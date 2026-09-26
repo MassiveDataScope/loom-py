@@ -123,7 +123,10 @@ the load of a shared machine, and any effect of running first or last, spreads
 over every configuration instead of penalising one of them. Each sample records
 its `position` in that order. The first
 `--warmup` repetitions are stored with `"warmup": true` and left out of the
-summaries. `--max-load L` waits, up to `--max-wait-s`, before each repetition
+summaries. `--gc NAME=POLICY` runs one configuration under a garbage-collector
+policy, applied once the flow is built and before the first record: `freeze`
+or `threshold:T0[,T1[,T2]]` (see `gc_policy.py`). Give the same interpreter
+twice under two names to compare a policy with the defaults. `--max-load L` waits, up to `--max-wait-s`, before each repetition
 until the 1-minute load average is at most `L`; the load is stored with every
 sample either way. `--tag` adds a suffix to the file names, so two runs on the
 same day do not overwrite each other. `--scenarios` selects a subset, and the other flags change the load
