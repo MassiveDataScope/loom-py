@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from benchmarks.streaming import gc_policy
 from benchmarks.streaming.engines import load_engine
 from benchmarks.streaming.load import LoadGenerator
 from benchmarks.streaming.metrics import Recorder
@@ -47,12 +48,15 @@ def probe(engine_name: str) -> dict[str, Any]:
     return {
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
-        "python_executable": sys.executable,
+        # The interpreter's name only: a full path would leak the local layout
+        # into result files meant to be committed.
+        "python_executable": Path(sys.executable).name,
         "gil_enabled": getattr(sys, "_is_gil_enabled", lambda: True)(),
         "platform": platform.platform(),
         "machine": platform.machine(),
         "cpu_model": cpu_model(),
         "cpu_count": os.cpu_count(),
+        **gc_policy.describe(),
         **load_engine(engine_name).describe(),
     }
 

@@ -31,6 +31,7 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 from bytewax.recovery import RecoveryConfig, init_db_dir
 from bytewax.run import cli_main
 
+from benchmarks.streaming import gc_policy
 from benchmarks.streaming.load import Event, LoadGenerator, Pacer, now_ns
 from benchmarks.streaming.metrics import Recorder, SinkItem
 from benchmarks.streaming.params import Mode, RunSpec
@@ -293,6 +294,7 @@ class LoomBytewaxEngine:
             error_sinks={},
             runtime=BytewaxRuntimeConfig(workers_per_process=spec.flow.workers),
         )
+        gc_policy.apply(spec.gc_policy)
         try:
             cli_main(  # type: ignore[no-untyped-call]
                 prepared.dataflow,

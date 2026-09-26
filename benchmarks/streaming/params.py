@@ -79,6 +79,8 @@ class RunSpec:
         crash_after: Outputs after which a ``CRASH`` run exits abruptly.
         resume_target: Highest source offset per partition seen at the sink
             before the crash; a ``RESUME`` run reports when it reaches it again.
+        gc_policy: Garbage-collector policy applied once the flow is built;
+            see :mod:`benchmarks.streaming.gc_policy`.
     """
 
     engine: str
@@ -92,6 +94,7 @@ class RunSpec:
     recovery_dir: str = ""
     crash_after: int = 0
     resume_target: dict[str, int] = field(default_factory=dict)
+    gc_policy: str = ""
 
     def to_json(self) -> dict[str, Any]:
         """Return a JSON-serialisable mapping."""
@@ -112,6 +115,7 @@ class RunSpec:
             recovery_dir=str(data["recovery_dir"]),
             crash_after=int(data["crash_after"]),
             resume_target={str(k): int(v) for k, v in data["resume_target"].items()},
+            gc_policy=str(data.get("gc_policy", "")),
         )
 
     def with_changes(self, **changes: Any) -> RunSpec:

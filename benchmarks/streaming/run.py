@@ -91,6 +91,7 @@ class Config:
 
     name: str
     python: str
+    gc_policy: str = ""
 
 
 class ChildFailed(RuntimeError):
@@ -265,6 +266,7 @@ def scenario_spec(base: RunSpec, scenario: Scenario, latency_rate: int) -> RunSp
 
 def measure(config: Config, scenario: Scenario, spec: RunSpec, expected: int) -> dict[str, Any]:
     """Take one sample of *scenario* in *config*."""
+    spec = spec.with_changes(gc_policy=config.gc_policy)
     if scenario.kind == "recovery":
         return measure_recovery(config, spec, expected)
     return measure_flow(config, spec, expected)
@@ -316,6 +318,19 @@ def parse_config(value: str) -> Config:
     return Config(name=name, python=python)
 
 
+def with_gc_policies(configs: Sequence[Config], policies: Sequence[str]) -> list[Config]:
+    """Attach every ``NAME=POLICY`` of *policies* to the configuration called NAME.
+
+    Raises:
+        ValueError: If a policy names no configuration.
+    """
+    by_name = dict(item.partition("=")[::2] for item in policies)
+    unknown = by_name.keys() - {config.name for config in configs}
+    if unknown:
+        raise ValueError(f"--gc for unknown configurations: {', '.join(sorted(unknown))}")
+    return [replace(config, gc_policy=by_name.get(config.name, "")) for config in configs]
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the command-line parser."""
     defaults_load, defaults_flow = LoadParams(), FlowParams()
@@ -323,6 +338,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--config", type=parse_config, action="append", required=True)
+    parser.add_argument(
+        "--gc",
+        action="append",
+        default=[],
+        metavar="NAME=POLICY",
+        help="garbage-collector policy of one configuration (see gc_policy.py)",
+    )
     parser.add_argument("--engine", default="loom-bytewax")
     parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     parser.add_argument("--repetitions", type=int, default=7, help="measured repetitions")
@@ -380,7 +402,7 @@ def run_all(
     base = _base_spec(args)
     scenarios = [SCENARIOS[name] for name in args.scenarios.split(",")]
     expected = LoadGenerator(base.load).expected_outputs()
-    configs: list[Config] = args.config
+    configs = with_gc_policies(args.config, args.gc)
     documents: dict[str, dict[str, Any]] = {}
     for config in configs:
         environment = probe(config, args.engine)
@@ -390,6 +412,7 @@ def run_all(
             "label": config_label(config, environment, args.tag),
             "created": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
             "environment": environment,
+            "gc_policy": config.gc_policy,
             "code": git_state(),
             "note": args.note,
             "params": {
