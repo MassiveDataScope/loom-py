@@ -117,9 +117,11 @@ python -m benchmarks.streaming.compare \
 Run both commands from the repository root. The runner itself needs only the
 standard library, so any Python 3.11+ can drive it. Each measurement runs in a
 fresh child process started with the configuration's interpreter
-(`python -m benchmarks.streaming.child`). Repetitions are interleaved
-(A, B, C, A, B, C, …), so drift in the load of a shared machine spreads over
-every configuration instead of penalising whichever ran last. The first
+(`python -m benchmarks.streaming.child`). Repetitions are interleaved,
+and the order rotates with each repetition (A B C, B C A, C A B, …). Drift in
+the load of a shared machine, and any effect of running first or last, spreads
+over every configuration instead of penalising one of them. Each sample records
+its `position` in that order. The first
 `--warmup` repetitions are stored with `"warmup": true` and left out of the
 summaries. `--max-load L` waits, up to `--max-wait-s`, before each repetition
 until the 1-minute load average is at most `L`; the load is stored with every

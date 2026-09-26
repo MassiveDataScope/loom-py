@@ -1,8 +1,9 @@
 """Run the reference streaming benchmark against one or more environments.
 
 Each ``--config NAME=PYTHON`` names a virtual environment by its interpreter.
-Repetitions are interleaved across configurations (A, B, C, A, B, C, ...) so
-drift in the load of a shared machine spreads evenly over all of them; the first
+Repetitions are interleaved across configurations, and the order rotates with
+every repetition (A B C, B C A, C A B, ...), so drift in the load of a shared
+machine, and whatever running first or last does, spreads evenly; the first
 ``--warmup`` repetitions are recorded but left out of the summaries. Every
 measurement runs in a fresh child process. One JSON file per configuration is
 written to ``--out`` as ``<date>-<config>.json``.
@@ -408,11 +409,14 @@ def run_all(
     for repetition in range(total):
         warmup = repetition < args.warmup
         wait_for_quiet(args.max_load, args.max_wait_s, log)
+        shift = repetition % len(configs)
+        order = configs[shift:] + configs[:shift]
         for scenario in scenarios:
             spec = scenario_spec(base, scenario, args.latency_rate)
-            for config in configs:
+            for position, config in enumerate(order):
                 sample = measure(config, scenario, spec, expected)
                 sample["repetition"] = repetition
+                sample["position"] = position
                 sample["warmup"] = warmup
                 documents[config.name]["scenarios"][scenario.name]["samples"].append(sample)
                 log(f"[{repetition + 1}/{total}] {scenario.name} {config.name}: {_brief(sample)}")
