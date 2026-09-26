@@ -47,7 +47,8 @@ pre-generated queue.
 | `throughput-w1` | 1 worker, as fast as the engine pulls | `msgs_per_s`, `msgs_per_cpu_s`, `peak_rss_mb` |
 | `throughput-w4` | 4 worker threads in one process | same; this is where cloning objects across workers under the GIL would show |
 | `throughput-p2` | 2 processes × 1 worker (`cli_main` with `process_id`/`addresses`) | same, across a cluster exchange |
-| `latency-w1` | 1 worker, fixed offered rate (`--latency-rate`, default 20 000 msg/s) | `p50_ms`, `p99_ms` |
+| `latency-w1` | 1 worker, fixed offered rate (`--latency-rate`, default 20 000 msg/s) | `p50_ms`, `p99_ms` as a user would see them |
+| `latency-b1-w1` | the same with `CollectBatch(max_records=1)` | `p99_ms` of the engine itself |
 | `recovery-w1` | `RecoveryConfig`; the process dies abruptly (`os._exit`) after half the outputs, then resumes from the recovery store | `recovery_s`, `resume_first_output_s`, `replayed` |
 
 **Metrics:**
@@ -60,8 +61,17 @@ pre-generated queue.
 - `p50_ms`, `p99_ms`: end-to-end latency, from source emission to sink write,
   taken from a log-bucketed histogram with about 1 % resolution. In the
   throughput scenarios these numbers mostly measure queueing at saturation, so
-  compare latency with `latency-w1`, where every configuration receives the
-  same offered load.
+  compare latency on the fixed-rate lanes, where every configuration receives
+  the same offered load. In `latency-w1` a record mostly waits for its batch
+  to fill: about `batch_max * partitions / rate` (12.8 ms by default) at
+  p99, whatever the engine. `latency-b1-w1` removes that wait, so its p99 is
+  the one that can show an engine regression.
+- `instructions_per_msg` (macOS only): instructions retired by the whole
+  process tree, as reported by `/usr/bin/time -l`, divided by the messages.
+  Startup is included, so the figure is comparable only between
+  configurations on the same interpreter, such as A and B. Neither host load
+  nor P/E core placement changes it, which makes it the steadiest signal on a
+  busy machine.
 - `peak_rss_mb`: `ru_maxrss` of the process, normalised to bytes on macOS and
   Linux. `startup_rss_mb` is the peak reached before the first emission
   (interpreter, imports, compilation); the difference is what the flow adds.
@@ -111,7 +121,10 @@ fresh child process started with the configuration's interpreter
 (A, B, C, A, B, C, …), so drift in the load of a shared machine spreads over
 every configuration instead of penalising whichever ran last. The first
 `--warmup` repetitions are stored with `"warmup": true` and left out of the
-summaries. `--scenarios` selects a subset, and the other flags change the load
+summaries. `--max-load L` waits, up to `--max-wait-s`, before each repetition
+until the 1-minute load average is at most `L`; the load is stored with every
+sample either way. `--tag` adds a suffix to the file names, so two runs on the
+same day do not overwrite each other. `--scenarios` selects a subset, and the other flags change the load
 (`--messages`, `--partitions`, `--keys`, `--payload-bytes`, `--seed`) or the
 flow (`--batch-max`, `--batch-timeout-ms`, `--epoch-interval-ms`).
 
@@ -122,9 +135,15 @@ CPU model and count, the commit of the benchmark code, all parameters, the host
 load average, every sample, and a summary per metric (n, mean, median, standard
 deviation, coefficient of variation).
 
-`compare.py` prints the median ± standard deviation of every file, the
-difference of the means against the first file with a Welch 95 % interval, and a
-verdict:
+`compare.py` prints the median ± standard deviation of every file and the
+difference against the first file. By default that difference is the ratio of
+medians with a 95 % percentile-bootstrap interval, using a fixed seed. The
+estimator is robust to the occasional repetition a shared machine slows down.
+`--method mean` switches to the ratio of means with a Welch interval. Only the
+gate metrics of each scenario (`GATES` in `compare.py`) get a verdict; the rest
+are printed as `info`. The gate metrics are `msgs_per_s`, `msgs_per_cpu_s` and
+`peak_rss_mb` for the throughput scenarios, `p99_ms` for `latency-b1-w1`, and
+`recovery_s` and `peak_rss_mb` for recovery:
 
 - `ok`: the whole interval worsens by less than `--threshold` (5 %).
 - `worse`: the whole interval worsens by more than the threshold.

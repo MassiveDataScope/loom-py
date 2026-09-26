@@ -20,11 +20,13 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -41,6 +43,8 @@ from benchmarks.streaming.params import FlowParams, LoadParams, Mode, RunSpec
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _CHILD = "benchmarks.streaming.child"
 _RUN_TIMEOUT_S = 900
+_TIME = Path("/usr/bin/time")
+_INSTRUCTIONS = re.compile(rb"^\s*(\d+)\s+instructions retired\s*$", re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +57,15 @@ class Scenario:
             rate) or ``recovery`` (crash half-way, then resume).
         workers: Worker threads per process.
         processes: Cluster processes.
+        batch_max: ``CollectBatch.max_records`` override; ``None`` keeps the
+            run's value.
     """
 
     name: str
     kind: str
     workers: int = 1
     processes: int = 1
+    batch_max: int | None = None
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -68,6 +75,10 @@ SCENARIOS: dict[str, Scenario] = {
         Scenario("throughput-w4", "throughput", workers=4),
         Scenario("throughput-p2", "throughput", processes=2),
         Scenario("latency-w1", "latency"),
+        # One record per batch: the time a record waits for its batch to fill
+        # (batch_max * partitions / rate) would otherwise dominate the latency
+        # and hide the engine's share of it.
+        Scenario("latency-b1-w1", "latency", batch_max=1),
         Scenario("recovery-w1", "recovery"),
     )
 }
@@ -108,8 +119,11 @@ def probe(config: Config, engine: str) -> dict[str, Any]:
 def _spawn(config: Config, spec: RunSpec, workdir: Path) -> subprocess.Popen[bytes]:
     spec_path = workdir / f"spec-{spec.process_id}.json"
     spec_path.write_text(json.dumps(spec.to_json()), encoding="utf-8")
+    # On macOS, BSD time reports the instructions a process retired: a count
+    # that neither the host load nor P/E core placement changes.
+    prefix = [str(_TIME), "-l"] if sys.platform == "darwin" and _TIME.exists() else []
     return subprocess.Popen(
-        [config.python, "-m", _CHILD, "--spec", str(spec_path)],
+        [*prefix, config.python, "-m", _CHILD, "--spec", str(spec_path)],
         cwd=REPO_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -134,16 +148,20 @@ def run_cluster(
         for index in range(processes)
     ]
     children = [_spawn(config, child_spec, workdir) for child_spec in specs]
+    instructions = []
     for child in children:
         _, stderr = child.communicate(timeout=_RUN_TIMEOUT_S)
         if child.returncode != expected_exit:
             tail = stderr.decode("utf-8", errors="replace")[-2_000:]
             raise ChildFailed(f"{config.name}: exit {child.returncode}\n{tail}")
+        match = _INSTRUCTIONS.search(stderr)
+        instructions.append(int(match.group(1)) if match else 0)
     results = []
-    for child_spec in specs:
+    for child_spec, retired in zip(specs, instructions, strict=True):
         path = Path(child_spec.result_path)
         data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         data["spawn_ns"] = spawn_ns
+        data["instructions"] = retired
         results.append(data)
     return results
 
@@ -165,6 +183,7 @@ def _merge(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "peak_rss_mb": max(r["peak_rss_bytes"] for r in results) / 2**20,
         "startup_rss_mb": max(r["startup_rss_bytes"] for r in results) / 2**20,
         "histogram": histogram,
+        "instructions": sum(r["instructions"] for r in results),
         "loadavg_1m": max(r["loadavg"][0] for r in results),
     }
 
@@ -180,6 +199,11 @@ def _flow_metrics(merged: dict[str, Any], messages: int) -> dict[str, float]:
         "peak_rss_mb": merged["peak_rss_mb"],
         "startup_rss_mb": merged["startup_rss_mb"],
         "startup_s": (merged["first_output_ns"] - merged["spawn_ns"]) / 1e9,
+        # Whole processes, startup included; comparable between two
+        # configurations on the same interpreter. NaN where time(1) cannot count.
+        "instructions_per_msg": (
+            merged["instructions"] / messages if merged["instructions"] else float("nan")
+        ),
     }
 
 
@@ -228,7 +252,12 @@ def measure_recovery(config: Config, spec: RunSpec, expected: int) -> dict[str, 
 
 def scenario_spec(base: RunSpec, scenario: Scenario, latency_rate: int) -> RunSpec:
     """Return the spec of *scenario* derived from the *base* parameters."""
-    flow = replace(base.flow, workers=scenario.workers, processes=scenario.processes)
+    flow = replace(
+        base.flow,
+        workers=scenario.workers,
+        processes=scenario.processes,
+        batch_max=scenario.batch_max if scenario.batch_max is not None else base.flow.batch_max,
+    )
     load = replace(base.load, rate=latency_rate) if scenario.kind == "latency" else base.load
     return base.with_changes(flow=flow, load=load)
 
@@ -251,13 +280,31 @@ def git_state() -> dict[str, Any]:
     return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
 
 
-def config_label(config: Config, environment: dict[str, Any]) -> str:
-    """Return the file-name label of *config*: name, Python and engine version."""
+def config_label(config: Config, environment: dict[str, Any], tag: str = "") -> str:
+    """Return the file-name label of *config*: name, Python, engine version and tag."""
     python = ".".join(str(environment["python_version"]).split(".")[:2])
-    return (
+    label = (
         f"{config.name}-py{python}-{environment['engine_distribution']}"
         f"-{environment['engine_version']}"
     )
+    return f"{label}-{tag}" if tag else label
+
+
+def wait_for_quiet(max_load: float, timeout_s: float, log: Callable[[str], None]) -> float:
+    """Wait until the 1-minute load average drops to *max_load*; return the load then.
+
+    ``max_load <= 0`` disables the wait. After *timeout_s* the run goes on at
+    whatever load there is; the load is recorded with every sample either way.
+    """
+    load = os.getloadavg()[0]
+    if max_load <= 0:
+        return load
+    deadline = time.monotonic() + timeout_s
+    while load > max_load and time.monotonic() < deadline:
+        log(f"load average {load:.1f} > {max_load:.1f}; waiting")
+        time.sleep(15)
+        load = os.getloadavg()[0]
+    return load
 
 
 def parse_config(value: str) -> Config:
@@ -291,6 +338,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epoch-interval-ms", type=int, default=defaults_flow.epoch_interval_ms)
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "benchmarks" / "results")
     parser.add_argument("--note", default="", help="free text stored with the results")
+    parser.add_argument("--tag", default="", help="suffix of the result file names")
+    parser.add_argument(
+        "--max-load",
+        type=float,
+        default=0.0,
+        help="before each repetition, wait until the 1-minute load average is at most this",
+    )
+    parser.add_argument("--max-wait-s", type=float, default=600.0, help="cap of that wait")
     return parser
 
 
@@ -331,7 +386,7 @@ def run_all(
         documents[config.name] = {
             "schema": 1,
             "config": config.name,
-            "label": config_label(config, environment),
+            "label": config_label(config, environment, args.tag),
             "created": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
             "environment": environment,
             "code": git_state(),
@@ -343,6 +398,7 @@ def run_all(
                 "repetitions": args.repetitions,
                 "warmup": args.warmup,
                 "expected_outputs": expected,
+                "max_load": args.max_load,
             },
             "host_loadavg_start": list(os.getloadavg()),
             "scenarios": {s.name: {"scenario": asdict(s), "samples": []} for s in scenarios},
@@ -351,6 +407,7 @@ def run_all(
     total = args.warmup + args.repetitions
     for repetition in range(total):
         warmup = repetition < args.warmup
+        wait_for_quiet(args.max_load, args.max_wait_s, log)
         for scenario in scenarios:
             spec = scenario_spec(base, scenario, args.latency_rate)
             for config in configs:

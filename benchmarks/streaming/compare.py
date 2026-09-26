@@ -1,17 +1,26 @@
 """Compare benchmark result files against a baseline.
 
 Prints, per scenario and metric, the median and standard deviation of every
-file, the difference of the means against the baseline with its 95 % interval,
-and a verdict against the regression threshold (SC-003: 5 %)::
+file, the relative difference against the baseline with its 95 % interval, and
+a verdict against the regression threshold (SC-003: 5 %)::
 
     python -m benchmarks.streaming.compare BASELINE.json OTHER.json [...]
 
-Verdicts, with *worsening* measured in the metric's bad direction:
+The default estimator is the ratio of medians with a percentile bootstrap
+interval (fixed seed, so the output is reproducible). It is robust to the
+occasional slow repetition a shared machine produces, such as a run scheduled on
+efficiency cores. ``--method mean`` uses the ratio of means with a Welch
+interval instead.
+
+Verdicts apply only to the gate metrics of each scenario (:data:`GATES`), with
+*worsening* measured in the metric's bad direction:
 
 * ``ok``: the whole interval worsens less than the threshold;
 * ``worse``: the whole interval worsens more than the threshold;
-* ``?``: the interval straddles the threshold; more repetitions or a quieter
-  machine are needed before calling it.
+* ``?``: the interval straddles the threshold. The result is not demonstrated
+  either way; more repetitions or a quieter machine are needed.
+
+Every other metric is printed as ``info``.
 """
 
 from __future__ import annotations
@@ -19,11 +28,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections.abc import Sequence
+import random
+import statistics
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from benchmarks.streaming.metrics import Summary, relative_difference
+from benchmarks.streaming.metrics import relative_difference, summarize
 
 HIGHER_IS_BETTER = frozenset({"msgs_per_s", "msgs_per_cpu_s"})
 """Metrics where a lower value is the regression; every other one is lower-is-better."""
@@ -31,16 +42,36 @@ HIGHER_IS_BETTER = frozenset({"msgs_per_s", "msgs_per_cpu_s"})
 REPORTED = (
     "msgs_per_s",
     "msgs_per_cpu_s",
+    "instructions_per_msg",
     "p50_ms",
     "p99_ms",
     "peak_rss_mb",
     "startup_rss_mb",
+    "flow_rss_mb",
     "startup_s",
     "recovery_s",
     "resume_first_output_s",
     "replayed",
 )
 """Metrics printed, in this order, when a scenario has them."""
+
+_THROUGHPUT_GATES = frozenset({"msgs_per_s", "msgs_per_cpu_s", "peak_rss_mb"})
+GATES: dict[str, frozenset[str]] = {
+    "throughput-w1": _THROUGHPUT_GATES,
+    "throughput-w4": _THROUGHPUT_GATES,
+    "throughput-p2": _THROUGHPUT_GATES,
+    # latency-w1 is dominated by the time a record waits for its batch to fill,
+    # the same for every engine; its latency is reported, not gated.
+    "latency-w1": frozenset({"peak_rss_mb"}),
+    "latency-b1-w1": frozenset({"p99_ms", "peak_rss_mb"}),
+    "recovery-w1": frozenset({"recovery_s", "peak_rss_mb"}),
+}
+"""FR-007 metrics that decide SC-003, per scenario."""
+
+_BOOTSTRAP_RESAMPLES = 4_000
+_BOOTSTRAP_SEED = 15
+
+Interval = tuple[float, float, float]
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -49,16 +80,48 @@ def load(path: Path) -> dict[str, Any]:
     return data
 
 
-def _summary(document: dict[str, Any], scenario: str, metric: str) -> Summary | None:
-    block = document["scenarios"].get(scenario, {}).get("summary", {}).get(metric)
+def samples(document: dict[str, Any], scenario: str, metric: str) -> list[float]:
+    """Return the measured (non-warm-up) values of *metric* in *scenario*."""
+    block = document["scenarios"].get(scenario)
     if block is None:
-        return None
-    return Summary(
-        n=int(block["n"]),
-        mean=float(block["mean"]),
-        median=float(block["median"]),
-        stdev=float(block["stdev"]),
+        return []
+    values = []
+    for sample in block["samples"]:
+        if sample["warmup"]:
+            continue
+        if metric == "flow_rss_mb" and "startup_rss_mb" in sample:
+            values.append(float(sample["peak_rss_mb"] - sample["startup_rss_mb"]))
+        elif metric in sample and not math.isnan(float(sample[metric])):
+            values.append(float(sample[metric]))
+    return values
+
+
+def median_ratio(candidate: Sequence[float], baseline: Sequence[float]) -> Interval:
+    """Return ``(diff %, low %, high %)`` of the ratio of medians, bootstrapped."""
+    base_median = statistics.median(baseline)
+    if base_median == 0:
+        return float("nan"), float("nan"), float("nan")
+    rng = random.Random(_BOOTSTRAP_SEED)
+    ratios = sorted(
+        statistics.median(rng.choices(candidate, k=len(candidate)))
+        / statistics.median(rng.choices(baseline, k=len(baseline)))
+        for _ in range(_BOOTSTRAP_RESAMPLES)
     )
+    low = ratios[int(0.025 * _BOOTSTRAP_RESAMPLES)]
+    high = ratios[int(0.975 * _BOOTSTRAP_RESAMPLES) - 1]
+    point = statistics.median(candidate) / base_median
+    return 100 * (point - 1), 100 * (low - 1), 100 * (high - 1)
+
+
+def mean_ratio(candidate: Sequence[float], baseline: Sequence[float]) -> Interval:
+    """Return ``(diff %, low %, high %)`` of the ratio of means, Welch interval."""
+    return relative_difference(summarize(candidate), summarize(baseline))
+
+
+METHODS: dict[str, Callable[[Sequence[float], Sequence[float]], Interval]] = {
+    "median": median_ratio,
+    "mean": mean_ratio,
+}
 
 
 def worsening(metric: str, diff_pct: float) -> float:
@@ -79,39 +142,43 @@ def verdict(metric: str, low: float, high: float, threshold: float) -> str:
     return "?"
 
 
+def _cell(values: Sequence[float]) -> str:
+    summary = summarize(values)
+    return f"{summary.median:.4g} ± {summary.stdev:.2g} (cv {summary.cv_pct:.0f}%)"
+
+
 def rows(
-    baseline: dict[str, Any], others: Sequence[dict[str, Any]], threshold: float
+    baseline: dict[str, Any],
+    others: Sequence[dict[str, Any]],
+    threshold: float,
+    method: str,
 ) -> list[list[str]]:
     """Return the table rows comparing *others* with *baseline*."""
+    estimate = METHODS[method]
     table: list[list[str]] = []
     for scenario in baseline["scenarios"]:
+        gates = GATES.get(scenario, frozenset())
         for metric in REPORTED:
-            base = _summary(baseline, scenario, metric)
-            if base is None:
+            base = samples(baseline, scenario, metric)
+            if not base:
                 continue
             row = [scenario, metric, _cell(base)]
             for other in others:
-                candidate = _summary(other, scenario, metric)
-                if candidate is None:
-                    row.append("-")
+                candidate = samples(other, scenario, metric)
+                if not candidate:
+                    row += ["-", "-", "-"]
                     continue
-                diff, low, high = relative_difference(candidate, base)
-                row.append(
-                    f"{_cell(candidate)} | {diff:+.1f}% [{low:+.1f}, {high:+.1f}] "
-                    f"{verdict(metric, low, high, threshold)}"
-                )
+                diff, low, high = estimate(candidate, base)
+                judged = verdict(metric, low, high, threshold) if metric in gates else "info"
+                row += [_cell(candidate), f"{diff:+.1f}% [{low:+.1f}, {high:+.1f}]", judged]
             table.append(row)
     return table
-
-
-def _cell(summary: Summary) -> str:
-    return f"{summary.median:.4g} ± {summary.stdev:.2g} (cv {summary.cv_pct:.1f}%)"
 
 
 def render_markdown(headers: Sequence[str], table: Sequence[Sequence[str]]) -> str:
     """Render *table* as a Markdown table."""
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
-    lines += ["| " + " | ".join(cell.replace("|", "·") for cell in row) + " |" for row in table]
+    lines += ["| " + " | ".join(row) + " |" for row in table]
     return "\n".join(lines)
 
 
@@ -131,17 +198,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("baseline", type=Path)
     parser.add_argument("others", type=Path, nargs="+")
     parser.add_argument("--threshold", type=float, default=5.0, help="allowed worsening, %%")
+    parser.add_argument("--method", choices=sorted(METHODS), default="median")
     parser.add_argument("--markdown", action="store_true")
     args = parser.parse_args(argv)
     baseline = load(args.baseline)
     others = [load(path) for path in args.others]
-    headers = [
-        "scenario",
-        "metric",
-        f"{baseline['config']} median ± sd",
-        *(f"{o['config']} median ± sd | Δ vs {baseline['config']} [95% CI]" for o in others),
-    ]
-    table = rows(baseline, others, args.threshold)
+    name = baseline["config"]
+    headers = ["scenario", "metric", f"{name} median ± sd"]
+    for other in others:
+        headers += [f"{other['config']} median ± sd", f"Δ vs {name} [95% CI]", "verdict"]
+    table = rows(baseline, others, args.threshold, args.method)
     render = render_markdown if args.markdown else render_text
     print(render(headers, table))
     return 0
