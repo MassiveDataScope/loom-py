@@ -63,6 +63,7 @@ Companion demo application:
    rest/autocrud
    rest/use-case-dsl
    rest/identity
+   rest/authorization
    rest/celery
    rest/sql
    rest/persistence-backends
