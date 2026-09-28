@@ -20,11 +20,15 @@ role where, and asks pure functions for decisions.
 | {class}`~loom.core.authz.Role` | your code | a named set of permissions |
 | {class}`~loom.core.authz.RoleCatalog` | your code | every permission and role, validated once |
 | {class}`~loom.core.authz.Scope` | your data | where a grant applies: a path of segments |
-| {class}`~loom.core.authz.Grant` | your database | subject + role **name** + scope |
+| {class}`~loom.core.authz.Grant` | your database | subject + role **name** + scope, optionally until an instant |
 
 A grant stores the role's name, never its permissions, so changing a role in code
 changes what every stored grant of it allows. The token only identifies the caller;
 it never carries permissions.
+
+loom implements Core RBAC (ANSI/INCITS 359) without role hierarchies or
+separation-of-duty constraints; hierarchy is expressed through permission sets, and
+separation of duty belongs to the product.
 
 ## Scopes are paths
 
@@ -87,11 +91,11 @@ evaluate(CATALOG, grants, RUN, Scope.of("acme"))                           # den
 evaluate(CATALOG, grants, READ, Scope.of("globex"))                        # denied
 ```
 
-{func}`~loom.core.authz.evaluate` never touches a database or a clock. It denies unless
+{func}`~loom.core.authz.evaluate` never touches a database or reads a clock. It denies unless
 some grant names a role that includes the permission on a covering scope. The
 {class}`~loom.core.authz.Decision` it returns names that grant for your audit log; when
 several grants allow, it names the one on the deepest scope (then the first by role name
-and subject), so the log does not depend on the order your store returned the rows in.
+and subject, then the longest-lived), so the log does not depend on the order your store returned the rows in.
 A stored grant whose role the code does not declare allows nothing.
 
 To filter a listing, ask once for the outermost scopes and test each item by prefix:
@@ -100,6 +104,31 @@ To filter a listing, ask once for the outermost scopes and test each item by pre
 reachable = scopes_with(CATALOG, grants, READ)      # frozenset({Scope.of("acme")})
 visible = [item for item in items if any(scope.covers(item.scope) for scope in reachable)]
 ```
+
+## Time-bound grants
+
+Privileged and temporary access, such as an on-call operator or a contractor, should end
+on its own rather than wait for someone to remember to revoke it. Give the grant a
+timezone-aware `expires_at` and pass the decision instant as `now=`:
+
+```python
+from datetime import UTC, datetime, timedelta
+
+now = datetime.now(UTC)
+on_call = [Grant("ada", "operator", Scope.of("acme"), expires_at=now + timedelta(hours=8))]
+
+evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now)                        # allowed
+evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now + timedelta(hours=8))   # denied
+```
+
+A grant is alive while `now` is before `expires_at`; from that instant on it counts as
+absent: it allows nothing, {func}`~loom.core.authz.scopes_with` leaves its scope out, and
+{func}`~loom.core.authz.can_grant` and {func}`~loom.core.authz.can_revoke` give the
+granter no power through it. loom still reads no clock, so the caller chooses `now` and a
+test can pin it. Grants without `expires_at` never need `now`; if any grant passed in
+can expire and `now` is missing, the call raises `ValueError` instead of guessing, and a
+naive `expires_at` or `now` raises too. Revoking a grant that has already expired
+follows the usual rules.
 
 ## Nobody grants more than they hold
 

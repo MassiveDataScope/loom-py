@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -42,8 +43,17 @@ R = T.child("sales", "orders")
 R_SIBLING = T.child("sales", "customers")
 
 
+NOW = datetime(2030, 6, 1, 12, tzinfo=UTC)
+TICK = timedelta(microseconds=1)
+NAIVE = datetime(2030, 6, 1, 12)
+
+
 def _grants(role: str, scope: Scope, subject: str = "ada") -> list[Grant]:
     return [Grant(subject, role, scope)]
+
+
+def _expiring(role: str, scope: Scope, expires_at: datetime, subject: str = "ada") -> list[Grant]:
+    return [Grant(subject, role, scope, expires_at)]
 
 
 class TestEvaluate:
@@ -104,6 +114,58 @@ class TestEvaluate:
         assert evaluate(CATALOG, iter(_grants("viewer", T)), READ, R)
 
 
+class TestEvaluateWithExpiry:
+    def test_alive_until_one_microsecond_before_expiry(self) -> None:
+        grants = _expiring("viewer", T, NOW + TICK)
+
+        assert evaluate(CATALOG, grants, READ, T, now=NOW) == Decision(True, grants[0])
+
+    def test_expired_at_the_instant_of_expiry(self) -> None:
+        assert not evaluate(CATALOG, _expiring("viewer", T, NOW), READ, T, now=NOW)
+
+    def test_expired_after_expiry(self) -> None:
+        assert not evaluate(CATALOG, _expiring("admin", ROOT, NOW - TICK), READ, T, now=NOW)
+
+    def test_expired_grant_counts_as_absent_among_live_ones(self) -> None:
+        lasting = Grant("ada", "viewer", T)
+        expired = Grant("ada", "operator", R, NOW)
+
+        assert evaluate(CATALOG, [expired, lasting], READ, R, now=NOW).grant == lasting
+        assert not evaluate(CATALOG, [expired, lasting], OPERATE, R, now=NOW)
+
+    def test_compares_instants_across_timezones(self) -> None:
+        later_elsewhere = (NOW + TICK).astimezone(timezone(timedelta(hours=-5)))
+
+        assert evaluate(CATALOG, _expiring("viewer", T, later_elsewhere), READ, T, now=NOW)
+
+    def test_grants_without_expiry_never_need_now(self) -> None:
+        assert evaluate(CATALOG, _grants("viewer", T), READ, T)
+
+    def test_expiry_without_now_fails_closed(self) -> None:
+        grants = [Grant("ada", "viewer", T), Grant("ada", "operator", U, NOW)]
+
+        with pytest.raises(ValueError, match="now"):
+            evaluate(CATALOG, grants, READ, T)
+
+    def test_naive_now_is_rejected_even_without_expiry(self) -> None:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            evaluate(CATALOG, _grants("viewer", T), READ, T, now=NAIVE)
+
+    def test_now_must_be_a_datetime(self) -> None:
+        with pytest.raises(TypeError, match="datetime"):
+            evaluate(CATALOG, [], READ, T, now="2030-06-01")  # type: ignore[arg-type]
+
+    def test_ties_resolve_to_the_longest_lived_grant_whatever_the_order(self) -> None:
+        lasting = Grant("ada", "viewer", T)
+        short = Grant("ada", "viewer", T, NOW + TICK)
+        longer = Grant("ada", "viewer", T, NOW + 2 * TICK)
+
+        for order in ([lasting, short, longer], [short, longer, lasting], [longer, lasting, short]):
+            assert evaluate(CATALOG, order, READ, T, now=NOW).grant == lasting
+        for order in ([short, longer], [longer, short]):
+            assert evaluate(CATALOG, order, READ, T, now=NOW).grant == longer
+
+
 class TestScopesWith:
     def test_returns_the_minimal_cover(self) -> None:
         other = U.child("x")
@@ -127,6 +189,24 @@ class TestScopesWith:
     def test_undeclared_permission_is_a_programming_error(self) -> None:
         with pytest.raises(UnknownPermission):
             scopes_with(CATALOG, [], UNDECLARED)
+
+    def test_ignores_expired_grants(self) -> None:
+        grants = [
+            Grant("ada", "viewer", ROOT, NOW),
+            Grant("ada", "viewer", T, NOW + TICK),
+            Grant("ada", "viewer", U),
+        ]
+
+        assert scopes_with(CATALOG, grants, READ, now=NOW) == frozenset({T, U})
+        assert scopes_with(CATALOG, grants, READ, now=NOW - TICK) == frozenset({ROOT})
+
+    def test_expiry_without_now_fails_closed(self) -> None:
+        with pytest.raises(ValueError, match="now"):
+            scopes_with(CATALOG, _expiring("operator", T, NOW), READ)
+
+    def test_naive_now_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            scopes_with(CATALOG, [], READ, now=NAIVE)
 
 
 class TestCanGrant:
@@ -161,6 +241,25 @@ class TestCanGrant:
         with pytest.raises(UnknownRole, match="ghost"):
             can_grant(CATALOG, _grants("admin", ROOT), "ghost", T, delegate=MANAGE)
 
+    def test_expired_delegate_grant_grants_nothing(self) -> None:
+        grants = [Grant("ada", "viewer", T), Grant("ada", "admin", T, NOW)]
+        check = can_grant(CATALOG, grants, "viewer", T, delegate=MANAGE, now=NOW)
+
+        assert check == GrantCheck(False, frozenset({MANAGE}))
+
+    def test_live_delegate_grant_allows(self) -> None:
+        grants = _expiring("admin", T, NOW + TICK)
+
+        assert can_grant(CATALOG, grants, "operator", R, delegate=MANAGE, now=NOW)
+
+    def test_expiring_delegate_grant_without_now_fails_closed(self) -> None:
+        with pytest.raises(ValueError, match="now"):
+            can_grant(CATALOG, _expiring("admin", T, NOW), "viewer", T, delegate=MANAGE)
+
+    def test_naive_now_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            can_grant(CATALOG, _grants("admin", T), "viewer", T, delegate=MANAGE, now=NAIVE)
+
 
 class TestCanRevoke:
     def test_may_revoke_what_it_could_grant(self) -> None:
@@ -180,6 +279,33 @@ class TestCanRevoke:
         assert can_revoke(CATALOG, _grants("member_manager", T), stale, delegate=MANAGE)
         assert not can_revoke(CATALOG, _grants("viewer", T), stale, delegate=MANAGE)
         assert not can_revoke(CATALOG, _grants("admin", U), stale, delegate=MANAGE)
+
+    def test_expired_delegate_grant_grants_nothing(self) -> None:
+        target = Grant("bob", "viewer", T)
+        grants = [Grant("ada", "viewer", T), Grant("ada", "admin", T, NOW)]
+        check = can_revoke(CATALOG, grants, target, delegate=MANAGE, now=NOW)
+
+        assert check == GrantCheck(False, frozenset({MANAGE}))
+
+    def test_expiry_of_the_target_does_not_matter(self) -> None:
+        target = Grant("bob", "operator", R, NOW - TICK)
+        granter = _grants("admin", T)
+
+        assert can_revoke(CATALOG, granter, target, delegate=MANAGE)
+        assert can_revoke(CATALOG, granter, target, delegate=MANAGE, now=NOW)
+        assert not can_revoke(CATALOG, _grants("member_manager", T), target, delegate=MANAGE)
+
+    def test_expiring_delegate_grant_without_now_fails_closed(self) -> None:
+        target = Grant("bob", "viewer", T)
+
+        with pytest.raises(ValueError, match="now"):
+            can_revoke(CATALOG, _expiring("admin", T, NOW), target, delegate=MANAGE)
+
+    def test_naive_now_is_rejected(self) -> None:
+        target = Grant("bob", "viewer", T)
+
+        with pytest.raises(ValueError, match="timezone-aware"):
+            can_revoke(CATALOG, _grants("admin", T), target, delegate=MANAGE, now=NAIVE)
 
 
 @pytest.mark.parametrize(

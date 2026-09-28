@@ -4,15 +4,39 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 
 from loom.core.authz._roles import require_name
 from loom.core.authz._scope import Scope
 
 
-@dataclass(frozen=True, slots=True, order=True)
+def require_aware(name: str, moment: datetime) -> None:
+    """Reject a moment that does not name a single instant.
+
+    Args:
+        name: What the moment is, for the error message.
+        moment: The moment to check.
+
+    Raises:
+        TypeError: When *moment* is not a datetime.
+        ValueError: When *moment* is naive.
+    """
+    if not isinstance(moment, datetime):
+        raise TypeError(f"{name} must be a datetime, not {type(moment).__name__}.")
+    if moment.utcoffset() is None:
+        raise ValueError(f"{name} must be timezone-aware: {moment!r}.")
+
+
+_NEVER = (0,)
+
+
+@dataclass(frozen=True, slots=True)
 class Grant:
-    """An assignment of a role to a subject on a scope.
+    """An assignment of a role to a subject on a scope, possibly until a moment.
+
+    Grants order by subject, role, scope and then expiry, with grants that
+    never expire before those that do, soonest first.
 
     Attributes:
         subject: Opaque identifier of the holder, such as an identity subject
@@ -20,19 +44,53 @@ class Grant:
         role: Name of the role; its permissions are looked up in the catalog
             at decision time.
         scope: Where the role applies, including everything below it.
+        expires_at: The timezone-aware instant from which the grant allows
+            nothing; ``None`` when it never expires.
     """
 
     subject: str
     role: str
     scope: Scope
+    expires_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        """Reject a grant that names no holder, an unusable role name or no scope."""
+        """Reject a grant with no holder, an unusable role name, no scope or a naive expiry."""
         if not self.subject:
             raise ValueError("A grant needs a subject.")
         require_name("role", self.role)
         if not isinstance(self.scope, Scope):
             raise TypeError(f"A grant scope must be a Scope, not {type(self.scope).__name__}.")
+        if self.expires_at is not None:
+            require_aware("A grant expiry", self.expires_at)
+            object.__setattr__(self, "expires_at", self.expires_at.astimezone(UTC))
+
+    def _key(self) -> tuple[str, str, Scope, tuple[int] | tuple[int, datetime]]:
+        expiry = _NEVER if self.expires_at is None else (1, self.expires_at)
+        return (self.subject, self.role, self.scope, expiry)
+
+    def __lt__(self, other: object) -> bool:
+        """Order by subject, role, scope, then expiry."""
+        if not isinstance(other, Grant):
+            return NotImplemented
+        return self._key() < other._key()
+
+    def __le__(self, other: object) -> bool:
+        """Order by subject, role, scope, then expiry."""
+        if not isinstance(other, Grant):
+            return NotImplemented
+        return self._key() <= other._key()
+
+    def __gt__(self, other: object) -> bool:
+        """Order by subject, role, scope, then expiry."""
+        if not isinstance(other, Grant):
+            return NotImplemented
+        return self._key() > other._key()
+
+    def __ge__(self, other: object) -> bool:
+        """Order by subject, role, scope, then expiry."""
+        if not isinstance(other, Grant):
+            return NotImplemented
+        return self._key() >= other._key()
 
 
 class GrantSource(Protocol):
