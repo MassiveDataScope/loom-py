@@ -40,6 +40,14 @@ Identity
    loom.core.identity
    loom.core.identity.wire
 
+Authorization
+-------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.core.authz
+
 Config
 ------
 
