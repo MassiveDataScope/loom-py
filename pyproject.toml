@@ -288,6 +288,15 @@ include = [
     "src/loom/ai/declarative/schemas/*.json",
 ]
 
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
