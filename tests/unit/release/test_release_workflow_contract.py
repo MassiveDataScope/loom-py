@@ -16,7 +16,7 @@ import yaml
 
 ROOT = Path(__file__).parents[3]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
-REUSABLE = "the-reacher-data/loom-actions/.github/workflows/release-on-label.yml"
+REUSABLE = "MassiveDataScope/loom-actions/.github/workflows/release-on-label.yml"
 
 
 def _workflow() -> dict[str, Any]:

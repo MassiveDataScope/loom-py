@@ -167,7 +167,7 @@ agent runs or which caller it runs as.
 The example below is complete and runnable, uses `Caller()` alongside
 `Agent()`, and is the exact use case exercised — with no network, no model
 and no database — by
-[`tests/integration/ai/test_agent_marker_test_double.py`](https://github.com/the-reacher-data/loom-py/blob/master/tests/integration/ai/test_agent_marker_test_double.py):
+[`tests/integration/ai/test_agent_marker_test_double.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/test_agent_marker_test_double.py):
 editing one without the other is a gap the next review will catch. An
 example that binds identity through a plain argument instead of `Caller()`
 would teach a forgeable pattern — a parameter with no marker is filled from
@@ -331,7 +331,7 @@ raises `ValueError` rather than widening a grant no one asked for.
 The example below is complete and runnable, uses `Caller()` alongside
 `Mcp()`, and is the exact use case exercised — with no network and no MCP
 server — by
-[`tests/integration/ai/test_use_case_mcp_marker_test_double.py`](https://github.com/the-reacher-data/loom-py/blob/master/tests/integration/ai/test_use_case_mcp_marker_test_double.py):
+[`tests/integration/ai/test_use_case_mcp_marker_test_double.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/test_use_case_mcp_marker_test_double.py):
 editing one without the other is a gap the next review will catch. As with
 `Agent()`, an example that skipped `Caller()` would teach a forgeable
 pattern.
@@ -823,7 +823,7 @@ when it is still being served.
 > authorization, not just its shape.
 
 A runnable version of every example above lives in
-[`tests/integration/rest/test_yaml_interfaces.py`](https://github.com/the-reacher-data/loom-py/blob/master/tests/integration/rest/test_yaml_interfaces.py),
+[`tests/integration/rest/test_yaml_interfaces.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/rest/test_yaml_interfaces.py),
 exercised end to end against a real FastAPI app on every test run.
 
 ---
