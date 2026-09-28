@@ -266,6 +266,9 @@ class TestConfigureEngineMcpConnectTimeout:
 
     def test_reaches_the_real_pydantic_ai_provider_and_its_shared_toolsets(self) -> None:
         """The real, installed engine: its own ``SharedMcpToolsets`` reads the value back."""
+        pytest.importorskip(
+            "pydantic_ai.mcp", reason="the MCP client is not installed: uv sync --group mcp-tests"
+        )
         from loom.ai.compiler import CompiledMcpCapability
         from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
 
