@@ -20,7 +20,7 @@ jobs:
   release:
     permissions:
       contents: write
-    uses: the-reacher-data/loom-actions/.github/workflows/release-on-label.yml@017878a375d4728129792fee009296635884b6d3 # v1.2.3
+    uses: MassiveDataScope/loom-actions/.github/workflows/release-on-label.yml@cf2cf11f2b09d538250219616f6e85967268d80e # master cf2cf11
     with:
       build-distribution: true
       package-name: loom-kernel

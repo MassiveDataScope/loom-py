@@ -569,7 +569,7 @@ shared session, checked at start-up against the server's real tool list, the
 same way an agent's own `mcp` capability is checked. See [the `Mcp()`
 marker](../rest/use-case-dsl.md#mcp-marker--reaching-an-mcp-server-directly)
 for the complete example, anchored by
-[`tests/integration/ai/test_use_case_mcp_marker_test_double.py`](https://github.com/the-reacher-data/loom-py/blob/master/tests/integration/ai/test_use_case_mcp_marker_test_double.py).
+[`tests/integration/ai/test_use_case_mcp_marker_test_double.py`](https://github.com/MassiveDataScope/loom-py/blob/master/tests/integration/ai/test_use_case_mcp_marker_test_double.py).
 
 The rule below — your own tools are a `usecase` grant, not an MCP one — is
 unchanged by this: `Mcp()` is for reaching *someone else's* server directly

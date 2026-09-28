@@ -4,14 +4,14 @@
 
 # loom-kernel
 
-[![CI](https://img.shields.io/github/actions/workflow/status/the-reacher-data/loom-py/ci-main.yml?branch=master&label=ci)](https://github.com/the-reacher-data/loom-py/actions/workflows/ci-main.yml)
-[![Docs](https://img.shields.io/github/actions/workflow/status/the-reacher-data/loom-py/docs.yml?branch=master&label=docs)](https://github.com/the-reacher-data/loom-py/actions/workflows/docs.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/MassiveDataScope/loom-py/ci-main.yml?branch=master&label=ci)](https://github.com/MassiveDataScope/loom-py/actions/workflows/ci-main.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/MassiveDataScope/loom-py/docs.yml?branch=master&label=docs)](https://github.com/MassiveDataScope/loom-py/actions/workflows/docs.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=the-reacher-data_loom-py&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=the-reacher-data_loom-py)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=the-reacher-data_loom-py&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=the-reacher-data_loom-py)
 [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=the-reacher-data_loom-py&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=the-reacher-data_loom-py)
-[![Coverage](https://codecov.io/gh/the-reacher-data/loom-py/branch/master/graph/badge.svg)](https://app.codecov.io/gh/the-reacher-data/loom-py/tree/master)
+[![Coverage](https://codecov.io/gh/MassiveDataScope/loom-py/branch/master/graph/badge.svg)](https://app.codecov.io/gh/MassiveDataScope/loom-py/tree/master)
 [![PyPI](https://img.shields.io/pypi/v/loom-kernel)](https://pypi.org/project/loom-kernel/)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/the-reacher-data/loom-py/blob/master/pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/MassiveDataScope/loom-py/blob/master/pyproject.toml)
 
 Framework-agnostic Python toolkit to build backend applications with:
 
