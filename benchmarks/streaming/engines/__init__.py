@@ -43,9 +43,6 @@ class Engine(Protocol):
 def load_engine(name: str) -> Engine:
     """Import and return the engine registered as *name*.
 
-    The import is deferred on purpose: each engine needs its own optional
-    dependencies, and only the child process that measures it has them.
-
     Raises:
         KeyError: If *name* is not registered.
     """

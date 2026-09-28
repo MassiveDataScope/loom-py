@@ -23,7 +23,7 @@ from benchmarks.streaming.load import now_ns
 from benchmarks.streaming.params import Mode, RunSpec
 
 CRASH_EXIT_CODE = 86
-"""Exit code of a child that simulated a crash on purpose."""
+"""Exit code of a child that simulated a crash."""
 
 _SUB_BUCKETS = 64
 """Histogram buckets per power of two: about 1.1 % relative resolution."""
@@ -32,9 +32,7 @@ _SUB_BUCKETS = 64
 class LatencyHistogram:
     """Log-bucketed histogram of nanosecond latencies; mergeable across workers.
 
-    A fixed-size histogram instead of a list keeps the memory the benchmark
-    itself uses independent of the number of messages, so it does not pollute
-    the RSS being measured.
+    Memory is bounded by the number of buckets, not the number of samples.
     """
 
     def __init__(self, buckets: Mapping[int, int] | None = None) -> None:
@@ -112,9 +110,9 @@ class Recorder:
     def mark_emit(self, at_ns: int) -> None:
         """Record a source emission time; the earliest one starts the clocks.
 
-        CPU time is counted from here too, so imports, compilation and engine
-        startup stay out of the per-message cost; the peak RSS reached so far
-        is kept to tell the interpreter's footprint from the flow's.
+        On the first call, stores the current CPU seconds and peak RSS as
+        ``startup_rss_bytes``, the baseline every later measurement is taken
+        against.
         """
         with self._lock:
             if self._first_emit_ns == 0:

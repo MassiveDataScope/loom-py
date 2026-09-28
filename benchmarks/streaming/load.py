@@ -90,8 +90,7 @@ class Pacer:
 
     With ``rate == 0`` a partition emits ``source_batch`` records per pull.
     Otherwise it follows a fixed schedule of ``rate / partitions`` records per
-    second from its first pull, so latency is measured below saturation and at
-    the same offered load for every configuration.
+    second from its first pull.
     """
 
     def __init__(self, load: LoadParams) -> None:

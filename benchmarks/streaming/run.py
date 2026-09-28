@@ -2,11 +2,10 @@
 
 Each ``--config NAME=PYTHON`` names a virtual environment by its interpreter.
 Repetitions are interleaved across configurations, and the order rotates with
-every repetition (A B C, B C A, C A B, ...), so drift in the load of a shared
-machine, and whatever running first or last does, spreads evenly; the first
-``--warmup`` repetitions are recorded but left out of the summaries. Every
-measurement runs in a fresh child process. One JSON file per configuration is
-written to ``--out`` as ``<date>-<config>.json``.
+every repetition (A B C, B C A, C A B, ...); the first ``--warmup``
+repetitions are recorded but left out of the summaries. Every measurement
+runs in a fresh child process. One JSON file per configuration is written to
+``--out`` as ``<date>-<config>.json``.
 
 Example::
 
@@ -76,9 +75,6 @@ SCENARIOS: dict[str, Scenario] = {
         Scenario("throughput-w4", "throughput", workers=4),
         Scenario("throughput-p2", "throughput", processes=2),
         Scenario("latency-w1", "latency"),
-        # One record per batch: the time a record waits for its batch to fill
-        # (batch_max * partitions / rate) would otherwise dominate the latency
-        # and hide the engine's share of it.
         Scenario("latency-b1-w1", "latency", batch_max=1),
         Scenario("recovery-w1", "recovery"),
     )
@@ -121,8 +117,7 @@ def probe(config: Config, engine: str) -> dict[str, Any]:
 def _spawn(config: Config, spec: RunSpec, workdir: Path) -> subprocess.Popen[bytes]:
     spec_path = workdir / f"spec-{spec.process_id}.json"
     spec_path.write_text(json.dumps(spec.to_json()), encoding="utf-8")
-    # On macOS, BSD time reports the instructions a process retired: a count
-    # that neither the host load nor P/E core placement changes.
+    # On macOS, BSD time -l reports the instructions a process retired.
     prefix = [str(_TIME), "-l"] if sys.platform == "darwin" and _TIME.exists() else []
     return subprocess.Popen(
         [*prefix, config.python, "-m", _CHILD, "--spec", str(spec_path)],
@@ -201,8 +196,7 @@ def _flow_metrics(merged: dict[str, Any], messages: int) -> dict[str, float]:
         "peak_rss_mb": merged["peak_rss_mb"],
         "startup_rss_mb": merged["startup_rss_mb"],
         "startup_s": (merged["first_output_ns"] - merged["spawn_ns"]) / 1e9,
-        # Whole processes, startup included; comparable between two
-        # configurations on the same interpreter. NaN where time(1) cannot count.
+        # Whole processes, startup included. NaN where time(1) cannot count.
         "instructions_per_msg": (
             merged["instructions"] / messages if merged["instructions"] else float("nan")
         ),
@@ -224,7 +218,7 @@ def measure_recovery(config: Config, spec: RunSpec, expected: int) -> dict[str, 
     ``recovery_s`` is the time from spawning the resumed process until its sink
     has again reached the highest offset of every partition seen before the
     crash; ``cold_same_point_s`` is the time the fresh run took to reach that
-    point from its own spawn, so the two compare like for like.
+    point from its own spawn.
     """
     with tempfile.TemporaryDirectory(prefix="loom-bench-") as tmp:
         workdir = Path(tmp)

@@ -2,15 +2,13 @@
 
 Prints, per scenario and metric, the median and standard deviation of every
 file, the relative difference against the baseline with its 95 % interval, and
-a verdict against the regression threshold (SC-003: 5 %)::
+a verdict against the regression threshold::
 
     python -m benchmarks.streaming.compare BASELINE.json OTHER.json [...]
 
 The default estimator is the ratio of medians with a percentile bootstrap
-interval (fixed seed, so the output is reproducible). It is robust to the
-occasional slow repetition a shared machine produces, such as a run scheduled on
-efficiency cores. ``--method mean`` uses the ratio of means with a Welch
-interval instead.
+interval, using a fixed seed. ``--method mean`` uses the ratio of means with
+a Welch interval instead.
 
 Verdicts apply only to the gate metrics of each scenario (:data:`GATES`), with
 *worsening* measured in the metric's bad direction:
@@ -60,13 +58,11 @@ GATES: dict[str, frozenset[str]] = {
     "throughput-w1": _THROUGHPUT_GATES,
     "throughput-w4": _THROUGHPUT_GATES,
     "throughput-p2": _THROUGHPUT_GATES,
-    # latency-w1 is dominated by the time a record waits for its batch to fill,
-    # the same for every engine; its latency is reported, not gated.
     "latency-w1": frozenset({"peak_rss_mb"}),
     "latency-b1-w1": frozenset({"p99_ms", "peak_rss_mb"}),
     "recovery-w1": frozenset({"recovery_s", "peak_rss_mb"}),
 }
-"""FR-007 metrics that decide SC-003, per scenario."""
+"""Metrics that decide the gate verdict, per scenario."""
 
 _BOOTSTRAP_RESAMPLES = 4_000
 _BOOTSTRAP_SEED = 15

@@ -1,8 +1,7 @@
 """Reference flow built with loom's streaming DSL and run on bytewax.
 
 The flow goes through the same compile and wiring path as production
-(``compile_flow`` and the runner's ``_prepare_run``, which is also what
-``loom.streaming.testing.StreamingTestRunner`` uses); only the Kafka source and
+(``compile_flow`` and the runner's ``_prepare_run``); only the Kafka source and
 sinks are replaced by in-memory ones. What it exercises of bytewax:
 
 * ``FixedPartitionedSource``/``StatefulSourcePartition`` with resume state,
@@ -265,9 +264,9 @@ class LoomBytewaxEngine:
     def describe(self) -> dict[str, str]:
         """Name the distribution that provides ``bytewax``.
 
-        ``loom-bytewax`` installs the same ``bytewax`` package as PyPI's
-        ``bytewax``; more than one provider means the environment is mixed and
-        its numbers are not attributable, so the run is refused.
+        Raises:
+            RuntimeError: If not exactly one installed distribution provides
+                ``bytewax``.
         """
         providers = importlib.metadata.packages_distributions().get("bytewax", [])
         if len(providers) != 1:

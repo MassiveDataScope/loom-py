@@ -1,20 +1,18 @@
 # Reference streaming benchmark
 
-A reproducible benchmark of the flow loom runs on its streaming engine
-(spec 015, FR-007). It answers one question: does changing the engine build, or
-the Python it runs on, make loom's streaming slower or heavier? The threshold is
-SC-003: no metric may get more than 5 % worse than bytewax 0.21.1 on Python 3.12.
+A reproducible benchmark of the flow loom runs on its streaming engine. It
+answers one question: does changing the engine build, or the Python it runs
+on, make loom's streaming slower or heavier? No metric may get more than 5 %
+worse than bytewax 0.21.1 on Python 3.12.
 
-It is not part of the test suite. `pytest` never collects it, because
-`benchmarks/` is outside `testpaths`.
+It is not part of the test suite; `benchmarks/` is outside `testpaths`, so
+`pytest` never collects it.
 
 ## What it measures
 
 **Reference flow** (`engines/loom_bytewax.py`) is built with loom's streaming
 DSL and wired through the same path as production: `compile_flow`, then the
-runner's `_prepare_run`. That is a private entry point, the same one
-`loom.streaming.testing.StreamingTestRunner` uses. Only the Kafka source and
-sinks are replaced:
+runner's `_prepare_run`. Only the Kafka source and sinks are replaced:
 
 ```
 FromTopic(bench.in, BenchEvent)      FixedPartitionedSource / StatefulSourcePartition,
@@ -36,18 +34,17 @@ record key.
 **Load** (`load.py`) is generated in memory and is deterministic: every event is
 a pure function of `(seed, partition, offset)`. A resumed run therefore
 regenerates exactly the records a crashed run would have produced. Records are
-msgpack-encoded when a partition emits them, and the emission time is stamped
-into the payload at that moment, so latency does not include the backlog of a
-pre-generated queue.
+msgpack-encoded and the emission time is stamped into the payload at the
+moment a partition emits them.
 
 **Scenarios** (`run.py`, `SCENARIOS`):
 
 | scenario | what it runs | main metrics |
 |---|---|---|
 | `throughput-w1` | 1 worker, as fast as the engine pulls | `msgs_per_s`, `msgs_per_cpu_s`, `peak_rss_mb` |
-| `throughput-w4` | 4 worker threads in one process | same; this is where cloning objects across workers under the GIL would show |
+| `throughput-w4` | 4 worker threads in one process | same |
 | `throughput-p2` | 2 processes × 1 worker (`cli_main` with `process_id`/`addresses`) | same, across a cluster exchange |
-| `latency-w1` | 1 worker, fixed offered rate (`--latency-rate`, default 20 000 msg/s) | `p50_ms`, `p99_ms` as a user would see them |
+| `latency-w1` | 1 worker, fixed offered rate (`--latency-rate`, default 20 000 msg/s) | `p50_ms`, `p99_ms` |
 | `latency-b1-w1` | the same with `CollectBatch(max_records=1)` | `p99_ms` of the engine itself |
 | `recovery-w1` | `RecoveryConfig`; the process dies abruptly (`os._exit`) after half the outputs, then resumes from the recovery store | `recovery_s`, `resume_first_output_s`, `replayed` |
 
@@ -56,22 +53,18 @@ pre-generated queue.
 - `msgs_per_s`: messages generated, divided by the time from the first source
   emission to the last sink write. Startup is excluded.
 - `msgs_per_cpu_s`: messages per CPU-second (user + system, all threads, all
-  processes), counted from the first emission. This is the per-core figure. It
-  is also the most robust one on a busy machine.
+  processes), counted from the first emission. This is the per-core figure.
 - `p50_ms`, `p99_ms`: end-to-end latency, from source emission to sink write,
   taken from a log-bucketed histogram with about 1 % resolution. In the
-  throughput scenarios these numbers mostly measure queueing at saturation, so
+  throughput scenarios these numbers mostly measure queueing at saturation;
   compare latency on the fixed-rate lanes, where every configuration receives
   the same offered load. In `latency-w1` a record mostly waits for its batch
   to fill: about `batch_max * partitions / rate` (12.8 ms by default) at
-  p99, whatever the engine. `latency-b1-w1` removes that wait, so its p99 is
-  the one that can show an engine regression.
+  p99, whatever the engine. `latency-b1-w1` removes that wait.
 - `instructions_per_msg` (macOS only): instructions retired by the whole
   process tree, as reported by `/usr/bin/time -l`, divided by the messages.
   Startup is included, so the figure is comparable only between
-  configurations on the same interpreter, such as A and B. Neither host load
-  nor P/E core placement changes it, which makes it the steadiest signal on a
-  busy machine.
+  configurations on the same interpreter, such as A and B.
 - `peak_rss_mb`: `ru_maxrss` of the process, normalised to bytes on macOS and
   Linux. `startup_rss_mb` is the peak reached before the first emission
   (interpreter, imports, compilation); the difference is what the flow adds.
@@ -118,10 +111,8 @@ Run both commands from the repository root. The runner itself needs only the
 standard library, so any Python 3.11+ can drive it. Each measurement runs in a
 fresh child process started with the configuration's interpreter
 (`python -m benchmarks.streaming.child`). Repetitions are interleaved,
-and the order rotates with each repetition (A B C, B C A, C A B, …). Drift in
-the load of a shared machine, and any effect of running first or last, spreads
-over every configuration instead of penalising one of them. Each sample records
-its `position` in that order. The first
+and the order rotates with each repetition (A B C, B C A, C A B, …). Each
+sample records its `position` in that order. The first
 `--warmup` repetitions are stored with `"warmup": true` and left out of the
 summaries. `--gc NAME=POLICY` runs one configuration under a garbage-collector
 policy, applied once the flow is built and before the first record: `freeze`
@@ -142,8 +133,7 @@ deviation, coefficient of variation).
 
 `compare.py` prints the median ± standard deviation of every file and the
 difference against the first file. By default that difference is the ratio of
-medians with a 95 % percentile-bootstrap interval, using a fixed seed. The
-estimator is robust to the occasional repetition a shared machine slows down.
+medians with a 95 % percentile-bootstrap interval, using a fixed seed.
 `--method mean` switches to the ratio of means with a Welch interval. Only the
 gate metrics of each scenario (`GATES` in `compare.py`) get a verdict; the rest
 are printed as `info`. The gate metrics are `msgs_per_s`, `msgs_per_cpu_s` and
@@ -157,8 +147,8 @@ are printed as `info`. The gate metrics are `msgs_per_s`, `msgs_per_cpu_s` and
 
 ## Adding another engine
 
-B009 evaluates Quix Streams with this benchmark. An engine is a module under
-`engines/` that exposes `ENGINE`, an object satisfying `engines.Engine`:
+An engine is a module under `engines/` that exposes `ENGINE`, an object
+satisfying `engines.Engine`:
 
 ```python
 class Engine(Protocol):
@@ -191,15 +181,7 @@ baseline, as above.
 
 ## Not covered yet
 
-- **Kafka lane.** The load is in memory on purpose, so the numbers measure loom
-  and the engine rather than a broker. A lane that reads from a real broker,
-  enabled only when a broker address is given through an environment variable,
-  has not been written yet. No broker was available where the first results
-  were taken, and an untested lane would be worse than none. To add one, give
-  the engine a source mode that uses loom's `KafkaPartitionedSource` over a
-  pre-filled topic, keeping the recorder sinks.
-- **`workflow_dispatch`.** This is not trivial yet. The `loom-bytewax` wheels
-  live in a private repository and are not on PyPI (B003), and a shared CI
-  runner is at least as noisy as a busy laptop. Once the wheels are published,
-  a manual workflow can create the three environments above, run the benchmark
-  and upload `benchmarks/results/` as an artefact.
+- **Kafka lane.** The load is generated in memory; there is no lane that
+  reads from a real broker. To add one, give the engine a source mode that
+  uses loom's `KafkaPartitionedSource` over a pre-filled topic, keeping the
+  recorder sinks.

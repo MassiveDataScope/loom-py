@@ -1,8 +1,7 @@
 """Garbage-collector policies an engine applies once the flow is built.
 
 An engine calls :func:`apply` after compiling and wiring its flow and before
-the first record, so the policy covers exactly the measured part of a run.
-Policies:
+the first record. Policies:
 
 * ``""``: the interpreter's defaults;
 * ``"freeze"``: ``gc.collect()`` then ``gc.freeze()``. Everything allocated

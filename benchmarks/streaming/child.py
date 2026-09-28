@@ -48,8 +48,6 @@ def probe(engine_name: str) -> dict[str, Any]:
     return {
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
-        # The interpreter's name only: a full path would leak the local layout
-        # into result files meant to be committed.
         "python_executable": Path(sys.executable).name,
         "gil_enabled": getattr(sys, "_is_gil_enabled", lambda: True)(),
         "platform": platform.platform(),
