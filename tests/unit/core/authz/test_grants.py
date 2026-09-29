@@ -23,8 +23,10 @@ BOB_ADMIN = Grant("bob", "admin", Scope.root())
 
 @pytest.mark.parametrize(("subject", "role"), [("", "viewer"), ("ada", ""), ("ada", "two words")])
 def test_rejects_empty_subject_or_invalid_role(subject: str, role: str) -> None:
+    scope = Scope.root()
+
     with pytest.raises(ValueError):
-        Grant(subject, role, Scope.root())
+        Grant(subject, role, scope)
 
 
 def test_rejects_a_scope_given_as_text() -> None:
@@ -33,13 +35,18 @@ def test_rejects_a_scope_given_as_text() -> None:
 
 
 def test_rejects_a_naive_expiry() -> None:
+    scope = Scope.root()
+    naive = datetime(2030, 1, 1)
+
     with pytest.raises(ValueError, match="timezone-aware"):
-        Grant("ada", "viewer", Scope.root(), datetime(2030, 1, 1))
+        Grant("ada", "viewer", scope, naive)
 
 
 def test_rejects_an_expiry_that_is_not_a_datetime() -> None:
+    scope = Scope.root()
+
     with pytest.raises(TypeError, match="datetime"):
-        Grant("ada", "viewer", Scope.root(), "2030-01-01")  # type: ignore[arg-type]
+        Grant("ada", "viewer", scope, "2030-01-01")  # type: ignore[arg-type]
 
 
 def test_expiry_defaults_to_never() -> None:
@@ -117,8 +124,10 @@ async def test_any_class_with_grants_for_is_a_source() -> None:
 
 
 async def test_source_errors_propagate() -> None:
+    source = _BrokenSource()
+
     with pytest.raises(ConnectionError, match="unreachable"):
-        await _load(_BrokenSource(), "ada")
+        await _load(source, "ada")
 
 
 def test_expiry_is_stored_in_utc() -> None:
@@ -126,4 +135,5 @@ def test_expiry_is_stored_in_utc() -> None:
     grant = Grant("ada", "viewer", Scope.of("T"), datetime(2026, 1, 1, 9, tzinfo=tokyo))
 
     assert grant.expires_at == datetime(2026, 1, 1, tzinfo=UTC)
-    assert grant.expires_at is not None and grant.expires_at.tzinfo is UTC
+    assert grant.expires_at is not None
+    assert grant.expires_at.tzinfo is UTC

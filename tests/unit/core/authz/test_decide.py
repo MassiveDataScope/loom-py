@@ -107,8 +107,10 @@ class TestEvaluate:
         assert not evaluate(CATALOG, _grants("retired", ROOT), READ, T)
 
     def test_undeclared_permission_is_a_programming_error(self) -> None:
+        grants = _grants("admin", ROOT)
+
         with pytest.raises(UnknownPermission, match="billing.pay"):
-            evaluate(CATALOG, _grants("admin", ROOT), UNDECLARED, T)
+            evaluate(CATALOG, grants, UNDECLARED, T)
 
     def test_accepts_a_one_shot_iterable(self) -> None:
         assert evaluate(CATALOG, iter(_grants("viewer", T)), READ, R)
@@ -148,8 +150,10 @@ class TestEvaluateWithExpiry:
             evaluate(CATALOG, grants, READ, T)
 
     def test_naive_now_is_rejected_even_without_expiry(self) -> None:
+        grants = _grants("viewer", T)
+
         with pytest.raises(ValueError, match="timezone-aware"):
-            evaluate(CATALOG, _grants("viewer", T), READ, T, now=NAIVE)
+            evaluate(CATALOG, grants, READ, T, now=NAIVE)
 
     def test_now_must_be_a_datetime(self) -> None:
         with pytest.raises(TypeError, match="datetime"):
@@ -201,8 +205,10 @@ class TestScopesWith:
         assert scopes_with(CATALOG, grants, READ, now=NOW - TICK) == frozenset({ROOT})
 
     def test_expiry_without_now_fails_closed(self) -> None:
+        grants = _expiring("operator", T, NOW)
+
         with pytest.raises(ValueError, match="now"):
-            scopes_with(CATALOG, _expiring("operator", T, NOW), READ)
+            scopes_with(CATALOG, grants, READ)
 
     def test_naive_now_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="timezone-aware"):
@@ -238,8 +244,10 @@ class TestCanGrant:
         assert can_grant(CATALOG, _grants("admin", ROOT), "admin", U, delegate=MANAGE)
 
     def test_unknown_role_is_a_programming_error(self) -> None:
+        grants = _grants("admin", ROOT)
+
         with pytest.raises(UnknownRole, match="ghost"):
-            can_grant(CATALOG, _grants("admin", ROOT), "ghost", T, delegate=MANAGE)
+            can_grant(CATALOG, grants, "ghost", T, delegate=MANAGE)
 
     def test_expired_delegate_grant_grants_nothing(self) -> None:
         grants = [Grant("ada", "viewer", T), Grant("ada", "admin", T, NOW)]
@@ -253,12 +261,16 @@ class TestCanGrant:
         assert can_grant(CATALOG, grants, "operator", R, delegate=MANAGE, now=NOW)
 
     def test_expiring_delegate_grant_without_now_fails_closed(self) -> None:
+        grants = _expiring("admin", T, NOW)
+
         with pytest.raises(ValueError, match="now"):
-            can_grant(CATALOG, _expiring("admin", T, NOW), "viewer", T, delegate=MANAGE)
+            can_grant(CATALOG, grants, "viewer", T, delegate=MANAGE)
 
     def test_naive_now_is_rejected(self) -> None:
+        grants = _grants("admin", T)
+
         with pytest.raises(ValueError, match="timezone-aware"):
-            can_grant(CATALOG, _grants("admin", T), "viewer", T, delegate=MANAGE, now=NAIVE)
+            can_grant(CATALOG, grants, "viewer", T, delegate=MANAGE, now=NAIVE)
 
 
 class TestCanRevoke:
@@ -298,14 +310,18 @@ class TestCanRevoke:
     def test_expiring_delegate_grant_without_now_fails_closed(self) -> None:
         target = Grant("bob", "viewer", T)
 
+        grants = _expiring("admin", T, NOW)
+
         with pytest.raises(ValueError, match="now"):
-            can_revoke(CATALOG, _expiring("admin", T, NOW), target, delegate=MANAGE)
+            can_revoke(CATALOG, grants, target, delegate=MANAGE)
 
     def test_naive_now_is_rejected(self) -> None:
         target = Grant("bob", "viewer", T)
 
+        grants = _grants("admin", T)
+
         with pytest.raises(ValueError, match="timezone-aware"):
-            can_revoke(CATALOG, _grants("admin", T), target, delegate=MANAGE, now=NAIVE)
+            can_revoke(CATALOG, grants, target, delegate=MANAGE, now=NAIVE)
 
 
 @pytest.mark.parametrize(
