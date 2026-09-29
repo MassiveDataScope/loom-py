@@ -477,6 +477,7 @@ prerelease_ignore = [
     "ci/.*",
     "test/.*",
     "build/.*",
+    "dependabot/.*",
 ]
 release_ignore = [
     "wip/.*",
@@ -485,4 +486,5 @@ release_ignore = [
     "ci/.*",
     "test/.*",
     "build/.*",
+    "dependabot/.*",
 ]
