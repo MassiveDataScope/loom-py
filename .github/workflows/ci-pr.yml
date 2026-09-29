@@ -348,8 +348,9 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
+      # Dependabot pull requests get no repository secrets, so they run without the scan.
       - name: Require SonarQube analysis configuration
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
         shell: bash
         run: |
           set -euo pipefail
