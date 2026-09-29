@@ -8,6 +8,22 @@ from dataclasses import dataclass
 _SEPARATOR = "/"
 
 
+def _segments_of(path: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(path, str):
+        raise TypeError("A scope path is a sequence of segments, not a string; use Scope.parse().")
+    return tuple(map(_segment, path))
+
+
+def _segment(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"A scope segment must be a string: {value!r}.")
+    if not value or _SEPARATOR in value:
+        raise ValueError(
+            f"A scope segment must be non-empty and free of {_SEPARATOR!r}: {value!r}."
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True, order=True, init=False)
 class Scope:
     """A node in the product's resource hierarchy.
@@ -43,19 +59,7 @@ class Scope:
             TypeError: When *path* is a single string or holds a non-string.
             ValueError: When a segment is empty or contains ``/``.
         """
-        if isinstance(path, str):
-            raise TypeError(
-                "A scope path is a sequence of segments, not a string; use Scope.parse()."
-            )
-        segments = tuple(path)
-        for segment in segments:
-            if not isinstance(segment, str):
-                raise TypeError(f"A scope segment must be a string: {segment!r}.")
-            if not segment or _SEPARATOR in segment:
-                raise ValueError(
-                    f"A scope segment must be non-empty and free of {_SEPARATOR!r}: {segment!r}."
-                )
-        object.__setattr__(self, "path", segments)
+        object.__setattr__(self, "path", _segments_of(path))
 
     @classmethod
     def root(cls) -> Scope:

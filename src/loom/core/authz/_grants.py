@@ -29,6 +29,23 @@ def require_aware(name: str, moment: datetime) -> None:
         raise ValueError(f"{name} must be timezone-aware: {moment!r}.")
 
 
+def _require_subject(subject: str) -> None:
+    if not subject:
+        raise ValueError("A grant needs a subject.")
+
+
+def _require_scope(scope: object) -> None:
+    if not isinstance(scope, Scope):
+        raise TypeError(f"A grant scope must be a Scope, not {type(scope).__name__}.")
+
+
+def _utc_or_none(name: str, moment: datetime | None) -> datetime | None:
+    if moment is None:
+        return None
+    require_aware(name, moment)
+    return moment.astimezone(UTC)
+
+
 _NEVER = (0,)
 
 
@@ -57,14 +74,10 @@ class Grant:
 
     def __post_init__(self) -> None:
         """Reject a grant with no holder, an unusable role name, no scope or a naive expiry."""
-        if not self.subject:
-            raise ValueError("A grant needs a subject.")
+        _require_subject(self.subject)
         require_name("role", self.role)
-        if not isinstance(self.scope, Scope):
-            raise TypeError(f"A grant scope must be a Scope, not {type(self.scope).__name__}.")
-        if self.expires_at is not None:
-            require_aware("A grant expiry", self.expires_at)
-            object.__setattr__(self, "expires_at", self.expires_at.astimezone(UTC))
+        _require_scope(self.scope)
+        object.__setattr__(self, "expires_at", _utc_or_none("A grant expiry", self.expires_at))
 
     @property
     def _sort_key(self) -> tuple[str, str, Scope, tuple[int] | tuple[int, datetime]]:
