@@ -1,0 +1,17 @@
+# Weekly dependency updates. Dependabot names its branches dependabot/<ecosystem>/..., which
+# [tool.semantic_branch] in pyproject.toml ignores: an update is released by the next
+# feature or fix, never on its own.
+version: 2
+updates:
+  # The project is locked with uv (uv.lock); the uv ecosystem updates the lock with it.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
