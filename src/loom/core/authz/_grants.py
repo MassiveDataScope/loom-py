@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -31,6 +32,7 @@ def require_aware(name: str, moment: datetime) -> None:
 _NEVER = (0,)
 
 
+@functools.total_ordering
 @dataclass(frozen=True, slots=True)
 class Grant:
     """An assignment of a role to a subject on a scope, possibly until a moment.
@@ -64,7 +66,8 @@ class Grant:
             require_aware("A grant expiry", self.expires_at)
             object.__setattr__(self, "expires_at", self.expires_at.astimezone(UTC))
 
-    def _key(self) -> tuple[str, str, Scope, tuple[int] | tuple[int, datetime]]:
+    @property
+    def _sort_key(self) -> tuple[str, str, Scope, tuple[int] | tuple[int, datetime]]:
         expiry = _NEVER if self.expires_at is None else (1, self.expires_at)
         return (self.subject, self.role, self.scope, expiry)
 
@@ -72,25 +75,7 @@ class Grant:
         """Order by subject, role, scope, then expiry."""
         if not isinstance(other, Grant):
             return NotImplemented
-        return self._key() < other._key()
-
-    def __le__(self, other: object) -> bool:
-        """Order by subject, role, scope, then expiry."""
-        if not isinstance(other, Grant):
-            return NotImplemented
-        return self._key() <= other._key()
-
-    def __gt__(self, other: object) -> bool:
-        """Order by subject, role, scope, then expiry."""
-        if not isinstance(other, Grant):
-            return NotImplemented
-        return self._key() > other._key()
-
-    def __ge__(self, other: object) -> bool:
-        """Order by subject, role, scope, then expiry."""
-        if not isinstance(other, Grant):
-            return NotImplemented
-        return self._key() >= other._key()
+        return self._sort_key < other._sort_key
 
 
 class GrantSource(Protocol):
