@@ -98,7 +98,7 @@ jobs:
           pip install --only-binary :all: "uv==0.10.2"
 
       - name: Quality report (strict)
-        uses: MassiveDataScope/loom-actions/actions/python/quality-report@736b2835d98bcb620f4e67516e32b840bc7b9a4a # v1.1.2
+        uses: MassiveDataScope/loom-actions/actions/python/quality-report@f0d33cbd43cf0ff2b04277528d14021c7871c202 # v1.8.1
         with:
           src-dir: src
           test-dir: tests

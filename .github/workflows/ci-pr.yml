@@ -256,7 +256,7 @@ jobs:
       - name: Quality report (strict gate)
         id: quality
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/python/quality-report@736b2835d98bcb620f4e67516e32b840bc7b9a4a # v1.1.2
+        uses: MassiveDataScope/loom-actions/actions/python/quality-report@f0d33cbd43cf0ff2b04277528d14021c7871c202 # v1.8.1
         with:
           src-dir: src
           test-dir: tests
@@ -268,7 +268,7 @@ jobs:
 
       - name: Publish PR quality comment
         if: ${{ always() && steps.quality.outputs.report-file != '' }}
-        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@736b2835d98bcb620f4e67516e32b840bc7b9a4a # v1.1.2
+        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@f0d33cbd43cf0ff2b04277528d14021c7871c202 # v1.8.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: "<!-- loom-quality-report -->"
@@ -276,7 +276,7 @@ jobs:
 
       - name: Compute candidate prerelease version
         id: version
-        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@736b2835d98bcb620f4e67516e32b840bc7b9a4a # v1.1.2
+        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@f0d33cbd43cf0ff2b04277528d14021c7871c202 # v1.8.1
         with:
           branch: ${{ github.head_ref }}
           prerelease: "true"
@@ -313,7 +313,7 @@ jobs:
       - name: Generate changelog preview
         id: changelog
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@736b2835d98bcb620f4e67516e32b840bc7b9a4a # v1.1.2
+        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@f0d33cbd43cf0ff2b04277528d14021c7871c202 # v1.8.1
         with:
           mode: "pr"
           branch: ${{ github.event.pull_request.head.sha }}
@@ -324,7 +324,7 @@ jobs:
 
       - name: Publish PR changelog comment
         if: ${{ steps.changelog.outcome == 'success' && steps.changelog.outputs.output_path != '' }}
-        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@736b2835d98bcb620f4e67516e32b840bc7b9a4a # v1.1.2
+        uses: MassiveDataScope/loom-actions/actions/core/pr-comment-update@f0d33cbd43cf0ff2b04277528d14021c7871c202 # v1.8.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: "<!-- changelog-preview -->,<!-- branch-source:${{ github.head_ref }} -->"
