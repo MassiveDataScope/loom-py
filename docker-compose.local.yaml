@@ -151,6 +151,25 @@ services:
       retries: 20
       start_period: 5s
 
+  # Postgres for tests/integration/core/repository/sqlalchemy/postgres: the
+  # session-settings hook is exercised against real row-level security. Host
+  # port 55432 so a local Postgres on 5432 is left alone.
+  #
+  #   docker compose -f docker-compose.local.yaml up -d postgres
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:55432:5432"
+    networks: [loom_net]
+    environment:
+      POSTGRES_PASSWORD: loom
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
   prefect-worker:
     image: prefecthq/prefect:3-latest
     command: >
