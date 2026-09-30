@@ -107,6 +107,7 @@ Three database roles, two managers:
 
 ```sql
 CREATE ROLE app_owner NOLOGIN NOBYPASSRLS;
+CREATE ROLE app_migrator LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '...' IN ROLE app_owner;
 CREATE ROLE app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '...';
 CREATE ROLE app_platform LOGIN NOSUPERUSER BYPASSRLS PASSWORD '...';
 
@@ -121,12 +122,15 @@ app_sessions = SessionManager(APP_URL, session_settings=request_settings)
 platform_sessions = SessionManager(PLATFORM_URL)
 ```
 
-- **Owner.** Migrations run as `app_owner`, which owns every table, view and function
-  and has neither `BYPASSRLS` nor a login. Ownership matters beyond `FORCE`: Postgres
-  evaluates a view's policies as the view's owner, so a view owned by a `BYPASSRLS` role
-  would hand every tenant's rows to whoever can select from it. Create views over
-  protected tables `WITH (security_invoker = true)` and avoid `SECURITY DEFINER`
-  functions that read them.
+- **Owner.** `app_owner` owns every table, view and function and has neither
+  `BYPASSRLS` nor a login. Migrations connect as `app_migrator`, a member of
+  `app_owner`, and start with `SET ROLE app_owner` so that everything they create
+  belongs to the owner. Neither `app` nor `app_platform` may be a member of `app_owner`,
+  and no relation may ever be owned by `app_platform`. Ownership matters beyond `FORCE`:
+  Postgres evaluates a view's policies as the view's owner, so a view owned by a
+  `BYPASSRLS` role would hand every tenant's rows to whoever can select from it. Create
+  views over protected tables `WITH (security_invoker = true)` (Postgres 15 or later)
+  and avoid `SECURITY DEFINER` functions that read them.
 - **Application.** `app` owns nothing and cannot bypass policies. It can only ever see
   the rows its transaction's settings select. Default privileges keep new tables covered
   without widening grants later.
@@ -144,7 +148,8 @@ platform_sessions = SessionManager(PLATFORM_URL)
 - The settings apply to transactions opened through the manager's `Session`. A raw
   `engine.connect()` does not run the provider, and neither does a `create_all` that runs
   at startup. With a non-owner application role, the schema must already exist, created
-  by the platform role or by migrations.
+  by migrations running as `app_owner`; never let the platform role create it, or it
+  becomes the owner.
 - Postgres only. The mechanism relies on `set_config` and custom settings.
 - The manager rejects `isolation_level="AUTOCOMMIT"` at construction, because autocommit
   would discard the settings right after they are set. A per-statement
