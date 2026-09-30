@@ -4,10 +4,16 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.session_settings import settings_statement
+from loom.core.repository.sqlalchemy.session_settings import (
+    SessionSettings,
+    install_session_settings,
+    settings_statement,
+)
 
 
 def test_keys_and_values_are_bound_parameters_and_never_inlined_in_the_sql() -> None:
@@ -99,5 +105,76 @@ async def test_without_session_settings_sessions_use_the_plain_sqlalchemy_sessio
     try:
         async with manager.session() as session:
             assert type(session.sync_session) is Session
+    finally:
+        await manager.dispose()
+
+
+def _sqlite_session_class(provider: SessionSettings) -> tuple[Engine, type[Session]]:
+    engine = create_engine("sqlite://")
+    session_class = type("SettingsSession", (Session,), {})
+    install_session_settings(session_class, provider)
+    return engine, session_class
+
+
+def test_a_provider_returning_none_lets_the_transaction_run_untouched() -> None:
+    engine, session_class = _sqlite_session_class(lambda: None)
+    with session_class(engine) as session:
+        assert session.execute(text("SELECT 1")).scalar_one() == 1
+        assert not session.connection().invalidated
+
+
+def test_a_savepoint_does_not_call_the_provider_again() -> None:
+    calls: list[int] = []
+
+    def counting() -> Mapping[str, str] | None:
+        calls.append(1)
+        return None
+
+    engine, session_class = _sqlite_session_class(counting)
+    with session_class(engine) as session:
+        session.execute(text("SELECT 1"))
+        with session.begin_nested():
+            session.execute(text("SELECT 1"))
+    assert len(calls) == 1
+
+
+def test_a_raising_provider_invalidates_the_connection() -> None:
+    class ProviderError(RuntimeError):
+        pass
+
+    def raising() -> Mapping[str, str] | None:
+        raise ProviderError("no context")
+
+    engine, session_class = _sqlite_session_class(raising)
+    with session_class(engine) as session:
+        with pytest.raises(ProviderError):
+            session.execute(text("SELECT 1"))
+        assert session.connection().invalidated
+
+
+def test_a_failing_settings_statement_invalidates_the_connection() -> None:
+    engine, session_class = _sqlite_session_class(lambda: {"app.tenant_id": "acme"})
+    with session_class(engine) as session:
+        with pytest.raises(OperationalError):
+            session.execute(text("SELECT 1"))
+        assert session.connection().invalidated
+
+
+async def test_a_provider_on_a_postgres_url_installs_a_dedicated_session_class() -> None:
+    manager = SessionManager(
+        "postgresql+asyncpg://user:secret@localhost/db", session_settings=lambda: None
+    )
+    try:
+        assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
+    finally:
+        await manager.dispose()
+
+
+async def test_from_config_installs_the_provider_on_a_postgres_url() -> None:
+    manager = SessionManager.from_config(
+        {"url": "postgresql+asyncpg://user:secret@localhost/db"}, session_settings=lambda: None
+    )
+    try:
+        assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
     finally:
         await manager.dispose()
