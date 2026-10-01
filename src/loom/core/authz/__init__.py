@@ -16,15 +16,18 @@ from loom.core.authz._decide import (
 )
 from loom.core.authz._grants import Grant, GrantSource, InMemoryGrantSource
 from loom.core.authz._roles import (
+    CompositionRules,
     Permission,
     Role,
     RoleCatalog,
+    RoleSpec,
     UnknownPermission,
     UnknownRole,
 )
 from loom.core.authz._scope import Scope
 
 __all__ = [
+    "CompositionRules",
     "Decision",
     "Grant",
     "GrantCheck",
@@ -33,6 +36,7 @@ __all__ = [
     "Permission",
     "Role",
     "RoleCatalog",
+    "RoleSpec",
     "Scope",
     "UnknownPermission",
     "UnknownRole",
