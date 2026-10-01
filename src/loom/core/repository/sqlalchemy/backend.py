@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import msgspec
-from sqlalchemy import text
+from sqlalchemy import inspect, text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.backend.scoped_ddl import check_dialect
+from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
+from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.model import BaseModel
+from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
@@ -24,10 +27,16 @@ from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 _logger = logging.getLogger(__name__)
 
 
+class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
+    mode: Literal["create_all", "external"] = "create_all"
+    allow_unprotected_dialect: bool = False
+
+
 class _DatabaseConfig(msgspec.Struct, kw_only=True):
     url: str
     echo: bool | None = None
     pool_pre_ping: bool = True
+    schema: _SchemaConfig = msgspec.field(default_factory=_SchemaConfig)
 
 
 class SQLAlchemyBackend:
@@ -60,7 +69,7 @@ class SQLAlchemyBackend:
             repo_registration_module=build_sqlalchemy_repository_registration_module(
                 session_manager, models
             ),
-            lifespan_init=lambda: _lifespan(session_manager),
+            lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema),
             default_repository_type=RepositorySQLAlchemy,
             prepare_models=_prepare_models,
             readiness=lambda: _readiness(session_manager),
@@ -108,15 +117,90 @@ async def _readiness(session_manager: SessionManager) -> bool:
     return True
 
 
+def startup_checks(
+    config: _SchemaConfig,
+    dialect: str,
+    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    *,
+    has_session_settings: bool,
+) -> tuple[str, ...]:
+    """Decide what startup may do; return the scoped tables left unprotected on purpose.
+
+    Raises:
+        ConfigError: When ``create_all`` would run with the application's session
+            settings, when scoped tables exist on a non-Postgres dialect without
+            the opt-out, or when ``create_all`` meets scoped tables on Postgres.
+    """
+    if config.mode == "external":
+        return ()
+    if has_session_settings:
+        raise ConfigError(
+            "the schema is never created with the application's session settings; "
+            "use database.schema.mode: external and create_schema(migrator_url, application)"
+        )
+    unprotected = check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
+    if scoped and dialect == "postgresql":
+        names = ", ".join(sorted(table.name for table in scoped.values()))
+        raise ConfigError(
+            f"create_all cannot protect scoped tables {names}; run "
+            "create_schema(migrator_url, application) and set database.schema.mode: external"
+        )
+    return unprotected
+
+
 @asynccontextmanager
-async def _lifespan(session_manager: SessionManager) -> AsyncIterator[None]:
+async def _lifespan(session_manager: SessionManager, config: _SchemaConfig) -> AsyncIterator[None]:
+    scoped = scoped_tables()
+    unprotected = startup_checks(
+        config,
+        session_manager.engine.dialect.name,
+        scoped,
+        has_session_settings=session_manager.has_session_settings,
+    )
+    if unprotected:
+        _logger.warning(
+            "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)
+        )
     async with session_manager.engine.begin() as connection:
-        await connection.run_sync(get_metadata().create_all)
+        if config.mode == "external":
+            await _check_external(connection, scoped)
+        else:
+            await connection.run_sync(get_metadata().create_all)
     try:
         yield
     finally:
         await session_manager.dispose()
         reset_registry()
+
+
+async def _check_external(
+    connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
+) -> None:
+    names = [table.name for table in get_metadata().sorted_tables]
+    present = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
+    missing = sorted(name for name in names if name not in present)
+    if missing:
+        raise ConfigError(
+            f"database.schema.mode is external but tables are missing: {', '.join(missing)}"
+        )
+    if scoped and connection.dialect.name == "postgresql":
+        await _check_forced_rls(connection, scoped)
+
+
+async def _check_forced_rls(
+    connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
+) -> None:
+    query = text(
+        "SELECT relname FROM pg_class WHERE oid = to_regclass(:name) "
+        "AND NOT (relrowsecurity AND relforcerowsecurity)"
+    )
+    unforced = [
+        table.name
+        for table in scoped.values()
+        if (await connection.execute(query, {"name": table.name})).scalar() is not None
+    ]
+    if unforced:
+        raise ConfigError(f"scoped tables without forced row-level security: {', '.join(unforced)}")
 
 
 __all__ = ["SQLAlchemyBackend"]

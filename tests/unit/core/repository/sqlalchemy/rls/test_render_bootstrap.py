@@ -197,3 +197,8 @@ def test_template_comments_mention_no_placeholder() -> None:
     comment_lines = [line for line in template.splitlines() if line.lstrip().startswith("--")]
 
     assert [line for line in comment_lines if "{" in line] == []
+
+
+def test_every_role_that_creates_or_reads_lands_in_the_application_schema(sql: str) -> None:
+    for role in ("r_owner", "r_migrator", "u_read", "u_write", "u_bypass"):
+        assert f"ALTER ROLE {role} SET search_path = s1;" in sql

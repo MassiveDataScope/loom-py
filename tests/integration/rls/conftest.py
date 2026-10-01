@@ -13,13 +13,18 @@ import os
 import secrets
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
 from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
+import yaml
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
+
+from loom.core.locator import Application, load_application
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d postgres"
@@ -174,3 +179,32 @@ async def admin_connection(module_database_uri: str) -> AsyncIterator[Any]:
             yield conn
     finally:
         await engine.dispose()
+
+
+def application_for(
+    product: ModuleType, database: ScopedDatabase, tmp_path: Path, *, schema: str | None = None
+) -> Application:
+    """Load a synthetic product as its own ``Application`` from a generated configuration file."""
+    name = schema or product.SCHEMA
+    config = {
+        "app": {
+            "name": name,
+            "discovery": {"mode": "modules", "modules": {"include": [product.__name__]}},
+        },
+        "database": {
+            "url": database.write,
+            "schema": {
+                "mode": "external",
+                "name": name,
+                "roles": {"owner": f"{name}_owner", "migrator": f"{name}_migrator"},
+                "database_users": {
+                    user: {"login": True, "access": access}
+                    for user, access in product.USERS.items()
+                },
+                "scopes": dict(product.SCOPE_BINDINGS),
+            },
+        },
+    }
+    path = tmp_path / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return load_application(str(path))

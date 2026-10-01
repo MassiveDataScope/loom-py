@@ -17,6 +17,7 @@ from loom.core.repository.sqlalchemy.rls.config import (
     DatabaseRoles,
     DatabaseUser,
 )
+from loom.core.repository.sqlalchemy.rls.schema import create_schema
 
 __all__ = [
     "MIN_SERVER_VERSION_NUM",
@@ -24,5 +25,6 @@ __all__ = [
     "DatabaseRoles",
     "DatabaseUser",
     "apply_bootstrap",
+    "create_schema",
     "render_bootstrap",
 ]
