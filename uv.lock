@@ -2236,6 +2236,7 @@ rest = [
     { name = "uvloop", marker = "sys_platform != 'win32'" },
 ]
 sqlalchemy = [
+    { name = "alembic" },
     { name = "greenlet" },
     { name = "sqlalchemy" },
 ]
@@ -2258,6 +2259,7 @@ dev = [
     { name = "a2a-sdk" },
     { name = "aiocache" },
     { name = "aiosqlite" },
+    { name = "alembic" },
     { name = "asyncpg" },
     { name = "attrs" },
     { name = "boto3" },
@@ -2314,6 +2316,7 @@ requires-dist = [
     { name = "a2a-sdk", marker = "extra == 'ai-a2a'", specifier = ">=1.1,<2" },
     { name = "aiocache", specifier = ">=0.12,<1.0" },
     { name = "aiocache", marker = "extra == 'cache'", specifier = ">=0.12,<1.0" },
+    { name = "alembic", marker = "extra == 'sqlalchemy'", specifier = ">=1.13,<2" },
     { name = "anyio", marker = "extra == 'streaming'", specifier = ">=4.0,<5.0" },
     { name = "boto3", marker = "extra == 'config-ssm'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'dynamodb'", specifier = ">=1.35" },
@@ -2397,6 +2400,7 @@ dev = [
     { name = "a2a-sdk", specifier = ">=1.1,<2" },
     { name = "aiocache", specifier = ">=0.12,<1.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "alembic", specifier = ">=1.13,<2" },
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "attrs", specifier = ">=23.1" },
     { name = "boto3", specifier = ">=1.35" },

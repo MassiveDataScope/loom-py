@@ -659,7 +659,8 @@ jobs:
           LOOM_PG_IT_URI: postgresql+asyncpg://postgres:loom@localhost:55432/postgres
         run: |
           set -euo pipefail
-          uv run --frozen pytest -m integration -ra
+          uv run --frozen pytest -m integration -ra \
+            --cov=src/loom --cov-report=xml:coverage-integration.xml
 
       - name: Integration tests (Apache Kafka fidelity check)
         shell: bash
@@ -668,6 +669,15 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen pytest tests/integration/streaming/kafka -ra
+
+      - name: Upload integration coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        with:
+          files: coverage-integration.xml
+          flags: postgres
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Dump service logs on failure
         if: ${{ failure() }}
