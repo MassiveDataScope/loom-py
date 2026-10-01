@@ -146,17 +146,19 @@ def test_a_raising_provider_invalidates_the_connection() -> None:
         raise ProviderError("no context")
 
     engine, session_class = _sqlite_session_class(raising)
+    statement = text("SELECT 1")
     with session_class(engine) as session:
         with pytest.raises(ProviderError):
-            session.execute(text("SELECT 1"))
+            session.execute(statement)
         assert session.connection().invalidated
 
 
 def test_a_failing_settings_statement_invalidates_the_connection() -> None:
     engine, session_class = _sqlite_session_class(lambda: {"app.tenant_id": "acme"})
+    statement = text("SELECT 1")
     with session_class(engine) as session:
         with pytest.raises(OperationalError):
-            session.execute(text("SELECT 1"))
+            session.execute(statement)
         assert session.connection().invalidated
 
 

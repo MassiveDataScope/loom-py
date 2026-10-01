@@ -15,7 +15,7 @@ and the subject of the current request, and writes its Postgres policies against
 ``current_setting(key, true)``.
 """
 
-_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*")
+_KEY = re.compile(r"[A-Za-z_]\w*\.[A-Za-z_]\w*")
 
 
 def settings_statement(

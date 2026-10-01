@@ -131,10 +131,12 @@ async def test_a_write_outside_the_tenant_is_refused_by_the_database(
     app_sessions: SessionManager,
 ) -> None:
     current_tenant.set("a")
+    insert = text(_INSERT)
+    foreign_row = {"tenant": "b", "payload": "b2"}
     async with app_sessions.session() as session:
-        await session.execute(text(_INSERT), {"tenant": "a", "payload": "a3"})
+        await session.execute(insert, {"tenant": "a", "payload": "a3"})
         with pytest.raises(DBAPIError):
-            await session.execute(text(_INSERT), {"tenant": "b", "payload": "b2"})
+            await session.execute(insert, foreign_row)
         await session.rollback()
 
 
@@ -190,10 +192,11 @@ async def test_a_bad_provider_fails_before_any_product_statement(
 ) -> None:
     manager = _manager(pg_app_uri, session_settings)
     statements = _record_statements(manager)
+    rows = text(_ROWS)
     try:
         async with manager.session() as session:
             with pytest.raises(error):
-                await session.execute(text(_ROWS))
+                await session.execute(rows)
     finally:
         await manager.dispose()
     assert statements == []
@@ -213,15 +216,16 @@ async def test_after_a_provider_failure_the_session_is_unusable_until_rolled_bac
 
     manager = _manager(pg_app_uri, failing_once)
     product_statements = _record_statements(manager, ROWS_TABLE)
+    rows = text(_ROWS)
     try:
         async with manager.session() as session:
             with pytest.raises(ProviderError):
-                await session.execute(text(_ROWS))
+                await session.execute(rows)
             with pytest.raises(PendingRollbackError):
-                await session.execute(text(_ROWS))
+                await session.execute(rows)
             assert product_statements == []
             await session.rollback()
-            payloads = list((await session.execute(text(_ROWS))).scalars())
+            payloads = list((await session.execute(rows)).scalars())
     finally:
         await manager.dispose()
     assert attempts == 2
