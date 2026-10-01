@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import msgspec
 
@@ -20,6 +20,7 @@ from loom.streaming.mongo._event import (
 
 _MONGO_MESSAGE_TYPE = "loom.mongo.cdc"
 _MAX_BSON_DEPTH = 64
+_JSON_SCALARS: frozenset[type] = frozenset({bool, int, float, str})
 
 
 class _SupportsBytes(Protocol):
@@ -32,7 +33,9 @@ def normalize_bson_value(value: object, _depth: int = 0) -> object:
     """Normalize one MongoDB/BSON runtime value into Loom-safe builtins."""
     if _depth > _MAX_BSON_DEPTH:
         raise ValueError(f"BSON document exceeds maximum nesting depth of {_MAX_BSON_DEPTH}.")
-    if value is None or isinstance(value, (bool, int, float, str)):
+    # Exact type, not isinstance: bson.Int64 subclasses int and msgspec refuses to encode
+    # builtin subclasses, so it must reach its normalizer below.
+    if value is None or type(value) in _JSON_SCALARS:
         return value
     if isinstance(value, datetime):
         return _datetime_to_epoch_ms(value)
@@ -43,8 +46,8 @@ def normalize_bson_value(value: object, _depth: int = 0) -> object:
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, memoryview, str)):
         return [normalize_bson_value(item, _depth + 1) for item in value]
 
-    type_name = type(value).__name__
-    return _BSON_NORMALIZERS.get(type_name, _identity)(value)
+    normalizer = _BSON_NORMALIZERS.get(type(value).__name__)
+    return value if normalizer is None else normalizer(value)
 
 
 def build_mongo_cdc_event(change: Mapping[str, object]) -> MongoCDCEvent:
@@ -160,7 +163,8 @@ def _build_wall_time_ms(
     if isinstance(value, datetime):
         return _datetime_to_epoch_ms(value)
     if type(value).__name__ == "DatetimeMS":
-        return _normalize_datetime_ms(value)
+        # DatetimeMS.__int__() returns milliseconds since Unix epoch; safe for out-of-range years.
+        return int(cast(Any, value))
     normalized = normalize_bson_value(value)
     if isinstance(normalized, int):
         return normalized
@@ -265,22 +269,15 @@ def _normalize_objectid(value: object) -> object:
     return MongoObjectId(id=str(value), created_at_ms=created_at_ms)
 
 
-def _identity(value: object) -> object:
-    return value
-
-
-def _normalize_datetime_ms(value: object) -> int:
-    # DatetimeMS.__int__() returns milliseconds since Unix epoch; safe for out-of-range years.
-    return int(value)  # type: ignore[call-overload, no-any-return]
-
-
-_BSON_NORMALIZERS: dict[str, Callable[[object], object]] = {
+_BSON_NORMALIZERS: dict[str, Callable[[Any], object]] = {
     "ObjectId": _normalize_objectid,
     "Timestamp": _normalize_timestamp_mapping,
     "Decimal128": _normalize_decimal128,
     "Binary": _normalize_binary,
     "DBRef": _normalize_dbref,
-    "DatetimeMS": _normalize_datetime_ms,
+    "DatetimeMS": int,
+    # NumberLong fields and the txnNumber of every multi-document transaction event.
+    "Int64": int,
 }
 
 

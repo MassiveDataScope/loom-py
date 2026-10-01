@@ -11,6 +11,7 @@ from bson import ObjectId
 from bson.binary import Binary
 from bson.dbref import DBRef
 from bson.decimal128 import Decimal128
+from bson.int64 import Int64
 from bson.timestamp import Timestamp
 
 from loom.core.model import LoomFrozenStruct
@@ -186,6 +187,34 @@ class TestMongoNormalizationContracts:
         assert full_doc_id.id == "507f1f77bcf86cd799439011"
         assert event.full_document["amount"] == "428.79"
         assert event.raw_json
+
+    def test_normalize_bson_value_unwraps_int64_to_a_plain_int(self) -> None:
+        value = normalize_bson_value(Int64(9007199254740993))
+
+        assert type(value) is int
+        assert value == 9007199254740993
+
+    def test_build_mongo_cdc_event_encodes_multi_document_transaction_events(self) -> None:
+        """Change events written inside a multi-document transaction carry ``lsid`` and an
+        Int64 ``txnNumber``; Int64 subclasses int, which msgspec refuses to encode."""
+        change = {
+            "_id": {"_data": "826ABD45A4"},
+            "operationType": "update",
+            "ns": {"db": "app", "coll": "transactions"},
+            "documentKey": {"_id": ObjectId("507f1f77bcf86cd799439011")},
+            "clusterTime": Timestamp(1716400000, 7),
+            "wallTime": datetime(2024, 5, 22, 12, 0, tzinfo=UTC),
+            "lsid": {"id": Binary(b"session-id", 4), "uid": Binary(b"user-hash")},
+            "txnNumber": Int64(23),
+            "updateDescription": {"updatedFields": {"counter": Int64(5)}},
+        }
+
+        event = build_mongo_cdc_event(change)
+
+        assert event.update_description is not None
+        updated = cast(dict[str, object], event.update_description["updatedFields"])
+        assert type(updated["counter"]) is int
+        assert '"txnNumber":23' in event.raw_json
 
     def test_normalize_dbref_without_database_field_sets_database_to_none(self) -> None:
         dbref = normalize_bson_value(DBRef("products", ObjectId("507f1f77bcf86cd799439011")))
