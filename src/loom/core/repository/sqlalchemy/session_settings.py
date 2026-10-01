@@ -10,12 +10,12 @@ from sqlalchemy.orm import Session
 SessionSettings = Callable[[], Mapping[str, str] | None]
 """Returns the settings to apply to the transaction about to start, or ``None`` to apply none.
 
-loom does not interpret the keys or values. A product returns, for example, the tenant
-and the subject of the current request, and writes its Postgres policies against
-``current_setting(key, true)``.
+loom does not interpret the keys or values. A product returns, for example, the
+boundary value and the subject of the current request, and writes its Postgres
+policies against ``current_setting(key, true)``.
 """
 
-_KEY = re.compile(r"[A-Za-z_]\w*\.[A-Za-z_]\w*")
+_KEY = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 
 
 def settings_statement(
@@ -24,8 +24,8 @@ def settings_statement(
     """Build the one statement that sets *values* for the current transaction.
 
     Every key and value is bound as a parameter: the compiled SQL carries only
-    placeholders. Keys must be application-prefixed identifiers, ``prefix.name``,
-    which is what Postgres requires of a custom setting.
+    placeholders. Keys are two or more identifiers joined by dots, such as
+    ``prefix.name``, which is what Postgres requires of a custom setting.
 
     Args:
         values: The settings to apply, or ``None``.
@@ -35,7 +35,7 @@ def settings_statement(
         when there is nothing to set.
 
     Raises:
-        ValueError: If a key is not a string of the form ``prefix.name``.
+        ValueError: If a key is not a dotted string of two or more identifiers.
         TypeError: If a value is not a ``str``.
     """
     if not values:
@@ -45,7 +45,7 @@ def settings_statement(
     for index, (key, value) in enumerate(values.items()):
         if not isinstance(key, str) or _KEY.fullmatch(key) is None:
             raise ValueError(
-                f"session setting key must be a str of the form 'prefix.name', got {key!r}"
+                f"session setting key must be a dotted str such as 'prefix.name', got {key!r}"
             )
         if not isinstance(value, str):
             raise TypeError(

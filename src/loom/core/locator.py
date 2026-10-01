@@ -14,24 +14,21 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import msgspec
-from sqlalchemy import MetaData
 
-from loom.core.backend.scoped_ddl import SCHEMA_KEY
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
 from loom.core.model.scoped import ScopedTable
-from loom.core.repository.sqlalchemy.rls.config import (
-    BootstrapConfig,
-    DatabaseRoles,
-    DatabaseUser,
-)
+
+if TYPE_CHECKING:
+    from sqlalchemy import MetaData
+
+    from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseUser
 
 CONFIG_ENV_VAR = "LOOM_CONFIG"
 SchemaMode = Literal["create_all", "external"]
@@ -122,6 +119,11 @@ def load_application(config_path: str | None = None) -> Application:
         ConfigError: When the path is missing, a required key is absent or a
             value has the wrong shape; the message names the key.
     """
+    from sqlalchemy import MetaData
+
+    from loom.core.backend.scoped_ddl import SCHEMA_KEY
+    from loom.core.backend.sqlalchemy import compile_all, scoped_tables
+
     context = ConfigContext.from_yaml(_resolve_path(config_path))
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
@@ -160,6 +162,8 @@ def _discover(discovery: _Discovery) -> DiscoveryResult:
 
 
 def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
+    from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseRoles
+
     name = _required(schema.name, "name")
     roles = _required(schema.roles, "roles")
     users = _required(schema.database_users, "database_users")
@@ -171,6 +175,8 @@ def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
 
 
 def _database_user(user: str, section: _UserSection) -> DatabaseUser:
+    from loom.core.repository.sqlalchemy.rls.config import DatabaseUser
+
     if section.access not in _ACCESS:
         raise ConfigError(
             f"database.schema.database_users.{user}.access {section.access!r} "

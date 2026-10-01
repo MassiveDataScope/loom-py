@@ -17,7 +17,9 @@ from loom.core.repository.sqlalchemy.rls.config import (
     DatabaseRoles,
     DatabaseUser,
 )
+from loom.core.repository.sqlalchemy.rls.provider import install_pool_reset, rls_session_settings
 from loom.core.repository.sqlalchemy.rls.schema import create_schema
+from loom.core.repository.sqlalchemy.rls.sources import register_scope_source
 
 __all__ = [
     "MIN_SERVER_VERSION_NUM",
@@ -26,5 +28,8 @@ __all__ = [
     "DatabaseUser",
     "apply_bootstrap",
     "create_schema",
+    "install_pool_reset",
+    "register_scope_source",
     "render_bootstrap",
+    "rls_session_settings",
 ]

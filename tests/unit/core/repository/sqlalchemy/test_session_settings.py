@@ -34,7 +34,6 @@ def test_none_or_empty_values_give_no_statement(values: Mapping[str, str] | None
     "key",
     [
         "tenant_id",
-        "app.tenant_id.extra",
         "app.",
         ".tenant_id",
         "app.tenant-id",
@@ -180,3 +179,10 @@ async def test_from_config_installs_the_provider_on_a_postgres_url() -> None:
         assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
     finally:
         await manager.dispose()
+
+
+def test_keys_with_more_than_two_parts_are_accepted() -> None:
+    clause, params = settings_statement({"app.scope.extra": "x"})
+
+    assert "set_config(:k0, :v0, true)" in str(clause)
+    assert params == {"k0": "app.scope.extra", "v0": "x"}
