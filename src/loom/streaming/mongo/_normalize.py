@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import msgspec
 
@@ -163,7 +163,8 @@ def _build_wall_time_ms(
     if isinstance(value, datetime):
         return _datetime_to_epoch_ms(value)
     if type(value).__name__ == "DatetimeMS":
-        return _to_int(value)
+        # DatetimeMS.__int__() returns milliseconds since Unix epoch; safe for out-of-range years.
+        return int(cast(Any, value))
     normalized = normalize_bson_value(value)
     if isinstance(normalized, int):
         return normalized
@@ -272,20 +273,15 @@ def _identity(value: object) -> object:
     return value
 
 
-def _to_int(value: object) -> int:
-    # DatetimeMS.__int__() returns milliseconds since Unix epoch (safe for out-of-range
-    # years); Int64 is NumberLong and the txnNumber of every multi-document transaction.
-    return int(value)  # type: ignore[call-overload, no-any-return]
-
-
-_BSON_NORMALIZERS: dict[str, Callable[[object], object]] = {
+_BSON_NORMALIZERS: dict[str, Callable[[Any], object]] = {
     "ObjectId": _normalize_objectid,
     "Timestamp": _normalize_timestamp_mapping,
     "Decimal128": _normalize_decimal128,
     "Binary": _normalize_binary,
     "DBRef": _normalize_dbref,
-    "DatetimeMS": _to_int,
-    "Int64": _to_int,
+    "DatetimeMS": int,
+    # NumberLong fields and the txnNumber of every multi-document transaction event.
+    "Int64": int,
 }
 
 
