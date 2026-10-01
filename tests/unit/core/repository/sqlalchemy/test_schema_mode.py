@@ -8,7 +8,7 @@ from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.model import BaseModel, ColumnField, RowScoped
+from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
@@ -27,7 +27,7 @@ class Plain(BaseModel):
 
 class Scoped(BaseModel, RowScoped):
     __tablename__ = "scoped_items"
-    holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+    holder: int = ScopedField(Integer, primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True)
 
 

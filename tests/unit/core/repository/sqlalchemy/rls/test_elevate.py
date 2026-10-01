@@ -11,7 +11,7 @@ from loom.core.authz.elevation import elevated_scopes, elevation_scope
 from loom.core.authz.product import clear_authz_product, load_authz_product, register_authz_product
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
-from loom.core.model import BaseModel, ColumnField, RowScoped
+from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
 from loom.core.repository.sqlalchemy.rls import elevate, validate_elevations
 from tests.unit.core.authz._elevation_doubles import FakeSink
@@ -24,9 +24,9 @@ BOUNDARY = Scope.of("b1")
 
 class Note(BaseModel, RowScoped):
     __tablename__ = "notes"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    editor: str = ColumnField(Text, scope="editor", on="write", elevable=True)
+    editor: str = ScopedField(Text, scope="editor", on="write", elevable=True)
 
 
 @dataclass

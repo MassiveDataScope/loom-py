@@ -13,15 +13,15 @@ from loom.core.backend.scoped_ddl import (
 )
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
-from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped
+from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
 
 
 class Note(BaseModel, RowScoped):
     __tablename__ = "notes"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    editor: str = ColumnField(Text, scope="editor", on="write", elevable=True)
+    editor: str = ScopedField(Text, scope="editor", on="write", elevable=True)
 
 
 class Kind(BaseModel):
@@ -138,7 +138,7 @@ def test_without_a_schema_in_the_metadata_nothing_is_registered() -> None:
 
 class Ledger(BaseModel, RowScoped):
     __tablename__ = "ledger"
-    holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+    holder: int = ScopedField(Integer, primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True)
 
 

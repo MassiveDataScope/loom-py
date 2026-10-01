@@ -12,7 +12,7 @@ from loom.core.backend.scoped_ddl import (
 )
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.locator import Application, DatabaseConfig, SchemaConfig
-from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped
+from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.types import Integer as LoomInteger
 from loom.core.model.types import String
 from loom.core.model.types import Text as LoomText
@@ -26,9 +26,9 @@ SCHEMA = "s1"
 
 class Note(BaseModel, RowScoped):
     __tablename__ = "notes"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(LoomInteger, primary_key=True, autoincrement=True)
-    editor: str = ColumnField(LoomText, scope="editor", on="write", elevable=True)
+    editor: str = ScopedField(LoomText, scope="editor", on="write", elevable=True)
     body: str = ColumnField(LoomText)
 
 

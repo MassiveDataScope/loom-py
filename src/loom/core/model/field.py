@@ -63,9 +63,6 @@ def ColumnField(
     default: Any = msgspec.UNSET,
     length: int | None = None,
     db_type: ColumnType | None = None,
-    scope: str | None = None,
-    on: Reach = "both",
-    elevable: bool = False,
 ) -> Any:
     """Declare column metadata without using explicit ``Annotated`` syntax."""
     selected_type = db_type or column_type
@@ -84,6 +81,41 @@ def ColumnField(
                 foreign_key=foreign_key,
                 on_delete=on_delete,
                 default=default,
+                length=length,
+            ),
+        ),
+    )
+
+
+def ScopedField(
+    column_type: ColumnType | None = None,
+    *,
+    scope: str,
+    on: Reach = "both",
+    elevable: bool = False,
+    primary_key: bool = False,
+    nullable: bool = False,
+    foreign_key: str | None = None,
+    on_delete: OnDelete | None = None,
+    length: int | None = None,
+    db_type: ColumnType | None = None,
+) -> Any:
+    """Declare the column that scopes the rows of a ``RowScoped`` model.
+
+    ``scope`` names the session value the column is compared with; ``on`` limits
+    the comparison to reads or writes, and ``elevable`` lets an authorized
+    execution lift a write-only scope within the table's boundary.
+    """
+    selected_type = db_type or column_type
+    return cast(
+        Any,
+        ColumnFieldSpec(
+            column_type=selected_type,
+            field=Field(
+                primary_key=primary_key,
+                nullable=nullable,
+                foreign_key=foreign_key,
+                on_delete=on_delete,
                 length=length,
                 scope=scope,
                 on=on,

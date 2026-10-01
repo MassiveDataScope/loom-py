@@ -9,7 +9,7 @@ because some of them commit state the next ones rely on.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,7 +77,7 @@ async def _seed(dsn: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def guarded(module_database_uri: str, created_roles: set[str]) -> Iterator[Guarded]:
+def guarded(module_database_uri: str, created_roles: set[str]) -> Guarded:
     suffixes = ("owner", "migrator", "readers", "writers", "ro", "rw", "ops")
     for schema in SCHEMAS:
         created_roles.update(f"{schema}_{suffix}" for suffix in suffixes)
@@ -86,7 +86,7 @@ def guarded(module_database_uri: str, created_roles: set[str]) -> Iterator[Guard
     url = make_url(module_database_uri).set(drivername="postgresql")
     dsn = url.render_as_string(hide_password=False)
     asyncio.run(_seed(dsn))
-    yield Guarded(dsn)
+    return Guarded(dsn)
 
 
 async def _sqlstate(conn: asyncpg.Connection, statement: str) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Index, MetaData, UniqueConstraint
 
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
-from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopeColumn
+from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopeColumn, ScopedField
 from loom.core.model.types import Integer, String, Text
 
 
@@ -11,7 +11,7 @@ class Ledger(BaseModel, RowScoped):
     __tablename__ = "ledger"
     __unique__ = (("holder", "reference"),)
     __indexes__ = (("holder", "booked_on"),)
-    holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+    holder: int = ScopedField(Integer, primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
     reference: str = ColumnField(Text)
     booked_on: str = ColumnField(Text)
@@ -20,9 +20,9 @@ class Ledger(BaseModel, RowScoped):
 class Readings(BaseModel, RowScoped):
     __tablename__ = "readings"
     __scope_privileges__ = frozenset({Privilege.SELECT})
-    region: int = ColumnField(Integer, primary_key=True, scope="region")
+    region: int = ScopedField(Integer, primary_key=True, scope="region")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    editor: str = ColumnField(String(36), scope="editor", on="write", elevable=True)
+    editor: str = ScopedField(String(36), scope="editor", on="write", elevable=True)
 
 
 class Kinds(BaseModel):

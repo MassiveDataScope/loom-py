@@ -181,7 +181,9 @@ jobs:
   # The gate: cheap checks plus the merged results, so a failure in either lane
   # still blocks here.
   validate:
-    needs: [tests-fast, tests-spark]
+    needs: [tests-fast, tests-spark, integration]
+    # Release-docs PRs skip the integration lane; validate still gates them.
+    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) }}
     runs-on: ubuntu-latest
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -240,6 +242,14 @@ jobs:
           mv model-coverage/.coverage.model .coverage.model
           rm -rf model-coverage
 
+      # Code that only runs against real services (row-level security,
+      # migrations) is covered here, so Sonar measures it like any other code.
+      - name: Download integration coverage
+        if: ${{ needs.integration.result == 'success' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-integration
+
       - name: Combine the results of every lane
         shell: bash
         run: |
@@ -247,8 +257,11 @@ jobs:
           python scripts/ci/merge_test_results.py \
             --junit junit-fast.xml --junit junit-slow.xml --junit junit-spark.xml \
             --junit-output junit.xml
-          uv run --frozen --with "pytest-cov==7.1.0" coverage combine \
-            .coverage.fast .coverage.slow .coverage.spark .coverage.model
+          coverage_files=(.coverage.fast .coverage.slow .coverage.spark .coverage.model)
+          if [ -f .coverage.integration ]; then
+            coverage_files+=(.coverage.integration)
+          fi
+          uv run --frozen --with "pytest-cov==7.1.0" coverage combine "${coverage_files[@]}"
           uv run --frozen --with "pytest-cov==7.1.0" coverage json -o coverage.json
           uv run --frozen --with "pytest-cov==7.1.0" coverage xml -o coverage.xml
 
@@ -657,6 +670,7 @@ jobs:
           LOOM_KAFKA_IT_BOOTSTRAP: localhost:19092
           LOOM_MONGO_IT_URI: mongodb://localhost:27017/?replicaSet=rs0
           LOOM_PG_IT_URI: postgresql+asyncpg://postgres:loom@localhost:55432/postgres
+          COVERAGE_FILE: .coverage.integration
         run: |
           set -euo pipefail
           uv run --frozen pytest -m integration -ra \
@@ -669,6 +683,15 @@ jobs:
         run: |
           set -euo pipefail
           uv run --frozen pytest tests/integration/streaming/kafka -ra
+
+      - name: Store integration coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-integration
+          path: .coverage.integration
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload integration coverage to Codecov
         if: always()

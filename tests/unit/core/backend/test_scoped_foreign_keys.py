@@ -4,20 +4,20 @@ import pytest
 from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all
-from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped
+from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
 
 
 class Holder(BaseModel, RowScoped):
     __tablename__ = "holders"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
     body: str = ColumnField(Text)
 
 
 class Item(BaseModel, RowScoped):
     __tablename__ = "items"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
     holder_id: int = ColumnField(Integer, foreign_key="holders.id", on_delete=OnDelete.CASCADE)
 
@@ -30,7 +30,7 @@ class Catalog(BaseModel):
 
 class Entry(BaseModel, RowScoped):
     __tablename__ = "entries"
-    catalog_id: int = ColumnField(
+    catalog_id: int = ScopedField(
         Integer,
         primary_key=True,
         scope="catalog",
@@ -75,7 +75,7 @@ def test_c6_set_null_and_set_default_between_scoped_tables_are_rejected(
 
     class Dangling(BaseModel, RowScoped):
         __tablename__ = "dangling"
-        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        key: str = ScopedField(String(36), primary_key=True, scope="holder")
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
         holder_id: int | None = ColumnField(
             Integer, nullable=True, foreign_key="holders.id", on_delete=action
@@ -88,12 +88,12 @@ def test_c6_set_null_and_set_default_between_scoped_tables_are_rejected(
 def test_c6_the_referenced_table_must_share_the_boundary_scope() -> None:
     class Other(BaseModel, RowScoped):
         __tablename__ = "others"
-        realm: str = ColumnField(String(36), primary_key=True, scope="realm")
+        realm: str = ScopedField(String(36), primary_key=True, scope="realm")
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 
     class Crossing(BaseModel, RowScoped):
         __tablename__ = "crossing"
-        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        key: str = ScopedField(String(36), primary_key=True, scope="holder")
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
         other_id: int = ColumnField(Integer, foreign_key="others.id")
 
@@ -122,7 +122,7 @@ def test_c9_a_boundary_fk_to_a_read_only_global_table_is_allowed() -> None:
 def test_c9_a_cascading_fk_to_a_global_table_is_rejected() -> None:
     class Cascading(BaseModel, RowScoped):
         __tablename__ = "cascading"
-        catalog_id: int = ColumnField(
+        catalog_id: int = ScopedField(
             Integer,
             primary_key=True,
             scope="catalog",
@@ -143,7 +143,7 @@ def test_c9_the_global_table_cannot_be_writable_by_a_group_except_for_insert() -
 
     class Pointing(BaseModel, RowScoped):
         __tablename__ = "pointing"
-        editable_id: int = ColumnField(
+        editable_id: int = ScopedField(
             Integer, primary_key=True, scope="editable", foreign_key="editable.id"
         )
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
@@ -160,7 +160,7 @@ def test_c9_insert_on_the_global_table_is_allowed() -> None:
 
     class Pointing(BaseModel, RowScoped):
         __tablename__ = "pointing_ok"
-        appendable_id: int = ColumnField(
+        appendable_id: int = ScopedField(
             Integer, primary_key=True, scope="appendable", foreign_key="appendable.id"
         )
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
@@ -174,7 +174,7 @@ def test_c9_insert_on_the_global_table_is_allowed() -> None:
 def test_a_scoped_model_whose_fk_target_is_not_compiled_is_rejected() -> None:
     class Orphan(BaseModel, RowScoped):
         __tablename__ = "orphans"
-        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        key: str = ScopedField(String(36), primary_key=True, scope="holder")
         id: int = ColumnField(Integer, primary_key=True)
         holder_id: int = ColumnField(Integer, foreign_key="holders.id")
 
@@ -185,13 +185,13 @@ def test_a_scoped_model_whose_fk_target_is_not_compiled_is_rejected() -> None:
 def test_c6_the_referenced_key_must_match_exactly() -> None:
     class Wide(BaseModel, RowScoped):
         __tablename__ = "wides"
-        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        key: str = ScopedField(String(36), primary_key=True, scope="holder")
         id: int = ColumnField(Integer, primary_key=True)
         version: int = ColumnField(Integer, primary_key=True)
 
     class Narrow(BaseModel, RowScoped):
         __tablename__ = "narrows"
-        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        key: str = ScopedField(String(36), primary_key=True, scope="holder")
         id: int = ColumnField(Integer, primary_key=True)
         wide_id: int = ColumnField(Integer, foreign_key="wides.id")
 

@@ -3,19 +3,19 @@ from __future__ import annotations
 from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
-from loom.core.model import BaseModel, ColumnField, RowScoped
+from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String
 
 
 class First(BaseModel, RowScoped):
     __tablename__ = "first"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 
 
 class Second(BaseModel, RowScoped):
     __tablename__ = "second"
-    region: int = ColumnField(Integer, primary_key=True, scope="region")
+    region: int = ScopedField(Integer, primary_key=True, scope="region")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 
 

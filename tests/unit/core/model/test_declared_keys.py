@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.model import BaseModel, ColumnField
+from loom.core.model import BaseModel, ColumnField, ScopedField
 from loom.core.model.introspection import (
     declared_indexes,
     declared_privileges,
@@ -18,7 +18,7 @@ class Entry(BaseModel, RowScoped):
     __tablename__ = "entries"
     __unique__ = (("holder", "reference"),)
     __indexes__ = (("holder", "booked_on"),)
-    holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+    holder: int = ScopedField(Integer, primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
     reference: str = ColumnField(Text)
     booked_on: str = ColumnField(Text)
@@ -46,7 +46,7 @@ def test_a_declared_unique_without_the_boundary_fails_c5() -> None:
     class Loose(BaseModel, RowScoped):
         __tablename__ = "loose"
         __unique__ = (("reference",),)
-        holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+        holder: int = ScopedField(Integer, primary_key=True, scope="holder")
         reference: str = ColumnField(Text)
 
     with pytest.raises(ValueError, match=r"C5.*Loose.*reference"):
@@ -57,7 +57,7 @@ def test_a_declared_unique_naming_an_unknown_column_is_rejected() -> None:
     class Typo(BaseModel, RowScoped):
         __tablename__ = "typo"
         __unique__ = (("holder", "refrence"),)
-        holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+        holder: int = ScopedField(Integer, primary_key=True, scope="holder")
         reference: str = ColumnField(Text)
 
     with pytest.raises(ValueError, match=r"Typo.*refrence"):
@@ -73,7 +73,7 @@ def test_privileges_on_a_scoped_model_are_rejected() -> None:
     class ScopedWithGrants(BaseModel, RowScoped):
         __tablename__ = "scoped_with_grants"
         __privileges__ = {"readers": frozenset({Privilege.SELECT})}
-        holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+        holder: int = ScopedField(Integer, primary_key=True, scope="holder")
 
     with pytest.raises(ValueError, match=r"ScopedWithGrants.*__privileges__"):
         declared_privileges(ScopedWithGrants)

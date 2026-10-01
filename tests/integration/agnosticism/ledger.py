@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped
+from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped, ScopedField
 from loom.core.model.types import BigInteger, DateTime, Integer, Numeric, Text
 
 SCHEMA = "ledger"
@@ -28,7 +28,7 @@ class Entry(BaseModel, RowScoped):
     __tablename__ = "entries"
     __unique__ = (("account_id", "reference"),)
     __indexes__ = (("account_id", "booked_on"),)
-    account_id: int = ColumnField(
+    account_id: int = ScopedField(
         BigInteger,
         primary_key=True,
         scope="account",

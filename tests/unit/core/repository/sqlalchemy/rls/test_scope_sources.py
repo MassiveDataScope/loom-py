@@ -9,7 +9,7 @@ from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.locator import Application, DatabaseConfig, SchemaConfig
-from loom.core.model import BaseModel, ColumnField, RowScoped
+from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
 from loom.core.repository.sqlalchemy.rls import (
     register_scope_source,
@@ -21,10 +21,10 @@ from loom.core.repository.sqlalchemy.session_settings import settings_statement
 
 class Note(BaseModel, RowScoped):
     __tablename__ = "notes"
-    key: str = ColumnField(String(36), primary_key=True, scope="holder")
+    key: str = ScopedField(String(36), primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    editor: str = ColumnField(Text, scope="editor", on="write", elevable=True)
-    region: int = ColumnField(Integer, scope="region", on="read")
+    editor: str = ScopedField(Text, scope="editor", on="write", elevable=True)
+    region: int = ScopedField(Integer, scope="region", on="read")
 
 
 @pytest.fixture(autouse=True)

@@ -10,7 +10,7 @@ from loom.core.model._loom_type import (
 )
 from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
-from loom.core.model.field import ColumnField, ColumnType, Field
+from loom.core.model.field import ColumnField, ColumnType, Field, ScopedField
 from loom.core.model.introspection import (
     ColumnFieldInfo,
     declared_indexes,
@@ -68,6 +68,7 @@ __all__ = [
     "Cardinality",
     "ColumnFieldInfo",
     "ColumnField",
+    "ScopedField",
     "ColumnType",
     "DateTime",
     "Field",

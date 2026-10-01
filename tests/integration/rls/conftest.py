@@ -92,9 +92,9 @@ def pg_admin_uri() -> str:
 
 
 @pytest.fixture(scope="module")
-def created_roles() -> Iterator[set[str]]:
+def created_roles() -> set[str]:
     """Roles are cluster-wide: every role a module creates is dropped after its database."""
-    yield set()
+    return set()
 
 
 @pytest.fixture(scope="module")

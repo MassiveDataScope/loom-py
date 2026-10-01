@@ -102,7 +102,11 @@ async def apply_bootstrap(
                 try:
                     await driver.execute(script)
                 except Exception as exc:
-                    raise _translate(exc, config.schema) from exc
+                    if _needs_superuser(exc):
+                        raise ConfigError(
+                            f"bootstrap of {config.schema} needs superuser or rds_superuser: {exc}"
+                        ) from exc
+                    raise
                 for statement in statements:
                     await driver.execute(statement)
     finally:
@@ -117,11 +121,8 @@ async def _driver(connection: AsyncConnection) -> Any:
     return driver
 
 
-def _translate(exc: Exception, schema: str) -> Exception:
-    message = str(exc)
-    if "event trigger" in message.lower() and getattr(exc, "sqlstate", "") == "42501":
-        return ConfigError(f"bootstrap of {schema} needs superuser or rds_superuser: {message}")
-    return exc
+def _needs_superuser(exc: Exception) -> bool:
+    return "event trigger" in str(exc).lower() and getattr(exc, "sqlstate", "") == "42501"
 
 
 def _revoke_public(revoke: bool) -> str:
