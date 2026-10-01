@@ -46,8 +46,8 @@ def normalize_bson_value(value: object, _depth: int = 0) -> object:
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, memoryview, str)):
         return [normalize_bson_value(item, _depth + 1) for item in value]
 
-    type_name = type(value).__name__
-    return _BSON_NORMALIZERS.get(type_name, _identity)(value)
+    normalizer = _BSON_NORMALIZERS.get(type(value).__name__)
+    return value if normalizer is None else normalizer(value)
 
 
 def build_mongo_cdc_event(change: Mapping[str, object]) -> MongoCDCEvent:
@@ -267,10 +267,6 @@ def _normalize_objectid(value: object) -> object:
         _datetime_to_epoch_ms(generation_time) if isinstance(generation_time, datetime) else None
     )
     return MongoObjectId(id=str(value), created_at_ms=created_at_ms)
-
-
-def _identity(value: object) -> object:
-    return value
 
 
 _BSON_NORMALIZERS: dict[str, Callable[[Any], object]] = {
