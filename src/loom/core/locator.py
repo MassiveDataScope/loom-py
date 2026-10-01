@@ -26,7 +26,7 @@ from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
 from loom.core.model.scoped import ScopedTable
-from loom.core.repository.sqlalchemy.rls.bootstrap import (
+from loom.core.repository.sqlalchemy.rls.config import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,

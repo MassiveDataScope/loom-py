@@ -7,7 +7,7 @@ itself.
 
 from __future__ import annotations
 
-from loom.core.repository.sqlalchemy.rls.bootstrap import (
+from loom.core.repository.sqlalchemy.rls.config import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,

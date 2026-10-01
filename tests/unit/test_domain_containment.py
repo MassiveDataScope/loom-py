@@ -122,7 +122,7 @@ def _dataclass_defaults(path: Path, class_name: str) -> dict[str, bool]:
 def test_bootstrap_types_have_no_name_defaults(
     class_name: str, fields_without_default: set[str]
 ) -> None:
-    path = _SRC / "core/repository/sqlalchemy/rls/bootstrap.py"
+    path = _SRC / "core/repository/sqlalchemy/rls/config.py"
     if not path.exists():
         pytest.fail(f"{path} does not exist yet")
 
