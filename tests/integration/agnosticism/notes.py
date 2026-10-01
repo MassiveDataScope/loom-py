@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped
+from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped
 from loom.core.model.types import DateTime, Integer, String, Text
 
 SCHEMA = "notes"
@@ -29,7 +29,7 @@ class NoteItem(BaseModel, RowScoped):
     __tablename__ = "note_items"
     owner_id: str = ColumnField(String(36), primary_key=True, scope="owner")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    note_id: int = ColumnField(Integer, foreign_key="notes.id", on_delete="CASCADE")
+    note_id: int = ColumnField(Integer, foreign_key="notes.id", on_delete=OnDelete.CASCADE)
     label: str = ColumnField(Text)
 
 
