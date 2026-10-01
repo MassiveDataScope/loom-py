@@ -41,3 +41,48 @@ def test_timeouts_accept_postgres_durations(value: str) -> None:
 def test_timeouts_reject_anything_else(value: str) -> None:
     with pytest.raises(ValueError, match="timeout"):
         validate_timeout(value)
+
+
+def test_autogenerate_never_drops_a_table_the_models_do_not_declare() -> None:
+    from loom.core.repository.sqlalchemy.migrations.runners import include_object
+
+    assert include_object(None, "orphan", "table", True, None) is False
+    assert include_object(None, "alembic_version", "table", True, None) is False
+    assert include_object(None, "alembic_version_data", "table", False, object()) is False
+    assert include_object(None, "notes", "table", True, object()) is True
+    assert include_object(None, "notes", "table", False, None) is True
+    assert include_object(None, "body", "column", True, None) is True
+
+
+def test_the_locator_puts_the_code_path_on_sys_path(tmp_path, monkeypatch) -> None:
+    import sys
+
+    from loom.core.locator import load_application
+
+    package = tmp_path / "code" / "located_pkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "models.py").write_text(
+        "from loom.core.model import BaseModel, ColumnField\n"
+        "from loom.core.model.types import Integer\n"
+        "class Located(BaseModel):\n"
+        "    __tablename__ = 'located'\n"
+        "    id: int = ColumnField(Integer, primary_key=True)\n"
+    )
+    config = tmp_path / "app.yaml"
+    config.write_text(
+        "app:\n"
+        "  name: located\n"
+        f"  code_path: {tmp_path / 'code'}\n"
+        "  discovery:\n"
+        "    mode: modules\n"
+        "    modules:\n"
+        "      include: [located_pkg.models]\n"
+        "database:\n"
+        "  url: sqlite+aiosqlite://\n"
+    )
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+    application = load_application(str(config))
+
+    assert "located" in application.metadata.tables

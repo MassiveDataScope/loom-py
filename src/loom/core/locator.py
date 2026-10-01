@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 import msgspec
@@ -60,6 +62,7 @@ class _Discovery(msgspec.Struct, kw_only=True):
 
 class _AppSection(msgspec.Struct, kw_only=True):
     name: str
+    code_path: str = "src"
     discovery: _Discovery = msgspec.field(default_factory=_Discovery)
 
 
@@ -127,6 +130,7 @@ def load_application(config_path: str | None = None) -> Application:
     context = ConfigContext.from_yaml(_resolve_path(config_path))
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
+    _ensure_on_path(app.code_path)
     models = _discover(app.discovery).models
     metadata = MetaData()
     if database.schema.name is not None:
@@ -143,6 +147,12 @@ def load_application(config_path: str | None = None) -> Application:
         scoped=scoped,
         scope_sources=scope_sources,
     )
+
+
+def _ensure_on_path(code_path: str) -> None:
+    resolved = str(Path(code_path).resolve())
+    if resolved not in sys.path:
+        sys.path.insert(0, resolved)
 
 
 def _resolve_path(config_path: str | None) -> str:

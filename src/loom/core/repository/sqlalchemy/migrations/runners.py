@@ -99,7 +99,7 @@ def run_migrations(
             compare_type=True,
             version_table=STRUCTURAL_VERSION_TABLE,
             version_table_schema=schema,
-            include_object=_not_a_version_table,
+            include_object=include_object,
             process_revision_directives=scope_protection_hook(application),
             on_version_apply=_assertion_for(schema),
         )
@@ -321,5 +321,16 @@ def _prepare_version_tables(connection: Connection, bootstrap: BootstrapConfig) 
         )
 
 
-def _not_a_version_table(obj: Any, name: str | None, type_: str, *_rest: Any) -> bool:
-    return not (type_ == "table" and name in {STRUCTURAL_VERSION_TABLE, DATA_VERSION_TABLE})
+def include_object(
+    _obj: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
+) -> bool:
+    """Leave version tables alone and never autogenerate the drop of an undeclared table.
+
+    A table the database has and the models do not may be one discovery
+    missed; dropping it is written by hand, never generated.
+    """
+    if type_ != "table":
+        return True
+    if name in {STRUCTURAL_VERSION_TABLE, DATA_VERSION_TABLE}:
+        return False
+    return not (reflected and compare_to is None)
