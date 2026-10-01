@@ -172,3 +172,216 @@ from loom.core.authz import InMemoryGrantSource
 source = InMemoryGrantSource(grants)
 decision = evaluate(CATALOG, await source.grants_for(identity.require_subject()), READ, scope)
 ```
+
+## Roles as data
+
+A product that keeps its role composition outside code declares each role as a
+{class}`~loom.core.authz.RoleSpec`: the permission names it adds and the roles it
+extends. {meth}`~loom.core.authz.RoleCatalog.from_specs` flattens the extensions:
+
+```python
+from loom.core.authz import RoleCatalog, RoleSpec
+
+CATALOG = RoleCatalog.from_specs(
+    [READ, RUN, MANAGE],
+    {
+        "viewer": RoleSpec(permissions=frozenset({"catalog.read"})),
+        "operator": RoleSpec(permissions=frozenset({"jobs.run"}), extends=("viewer",)),
+        "admin": RoleSpec(permissions=frozenset({"members.manage"}), extends=("operator",)),
+    },
+)
+```
+
+Each role holds the union of its own permissions and those of every role it extends, so
+this catalog equals one built by hand from the flattened roles. Building fails with
+`ValueError` naming the role and the cause:
+
+| Cause | Example |
+|---|---|
+| a cycle | `viewer` extends `admin`, which extends `viewer` |
+| an unknown base | `extends=("veiwer",)` |
+| an undeclared permission | `permissions=frozenset({"catalog.write"})` |
+
+loom reads no file. The product parses its own format, per environment if it wants, and
+passes the specs.
+
+### Catalog digest
+
+{meth}`~loom.core.authz.RoleCatalog.digest` returns a SHA-256 over the sorted
+`role:perm,perm` lines of the catalog. It does not depend on declaration order and
+changes with any permission of any role, custom roles included. Record it next to a
+deployment, or compare it in CI, to notice a catalog that changed between environments.
+
+```python
+CATALOG.digest()
+```
+
+## Custom roles
+
+{meth}`~loom.core.authz.RoleCatalog.compose` adds roles defined by a product's
+administrators to a fixed base catalog, under rules the product sets in
+{class}`~loom.core.authz.CompositionRules`. Every field is required:
+
+| Field | Meaning |
+|---|---|
+| `custom_prefix` | prefix of every custom role name |
+| `may_extend_base` | whether a custom role may extend a base role at all |
+| `non_extensible` | base roles no custom role may extend |
+| `ceiling` | the most a custom role may hold; never `None` |
+
+The ceiling is the creator's effective permissions at the scope where the role is
+created, so nobody defines a role above what they hold:
+
+```python
+from loom.core.authz import CompositionRules, RoleSpec, Scope, evaluate
+
+at = Scope.of("acme")
+ceiling = frozenset(
+    permission
+    for permission in CATALOG.permissions
+    if evaluate(CATALOG, creator_grants, permission, at)
+)
+rules = CompositionRules(
+    custom_prefix="custom:",
+    may_extend_base=True,
+    non_extensible=frozenset({"admin"}),
+    ceiling=ceiling,
+)
+effective = RoleCatalog.compose(
+    CATALOG,
+    {"runner": RoleSpec(permissions=frozenset({"jobs.run"}), extends=("viewer",))},
+    rules,
+    namespace="acme",
+)
+effective.role("custom:acme/runner")
+```
+
+The effective name of a custom role is `f"{custom_prefix}{namespace}/{name}"`. The
+`namespace` names where the role is defined, so two boundaries that each create a
+`runner` obtain two different roles and neither can be granted in the other. The base
+roles are kept unchanged. Composition fails with `ValueError` naming the offender when:
+
+- `namespace` or a custom name is empty or contains `/`;
+- a custom role uses a permission the base catalog does not declare;
+- a custom role, once flattened, holds a permission outside `ceiling`;
+- a custom role extends a base role while `may_extend_base` is false, or extends a role
+  in `non_extensible`;
+- an effective name collides with a base role.
+
+loom does not persist custom roles; storing, caching and auditing them is the product's
+job. Grant a custom role by its effective name and decide with the effective catalog.
+
+### Editing a granted custom role
+
+Changing the permissions of a custom role changes what every existing grant of it
+allows. Before applying the edit, check every holder's grant against the new catalog
+with the editor's grants, and refuse on any failure (obligation P3):
+
+```python
+from loom.core.authz import can_grant
+
+for grant in holders_of_role:
+    check = can_grant(new_catalog, editor_grants, grant.role, grant.scope, delegate=MANAGE)
+    if not check:
+        raise PermissionError(f"edit refused on {grant.scope}: missing {sorted(check.missing)}")
+```
+
+## The product declaration
+
+A product publishes what loom needs to decide, delegate and elevate as an
+{class}`~loom.core.authz.product.AuthzProduct`: `catalog`, `delegate` (the permission
+{func}`~loom.core.authz.can_grant` and {func}`~loom.core.authz.can_revoke` require of a
+granter) and `elevations` (elevable scope name to permission):
+
+```python
+EDIT_ANY = Permission("entries.edit_any")
+
+
+class LedgerAuthz:
+    catalog = CATALOG
+    delegate = MANAGE
+    elevations = {"clerk": EDIT_ANY}
+```
+
+Register it under the `loom.authz` entry point group, as the object or a factory that
+returns it:
+
+```toml
+[project.entry-points."loom.authz"]
+ledger = "ledger.authz:LedgerAuthz"
+```
+
+{func}`~loom.core.authz.product.load_authz_product` returns the product, or `None` when
+none is registered; {func}`~loom.core.authz.product.register_authz_product` installs one
+for the process ahead of the entry point, which is what tests use.
+{func}`~loom.core.repository.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
+`elevations` names a scope that no compiled model declares, or one that is not elevable.
+The standard SQLAlchemy backend calls it at startup, with the compiled scoped tables,
+when `database.schema.mode` is `external` on Postgres; it remains available for
+programmatic use.
+
+## Elevating a write scope
+
+A [row-scoped table](postgres-rls.md#row-scoped-tables) can declare a write-only,
+elevable scope: callers read every row within the boundary but modify only their own.
+When the product's authorizer allows more, for example an administrator editing other
+users' rows, {func}`~loom.core.repository.sqlalchemy.rls.elevate` turns that decision,
+and only that decision, into the session flag `loom.scope.<scope>.any` for the rest of
+the current execution:
+
+```python
+from loom.core.authz import Scope, evaluate
+from loom.core.repository.sqlalchemy.rls import elevate
+
+at = Scope.of(account_id)
+decision = evaluate(CATALOG, grants, EDIT_ANY, at)
+if not decision:
+    raise PermissionError("not allowed to edit other clerks' entries")
+await elevate("clerk", decision, at=at)
+```
+
+`elevate(scope, decision, *, at, catalog=None)` has one error per cause and sets nothing
+when it raises. Outside an execution it raises `RuntimeError` before checking anything
+else:
+
+| Error | Cause |
+|---|---|
+| `RuntimeError` | no use-case execution is running |
+| `ConfigError` | no product is registered, or `scope` is not in `AuthzProduct.elevations` |
+| `PermissionError` | the decision is denied, its grant's role is not in `catalog.roles_with(elevations[scope])`, or its grant's scope does not cover `at` |
+
+`catalog` defaults to `AuthzProduct.catalog`; a product with custom roles passes its
+effective catalog.
+
+### One execution, no more
+
+The executor opens an elevation frame for every use-case execution, around the pipeline
+and the commit or rollback of its unit of work. The frame decides how long an elevation
+lives:
+
+- the flag is transaction-local: the session-settings provider emits `'on'` in every
+  transaction that begins while the frame holds the scope, and `''` otherwise;
+- elevating after a read in the same unit of work also flags the open transaction, through
+  the executor's elevation sink,
+  {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink`; the standard
+  SQLAlchemy backend provides it in `external` mode on Postgres through
+  `PersistenceWiring.elevation_sink`, and a kernel built by hand passes it as
+  `create_kernel(elevation_sink=...)`;
+- a nested execution inherits its parent's elevations, never changes them, and clears
+  on exit only what it added; when that clearing fails, the session is invalidated, so
+  no flag outlives the execution that set it;
+- a task spawned during the execution shares the frame and loses the elevation when the
+  execution ends;
+- post-commit actions and the next execution on the same pooled connection are not
+  elevated.
+
+{func}`~loom.core.authz.elevation.elevated_scopes` returns the scopes elevated in the
+current context, empty outside an execution.
+
+### Elevate only at the boundary
+
+`elevate` checks that the decision's grant covers `at`. It does not check that `at` is
+the boundary the session is filtered by, and the flag opens every row of the elevable
+scope within that boundary. Call `elevate` only with a decision evaluated at the scope of
+the boundary (obligation P2); a decision taken on a narrower scope would open more than
+it justifies.

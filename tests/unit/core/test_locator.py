@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
-from loom.core.locator import Application, load_application
 
 from loom.core.config.errors import ConfigError
+from loom.core.locator import Application, load_application
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"
@@ -142,3 +143,30 @@ def test_a_missing_loom_config_variable_is_named(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(ConfigError, match="LOOM_CONFIG"):
         load_application()
+
+
+def test_a_relative_code_path_resolves_against_the_config_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    package = project / "src" / "relcodepath_models"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "models.py").write_text(
+        "from loom.core.model import BaseModel, ColumnField\n\n\n"
+        "class Gadget(BaseModel):\n"
+        '    __tablename__ = "gadgets"\n'
+        "    id: int = ColumnField(primary_key=True, autoincrement=True)\n"
+    )
+    config = _config("relcodepath_models.models", mode="create_all")
+    app_section = config["app"]
+    assert isinstance(app_section, dict)
+    app_section["code_path"] = "src"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+    application = load_application(_write(project, "loom.yaml", config))
+
+    assert set(application.metadata.tables) == {"gadgets"}

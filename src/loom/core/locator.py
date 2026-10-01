@@ -127,10 +127,11 @@ def load_application(config_path: str | None = None) -> Application:
     from loom.core.backend.scoped_ddl import SCHEMA_KEY
     from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 
-    context = ConfigContext.from_yaml(_resolve_path(config_path))
+    path = _resolve_path(config_path)
+    context = ConfigContext.from_yaml(path)
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
-    _ensure_on_path(app.code_path)
+    _ensure_on_path(app.code_path, Path(path).resolve().parent)
     models = _discover(app.discovery).models
     metadata = MetaData()
     if database.schema.name is not None:
@@ -149,8 +150,11 @@ def load_application(config_path: str | None = None) -> Application:
     )
 
 
-def _ensure_on_path(code_path: str) -> None:
-    resolved = str(Path(code_path).resolve())
+def _ensure_on_path(code_path: str, config_dir: Path) -> None:
+    candidate = Path(code_path)
+    if not candidate.is_absolute():
+        candidate = config_dir / candidate
+    resolved = str(candidate.resolve())
     if resolved not in sys.path:
         sys.path.insert(0, resolved)
 
