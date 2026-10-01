@@ -4,11 +4,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import pytest
-from loom.core.authz.elevation import elevated_scopes, elevation_scope
-from loom.core.authz.product import clear_authz_product, load_authz_product, register_authz_product
 from sqlalchemy import MetaData
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import elevated_scopes, elevation_scope
+from loom.core.authz.product import clear_authz_product, load_authz_product, register_authz_product
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField, RowScoped

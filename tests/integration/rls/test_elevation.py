@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from loom.core.authz.elevation import elevation_scope
-from loom.core.authz.product import clear_authz_product, register_authz_product
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import elevation_scope
+from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.repository.sqlalchemy.rls import (
     SQLAlchemyElevationSink,
