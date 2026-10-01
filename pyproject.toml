@@ -289,6 +289,7 @@ packages = [
 include = [
     "src/loom/py.typed",
     "src/loom/ai/declarative/schemas/*.json",
+    "src/loom/core/repository/sqlalchemy/rls/templates/*.sql",
 ]
 
 [tool.hatch.build.targets.sdist]
