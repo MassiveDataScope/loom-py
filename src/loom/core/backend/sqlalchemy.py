@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -103,15 +104,19 @@ class _Compilation:
     scoped: dict[tuple[str | None, str], ScopedTable] = field(default_factory=dict)
 
 
-_SHARED = _Compilation(
-    SABase.metadata, SABase, _registry, _table_registry, _core_registry, _pending_relations
-)
 _COMPILATION_KEY = "loom.compilation"
+
+
+@functools.cache
+def _shared() -> _Compilation:
+    return _Compilation(
+        SABase.metadata, SABase, _registry, _table_registry, _core_registry, _pending_relations
+    )
 
 
 def _compilation_for(metadata: MetaData | None) -> _Compilation:
     if metadata is None or metadata is SABase.metadata:
-        return _SHARED
+        return _shared()
     existing = metadata.info.get(_COMPILATION_KEY)
     if existing is None:
         base = sa_registry(metadata=metadata).generate_base()
@@ -666,7 +671,7 @@ def reset_registry() -> None:
     _table_registry.clear()
     _core_registry.clear()
     _pending_relations.clear()
-    _SHARED.scoped.clear()
+    _shared().scoped.clear()
     SABase.metadata.clear()
     SABase.registry.dispose()
 

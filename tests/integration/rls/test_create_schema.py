@@ -124,3 +124,22 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
                 pass
     finally:
         clear_scope_sources()
+
+
+async def test_a_disabled_guard_event_trigger_stops_create_schema_and_fails_verify(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    from loom.core.repository.sqlalchemy.rls import verify
+
+    database = await scoped_database("notes_evt")
+    application = application_for(notes, database, tmp_path, schema="notes_evt")
+    await create_schema(database.migrator, application)
+    engine = create_async_engine(database.superuser, poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER EVENT TRIGGER loom_guard_notes_evt_ddl DISABLE"))
+    await engine.dispose()
+
+    report = await verify(database.superuser, application)
+    assert "guard.event_triggers" in {finding.check for finding in report.findings}
+    with pytest.raises(ConfigError, match="event trigger"):
+        await create_schema(database.migrator, application)

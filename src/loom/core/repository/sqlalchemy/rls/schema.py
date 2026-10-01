@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from loom.core.backend.scoped_ddl import check_dialect
+from loom.core.backend.scoped_ddl import check_dialect, missing_event_triggers_statement
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -63,4 +63,11 @@ async def _require_guard(connection: AsyncConnection, schema: str) -> None:
     if found is None:
         raise ConfigError(
             f"schema {schema!r} has no guard: run apply_bootstrap (loom schema bootstrap) first"
+        )
+    missing = (await connection.execute(text(missing_event_triggers_statement(schema)))).scalars()
+    names = sorted(missing)
+    if names:
+        raise ConfigError(
+            f"the guard of schema {schema!r} has missing or disabled event triggers {names}: "
+            "re-apply the bootstrap (loom schema bootstrap)"
         )

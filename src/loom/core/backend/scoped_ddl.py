@@ -162,6 +162,17 @@ def guard_name(schema: str) -> str:
     return f"loom_guard_{schema_identifier(schema)}"
 
 
+def missing_event_triggers_statement(schema: str) -> str:
+    """Select the guard's event triggers of ``schema`` that are missing or not enabled."""
+    guard = guard_name(schema)
+    return (
+        "SELECT name FROM (VALUES "
+        f"('{guard}_ddl', 'ddl_command_end'), ('{guard}_drop', 'sql_drop')) AS t(name, event) "
+        "WHERE NOT EXISTS (SELECT 1 FROM pg_event_trigger e WHERE e.evtname = t.name "
+        "AND e.evtevent = t.event AND e.evtenabled = 'O')"
+    )
+
+
 def assert_statement(schema: str) -> str:
     """Call the guard's closing assertion of ``schema``."""
     return f"SELECT {guard_name(schema)}.assert_scoped_schema()"

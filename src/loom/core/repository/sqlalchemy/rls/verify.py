@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.backend.scoped_ddl import missing_event_triggers_statement
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable
@@ -90,6 +91,7 @@ async def verify(url: str, application: Application) -> Report:
     try:
         async with engine.connect() as connection:
             findings = await _assertion(connection, bootstrap.schema)
+            findings += await _event_triggers(connection, bootstrap.schema)
             acl = await _acl(connection, bootstrap.schema)
             findings += _group_privileges(acl, application.scoped, bootstrap.schema)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
@@ -100,6 +102,14 @@ async def verify(url: str, application: Application) -> Report:
     finally:
         await engine.dispose()
     return Report(ok=not findings, findings=tuple(findings))
+
+
+async def _event_triggers(connection: AsyncConnection, schema: str) -> list[Finding]:
+    missing = (await connection.execute(text(missing_event_triggers_statement(schema)))).scalars()
+    return [
+        Finding(None, "guard.event_triggers", f"{name}: enabled", f"{name}: missing or disabled")
+        for name in sorted(missing)
+    ]
 
 
 async def _assertion(connection: AsyncConnection, schema: str) -> list[Finding]:
