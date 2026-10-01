@@ -1,9 +1,7 @@
--- Bootstrap of one application schema. Rendered by loom from the product's declaration; every name below
--- was injected, none is loom's. Idempotent: re-applying after adding a database user is the supported way
--- to grant that user. Placeholders: {S} schema, {OWNER}, {MIGRATOR}, {READERS}, {WRITERS}, {BYPASS_LIST}
--- (quoted list of declared bypass users), {ROLE_STATEMENTS}, {USER_STATEMENTS}, {BYPASS_STATEMENTS},
--- {REVOKE_PUBLIC}. SQLSTATEs: LG001 owner DML denied, LG002 guard invariant violated, 22023 bad
--- declaration, 42501 not the owner or not privileged.
+-- Bootstrap of one application schema, rendered by loom from the product's declaration. Every name below was
+-- injected, none is loom's. Idempotent: re-applying after adding a database user is the supported way to grant it.
+-- SQLSTATEs: LG001 owner DML denied, LG002 guard invariant violated, 22023 bad declaration, 42501 not the owner
+-- or not privileged.
 DO $$
 BEGIN
   IF current_setting('server_version_num')::int < {MIN_SERVER_VERSION_NUM} THEN
@@ -13,24 +11,23 @@ BEGIN
     RAISE EXCEPTION 'loom_guard[{S}]: creating an event trigger needs superuser or rds_superuser; current_user is %', current_user USING ERRCODE = '42501';
   END IF;
 END $$;
--- roles: compare attributes when they exist, create when they do not
-CREATE OR REPLACE FUNCTION pg_temp.loom_ensure_role(name_ text, login_ boolean, bypass_ boolean, inherit_ boolean) RETURNS void LANGUAGE plpgsql AS $$
-DECLARE r pg_roles%ROWTYPE;
+-- roles and users: compare attributes when they exist, create when they do not
+DO $$
+DECLARE spec record; r pg_roles%ROWTYPE;
 BEGIN
-  SELECT * INTO r FROM pg_roles WHERE rolname = name_;
-  IF NOT FOUND THEN
-    EXECUTE format('CREATE ROLE %I %s %s %s', name_,
-      CASE WHEN login_ THEN 'LOGIN' ELSE 'NOLOGIN' END,
-      CASE WHEN bypass_ THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END,
-      CASE WHEN inherit_ THEN 'INHERIT' ELSE 'NOINHERIT' END);
-    RETURN;
-  END IF;
-  IF r.rolcanlogin <> login_ OR r.rolbypassrls <> bypass_ OR r.rolinherit <> inherit_ OR r.rolsuper OR r.rolcreaterole OR r.rolcreatedb THEN
-    RAISE EXCEPTION 'loom_guard[{S}]: role % already exists with different attributes', name_ USING ERRCODE = '42501';
-  END IF;
+  FOR spec IN SELECT * FROM (VALUES {ROLE_ROWS}) AS v(name_, login_, bypass_, inherit_) LOOP
+    SELECT * INTO r FROM pg_roles WHERE rolname = spec.name_;
+    IF NOT FOUND THEN
+      EXECUTE format('CREATE ROLE %I %s %s %s', spec.name_,
+        CASE WHEN spec.login_ THEN 'LOGIN' ELSE 'NOLOGIN' END,
+        CASE WHEN spec.bypass_ THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END,
+        CASE WHEN spec.inherit_ THEN 'INHERIT' ELSE 'NOINHERIT' END);
+    ELSIF r.rolcanlogin <> spec.login_ OR r.rolbypassrls <> spec.bypass_ OR r.rolinherit <> spec.inherit_ OR r.rolsuper OR r.rolcreaterole OR r.rolcreatedb THEN
+      RAISE EXCEPTION 'loom_guard[{S}]: role % already exists with different attributes', spec.name_ USING ERRCODE = '42501';
+    END IF;
+  END LOOP;
 END $$;
-{ROLE_STATEMENTS}
-GRANT {OWNER} TO {MIGRATOR} WITH INHERIT FALSE;
+GRANT {OWNER} TO {MIGRATOR};
 ALTER ROLE {MIGRATOR} SET role = {OWNER};
 {USER_STATEMENTS}
 CREATE SCHEMA IF NOT EXISTS {S} AUTHORIZATION {OWNER};

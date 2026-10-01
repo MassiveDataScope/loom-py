@@ -3,17 +3,17 @@ from __future__ import annotations
 import re
 
 import pytest
-from loom.core.repository.sqlalchemy.rls.bootstrap import (
-    MIN_SERVER_VERSION_NUM,
-    password_statements,
-    scram_sha256_verifier,
-)
 
 from loom.core.repository.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
     render_bootstrap,
+)
+from loom.core.repository.sqlalchemy.rls.bootstrap import (
+    MIN_SERVER_VERSION_NUM,
+    password_statements,
+    scram_sha256_verifier,
 )
 
 
@@ -88,7 +88,8 @@ def test_groups_are_created_and_users_join_them_by_access(sql: str) -> None:
 
 
 def test_the_migrator_is_a_no_inherit_member_of_the_owner(sql: str) -> None:
-    assert re.search(r"GRANT r_owner TO r_migrator WITH INHERIT FALSE", sql)
+    assert re.search(r"GRANT r_owner TO r_migrator;", sql)
+    assert "('r_migrator', true, false, false)" in sql
     assert re.search(r"ALTER ROLE r_migrator SET role = r_owner", sql)
 
 
@@ -185,3 +186,14 @@ def test_password_statements_carry_verifiers_never_cleartext() -> None:
         assert "SCRAM-SHA-256$" in statement
         assert "plain-text-secret" not in statement
         assert "another" not in statement
+
+
+def test_template_comments_mention_no_placeholder() -> None:
+    from importlib.resources import files
+
+    template = (
+        files("loom.core.repository.sqlalchemy.rls") / "templates" / "bootstrap.sql"
+    ).read_text()
+    comment_lines = [line for line in template.splitlines() if line.lstrip().startswith("--")]
+
+    assert [line for line in comment_lines if "{" in line] == []

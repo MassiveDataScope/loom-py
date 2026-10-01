@@ -66,20 +66,23 @@ def pg_admin_uri() -> str:
 
 
 @pytest.fixture(scope="module")
-def module_database_uri(pg_admin_uri: str) -> Iterator[str]:
+def created_roles() -> Iterator[set[str]]:
+    """Roles are cluster-wide: every role a module creates is dropped after its database."""
+    yield set()
+
+
+@pytest.fixture(scope="module")
+def module_database_uri(pg_admin_uri: str, created_roles: set[str]) -> Iterator[str]:
     name = f"loom_rls_{secrets.token_hex(4)}"
     asyncio.run(_run(pg_admin_uri, f'CREATE DATABASE "{name}"', autocommit=True))
     uri = make_url(pg_admin_uri).set(database=name).render_as_string(hide_password=False)
     try:
         yield uri
     finally:
-        asyncio.run(
-            _run(
-                pg_admin_uri,
-                f'DROP DATABASE "{name}" WITH (FORCE)',
-                autocommit=True,
-            )
-        )
+        asyncio.run(_run(pg_admin_uri, f'DROP DATABASE "{name}" WITH (FORCE)', autocommit=True))
+        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles))
+        if drops:
+            asyncio.run(_run(pg_admin_uri, *drops, autocommit=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +108,7 @@ BootstrapFactory = Callable[..., Coroutine[Any, Any, ScopedDatabase]]
 
 
 @pytest.fixture
-def scoped_database(module_database_uri: str) -> BootstrapFactory:
+def scoped_database(module_database_uri: str, created_roles: set[str]) -> BootstrapFactory:
     """Apply a product bootstrap for ``schema`` and return its user URLs.
 
     The factory imports the bootstrap API lazily so this module stays
@@ -113,7 +116,7 @@ def scoped_database(module_database_uri: str) -> BootstrapFactory:
     """
 
     async def factory(schema: str, **options: Any) -> ScopedDatabase:
-        from loom.core.repository.sqlalchemy.schema import (
+        from loom.core.repository.sqlalchemy.rls import (
             BootstrapConfig,
             DatabaseRoles,
             DatabaseUser,
@@ -138,6 +141,9 @@ def scoped_database(module_database_uri: str) -> BootstrapFactory:
                 f"{schema}_ops": DatabaseUser(login=True, access="bypass"),
             },
             **options,
+        )
+        created_roles.update(
+            {f"{schema}_owner", f"{schema}_readers", f"{schema}_writers", *passwords}
         )
         await apply_bootstrap(module_database_uri, config, passwords)
         base = ScopedDatabase(

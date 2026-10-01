@@ -44,8 +44,8 @@ def render_bootstrap(config: BootstrapConfig) -> str:
         "{READERS}": readers,
         "{WRITERS}": writers,
         "{BYPASS_LIST}": ", ".join(f"'{user}'" for user in bypass) or "NULL",
-        "{ROLE_STATEMENTS}": _role_statements(config, readers, writers),
-        "{USER_STATEMENTS}": _user_statements(config.database_users, readers, writers),
+        "{ROLE_ROWS}": _role_rows(config, readers, writers),
+        "{USER_STATEMENTS}": _membership_statements(config.database_users, readers, writers),
         "{BYPASS_STATEMENTS}": _bypass_statements(config, bypass),
         "{REVOKE_PUBLIC}": _revoke_public(config.revoke_public),
     }
@@ -134,27 +134,27 @@ def _groups(schema: str) -> tuple[str, str]:
     return f"{schema}_readers", f"{schema}_writers"
 
 
-def _ensure(name: str, *, login: bool, bypass: bool, inherit: bool) -> str:
+def _role_row(name: str, *, login: bool, bypass: bool, inherit: bool) -> str:
     flags = ", ".join(str(flag).lower() for flag in (login, bypass, inherit))
-    return f"SELECT pg_temp.loom_ensure_role('{name}', {flags});"
+    return f"('{name}', {flags})"
 
 
-def _role_statements(config: BootstrapConfig, readers: str, writers: str) -> str:
-    return "\n".join(
-        [
-            _ensure(config.roles.owner, login=False, bypass=False, inherit=True),
-            _ensure(config.roles.migrator, login=True, bypass=False, inherit=False),
-            _ensure(readers, login=False, bypass=False, inherit=True),
-            _ensure(writers, login=False, bypass=False, inherit=True),
-        ]
-    )
+def _role_rows(config: BootstrapConfig, readers: str, writers: str) -> str:
+    rows = [
+        _role_row(config.roles.owner, login=False, bypass=False, inherit=True),
+        _role_row(config.roles.migrator, login=True, bypass=False, inherit=False),
+        _role_row(readers, login=False, bypass=False, inherit=True),
+        _role_row(writers, login=False, bypass=False, inherit=True),
+    ]
+    for name, spec in config.database_users.items():
+        bypass = spec.access == "bypass"
+        rows.append(_role_row(name, login=spec.login, bypass=bypass, inherit=not bypass))
+    return ", ".join(rows)
 
 
-def _user_statements(users: Mapping[str, DatabaseUser], readers: str, writers: str) -> str:
+def _membership_statements(users: Mapping[str, DatabaseUser], readers: str, writers: str) -> str:
     lines: list[str] = []
     for name, spec in users.items():
-        bypass = spec.access == "bypass"
-        lines.append(_ensure(name, login=spec.login, bypass=bypass, inherit=not bypass))
         if spec.access == "read":
             lines.append(f"GRANT {readers} TO {name};")
         elif spec.access == "write":
