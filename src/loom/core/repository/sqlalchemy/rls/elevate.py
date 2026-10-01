@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from loom.core.authz import Decision, RoleCatalog, Scope
-from loom.core.authz.elevation import elevate_scope
+from loom.core.authz.elevation import elevate_scope, in_execution_frame
 from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
@@ -28,6 +28,11 @@ class SQLAlchemyElevationSink:
     async def clear_flags(self, scopes: frozenset[str]) -> None:
         await self._apply({f"{SCOPE_PREFIX}{scope}.any": "" for scope in sorted(scopes)})
 
+    async def invalidate(self) -> None:
+        session = get_active_session()
+        if session is not None:
+            await session.invalidate()
+
     @staticmethod
     async def _apply(values: Mapping[str, str]) -> None:
         session = get_active_session()
@@ -48,6 +53,8 @@ async def elevate(
         ConfigError: Without a product, or when the product did not map ``scope``.
         PermissionError: When the decision does not justify the elevation.
     """
+    if not in_execution_frame():
+        raise RuntimeError("elevate requires an open execution frame")
     product = load_authz_product()
     if product is None:
         raise ConfigError("no authorization product is registered under the loom.authz entry point")

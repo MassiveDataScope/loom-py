@@ -34,6 +34,8 @@ class ElevationSink(Protocol):
 
     async def clear_flags(self, scopes: frozenset[str]) -> None: ...
 
+    async def invalidate(self) -> None: ...
+
 
 @dataclass(slots=True)
 class _Frame:
@@ -45,6 +47,11 @@ class _Frame:
 
 
 _elevation: ContextVar[_Frame | None] = ContextVar("_elevation", default=None)
+
+
+def in_execution_frame() -> bool:
+    """Whether an execution frame is open in this context."""
+    return _open_frame() is not None
 
 
 def elevated_scopes() -> frozenset[str]:
@@ -132,7 +139,10 @@ async def _clear_added(frame: _Frame) -> None:
     try:
         await asyncio.shield(frame.sink.clear_flags(added))
     except Exception:
-        _logger.exception("elevation flags could not be cleared for %s", sorted(added))
+        _logger.exception(
+            "elevation flags could not be cleared for %s; invalidating the session", sorted(added)
+        )
+        await frame.sink.invalidate()
 
 
 def _open_frame() -> _Frame | None:

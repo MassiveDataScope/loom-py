@@ -149,3 +149,23 @@ async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
                 await inner()
         assert elevated_scopes() == frozenset()
     assert sink.cleared == [frozenset({"editor"})]
+
+
+async def test_a_failed_clear_invalidates_the_session() -> None:
+    sink = FakeSink(open=True, fail_on_clear=True)
+    outer = elevation_scope(owns_transaction=True, sink=sink)
+    inner = elevation_scope(owns_transaction=False, sink=sink)
+    async with outer, inner:
+        await _elevate()
+
+    assert sink.invalidated == 1
+
+
+async def test_elevate_outside_an_execution_is_a_runtime_error_even_without_a_product() -> None:
+    from loom.core.authz.product import clear_authz_product
+    from loom.core.repository.sqlalchemy.rls import elevate
+
+    clear_authz_product()
+
+    with pytest.raises(RuntimeError, match="execution frame"):
+        await elevate("editor", _allowed(), at=BOUNDARY)

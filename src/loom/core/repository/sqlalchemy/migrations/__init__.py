@@ -8,11 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from loom.core.repository.sqlalchemy.migrations.hook import (
-    MarkScopedTableOp,
-    UnmarkScopedTableOp,
-    scope_protection_hook,
-)
+from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
 from loom.core.repository.sqlalchemy.migrations.runners import (
     alembic_config,
     check,
@@ -24,8 +20,6 @@ ENV_TEMPLATE_PATH = Path(__file__).with_name("env_template.py")
 
 __all__ = [
     "ENV_TEMPLATE_PATH",
-    "MarkScopedTableOp",
-    "UnmarkScopedTableOp",
     "alembic_config",
     "check",
     "run_data_migrations",

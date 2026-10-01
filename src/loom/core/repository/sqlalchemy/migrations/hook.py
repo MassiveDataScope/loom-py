@@ -31,28 +31,6 @@ RevisionHook = Callable[[Any, Any, Sequence[ops.MigrationScript]], None]
 _COLUMN_OPS = (ops.AlterColumnOp, ops.DropColumnOp)
 
 
-class MarkScopedTableOp(ops.MigrateOperation):
-    """An existing table became row-scoped in the model: protect it."""
-
-    def __init__(self, table_name: str, *, schema: str | None = None) -> None:
-        self.table_name = table_name
-        self.schema = schema
-
-    def reverse(self) -> UnmarkScopedTableOp:
-        return UnmarkScopedTableOp(self.table_name, schema=self.schema)
-
-
-class UnmarkScopedTableOp(ops.MigrateOperation):
-    """A scoped table lost its marker: out of scope, the hook refuses it."""
-
-    def __init__(self, table_name: str, *, schema: str | None = None) -> None:
-        self.table_name = table_name
-        self.schema = schema
-
-    def reverse(self) -> MarkScopedTableOp:
-        return MarkScopedTableOp(self.table_name, schema=self.schema)
-
-
 def scope_protection_hook(application: Application) -> RevisionHook:
     """Return the ``process_revision_directives`` callable for ``application``."""
     rewriter = _Rewriter(application)
@@ -110,10 +88,6 @@ class _Rewriter:
             return [self._hatch(), self._unprotect(op.table_name), op]
         if isinstance(op, ops.ModifyTableOps) and self._touches_scope(op):
             return [self._hatch(), self._unprotect(op.table_name), op, self._protect(op.table_name)]
-        if isinstance(op, MarkScopedTableOp):
-            return [self._hatch(), self._protect(op.table_name)]
-        if isinstance(op, UnmarkScopedTableOp):
-            raise ValueError(f"cannot unmark scoped table {op.table_name!r}: out of scope")
         return [op]
 
     def _create(self, op: ops.CreateTableOp) -> list[ops.MigrateOperation]:

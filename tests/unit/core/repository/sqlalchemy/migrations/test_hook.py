@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-import pytest
 from alembic.operations import ops
-from loom.core.repository.sqlalchemy.migrations.hook import (
-    MarkScopedTableOp,
-    UnmarkScopedTableOp,
-    scope_protection_hook,
-)
 from sqlalchemy import Column, Integer, MetaData, Table, Text
 
 from loom.core.backend.scoped_ddl import (
@@ -22,6 +16,9 @@ from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped
 from loom.core.model.types import Integer as LoomInteger
 from loom.core.model.types import String
 from loom.core.model.types import Text as LoomText
+from loom.core.repository.sqlalchemy.migrations.hook import (
+    scope_protection_hook,
+)
 from loom.core.repository.sqlalchemy.rls import BootstrapConfig, DatabaseRoles, DatabaseUser
 
 SCHEMA = "s1"
@@ -120,25 +117,6 @@ def test_creating_a_global_table_with_privileges_emits_its_grants() -> None:
             SCHEMA, "kinds", {"readers": frozenset({Privilege.SELECT})}, serial_columns=("id",)
         ),
     ]
-
-
-def test_marking_an_existing_table_protects_it_under_the_hatch() -> None:
-    application = _application()
-    script = _script([MarkScopedTableOp("notes")])
-
-    _rewrite(application, script)
-
-    assert _sql(script.upgrade_ops.ops) == [
-        hatch_statement(SCHEMA),
-        protect_statement(SCHEMA, "notes", application.scoped[(None, "notes")]),
-    ]
-
-
-def test_unmarking_a_scoped_table_is_out_of_scope() -> None:
-    application = _application()
-
-    with pytest.raises(ValueError, match="unmark"):
-        _rewrite(application, _script([UnmarkScopedTableOp("notes")]))
 
 
 def test_changing_a_scope_column_reprotects_the_table_in_both_directions() -> None:

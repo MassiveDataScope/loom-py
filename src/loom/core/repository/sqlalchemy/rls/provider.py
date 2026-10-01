@@ -99,7 +99,9 @@ def install_pool_reset(engine: AsyncEngine) -> None:
     """
 
     @event.listens_for(engine.sync_engine, "reset")
-    def _reset(dbapi_connection: Any, _record: Any, _state: Any) -> None:
+    def _reset(dbapi_connection: Any, _record: Any, state: Any) -> None:
+        if state.terminate_only or not state.asyncio_safe:
+            return
         dbapi_connection.rollback()
         cursor = dbapi_connection.cursor()
         try:
