@@ -64,16 +64,18 @@ async def test_a_failing_sink_leaves_the_scope_unelevated_and_re_raises() -> Non
 
 async def test_a_denied_decision_cannot_elevate() -> None:
     sink = FakeSink()
+    denied = Decision(allowed=False, grant=None)
     async with elevation_scope(owns_transaction=True, sink=sink):
         with pytest.raises(PermissionError):
-            await _elevate(Decision(allowed=False, grant=None))
+            await _elevate(denied)
 
 
 async def test_a_grant_whose_role_lacks_the_mapped_permission_cannot_elevate() -> None:
     sink = FakeSink()
     async with elevation_scope(owns_transaction=True, sink=sink):
+        viewer_grant = _allowed(role="viewer")
         with pytest.raises(PermissionError, match="viewer"):
-            await _elevate(_allowed(role="viewer"))
+            await _elevate(viewer_grant)
 
 
 async def test_a_grant_that_does_not_cover_the_boundary_cannot_elevate() -> None:
@@ -143,9 +145,10 @@ async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
             await _elevate()
             await asyncio.sleep(10)
 
+    short_timeout = asyncio.timeout(0.01)
     async with elevation_scope(owns_transaction=True, sink=sink):
         with pytest.raises(TimeoutError):
-            async with asyncio.timeout(0.01):
+            async with short_timeout:
                 await inner()
         assert elevated_scopes() == frozenset()
     assert sink.cleared == [frozenset({"editor"})]
@@ -167,5 +170,7 @@ async def test_elevate_outside_an_execution_is_a_runtime_error_even_without_a_pr
 
     clear_authz_product()
 
+    allowed_decision = _allowed()
+
     with pytest.raises(RuntimeError, match="execution frame"):
-        await elevate("editor", _allowed(), at=BOUNDARY)
+        await elevate("editor", allowed_decision, at=BOUNDARY)

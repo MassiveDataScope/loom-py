@@ -81,8 +81,10 @@ def test_c6_set_null_and_set_default_between_scoped_tables_are_rejected(
             Integer, nullable=True, foreign_key="holders.id", on_delete=action
         )
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=rf"C6.*Dangling.*{action_name}"):
-        compile_all(Holder, Dangling, metadata=MetaData())
+        compile_all(Holder, Dangling, metadata=metadata)
 
 
 def test_c6_the_referenced_table_must_share_the_boundary_scope() -> None:
@@ -97,8 +99,10 @@ def test_c6_the_referenced_table_must_share_the_boundary_scope() -> None:
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
         other_id: int = ColumnField(Integer, foreign_key="others.id")
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=r"C6.*Crossing.*holder"):
-        compile_all(Other, Crossing, metadata=MetaData())
+        compile_all(Other, Crossing, metadata=metadata)
 
 
 def test_c7_a_fk_from_an_unscoped_table_to_a_scoped_table_is_rejected() -> None:
@@ -107,8 +111,10 @@ def test_c7_a_fk_from_an_unscoped_table_to_a_scoped_table_is_rejected() -> None:
         id: int = ColumnField(Integer, primary_key=True)
         holder_id: int = ColumnField(Integer, foreign_key="holders.id")
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=r"C7.*Global.*holders"):
-        compile_all(Holder, Global, metadata=MetaData())
+        compile_all(Holder, Global, metadata=metadata)
 
 
 def test_c9_a_boundary_fk_to_a_read_only_global_table_is_allowed() -> None:
@@ -131,8 +137,10 @@ def test_c9_a_cascading_fk_to_a_global_table_is_rejected() -> None:
         )
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=r"C9.*Cascading.*CASCADE"):
-        compile_all(Catalog, Cascading, metadata=MetaData())
+        compile_all(Catalog, Cascading, metadata=metadata)
 
 
 def test_c9_the_global_table_cannot_be_writable_by_a_group_except_for_insert() -> None:
@@ -148,8 +156,10 @@ def test_c9_the_global_table_cannot_be_writable_by_a_group_except_for_insert() -
         )
         id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=r"C9.*Pointing.*writers"):
-        compile_all(Editable, Pointing, metadata=MetaData())
+        compile_all(Editable, Pointing, metadata=metadata)
 
 
 def test_c9_insert_on_the_global_table_is_allowed() -> None:
@@ -178,8 +188,10 @@ def test_a_scoped_model_whose_fk_target_is_not_compiled_is_rejected() -> None:
         id: int = ColumnField(Integer, primary_key=True)
         holder_id: int = ColumnField(Integer, foreign_key="holders.id")
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=r"orphans.*holders"):
-        compile_all(Orphan, metadata=MetaData())
+        compile_all(Orphan, metadata=metadata)
 
 
 def test_c6_the_referenced_key_must_match_exactly() -> None:
@@ -195,5 +207,7 @@ def test_c6_the_referenced_key_must_match_exactly() -> None:
         id: int = ColumnField(Integer, primary_key=True)
         wide_id: int = ColumnField(Integer, foreign_key="wides.id")
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match=r"C6.*\(key, id\)"):
-        compile_all(Wide, Narrow, metadata=MetaData())
+        compile_all(Wide, Narrow, metadata=metadata)

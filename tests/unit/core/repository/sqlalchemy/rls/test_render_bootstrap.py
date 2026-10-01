@@ -156,8 +156,10 @@ def test_public_is_revoked_from_the_application_schema_by_default(sql: str) -> N
     ],
 )
 def test_bad_identifiers_are_rejected_before_rendering(bad: dict[str, object]) -> None:
+    config = _config(**bad)
+
     with pytest.raises(ValueError, match="identifier"):
-        render_bootstrap(_config(**bad))
+        render_bootstrap(config)
 
 
 def test_the_scram_verifier_has_the_postgres_shape_and_hides_the_password() -> None:

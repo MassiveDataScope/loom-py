@@ -83,8 +83,10 @@ def test_identity_bindings_read_the_subject_and_the_verified_attributes() -> Non
 
 
 def test_an_unregistered_request_source_is_a_configuration_error() -> None:
+    application = _application()
+
     with pytest.raises(ConfigError, match=r"request\.editor"):
-        rls_session_settings(_application())
+        rls_session_settings(application)
 
 
 def test_the_provider_emits_every_key_as_empty_when_nobody_is_authenticated() -> None:

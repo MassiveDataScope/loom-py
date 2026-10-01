@@ -77,16 +77,14 @@ async def test_an_existing_role_with_other_attributes_is_refused(
     finally:
         await engine.dispose()
 
+    bootstrap_config = BootstrapConfig(
+        schema="guard_c",
+        roles=DatabaseRoles(owner="guard_c_owner", migrator="guard_c_migrator"),
+        database_users={"guard_c_ro": DatabaseUser(login=True, access="read")},
+    )
+
     with pytest.raises(asyncpg.PostgresError) as failure:
-        await apply_bootstrap(
-            module_database_uri,
-            BootstrapConfig(
-                schema="guard_c",
-                roles=DatabaseRoles(owner="guard_c_owner", migrator="guard_c_migrator"),
-                database_users={"guard_c_ro": DatabaseUser(login=True, access="read")},
-            ),
-            passwords={},
-        )
+        await apply_bootstrap(module_database_uri, bootstrap_config, passwords={})
 
     assert failure.value.sqlstate == "42501"
     assert "different attributes" in str(failure.value)

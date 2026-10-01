@@ -64,15 +64,19 @@ def test_a_custom_role_is_named_by_prefix_namespace_and_name() -> None:
 def test_a_permission_above_the_ceiling_is_rejected_by_name() -> None:
     custom = {"boss": RoleSpec(permissions=frozenset({"members.manage"}))}
 
+    composition_rules = rules()
+
     with pytest.raises(ValueError, match="'boss'.*members.manage"):
-        RoleCatalog.compose(BASE, custom, rules(), namespace="acme")
+        RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
 
 def test_an_inherited_permission_above_the_ceiling_is_rejected_too() -> None:
     custom = {"shadow": RoleSpec(extends=("admin",))}
 
+    composition_rules = rules()
+
     with pytest.raises(ValueError, match="'shadow'.*members.manage"):
-        RoleCatalog.compose(BASE, custom, rules(), namespace="acme")
+        RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
 
 def test_a_custom_role_cannot_take_a_base_name() -> None:
@@ -81,22 +85,28 @@ def test_a_custom_role_cannot_take_a_base_name() -> None:
     )
     custom = {"viewer": RoleSpec(permissions=frozenset({"catalog.read"}))}
 
+    composition_rules = rules()
+
     with pytest.raises(ValueError, match="base.*'custom:acme/viewer'"):
-        RoleCatalog.compose(base, custom, rules(), namespace="acme")
+        RoleCatalog.compose(base, custom, composition_rules, namespace="acme")
 
 
 def test_a_non_extensible_base_role_cannot_be_extended() -> None:
     custom = {"ops": RoleSpec(extends=("platform",))}
 
+    composition_rules = rules()
+
     with pytest.raises(ValueError, match="'platform'.*not extensible"):
-        RoleCatalog.compose(BASE, custom, rules(), namespace="acme")
+        RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
 
 def test_extending_base_roles_can_be_disabled_entirely() -> None:
     custom = {"analyst": RoleSpec(extends=("viewer",))}
 
+    composition_rules = rules(may_extend_base=False)
+
     with pytest.raises(ValueError, match="may not extend base roles"):
-        RoleCatalog.compose(BASE, custom, rules(may_extend_base=False), namespace="acme")
+        RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
 
 def test_the_same_custom_name_in_two_namespaces_yields_two_roles() -> None:
@@ -114,16 +124,20 @@ def test_the_same_custom_name_in_two_namespaces_yields_two_roles() -> None:
 def test_an_empty_or_slashed_namespace_is_rejected(namespace: str) -> None:
     custom = {"analyst": RoleSpec(permissions=frozenset({"query.run"}))}
 
+    composition_rules = rules()
+
     with pytest.raises(ValueError, match="namespace"):
-        RoleCatalog.compose(BASE, custom, rules(), namespace=namespace)
+        RoleCatalog.compose(BASE, custom, composition_rules, namespace=namespace)
 
 
 @pytest.mark.parametrize("name", ["", "a/b"])
 def test_an_empty_or_slashed_custom_name_is_rejected(name: str) -> None:
     custom = {name: RoleSpec(permissions=frozenset({"query.run"}))}
 
+    composition_rules = rules()
+
     with pytest.raises(ValueError, match="custom role name"):
-        RoleCatalog.compose(BASE, custom, rules(), namespace="acme")
+        RoleCatalog.compose(BASE, custom, composition_rules, namespace="acme")
 
 
 def test_the_digest_changes_with_a_custom_role() -> None:

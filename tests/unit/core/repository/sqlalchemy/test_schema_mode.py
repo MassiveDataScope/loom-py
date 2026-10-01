@@ -76,25 +76,33 @@ def test_startup_without_scoped_models_changes_nothing() -> None:
 
 
 def test_startup_refuses_create_all_with_scoped_models_on_postgres() -> None:
+    schema_config = _SchemaConfig()
+    scoped_models = _scoped()
+
     with pytest.raises(ConfigError, match=r"create_schema\(migrator_url"):
-        startup_checks(_SchemaConfig(), "postgresql", _scoped(), has_session_settings=False)
+        startup_checks(schema_config, "postgresql", scoped_models, has_session_settings=False)
 
 
 def test_startup_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
-    with pytest.raises(ConfigError, match=r"sqlite.*scoped_items"):
-        startup_checks(_SchemaConfig(), "sqlite", _scoped(), has_session_settings=False)
-
+    schema_config = _SchemaConfig()
+    scoped_models = _scoped()
     allowed = _SchemaConfig(allow_unprotected_dialect=True)
-    assert startup_checks(allowed, "sqlite", _scoped(), has_session_settings=False) == (
+
+    with pytest.raises(ConfigError, match=r"sqlite.*scoped_items"):
+        startup_checks(schema_config, "sqlite", scoped_models, has_session_settings=False)
+
+    assert startup_checks(allowed, "sqlite", scoped_models, has_session_settings=False) == (
         "scoped_items",
     )
 
 
 def test_startup_never_creates_the_schema_with_the_application_session() -> None:
-    with pytest.raises(ConfigError, match="session settings"):
-        startup_checks(_SchemaConfig(), "sqlite", {}, has_session_settings=True)
-
+    schema_config = _SchemaConfig()
     external = _SchemaConfig(mode="external")
+
+    with pytest.raises(ConfigError, match="session settings"):
+        startup_checks(schema_config, "sqlite", {}, has_session_settings=True)
+
     assert startup_checks(external, "sqlite", {}, has_session_settings=True) == ()
 
 
@@ -135,12 +143,13 @@ async def test_external_mode_fails_at_startup_when_a_table_is_missing() -> None:
 
 def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
     external = _SchemaConfig(mode="external")
+    scoped_models = _scoped()
+    allowed = _SchemaConfig(mode="external", allow_unprotected_dialect=True)
 
     with pytest.raises(ConfigError, match="scoped_items"):
-        startup_checks(external, "sqlite", _scoped(), has_session_settings=True)
+        startup_checks(external, "sqlite", scoped_models, has_session_settings=True)
 
-    allowed = _SchemaConfig(mode="external", allow_unprotected_dialect=True)
-    assert startup_checks(allowed, "sqlite", _scoped(), has_session_settings=True) == (
+    assert startup_checks(allowed, "sqlite", scoped_models, has_session_settings=True) == (
         "scoped_items",
     )
 

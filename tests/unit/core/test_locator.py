@@ -78,8 +78,10 @@ def test_an_unknown_access_value_names_the_user(tmp_path: Path) -> None:
     schema = _scoped_schema()
     schema["database_users"] = {"notes_ro": {"login": True, "access": "admin"}}
 
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
     with pytest.raises(ConfigError, match=r"notes_ro.*admin"):
-        load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+        load_application(config_path)
 
 
 @pytest.mark.parametrize("missing", ["name", "roles", "database_users", "scopes"])
@@ -87,24 +89,30 @@ def test_a_missing_schema_key_names_itself(tmp_path: Path, missing: str) -> None
     schema = _scoped_schema()
     del schema[missing]
 
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
     with pytest.raises(ConfigError, match=rf"database\.schema\.{missing}"):
-        load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+        load_application(config_path)
 
 
 def test_a_declared_scope_without_a_source_names_the_scope(tmp_path: Path) -> None:
     schema = _scoped_schema()
     schema["scopes"] = {"owner": "identity.subject"}
 
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
     with pytest.raises(ConfigError, match=r"database\.schema\.scopes\.editor"):
-        load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+        load_application(config_path)
 
 
 def test_a_scope_source_must_be_an_identity_or_request_reference(tmp_path: Path) -> None:
     schema = _scoped_schema()
     schema["scopes"] = {"owner": "env.subject", "editor": "request.editor"}
 
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
     with pytest.raises(ConfigError, match=r"scopes\.owner.*env\.subject"):
-        load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+        load_application(config_path)
 
 
 def test_an_application_without_scoped_models_needs_no_schema_keys(tmp_path: Path) -> None:
@@ -175,5 +183,7 @@ def test_a_relative_code_path_resolves_against_the_config_directory(
 def test_an_invalid_schema_name_is_a_config_error_naming_the_key(tmp_path: Path) -> None:
     schema = {**_scoped_schema(), "name": "Notes"}
 
+    config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
+
     with pytest.raises(ConfigError, match=r"database\.schema"):
-        load_application(_write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema)))
+        load_application(config_path)

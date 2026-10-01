@@ -189,12 +189,13 @@ Postgres, no bootstrap.
 ### Marking a model
 
 Mix {class}`~loom.core.model.RowScoped` into the model and name a scope on each scoping
-column with `ColumnField(scope=..., on=..., elevable=...)`:
+column with `ScopedField(..., scope=..., on=..., elevable=...)`; other columns keep
+`ColumnField`:
 
 ```python
 import datetime as dt
 
-from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped
+from loom.core.model import BaseModel, ColumnField, OnDelete, Privilege, RowScoped, ScopedField
 from loom.core.model.types import BigInteger, DateTime, Integer, Text
 
 
@@ -209,7 +210,7 @@ class Entry(BaseModel, RowScoped):
     __tablename__ = "entries"
     __unique__ = (("account_id", "reference"),)
     __indexes__ = (("account_id", "booked_on"),)
-    account_id: int = ColumnField(
+    account_id: int = ScopedField(
         BigInteger,
         primary_key=True,
         scope="account",
@@ -217,14 +218,14 @@ class Entry(BaseModel, RowScoped):
         on_delete=OnDelete.RESTRICT,
     )
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    clerk: str = ColumnField(Text, scope="clerk", on="write", elevable=True)
+    clerk: str = ScopedField(Text, scope="clerk", on="write", elevable=True)
     reference: str = ColumnField(Text)
     booked_on: dt.datetime = ColumnField(DateTime())
 
 
 class EntryLine(BaseModel, RowScoped):
     __tablename__ = "entry_lines"
-    account_id: int = ColumnField(BigInteger, primary_key=True, scope="account")
+    account_id: int = ScopedField(BigInteger, primary_key=True, scope="account")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
     entry_id: int = ColumnField(Integer, foreign_key="entries.id", on_delete=OnDelete.CASCADE)
     text: str = ColumnField(Text)
@@ -252,7 +253,7 @@ scoped table admits every row privilege by default; a read-only one narrows
 class Reading(BaseModel, RowScoped):
     __tablename__ = "readings"
     __scope_privileges__ = frozenset({Privilege.SELECT})
-    account_id: int = ColumnField(BigInteger, primary_key=True, scope="account")
+    account_id: int = ScopedField(BigInteger, primary_key=True, scope="account")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
 ```
 

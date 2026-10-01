@@ -65,45 +65,54 @@ def test_a_registered_product_is_what_the_loader_returns() -> None:
 
 
 def test_validate_elevations_accepts_elevable_scopes_only() -> None:
-    validate_elevations(Product(), _scoped())
+    scoped = _scoped()
+    validate_elevations(Product(), scoped)
+    product_mapping_holder = Product(elevations={"holder": MANAGE})
+    product_mapping_nope = Product(elevations={"nope": MANAGE})
 
     with pytest.raises(ConfigError, match=r"holder.*elevable"):
-        validate_elevations(Product(elevations={"holder": MANAGE}), _scoped())
+        validate_elevations(product_mapping_holder, scoped)
     with pytest.raises(ConfigError, match=r"nope"):
-        validate_elevations(Product(elevations={"nope": MANAGE}), _scoped())
+        validate_elevations(product_mapping_nope, scoped)
 
 
 async def test_elevate_without_a_product_is_a_configuration_error() -> None:
+    admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):
         with pytest.raises(ConfigError, match="loom.authz"):
-            await elevate("editor", _decision("admin"), at=BOUNDARY)
+            await elevate("editor", admin_decision, at=BOUNDARY)
 
 
 async def test_elevate_refuses_a_scope_the_product_did_not_map() -> None:
     register_authz_product(Product())
+    admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):
         with pytest.raises(ConfigError, match="holder"):
-            await elevate("holder", _decision("admin"), at=BOUNDARY)
+            await elevate("holder", admin_decision, at=BOUNDARY)
 
 
 async def test_elevate_requires_the_mapped_permission_on_the_grant_role() -> None:
     register_authz_product(Product())
+    editor_decision = _decision("editor")
+    admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):
         with pytest.raises(PermissionError, match="editor"):
-            await elevate("editor", _decision("editor"), at=BOUNDARY)
-        await elevate("editor", _decision("admin"), at=BOUNDARY)
+            await elevate("editor", editor_decision, at=BOUNDARY)
+        await elevate("editor", admin_decision, at=BOUNDARY)
         assert elevated_scopes() == frozenset({"editor"})
 
 
 async def test_elevate_outside_an_execution_is_a_programming_error() -> None:
     register_authz_product(Product())
+    admin_decision = _decision("admin")
     with pytest.raises(RuntimeError, match="frame"):
-        await elevate("editor", _decision("admin"), at=BOUNDARY)
+        await elevate("editor", admin_decision, at=BOUNDARY)
 
 
 async def test_an_explicit_catalog_overrides_the_product_catalog() -> None:
     register_authz_product(Product())
     narrower = RoleCatalog((WRITE, MANAGE), (Role("admin", (WRITE,)),))
+    admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):
         with pytest.raises(PermissionError):
-            await elevate("editor", _decision("admin"), at=BOUNDARY, catalog=narrower)
+            await elevate("editor", admin_decision, at=BOUNDARY, catalog=narrower)
