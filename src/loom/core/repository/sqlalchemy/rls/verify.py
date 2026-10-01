@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -20,14 +21,17 @@ from sqlalchemy.pool import NullPool
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable
-from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.config import (
+    BYPASS_VERSION_PRIVILEGES,
+    VERSION_TABLE,
+    BootstrapConfig,
+)
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
 
 Acl = dict[str, dict[str, set[str]]]
 WRITES = frozenset({Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE})
-VERSION_TABLE = "alembic_version"
 
 _RELATION_ACL = text(
     "SELECT c.relname, c.relkind, coalesce(r.rolname, 'PUBLIC') AS grantee, a.privilege_type "
@@ -157,8 +161,12 @@ def _bypass_privileges(acl: Acl, bootstrap: BootstrapConfig) -> list[Finding]:
     for relname, grants in acl.items():
         for user in bypass:
             actual = grants.get(user, set())
-            if relname == VERSION_TABLE and actual:
-                findings.append(_diff(relname, "bypass.alembic_version", user, set(), actual))
+            if relname == VERSION_TABLE and actual != BYPASS_VERSION_PRIVILEGES:
+                findings.append(
+                    _diff(
+                        relname, "bypass.alembic_version", user, BYPASS_VERSION_PRIVILEGES, actual
+                    )
+                )
             elif relname != VERSION_TABLE and _is_table(relname, acl) and not four <= actual:
                 findings.append(_diff(relname, "bypass.privileges", user, four, actual))
     return findings
@@ -247,6 +255,6 @@ def _is_table(relname: str, acl: Acl) -> bool:
 
 
 def _diff(
-    table: str | None, check: str, subject: str, wanted: set[str], actual: set[str]
+    table: str | None, check: str, subject: str, wanted: AbstractSet[str], actual: AbstractSet[str]
 ) -> Finding:
     return Finding(table, check, f"{subject}: {sorted(wanted)}", f"{subject}: {sorted(actual)}")

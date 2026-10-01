@@ -336,8 +336,73 @@ async def test_check_passes_at_head_and_reports_column_and_registry_drift(
 
     await _execute(
         database.superuser,
-        "DELETE FROM loom_guard_notes_check.scoped_table "
-        "WHERE rel = 'notes_check.note_items'::regclass",
+        "DROP EVENT TRIGGER loom_guard_notes_check_ddl",
+        "DROP EVENT TRIGGER loom_guard_notes_check_drop",
     )
-    with pytest.raises(ConfigError, match="guard assertion failed"):
-        await asyncio.to_thread(check, config, trees.application)
+
+
+_FAILING_REVISION = '''"""A first revision that fails after Alembic created its version table."""
+
+from alembic import op
+
+revision = "f0001"
+down_revision = None
+
+
+def upgrade() -> None:
+    op.execute("SELECT 1/0")
+
+
+def downgrade() -> None:
+    pass
+'''
+
+
+async def test_verify_is_clean_after_an_upgrade(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    from loom.core.repository.sqlalchemy.rls import verify
+
+    database = await scoped_database("notes_verified")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_verified")
+
+    report = await verify(database.superuser, trees.application)
+
+    assert report.ok, report.findings
+
+
+async def test_a_failed_first_revision_leaves_the_bypass_read_only_on_the_version_table(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_failed")
+    application = application_for(notes, database, tmp_path, schema="notes_failed")
+    trees = Trees(tmp_path, application)
+    trees.write_revision(trees.structural, "f0001_fails", _FAILING_REVISION)
+    config = trees.config(trees.structural, database.migrator)
+
+    with pytest.raises(Exception, match="division by zero"):
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+    privileges = (
+        "SELECT string_agg(a.privilege_type, ',' ORDER BY a.privilege_type) "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, "
+        "LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid = a.grantee "
+        "WHERE n.nspname = 'notes_failed' AND c.relname = 'alembic_version' "
+        "AND r.rolname = 'notes_failed_ops'"
+    )
+    assert await _scalar(database.superuser, privileges) == "SELECT"
+
+
+async def test_check_does_not_write_to_the_database(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_readonly")
+    application = application_for(notes, database, tmp_path, schema="notes_readonly")
+    trees = Trees(tmp_path, application)
+    config = trees.config(trees.structural, database.migrator)
+
+    with pytest.raises(ConfigError):
+        await asyncio.to_thread(check, config, application)
+
+    tables = "SELECT count(*) FROM pg_tables WHERE schemaname = 'notes_readonly'"
+    assert await _scalar(database.superuser, tables) == 0

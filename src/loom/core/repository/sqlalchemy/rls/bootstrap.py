@@ -20,7 +20,12 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.backend.scoped_ddl import sql_identifier
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseUser
+from loom.core.repository.sqlalchemy.rls.config import (
+    BYPASS_VERSION_PRIVILEGES,
+    VERSION_TABLE,
+    BootstrapConfig,
+    DatabaseUser,
+)
 
 MIN_SERVER_VERSION_NUM = 140000
 SCRAM_ITERATIONS = 4096
@@ -171,7 +176,13 @@ def _bypass_statements(config: BootstrapConfig, bypass: list[str]) -> str:
             f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {config.schema} "
             f"TO {user};",
             f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA {config.schema} TO {user};",
-            f"DO $$ BEGIN IF to_regclass('{config.schema}.alembic_version') IS NOT NULL THEN "
-            f"REVOKE ALL ON TABLE {config.schema}.alembic_version FROM {user}; END IF; END $$;",
+            f"DO $$ BEGIN IF to_regclass('{config.schema}.{VERSION_TABLE}') IS NOT NULL THEN "
+            f"REVOKE ALL ON TABLE {config.schema}.{VERSION_TABLE} FROM {user}; "
+            f"GRANT {_version_privileges()} ON TABLE {config.schema}.{VERSION_TABLE} TO {user}; "
+            f"END IF; END $$;",
         ]
     return "\n".join(lines)
+
+
+def _version_privileges() -> str:
+    return ", ".join(sorted(BYPASS_VERSION_PRIVILEGES))

@@ -10,6 +10,10 @@ from loom.core.backend.scoped_ddl import schema_identifier, sql_identifier
 
 Access = Literal["read", "write", "bypass"]
 
+VERSION_TABLE = "alembic_version"
+DATA_VERSION_TABLE = "alembic_version_data"
+BYPASS_VERSION_PRIVILEGES = frozenset({"SELECT"})
+
 
 @dataclass(frozen=True, slots=True)
 class DatabaseRoles:
