@@ -65,18 +65,29 @@ def scoped_session_settings(
     if missing:
         raise ConfigError(f"database.schema.scopes is missing bindings for {missing}")
     validate_bindings({scope: scope_sources[scope] for scope in scopes})
+    return _ScopedProvider(scopes, scope_sources, product)
 
-    def provide() -> Mapping[str, str]:
+
+class _ScopedProvider:
+    def __init__(
+        self,
+        scopes: Mapping[str, bool],
+        scope_sources: Mapping[str, str],
+        product: SessionSettings | None,
+    ) -> None:
+        self._scopes = dict(scopes)
+        self._sources = dict(scope_sources)
+        self._product = product
+
+    def __call__(self) -> Mapping[str, str]:
         active = elevated_scopes()
-        settings = dict(_product_settings(product))
-        for scope, elevable in scopes.items():
-            value = resolve_binding(scope_sources[scope])
+        settings = dict(_product_settings(self._product))
+        for scope, elevable in self._scopes.items():
+            value = resolve_binding(self._sources[scope])
             settings[scope_setting(scope)] = "" if value is None else str(value)
             if elevable:
                 settings[elevation_setting(scope)] = "on" if scope in active else ""
         return settings
-
-    return provide
 
 
 class DeferredScopedSettings:

@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
 DATA_TREE = "data"
 STRUCTURAL_TREE = "structural"
-STRUCTURAL_VERSION_TABLE = VERSION_TABLE
 READ_ONLY = "loom.read_only"
 GUARD_SQLSTATE = "LG002"
 _TIMEOUT = re.compile(r"^\d+(ms|s|min)?$")
@@ -97,7 +96,7 @@ def run_migrations(
             target_metadata=application.metadata,
             transaction_per_migration=True,
             compare_type=True,
-            version_table=STRUCTURAL_VERSION_TABLE,
+            version_table=VERSION_TABLE,
             version_table_schema=schema,
             include_object=include_object,
             process_revision_directives=scope_protection_hook(application),
@@ -239,7 +238,7 @@ def _require_bypass(connection: Connection, application: Application) -> None:
         text("SELECT current_user, rolbypassrls FROM pg_roles WHERE rolname = current_user")
     ).one()
     users = application.bootstrap.database_users if application.bootstrap else {}
-    declared = users.get(user)
+    declared = users.get(str(user))
     if not bypass or declared is None or declared.access != "bypass":
         raise ConfigError(
             f"data migrations run as a declared bypass user; {user!r} is not one: "
@@ -254,13 +253,11 @@ def _require_structural_head(connection: Connection, config: Config, schema: str
     heads = set(ScriptDirectory.from_config(structural).get_heads())
     applied = {
         row[0]
-        for row in connection.execute(
-            text(f'SELECT version_num FROM "{schema}".{STRUCTURAL_VERSION_TABLE}')
-        )
+        for row in connection.execute(text(f'SELECT version_num FROM "{schema}".{VERSION_TABLE}'))
     }
     if heads != applied:
         raise ConfigError(
-            f"the structural tree must be at head before data migrations: "
+            "the structural tree must be at head before data migrations: "
             f"heads {sorted(heads)}, applied {sorted(applied)}"
         )
 
@@ -303,21 +300,19 @@ def _assertion_for(schema: str) -> Any:
 
 def _prepare_version_tables(connection: Connection, bootstrap: BootstrapConfig) -> None:
     """Create both version tables and fix the bypass users' read-only access before any revision."""
-    for table in (STRUCTURAL_VERSION_TABLE, DATA_VERSION_TABLE):
+    for table in (VERSION_TABLE, DATA_VERSION_TABLE):
         connection.execute(
             text(
                 f"CREATE TABLE IF NOT EXISTS {bootstrap.schema}.{table} "
-                f"(version_num VARCHAR(32) NOT NULL, "
+                "(version_num VARCHAR(32) NOT NULL, "
                 f"CONSTRAINT {table}_pkc PRIMARY KEY (version_num))"
             )
         )
     privileges = ", ".join(sorted(BYPASS_VERSION_PRIVILEGES))
     for user in bootstrap.bypass_users:
+        connection.execute(text(f"REVOKE ALL ON {bootstrap.schema}.{VERSION_TABLE} FROM {user}"))
         connection.execute(
-            text(f"REVOKE ALL ON {bootstrap.schema}.{STRUCTURAL_VERSION_TABLE} FROM {user}")
-        )
-        connection.execute(
-            text(f"GRANT {privileges} ON {bootstrap.schema}.{STRUCTURAL_VERSION_TABLE} TO {user}")
+            text(f"GRANT {privileges} ON {bootstrap.schema}.{VERSION_TABLE} TO {user}")
         )
 
 
@@ -331,6 +326,6 @@ def include_object(
     """
     if type_ != "table":
         return True
-    if name in {STRUCTURAL_VERSION_TABLE, DATA_VERSION_TABLE}:
+    if name in {VERSION_TABLE, DATA_VERSION_TABLE}:
         return False
     return not (reflected and compare_to is None)

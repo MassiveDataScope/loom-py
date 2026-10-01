@@ -16,7 +16,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar, get_args
 
 import msgspec
 
@@ -36,7 +36,6 @@ CONFIG_ENV_VAR = "LOOM_CONFIG"
 SchemaMode = Literal["create_all", "external"]
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
-_ACCESS = ("read", "write", "bypass")
 _T = TypeVar("_T")
 
 
@@ -193,14 +192,16 @@ def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
 
 
 def _database_user(user: str, section: _UserSection) -> DatabaseUser:
-    from loom.core.repository.sqlalchemy.rls.config import DatabaseUser
+    from loom.core.repository.sqlalchemy.rls.config import Access, DatabaseUser
 
-    if section.access not in _ACCESS:
+    choices: tuple[Access, ...] = get_args(Access)
+    access: Access | None = next((c for c in choices if c == section.access), None)
+    if access is None:
         raise ConfigError(
             f"database.schema.database_users.{user}.access {section.access!r} "
-            f"is not one of {', '.join(_ACCESS)}"
+            f"is not one of {', '.join(choices)}"
         )
-    return DatabaseUser(login=section.login, access=section.access)  # type: ignore[arg-type]
+    return DatabaseUser(login=section.login, access=access)
 
 
 def _scope_sources(

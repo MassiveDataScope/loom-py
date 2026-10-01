@@ -146,14 +146,19 @@ def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed()
 
 
 def test_external_mode_wires_the_scoped_provider_and_the_elevation_sink() -> None:
+    from loom.core.authz.elevation import ElevationSink
+    from loom.core.di.container import LoomContainer
     from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 
     external = _wiring("postgresql+asyncpg://app:secret@localhost/app", Plain, mode="external")
     create_all = _wiring("sqlite+aiosqlite://", Plain)
+    external_container, create_all_container = LoomContainer(), LoomContainer()
+    external.repo_registration_module(external_container)
+    create_all.repo_registration_module(create_all_container)
 
-    assert isinstance(external.elevation_sink, SQLAlchemyElevationSink)
+    assert isinstance(external_container.resolve(ElevationSink), SQLAlchemyElevationSink)
     assert external.uow_factory._session_manager.has_session_settings
-    assert create_all.elevation_sink is None
+    assert not create_all_container.is_registered(ElevationSink)
     assert not create_all.uow_factory._session_manager.has_session_settings
 
 
@@ -171,14 +176,21 @@ async def test_external_mode_validates_scope_bindings_at_startup() -> None:
             pass
 
 
-def test_create_kernel_hands_the_elevation_sink_to_the_executor() -> None:
+def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> None:
+    from loom.core.authz.elevation import ElevationSink
     from loom.core.bootstrap.kernel import create_kernel
+    from loom.core.di.container import LoomContainer
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 
     sink = SQLAlchemyElevationSink()
     config = msgspec.convert({"url": "sqlite+aiosqlite://"}, _DatabaseConfig)
 
-    runtime = create_kernel(config=config, use_cases=[], modules=[], elevation_sink=sink)
+    def register(container: LoomContainer) -> None:
+        container.register_instance(ElevationSink, sink)
 
-    assert runtime.container.resolve(RuntimeExecutor)._elevation_sink is sink
+    with_sink = create_kernel(config=config, use_cases=[], modules=[register])
+    without_sink = create_kernel(config=config, use_cases=[], modules=[])
+
+    assert with_sink.container.resolve(RuntimeExecutor)._elevation_sink is sink
+    assert without_sink.container.resolve(RuntimeExecutor)._elevation_sink is None

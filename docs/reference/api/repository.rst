@@ -17,6 +17,8 @@ SQLAlchemy adapter
    :toctree: generated
 
    loom.core.repository.sqlalchemy
+   loom.core.repository.sqlalchemy.rls
+   loom.core.repository.sqlalchemy.migrations
 
 Cache layer
 -----------

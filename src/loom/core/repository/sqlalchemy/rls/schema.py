@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from loom.core.backend.scoped_ddl import check_dialect, missing_event_triggers_statement
+from loom.core.backend.scoped_ddl import (
+    assert_statement,
+    check_dialect,
+    guard_name,
+    missing_event_triggers_statement,
+)
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -42,9 +47,7 @@ async def create_schema(migrator_url: str, application: Application) -> None:
                 await _require_guard(connection, schema.name)
             await connection.run_sync(application.metadata.create_all)
             if application.scoped and schema.name is not None:
-                await connection.execute(
-                    text(f"SELECT loom_guard_{schema.name}.assert_scoped_schema()")
-                )
+                await connection.execute(text(assert_statement(schema.name)))
     finally:
         await manager.dispose()
 
@@ -56,7 +59,7 @@ async def _require_guard(connection: AsyncConnection, schema: str) -> None:
             f"the migrator lands in schema {current!r}, not {schema!r}: run apply_bootstrap "
             "(loom schema bootstrap) so its search_path points at the application schema"
         )
-    guard = f"loom_guard_{schema}.{PROTECT_SIGNATURE}"
+    guard = f"{guard_name(schema)}.{PROTECT_SIGNATURE}"
     found = (
         await connection.execute(text("SELECT to_regprocedure(:guard)"), {"guard": guard})
     ).scalar()
@@ -64,7 +67,8 @@ async def _require_guard(connection: AsyncConnection, schema: str) -> None:
         raise ConfigError(
             f"schema {schema!r} has no guard: run apply_bootstrap (loom schema bootstrap) first"
         )
-    missing = (await connection.execute(text(missing_event_triggers_statement(schema)))).scalars()
+    result = await connection.execute(text(missing_event_triggers_statement(schema)))
+    missing = [str(row[0]) for row in result]
     names = sorted(missing)
     if names:
         raise ConfigError(

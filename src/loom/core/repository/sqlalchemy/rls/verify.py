@@ -98,7 +98,9 @@ async def verify(url: str, application: Application) -> Report:
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
             findings += _bypass_privileges(acl, sequences, bootstrap)
             findings += _global_privileges(acl, application, bootstrap.schema)
-            findings += await _c9(connection, acl, application.scoped, bootstrap.schema)
+            findings += await _global_parent_findings(
+                connection, acl, application.scoped, bootstrap.schema
+            )
             findings += await _memberships(connection, bootstrap)
     finally:
         await engine.dispose()
@@ -106,7 +108,8 @@ async def verify(url: str, application: Application) -> Report:
 
 
 async def _event_triggers(connection: AsyncConnection, schema: str) -> list[Finding]:
-    missing = (await connection.execute(text(missing_event_triggers_statement(schema)))).scalars()
+    result = await connection.execute(text(missing_event_triggers_statement(schema)))
+    missing = [str(row[0]) for row in result]
     return [
         Finding(None, "guard.event_triggers", f"{name}: enabled", f"{name}: missing or disabled")
         for name in sorted(missing)
@@ -205,7 +208,7 @@ def _global_privileges(acl: Acl, application: Application, schema: str) -> list[
     return findings
 
 
-async def _c9(
+async def _global_parent_findings(
     connection: AsyncConnection,
     acl: Acl,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
@@ -216,16 +219,26 @@ async def _c9(
     findings: list[Finding] = []
     for row in await connection.execute(_FOREIGN_KEYS, {"schema": schema}):
         child, parent = str(row.child), str(row.parent)
-        if child not in scoped_names or parent in scoped_names:
-            continue
-        for action in (str(row.on_delete), str(row.on_update)):
-            if action not in ("r", "a"):
-                findings.append(Finding(child, "c9.action", "RESTRICT or NO ACTION", action))
-        writes = {g: acl[parent].get(g, set()) & {"UPDATE", "DELETE"} for g in groups}
-        for group, held in writes.items():
-            if held:
-                findings.append(_diff(parent, "c9.group_write", group, set(), held))
+        if child in scoped_names and parent not in scoped_names:
+            findings.extend(_action_findings(child, (str(row.on_delete), str(row.on_update))))
+            findings.extend(_parent_write_findings(parent, acl, groups))
     return findings
+
+
+def _action_findings(child: str, actions: tuple[str, str]) -> list[Finding]:
+    return [
+        Finding(child, "c9.action", "RESTRICT or NO ACTION", action)
+        for action in actions
+        if action not in ("r", "a")
+    ]
+
+
+def _parent_write_findings(parent: str, acl: Acl, groups: tuple[str, str]) -> list[Finding]:
+    return [
+        _diff(parent, "c9.group_write", group, set(), held)
+        for group in groups
+        if (held := acl[parent].get(group, set()) & {"UPDATE", "DELETE"})
+    ]
 
 
 async def _memberships(connection: AsyncConnection, bootstrap: BootstrapConfig) -> list[Finding]:

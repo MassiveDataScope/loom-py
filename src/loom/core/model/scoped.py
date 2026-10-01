@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, Literal
+from typing import ClassVar
 
+from loom.core.model.field import Reach
 from loom.core.model.privilege import READ_WRITE, Privilege
-
-Reach = Literal["read", "write", "both"]
 
 
 class RowScoped:

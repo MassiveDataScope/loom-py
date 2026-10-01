@@ -284,27 +284,40 @@ def _foreign_key_constraints(
     for name, info in fields.items():
         if info.field.foreign_key is None:
             continue
-        target_table, _, ref = info.field.foreign_key.rpartition(".")
-        target = _target_model(target_table, models_by_table, comp)
-        if target is None:
-            if boundary is not None:
-                raise ValueError(
-                    f"{get_table_name(struct_cls)}.{name} references {target_table}, which is "
-                    "not compiled with it; compile both models together so C6, C7 and C9 apply"
-                )
-            continue
-        target_boundary = next((s for s in scope_columns(target) if s.is_boundary), None)
-        if boundary is None:
-            _check_c7(struct_cls, target_table, target_boundary)
-            continue
-        if target_boundary is None:
-            _check_c9(struct_cls, info.field.on_delete, target)
-            continue
-        constraints.append(
-            _composite_fk(struct_cls, name, info.field, boundary, target, target_boundary, ref)
+        constraint = _constraint_for_field(
+            struct_cls, name, info.field, boundary, models_by_table, comp
         )
-        composite.add(name)
+        if constraint is not None:
+            constraints.append(constraint)
+            composite.add(name)
     return constraints, composite
+
+
+def _constraint_for_field(
+    struct_cls: type,
+    name: str,
+    field: Field,
+    boundary: ScopeColumn | None,
+    models_by_table: Mapping[str, type],
+    comp: _Compilation,
+) -> Any | None:
+    target_table, _, ref = (field.foreign_key or "").rpartition(".")
+    target = _target_model(target_table, models_by_table, comp)
+    if target is None:
+        if boundary is not None:
+            raise ValueError(
+                f"{get_table_name(struct_cls)}.{name} references {target_table}, which is "
+                "not compiled with it; compile both models together so C6, C7 and C9 apply"
+            )
+        return None
+    target_boundary = next((s for s in scope_columns(target) if s.is_boundary), None)
+    if boundary is None:
+        _check_c7(struct_cls, target_table, target_boundary)
+        return None
+    if target_boundary is None:
+        _check_c9(struct_cls, field.on_delete, target)
+        return None
+    return _composite_fk(struct_cls, name, field, boundary, target, target_boundary, ref)
 
 
 def _check_c7(struct_cls: type, target_table: str, target_boundary: ScopeColumn | None) -> None:

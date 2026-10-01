@@ -43,7 +43,7 @@ class _Frame:
     sink: ElevationSink | None
     parent: _Frame | None
     scopes: set[str] = field(default_factory=set)
-    open: bool = True
+    is_open: bool = True
 
 
 _elevation: ContextVar[_Frame | None] = ContextVar("_elevation", default=None)
@@ -66,9 +66,10 @@ async def elevation_scope(
 ) -> AsyncIterator[None]:
     """Open a frame for one execution; nested frames inherit and never mutate their parent."""
     parent = _open_frame()
+    inherited = parent.sink if parent is not None else None
     frame = _Frame(
         owns_transaction=owns_transaction,
-        sink=sink if sink is not None else (parent.sink if parent else None),
+        sink=sink or inherited,
         parent=parent,
         scopes=set(parent.scopes) if parent else set(),
     )
@@ -79,7 +80,7 @@ async def elevation_scope(
         try:
             await _clear_added(frame)
         finally:
-            frame.open = False
+            frame.is_open = False
             _elevation.reset(token)
 
 
@@ -147,4 +148,4 @@ async def _clear_added(frame: _Frame) -> None:
 
 def _open_frame() -> _Frame | None:
     frame = _elevation.get()
-    return frame if frame is not None and frame.open else None
+    return frame if frame is not None and frame.is_open else None

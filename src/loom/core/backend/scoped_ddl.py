@@ -10,15 +10,18 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
+from typing import get_args
 
 from sqlalchemy import DDL, Table, event
 from sqlalchemy.dialects.postgresql.base import RESERVED_WORDS
 
 from loom.core.config import ConfigError
+from loom.core.model.field import Reach
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
 
 SCHEMA_KEY = "loom.schema"
+POSTGRES_DIALECT = "postgresql"
 _REGISTERED = "loom.scoped_ddl"
 MAX_IDENTIFIER_LENGTH = 63
 MAX_SCHEMA_LENGTH = 47
@@ -29,14 +32,20 @@ _ORDER = (Privilege.SELECT, Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE
 
 def hatch_statement(schema: str) -> str:
     """Open the guard's transaction-local hatch so the table can be created before protection."""
-    guard = _guard(schema)
+    guard = guard_name(schema)
     return f"SELECT set_config('{guard}.protecting', 'on', true)"
 
 
 def protect_statement(schema: str, table: str, scoped: ScopedTable) -> str:
     """Call the guard's protection with the qualified table, its scopes and its privileges."""
-    guard = _guard(schema)
-    _identifier(table)
+    guard = guard_name(schema)
+    sql_identifier(table)
+    for scope in scoped.scopes:
+        sql_identifier(scope.column)
+        if scope.on not in get_args(Reach):
+            raise ValueError(
+                f"scope {scope.scope!r} has reach {scope.on!r}; expected one of {get_args(Reach)}"
+            )
     scopes = json.dumps(
         [
             {"col": s.column, "scope": s.scope, "on": s.on, "elevable": s.elevable}
@@ -51,8 +60,8 @@ def protect_statement(schema: str, table: str, scoped: ScopedTable) -> str:
 
 def unprotect_statement(schema: str, table: str) -> str:
     """Call the guard's unprotection for the qualified table."""
-    guard = _guard(schema)
-    _identifier(table)
+    guard = guard_name(schema)
+    sql_identifier(table)
     return f"SELECT {guard}.unprotect_scoped_table('{schema}.{table}')"
 
 
@@ -64,8 +73,8 @@ def grant_statements(
     serial_columns: Sequence[str] = (),
 ) -> list[str]:
     """Plain grants for an unscoped table, one per group, plus sequence usage for inserters."""
-    _identifier(schema)
-    _identifier(table)
+    schema_identifier(schema)
+    sql_identifier(table)
     statements: list[str] = []
     for group in ("readers", "writers"):
         granted = privileges.get(group, frozenset())
@@ -76,7 +85,7 @@ def grant_statements(
         if Privilege.INSERT in granted:
             statements += [
                 "DO $$ BEGIN EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', "
-                f"pg_get_serial_sequence('{schema}.{table}', '{_identifier(column)}'), "
+                f"pg_get_serial_sequence('{schema}.{table}', '{sql_identifier(column)}'), "
                 f"'{schema}_{group}'); END $$"
                 for column in serial_columns
             ]
@@ -92,7 +101,7 @@ def check_dialect(
         ConfigError: When scoped tables exist on a non-Postgres dialect and the
             product did not opt in with ``allow_unprotected_dialect``.
     """
-    if dialect == "postgresql" or not scoped:
+    if dialect == POSTGRES_DIALECT or not scoped:
         return ()
     names = tuple(sorted(table.name for table in scoped.values()))
     if not allow_unprotected:
@@ -126,8 +135,7 @@ def register_listeners(
 
 
 def _listen(table: Table, when: str, statement: str) -> None:
-    ddl = DDL(statement)  # type: ignore[no-untyped-call]
-    event.listen(table, when, ddl.execute_if(dialect="postgresql"))
+    event.listen(table, when, DDL(statement).execute_if(dialect=POSTGRES_DIALECT))
 
 
 def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str:
@@ -178,14 +186,6 @@ def missing_event_triggers_statement(schema: str) -> str:
 def assert_statement(schema: str) -> str:
     """Call the guard's closing assertion of ``schema``."""
     return f"SELECT {guard_name(schema)}.assert_scoped_schema()"
-
-
-def _guard(schema: str) -> str:
-    return guard_name(schema)
-
-
-def _identifier(name: str) -> str:
-    return sql_identifier(name)
 
 
 def _privilege_list(privileges: frozenset[Privilege]) -> str:

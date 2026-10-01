@@ -370,10 +370,10 @@ standard SQLAlchemy backend:
   of `database.schema.scopes` against the scopes they declare;
 - validates the registered product's `elevations` with
   {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations`;
-- hands {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink` to the
-  executor through `PersistenceWiring.elevation_sink`.
+- registers {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink` in the
+  container as the `ElevationSink`, which the kernel hands to the executor.
 
-A kernel built by hand passes the sink as `create_kernel(elevation_sink=...)`. In
+A kernel built by hand registers an `ElevationSink` through one of its `modules`. In
 `create_all` mode, or on another dialect, the backend installs none of this.
 
 The provider never returns `None`. In every outer transaction it emits every declared

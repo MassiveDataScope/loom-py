@@ -44,10 +44,11 @@ def load_authz_product() -> AuthzProduct | None:
     """Return the registered product, else the one the ``loom.authz`` entry point names."""
     if _registered is not None:
         return _registered
-    for entry in entry_points(group=ENTRY_POINT_GROUP):
-        loaded: object = entry.load()
-        product = loaded() if callable(loaded) else loaded
-        if not isinstance(product, AuthzProduct):
-            raise TypeError(f"entry point {entry.name!r} does not provide an AuthzProduct")
-        return product
-    return None
+    entry = next(iter(entry_points(group=ENTRY_POINT_GROUP)), None)
+    if entry is None:
+        return None
+    loaded: object = entry.load()
+    product = loaded() if callable(loaded) else loaded
+    if not isinstance(product, AuthzProduct):
+        raise TypeError(f"entry point {entry.name!r} does not provide an AuthzProduct")
+    return product

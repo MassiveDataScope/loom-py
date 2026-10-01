@@ -364,9 +364,8 @@ lives:
 - elevating after a read in the same unit of work also flags the open transaction, through
   the executor's elevation sink,
   {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink`; the standard
-  SQLAlchemy backend provides it in `external` mode on Postgres through
-  `PersistenceWiring.elevation_sink`, and a kernel built by hand passes it as
-  `create_kernel(elevation_sink=...)`;
+  SQLAlchemy backend registers it in the container in `external` mode on Postgres, and a
+  kernel built by hand registers an `ElevationSink` through one of its `modules`;
 - a nested execution inherits its parent's elevations, never changes them, and clears
   on exit only what it added; when that clearing fails, the session is invalidated, so
   no flag outlives the execution that set it;

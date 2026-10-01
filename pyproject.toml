@@ -411,6 +411,12 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = [
+    "loom.core.backend.scoped_ddl",
+]
+disallow_untyped_calls = false
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = [

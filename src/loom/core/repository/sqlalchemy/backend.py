@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import ClassVar, Literal
 
@@ -11,10 +11,12 @@ import msgspec
 from sqlalchemy import inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from loom.core.authz.elevation import ElevationSink
 from loom.core.authz.product import load_authz_product
 from loom.core.backend.scoped_ddl import check_dialect
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring
@@ -79,15 +81,28 @@ class SQLAlchemyBackend:
         session_manager = _build_session_manager(db_cfg, settings)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
-            repo_registration_module=build_sqlalchemy_repository_registration_module(
-                session_manager, models
+            repo_registration_module=_with_elevation_sink(
+                build_sqlalchemy_repository_registration_module(session_manager, models),
+                enabled=settings is not None,
             ),
             lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema, settings),
             default_repository_type=RepositorySQLAlchemy,
             prepare_models=_prepare_models,
             readiness=lambda: _readiness(session_manager),
-            elevation_sink=SQLAlchemyElevationSink() if settings is not None else None,
         )
+
+
+def _with_elevation_sink(
+    module: Callable[[LoomContainer], None], *, enabled: bool
+) -> Callable[[LoomContainer], None]:
+    if not enabled:
+        return module
+
+    def register(container: LoomContainer) -> None:
+        module(container)
+        container.register_instance(ElevationSink, SQLAlchemyElevationSink())
+
+    return register
 
 
 def _build_session_manager(

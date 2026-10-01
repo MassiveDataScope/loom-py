@@ -126,7 +126,7 @@ class _Flattener:
         self._resolved: dict[str, frozenset[Permission]] = {}
         self._visiting: list[str] = []
 
-    def all(self) -> dict[str, frozenset[Permission]]:
+    def flatten(self) -> dict[str, frozenset[Permission]]:
         for name in self._specs:
             self._resolve(name)
         return self._resolved
@@ -161,14 +161,6 @@ class _Flattener:
         if permission not in self._declared:
             raise ValueError(f"Role {name!r} uses undeclared permission {permission}.")
         return self._declared[permission]
-
-
-def _flatten(
-    specs: Mapping[str, RoleSpec],
-    declared: Mapping[str, Permission],
-    bases: Mapping[str, frozenset[Permission]],
-) -> dict[str, frozenset[Permission]]:
-    return _Flattener(specs, declared, bases).all()
 
 
 def _check_extensions(
@@ -268,7 +260,7 @@ class RoleCatalog:
             ValueError: On a cycle, an unknown base or an undeclared permission.
         """
         declared = {permission.name: permission for permission in permissions}
-        flattened = _flatten(specs, declared, {})
+        flattened = _Flattener(specs, declared, {}).flatten()
         return cls(declared.values(), [Role(name, flattened[name]) for name in specs])
 
     @classmethod
@@ -305,7 +297,7 @@ class RoleCatalog:
         for name, spec in custom.items():
             _require_segment("custom role name", name)
             _check_extensions(name, spec, base_roles, rules)
-        flattened = _flatten(custom, declared, base_roles)
+        flattened = _Flattener(custom, declared, base_roles).flatten()
         customs = [
             _custom_role(name, flattened[name], rules, namespace, base_roles) for name in custom
         ]
