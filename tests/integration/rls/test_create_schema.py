@@ -49,8 +49,10 @@ async def test_create_schema_without_the_bootstrap_names_the_entry_point(
     database = await scoped_database("notes_boot")
     application = application_for(notes, database, tmp_path, schema="missing_guard")
 
-    with pytest.raises(ConfigError, match=r"apply_bootstrap|loom schema bootstrap"):
+    with pytest.raises(ConfigError, match="apply_bootstrap") as raised:
         await create_schema(database.migrator, application)
+
+    assert "loom schema bootstrap" not in str(raised.value)
 
 
 async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(

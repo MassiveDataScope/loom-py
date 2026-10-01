@@ -2,8 +2,10 @@
 
 The hook reads the compiled metadata only. For each table it emits one
 sequence under the guard's hatch: create then protect, unprotect then drop, or
-unprotect, change, protect when a scope column changes. The revision carries
-loom's guard operations, never SQL.
+unprotect, change, protect when a scope column changes. A downgrade never
+protects with the head scopes: it unprotects and stops on a
+``NotImplementedError`` the developer replaces with the target revision's
+protect. The revision carries loom's guard operations, never SQL.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.migrations.operations import (
     GrantTableOp,
+    HandWrittenProtectOp,
     OpenHatchOp,
     ProtectScopedTableOp,
     UnprotectScopedTableOp,
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
     from loom.core.locator import Application
 
 RevisionHook = Callable[[Any, Any, Sequence[ops.MigrationScript]], None]
+_Seal = Callable[[str], ops.MigrateOperation]
 _COLUMN_OPS = (ops.AlterColumnOp, ops.DropColumnOp)
 
 
@@ -37,9 +41,12 @@ def scope_protection_hook(application: Application) -> RevisionHook:
 
     def hook(_context: Any, _revision: Any, directives: Sequence[ops.MigrationScript]) -> None:
         for script in directives:
-            for container in (script.upgrade_ops, script.downgrade_ops):
-                if container is not None:
-                    container.ops[:] = rewriter.rewrite(container.ops)
+            if script.upgrade_ops is not None:
+                script.upgrade_ops.ops[:] = rewriter.rewrite(script.upgrade_ops.ops)
+            if script.downgrade_ops is not None:
+                script.downgrade_ops.ops[:] = rewriter.rewrite(
+                    script.downgrade_ops.ops, downgrade=True
+                )
 
     return hook
 
@@ -55,24 +62,27 @@ class _Rewriter:
             if not is_row_scoped(model) and declared_privileges(model)
         }
 
-    def rewrite(self, operations: Iterable[ops.MigrateOperation]) -> list[ops.MigrateOperation]:
+    def rewrite(
+        self, operations: Iterable[ops.MigrateOperation], *, downgrade: bool = False
+    ) -> list[ops.MigrateOperation]:
+        seal = self._hand_written if downgrade else self._protect
         rewritten: list[ops.MigrateOperation] = []
         for op in operations:
-            rewritten.extend(self._sequence_for(op))
+            rewritten.extend(self._sequence_for(op, seal))
         return rewritten
 
-    def _sequence_for(self, op: ops.MigrateOperation) -> list[ops.MigrateOperation]:
+    def _sequence_for(self, op: ops.MigrateOperation, seal: _Seal) -> list[ops.MigrateOperation]:
         if isinstance(op, ops.CreateTableOp):
-            return self._create(op)
+            return self._create(op, seal)
         if isinstance(op, ops.DropTableOp) and op.table_name in self._scoped:
             return [self._hatch(), self._unprotect(op.table_name), op]
         if isinstance(op, ops.ModifyTableOps) and self._touches_scope(op):
-            return [self._hatch(), self._unprotect(op.table_name), op, self._protect(op.table_name)]
+            return [self._hatch(), self._unprotect(op.table_name), op, seal(op.table_name)]
         return [op]
 
-    def _create(self, op: ops.CreateTableOp) -> list[ops.MigrateOperation]:
+    def _create(self, op: ops.CreateTableOp, seal: _Seal) -> list[ops.MigrateOperation]:
         if op.table_name in self._scoped:
-            return [self._hatch(), op, self._protect(op.table_name)]
+            return [self._hatch(), op, seal(op.table_name)]
         privileges = self._privileges.get(op.table_name)
         if privileges is None:
             return [op]
@@ -97,6 +107,9 @@ class _Rewriter:
         return ProtectScopedTableOp(
             table_name, scope_documents(scoped), privilege_names(scoped.privileges)
         )
+
+    def _hand_written(self, table_name: str) -> HandWrittenProtectOp:
+        return HandWrittenProtectOp(table_name)
 
     def _unprotect(self, table_name: str) -> UnprotectScopedTableOp:
         return UnprotectScopedTableOp(table_name)

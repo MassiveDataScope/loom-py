@@ -65,7 +65,7 @@ async def test_the_bootstrap_is_idempotent(
     assert await scalar(database.read, "SELECT 1") == 1
 
 
-async def test_an_existing_role_with_other_attributes_is_refused(
+async def test_an_existing_role_is_never_adopted(
     module_database_uri: str, created_roles: set[str]
 ) -> None:
     created_roles.add("guard_c_ro")
@@ -90,6 +90,21 @@ async def test_an_existing_role_with_other_attributes_is_refused(
         await apply_bootstrap(module_database_uri, bootstrap_config, passwords={})
 
     assert failure.value.sqlstate == "42501"
-    assert "different attributes" in str(failure.value)
+    assert "never adopts a role" in str(failure.value)
     guard = "SELECT to_regnamespace('loom_guard_guard_c')"
     assert await scalar(module_database_uri, guard) is None
+
+
+async def test_a_recorded_role_whose_attributes_changed_is_refused_on_rerun(
+    scoped_database: BootstrapFactory,
+) -> None:
+    database = await scoped_database("guard_d")
+    engine = create_async_engine(database.superuser, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER ROLE guard_d_ro BYPASSRLS"))
+    finally:
+        await engine.dispose()
+
+    with pytest.raises(asyncpg.InsufficientPrivilegeError, match="different attributes"):
+        await scoped_database("guard_d")

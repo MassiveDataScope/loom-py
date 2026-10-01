@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loom.core.model import BaseModel
 from loom.core.use_case.use_case import UseCase
-from loom.rest.model import RestInterface
+
+if TYPE_CHECKING:
+    from loom.rest.model import RestInterface
 
 AGENTS_ONLY_HINT = (
     "An application whose only content is agents uses app.discovery.mode: manifest "

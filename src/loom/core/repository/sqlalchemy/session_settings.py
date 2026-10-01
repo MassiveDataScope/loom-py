@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import TextClause, event, text
 from sqlalchemy.orm import Session
@@ -16,17 +16,28 @@ boundary value and the subject of the current request, and writes its Postgres
 policies against ``current_setting(key, true)``.
 """
 
-_KEY = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
-SET_SETTINGS = (
+_KEY: Final = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
+SET_SETTINGS: Final = (
     "SELECT set_config(s.key, s.value, true) FROM jsonb_each_text(CAST(:settings AS jsonb)) AS s"
 )
-_SET_SETTINGS = text(SET_SETTINGS)
+_SET_SETTINGS: Final = text(SET_SETTINGS)
 
 
 def settings_statement(
     values: Mapping[str, str] | None,
 ) -> tuple[TextClause, dict[str, str]] | None:
     """Build the one statement that sets *values* for the current transaction.
+
+    Returns:
+        :data:`SET_SETTINGS` as a clause with the parameters of
+        :func:`settings_parameters`, or ``None`` when there is nothing to set.
+    """
+    parameters = settings_parameters(values)
+    return None if parameters is None else (_SET_SETTINGS, parameters)
+
+
+def settings_parameters(values: Mapping[str, str] | None) -> dict[str, str] | None:
+    """The bound parameters of :data:`SET_SETTINGS` that set *values*.
 
     The statement is a constant; the keys and values travel as one bound JSON
     document. Keys are two or more identifiers joined by dots, such as
@@ -36,8 +47,7 @@ def settings_statement(
         values: The settings to apply, or ``None``.
 
     Returns:
-        The ``SELECT set_config(...)`` clause with its parameters, or ``None``
-        when there is nothing to set.
+        The one bound JSON document, or ``None`` when there is nothing to set.
 
     Raises:
         ValueError: If a key is not a dotted string of two or more identifiers.
@@ -54,7 +64,7 @@ def settings_statement(
             raise TypeError(
                 f"session setting value for {key!r} must be str, got {type(value).__name__}"
             )
-    return _SET_SETTINGS, {"settings": json.dumps(dict(values))}
+    return {"settings": json.dumps(dict(values))}
 
 
 def install_session_settings(session_class: type[Session], provider: SessionSettings) -> None:
@@ -75,9 +85,9 @@ def install_session_settings(session_class: type[Session], provider: SessionSett
         if transaction.nested:
             return
         try:
-            statement = settings_statement(provider())
-            if statement is not None:
-                connection.execute(*statement)
+            parameters = settings_parameters(provider())
+            if parameters is not None:
+                connection.execute(_SET_SETTINGS, parameters)
         except BaseException:
             connection.invalidate()
             raise

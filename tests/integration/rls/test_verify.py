@@ -139,6 +139,12 @@ REGISTERED_QUAL = (
             "migrator.inherit",
         ),
         (
+            "an undeclared member of readers",
+            ["CREATE ROLE notes_stranger NOLOGIN", "GRANT notes_readers TO notes_stranger"],
+            ["DROP ROLE notes_stranger"],
+            "membership.undeclared",
+        ),
+        (
             "owner member of a bypass role",
             ["GRANT notes_ops TO notes_owner"],
             ["REVOKE notes_ops FROM notes_owner"],
@@ -221,7 +227,11 @@ async def test_a_policy_drift_surfaces_as_an_assertion_finding(products, label, 
     database, application = products["notes"]
     async with _admin(database.superuser) as conn:
         registered = (await conn.execute(text(REGISTERED_QUAL))).scalar_one()
-    drift = f"BEGIN; {HATCH}; ALTER POLICY loom_select ON notes.notes {alteration}; COMMIT"
+    drift = (
+        "ALTER EVENT TRIGGER loom_guard_notes_ddl DISABLE; "
+        f"ALTER POLICY loom_select ON notes.notes {alteration}; "
+        "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE ALWAYS"
+    )
     restore = (
         f"BEGIN; {HATCH}; "
         f"ALTER POLICY loom_select ON notes.notes TO PUBLIC USING ({registered}); COMMIT"

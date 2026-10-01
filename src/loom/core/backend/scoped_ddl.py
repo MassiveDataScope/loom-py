@@ -3,6 +3,8 @@
 Every statement is a constant; the schema, table, scopes and privileges travel
 as bound parameters and Postgres quotes them. loom names nothing. The
 listeners fire only on Postgres, so another dialect creates plain tables.
+Inside ``create_schema`` each guard call resolves the guard first and then
+restores the application-first path the table DDL needs.
 """
 
 from __future__ import annotations
@@ -10,53 +12,61 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any, get_args
+from typing import Any, Final, get_args
 
-from sqlalchemy import Connection, Table, TextClause, event, text
-from sqlalchemy.dialects.postgresql.base import RESERVED_WORDS
+from sqlalchemy import Connection, Table, event, text
 
 from loom.core.config import ConfigError
 from loom.core.model.field import Reach
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
+from loom.core.schema_names import schema_identifier, sql_identifier
 
-SCHEMA_KEY = "loom.schema"
-POSTGRES_DIALECT = "postgresql"
-_REGISTERED = "loom.scoped_ddl"
-MAX_IDENTIFIER_LENGTH = 63
-MAX_SCHEMA_LENGTH = 47
-_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
-_SPECIAL_ROLES = frozenset({"public", "none", "current_role", "current_user", "session_user"})
-_ORDER = (Privilege.SELECT, Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE)
+SCHEMA_KEY: Final = "loom.schema"
+GUARD_PATH: Final = "loom.guard_path"
+POSTGRES_DIALECT: Final = "postgresql"
+_REGISTERED: Final = "loom.scoped_ddl"
+_TIMEOUT: Final = re.compile(r"^\d+(ms|s|min)?$")
+_ORDER: Final = (Privilege.SELECT, Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE)
 
-OPEN_HATCH = "SELECT open_hatch()"
-PROTECT = (
+OPEN_HATCH: Final = "SELECT open_hatch()"
+PROTECT: Final = (
     "SELECT protect_scoped_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
     "CAST(:scopes AS jsonb), CAST(:privileges AS text[]))"
 )
-UNPROTECT = (
+UNPROTECT: Final = (
     "SELECT unprotect_scoped_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)))"
 )
-GRANT_TABLE = (
+GRANT_TABLE: Final = (
     "SELECT grant_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
     "CAST(:readers AS text[]), CAST(:writers AS text[]))"
 )
-ASSERT_SCHEMA = "SELECT assert_scoped_schema()"
-ENTER_GUARD = "SELECT set_config('search_path', quote_ident(:guard) || ', pg_catalog', true)"
-MISSING_EVENT_TRIGGERS = (
+ASSERT_SCHEMA: Final = "SELECT assert_scoped_schema()"
+GUARD_FIRST: Final = (
+    "SELECT set_config('search_path', quote_ident(:guard) || ', pg_catalog, pg_temp', true)"
+)
+APP_FIRST: Final = (
+    "SELECT set_config('search_path', quote_ident(:schema) || ', ' || quote_ident(:guard), true)"
+)
+SCHEMA_LOCK: Final = "SELECT pg_advisory_xact_lock(hashtextextended('loom.schema:' || :schema, 0))"
+LOCK_TIMEOUT: Final = "SELECT set_config('lock_timeout', :lock, true)"
+MISSING_EVENT_TRIGGERS: Final = (
     "SELECT t.name FROM (VALUES (:guard || '_ddl', 'ddl_command_end', 'on_ddl_end'), "
     "(:guard || '_drop', 'sql_drop', 'on_sql_drop')) AS t(name, event, handler) "
-    "WHERE NOT EXISTS (SELECT 1 FROM pg_event_trigger e JOIN pg_roles o ON o.oid = e.evtowner "
+    "WHERE NOT EXISTS (SELECT 1 FROM pg_event_trigger e "
     "JOIN pg_proc p ON p.oid = e.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace "
     "WHERE e.evtname = t.name AND e.evtevent = t.event AND e.evtenabled = 'A' "
-    "AND e.evttags IS NULL AND o.rolsuper AND n.nspname = :guard AND p.proname = t.handler "
-    "AND p.pronargs = 0)"
+    "AND e.evttags IS NULL AND e.evtowner = n.nspowner AND n.nspname = :guard "
+    "AND p.proname = t.handler AND p.pronargs = 0)"
 )
 
 Parameters = dict[str, Any]
-_OPEN_HATCH = text(OPEN_HATCH)
-_PROTECT = text(PROTECT)
-_GRANT_TABLE = text(GRANT_TABLE)
+GuardCall = Callable[[Connection, Parameters], None]
+_OPEN_HATCH: Final = text(OPEN_HATCH)
+_PROTECT: Final = text(PROTECT)
+_GRANT_TABLE: Final = text(GRANT_TABLE)
+_GUARD_FIRST: Final = text(GUARD_FIRST)
+_APP_FIRST: Final = text(APP_FIRST)
 
 
 def scope_documents(scoped: ScopedTable) -> list[dict[str, Any]]:
@@ -103,6 +113,13 @@ def table_parameters(schema: str, table: str) -> Parameters:
     return {"schema": schema_identifier(schema), "table": sql_identifier(table)}
 
 
+def validate_timeout(value: str) -> str:
+    """Accept a Postgres duration literal such as ``5s``, ``250ms`` or ``2min``."""
+    if not _TIMEOUT.fullmatch(value):
+        raise ValueError(f"timeout must be a Postgres duration like '5s', got {value!r}")
+    return value
+
+
 def check_dialect(
     dialect: str, scoped: Mapping[tuple[str | None, str], ScopedTable], *, allow_unprotected: bool
 ) -> tuple[str, ...]:
@@ -135,50 +152,37 @@ def register_listeners(
         return
     table.info[_REGISTERED] = True
     if scoped is not None:
-        _listen(table, "before_create", _OPEN_HATCH, {})
-        _listen(table, "after_create", _PROTECT, protect_parameters(schema, table.name, scoped))
+        event.listen(table, "before_create", _postgres_only(_open_hatch, {}))
+        parameters = protect_parameters(schema, table.name, scoped)
+        event.listen(table, "after_create", _postgres_only(_protect, parameters))
         return
     if any(privileges.values()):
         parameters = grant_parameters(schema, table.name, privileges)
-        _listen(table, "after_create", _GRANT_TABLE, parameters)
+        event.listen(table, "after_create", _postgres_only(_grant_table, parameters))
 
 
-def _listen(table: Table, when: str, clause: TextClause, parameters: Parameters) -> None:
-    event.listen(table, when, _postgres_only(clause, parameters))
+def _open_hatch(connection: Connection, parameters: Parameters) -> None:
+    connection.execute(_OPEN_HATCH, parameters)
 
 
-def _postgres_only(clause: TextClause, parameters: Parameters) -> Callable[..., None]:
+def _protect(connection: Connection, parameters: Parameters) -> None:
+    connection.execute(_PROTECT, parameters)
+
+
+def _grant_table(connection: Connection, parameters: Parameters) -> None:
+    connection.execute(_GRANT_TABLE, parameters)
+
+
+def _postgres_only(call: GuardCall, parameters: Parameters) -> Callable[..., None]:
     def listener(_target: Table, connection: Connection, **_: Any) -> None:
-        if connection.dialect.name == POSTGRES_DIALECT:
-            connection.execute(clause, parameters)
+        if connection.dialect.name != POSTGRES_DIALECT:
+            return
+        path = connection.info.get(GUARD_PATH)
+        if path is None:
+            call(connection, parameters)
+            return
+        connection.execute(_GUARD_FIRST, path)
+        call(connection, parameters)
+        connection.execute(_APP_FIRST, path)
 
     return listener
-
-
-def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str:
-    """Return ``name`` when Postgres stores it exactly as written and resolves it to itself.
-
-    Lowercase letters, digits and ``_``; at most ``max_length`` characters so
-    Postgres never truncates it; not a reserved word, a special role name or a
-    ``pg_`` name.
-
-    Raises:
-        ValueError: Naming the offending identifier.
-    """
-    if (
-        not _IDENTIFIER.fullmatch(name)
-        or len(name) > max_length
-        or name in RESERVED_WORDS
-        or name in _SPECIAL_ROLES
-        or name.startswith("pg_")
-    ):
-        raise ValueError(
-            f"{name!r} is not a usable SQL identifier: lowercase letters, digits and '_', "
-            f"at most {max_length} characters, not a reserved word, special role or pg_ name"
-        )
-    return name
-
-
-def schema_identifier(name: str) -> str:
-    """Validate a scoped schema name; short enough that every guard object name fits."""
-    return sql_identifier(name, max_length=MAX_SCHEMA_LENGTH)

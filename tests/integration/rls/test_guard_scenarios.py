@@ -16,6 +16,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from asyncpg.transaction import Transaction
 from sqlalchemy.engine import make_url
 
 from loom.core.repository.sqlalchemy.rls import (
@@ -116,12 +117,21 @@ async def _run(
             for step in prelude:
                 await conn.execute(step)
             got = await _sqlstate(conn, statement)
-        finally:
-            if commit and got == "none":
-                await tx.commit()
-            else:
-                await tx.rollback()
+        except BaseException:
+            await tx.rollback()
+            raise
+        if commit and got == "none":
+            return await _committed(tx)
+        await tx.rollback()
         return got
+
+
+async def _committed(tx: Transaction) -> str:
+    try:
+        await tx.commit()
+    except asyncpg.PostgresError as exc:
+        return str(exc.sqlstate)
+    return "none"
 
 
 async def _truth(
@@ -155,6 +165,17 @@ def _owner_key(owner: str) -> str:
 
 def _hatch(schema: str) -> str:
     return f"SELECT loom_guard_{schema}.open_hatch()"
+
+
+def _unguarded(schema: str) -> list[str]:
+    return [f"ALTER EVENT TRIGGER loom_guard_{schema}_ddl DISABLE"]
+
+
+def _guarded_again(schema: str) -> str:
+    return f"ALTER EVENT TRIGGER loom_guard_{schema}_ddl ENABLE ALWAYS"
+
+
+GRANT_ON_NOTES = "GRANT SELECT ON notes.notes TO notes_readers"
 
 
 def _protect(schema: str, table: str, scopes: str, privileges: str) -> str:
@@ -669,8 +690,11 @@ class TestUnprotect:
             await _run(guarded, role="notes_owner", prelude=hatch, statement=unprotect, commit=True)
             == "none"
         )
-        check = f"{_count('notes.tmp_scoped')} = 0"
-        assert await _truth(guarded, role="notes_rw", prelude=[_owner_key(U1)], check=check)
+        read = "SELECT count(*) FROM notes.tmp_scoped"
+        assert (
+            await _run(guarded, role="notes_rw", prelude=[_owner_key(U1)], statement=read)
+            == "42501"
+        )
         drop = ["DROP TABLE notes.tmp_scoped"]
         assert (
             await _run(
@@ -722,12 +746,14 @@ class TestIncrementalDdlAndRepair:
         self, guarded: Guarded
     ) -> None:
         drift = "ALTER POLICY loom_select ON notes.child_late USING (true)"
-        assert (
-            await _run(
-                guarded, role="notes_owner", prelude=[_hatch("notes")], statement=drift, commit=True
-            )
-            == "none"
+        under_hatch = await _run(
+            guarded, role="notes_owner", prelude=[_hatch("notes")], statement=drift, commit=True
         )
+        assert under_hatch == "LG002"
+        assert await _run(guarded, prelude=_unguarded("notes"), statement=drift, commit=True) == (
+            "none"
+        )
+        await _run(guarded, statement=_guarded_again("notes"), commit=True)
         assert await _run(guarded, statement=ASSERT_NOTES) == "LG002"
         protect = _protect("notes", "notes.child_late", OWNER, RW)
         unprotect = "SELECT loom_guard_notes.unprotect_scoped_table('notes.child_late')"
@@ -864,18 +890,22 @@ class TestThreeProductsInOneDatabase:
         hatch = [_hatch("sites")]
         assert (
             await _run(guarded, role="sites_owner", prelude=hatch, statement=break_rls, commit=True)
-            == "none"
+            == "LG002"
         )
+        unguarded = _unguarded("sites")
+        assert await _run(guarded, prelude=unguarded, statement=break_rls, commit=True) == "none"
+        await _run(guarded, statement=_guarded_again("sites"), commit=True)
         try:
             assert (
                 await _run(guarded, statement="SELECT loom_guard_sites.assert_scoped_schema()")
                 == "LG002"
             )
             scratch = _scoped("notes.scratch_a")
-            assert await _run(guarded, role="notes_owner", statement=scratch) == "LG002"
+            assert await _run(guarded, role="notes_owner", statement=scratch) == "none"
+            assert await _run(guarded, role="notes_owner", statement=GRANT_ON_NOTES) == "LG002"
             assert (
                 await _run(guarded, role="notes_rw", statement="CREATE TEMP TABLE scratch2 (x int)")
-                == "LG002"
+                == "none"
             )
         finally:
             assert (
@@ -892,12 +922,13 @@ class TestThreeProductsInOneDatabase:
     async def test_x5_the_blocking_error_names_the_broken_schema(self, guarded: Guarded) -> None:
         async with guarded.connection() as conn:
             async with conn.transaction():
-                await conn.execute("SET LOCAL ROLE sites_owner")
-                await conn.execute(_hatch("sites"))
+                for statement in _unguarded("sites"):
+                    await conn.execute(statement)
                 await conn.execute("ALTER TABLE sites.site_readings NO FORCE ROW LEVEL SECURITY")
+                await conn.execute(_guarded_again("sites"))
             try:
                 with pytest.raises(asyncpg.PostgresError) as failure:
-                    await conn.execute("CREATE TEMP TABLE scratch3 (x int)")
+                    await conn.execute(GRANT_ON_NOTES)
                 assert failure.value.sqlstate == "LG002"
                 assert "loom_guard[sites]" in str(failure.value)
             finally:

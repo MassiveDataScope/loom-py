@@ -21,10 +21,7 @@ from loom.core.repository.sqlalchemy.rls.bootstrap import (
 )
 from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     GUARD_REVISIONS,
-    REQUIRED_GUARD_REVISION,
-    digest,
     pending_revisions,
-    preflight_sql,
 )
 
 SALT = b"0123456789abcdef"
@@ -46,22 +43,6 @@ def _config(**overrides: object) -> BootstrapConfig:
 
 def _names(**overrides: str) -> SchemaNames:
     return dataclasses.replace(SchemaNames.derived("s1"), **overrides)
-
-
-def test_derived_names_follow_the_convention() -> None:
-    assert SchemaNames.derived("notes") == SchemaNames(
-        guard="loom_guard_notes",
-        readers="notes_readers",
-        writers="notes_writers",
-        version_table="alembic_version",
-        data_version_table="alembic_version_data",
-    )
-
-
-@pytest.mark.parametrize("bad", ["my-schema", "1st", "Notes", "select", "s" * 48])
-def test_derived_names_reject_a_bad_schema(bad: str) -> None:
-    with pytest.raises(ValueError, match="identifier"):
-        SchemaNames.derived(bad)
 
 
 def test_a_valid_config_validates_to_itself() -> None:
@@ -171,10 +152,10 @@ def test_the_document_carries_every_declared_name() -> None:
 
     assert config.document() == {
         "app_schema": "s1",
-        "owner": "r_owner",
-        "migrator": "r_migrator",
-        "readers": "grp_r",
-        "writers": "grp_w",
+        "owner_role": "r_owner",
+        "migrator_role": "r_migrator",
+        "readers_role": "grp_r",
+        "writers_role": "grp_w",
         "users": [
             {"name": "u_read", "login": True, "access": "read"},
             {"name": "u_write", "login": True, "access": "write"},
@@ -191,10 +172,6 @@ def test_the_document_omits_the_guard_name_and_every_password() -> None:
 
     assert "loom_guard_s1" not in repr(document)
     assert "password" not in repr(document).lower()
-
-
-def test_public_is_revoked_by_default() -> None:
-    assert _config().document()["revoke_public"] is True
 
 
 def test_the_configuration_and_the_passwords_travel_as_bound_parameters() -> None:
@@ -241,26 +218,6 @@ def test_a_different_salt_or_password_yields_a_different_verifier() -> None:
     assert scram_sha256_verifier("other", salt=SALT) != base
 
 
-def test_every_released_revision_matches_its_digest() -> None:
-    for revision in GUARD_REVISIONS:
-        assert digest(revision.sql()) == revision.sha256
-
-
-def test_revisions_are_numbered_from_one_without_gaps() -> None:
-    numbers = [revision.number for revision in GUARD_REVISIONS]
-
-    assert numbers == list(range(1, len(numbers) + 1))
-    assert numbers[-1] == REQUIRED_GUARD_REVISION
-
-
-def test_the_guard_files_carry_no_template_placeholder() -> None:
-    texts = [preflight_sql(), *(revision.sql() for revision in GUARD_REVISIONS)]
-
-    for text in texts:
-        assert "{schema}" not in text.lower()
-        assert "{guard}" not in text.lower()
-
-
 def test_a_fresh_guard_needs_every_revision() -> None:
     assert pending_revisions({}) == GUARD_REVISIONS
 
@@ -273,7 +230,7 @@ def test_a_current_guard_needs_no_revision() -> None:
 
 def test_a_revision_this_release_does_not_know_is_refused() -> None:
     applied = {revision.number: revision.sha256 for revision in GUARD_REVISIONS}
-    applied[REQUIRED_GUARD_REVISION + 1] = "0" * 64
+    applied[GUARD_REVISIONS[-1].number + 1] = "0" * 64
 
     with pytest.raises(ConfigError, match="does not know"):
         pending_revisions(applied)

@@ -8,8 +8,9 @@ schema is the one the runner configured as the version table schema.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from typing import Any, Final, Protocol
 
 from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
@@ -17,7 +18,9 @@ from alembic.operations import MigrateOperation, Operations
 from sqlalchemy import text
 
 from loom.core.backend.scoped_ddl import (
+    APP_FIRST,
     GRANT_TABLE,
+    GUARD_FIRST,
     OPEN_HATCH,
     PROTECT,
     UNPROTECT,
@@ -26,10 +29,13 @@ from loom.core.backend.scoped_ddl import (
 from loom.core.config import ConfigError
 
 _IMPORT = "import loom.core.repository.sqlalchemy.migrations.operations"
-_OPEN_HATCH = text(OPEN_HATCH)
-_PROTECT = text(PROTECT)
-_UNPROTECT = text(UNPROTECT)
-_GRANT_TABLE = text(GRANT_TABLE)
+_OPEN_HATCH: Final = text(OPEN_HATCH)
+_PROTECT: Final = text(PROTECT)
+_UNPROTECT: Final = text(UNPROTECT)
+_GRANT_TABLE: Final = text(GRANT_TABLE)
+_GUARD_FIRST: Final = text(GUARD_FIRST)
+_APP_FIRST: Final = text(APP_FIRST)
+GUARD_OPTION: Final = "loom_guard"
 
 
 @Operations.register_operation("open_hatch")
@@ -120,37 +126,78 @@ class GrantTableOp(MigrateOperation):
         return ("grant_table", self.table)
 
 
-@Operations.implementation_for(OpenHatchOp)
-def _open_hatch(operations: Operations, _op: OpenHatchOp) -> None:
-    operations.get_bind().execute(_OPEN_HATCH)
+class HandWrittenProtectOp(MigrateOperation):
+    """Stop a downgrade where only the developer knows the scopes of the target revision."""
+
+    def __init__(self, table: str):
+        self.table = table
+
+    def message(self) -> str:
+        return (
+            f"the downgrade of {self.table!r} must re-protect it with the scopes of the target "
+            f"revision: replace this line with op.protect_scoped_table({self.table!r}, "
+            "<scopes>, <privileges>) written by hand"
+        )
+
+    def to_diff_tuple(self) -> tuple[str, str]:
+        return ("hand_written_protect", self.table)
 
 
-@Operations.implementation_for(ProtectScopedTableOp)
-def _protect(operations: Operations, op: ProtectScopedTableOp) -> None:
-    parameters = {
-        **_table(operations, op.table),
-        "scopes": json.dumps(op.scopes),
-        "privileges": op.privileges,
-    }
-    operations.get_bind().execute(_PROTECT, parameters)
+class _Bind(Protocol):
+    def execute(self, clause: Any, parameters: Any = ..., /) -> Any: ...
 
 
-@Operations.implementation_for(UnprotectScopedTableOp)
-def _unprotect(operations: Operations, op: UnprotectScopedTableOp) -> None:
-    operations.get_bind().execute(_UNPROTECT, _table(operations, op.table))
+class _Context(Protocol):
+    opts: dict[str, Any]
 
 
-@Operations.implementation_for(GrantTableOp)
-def _grant(operations: Operations, op: GrantTableOp) -> None:
-    parameters = {**_table(operations, op.table), "readers": op.readers, "writers": op.writers}
-    operations.get_bind().execute(_GRANT_TABLE, parameters)
+class GuardOperations(Protocol):
+    """The part of Alembic's ``Operations`` a guard operation needs."""
+
+    def get_bind(self) -> _Bind: ...
+
+    def get_context(self) -> _Context: ...
 
 
-def _table(operations: Operations, table: str) -> dict[str, Any]:
-    schema = operations.get_context().opts.get("version_table_schema")
-    if not schema:
+def run_guard_operation(operations: GuardOperations, op: MigrateOperation) -> None:
+    """Run one guard operation with the guard resolved before the application schema.
+
+    The guard name comes from ``run_migrations``; outside it the operation is
+    refused, so a revision can never reach a routine the application schema
+    shadows.
+    """
+    with _guard_first(operations) as (bind, schema):
+        if isinstance(op, ProtectScopedTableOp):
+            scopes = {"scopes": json.dumps(op.scopes), "privileges": op.privileges}
+            bind.execute(_PROTECT, {**table_parameters(schema, op.table), **scopes})
+        elif isinstance(op, UnprotectScopedTableOp):
+            bind.execute(_UNPROTECT, table_parameters(schema, op.table))
+        elif isinstance(op, GrantTableOp):
+            groups = {"readers": op.readers, "writers": op.writers}
+            bind.execute(_GRANT_TABLE, {**table_parameters(schema, op.table), **groups})
+        else:
+            bind.execute(_OPEN_HATCH)
+
+
+@contextmanager
+def _guard_first(operations: GuardOperations) -> Iterator[tuple[_Bind, str]]:
+    opts = operations.get_context().opts
+    schema, guard = opts.get("version_table_schema"), opts.get(GUARD_OPTION)
+    if not schema or not guard:
         raise ConfigError("guard operations run only through loom's run_migrations")
-    return table_parameters(str(schema), table)
+    path = {"schema": str(schema), "guard": str(guard)}
+    bind = operations.get_bind()
+    bind.execute(_GUARD_FIRST, path)
+    yield bind, str(schema)
+    bind.execute(_APP_FIRST, path)
+
+
+@Operations.implementation_for(OpenHatchOp)
+@Operations.implementation_for(ProtectScopedTableOp)
+@Operations.implementation_for(UnprotectScopedTableOp)
+@Operations.implementation_for(GrantTableOp)
+def _guard_operation(operations: Operations, op: MigrateOperation) -> None:
+    run_guard_operation(operations, op)
 
 
 @renderers.dispatch_for(OpenHatchOp)
@@ -175,3 +222,8 @@ def _render_unprotect(context: AutogenContext, op: UnprotectScopedTableOp) -> st
 def _render_grant(context: AutogenContext, op: GrantTableOp) -> str:
     context.imports.add(_IMPORT)
     return f"op.grant_table({op.table!r}, {op.readers!r}, {op.writers!r})"
+
+
+@renderers.dispatch_for(HandWrittenProtectOp)
+def _render_hand_written_protect(_context: AutogenContext, op: HandWrittenProtectOp) -> str:
+    return f"raise {NotImplementedError.__name__}({op.message()!r})"

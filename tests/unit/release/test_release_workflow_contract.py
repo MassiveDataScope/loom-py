@@ -89,8 +89,17 @@ class TestThePublishStaysHere:
 
     def test_it_does_not_publish_a_failed_release(self) -> None:
         job = self._publish_job()
-        assert job["needs"] == "release"
+        assert "release" in job["needs"]
         assert "needs.release.result == 'success'" in cast(str, job["if"])
+
+    def test_it_publishes_only_when_released_guard_revisions_are_unchanged(self) -> None:
+        job = self._publish_job()
+        guard = cast(dict[str, Any], cast(dict[str, Any], _workflow()["jobs"])["released-guard"])
+        commands = " ".join(str(step.get("run", "")) for step in guard["steps"])
+        assert "released-guard" in job["needs"]
+        assert "needs.released-guard.result == 'success'" in cast(str, job["if"])
+        assert "pip download --no-deps --only-binary=:all:" in commands
+        assert "check_released_guard.sh wheel" in commands
 
 
 class TestNothingElsePublishes:

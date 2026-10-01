@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import ClassVar, Literal
+from typing import ClassVar, Final, Literal
 
 import msgspec
 from sqlalchemy import inspect, make_url, text
@@ -28,12 +28,21 @@ from loom.core.repository.sqlalchemy.rls.elevate import (
     SQLAlchemyElevationSink,
     validate_elevations,
 )
-from loom.core.repository.sqlalchemy.rls.integrity import guard_problems
+from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 _logger = logging.getLogger(__name__)
+
+EXTERNAL: Final = "external"
+
+PROBE: Final = "SELECT 1"
+PRIVILEGED_ROLE: Final = (
+    "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
+)
+_PROBE: Final = text(PROBE)
+_PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
 
 
 class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
@@ -77,7 +86,7 @@ class SQLAlchemyBackend:
         postgres = make_url(db_cfg.url).get_backend_name() == POSTGRES_DIALECT
         settings = (
             DeferredScopedSettings(db_cfg.schema.scopes)
-            if db_cfg.schema.mode == "external" and postgres
+            if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
         session_manager = _build_session_manager(db_cfg, settings)
@@ -147,7 +156,7 @@ async def _readiness(session_manager: SessionManager) -> bool:
     """
     try:
         async with session_manager.session() as session:
-            await session.execute(text("SELECT 1"))
+            await session.execute(_PROBE)
     except Exception:
         _logger.warning("sqlalchemy readiness probe failed", exc_info=True)
         return False
@@ -168,7 +177,7 @@ def startup_checks(
             settings, when scoped tables exist on a non-Postgres dialect without
             the opt-out, or when ``create_all`` meets scoped tables on Postgres.
     """
-    if config.mode == "external":
+    if config.mode == EXTERNAL:
         return check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
     if has_session_settings:
         raise ConfigError(
@@ -208,7 +217,7 @@ async def _lifespan(
             "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)
         )
     async with session_manager.engine.begin() as connection:
-        if config.mode == "external":
+        if config.mode == EXTERNAL:
             await _check_external(connection, scoped, config.guard)
         else:
             await connection.run_sync(get_metadata().create_all)
@@ -234,48 +243,41 @@ async def _check_external(
     if connection.dialect.name == POSTGRES_DIALECT:
         await _reject_privileged_connection(connection)
         if scoped:
-            await _check_forced_rls(connection, scoped)
-            await _check_guard(connection, guard)
+            await _check_guard(connection, scoped, guard)
 
 
-async def _check_guard(connection: AsyncConnection, guard: str | None) -> None:
+async def _check_guard(
+    connection: AsyncConnection,
+    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    guard: str | None,
+) -> None:
+    """Check, as the application user, the guard and every scoped table's protection.
+
+    The guard's catalogue, owners, grants, function settings and event
+    triggers, and each scoped table's forced row-level security, canonical
+    permissive policies and owner trigger bound to this guard. The guard's
+    configuration row is not readable here; ``verify`` checks it.
+    """
     if guard is None:
         raise ConfigError(
             "database.schema.guard is required when a model is RowScoped: "
             "run `loom schema init <schema>` to write the derived names"
         )
-    problems = await guard_problems(connection, guard)
+    problems = await startup_problems(connection, guard, scoped)
     if problems:
         details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)
         raise ConfigError(
-            f"the guard {guard} in the database is not the one this release of loom ships: "
-            f"{details}"
+            f"the guard {guard} or the scoped tables differ from what this release of loom "
+            f"ships: {details}"
         )
 
 
 async def _reject_privileged_connection(connection: AsyncConnection) -> None:
-    role = text("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
-    if (await connection.execute(role)).scalar():
+    if (await connection.execute(_PRIVILEGED_ROLE)).scalar():
         raise ConfigError(
             "the application connects as a superuser or a bypass role, which ignores "
             "row-level security; use the URL of a read or write database user"
         )
-
-
-async def _check_forced_rls(
-    connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
-) -> None:
-    query = text(
-        "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
-        "WHERE relname = :name AND relnamespace = current_schema()::regnamespace"
-    )
-    unforced = [
-        table.name
-        for table in scoped.values()
-        if not (await connection.execute(query, {"name": table.name})).scalar()
-    ]
-    if unforced:
-        raise ConfigError(f"scoped tables without forced row-level security: {', '.join(unforced)}")
 
 
 __all__ = ["SQLAlchemyBackend"]

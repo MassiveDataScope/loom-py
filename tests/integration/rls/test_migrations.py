@@ -17,10 +17,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
 from loom.core.locator import CONFIG_ENV_VAR, Application
 from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH, alembic_config, check
+from loom.core.repository.sqlalchemy.rls import integrity
 from tests.integration.agnosticism import notes, sites
 from tests.integration.rls.conftest import (
     BootstrapFactory,
@@ -398,3 +400,45 @@ async def test_check_does_not_write_to_the_database(
 
     tables = "SELECT count(*) FROM pg_tables WHERE schemaname = 'notes_readonly'"
     assert await scalar(database.superuser, tables) == 0
+
+
+async def test_a_shadowing_assertion_in_the_application_schema_never_closes_a_revision(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_shadow")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_shadow")
+    await execute(
+        database.superuser,
+        "ALTER EVENT TRIGGER loom_guard_notes_shadow_ddl DISABLE",
+        "SET ROLE notes_shadow_owner",
+        "CREATE FUNCTION notes_shadow.assert_scoped_schema() RETURNS void "
+        "LANGUAGE sql AS $$ SELECT $$",
+        "RESET ROLE",
+        "ALTER EVENT TRIGGER loom_guard_notes_shadow_ddl ENABLE ALWAYS",
+    )
+    config = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(command.revision, config, "noop")
+
+    try:
+        with pytest.raises(DBAPIError, match="collide"):
+            await asyncio.to_thread(command.upgrade, config, "head")
+    finally:
+        await execute(
+            database.superuser,
+            "DROP EVENT TRIGGER loom_guard_notes_shadow_ddl",
+            "DROP EVENT TRIGGER loom_guard_notes_shadow_drop",
+        )
+
+
+async def test_a_guard_below_the_minimum_revision_stops_the_runner(
+    scoped_database: BootstrapFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = await scoped_database("notes_pending")
+    application = application_for(notes, database, tmp_path, schema="notes_pending")
+    trees = Trees(tmp_path, application)
+    config = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(command.revision, config, "initial", autogenerate=True)
+    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", 2)
+
+    with pytest.raises(ConfigError, match="guard revision pending"):
+        await asyncio.to_thread(command.upgrade, config, "head")

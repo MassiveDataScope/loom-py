@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import json
 from typing import Any
 
@@ -8,9 +7,11 @@ import pytest
 from sqlalchemy import MetaData, Table, create_engine
 
 from loom.core.backend.scoped_ddl import (
+    APP_FIRST,
     ASSERT_SCHEMA,
-    ENTER_GUARD,
     GRANT_TABLE,
+    GUARD_FIRST,
+    GUARD_PATH,
     MISSING_EVENT_TRIGGERS,
     OPEN_HATCH,
     PROTECT,
@@ -65,13 +66,29 @@ def _metadata_of(model: type) -> MetaData:
     return metadata
 
 
-def _ddl(table: Table, event: str) -> list[tuple[str, dict[str, Any]]]:
-    calls = []
+class _Connection:
+    def __init__(self, info: dict[str, Any] | None = None) -> None:
+        self.dialect = type("Dialect", (), {"name": "postgresql"})()
+        self.info = info or {}
+        self.calls: list[tuple[str, Any]] = []
+
+    @property
+    def statements(self) -> list[str]:
+        return [statement for statement, _ in self.calls]
+
+    def execute(self, clause: object, parameters: object = None) -> None:
+        self.calls.append((str(clause), parameters))
+
+
+def _fire(table: Table, event: str, connection: _Connection) -> None:
     for listener in getattr(table.dispatch, event):
-        captured = inspect.getclosurevars(listener).nonlocals
-        if "clause" in captured:
-            calls.append((str(captured["clause"]), captured["parameters"]))
-    return calls
+        listener(table, connection)
+
+
+def _ddl(table: Table, event: str) -> list[tuple[str, Any]]:
+    connection = _Connection()
+    _fire(table, event, connection)
+    return connection.calls
 
 
 def test_every_guard_call_is_a_constant_with_bound_parameters() -> None:
@@ -81,8 +98,19 @@ def test_every_guard_call_is_a_constant_with_bound_parameters() -> None:
     assert ":scopes" in PROTECT and ":privileges" in PROTECT
     assert ":schema" in UNPROTECT and ":table" in UNPROTECT
     assert ":readers" in GRANT_TABLE and ":writers" in GRANT_TABLE
-    assert ":guard" in ENTER_GUARD
+    assert ":guard" in GUARD_FIRST
+    assert ":schema" in APP_FIRST and ":guard" in APP_FIRST
     assert ":guard" in MISSING_EVENT_TRIGGERS
+
+
+def test_the_guard_comes_first_for_its_calls_and_last_for_the_ddl() -> None:
+    assert GUARD_FIRST.index(":guard") < GUARD_FIRST.index("pg_catalog")
+    assert APP_FIRST.index(":schema") < APP_FIRST.index(":guard")
+
+
+def test_an_event_trigger_is_trusted_by_owner_not_by_superuser_flag() -> None:
+    assert "rolsuper" not in MISSING_EVENT_TRIGGERS
+    assert "evtowner = n.nspowner" in MISSING_EVENT_TRIGGERS
 
 
 def test_protect_passes_the_table_the_scopes_json_and_the_privileges() -> None:
@@ -231,3 +259,21 @@ def test_scoped_models_on_another_dialect_raise_unless_explicitly_allowed() -> N
 
     assert check_dialect("sqlite", scoped, allow_unprotected=True) == ("notes",)
     assert check_dialect("postgresql", scoped, allow_unprotected=False) == ()
+
+
+def test_a_guard_call_inside_create_schema_resolves_the_guard_first() -> None:
+    metadata = _metadata_of(Note)
+    connection = _Connection({GUARD_PATH: {"schema": "s1", "guard": "g1"}})
+
+    _fire(metadata.tables["notes"], "after_create", connection)
+
+    assert connection.statements == [GUARD_FIRST, PROTECT, APP_FIRST]
+
+
+def test_a_guard_call_outside_create_schema_runs_alone() -> None:
+    metadata = _metadata_of(Note)
+    connection = _Connection()
+
+    _fire(metadata.tables["notes"], "before_create", connection)
+
+    assert connection.statements == [OPEN_HATCH]

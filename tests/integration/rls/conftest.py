@@ -27,6 +27,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.locator import Application, load_application
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
+FIXTURE_USERS = {"ro": "read", "rw": "write", "ops": "bypass"}
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d postgres"
 
 
@@ -221,8 +222,8 @@ def application_for(
                 "name": name,
                 "roles": {"owner": f"{name}_owner", "migrator": f"{name}_migrator"},
                 "database_users": {
-                    user.replace(product.SCHEMA, name, 1): {"login": True, "access": access}
-                    for user, access in product.USERS.items()
+                    f"{name}_{suffix}": {"login": True, "access": access}
+                    for suffix, access in FIXTURE_USERS.items()
                 },
                 "scopes": dict(product.SCOPE_BINDINGS),
                 "guard": f"loom_guard_{name}",

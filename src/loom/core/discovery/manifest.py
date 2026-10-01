@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from loom.core.contracts.manifest import AppManifestAttr
 from loom.core.discovery._utils import _append_unique, collect_use_cases_from_interfaces
@@ -11,7 +11,9 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel
 from loom.core.repository.abc import Repository
 from loom.core.use_case.use_case import UseCase
-from loom.rest.model import RestInterface
+
+if TYPE_CHECKING:
+    from loom.rest.model import RestInterface
 
 
 class ManifestDiscoveryEngine:
@@ -53,7 +55,7 @@ class ManifestDiscoveryEngine:
 
         models = [cast(type[BaseModel], item) for item in raw_models]
         use_cases = [cast(type[UseCase[object, object]], item) for item in raw_use_cases]
-        interfaces = [cast(type[RestInterface[object]], item) for item in raw_interfaces]
+        interfaces = [cast("type[RestInterface[object]]", item) for item in raw_interfaces]
         repositories = [cast(type[Any], item) for item in raw_repositories]
 
         self._validate_repositories(repositories)

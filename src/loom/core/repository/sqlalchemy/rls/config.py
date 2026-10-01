@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 
-from loom.core.backend.scoped_ddl import schema_identifier, sql_identifier
+from loom.core.schema_names import SchemaNames, schema_identifier, sql_identifier
 
 Access = Literal["read", "write", "bypass"]
 
-BYPASS_VERSION_PRIVILEGES = frozenset({"SELECT"})
-MAX_GUARD_LENGTH = 58
-MAX_VERSION_TABLE_LENGTH = 59
+BYPASS_VERSION_PRIVILEGES: Final = frozenset({"SELECT"})
+MAX_GUARD_LENGTH: Final = 58
+MAX_VERSION_TABLE_LENGTH: Final = 59
+POSTGRES_SCRAM_ITERATIONS: Final = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,41 +33,22 @@ class DatabaseUser:
 
 
 @dataclass(frozen=True, slots=True)
-class SchemaNames:
-    """The names around one application schema; declared by the product, never defaulted.
-
-    ``loom schema init`` proposes them with :meth:`derived` and writes them into
-    the product's configuration, where the product may change any of them.
-    """
-
-    guard: str
-    readers: str
-    writers: str
-    version_table: str
-    data_version_table: str
-
-    @classmethod
-    def derived(cls, schema: str) -> SchemaNames:
-        """Propose the conventional names for ``schema``; used only to write the configuration."""
-        schema_identifier(schema)
-        return cls(
-            guard=f"loom_guard_{schema}",
-            readers=f"{schema}_readers",
-            writers=f"{schema}_writers",
-            version_table="alembic_version",
-            data_version_table="alembic_version_data",
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class BootstrapConfig:
-    """Everything the bootstrap applies for one application schema; no name has a default."""
+    """Everything the bootstrap applies for one application schema; no name has a default.
+
+    ``revoke_public`` revokes every ``PUBLIC`` privilege on the ``public``
+    schema; it is opt-in because that schema belongs to the whole database.
+    ``scram_iterations`` is the PBKDF2 iteration count of every password
+    verifier; it defaults to Postgres' own ``scram_iterations`` (4096) and may
+    only be raised.
+    """
 
     schema: str
     roles: DatabaseRoles
     database_users: Mapping[str, DatabaseUser]
     names: SchemaNames
-    revoke_public: bool = True
+    revoke_public: bool = False
+    scram_iterations: int = POSTGRES_SCRAM_ITERATIONS
 
     @property
     def bypass_users(self) -> tuple[str, ...]:
@@ -97,16 +79,21 @@ class BootstrapConfig:
             raise ValueError(f"database roles must have distinct names, got {sorted(roles)}")
         if self.names.version_table == self.names.data_version_table:
             raise ValueError("the structural and the data version tables must differ")
+        if self.scram_iterations < POSTGRES_SCRAM_ITERATIONS:
+            raise ValueError(
+                f"scram_iterations must be at least {POSTGRES_SCRAM_ITERATIONS}, "
+                f"got {self.scram_iterations}"
+            )
         return self
 
     def document(self) -> dict[str, object]:
         """The bound JSON document the guard's ``configure`` consumes."""
         return {
             "app_schema": self.schema,
-            "owner": self.roles.owner,
-            "migrator": self.roles.migrator,
-            "readers": self.names.readers,
-            "writers": self.names.writers,
+            "owner_role": self.roles.owner,
+            "migrator_role": self.roles.migrator,
+            "readers_role": self.names.readers,
+            "writers_role": self.names.writers,
             "users": [
                 {"name": name, "login": spec.login, "access": spec.access}
                 for name, spec in self.database_users.items()

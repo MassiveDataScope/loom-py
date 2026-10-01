@@ -6,7 +6,6 @@ from loom.core.repository.sqlalchemy.rls.guard_manifest import (
     GUARD_REVISIONS,
     PREFLIGHT_FILE,
     PREFLIGHT_SHA256,
-    REQUIRED_GUARD_REVISION,
     digest,
     preflight_sql,
 )
@@ -33,7 +32,6 @@ def test_revisions_are_numbered_from_one_without_gaps() -> None:
     numbers = [revision.number for revision in GUARD_REVISIONS]
 
     assert numbers == list(range(1, len(numbers) + 1))
-    assert numbers[-1] == REQUIRED_GUARD_REVISION
 
 
 def test_every_packaged_revision_file_is_released() -> None:

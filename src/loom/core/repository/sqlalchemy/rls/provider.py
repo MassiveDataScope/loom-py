@@ -10,7 +10,7 @@ returns to the pool.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from loom.core.locator import Application
 
 SCOPE_PREFIX = "loom.scope."
+RESET_ALL: Final = "RESET ALL"
 
 
 def scope_setting(scope: str) -> str:
@@ -126,7 +127,7 @@ def install_pool_reset(engine: AsyncEngine) -> None:
         dbapi_connection.rollback()
         cursor = dbapi_connection.cursor()
         try:
-            cursor.execute("RESET ALL")
+            cursor.execute(RESET_ALL)
         finally:
             cursor.close()
         dbapi_connection.commit()

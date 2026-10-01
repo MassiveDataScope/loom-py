@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import pytest
+import sqlalchemy
 from alembic.autogenerate import render_python_code
 from alembic.operations import ops
 from sqlalchemy import Column, Integer, MetaData, Table, Text
@@ -16,6 +20,7 @@ from loom.core.repository.sqlalchemy.migrations.hook import (
 )
 from loom.core.repository.sqlalchemy.migrations.operations import (
     GrantTableOp,
+    HandWrittenProtectOp,
     OpenHatchOp,
     ProtectScopedTableOp,
     UnprotectScopedTableOp,
@@ -89,6 +94,7 @@ PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE"]
 HATCH = ("open_hatch",)
 PROTECT = ("protect_scoped_table", "notes", SCOPES, PRIVILEGES)
 UNPROTECT = ("unprotect_scoped_table", "notes")
+HAND_WRITTEN = ("hand_written_protect", "notes")
 
 
 def _describe(op: ops.MigrateOperation) -> tuple[object, ...] | str:
@@ -98,6 +104,8 @@ def _describe(op: ops.MigrateOperation) -> tuple[object, ...] | str:
         return ("protect_scoped_table", op.table, op.scopes, op.privileges)
     if isinstance(op, UnprotectScopedTableOp):
         return ("unprotect_scoped_table", op.table)
+    if isinstance(op, HandWrittenProtectOp):
+        return ("hand_written_protect", op.table)
     if isinstance(op, GrantTableOp):
         return ("grant_table", op.table, op.readers, op.writers)
     return type(op).__name__
@@ -131,18 +139,64 @@ def test_creating_a_global_table_with_privileges_emits_its_grants() -> None:
     ]
 
 
-def test_changing_a_scope_column_reprotects_the_table_in_both_directions() -> None:
-    application = _application()
+def _scope_change() -> ops.MigrationScript:
     column = Column("editor", Text(), nullable=False)
     upgrade = ops.ModifyTableOps("notes", [ops.AddColumnOp("notes", column)])
     downgrade = ops.ModifyTableOps("notes", [ops.DropColumnOp("notes", "editor")])
-    script = _script([upgrade], [downgrade])
+    return _script([upgrade], [downgrade])
+
+
+def test_changing_a_scope_column_reprotects_the_table_with_the_head_scopes() -> None:
+    script = _rewrite(_application(), _scope_change())
+
+    assert _sql(script.upgrade_ops.ops) == [HATCH, UNPROTECT, "ModifyTableOps", PROTECT]
+
+
+def test_a_downgrade_changing_a_scope_column_never_reprotects_with_the_head_scopes() -> None:
+    script = _rewrite(_application(), _scope_change())
+
+    assert _sql(script.downgrade_ops.ops) == [HATCH, UNPROTECT, "ModifyTableOps", HAND_WRITTEN]
+
+
+def test_a_downgrade_recreating_a_scoped_table_never_protects_it_with_the_head_scopes() -> None:
+    application = _application()
+    table = application.metadata.tables["notes"]
+    script = _script([ops.DropTableOp.from_table(table)], [ops.CreateTableOp.from_table(table)])
 
     _rewrite(application, script)
 
-    expected = [HATCH, UNPROTECT, "ModifyTableOps", PROTECT]
-    assert _sql(script.upgrade_ops.ops) == expected
-    assert _sql(script.downgrade_ops.ops) == expected
+    assert _sql(script.downgrade_ops.ops) == [HATCH, "CreateTableOp", HAND_WRITTEN]
+
+
+def test_the_downgrade_renders_a_not_implemented_error_asking_for_the_protect() -> None:
+    script = _rewrite(_application(), _scope_change())
+
+    code = render_python_code(script.downgrade_ops)
+
+    assert "op.unprotect_scoped_table('notes')" in code
+    assert "raise NotImplementedError(" in code
+    assert "op.protect_scoped_table('notes'" in code
+    assert "protect_scoped_table('notes', [" not in code
+
+
+def test_running_the_rendered_downgrade_unprotects_then_stops_for_the_hand_written_protect() -> (
+    None
+):
+    script = _rewrite(_application(), _scope_change())
+    calls: list[str] = []
+
+    class Recorder:
+        def __getattr__(self, name: str) -> Callable[..., None]:
+            return lambda *_args, **_kwargs: calls.append(name)
+
+    namespace: dict[str, object] = {"op": Recorder(), "sa": sqlalchemy}
+    exec(f"def downgrade():\n    {render_python_code(script.downgrade_ops)}\n", namespace)
+    downgrade = namespace["downgrade"]
+    assert callable(downgrade)
+
+    with pytest.raises(NotImplementedError, match="notes"):
+        downgrade()
+    assert calls == ["open_hatch", "unprotect_scoped_table", "drop_column"]
 
 
 def test_changing_an_ordinary_column_of_a_scoped_table_is_left_alone() -> None:

@@ -221,8 +221,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --tags --force origin
-          bash scripts/ci/check_released_guard.sh
+          git fetch --tags origin
+          bash scripts/ci/check_released_guard.sh tags
 
       # The report is the primary version's; the other legs gate through `needs`.
       - name: Download fast lane results

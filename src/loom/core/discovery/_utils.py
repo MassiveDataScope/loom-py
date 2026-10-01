@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import sys
 import typing
 from dataclasses import dataclass, field
 from types import ModuleType
@@ -12,10 +13,13 @@ from typing import Any
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.use_case.use_case import UseCase
-from loom.rest.model import RestInterface
+
+if typing.TYPE_CHECKING:
+    from loom.rest.model import RestInterface
 
 ItemT = typing.TypeVar("ItemT")
 _LocalClassResolver = typing.Callable[[type[Any]], type[Any] | None]
+_REST_MODEL = "loom.rest.model"
 
 
 @dataclass
@@ -44,7 +48,7 @@ class _DiscoveryCollector:
         _append_unique(
             self.interfaces,
             self._seen_interfaces,
-            typing.cast(type[RestInterface[object]], value),
+            typing.cast("type[RestInterface[object]]", value),
         )
 
     def append_job(self, value: type[Any]) -> None:
@@ -78,9 +82,17 @@ def _as_use_case(cls: type[Any]) -> type[UseCase[object, object]] | None:
     return None
 
 
+def _loaded_rest_interface() -> type[Any] | None:
+    rest_model = sys.modules.get(_REST_MODEL)
+    if rest_model is None:
+        return None
+    return typing.cast(type[Any], rest_model.RestInterface)
+
+
 def _as_interface(cls: type[Any]) -> type[RestInterface[object]] | None:
-    if issubclass(cls, RestInterface) and cls is not RestInterface:
-        return typing.cast(type[RestInterface[object]], cls)
+    interface = _loaded_rest_interface()
+    if interface is not None and issubclass(cls, interface) and cls is not interface:
+        return typing.cast("type[RestInterface[object]]", cls)
     return None
 
 

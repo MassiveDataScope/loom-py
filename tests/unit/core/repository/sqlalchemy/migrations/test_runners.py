@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
+from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.migrations import alembic_config
 from loom.core.repository.sqlalchemy.migrations.runners import (
+    LOCK,
+    assert_revision,
     include_object_for,
+    lock_schema,
+    require_landing,
     validate_timeout,
 )
 from loom.core.repository.sqlalchemy.rls import SchemaNames
@@ -105,3 +111,42 @@ def test_the_locator_puts_the_code_path_on_sys_path(tmp_path, monkeypatch) -> No
     application = load_application(str(config))
 
     assert "located" in application.metadata.tables
+
+
+class _Recorder:
+    def __init__(self, row: tuple[str, str] = ("owner", "app")) -> None:
+        self.statements: list[str] = []
+        self.row = row
+
+    def execute(self, statement: object, parameters: object = None) -> _Recorder:
+        del parameters
+        self.statements.append(str(statement))
+        return self
+
+    def one(self) -> tuple[str, str]:
+        return self.row
+
+
+def test_the_closing_assertion_resolves_the_guard_first() -> None:
+    connection = _Recorder()
+
+    assert_revision(connection, "loom_guard_app")
+
+    assert connection.statements == [GUARD_FIRST, ASSERT_SCHEMA]
+
+
+def test_the_lock_timeout_is_set_before_waiting_for_the_schema_lock() -> None:
+    connection = _Recorder()
+
+    lock_schema(connection, "app", "5s")
+
+    assert connection.statements == [LOCK_TIMEOUT, LOCK]
+
+
+def test_a_wrong_landing_names_apply_bootstrap() -> None:
+    connection = _Recorder(row=("someone", "public"))
+
+    with pytest.raises(ConfigError, match="apply_bootstrap") as raised:
+        require_landing(connection, "owner", "app")
+
+    assert "loom schema bootstrap" not in str(raised.value)

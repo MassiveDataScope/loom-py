@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Final
+
+from sqlalchemy import text
 
 from loom.core.authz import Decision, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, in_execution_frame
@@ -10,8 +13,10 @@ from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
-from loom.core.repository.sqlalchemy.session_settings import settings_statement
+from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
 from loom.core.repository.sqlalchemy.transactional import get_active_session
+
+_SET_SETTINGS: Final = text(SET_SETTINGS)
 
 
 class SQLAlchemyElevationSink:
@@ -35,11 +40,10 @@ class SQLAlchemyElevationSink:
     @staticmethod
     async def _apply(values: Mapping[str, str]) -> None:
         session = get_active_session()
-        statement = settings_statement(values)
-        if session is None or statement is None:
+        parameters = settings_parameters(values)
+        if session is None or parameters is None:
             return
-        clause, params = statement
-        await session.execute(clause, params)
+        await session.execute(_SET_SETTINGS, parameters)
 
 
 async def elevate(

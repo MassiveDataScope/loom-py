@@ -26,6 +26,7 @@ from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
 from loom.core.model.scoped import ScopedTable
+from loom.core.schema_names import SchemaNames
 
 if TYPE_CHECKING:
     from sqlalchemy import MetaData
@@ -197,11 +198,7 @@ def _schema_name(name: str) -> str:
 
 
 def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
-    from loom.core.repository.sqlalchemy.rls.config import (
-        BootstrapConfig,
-        DatabaseRoles,
-        SchemaNames,
-    )
+    from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseRoles
 
     name = _required(schema.name, "name")
     roles = _required(schema.roles, "roles")

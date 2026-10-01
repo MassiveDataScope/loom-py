@@ -111,19 +111,26 @@ def _dataclass_defaults(path: Path, class_name: str) -> dict[str, bool]:
     pytest.fail(f"{class_name} not found in {path}")
 
 
+_RLS_CONFIG = "core/repository/sqlalchemy/rls/config.py"
+
+
 @pytest.mark.parametrize(
-    ("class_name", "fields_without_default"),
+    ("module", "class_name", "fields_without_default"),
     [
-        ("BootstrapConfig", {"schema", "roles", "database_users", "names"}),
-        ("SchemaNames", {"guard", "readers", "writers", "version_table", "data_version_table"}),
-        ("DatabaseRoles", {"owner", "migrator"}),
-        ("DatabaseUser", {"login", "access"}),
+        (_RLS_CONFIG, "BootstrapConfig", {"schema", "roles", "database_users", "names"}),
+        (
+            "core/schema_names.py",
+            "SchemaNames",
+            {"guard", "readers", "writers", "version_table", "data_version_table"},
+        ),
+        (_RLS_CONFIG, "DatabaseRoles", {"owner", "migrator"}),
+        (_RLS_CONFIG, "DatabaseUser", {"login", "access"}),
     ],
 )
 def test_bootstrap_types_have_no_name_defaults(
-    class_name: str, fields_without_default: set[str]
+    module: str, class_name: str, fields_without_default: set[str]
 ) -> None:
-    path = _SRC / "core/repository/sqlalchemy/rls/config.py"
+    path = _SRC / module
     if not path.exists():
         pytest.fail(f"{path} does not exist yet")
 

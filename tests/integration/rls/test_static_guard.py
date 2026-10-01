@@ -18,9 +18,12 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import Application
+from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.rls import create_schema, verify
-from loom.core.repository.sqlalchemy.rls.integrity import guard_problems
+from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
+from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
 
@@ -89,7 +92,7 @@ async def _startup_problems(product: Installed) -> set[str]:
     engine = create_async_engine(product.database.write, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
-            problems = await guard_problems(connection, product.guard)
+            problems = await startup_problems(connection, product.guard, product.application.scoped)
     finally:
         await engine.dispose()
     return {problem.check for problem in problems}
@@ -158,14 +161,17 @@ async def test_the_owner_of_one_schema_cannot_reach_another_guard(
         "LANGUAGE sql STABLE AS $$ SELECT true $$",
         "ALTER FUNCTION {guard}." + PROTECT + " SECURITY INVOKER",
         "CREATE TABLE {guard}.extra (x int)",
+        "DROP FUNCTION {guard}.registered_tables()",
     ],
-    ids=["replace body", "alter function", "extra table"],
+    ids=["replace body", "alter function", "extra table", "drop function"],
 )
 async def test_ddl_on_the_guard_outside_the_installer_fails_in_the_same_statement(
     installed: Installed, statement: str
 ) -> None:
+    ddl = statement.format(guard=installed.guard)
+
     with pytest.raises(asyncpg.PostgresError, match="outside the loom installer"):
-        await _run(installed.database.superuser, statement.format(guard=installed.guard))
+        await _run(installed.database.superuser, ddl)
 
 
 @pytest.mark.parametrize(
@@ -192,7 +198,7 @@ async def test_ddl_on_the_guard_outside_the_installer_fails_in_the_same_statemen
         ),
         (
             ["{installing}", "ALTER FUNCTION {guard}." + PROTECT + " OWNER TO {schema}_owner"],
-            "guard.function_owner",
+            "guard.owner",
             True,
         ),
         (
@@ -203,8 +209,28 @@ async def test_ddl_on_the_guard_outside_the_installer_fails_in_the_same_statemen
         (
             ["REVOKE EXECUTE ON FUNCTION {guard}." + PROTECT + " FROM {schema}_owner"],
             "guard.function_grants",
-            False,
+            True,
         ),
+        (
+            ["GRANT EXECUTE ON FUNCTION {guard}." + PROTECT + " TO {schema}_readers"],
+            "guard.function_grants",
+            True,
+        ),
+        (["GRANT UPDATE ON {guard}.config TO {schema}_owner"], "guard.relation_grants", True),
+        (
+            [
+                "{installing}",
+                "CREATE OPERATOR {guard}.=== (LEFTARG = int, RIGHTARG = int, FUNCTION = int4eq)",
+            ],
+            "guard.objects",
+            True,
+        ),
+        (
+            ["{installing}", "ALTER TABLE {guard}.config DROP CONSTRAINT config_singleton_check"],
+            "guard.constraints",
+            True,
+        ),
+        (["{installing}", "DROP FUNCTION {guard}.registered_tables()"], "guard.functions", True),
         (
             [
                 "{installing}",
@@ -213,8 +239,8 @@ async def test_ddl_on_the_guard_outside_the_installer_fails_in_the_same_statemen
             "guard.functions",
             True,
         ),
-        (["{installing}", "CREATE TABLE {guard}.extra (x int)"], "guard.relations", False),
-        (["GRANT CREATE ON SCHEMA {guard} TO PUBLIC"], "guard.schema_grants", False),
+        (["{installing}", "CREATE TABLE {guard}.extra (x int)"], "guard.relations", True),
+        (["GRANT CREATE ON SCHEMA {guard} TO PUBLIC"], "guard.schema_grants", True),
         (
             [
                 "{installing}",
@@ -223,11 +249,11 @@ async def test_ddl_on_the_guard_outside_the_installer_fails_in_the_same_statemen
                 "CREATE TRIGGER t AFTER INSERT ON {guard}.config FOR EACH STATEMENT "
                 "EXECUTE FUNCTION {guard}.noop()",
             ],
-            "guard.relation",
-            False,
+            "guard.triggers",
+            True,
         ),
         (
-            ["UPDATE {guard}.config SET bypass_roles = array_append(bypass_roles, '{schema}_rw')"],
+            ["UPDATE {guard}.config SET version_table = 'tampered'"],
             "guard.config",
             False,
         ),
@@ -251,6 +277,11 @@ async def test_ddl_on_the_guard_outside_the_installer_fails_in_the_same_statemen
         "owner",
         "execute to public",
         "execute revoked from the owner",
+        "execute to a foreign role",
+        "update on the configuration",
+        "extra operator",
+        "dropped check",
+        "dropped function",
         "extra function",
         "extra table",
         "create on the guard schema",
@@ -344,3 +375,32 @@ async def test_the_owner_cannot_configure_the_guard_or_set_passwords(
         await _run(
             installed.database.migrator, f"SELECT {installed.guard}.configure('{{}}'::jsonb)"
         )
+
+
+async def test_startup_refuses_a_tampered_guard_as_the_application_user(
+    installed: Installed,
+) -> None:
+    await _run(
+        installed.database.superuser,
+        f"GRANT UPDATE ON {installed.guard}.config TO {installed.schema}_owner",
+    )
+    config = {
+        "app": {"name": "tampered"},
+        "database": {
+            "url": installed.database.write,
+            "schema": {
+                "mode": "external",
+                "scopes": dict(notes.SCOPE_BINDINGS),
+                "guard": installed.guard,
+            },
+        },
+    }
+    register_scope_source("editor", lambda: None)
+    try:
+        wiring = SQLAlchemyBackend().build(ConfigContext.from_dict(config), notes.MODELS)
+        wiring.prepare_models(notes.MODELS)
+        with pytest.raises(ConfigError, match="guard.relation_grants"):
+            async with wiring.lifespan_init():
+                pass
+    finally:
+        clear_scope_sources()
