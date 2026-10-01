@@ -48,10 +48,11 @@ CREATE OR REPLACE FUNCTION loom_guard_{S}.term(col name, scope text, elevable bo
   SELECT CASE WHEN elevable
     THEN format('(%I = NULLIF(current_setting(%L, true), %L)::%s OR current_setting(%L, true) = %L)', col, 'loom.scope.'||scope, '', coltype, 'loom.scope.'||scope||'.any', 'on')
     ELSE format('%I = NULLIF(current_setting(%L, true), %L)::%s', col, 'loom.scope.'||scope, '', coltype) END $$;
-CREATE OR REPLACE FUNCTION loom_guard_{S}.deny_owner_dml() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION loom_guard_{S}.deny_owner_dml() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
-  IF (SELECT relowner FROM pg_class WHERE oid = TG_RELID) = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+  IF pg_has_role(current_user, (SELECT relowner FROM pg_catalog.pg_class WHERE oid = TG_RELID), 'USAGE')
+     AND NOT (SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user)
   THEN RAISE EXCEPTION 'loom_guard[%]: owner DML on scoped table %.% is denied; run data migrations as the bypass user', TG_TABLE_SCHEMA, TG_TABLE_SCHEMA, TG_TABLE_NAME USING ERRCODE = 'LG001'; END IF;
   RETURN NULL;
 END $$;
@@ -82,16 +83,20 @@ BEGIN
     RAISE EXCEPTION 'loom_guard[{S}]: elevable scopes must be write-only' USING ERRCODE = '22023'; END IF;
   IF EXISTS (SELECT 1 FROM jsonb_array_elements(scopes) x JOIN pg_attribute a ON a.attrelid = tbl AND a.attname = x->>'col' WHERE coalesce(x->>'on','both') = 'both' AND NOT a.attnotnull) THEN
     RAISE EXCEPTION 'loom_guard[{S}]: boundary column must be NOT NULL' USING ERRCODE = '22023'; END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(scopes) x JOIN pg_attribute a ON a.attrelid = tbl AND a.attname = x->>'col'
+             LEFT JOIN pg_collation co ON co.oid = a.attcollation
+             WHERE a.atttypid = 'bpchar'::regtype OR NOT coalesce(co.collisdeterministic, true)) THEN
+    RAISE EXCEPTION 'loom_guard[{S}]: scope columns may not be char(n) or use a nondeterministic collation: equal values must be identical' USING ERRCODE = '22023'; END IF;
   IF EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = tbl AND (i.indisunique OR i.indisexclusion) AND EXISTS (
        SELECT 1 FROM jsonb_array_elements(scopes) x WHERE coalesce(x->>'on','both') = 'both' AND NOT coalesce((x->>'elevable')::boolean,false)
-         AND (SELECT attnum FROM pg_attribute WHERE attrelid = tbl AND attname = x->>'col') <> ALL (i.indkey::int2[]))) THEN
+         AND (SELECT attnum FROM pg_attribute WHERE attrelid = tbl AND attname = x->>'col') <> ALL ((i.indkey::int2[])[0:i.indnkeyatts - 1]))) THEN
     RAISE EXCEPTION 'loom_guard[{S}]: every unique index of % must contain the boundary column', tbl USING ERRCODE = 'LG002'; END IF;
   PERFORM set_config('loom_guard_{S}.protecting', 'on', true);
   EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', tbl);
   EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', tbl);
-  SELECT string_agg(loom_guard_{S}.term((x->>'col')::name, x->>'scope', coalesce((x->>'elevable')::boolean,false), format_type(a.atttypid, a.atttypmod)), ' AND ') INTO r
+  SELECT string_agg(loom_guard_{S}.term((x->>'col')::name, x->>'scope', coalesce((x->>'elevable')::boolean,false), format_type(a.atttypid, NULL)), ' AND ') INTO r
     FROM jsonb_array_elements(scopes) x JOIN pg_attribute a ON a.attrelid = tbl AND a.attname = x->>'col' WHERE coalesce(x->>'on','both') IN ('read','both');
-  SELECT string_agg(loom_guard_{S}.term((x->>'col')::name, x->>'scope', coalesce((x->>'elevable')::boolean,false), format_type(a.atttypid, a.atttypmod)), ' AND ') INTO w
+  SELECT string_agg(loom_guard_{S}.term((x->>'col')::name, x->>'scope', coalesce((x->>'elevable')::boolean,false), format_type(a.atttypid, NULL)), ' AND ') INTO w
     FROM jsonb_array_elements(scopes) x JOIN pg_attribute a ON a.attrelid = tbl AND a.attname = x->>'col' WHERE coalesce(x->>'on','both') IN ('write','both');
   EXECUTE format('CREATE POLICY loom_select ON %s FOR SELECT TO PUBLIC USING (%s)', tbl, r);
   IF 'INSERT' = ANY(table_privileges) THEN EXECUTE format('CREATE POLICY loom_insert ON %s FOR INSERT TO PUBLIC WITH CHECK (%s)', tbl, w); END IF;
@@ -122,6 +127,8 @@ DECLARE pol record;
 BEGIN
   IF NOT pg_has_role(session_user, '{OWNER}', 'MEMBER') THEN
     RAISE EXCEPTION 'loom_guard[{S}]: only the owner may unprotect %', tbl USING ERRCODE = '42501'; END IF;
+  IF current_setting('loom_guard_{S}.protecting', true) IS DISTINCT FROM 'on' THEN
+    RAISE EXCEPTION 'loom_guard[{S}]: unprotect % only under the hatch, in the transaction that changes or drops it', tbl USING ERRCODE = 'LG002'; END IF;
   IF NOT EXISTS (SELECT 1 FROM loom_guard_{S}.scoped_table WHERE rel = tbl) THEN
     RAISE EXCEPTION 'loom_guard[{S}]: % is not registered', tbl USING ERRCODE = '42501'; END IF;
   DELETE FROM loom_guard_{S}.scoped_policy WHERE rel = tbl;
@@ -165,6 +172,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles m WHERE NOT m.rolbypassrls AND NOT m.rolsuper AND (pg_has_role(m.oid, '{READERS}', 'MEMBER') OR pg_has_role(m.oid, '{WRITERS}', 'MEMBER'))
              AND EXISTS (SELECT 1 FROM pg_roles b WHERE b.rolbypassrls AND pg_has_role(m.oid, b.oid, 'MEMBER')))
   THEN RAISE EXCEPTION 'loom_guard[{S}]: a non-bypass user is a member of a bypass role' USING ERRCODE = 'LG002'; END IF;
+  SELECT string_agg(m.rolname, ', ') INTO bad FROM pg_roles m
+    WHERE NOT m.rolsuper AND m.rolname NOT IN ('{OWNER}', '{MIGRATOR}') AND pg_has_role(m.oid, '{OWNER}', 'MEMBER');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'loom_guard[{S}]: only the migrator may be a member of {OWNER}: %', bad USING ERRCODE = 'LG002'; END IF;
   SELECT string_agg(t.rel::text, ', ') INTO bad FROM loom_guard_{S}.scoped_table t WHERE NOT EXISTS (
     SELECT 1 FROM pg_trigger g WHERE g.tgrelid = t.rel AND g.tgname = 'loom_deny_owner_dml' AND g.tgenabled = 'A'
       AND g.tgfoid = 'loom_guard_{S}.deny_owner_dml'::regproc AND (g.tgtype & 2) <> 0 AND (g.tgtype & 28) = 28 AND (g.tgtype & 32) <> 0 AND g.tgqual IS NULL AND g.tgattr = ''::int2vector);
@@ -172,7 +182,7 @@ BEGIN
   SELECT string_agg(i.indexrelid::regclass::text, ', ') INTO bad FROM pg_index i JOIN loom_guard_{S}.scoped_table t ON t.rel = i.indrelid
     WHERE (i.indisunique OR i.indisexclusion) AND EXISTS (
       SELECT 1 FROM jsonb_array_elements(t.scopes) x WHERE coalesce(x->>'on','both') = 'both' AND NOT coalesce((x->>'elevable')::boolean,false)
-        AND (SELECT attnum FROM pg_attribute WHERE attrelid = t.rel AND attname = x->>'col') <> ALL (i.indkey::int2[]));
+        AND (SELECT attnum FROM pg_attribute WHERE attrelid = t.rel AND attname = x->>'col') <> ALL ((i.indkey::int2[])[0:i.indnkeyatts - 1]));
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'loom_guard[{S}]: unique index without the boundary column: %', bad USING ERRCODE = 'LG002'; END IF;
   SELECT string_agg(con.conname, ', ') INTO bad FROM pg_constraint con
     JOIN loom_guard_{S}.scoped_table t ON t.rel = con.conrelid JOIN loom_guard_{S}.scoped_table t2 ON t2.rel = con.confrelid

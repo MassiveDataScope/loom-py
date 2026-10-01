@@ -11,7 +11,6 @@ import base64
 import hashlib
 import hmac
 import os
-import re
 from collections.abc import Callable, Mapping
 from importlib.resources import files
 from typing import Any
@@ -19,23 +18,21 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.backend.scoped_ddl import sql_identifier
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseUser
 
 MIN_SERVER_VERSION_NUM = 140000
 SCRAM_ITERATIONS = 4096
 
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _TEMPLATE = files("loom.core.repository.sqlalchemy.rls") / "templates" / "bootstrap.sql"
 
 
 def render_bootstrap(config: BootstrapConfig) -> str:
     """Return the idempotent SQL that provisions ``config.schema`` and its guard."""
-    names = [config.schema, config.roles.owner, config.roles.migrator, *config.database_users]
-    for name in names:
-        _identifier(name)
+    config.validated()
     readers, writers = _groups(config.schema)
-    bypass = [user for user, spec in config.database_users.items() if spec.access == "bypass"]
+    bypass = list(config.bypass_users)
     substitutions = {
         "{MIN_SERVER_VERSION_NUM}": str(MIN_SERVER_VERSION_NUM),
         "{S}": config.schema,
@@ -75,7 +72,7 @@ def password_statements(
 ) -> list[str]:
     """One ``ALTER ROLE`` per user carrying a verifier, never the password itself."""
     return [
-        f"ALTER ROLE {_identifier(user)} PASSWORD "
+        f"ALTER ROLE {sql_identifier(user)} PASSWORD "
         f"'{scram_sha256_verifier(password, salt=salt_factory())}'"
         for user, password in passwords.items()
     ]
@@ -120,12 +117,6 @@ def _translate(exc: Exception, schema: str) -> Exception:
     if "event trigger" in message.lower() and getattr(exc, "sqlstate", "") == "42501":
         return ConfigError(f"bootstrap of {schema} needs superuser or rds_superuser: {message}")
     return exc
-
-
-def _identifier(name: str) -> str:
-    if not _IDENTIFIER.fullmatch(name):
-        raise ValueError(f"{name!r} is not a plain SQL identifier")
-    return name
 
 
 def _revoke_public(revoke: bool) -> str:

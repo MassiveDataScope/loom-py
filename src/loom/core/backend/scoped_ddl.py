@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping, Sequence
 
 from sqlalchemy import DDL, Table, event
+from sqlalchemy.dialects.postgresql.base import RESERVED_WORDS
 
 from loom.core.config import ConfigError
 from loom.core.model.privilege import Privilege
@@ -19,7 +20,10 @@ from loom.core.model.scoped import ScopedTable
 
 SCHEMA_KEY = "loom.schema"
 _REGISTERED = "loom.scoped_ddl"
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+MAX_IDENTIFIER_LENGTH = 63
+MAX_SCHEMA_LENGTH = 47
+_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
+_SPECIAL_ROLES = frozenset({"public", "none", "current_role", "current_user", "session_user"})
 _ORDER = (Privilege.SELECT, Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE)
 
 
@@ -124,14 +128,51 @@ def _listen(table: Table, when: str, statement: str) -> None:
     event.listen(table, when, ddl.execute_if(dialect="postgresql"))
 
 
+def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str:
+    """Return ``name`` when Postgres stores it exactly as written and resolves it to itself.
+
+    Lowercase letters, digits and ``_``; at most ``max_length`` characters so
+    Postgres never truncates it; not a reserved word, a special role name or a
+    ``pg_`` name.
+
+    Raises:
+        ValueError: Naming the offending identifier.
+    """
+    if (
+        not _IDENTIFIER.fullmatch(name)
+        or len(name) > max_length
+        or name in RESERVED_WORDS
+        or name in _SPECIAL_ROLES
+        or name.startswith("pg_")
+    ):
+        raise ValueError(
+            f"{name!r} is not a usable SQL identifier: lowercase letters, digits and '_', "
+            f"at most {max_length} characters, not a reserved word, special role or pg_ name"
+        )
+    return name
+
+
+def schema_identifier(name: str) -> str:
+    """Validate a scoped schema name; short enough that every guard object name fits."""
+    return sql_identifier(name, max_length=MAX_SCHEMA_LENGTH)
+
+
+def guard_name(schema: str) -> str:
+    """Return the name of the guard schema of ``schema``."""
+    return f"loom_guard_{schema_identifier(schema)}"
+
+
+def assert_statement(schema: str) -> str:
+    """Call the guard's closing assertion of ``schema``."""
+    return f"SELECT {guard_name(schema)}.assert_scoped_schema()"
+
+
 def _guard(schema: str) -> str:
-    return f"loom_guard_{_identifier(schema)}"
+    return guard_name(schema)
 
 
 def _identifier(name: str) -> str:
-    if not _IDENTIFIER.fullmatch(name):
-        raise ValueError(f"{name!r} is not a plain SQL identifier")
-    return name
+    return sql_identifier(name)
 
 
 def _privilege_list(privileges: frozenset[Privilege]) -> str:

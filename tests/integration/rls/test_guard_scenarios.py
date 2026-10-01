@@ -646,7 +646,11 @@ class TestUnprotect:
             await _run(guarded, role="notes_owner", statement="DROP TABLE notes.tmp_scoped")
             == "LG002"
         )
-        assert await _run(guarded, role="notes_owner", statement=unprotect, commit=True) == "none"
+        hatch = [_hatch("notes")]
+        assert (
+            await _run(guarded, role="notes_owner", prelude=hatch, statement=unprotect, commit=True)
+            == "none"
+        )
         check = f"{_count('notes.tmp_scoped')} = 0"
         assert await _truth(guarded, role="notes_rw", prelude=[_owner_key(U1)], check=check)
         drop = ["DROP TABLE notes.tmp_scoped"]
@@ -657,7 +661,7 @@ class TestUnprotect:
             == "none"
         )
         unknown = "SELECT loom_guard_notes.unprotect_scoped_table('notes.note_kinds')"
-        assert await _run(guarded, role="notes_owner", statement=unknown) == "42501"
+        assert await _run(guarded, role="notes_owner", prelude=hatch, statement=unknown) == "42501"
 
 
 class TestIncrementalDdlAndRepair:

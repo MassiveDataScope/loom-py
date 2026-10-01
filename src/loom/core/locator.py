@@ -167,11 +167,15 @@ def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
     name = _required(schema.name, "name")
     roles = _required(schema.roles, "roles")
     users = _required(schema.database_users, "database_users")
-    return BootstrapConfig(
+    config = BootstrapConfig(
         schema=name,
         roles=DatabaseRoles(owner=roles.owner, migrator=roles.migrator),
         database_users={user: _database_user(user, section) for user, section in users.items()},
     )
+    try:
+        return config.validated()
+    except ValueError as exc:
+        raise ConfigError(f"database.schema: {exc}") from exc
 
 
 def _database_user(user: str, section: _UserSection) -> DatabaseUser:
