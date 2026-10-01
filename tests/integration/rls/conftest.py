@@ -25,7 +25,6 @@ URI_ENV_VAR = "LOOM_PG_IT_URI"
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d postgres"
 
 
-
 async def _run(uri: str, *statements: str, autocommit: bool = False) -> None:
     engine = create_async_engine(
         uri,
@@ -132,7 +131,7 @@ def scoped_database(module_database_uri: str) -> BootstrapFactory:
         }
         config = BootstrapConfig(
             schema=schema,
-            database_roles=DatabaseRoles(owner=f"{schema}_owner", migrator=f"{schema}_migrator"),
+            roles=DatabaseRoles(owner=f"{schema}_owner", migrator=f"{schema}_migrator"),
             database_users={
                 f"{schema}_ro": DatabaseUser(login=True, access="read"),
                 f"{schema}_rw": DatabaseUser(login=True, access="write"),
