@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
@@ -19,7 +19,8 @@ def _allowed(role: str = "editor", scope: Scope = BOUNDARY) -> Decision:
 
 
 async def _elevate(decision: Decision | None = None, *, at: Scope = BOUNDARY) -> None:
-    await elevate_scope("editor", decision or _allowed(), at=at, permission=WRITE, catalog=CATALOG)
+    chosen = _allowed() if decision is None else decision
+    await elevate_scope("editor", chosen, at=at, permission=WRITE, catalog=CATALOG)
 
 
 def test_no_frame_means_no_elevation() -> None:

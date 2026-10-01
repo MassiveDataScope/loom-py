@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from loom.core.authz.elevation import elevated_scopes
 from loom.core.repository.sqlalchemy.rls.sources import resolve_binding, validate_bindings
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
 
@@ -28,7 +29,7 @@ def rls_session_settings(
     application: Application,
     product: SessionSettings | None = None,
     *,
-    elevated: Callable[[], frozenset[str]] = lambda: frozenset(),
+    elevated: Callable[[], frozenset[str]] = elevated_scopes,
 ) -> Callable[[], Mapping[str, str]]:
     """Build the provider for ``application``; the product's settings are merged in.
 

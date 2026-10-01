@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.authz.elevation import elevate_scope, elevated_scopes
-
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.use_case import UseCase
@@ -29,7 +28,7 @@ class Nested(UseCase[Any, list[str]]):
 
     async def execute(self, value: str) -> list[str]:
         await elevate_scope("editor", DECISION, at=BOUNDARY, permission=WRITE, catalog=CATALOG)
-        inner: list[str] = await self._executor.execute(Elevating(), value=value)  # type: ignore[arg-type]
+        inner: list[str] = await self._executor.execute(Elevating(), params={"value": value})  # type: ignore[arg-type]
         return inner + sorted(elevated_scopes())
 
 
@@ -44,7 +43,7 @@ async def test_an_execution_runs_inside_a_frame_that_closes_with_it() -> None:
     sink = FakeSink(open=True)
     executor = _executor(sink, Elevating)
 
-    result = await executor.execute(Elevating(), value="x")  # type: ignore[arg-type]
+    result = await executor.execute(Elevating(), params={"value": "x"})  # type: ignore[arg-type]
 
     assert result == ["editor"]
     assert sink.set == ["editor"]
@@ -55,7 +54,7 @@ async def test_a_nested_execution_inherits_the_frame_and_the_outer_keeps_its_sta
     sink = FakeSink(open=True)
     executor = _executor(sink, Elevating, Nested)
 
-    result = await executor.execute(Nested(executor), value="x")  # type: ignore[arg-type]
+    result = await executor.execute(Nested(executor), params={"value": "x"})  # type: ignore[arg-type]
 
     assert result == ["editor", "editor"]
     assert sink.cleared == []
@@ -67,7 +66,7 @@ async def test_without_a_sink_the_frame_still_exists_and_elevation_waits_for_the
     compiler.compile(Elevating)
     executor = RuntimeExecutor(compiler)
 
-    result = await executor.execute(Elevating(), value="x")  # type: ignore[arg-type]
+    result = await executor.execute(Elevating(), params={"value": "x"})  # type: ignore[arg-type]
 
     assert result == ["editor"]
     assert elevated_scopes() == frozenset()

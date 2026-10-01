@@ -8,6 +8,7 @@ from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
+from loom.core.authz.elevation import ElevationSink, elevation_scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
@@ -181,9 +182,11 @@ class RuntimeExecutor:
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         agent_resolver: Callable[[str, Identity], Any] | None = None,
         mcp_resolver: Callable[[str, tuple[str, ...], Identity], Any] | None = None,
+        elevation_sink: ElevationSink | None = None,
     ) -> None:
         self._compiler = compiler
         self._uow_factory = uow_factory
+        self._elevation_sink = elevation_sink
         self._debug = debug_execution
         self._logger = logger or get_logger(__name__)
         self._metrics = metrics
@@ -416,12 +419,15 @@ class RuntimeExecutor:
         channel = PostCommitChannel() if owned_factory or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
-            if owned_factory is None:
-                result = await self._run_pipeline(state, plan, compilable, inputs)
-            else:
-                result = await self._run_in_unit_of_work(
-                    owned_factory, state, plan, compilable, inputs
-                )
+            async with elevation_scope(
+                owns_transaction=owned_factory is not None, sink=self._elevation_sink
+            ):
+                if owned_factory is None:
+                    result = await self._run_pipeline(state, plan, compilable, inputs)
+                else:
+                    result = await self._run_in_unit_of_work(
+                        owned_factory, state, plan, compilable, inputs
+                    )
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
             # accounted for and re-raised.  ``state.committed`` tells apart
