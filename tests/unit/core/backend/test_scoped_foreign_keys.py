@@ -169,3 +169,31 @@ def test_c9_insert_on_the_global_table_is_allowed() -> None:
     compile_all(Appendable, Pointing, metadata=metadata)
 
     assert "pointing_ok" in metadata.tables
+
+
+def test_a_scoped_model_whose_fk_target_is_not_compiled_is_rejected() -> None:
+    class Orphan(BaseModel, RowScoped):
+        __tablename__ = "orphans"
+        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        id: int = ColumnField(Integer, primary_key=True)
+        holder_id: int = ColumnField(Integer, foreign_key="holders.id")
+
+    with pytest.raises(ValueError, match=r"orphans.*holders"):
+        compile_all(Orphan, metadata=MetaData())
+
+
+def test_c6_the_referenced_key_must_match_exactly() -> None:
+    class Wide(BaseModel, RowScoped):
+        __tablename__ = "wides"
+        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        id: int = ColumnField(Integer, primary_key=True)
+        version: int = ColumnField(Integer, primary_key=True)
+
+    class Narrow(BaseModel, RowScoped):
+        __tablename__ = "narrows"
+        key: str = ColumnField(String(36), primary_key=True, scope="holder")
+        id: int = ColumnField(Integer, primary_key=True)
+        wide_id: int = ColumnField(Integer, foreign_key="wides.id")
+
+    with pytest.raises(ValueError, match=r"C6.*\(key, id\)"):
+        compile_all(Wide, Narrow, metadata=MetaData())

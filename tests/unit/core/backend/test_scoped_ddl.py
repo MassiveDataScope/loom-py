@@ -82,7 +82,8 @@ def test_global_table_grants_go_to_the_groups_and_insert_brings_sequence_usage()
     assert statements == [
         "GRANT SELECT ON s1.kinds TO s1_readers",
         "GRANT INSERT ON s1.kinds TO s1_writers",
-        "GRANT USAGE ON SEQUENCE s1.kinds_id_seq TO s1_writers",
+        "DO $$ BEGIN EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', "
+        "pg_get_serial_sequence('s1.kinds', 'id'), 's1_writers'); END $$",
     ]
 
 

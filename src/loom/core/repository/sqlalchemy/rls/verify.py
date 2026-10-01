@@ -18,7 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import missing_event_triggers_statement
+from loom.core.backend.scoped_ddl import assert_statement, missing_event_triggers_statement
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable
@@ -35,7 +35,8 @@ Acl = dict[str, dict[str, set[str]]]
 WRITES = frozenset({Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE})
 
 _RELATION_ACL = text(
-    "SELECT c.relname, c.relkind, coalesce(r.rolname, 'PUBLIC') AS grantee, a.privilege_type "
+    "SELECT c.relname, c.relkind::text AS relkind, coalesce(r.rolname, 'PUBLIC') AS grantee, "
+    "a.privilege_type "
     "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, "
     "LATERAL aclexplode(coalesce(c.relacl, "
     "acldefault((CASE c.relkind WHEN 'S' THEN 's' ELSE 'r' END)::\"char\", c.relowner))) a "
@@ -92,10 +93,10 @@ async def verify(url: str, application: Application) -> Report:
         async with engine.connect() as connection:
             findings = await _assertion(connection, bootstrap.schema)
             findings += await _event_triggers(connection, bootstrap.schema)
-            acl = await _acl(connection, bootstrap.schema)
+            acl, sequences = await _acl(connection, bootstrap.schema)
             findings += _group_privileges(acl, application.scoped, bootstrap.schema)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
-            findings += _bypass_privileges(acl, bootstrap)
+            findings += _bypass_privileges(acl, sequences, bootstrap)
             findings += _global_privileges(acl, application, bootstrap.schema)
             findings += await _c9(connection, acl, application.scoped, bootstrap.schema)
             findings += await _memberships(connection, bootstrap)
@@ -114,19 +115,22 @@ async def _event_triggers(connection: AsyncConnection, schema: str) -> list[Find
 
 async def _assertion(connection: AsyncConnection, schema: str) -> list[Finding]:
     try:
-        await connection.execute(text(f"SELECT loom_guard_{schema}.assert_scoped_schema()"))
+        await connection.execute(text(assert_statement(schema)))
     except DBAPIError as exc:
         await connection.rollback()
         return [Finding(None, "assertion", "passes", str(exc.orig))]
     return []
 
 
-async def _acl(connection: AsyncConnection, schema: str) -> Acl:
+async def _acl(connection: AsyncConnection, schema: str) -> tuple[Acl, frozenset[str]]:
     acl: Acl = defaultdict(lambda: defaultdict(set))
+    sequences: set[str] = set()
     rows = await connection.execute(_RELATION_ACL, {"schema": schema})
     for row in rows:
         acl[str(row.relname)][str(row.grantee)].add(str(row.privilege_type))
-    return acl
+        if row.relkind == "S":
+            sequences.add(str(row.relname))
+    return acl, frozenset(sequences)
 
 
 def _group_privileges(
@@ -164,7 +168,9 @@ async def _sequence_usage(
     return findings
 
 
-def _bypass_privileges(acl: Acl, bootstrap: BootstrapConfig) -> list[Finding]:
+def _bypass_privileges(
+    acl: Acl, sequences: frozenset[str], bootstrap: BootstrapConfig
+) -> list[Finding]:
     bypass = [u for u, spec in bootstrap.database_users.items() if spec.access == "bypass"]
     four = {p.value for p in READ_WRITE}
     findings: list[Finding] = []
@@ -177,7 +183,7 @@ def _bypass_privileges(acl: Acl, bootstrap: BootstrapConfig) -> list[Finding]:
                         relname, "bypass.alembic_version", user, BYPASS_VERSION_PRIVILEGES, actual
                     )
                 )
-            elif relname != VERSION_TABLE and _is_table(relname, acl) and not four <= actual:
+            elif relname != VERSION_TABLE and relname not in sequences and not four <= actual:
                 findings.append(_diff(relname, "bypass.privileges", user, four, actual))
     return findings
 
@@ -258,10 +264,6 @@ def _access_memberships(
         if actual != wanted:
             findings.append(_diff(None, "membership.access", user, wanted, actual))
     return findings
-
-
-def _is_table(relname: str, acl: Acl) -> bool:
-    return not relname.endswith("_seq") and relname in acl
 
 
 def _diff(

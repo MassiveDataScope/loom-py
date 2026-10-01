@@ -75,7 +75,9 @@ def grant_statements(
         statements.append(f"GRANT {names} ON {schema}.{table} TO {schema}_{group}")
         if Privilege.INSERT in granted:
             statements += [
-                f"GRANT USAGE ON SEQUENCE {schema}.{table}_{column}_seq TO {schema}_{group}"
+                "DO $$ BEGIN EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', "
+                f"pg_get_serial_sequence('{schema}.{table}', '{_identifier(column)}'), "
+                f"'{schema}_{group}'); END $$"
                 for column in serial_columns
             ]
     return statements

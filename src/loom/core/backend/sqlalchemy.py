@@ -287,6 +287,11 @@ def _foreign_key_constraints(
         target_table, _, ref = info.field.foreign_key.rpartition(".")
         target = _target_model(target_table, models_by_table, comp)
         if target is None:
+            if boundary is not None:
+                raise ValueError(
+                    f"{get_table_name(struct_cls)}.{name} references {target_table}, which is "
+                    "not compiled with it; compile both models together so C6, C7 and C9 apply"
+                )
             continue
         target_boundary = next((s for s in scope_columns(target) if s.is_boundary), None)
         if boundary is None:
@@ -351,7 +356,7 @@ def _check_c6_target_key(
     fields = get_column_fields(target)
     keys = [tuple(name for name, info in fields.items() if info.field.primary_key)]
     keys += list(declared_unique(target))
-    if not any({target_boundary, ref} <= set(key) for key in keys):
+    if not any({target_boundary, ref} == set(key) for key in keys):
         raise ValueError(
             f"C6: {struct_cls.__name__}.{column} needs a key on "
             f"({target_boundary}, {ref}) in {target.__name__}"
