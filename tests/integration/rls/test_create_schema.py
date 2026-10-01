@@ -6,24 +6,13 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.rls import create_schema
 from tests.integration.agnosticism import notes
-from tests.integration.rls.conftest import BootstrapFactory, application_for
+from tests.integration.rls.conftest import BootstrapFactory, application_for, execute, scalar
 
 pytestmark = pytest.mark.integration
-
-
-async def _scalar(url: str, sql: str) -> object:
-    engine = create_async_engine(url, poolclass=NullPool)
-    try:
-        async with engine.connect() as conn:
-            return (await conn.execute(text(sql))).scalar()
-    finally:
-        await engine.dispose()
 
 
 async def test_create_schema_creates_and_protects_every_scoped_table(
@@ -35,10 +24,10 @@ async def test_create_schema_creates_and_protects_every_scoped_table(
     await create_schema(database.migrator, application)
 
     registered = "SELECT count(*) FROM loom_guard_notes.scoped_table"
-    assert await _scalar(database.superuser, registered) == 3
+    assert await scalar(database.superuser, registered) == 3
     asserted = "SELECT 1 FROM (SELECT loom_guard_notes.assert_scoped_schema()) AS guard"
-    assert await _scalar(database.superuser, asserted) == 1
-    assert await _scalar(database.read, "SELECT count(*) FROM notes.notes") == 0
+    assert await scalar(database.superuser, asserted) == 1
+    assert await scalar(database.read, "SELECT count(*) FROM notes.notes") == 0
 
 
 async def test_create_schema_is_idempotent(
@@ -51,7 +40,7 @@ async def test_create_schema_is_idempotent(
     await create_schema(database.migrator, application)
 
     registered = "SELECT count(*) FROM loom_guard_notes_twice.scoped_table"
-    assert await _scalar(database.superuser, registered) == 3
+    assert await scalar(database.superuser, registered) == 3
 
 
 async def test_create_schema_without_the_bootstrap_names_the_entry_point(
@@ -82,10 +71,7 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
         "INSERT INTO notes_wired.notes (owner_id, editor, body) "
         "VALUES ('u1', 'e', 'mine'), ('u2', 'e', 'theirs')"
     )
-    engine = create_async_engine(database.bypass, poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.execute(text(seed))
-    await engine.dispose()
+    await execute(database.bypass, seed)
 
     def backend(url: str):
         config = {
@@ -134,10 +120,7 @@ async def test_a_disabled_guard_event_trigger_stops_create_schema_and_fails_veri
     database = await scoped_database("notes_evt")
     application = application_for(notes, database, tmp_path, schema="notes_evt")
     await create_schema(database.migrator, application)
-    engine = create_async_engine(database.superuser, poolclass=NullPool)
-    async with engine.begin() as conn:
-        await conn.execute(text("ALTER EVENT TRIGGER loom_guard_notes_evt_ddl DISABLE"))
-    await engine.dispose()
+    await execute(database.superuser, "ALTER EVENT TRIGGER loom_guard_notes_evt_ddl DISABLE")
 
     report = await verify(database.superuser, application)
     assert "guard.event_triggers" in {finding.check for finding in report.findings}

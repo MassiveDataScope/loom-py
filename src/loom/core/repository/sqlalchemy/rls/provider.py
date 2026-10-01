@@ -27,6 +27,16 @@ if TYPE_CHECKING:
 SCOPE_PREFIX = "loom.scope."
 
 
+def scope_setting(scope: str) -> str:
+    """The session key that carries the value of ``scope``."""
+    return f"{SCOPE_PREFIX}{scope}"
+
+
+def elevation_setting(scope: str) -> str:
+    """The session key that flags ``scope`` as elevated."""
+    return f"{SCOPE_PREFIX}{scope}.any"
+
+
 def rls_session_settings(
     application: Application, product: SessionSettings | None = None
 ) -> Callable[[], Mapping[str, str]]:
@@ -61,9 +71,9 @@ def scoped_session_settings(
         settings = dict(_product_settings(product))
         for scope, elevable in scopes.items():
             value = resolve_binding(scope_sources[scope])
-            settings[f"{SCOPE_PREFIX}{scope}"] = "" if value is None else str(value)
+            settings[scope_setting(scope)] = "" if value is None else str(value)
             if elevable:
-                settings[f"{SCOPE_PREFIX}{scope}.any"] = "on" if scope in active else ""
+                settings[elevation_setting(scope)] = "on" if scope in active else ""
         return settings
 
     return provide

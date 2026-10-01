@@ -46,6 +46,27 @@ async def _run(uri: str, *statements: str, autocommit: bool = False) -> None:
         await engine.dispose()
 
 
+async def scalar(url: str, sql: str, **params: Any) -> Any:
+    """Return the first column of the first row of ``sql`` run as the user in ``url``."""
+    engine = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with engine.connect() as conn:
+            return (await conn.execute(text(sql), params)).scalar()
+    finally:
+        await engine.dispose()
+
+
+async def execute(url: str, *statements: str) -> None:
+    """Run ``statements`` in one committed transaction as the user in ``url``."""
+    engine = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            for statement in statements:
+                await conn.execute(text(statement))
+    finally:
+        await engine.dispose()
+
+
 async def _connection_problem(uri: str) -> str | None:
     try:
         await _run(uri, "SELECT 1")

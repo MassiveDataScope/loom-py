@@ -111,39 +111,94 @@ class CompositionRules:
             raise ValueError("ceiling is required: pass the creator's permissions, never None.")
 
 
+class _Flattener:
+    """Resolve ``extends`` into flat permission sets, detecting cycles and unknown names."""
+
+    def __init__(
+        self,
+        specs: Mapping[str, RoleSpec],
+        declared: Mapping[str, Permission],
+        bases: Mapping[str, frozenset[Permission]],
+    ) -> None:
+        self._specs = specs
+        self._declared = declared
+        self._bases = bases
+        self._resolved: dict[str, frozenset[Permission]] = {}
+        self._visiting: list[str] = []
+
+    def all(self) -> dict[str, frozenset[Permission]]:
+        for name in self._specs:
+            self._resolve(name)
+        return self._resolved
+
+    def _resolve(self, name: str) -> frozenset[Permission]:
+        if name in self._resolved:
+            return self._resolved[name]
+        if name in self._bases:
+            return self._bases[name]
+        self._enter(name)
+        spec = self._specs[name]
+        permissions = {permission for base in spec.extends for permission in self._base(name, base)}
+        permissions |= {
+            self._permission(name, permission) for permission in sorted(spec.permissions)
+        }
+        self._visiting.pop()
+        self._resolved[name] = frozenset(permissions)
+        return self._resolved[name]
+
+    def _enter(self, name: str) -> None:
+        if name in self._visiting:
+            path = [*self._visiting[self._visiting.index(name) :], name]
+            raise ValueError(f"Role extends form a cycle: {' -> '.join(map(repr, path))}.")
+        self._visiting.append(name)
+
+    def _base(self, name: str, base: str) -> frozenset[Permission]:
+        if base not in self._specs and base not in self._bases:
+            raise ValueError(f"Role {name!r} extends unknown role {base!r}.")
+        return self._resolve(base)
+
+    def _permission(self, name: str, permission: str) -> Permission:
+        if permission not in self._declared:
+            raise ValueError(f"Role {name!r} uses undeclared permission {permission}.")
+        return self._declared[permission]
+
+
 def _flatten(
     specs: Mapping[str, RoleSpec],
     declared: Mapping[str, Permission],
     bases: Mapping[str, frozenset[Permission]],
 ) -> dict[str, frozenset[Permission]]:
-    resolved: dict[str, frozenset[Permission]] = {}
-    visiting: list[str] = []
+    return _Flattener(specs, declared, bases).all()
 
-    def resolve(name: str) -> frozenset[Permission]:
-        if name in resolved:
-            return resolved[name]
-        if name in bases:
-            return bases[name]
-        if name in visiting:
-            cycle = " -> ".join(repr(step) for step in [*visiting[visiting.index(name) :], name])
-            raise ValueError(f"Role extends form a cycle: {cycle}.")
-        visiting.append(name)
-        permissions: set[Permission] = set()
-        for base in specs[name].extends:
-            if base not in specs and base not in bases:
-                raise ValueError(f"Role {name!r} extends unknown role {base!r}.")
-            permissions |= resolve(base)
-        for permission in sorted(specs[name].permissions):
-            if permission not in declared:
-                raise ValueError(f"Role {name!r} uses undeclared permission {permission}.")
-            permissions.add(declared[permission])
-        visiting.pop()
-        resolved[name] = frozenset(permissions)
-        return resolved[name]
 
-    for name in specs:
-        resolve(name)
-    return resolved
+def _check_extensions(
+    name: str, spec: RoleSpec, base_roles: Mapping[str, object], rules: CompositionRules
+) -> None:
+    for extended in spec.extends:
+        if extended not in base_roles:
+            continue
+        if not rules.may_extend_base:
+            raise ValueError(f"Custom role {name!r} may not extend base roles.")
+        if extended in rules.non_extensible:
+            raise ValueError(f"Base role {extended!r} is not extensible.")
+
+
+def _custom_role(
+    name: str,
+    permissions: frozenset[Permission],
+    rules: CompositionRules,
+    namespace: str,
+    base_roles: Mapping[str, object],
+) -> Role:
+    above = sorted(permission.name for permission in permissions - rules.ceiling)
+    if above:
+        raise ValueError(f"Custom role {name!r} exceeds the ceiling: {', '.join(above)}.")
+    effective = f"{rules.custom_prefix}{namespace}/{name}"
+    if effective in base_roles:
+        raise ValueError(
+            f"A base role is already named {effective!r}; custom roles never replace it."
+        )
+    return Role(effective, permissions)
 
 
 def _require_segment(kind: str, value: str) -> None:
@@ -249,26 +304,12 @@ class RoleCatalog:
         declared = {permission.name: permission for permission in base.permissions}
         for name, spec in custom.items():
             _require_segment("custom role name", name)
-            for extended in spec.extends:
-                if extended not in base_roles:
-                    continue
-                if not rules.may_extend_base:
-                    raise ValueError(f"Custom role {name!r} may not extend base roles.")
-                if extended in rules.non_extensible:
-                    raise ValueError(f"Base role {extended!r} is not extensible.")
+            _check_extensions(name, spec, base_roles, rules)
         flattened = _flatten(custom, declared, base_roles)
-        roles: list[Role] = list(base.roles)
-        for name in custom:
-            above = sorted(permission.name for permission in flattened[name] - rules.ceiling)
-            if above:
-                raise ValueError(f"Custom role {name!r} exceeds the ceiling: {', '.join(above)}.")
-            effective = f"{rules.custom_prefix}{namespace}/{name}"
-            if effective in base_roles:
-                raise ValueError(
-                    f"A base role is already named {effective!r}; custom roles never replace it."
-                )
-            roles.append(Role(effective, flattened[name]))
-        return cls(base.permissions, roles)
+        customs = [
+            _custom_role(name, flattened[name], rules, namespace, base_roles) for name in custom
+        ]
+        return cls(base.permissions, [*base.roles, *customs])
 
     def digest(self) -> str:
         """Return a SHA-256 over the sorted ``role:perm,perm`` lines of the catalog."""

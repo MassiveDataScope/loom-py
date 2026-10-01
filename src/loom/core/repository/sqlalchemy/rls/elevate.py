@@ -9,10 +9,9 @@ from loom.core.authz.elevation import elevate_scope, in_execution_frame
 from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
+from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
 from loom.core.repository.sqlalchemy.session_settings import settings_statement
 from loom.core.repository.sqlalchemy.transactional import get_active_session
-
-SCOPE_PREFIX = "loom.scope."
 
 
 class SQLAlchemyElevationSink:
@@ -23,10 +22,10 @@ class SQLAlchemyElevationSink:
         return session is not None and session.in_transaction()
 
     async def set_flag(self, scope: str) -> None:
-        await self._apply({f"{SCOPE_PREFIX}{scope}.any": "on"})
+        await self._apply({elevation_setting(scope): "on"})
 
     async def clear_flags(self, scopes: frozenset[str]) -> None:
-        await self._apply({f"{SCOPE_PREFIX}{scope}.any": "" for scope in sorted(scopes)})
+        await self._apply({elevation_setting(scope): "" for scope in sorted(scopes)})
 
     async def invalidate(self) -> None:
         session = get_active_session()
