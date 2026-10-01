@@ -30,7 +30,15 @@ extensions = [
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "guides", "architecture", "examples-repo"]
+exclude_patterns = [
+    "_build",
+    "_inventories",
+    "Thumbs.db",
+    ".DS_Store",
+    "guides",
+    "architecture",
+    "examples-repo",
+]
 
 html_theme = "furo"
 html_static_path = ["_static"]
@@ -153,7 +161,10 @@ source_suffix = {
 }
 
 intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
+    "python": (
+        "https://docs.python.org/3",
+        (None, "_inventories/python-objects.inv"),
+    ),
 }
 
 suppress_warnings = ["ref.python"]
