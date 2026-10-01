@@ -182,7 +182,6 @@ jobs:
   # still blocks here.
   validate:
     needs: [tests-fast, tests-spark, integration]
-    # Release-docs PRs skip the integration lane; validate still gates them.
     if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) }}
     runs-on: ubuntu-latest
     env:
@@ -242,8 +241,6 @@ jobs:
           mv model-coverage/.coverage.model .coverage.model
           rm -rf model-coverage
 
-      # Code that only runs against real services (row-level security,
-      # migrations) is covered here, so Sonar measures it like any other code.
       - name: Download integration coverage
         if: ${{ needs.integration.result == 'success' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

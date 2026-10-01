@@ -1,7 +1,3 @@
--- Bootstrap of one application schema, rendered by loom from the product's declaration. Every name below was
--- injected, none is loom's. Idempotent: re-applying after adding a database user is the supported way to grant it.
--- SQLSTATEs: LG001 owner DML denied, LG002 guard invariant violated, 22023 bad declaration, 42501 not the owner
--- or not privileged.
 DO $$
 BEGIN
   IF current_setting('server_version_num')::int < {MIN_SERVER_VERSION_NUM} THEN
@@ -11,7 +7,6 @@ BEGIN
     RAISE EXCEPTION 'loom_guard[{S}]: creating an event trigger needs superuser or rds_superuser; current_user is %', current_user USING ERRCODE = '42501';
   END IF;
 END $$;
--- guard schema and the helpers every guard function shares
 CREATE SCHEMA IF NOT EXISTS loom_guard_{S};
 CREATE OR REPLACE FUNCTION loom_guard_{S}.fail(code text, message text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
@@ -53,7 +48,6 @@ CREATE OR REPLACE FUNCTION loom_guard_{S}.set_hatch(state text) RETURNS void LAN
   SELECT set_config('loom_guard_{S}.protecting', state, true) $$;
 CREATE OR REPLACE FUNCTION loom_guard_{S}.hatch_open() RETURNS boolean LANGUAGE sql STABLE AS $$
   SELECT coalesce(current_setting('loom_guard_{S}.protecting', true) = 'on', false) $$;
--- roles and users: compare attributes when they exist, create when they do not
 DO $$
 DECLARE spec record; r pg_roles%ROWTYPE;
 BEGIN
@@ -79,7 +73,6 @@ CREATE SCHEMA IF NOT EXISTS {S} AUTHORIZATION {OWNER};
 REVOKE CREATE ON SCHEMA {S} FROM PUBLIC;
 GRANT USAGE ON SCHEMA {S} TO {READERS}, {WRITERS};
 {BYPASS_STATEMENTS}
--- guard objects for this schema
 CREATE TABLE IF NOT EXISTS loom_guard_{S}.scoped_table (rel regclass PRIMARY KEY, scopes jsonb NOT NULL, privileges text[] NOT NULL);
 CREATE TABLE IF NOT EXISTS loom_guard_{S}.scoped_policy (rel regclass, policyname name, cmd text, roles name[], qual text, with_check text, PRIMARY KEY (rel, policyname));
 REVOKE ALL ON SCHEMA loom_guard_{S} FROM PUBLIC;
