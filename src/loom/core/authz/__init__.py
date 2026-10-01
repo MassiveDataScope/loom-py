@@ -25,8 +25,10 @@ from loom.core.authz._roles import (
     UnknownRole,
 )
 from loom.core.authz._scope import Scope
+from loom.core.authz.product import AuthzProduct, load_authz_product
 
 __all__ = [
+    "AuthzProduct",
     "CompositionRules",
     "Decision",
     "Grant",
@@ -43,5 +45,6 @@ __all__ = [
     "can_grant",
     "can_revoke",
     "evaluate",
+    "load_authz_product",
     "scopes_with",
 ]

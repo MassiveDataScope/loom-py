@@ -126,3 +126,28 @@ async def test_a_disabled_guard_event_trigger_stops_create_schema_and_fails_veri
     assert "guard.event_triggers" in {finding.check for finding in report.findings}
     with pytest.raises(ConfigError, match="event trigger"):
         await create_schema(database.migrator, application)
+
+
+async def test_external_mode_refuses_a_bypass_connection_without_scoped_tables(
+    scoped_database: BootstrapFactory,
+) -> None:
+    from loom.core.config import ConfigContext
+    from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+    from tests.unit.core.locator_fixtures.plain import Widget
+
+    database = await scoped_database("plain_external")
+    await execute(
+        database.migrator,
+        "SET ROLE plain_external_owner",
+        "CREATE TABLE plain_external.widgets (id integer PRIMARY KEY, name text)",
+    )
+    config = {
+        "app": {"name": "plain"},
+        "database": {"url": database.bypass, "schema": {"mode": "external"}},
+    }
+    wiring = SQLAlchemyBackend().build(ConfigContext.from_dict(config), (Widget,))
+    wiring.prepare_models((Widget,))
+
+    with pytest.raises(ConfigError, match="bypass"):
+        async with wiring.lifespan_init():
+            pass

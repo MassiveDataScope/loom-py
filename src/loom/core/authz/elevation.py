@@ -143,7 +143,14 @@ async def _clear_added(frame: _Frame) -> None:
         _logger.exception(
             "elevation flags could not be cleared for %s; invalidating the session", sorted(added)
         )
-        await frame.sink.invalidate()
+        await _invalidate(frame.sink)
+
+
+async def _invalidate(sink: ElevationSink) -> None:
+    try:
+        await sink.invalidate()
+    except Exception:
+        _logger.exception("the session could not be invalidated after a failed clearing")
 
 
 def _open_frame() -> _Frame | None:

@@ -134,7 +134,7 @@ def load_application(config_path: str | None = None) -> Application:
     models = _discover(app.discovery).models
     metadata = MetaData()
     if database.schema.name is not None:
-        metadata.info[SCHEMA_KEY] = database.schema.name
+        metadata.info[SCHEMA_KEY] = _schema_name(database.schema.name)
     compile_all(*models, metadata=metadata)
     scoped = scoped_tables(metadata)
     bootstrap = _bootstrap(database.schema) if scoped else None
@@ -172,6 +172,15 @@ def _discover(discovery: _Discovery) -> DiscoveryResult:
     if engine is None:
         raise ConfigError(f"app.discovery.mode {discovery.mode!r} is not supported")
     return engine(discovery)
+
+
+def _schema_name(name: str) -> str:
+    from loom.core.backend.scoped_ddl import schema_identifier
+
+    try:
+        return schema_identifier(name)
+    except ValueError as exc:
+        raise ConfigError(f"database.schema.name: {exc}") from exc
 
 
 def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:

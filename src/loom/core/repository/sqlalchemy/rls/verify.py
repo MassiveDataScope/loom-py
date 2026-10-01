@@ -174,8 +174,8 @@ async def _sequence_usage(
 def _bypass_privileges(
     acl: Acl, sequences: frozenset[str], bootstrap: BootstrapConfig
 ) -> list[Finding]:
-    bypass = [u for u, spec in bootstrap.database_users.items() if spec.access == "bypass"]
-    four = {p.value for p in READ_WRITE}
+    bypass = bootstrap.bypass_users
+    all_row_privileges = {p.value for p in READ_WRITE}
     findings: list[Finding] = []
     for relname, grants in acl.items():
         for user in bypass:
@@ -186,8 +186,16 @@ def _bypass_privileges(
                         relname, "bypass.alembic_version", user, BYPASS_VERSION_PRIVILEGES, actual
                     )
                 )
-            elif relname != VERSION_TABLE and relname not in sequences and not four <= actual:
-                findings.append(_diff(relname, "bypass.privileges", user, four, actual))
+            elif relname in sequences and "USAGE" not in actual:
+                findings.append(_diff(relname, "bypass.sequence_usage", user, {"USAGE"}, actual))
+            elif (
+                relname != VERSION_TABLE
+                and relname not in sequences
+                and not all_row_privileges <= actual
+            ):
+                findings.append(
+                    _diff(relname, "bypass.privileges", user, all_row_privileges, actual)
+                )
     return findings
 
 

@@ -121,6 +121,12 @@ REGISTERED_QUAL = (
             "sequence.usage",
         ),
         (
+            "bypass without USAGE on a sequence",
+            ["REVOKE USAGE ON SEQUENCE notes.notes_id_seq FROM notes_ops"],
+            ["GRANT USAGE ON SEQUENCE notes.notes_id_seq TO notes_ops"],
+            "bypass.sequence_usage",
+        ),
+        (
             "a read user member of writers",
             ["GRANT notes_writers TO notes_ro"],
             ["REVOKE notes_writers FROM notes_ro"],

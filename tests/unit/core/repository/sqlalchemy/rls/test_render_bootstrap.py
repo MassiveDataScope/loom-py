@@ -93,7 +93,7 @@ def test_the_migrator_is_a_no_inherit_member_of_the_owner(sql: str) -> None:
     assert re.search(r"ALTER ROLE r_migrator SET role = r_owner", sql)
 
 
-def test_role_attributes_and_memberships_are_compared_before_reuse(sql: str) -> None:
+def test_role_attributes_are_compared_before_reuse(sql: str) -> None:
     assert "rolbypassrls" in sql
     assert "rolsuper" in sql
     assert "already exists with different attributes" in sql

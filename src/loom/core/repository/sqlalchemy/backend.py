@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from loom.core.authz.elevation import ElevationSink
 from loom.core.authz.product import load_authz_product
-from loom.core.backend.scoped_ddl import check_dialect
+from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.di.container import LoomContainer
@@ -72,7 +72,7 @@ class SQLAlchemyBackend:
             ConfigError: When the ``database`` section is missing or invalid.
         """
         db_cfg = ctx.section(ConfigKey.DATABASE, _DatabaseConfig)
-        postgres = make_url(db_cfg.url).get_backend_name() == "postgresql"
+        postgres = make_url(db_cfg.url).get_backend_name() == POSTGRES_DIALECT
         settings = (
             DeferredScopedSettings(db_cfg.schema.scopes)
             if db_cfg.schema.mode == "external" and postgres
@@ -227,19 +227,24 @@ async def _check_external(
         raise ConfigError(
             f"database.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
-    if scoped and connection.dialect.name == "postgresql":
-        await _check_forced_rls(connection, scoped)
+    if connection.dialect.name == POSTGRES_DIALECT:
+        await _reject_privileged_connection(connection)
+        if scoped:
+            await _check_forced_rls(connection, scoped)
 
 
-async def _check_forced_rls(
-    connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
-) -> None:
+async def _reject_privileged_connection(connection: AsyncConnection) -> None:
     role = text("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
     if (await connection.execute(role)).scalar():
         raise ConfigError(
             "the application connects as a superuser or a bypass role, which ignores "
             "row-level security; use the URL of a read or write database user"
         )
+
+
+async def _check_forced_rls(
+    connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
+) -> None:
     query = text(
         "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
         "WHERE relname = :name AND relnamespace = current_schema()::regnamespace"

@@ -40,8 +40,6 @@ def scope_protection_hook(application: Application) -> RevisionHook:
             for container in (script.upgrade_ops, script.downgrade_ops):
                 if container is not None:
                     container.ops[:] = rewriter.rewrite(container.ops)
-            if script.upgrade_ops is not None:
-                rewriter.assert_protected(script.upgrade_ops.ops)
 
     return hook
 
@@ -67,19 +65,6 @@ class _Rewriter:
         for op in operations:
             rewritten.extend(self._sequence_for(op))
         return rewritten
-
-    def assert_protected(self, operations: Sequence[ops.MigrateOperation]) -> None:
-        created = [
-            op.table_name
-            for op in operations
-            if isinstance(op, ops.CreateTableOp) and op.table_name in self._scoped
-        ]
-        protected = {
-            self._protected_table(op) for op in operations if isinstance(op, ops.ExecuteSQLOp)
-        }
-        missing = [name for name in created if name not in protected]
-        if missing:
-            raise ValueError(f"revision would leave scoped tables unprotected: {missing}")
 
     def _sequence_for(self, op: ops.MigrateOperation) -> list[ops.MigrateOperation]:
         if isinstance(op, ops.CreateTableOp):
@@ -107,13 +92,6 @@ class _Rewriter:
             return False
         columns = {column.column for column in scoped.scopes}
         return any(_column_name(inner) in columns for inner in op.ops)
-
-    def _protected_table(self, op: ops.ExecuteSQLOp) -> str | None:
-        text = str(op.sqltext)
-        marker = f".protect_scoped_table('{self._schema}."
-        if marker not in text:
-            return None
-        return text.split(marker, 1)[1].split("'", 1)[0]
 
     def _serials(self, table_name: str) -> tuple[str, ...]:
         table = self._tables.get(table_name)

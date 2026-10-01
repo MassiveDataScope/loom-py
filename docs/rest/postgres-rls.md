@@ -894,6 +894,25 @@ is a usage pattern, not a loom mechanism. Audit every use of the bypass manager.
 - **Adopting existing data.** Composite FKs change the physical key of referencing
   tables. A product that adopts row-scoped tables on existing data needs its own
   expand/contract migration; an FK without the boundary fails the assertion.
+- **Foreign keys from other schemas.** The assertion inspects the application schema
+  only, so a foreign key declared in another schema towards a scoped table is not
+  reported. It needs `REFERENCES`, which loom never grants.
+- **Exclusion constraints.** C5 requires the boundary among the key columns of an
+  `EXCLUDE` constraint, but not that it is compared with `=`.
+- **SCRAM verifiers.** Passwords are hashed on the client without SASLprep and with
+  a fixed iteration count; non-ASCII passwords may not authenticate.
+- **Process-wide registries.** Scope sources and the authorization product are
+  registered per process, not per application.
+- **`elevate` inputs.** `elevate` trusts the `catalog=` it receives and does not
+  check the decision's subject or expiry; the product evaluates the decision for
+  the current identity just before elevating.
+- **Test aids.** `register_authz_product` and `clear_authz_product` exist for tests;
+  production code publishes the product through the `loom.authz` entry point.
+- **`database.schema` as a string.** loom 2.11 ignored a scalar `database.schema`;
+  from 2.12 the key is a section, so a string value fails at startup with a
+  `ConfigError`. Move a schema name to `database.schema.name`.
+- **Discovery imports.** `load_application` reuses the server's discovery, which
+  imports the REST model module.
 
 ### A broken guard blocks all DDL
 

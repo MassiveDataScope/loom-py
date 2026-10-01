@@ -170,3 +170,10 @@ def test_a_relative_code_path_resolves_against_the_config_directory(
     application = load_application(_write(project, "loom.yaml", config))
 
     assert set(application.metadata.tables) == {"gadgets"}
+
+
+def test_an_invalid_schema_name_is_a_config_error_naming_the_key(tmp_path: Path) -> None:
+    schema = {**_scoped_schema(), "name": "Notes"}
+
+    with pytest.raises(ConfigError, match=r"database\.schema"):
+        load_application(_write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema)))
