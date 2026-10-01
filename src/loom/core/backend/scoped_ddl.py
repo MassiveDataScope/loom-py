@@ -45,6 +45,13 @@ def protect_statement(schema: str, table: str, scoped: ScopedTable) -> str:
     )
 
 
+def unprotect_statement(schema: str, table: str) -> str:
+    """Call the guard's unprotection for the qualified table."""
+    guard = _guard(schema)
+    _identifier(table)
+    return f"SELECT {guard}.unprotect_scoped_table('{schema}.{table}')"
+
+
 def grant_statements(
     schema: str,
     table: str,
