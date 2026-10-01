@@ -31,6 +31,7 @@ from sqlalchemy.orm import DeclarativeBase, mapped_column, relationship
 from sqlalchemy.orm import registry as sa_registry
 
 from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
+from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnType, Field
 from loom.core.model.introspection import (
@@ -221,15 +222,30 @@ def _compile_model(
     comp.compiled[struct_cls] = sa_cls
     comp.tables[table_name] = sa_cls
     comp.pending[struct_cls] = get_relations(struct_cls)
+    table = sa_cls.__table__
+    scoped = None
     if scopes:
-        table = sa_cls.__table__
-        comp.scoped[(table.schema, table.name)] = ScopedTable(
+        scoped = ScopedTable(
             schema=table.schema,
             name=table.name,
             scopes=scopes,
             privileges=frozenset(getattr(struct_cls, "__scope_privileges__", READ_WRITE)),
         )
+        comp.scoped[(table.schema, table.name)] = scoped
+    schema = comp.metadata.info.get(SCHEMA_KEY)
+    if schema is not None:
+        register_listeners(
+            table,
+            schema=schema,
+            scoped=scoped,
+            privileges=declared_privileges(struct_cls),
+            serial_columns=_serial_columns(column_fields),
+        )
     return sa_cls
+
+
+def _serial_columns(fields: dict[str, ColumnFieldInfo]) -> tuple[str, ...]:
+    return tuple(name for name, info in fields.items() if info.field.autoincrement)
 
 
 def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:

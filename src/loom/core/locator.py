@@ -19,6 +19,7 @@ from typing import Literal, TypeVar
 import msgspec
 from sqlalchemy import MetaData
 
+from loom.core.backend.scoped_ddl import SCHEMA_KEY
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.discovery.base import DiscoveryResult
@@ -126,6 +127,8 @@ def load_application(config_path: str | None = None) -> Application:
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
     models = _discover(app.discovery).models
     metadata = MetaData()
+    if database.schema.name is not None:
+        metadata.info[SCHEMA_KEY] = database.schema.name
     compile_all(*models, metadata=metadata)
     scoped = scoped_tables(metadata)
     bootstrap = _bootstrap(database.schema) if scoped else None

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import MetaData, create_engine
+from sqlalchemy.dialects import postgresql
+
 from loom.core.backend.scoped_ddl import (
     SCHEMA_KEY,
     check_dialect,
@@ -8,9 +11,6 @@ from loom.core.backend.scoped_ddl import (
     hatch_statement,
     protect_statement,
 )
-from sqlalchemy import MetaData, create_engine
-from sqlalchemy.dialects import postgresql
-
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped
@@ -42,7 +42,7 @@ def _metadata(schema: str = "s1") -> MetaData:
 
 def _ddl(table, event: str) -> list[str]:
     statements = []
-    for listener in table.dispatch[event]:
+    for listener in getattr(table.dispatch, event):
         target = getattr(listener, "__self__", listener)
         statement = getattr(target, "statement", None)
         if statement is not None:
@@ -135,15 +135,21 @@ def test_without_a_schema_in_the_metadata_nothing_is_registered() -> None:
     assert _ddl(metadata.tables["kinds"], "after_create") == []
 
 
+class Ledger(BaseModel, RowScoped):
+    __tablename__ = "ledger"
+    holder: int = ColumnField(Integer, primary_key=True, scope="holder")
+    id: int = ColumnField(Integer, primary_key=True)
+
+
 def test_listeners_emit_only_on_postgres() -> None:
     metadata = _metadata()
-    compile_all(Note, metadata=metadata)
+    compile_all(Ledger, metadata=metadata)
     engine = create_engine("sqlite://")
 
     metadata.create_all(engine)
 
-    assert "notes" in metadata.tables
-    listener = list(metadata.tables["notes"].dispatch.after_create)[0]
+    assert "ledger" in engine.dialect.get_table_names(engine.connect())
+    listener = list(metadata.tables["ledger"].dispatch.after_create)[0]
     compiled = str(listener.compile(dialect=postgresql.dialect()))
     assert compiled.startswith("SELECT loom_guard_s1")
 
