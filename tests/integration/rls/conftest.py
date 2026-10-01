@@ -198,7 +198,7 @@ def application_for(
                 "name": name,
                 "roles": {"owner": f"{name}_owner", "migrator": f"{name}_migrator"},
                 "database_users": {
-                    user: {"login": True, "access": access}
+                    user.replace(product.SCHEMA, name, 1): {"login": True, "access": access}
                     for user, access in product.USERS.items()
                 },
                 "scopes": dict(product.SCOPE_BINDINGS),

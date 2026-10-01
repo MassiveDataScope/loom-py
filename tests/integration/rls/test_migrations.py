@@ -1,0 +1,343 @@
+"""Alembic runners against a real Postgres (T019, FR-025 to FR-028, A5, H2).
+
+The structural tree runs as the migrator acting as owner; the data tree runs
+as a declared bypass user. Both trees share one advisory lock per schema and
+every revision closes with the guard's assertion.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
+
+from loom.core.config import ConfigError
+from loom.core.locator import CONFIG_ENV_VAR, Application
+from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH, alembic_config, check
+from tests.integration.agnosticism import notes, sites
+from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
+
+pytestmark = pytest.mark.integration
+
+_SCRIPT_TEMPLATE = '''"""${message}"""
+
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
+
+revision = ${repr(up_revision)}
+down_revision = ${repr(down_revision)}
+branch_labels = ${repr(branch_labels)}
+depends_on = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    ${downgrades if downgrades else "pass"}
+'''
+
+_DATA_REVISION = '''"""Review every note, whatever its boundary."""
+
+from alembic import op
+
+revision = "d0001"
+down_revision = None
+data_migration = True
+
+
+def upgrade() -> None:
+    op.execute("UPDATE {schema}.notes SET body = current_user")
+
+
+def downgrade() -> None:
+    op.execute("UPDATE {schema}.notes SET body = ''")
+'''
+
+_MISPLACED_DATA_REVISION = '''"""A data revision dropped into the structural tree by mistake."""
+
+revision = "s9999"
+down_revision = None
+data_migration = True
+
+
+def upgrade() -> None:
+    pass
+
+
+def downgrade() -> None:
+    pass
+'''
+
+_STRUCTURAL_IN_DATA_TREE = '''"""A revision without the data marker inside the data tree."""
+
+revision = "d9999"
+down_revision = None
+
+
+def upgrade() -> None:
+    pass
+
+
+def downgrade() -> None:
+    pass
+'''
+
+
+async def _scalar(url: str, sql: str, **params: Any) -> Any:
+    engine = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with engine.connect() as conn:
+            return (await conn.execute(text(sql), params)).scalar()
+    finally:
+        await engine.dispose()
+
+
+async def _execute(url: str, *statements: str) -> None:
+    engine = create_async_engine(url, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            for statement in statements:
+                await conn.execute(text(statement))
+    finally:
+        await engine.dispose()
+
+
+async def _upgrade_in_subprocess(location: Path, url: str, config_path: Path) -> None:
+    """Alembic's environment proxy is process-global: concurrent runners are processes."""
+    code = (
+        "from alembic import command\n"
+        "from loom.core.repository.sqlalchemy.migrations import alembic_config\n"
+        f"command.upgrade(alembic_config({str(location)!r}, {url!r}), 'head')\n"
+    )
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        code,
+        cwd=Path(__file__).parents[3],
+        env={**os.environ, CONFIG_ENV_VAR: str(config_path)},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _out, err = await process.communicate()
+    assert process.returncode == 0, err.decode()
+
+
+class Trees:
+    """One structural and one data script location sharing loom's environment."""
+
+    def __init__(self, root: Path, application: Application) -> None:
+        self.structural = root / "alembic"
+        self.data = self.structural / "data"
+        self.application = application
+        env_source = ENV_TEMPLATE_PATH.read_text()
+        for location in (self.structural, self.data):
+            (location / "versions").mkdir(parents=True)
+            (location / "env.py").write_text(env_source)
+            (location / "script.py.mako").write_text(_SCRIPT_TEMPLATE)
+
+    def config(self, location: Path, url: str) -> Config:
+        config = alembic_config(str(location), url)
+        config.attributes["application"] = self.application
+        return config
+
+    def write_revision(self, location: Path, name: str, source: str) -> None:
+        (location / "versions" / f"{name}.py").write_text(source)
+
+
+async def _upgraded_trees(
+    database: ScopedDatabase, product: Any, tmp_path: Path, *, schema: str | None = None
+) -> Trees:
+    application = application_for(product, database, tmp_path, schema=schema)
+    trees = Trees(tmp_path, application)
+    config = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(command.revision, config, "initial", autogenerate=True)
+    await asyncio.to_thread(command.upgrade, config, "head")
+    return trees
+
+
+async def test_autogenerated_revision_upgrades_and_protects_every_scoped_table(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_auto")
+
+    await _upgraded_trees(database, notes, tmp_path, schema="notes_auto")
+
+    registered = "SELECT count(*) FROM loom_guard_notes_auto.scoped_table"
+    assert await _scalar(database.superuser, registered) == 3
+    version_tables = (
+        "SELECT count(*) FROM pg_tables WHERE schemaname = 'notes_auto' "
+        "AND tablename IN ('alembic_version', 'alembic_version_data')"
+    )
+    tables = "SELECT string_agg(tablename, ',') FROM pg_tables WHERE schemaname = 'notes_auto'"
+    assert await _scalar(database.superuser, version_tables) == 2, await _scalar(
+        database.superuser, tables
+    )
+    bypass_privileges = (
+        "SELECT string_agg(a.privilege_type, ',' ORDER BY a.privilege_type) "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, "
+        "LATERAL aclexplode(c.relacl) a JOIN pg_roles r ON r.oid = a.grantee "
+        "WHERE n.nspname = 'notes_auto' AND c.relname = 'alembic_version' "
+        "AND r.rolname = 'notes_auto_ops'"
+    )
+    assert await _scalar(database.superuser, bypass_privileges) == "SELECT"
+    assert await _scalar(database.read, "SELECT count(*) FROM notes_auto.notes") == 0
+
+
+async def test_two_concurrent_upgrades_serialize_and_the_second_does_nothing(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_twice")
+    application = application_for(notes, database, tmp_path, schema="notes_twice")
+    trees = Trees(tmp_path, application)
+    first = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(command.revision, first, "initial", autogenerate=True)
+    config_path = tmp_path / "notes_twice.yaml"
+
+    await asyncio.gather(
+        _upgrade_in_subprocess(trees.structural, database.migrator, config_path),
+        _upgrade_in_subprocess(trees.structural, database.migrator, config_path),
+    )
+
+    registered = "SELECT count(*) FROM loom_guard_notes_twice.scoped_table"
+    assert await _scalar(database.superuser, registered) == 3
+    versions = "SELECT count(*) FROM notes_twice.alembic_version"
+    assert await _scalar(database.superuser, versions) == 1
+
+
+async def test_upgrading_one_schema_does_not_block_another(
+    scoped_database: BootstrapFactory, tmp_path: Path, admin_connection: Any
+) -> None:
+    await scoped_database("notes_locked")
+    sites_database = await scoped_database(sites.SCHEMA)
+    await admin_connection.execute(
+        text("SELECT pg_advisory_lock(hashtextextended('loom.schema:notes_locked', 0))")
+    )
+
+    trees = await asyncio.wait_for(_upgraded_trees(sites_database, sites, tmp_path), timeout=60)
+
+    registered = "SELECT count(*) FROM loom_guard_sites.scoped_table"
+    assert await _scalar(sites_database.superuser, registered) == len(trees.application.scoped)
+
+
+async def test_a_data_revision_in_the_structural_tree_is_rejected(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_misplaced")
+    application = application_for(notes, database, tmp_path, schema="notes_misplaced")
+    trees = Trees(tmp_path, application)
+    trees.write_revision(
+        trees.structural,
+        "s9999_misplaced",
+        _MISPLACED_DATA_REVISION.format(schema="notes_misplaced"),
+    )
+    config = trees.config(trees.structural, database.migrator)
+
+    with pytest.raises(ConfigError, match="data_migration"):
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+
+async def test_the_data_runner_requires_a_declared_bypass_user(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_bypass")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_bypass")
+    trees.write_revision(trees.data, "d0001_review", _DATA_REVISION.format(schema="notes_bypass"))
+    as_migrator = trees.config(trees.data, database.migrator)
+
+    with pytest.raises(ConfigError, match="bypass"):
+        await asyncio.to_thread(command.upgrade, as_migrator, "head")
+
+
+async def test_the_data_runner_requires_the_structural_tree_at_head(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_head")
+    application = application_for(notes, database, tmp_path, schema="notes_head")
+    trees = Trees(tmp_path, application)
+    structural = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(command.revision, structural, "initial", autogenerate=True)
+    trees.write_revision(trees.data, "d0001_review", _DATA_REVISION.format(schema="notes_head"))
+    data = trees.config(trees.data, database.bypass)
+
+    with pytest.raises(ConfigError, match="structural"):
+        await asyncio.to_thread(command.upgrade, data, "head")
+
+
+async def test_a_data_revision_updates_every_boundary_without_switching_role(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_data")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_data")
+    await _execute(
+        database.bypass,
+        "INSERT INTO notes_data.notes (owner_id, editor, body) "
+        "VALUES ('u1', 'e', 'a'), ('u2', 'e', 'b')",
+    )
+    trees.write_revision(trees.data, "d0001_review", _DATA_REVISION.format(schema="notes_data"))
+    config = trees.config(trees.data, database.bypass)
+
+    await asyncio.to_thread(command.upgrade, config, "head")
+
+    reviewed = "SELECT count(*) FROM notes_data.notes WHERE body = 'notes_data_ops'"
+    assert await _scalar(database.bypass, reviewed) == 2
+    versions = "SELECT version_num FROM notes_data.alembic_version_data"
+    assert await _scalar(database.superuser, versions) == "d0001"
+
+
+async def test_a_structural_revision_in_the_data_tree_is_rejected(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_struct")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_struct")
+    trees.write_revision(trees.data, "d9999_structural", _STRUCTURAL_IN_DATA_TREE)
+    config = trees.config(trees.data, database.bypass)
+
+    with pytest.raises(ConfigError, match="data_migration"):
+        await asyncio.to_thread(command.upgrade, config, "head")
+
+
+async def test_check_passes_at_head_and_reports_column_and_registry_drift(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("notes_check")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_check")
+    config = trees.config(trees.structural, database.migrator)
+
+    await asyncio.to_thread(check, config, trees.application)
+
+    await _execute(database.superuser, "ALTER TABLE notes_check.notes DROP COLUMN body")
+    with pytest.raises(ConfigError, match="body"):
+        await asyncio.to_thread(check, config, trees.application)
+
+    await _execute(
+        database.superuser,
+        "ALTER TABLE notes_check.notes ADD COLUMN body text NOT NULL DEFAULT ''",
+        "ALTER TABLE notes_check.notes ALTER COLUMN body DROP DEFAULT",
+    )
+    await _execute(
+        database.superuser,
+        "DELETE FROM loom_guard_notes_check.scoped_table "
+        "WHERE rel = 'notes_check.note_events'::regclass",
+    )
+    with pytest.raises(ConfigError, match="registry.*note_events"):
+        await asyncio.to_thread(check, config, trees.application)
+
+    await _execute(
+        database.superuser,
+        "DELETE FROM loom_guard_notes_check.scoped_table "
+        "WHERE rel = 'notes_check.note_items'::regclass",
+    )
+    with pytest.raises(ConfigError, match="guard assertion failed"):
+        await asyncio.to_thread(check, config, trees.application)

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS loom_guard_{S}.scoped_table (rel regclass PRIMARY KEY
 CREATE TABLE IF NOT EXISTS loom_guard_{S}.scoped_policy (rel regclass, policyname name, cmd text, roles name[], qual text, with_check text, PRIMARY KEY (rel, policyname));
 REVOKE ALL ON SCHEMA loom_guard_{S} FROM PUBLIC;
 GRANT USAGE ON SCHEMA loom_guard_{S} TO {OWNER};
+GRANT SELECT ON loom_guard_{S}.scoped_table, loom_guard_{S}.scoped_policy TO {OWNER};
 CREATE OR REPLACE FUNCTION loom_guard_{S}.term(col name, scope text, elevable boolean, coltype text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE WHEN elevable
     THEN format('(%I = NULLIF(current_setting(%L, true), %L)::%s OR current_setting(%L, true) = %L)', col, 'loom.scope.'||scope, '', coltype, 'loom.scope.'||scope||'.any', 'on')
