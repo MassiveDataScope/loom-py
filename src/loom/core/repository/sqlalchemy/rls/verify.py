@@ -259,7 +259,7 @@ def _bypass_privileges(
                 findings.append(
                     _diff(relname, "bypass.version_table", user, BYPASS_VERSION_PRIVILEGES, actual)
                 )
-            elif relname in sequences and not actual >= USAGE:
+            elif relname in sequences and not USAGE.issubset(actual):
                 findings.append(_diff(relname, "bypass.sequence_usage", user, USAGE, actual))
             elif (
                 relname != version_table

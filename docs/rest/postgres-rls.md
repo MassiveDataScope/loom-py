@@ -432,7 +432,7 @@ database:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | `create_all` | `external` never creates tables; at startup it wires the session values, refuses scoped models on another dialect, a superuser or bypass connection, a missing table, a scoped table without forced row-level security, and a guard that differs from the released one |
+| `mode` | `create_all` | `external` never creates tables; at startup it wires the session values, refuses scoped models on another dialect, a superuser or bypass connection, a missing table, a scoped table that is not protected canonically, and a guard that differs from the released one |
 | `allow_unprotected_dialect` | `false` | see [Other dialects](#other-dialects) |
 | `name` | none | the application schema; required when any model is `RowScoped` |
 | `guard` | none | the guard schema; see [Names](#names) |
@@ -457,8 +457,13 @@ In `mode: external`, startup fails with `ConfigError` when scoped models meet a 
 other than Postgres without `allow_unprotected_dialect`, and when the application
 connects as a superuser or a role with `BYPASSRLS`, which row-level security does not
 restrain. Use the URL of a `read` or `write` user. Startup also reads the catalogue and
-fails with `ConfigError` when the guard installed in the database is not the one this
-release of loom shipped; see [Why the guard is static SQL](#why-the-guard-is-static-sql).
+fails with `ConfigError` when a scoped table is missing or not protected canonically
+(forced row-level security, exactly the `loom_*` policies its privileges admit, all
+permissive, and its `loom_deny_owner_dml` trigger enabled `ALWAYS` on this guard's
+function), or when the guard installed in the database is not one this release of loom
+shipped or is below the minimum compatible revision; see
+[Why the guard is static SQL](#why-the-guard-is-static-sql) and
+[Adding users and upgrading loom](#adding-users-and-upgrading-loom).
 
 ### Names
 
@@ -484,11 +489,18 @@ Without `--config` it prints the `database.schema` block. With it, it merges the
 into the file and fills only the names that are absent. A name the product already
 changed is kept: the command lists it on standard error, exits with status 1 and leaves
 the file untouched. The file is rewritten with PyYAML, so comments are not preserved.
-From then on the names belong to the product; loom never derives them again, and a
-missing one raises `ConfigError` pointing at `loom schema init`.
+A file whose top level, `database` or `database.schema` is not a mapping, or that is not
+valid YAML, is refused the same way. From then on the names belong to the product; loom
+never derives them again, and a missing one raises `ConfigError` pointing at
+`loom schema init`.
+
+`loom schema init` depends only on the standard library and PyYAML: it needs neither the
+`sqlalchemy` nor the `rest` extra. Run without the `cli` extra, `loom` prints how to
+install it (`pip install "loom-kernel[cli]"`) and exits with status 1. The command tree
+lives in `loom.cli.app`.
 
 Every name Postgres sees passes one validator,
-`loom.core.backend.scoped_ddl.sql_identifier`, and `schema_identifier` for the schema:
+`loom.core.schema_names.sql_identifier`, and `schema_identifier` for the schema:
 
 - lowercase letters, digits and `_`, starting with a letter or `_`;
 - at most 63 characters, so Postgres never truncates it; at most 47 for the schema, so
@@ -534,7 +546,9 @@ It refuses a role name with a `pg_` or `rds_` prefix.
 
 {func}`~loom.core.repository.sqlalchemy.rls.apply_bootstrap` prepares one application
 schema in one transaction, with a superuser URL: the guard, the users and groups, the
-schema, its grants and the guard's event triggers.
+schema, its grants and the guard's event triggers. The role that runs the first bootstrap
+of a schema becomes its installer: it owns the guard, and every later bootstrap of that
+schema must run as the same role.
 
 ```python
 import asyncio
@@ -562,20 +576,32 @@ asyncio.run(main())
 
 Inside that transaction it runs, in order:
 
-1. the static preflight, which checks `server_version_num` against
+1. transaction-local `log_statement = none`, `log_min_duration_statement = -1` and
+   `log_parameter_max_length = 0`, so the server logs none of the statements that follow
+   nor their parameters;
+2. `lock_timeout`, then the schema's advisory lock
+   `pg_advisory_xact_lock(hashtextextended('loom.schema:' || schema, 0))`, the same lock
+   the migration runners and `create_schema` take, so a bootstrap never runs next to a
+   migration of the same schema and waits at most `lock_timeout` (`apply_bootstrap(...,
+   lock_timeout="5s")`, the default) before failing;
+3. the static preflight, which checks `server_version_num` against
    {data}`~loom.core.repository.sqlalchemy.rls.MIN_SERVER_VERSION_NUM` (`140000`) and
    that the caller is a superuser or a member of `rds_superuser`, then creates the guard
-   schema with its `revision` table, or checks the existing one;
-2. a transaction-level advisory lock on the guard, so two bootstraps of one schema
-   serialize;
-3. every guard revision the schema has not applied yet, each a static file checked
+   schema with its `revision` table, or checks that the existing one belongs to the
+   calling role and holds loom's revisions;
+4. every guard revision the schema has not applied yet, each a static file checked
    against the digest it was released with and recorded with that digest in the guard;
-4. the guard's `configure`, which receives the declaration as one bound JSON document
-   and creates or checks the roles, the application schema, the grants, the
-   configuration row and the two event triggers, both `ENABLE ALWAYS`;
-5. one password per entry of `passwords`, sent as a SCRAM-SHA-256 verifier computed on
-   the client. No cleartext password reaches the server or its log, and only the
-   migrator and users declared with `login: true` accept one.
+5. the guard's `configure`, which receives the declaration as one bound JSON document
+   and creates or checks the roles, the memberships, the application schema, the grants,
+   the configuration row and the two event triggers, both `ENABLE ALWAYS`;
+6. one password per entry of `passwords`, sent as a SCRAM-SHA-256 verifier computed on
+   the client through `set_password_verifier`, which pins `log_statement = none` for
+   its own execution. No cleartext password reaches the server or its log, and only the
+   migrator and users declared with `login: true` accept one;
+7. the catalogue integrity check of
+   [Why the guard is static SQL](#why-the-guard-is-static-sql) on the guard it just
+   installed, with its owner compared to the calling role; a difference raises
+   `ConfigError` and nothing is committed.
 
 What it guarantees:
 
@@ -586,21 +612,44 @@ What it guarantees:
   `apply_bootstrap` raises `ConfigError` naming the event trigger. There is no degraded
   mode.
 - It never adopts what it does not own. A guard schema that exists without loom's
-  revisions or with an owner that is not a superuser, an application schema owned by
-  another role than the declared owner, and a guard already configured for another
-  schema, owner, migrator or groups fail with `42501`.
-- It compares an existing role attribute by attribute and fails without touching
-  anything when one differs or the role is a superuser or holds `CREATEROLE`,
-  `CREATEDB` or `REPLICATION`, so a pre-existing `BYPASSRLS` role is never accepted in
+  revisions or with an owner other than the role running the bootstrap, an application
+  schema owned by another role than the declared owner, and a guard already configured
+  for another schema, owner, migrator, groups, version tables or installer fail with
+  `42501`.
+- It never adopts a role. On the first bootstrap of a schema, none of the declared roles
+  (owner, migrator, groups, users) may exist yet; it creates them all. A later bootstrap
+  accepts an existing role only when this guard recorded it, and still compares it
+  attribute by attribute: it fails without touching anything when one differs or the role
+  is a superuser or holds `CREATEROLE`, `CREATEDB` or `REPLICATION`. Any other existing
+  role fails with `42501`, so a pre-existing `BYPASSRLS` role is never accepted in
   silence.
+- It audits the memberships of every declared role, as member and as granted role.
+  Superusers and the installer aside, the only edges allowed are the migrator in the
+  owner and each `read` or `write` user in its groups. Any other edge, including a
+  membership in a `pg_*`, `rds_*` or bypass role, and any membership granted
+  `WITH ADMIN OPTION`, fails with `42501` naming it.
 - A guard that holds a revision this release of loom does not know, or one recorded with
   another digest, raises `ConfigError`: upgrade loom first.
-- `revoke_public=True`, the default, revokes `ALL` on schema `public` from `PUBLIC`.
+- Revoking `PUBLIC`'s privileges on schema `public` is opt-in, because that schema
+  belongs to the whole database: `revoke_public` defaults to `False`, and with `True`
+  the bootstrap revokes `ALL` on schema `public` from `PUBLIC`.
+- `scram_iterations` is the PBKDF2 iteration count of every verifier. It defaults to
+  `4096`, Postgres' own default, and a lower value raises `ConfigError`.
 - When the structural version table already exists, each bypass user is left with
   exactly `SELECT` on it.
 
-Applying it again with the same declaration converges to the same state. Re-applying it
-is also how you add users and upgrade loom, below.
+`load_application` builds the
+{class}`~loom.core.repository.sqlalchemy.rls.BootstrapConfig` with both defaults; set them
+on the returned value before applying it:
+
+```python
+import dataclasses
+
+bootstrap = dataclasses.replace(bootstrap, revoke_public=True, scram_iterations=600_000)
+```
+
+Applying it again with the same declaration, as the same installer, converges to the
+same state. Re-applying it is also how you add users and upgrade loom, below.
 
 #### Compose reference
 
@@ -656,13 +705,17 @@ asyncio.run(create_schema(os.environ["MIGRATOR_URL"], load_application()))
 ```
 
 {func}`~loom.core.repository.sqlalchemy.rls.create_schema` always takes the migrator
-URL and uses a session manager without session settings. It checks the dialect, checks
-that the migrator lands in the application schema, that `protect_scoped_table` resolves
-to the declared guard and that the guard's two event triggers, `ddl_command_end` and
-`sql_drop`, are present, enabled `ALWAYS` and owned by a superuser, runs `create_all` on
-the application's metadata and closes with the guard's assertion. Each scoped table is protected in the transaction
-that creates it. Then start the application with `mode: external` and the URL of a
-`read` or `write` user.
+URL and uses a session manager without session settings. It checks the dialect, sets
+`lock_timeout` (`create_schema(..., lock_timeout="5s")`, the default) and takes the
+schema's advisory lock, the one the bootstrap and the runners take. It then checks that
+the migrator lands in the application schema, that `protect_scoped_table` resolves to
+the declared guard, that the guard's two event triggers, `ddl_command_end` and
+`sql_drop`, are present, enabled `ALWAYS` and owned by the guard schema's owner, and
+that the guard is at or above the minimum compatible revision. It runs `create_all` on
+the application's metadata and closes with the guard's assertion. Each scoped table is
+protected in the transaction that creates it, and each guard call resolves the guard
+first, as described in [What the guard enforces](#what-the-guard-enforces). Then start
+the application with `mode: external` and the URL of a `read` or `write` user.
 
 ### CI and production with Alembic
 
@@ -714,8 +767,12 @@ tree. The environment calls
 - never switches role: it fails unless `current_user` is the owner and
   `current_schema()` the application schema, which the bootstrap arranges through the
   migrator's `role` and `search_path` defaults;
-- takes `pg_advisory_lock(hashtextextended('loom.schema:' || schema, 0))`, so two
-  deployments on one schema serialize and two schemas never block each other;
+- refuses a guard below the minimum compatible revision with `ConfigError`
+  (`guard revision pending`), before any guard call;
+- sets `lock_timeout` and takes
+  `pg_advisory_lock(hashtextextended('loom.schema:' || schema, 0))`, the lock the
+  bootstrap and `create_schema` take, so two deployments on one schema serialize, a
+  migration never runs next to a bootstrap, and two schemas never block each other;
 - creates both declared version tables (`version_tables.structure` and
   `version_tables.data`) through the guard's `prepare_version_tables`, and leaves each
   bypass user with exactly `SELECT` on the structural one, before the first revision;
@@ -733,9 +790,16 @@ revision carries loom's Alembic operations, never SQL text:
 | Model change | Generated sequence |
 |---|---|
 | new scoped table | `op.open_hatch()`, create, `op.protect_scoped_table(...)` |
-| scope column added, altered or dropped | `op.open_hatch()`, `op.unprotect_scoped_table(...)`, change, `op.protect_scoped_table(...)`; the same sequence in `downgrade` |
+| scope column added, altered or dropped | `op.open_hatch()`, `op.unprotect_scoped_table(...)`, change, `op.protect_scoped_table(...)` |
 | scoped table dropped, as in the `downgrade` of its creation | `op.open_hatch()`, `op.unprotect_scoped_table(...)`, drop |
 | global table with `__privileges__` | create, then `op.grant_table(...)` |
+
+A `downgrade` never protects a table with the scopes of the current models, because the
+revision it returns to may have had others. Where the `upgrade` would protect, the
+`downgrade` unprotects, applies the change and then stops on a generated
+`raise NotImplementedError(...)` that names the table: replace that line with
+`op.protect_scoped_table(...)` written by hand with the scopes and privileges of the
+target revision. The same holds for a scoped table that the `downgrade` recreates.
 
 A new scoped table, as generated:
 
@@ -755,9 +819,10 @@ def upgrade() -> None:
 
 The import registers the operations, which live in
 {mod}`~loom.core.repository.sqlalchemy.migrations.operations`. Each one executes a constant
-statement with bound parameters against the guard, and resolves the table in the
-application schema the runner configured, so it runs only through `run_migrations`;
-anywhere else it raises `ConfigError`.
+statement with bound parameters against the guard named by the runner, resolving the
+guard first, and resolves the table in the application schema the runner configured, so
+it runs only through `run_migrations`; anywhere else it raises `ConfigError` (`guard
+operations run only through loom's run_migrations`).
 
 The hook also emits the composite FKs, `__unique__` and `__indexes__`, and refuses to
 write a revision that would leave a scoped table unprotected. A structural revision that
@@ -773,6 +838,10 @@ table or unmarking a scoped one is out of scope: no revision is generated for it
 
 {func}`~loom.core.repository.sqlalchemy.migrations.check` is read-only: it takes no
 lock, creates no version table and writes nothing.
+
+The migration package, the environment and
+{func}`~loom.core.locator.load_application` work without the `rest` extra: they import
+nothing from FastAPI.
 
 ### Data migrations
 
@@ -814,16 +883,27 @@ revision cannot change the schema.
 
 ### Adding users and upgrading loom
 
-Declare the new user under `database_users` and re-apply the bootstrap with the
-superuser URL. A `read` or `write` user joins its groups and works at once; a `bypass`
-user receives its privileges on the existing tables. No revision and no table DDL are
-needed.
+Declare the new user under `database_users` and re-apply the bootstrap as the same
+installer. The new name must not exist yet as a role. A `read` or `write` user joins its
+groups and works at once; a `bypass` user receives its privileges on the existing tables.
+No revision and no table DDL are needed.
 
-Upgrading loom is the same step: re-apply the bootstrap of each schema. It applies only
-the guard revisions that schema lacks, each checked against its released digest, and
-never touches the guard of another schema, so two products on different loom versions
-can share a database. A released revision is never edited; a change to the guard ships
-as a new revision.
+Removing a user from `database_users` and re-applying the bootstrap takes away what it
+held: its group memberships, its privileges and default privileges in the schema, its
+`USAGE` on the schema and its role settings. The role itself is not dropped, and the
+guard forgets it, so declaring the same name again later is refused like any role the
+guard did not create. Drop or rename the role by hand, or declare a new name.
+
+Upgrading loom is the same step, in this order: upgrade loom in the application, then
+re-apply the bootstrap of each schema with it. The bootstrap applies only the guard
+revisions that schema lacks, each checked against its released digest, and never touches
+the guard of another schema, so two products on different loom versions can share a
+database. A release of loom accepts every released guard revision at or above its
+{data}`~loom.core.repository.sqlalchemy.rls.guard_manifest.MIN_COMPATIBLE_GUARD_REVISION`;
+below it, the runners and `create_schema` raise `ConfigError` (`guard revision pending`)
+and startup refuses to serve until the bootstrap has run. A guard holding a revision the
+release does not know is refused everywhere. A released revision is never edited; a
+change to the guard ships as a new revision.
 
 ### Incremental DDL under the hatch
 
@@ -832,9 +912,15 @@ Any DDL on a scoped table outside protection runs after the guard's hatch is ope
 is followed by its protection in the same transaction. Without the hatch, the guard fails
 it closed. A hand revision uses the operations above (`op.open_hatch()`,
 `op.protect_scoped_table(...)`, `op.unprotect_scoped_table(...)`); a hand session calls
-the guard's functions. Run these as the migrator. The examples use the derived guard
-name, `loom_guard_ledger`; `open_hatch()` opens the hatch until the end of the
-transaction.
+the guard's functions, qualified with the guard schema as below. Run these as the
+migrator. The examples use the derived guard name, `loom_guard_ledger`.
+
+`open_hatch()` writes a row for the current transaction into the guard, which only a
+member of the owner can do; no session setting opens the hatch. The row lives until the
+transaction ends or `protect_scoped_table` closes the hatch, and a deferred constraint
+trigger on it runs the assertion at `COMMIT`. A transaction that opened the hatch and
+leaves a violation behind therefore fails when it commits, with `LG002`, and nothing it
+did persists.
 
 A new child table with an inline FK to a scoped table:
 
@@ -893,19 +979,32 @@ COMMIT;
 ```
 
 `unprotect_scoped_table` without the hatch fails with `LG002`, and so does the drop of a
-registered table, rejected by the `sql_drop` trigger.
+registered table, rejected by the `sql_drop` trigger. Besides dropping the policies and
+the owner trigger, `unprotect_scoped_table` disables row-level security and revokes every
+privilege the two groups held on the table, so an unprotected table is a plain one that
+no non-bypass user can read.
 
 ### What the guard enforces
 
-The guard schema and everything in it belong to the superuser that ran the bootstrap.
-Only the owner holds anything on it: `USAGE`, `SELECT` on its configuration and
-registry, and `EXECUTE` on the functions a migration calls, such as `open_hatch`,
-`protect_scoped_table`, `unprotect_scoped_table`, `grant_table` and
-`assert_scoped_schema`. Of those, `protect_scoped_table` and `unprotect_scoped_table` are
-the only ones that write its registry. Two event triggers, enabled `ALWAYS`, run its
-checks: `ddl_command_end` rejects DDL on the guard schema outside the bootstrap, then
-runs the assertion on every DDL of the database unless the hatch is open, and `sql_drop`
-rejects the drop of a registered table. The hatch never admits DDL on the guard itself.
+The guard schema, everything in it and its two event triggers belong to the installer,
+the superuser or `rds_superuser` member that ran the first bootstrap. Only the owner holds
+anything on it: `USAGE`, `SELECT` on its configuration and registry, and `EXECUTE` on
+the functions a migration calls, such as `open_hatch`, `protect_scoped_table`,
+`unprotect_scoped_table`, `grant_table` and `assert_scoped_schema`. Of those,
+`protect_scoped_table` and `unprotect_scoped_table` are the only ones that write its
+registry. Two event triggers, enabled `ALWAYS`, run its checks: `ddl_command_end`
+rejects DDL on the guard schema outside the bootstrap, then, unless the hatch is open,
+runs the assertion for every DDL that touches the guard or the application schema and
+for every DDL that reports no schema, such as `GRANT` and `REVOKE`; `sql_drop` rejects
+the drop of a registered table. The hatch never admits DDL on the guard itself.
+
+Every call loom makes into the guard (the bootstrap, the runners and their Alembic
+operations, `create_schema`, `check` and `verify`) first sets the transaction's
+`search_path` to the guard, `pg_catalog` and `pg_temp`, so an unqualified guard function
+always resolves to the guard and never to a routine of the application schema; the
+guard's own functions pin the same `search_path`. A routine in the application schema
+named like a guard function is itself a violation.
+
 The assertion fails with `LG002` when any of these stops holding:
 
 - every registered table has row-level security enabled and forced;
@@ -920,7 +1019,11 @@ The assertion fails with `LG002` when any of these stops holding:
 - FKs between scoped tables map boundary to boundary and never `SET NULL` or
   `SET DEFAULT`; no FK reaches a scoped table from an unregistered one;
 - every partition of a registered table is registered;
-- every relation of the schema is owned by the owner, and there is no materialized view;
+- no unregistered table of the schema has row-level security enabled or forced, a
+  policy, or a trigger named `loom_*`;
+- no routine of the schema has the name of a guard function;
+- the schema and every relation in it are owned by the owner, never by a superuser or a
+  bypass role, and there is no materialized view;
 - no non-bypass member of a schema group is a member of a bypass role;
 - no role other than the migrator, superusers aside, is a member of the owner.
 
@@ -940,28 +1043,43 @@ loom's test suite enforces it.
   template in between.
 - **Tampering with a released revision is detected in CI.** loom's tests compare every
   released revision and the preflight with their pinned digests and reject a revision
-  file the manifest does not list.
-- **Tampering with the installed guard is detected at startup.** Startup in `external`
-  mode reads the catalogue through
-  {func}`~loom.core.repository.sqlalchemy.rls.integrity.guard_problems` and compares the
-  installed functions with the released fingerprint (name, arguments, result, language,
-  security, volatility, strictness, leakproofness, parallel safety and source), their
-  `search_path`, their superuser owner and the absence of grants to `PUBLIC`, and
-  requires both event triggers enabled `ALWAYS` on the guard's handlers. `verify` runs the same comparison with the owner's
-  grants checked exactly, and also compares the guard's relations, the owner and grants
-  of the guard schema, and the configuration row with the declaration. Startup refuses
-  to serve; `verify` reports each difference as a `guard.*` finding.
-- **Against a database superuser it is detection, not prevention.** A superuser can
-  disable an event trigger, mark a session as installing, or rewrite a function. The
-  guard makes such a change visible at the next startup or `verify`; it cannot stop it.
-  Use the superuser credential for the bootstrap only.
+  file the manifest does not list. On every pull request, CI also checks that each guard
+  file shipped by every release tag is still byte-identical and that every digest it
+  pinned is still in the manifest; before publishing, the release workflow runs the same
+  check of the candidate wheel against the last wheel published on PyPI. Release tags
+  `v*.*.*` are immutable under a repository ruleset, and `CODEOWNERS` requires the
+  maintainers' review for `.github/`, `scripts/ci/`, the guard files and the manifest.
+- **Tampering with the installed guard is detected.** Each released revision pins six
+  catalogue digests besides its file digest: `functions` (name, arguments, result,
+  language, security, volatility, strictness, leakproofness, parallel safety, kind and
+  source), `relations`, `columns`, `constraints`, `triggers` (rules included) and
+  `objects`. The functions identify the revision; the other categories must match that
+  revision's digests, and `objects` must be empty, so an operator, type, collation,
+  operator class, text search object or statistics object added to the guard is refused.
+  {func}`~loom.core.repository.sqlalchemy.rls.integrity.guard_problems` also requires
+  every object of the guard to belong to the guard schema's owner, the grants to be
+  exactly the owner's (`USAGE` on the schema, `SELECT` on the configuration and registry,
+  `EXECUTE` on the functions above) and nothing to anyone else, every function's settings
+  to be exactly `search_path=pg_catalog, <guard>, pg_temp` (plus `log_statement=none` on
+  `set_password_verifier`), and both event triggers enabled `ALWAYS` on the guard's
+  handlers and owned by the guard schema's owner. Startup in `external` mode runs it as
+  the application user, on everything the catalogue lets that user read, together with
+  the protection of each scoped table, and refuses to serve. `verify` runs it with the
+  guard schema's owner compared to the installer recorded in the configuration row, and
+  additionally checks that row against the declaration, the registry against the models
+  and the memberships of the groups; it reports each difference as a finding. The
+  bootstrap runs it before committing.
+- **Against a database superuser it is detection, not prevention.** A superuser, or the
+  installer, can disable an event trigger, mark a session as installing, or rewrite a
+  function. The guard makes such a change visible at the next startup or `verify`; it
+  cannot stop it. Use that credential for the bootstrap only.
 
 ### `check` versus `verify`
 
 | | {func}`~loom.core.repository.sqlalchemy.migrations.check` | {func}`~loom.core.repository.sqlalchemy.rls.verify` |
 |---|---|---|
 | Question | do the models, the migrations and the registry agree? | does the database hold what the declaration says? |
-| Compares | tables and columns (Alembic autogenerate), registered tables against the model | the installed guard against the released one (`guard.*`: functions, their configuration, owners and grants, relations, the guard schema, the configuration row, the two event triggers), the assertion, then what the assertion cannot require: presence of group and bypass privileges, exactly `SELECT` for bypass users on the structural version table, sequence `USAGE`, `__privileges__` on global tables, C9 actions and group privileges, memberships against `access`, the migrator's no-inherit membership, owner and migrator outside bypass roles |
+| Compares | tables and columns (Alembic autogenerate), registered tables against the model | the installed guard against the released one (`guard.*`: the six catalogue digests, owners against the recorded installer, grants, function settings, the two event triggers, the configuration row including the installer), the registry and each scoped table's protection, the assertion, then what the assertion cannot require: presence of group and bypass privileges, exactly `SELECT` for bypass users on the structural version table, sequence `USAGE`, `__privileges__` on global tables, C9 actions and group privileges, memberships against `access`, undeclared members of the groups (`membership.undeclared`), the migrator's no-inherit membership, owner and migrator outside bypass roles |
 | Credential | migrator | migrator |
 | Writes | none; no lock, no version table | none |
 | Result | `ConfigError` naming the first drift | {class}`~loom.core.repository.sqlalchemy.rls.Report` with `ok` and `findings` |
@@ -984,10 +1102,10 @@ Every `LG001` and `LG002` message starts with `loom_guard[<schema>]:`.
 | Signal | Where | Meaning |
 |---|---|---|
 | `LG001` | `loom_deny_owner_dml` | the owner ran `INSERT`, `UPDATE`, `DELETE` or `TRUNCATE` on a scoped table, usually a structural revision that should be a data revision |
-| `LG002` | the assertion, `ddl_command_end`, `sql_drop`, C5 in `protect_scoped_table`, `unprotect_scoped_table` | a guard invariant is broken, the message naming the object to repair; DDL on the guard schema outside the bootstrap; or an unprotect without the hatch |
+| `LG002` | the assertion, `ddl_command_end`, `sql_drop`, `COMMIT` of a transaction that opened the hatch, C5 in `protect_scoped_table`, `unprotect_scoped_table` | a guard invariant is broken, the message naming the object to repair; DDL on the guard schema outside the bootstrap; or an unprotect without the hatch |
 | `22023` | `protect_scoped_table`, the bootstrap | an invalid declaration, a `char(n)` scope column or one with a nondeterministic collation, or a server below Postgres 14 |
-| `42501` | `protect_scoped_table`, `unprotect_scoped_table`, the bootstrap | wrong schema, wrong owner, a caller that is not a member of the owner, prior policies, a table not registered, an existing role that differs from the declaration or uses a reserved prefix, or a guard or application schema the bootstrap does not own |
-| `ConfigError` | startup, `load_application`, `apply_bootstrap`, `create_schema`, the runners, the guard operations, `check` | a missing key or name, an invalid name, a missing or malformed scope binding, a missing guard or guard event trigger, a guard that differs from the released one, a guard revision this release does not know, a bootstrap without superuser, a wrong credential, a superuser or bypass application connection, a dialect that cannot protect, or drift |
+| `42501` | `open_hatch`, `protect_scoped_table`, `unprotect_scoped_table`, the bootstrap | wrong schema, wrong owner, a caller that is not a member of the owner, prior policies, a table not registered, a role that exists and this guard did not create, a recorded role that differs from the declaration, a reserved role prefix, an unexpected or `ADMIN` membership, a guard or application schema the bootstrap does not own, or a bootstrap by another installer |
+| `ConfigError` | startup, `load_application`, `apply_bootstrap`, `create_schema`, the runners, the guard operations, `check` | a missing key or name, an invalid name or lock timeout, a missing or malformed scope binding, a missing guard or guard event trigger, a guard that differs from the released one, a guard revision this release does not know or below the minimum compatible one (`guard revision pending`), a guard operation outside `run_migrations`, a bootstrap without superuser, a wrong credential, a superuser or bypass application connection, a dialect that cannot protect, or drift; messages that call for a bootstrap point at `apply_bootstrap` |
 | `ValueError` | `compile_all`, the revision hook, `BootstrapConfig.validated`, `SchemaNames.derived` | a compile rule, an FK whose target is not compiled with it, a revision that would leave a table unprotected, or an invalid name |
 
 ### Other dialects
@@ -1021,10 +1139,10 @@ is a usage pattern, not a loom mechanism. Audit every use of the bypass manager.
 - **What the guard does.** It detects accidental drift by those credentials (hand DDL,
   an incomplete revision) in the same DDL that causes it, and closes every path of the
   application user.
-- **Session values.** The `loom.scope.*` keys and the hatch are settings any session can
-  set. Row-level security defends against missing or wrong filters in application code,
-  not against arbitrary code or SQL injection inside the application process (obligation
-  P5).
+- **Session values.** The `loom.scope.*` keys are settings any session can set.
+  Row-level security defends against missing or wrong filters in application code, not
+  against arbitrary code or SQL injection inside the application process (obligation
+  P5). The hatch is not a setting: only a member of the owner can open it.
 
 ### Residuals
 
@@ -1048,8 +1166,14 @@ is a usage pattern, not a loom mechanism. Audit every use of the bypass manager.
   reported. It needs `REFERENCES`, which loom never grants.
 - **Exclusion constraints.** C5 requires the boundary among the key columns of an
   `EXCLUDE` constraint, but not that it is compared with `=`.
-- **SCRAM verifiers.** Passwords are hashed on the client without SASLprep and with
-  a fixed iteration count; non-ASCII passwords may not authenticate.
+- **SCRAM verifiers.** Passwords are hashed on the client without SASLprep, so a
+  password that SASLprep would change may not authenticate. Use ASCII passwords, which
+  SASLprep leaves unchanged, or leave the user out of `passwords` and set a verifier you
+  computed yourself. The iteration count is `scram_iterations` (see
+  [The bootstrap](#the-bootstrap)).
+- **Removed users.** Removing a user from `database_users` revokes what it held but
+  leaves its role in place; see
+  [Adding users and upgrading loom](#adding-users-and-upgrading-loom).
 - **Process-wide registries.** Scope sources and the authorization product are
   registered per process, not per application.
 - **`elevate` inputs.** `elevate` trusts the `catalog=` it receives and does not
@@ -1061,24 +1185,26 @@ is a usage pattern, not a loom mechanism. Audit every use of the bypass manager.
   from 2.12 the key is a section, so a string value fails at startup with a
   `ConfigError`. Move a schema name to `database.schema.name`.
 - **Discovery imports.** `load_application` reuses the server's discovery, which
-  imports the REST model module.
+  recognises REST interfaces only when the product's modules have already imported
+  `loom.rest.model`; it never imports it itself.
 
-### A broken guard blocks all DDL
+### A broken guard blocks DDL on its schema and every schemaless DDL
 
-Each guard asserts its own schema on every DDL of the whole database, with no tag list
-and no schema filter. A tag left out would be a hole, and Postgres reports no schema for
-`GRANT`, `REVOKE` or `ALTER POLICY`, so no filter could tell whether a DDL touched the
-schema. The accepted consequence: while one guard is broken, every DDL in the database
-fails with `LG002` and the schema to repair in the message, until it is repaired. It is
-never a permission error, because the triggers and the assertion are
-`SECURITY DEFINER`.
+Each guard asserts its own schema for every DDL that touches its application schema or
+its guard schema, with no tag list. Postgres reports no schema for some commands, such
+as `GRANT` and `REVOKE`, so no filter could tell whether they touched the schema; the
+guard asserts on every one of them too. DDL that touches only other schemas does not run
+the assertion. The accepted consequence: while one guard is broken, every DDL on its
+schemas and every schemaless DDL in the database fails with `LG002` and the schema to
+repair in the message, until it is repaired. It is never a permission error, because the
+triggers and the assertion are `SECURITY DEFINER`.
 
 ### Repairing policy text drift
 
 After a major Postgres upgrade or a dump and restore, the text Postgres returns for a
 policy's `qual` or `with_check` may differ from the registered one. The assertion then
-fails and, as above, blocks all DDL. Repair each named table in one transaction, as the
-migrator:
+fails and, as above, blocks DDL on the schema and every schemaless DDL. Repair each
+named table in one transaction, as the migrator:
 
 ```sql
 BEGIN;
@@ -1121,7 +1247,7 @@ Each case fails explicitly or is documented here; none is resolved in silence.
 | Postgres without superuser or `rds_superuser` | The bootstrap raises `ConfigError` naming the event trigger |
 | Postgres before 14 | The bootstrap fails on the `server_version_num` check |
 | Other dialects | `ConfigError` at startup, unless `allow_unprotected_dialect: true` in tests |
-| A degraded mode, or an event trigger filtered by schema | No degraded mode (`ConfigError`); no filter (a broken guard blocks all DDL) |
+| A degraded mode, or an event trigger filtered by command tag | No degraded mode (`ConfigError`); no tag filter (a broken guard blocks DDL on its schemas and every schemaless DDL) |
 | Cross-boundary jobs on the application credential | They see zero rows; use the bypass manager |
 | Side channels | Not addressed by row-level security |
 | Logical replication | Not guarded; publications are owner acts |

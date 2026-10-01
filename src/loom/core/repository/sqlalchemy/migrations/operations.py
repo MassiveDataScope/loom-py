@@ -8,8 +8,7 @@ schema is the one the runner configured as the version table schema.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Sequence
 from typing import Any, Final, Protocol
 
 from alembic.autogenerate import renderers
@@ -166,21 +165,6 @@ def run_guard_operation(operations: GuardOperations, op: MigrateOperation) -> No
     refused, so a revision can never reach a routine the application schema
     shadows.
     """
-    with _guard_first(operations) as (bind, schema):
-        if isinstance(op, ProtectScopedTableOp):
-            scopes = {"scopes": json.dumps(op.scopes), "privileges": op.privileges}
-            bind.execute(_PROTECT, {**table_parameters(schema, op.table), **scopes})
-        elif isinstance(op, UnprotectScopedTableOp):
-            bind.execute(_UNPROTECT, table_parameters(schema, op.table))
-        elif isinstance(op, GrantTableOp):
-            groups = {"readers": op.readers, "writers": op.writers}
-            bind.execute(_GRANT_TABLE, {**table_parameters(schema, op.table), **groups})
-        else:
-            bind.execute(_OPEN_HATCH)
-
-
-@contextmanager
-def _guard_first(operations: GuardOperations) -> Iterator[tuple[_Bind, str]]:
     opts = operations.get_context().opts
     schema, guard = opts.get("version_table_schema"), opts.get(GUARD_OPTION)
     if not schema or not guard:
@@ -188,8 +172,21 @@ def _guard_first(operations: GuardOperations) -> Iterator[tuple[_Bind, str]]:
     path = {"schema": str(schema), "guard": str(guard)}
     bind = operations.get_bind()
     bind.execute(_GUARD_FIRST, path)
-    yield bind, str(schema)
+    _call_guard(bind, str(schema), op)
     bind.execute(_APP_FIRST, path)
+
+
+def _call_guard(bind: _Bind, schema: str, op: MigrateOperation) -> None:
+    if isinstance(op, ProtectScopedTableOp):
+        scopes = {"scopes": json.dumps(op.scopes), "privileges": op.privileges}
+        bind.execute(_PROTECT, {**table_parameters(schema, op.table), **scopes})
+    elif isinstance(op, UnprotectScopedTableOp):
+        bind.execute(_UNPROTECT, table_parameters(schema, op.table))
+    elif isinstance(op, GrantTableOp):
+        groups = {"readers": op.readers, "writers": op.writers}
+        bind.execute(_GRANT_TABLE, {**table_parameters(schema, op.table), **groups})
+    else:
+        bind.execute(_OPEN_HATCH)
 
 
 @Operations.implementation_for(OpenHatchOp)

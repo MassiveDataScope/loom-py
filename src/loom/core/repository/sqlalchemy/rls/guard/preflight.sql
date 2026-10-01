@@ -5,8 +5,8 @@ BEGIN
   IF current_setting('server_version_num')::int < min_version THEN
     RAISE invalid_parameter_value USING MESSAGE = format('loom_guard[%s]: server_version_num %s is below %s', guard, current_setting('server_version_num'), min_version);
   END IF;
-  privileged := ARRAY(SELECT r.rolname FROM pg_roles r WHERE r.rolsuper
-                      OR EXISTS (SELECT 1 FROM pg_roles a WHERE a.rolname = 'rds_superuser' AND pg_has_role(r.oid, a.oid, 'MEMBER')));
+  privileged := ARRAY(SELECT r.rolname FROM pg_roles r LEFT JOIN pg_roles a ON a.rolname = 'rds_superuser'
+                      WHERE r.rolsuper OR (a.oid IS NOT NULL AND pg_has_role(r.oid, a.oid, 'MEMBER')));
   IF NOT current_user = ANY (privileged) THEN
     RAISE insufficient_privilege USING MESSAGE = format('loom_guard[%s]: creating an event trigger needs superuser or rds_superuser; current_user is %s', guard, current_user);
   END IF;

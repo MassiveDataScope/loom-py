@@ -91,16 +91,30 @@ def _ddl(table: Table, event: str) -> list[tuple[str, Any]]:
     return connection.calls
 
 
-def test_every_guard_call_is_a_constant_with_bound_parameters() -> None:
+def test_parameterless_guard_calls_are_fixed_statements() -> None:
     assert OPEN_HATCH == "SELECT open_hatch()"
     assert ASSERT_SCHEMA == "SELECT assert_scoped_schema()"
-    assert ":schema" in PROTECT and ":table" in PROTECT
-    assert ":scopes" in PROTECT and ":privileges" in PROTECT
-    assert ":schema" in UNPROTECT and ":table" in UNPROTECT
-    assert ":readers" in GRANT_TABLE and ":writers" in GRANT_TABLE
-    assert ":guard" in GUARD_FIRST
-    assert ":schema" in APP_FIRST and ":guard" in APP_FIRST
-    assert ":guard" in MISSING_EVENT_TRIGGERS
+
+
+@pytest.mark.parametrize(
+    ("statement", "parameter"),
+    [
+        (PROTECT, ":schema"),
+        (PROTECT, ":table"),
+        (PROTECT, ":scopes"),
+        (PROTECT, ":privileges"),
+        (UNPROTECT, ":schema"),
+        (UNPROTECT, ":table"),
+        (GRANT_TABLE, ":readers"),
+        (GRANT_TABLE, ":writers"),
+        (GUARD_FIRST, ":guard"),
+        (APP_FIRST, ":schema"),
+        (APP_FIRST, ":guard"),
+        (MISSING_EVENT_TRIGGERS, ":guard"),
+    ],
+)
+def test_every_guard_call_binds_its_parameters(statement: str, parameter: str) -> None:
+    assert parameter in statement
 
 
 def test_the_guard_comes_first_for_its_calls_and_last_for_the_ddl() -> None:

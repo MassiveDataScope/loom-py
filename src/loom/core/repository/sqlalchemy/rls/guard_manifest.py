@@ -20,7 +20,7 @@ from loom.core.config import ConfigError
 
 _GUARD: Final = files("loom.core.repository.sqlalchemy.rls") / "guard"
 PREFLIGHT_FILE: Final = "preflight.sql"
-PREFLIGHT_SHA256: Final = "32a96565d1717b06454384783ba33a54264997dfb2233cb6c7f18a9dbd16a162"
+PREFLIGHT_SHA256: Final = "46b1fd415bdc8d9c359d9dc73962eef0f5bbe8bc3f6f1fe77669d101aeb875ba"
 
 
 @dataclass(frozen=True, slots=True)
