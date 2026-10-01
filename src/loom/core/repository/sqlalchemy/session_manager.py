@@ -5,14 +5,20 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session
 
 from loom.core.logger import get_logger
+from loom.core.repository.sqlalchemy.session_settings import (
+    SessionSettings,
+    install_session_settings,
+)
 from loom.core.tracing import get_trace_id
 
 
@@ -25,6 +31,7 @@ class SessionManager:
         config: Mapping[str, Any],
         *,
         inject_trace_id: bool = True,
+        session_settings: SessionSettings | None = None,
         **engine_kwargs: object,
     ) -> SessionManager:
         """Build a session manager from a resolved SQLAlchemy config mapping.
@@ -34,6 +41,8 @@ class SessionManager:
                 optional pool tuning keys.
             inject_trace_id: When ``True``, prefixes SQL statements with the
                 active trace id when available.
+            session_settings: Optional provider of transaction-local Postgres
+                settings; see :meth:`SessionManager.__init__` for the contract.
             **engine_kwargs: Additional keyword arguments forwarded to the
                 async engine constructor.
 
@@ -41,7 +50,8 @@ class SessionManager:
             A configured :class:`SessionManager`.
 
         Raises:
-            ValueError: If ``url`` is missing or empty.
+            ValueError: If ``url`` is missing or empty, or if ``session_settings``
+                is given and ``url`` is not a Postgres URL.
         """
         url = config.get("url")
         if not url:
@@ -56,6 +66,7 @@ class SessionManager:
             pool_recycle=_optional_int(config.get("pool_recycle"), 1800),
             connect_args=dict(config.get("connect_args") or {}),
             inject_trace_id=inject_trace_id,
+            session_settings=session_settings,
             **engine_kwargs,
         )
 
@@ -71,6 +82,7 @@ class SessionManager:
         pool_recycle: int | None = 1800,
         connect_args: dict[str, object] | None = None,
         inject_trace_id: bool = True,
+        session_settings: SessionSettings | None = None,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -88,8 +100,32 @@ class SessionManager:
                 ``/* trace_id=<id> */`` comment when a trace identifier is active
                 in the current async context.  Visible in database slow-query logs
                 and ``pg_stat_activity``.  Defaults to ``True``.
+            session_settings: When given, a callable that returns the settings for
+                the transaction about to start, or ``None`` to apply none. Each
+                outer transaction then begins with one ``SELECT`` that calls
+                ``set_config(key, value, true)`` once per entry, with keys and
+                values bound as parameters. The settings are local to the
+                transaction, so the connection returns to the pool clean. Postgres
+                only, and incompatible with ``isolation_level="AUTOCOMMIT"``, which
+                would discard the settings after each statement; when ``None``,
+                the manager behaves exactly as it does without this option.
             **engine_kwargs: Additional keyword arguments forwarded to ``create_async_engine``.
+
+        Raises:
+            ValueError: If ``session_settings`` is given and ``url`` is not a
+                Postgres URL, or the engine is configured with
+                ``isolation_level="AUTOCOMMIT"``.
         """
+        if session_settings is not None:
+            backend = make_url(url).get_backend_name()
+            if backend != "postgresql":
+                raise ValueError(
+                    f"session_settings requires a postgresql URL, got backend {backend!r}"
+                )
+            if _autocommit(engine_kwargs):
+                raise ValueError(
+                    "session_settings is incompatible with isolation_level='AUTOCOMMIT'"
+                )
         engine_config: dict[str, object] = {
             "echo": echo,
             "pool_pre_ping": pool_pre_ping,
@@ -108,10 +144,16 @@ class SessionManager:
 
         self._log = get_logger(__name__).bind(module="session_manager")
         self._engine = create_async_engine(url, **engine_config)
+        factory_kwargs: dict[str, Any] = {}
+        if session_settings is not None:
+            session_class = type("SettingsSession", (Session,), {})
+            install_session_settings(session_class, session_settings)
+            factory_kwargs["sync_session_class"] = session_class
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             class_=AsyncSession,
             expire_on_commit=False,
+            **factory_kwargs,
         )
         if inject_trace_id:
             _register_trace_id_listener(self._engine)
@@ -120,6 +162,7 @@ class SessionManager:
             backend=self._engine.url.get_backend_name(),
             driver=self._engine.url.get_driver_name(),
             inject_trace_id=inject_trace_id,
+            session_settings=session_settings is not None,
         )
 
     @asynccontextmanager
@@ -179,6 +222,17 @@ def _register_trace_id_listener(async_engine: AsyncEngine) -> None:
         if tid:
             statement = f"/* trace_id={tid} */ " + statement
         return statement, parameters
+
+
+def _autocommit(engine_kwargs: Mapping[str, object]) -> bool:
+    execution_options = engine_kwargs.get("execution_options")
+    levels = (
+        engine_kwargs.get("isolation_level"),
+        execution_options.get("isolation_level")
+        if isinstance(execution_options, Mapping)
+        else None,
+    )
+    return any(isinstance(level, str) and level.upper() == "AUTOCOMMIT" for level in levels)
 
 
 def _optional_int(value: Any, default: int) -> int:

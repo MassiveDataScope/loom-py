@@ -64,6 +64,7 @@ Companion demo application:
    rest/use-case-dsl
    rest/identity
    rest/authorization
+   rest/postgres-rls
    rest/celery
    rest/sql
    rest/persistence-backends
