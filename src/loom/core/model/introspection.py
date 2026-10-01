@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -10,8 +11,10 @@ from typing import Any, ClassVar, Union, cast, get_args, get_origin, get_type_hi
 import msgspec
 
 from loom.core.model.field import ColumnFieldSpec, ColumnType, Field
+from loom.core.model.privilege import Privilege
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
+from loom.core.model.scoped import ScopeColumn
 from loom.core.model.types import JSON, Boolean, DateTime, Float, Integer, Numeric, String
 
 
@@ -338,3 +341,135 @@ def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType:
     if python_type in (date, time):
         return String(None)
     return _SCALAR_TYPE_MAP.get(python_type, JSON)
+
+
+_SCOPE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
+_GROUPS = frozenset({"readers", "writers"})
+
+
+def is_row_scoped(cls: type) -> bool:
+    """Whether ``cls`` carries the ``RowScoped`` marker."""
+    return bool(getattr(cls, "__row_scoped__", False))
+
+
+def scope_columns(cls: type) -> tuple[ScopeColumn, ...]:
+    """Resolve the scoped columns of ``cls``, enforcing rules C1 to C5 and C8.
+
+    Raises ``ValueError`` naming the rule, the model and the column.
+    """
+    fields = get_column_fields(cls)
+    marked = is_row_scoped(cls)
+    scopes = tuple(
+        ScopeColumn(
+            scope=info.field.scope, column=name, on=info.field.on, elevable=info.field.elevable
+        )
+        for name, info in fields.items()
+        if info.field.scope is not None
+    )
+    _check_c4(cls, fields, marked)
+    if not marked:
+        return ()
+    _check_c3(cls, scopes)
+    _check_c2(cls, scopes)
+    boundary = _check_c1(cls, scopes)
+    _check_c8(cls, fields, boundary)
+    _check_c5(cls, fields, boundary)
+    return scopes
+
+
+def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
+    """Composite UNIQUE constraints declared with ``__unique__``."""
+    return _declared_column_tuples(cls, "__unique__")
+
+
+def declared_indexes(cls: type) -> tuple[tuple[str, ...], ...]:
+    """Non-unique indexes declared with ``__indexes__``."""
+    return _declared_column_tuples(cls, "__indexes__")
+
+
+def declared_privileges(cls: type) -> Mapping[str, frozenset[Privilege]]:
+    """Group privileges declared with ``__privileges__`` on an unscoped model."""
+    raw = getattr(cls, "__privileges__", None)
+    if raw is None:
+        return {}
+    if is_row_scoped(cls):
+        raise ValueError(f"{cls.__name__}: __privileges__ is only for unscoped models")
+    result: dict[str, frozenset[Privilege]] = {}
+    for group, privileges in raw.items():
+        if group not in _GROUPS:
+            raise ValueError(f"{cls.__name__}: unknown privilege group {group!r}")
+        result[group] = frozenset(_as_privilege(cls, item) for item in privileges)
+    return result
+
+
+def _as_privilege(cls: type, item: object) -> Privilege:
+    if isinstance(item, Privilege):
+        return item
+    if isinstance(item, str) and item in Privilege.__members__:
+        return Privilege[item]
+    raise ValueError(f"{cls.__name__}: {item!r} is not a row privilege")
+
+
+def _declared_column_tuples(cls: type, attr: str) -> tuple[tuple[str, ...], ...]:
+    declared = tuple(tuple(entry) for entry in getattr(cls, attr, ()))
+    known = get_column_fields(cls)
+    for entry in declared:
+        for column in entry:
+            if column not in known:
+                raise ValueError(f"{cls.__name__}: {attr} names unknown column {column!r}")
+    return declared
+
+
+def _check_c4(cls: type, fields: dict[str, ColumnFieldInfo], marked: bool) -> None:
+    for name, info in fields.items():
+        field = info.field
+        if field.scope is not None and not marked:
+            raise ValueError(f"C4: {cls.__name__}.{name} declares a scope on an unmarked model")
+        if field.scope is None and (field.on != "both" or field.elevable):
+            raise ValueError(
+                f"C4: {cls.__name__}.{name} declares reach or elevable without a scope"
+            )
+
+
+def _check_c3(cls: type, scopes: tuple[ScopeColumn, ...]) -> None:
+    seen: set[str] = set()
+    for scope in scopes:
+        if not _SCOPE_NAME.fullmatch(scope.scope):
+            raise ValueError(
+                f"C3: {cls.__name__}.{scope.column} scope {scope.scope!r} is not an identifier"
+            )
+        if scope.scope in seen:
+            raise ValueError(f"C3: {cls.__name__}.{scope.column} repeats scope {scope.scope!r}")
+        seen.add(scope.scope)
+
+
+def _check_c2(cls: type, scopes: tuple[ScopeColumn, ...]) -> None:
+    for scope in scopes:
+        if scope.elevable and scope.on != "write":
+            raise ValueError(f"C2: {cls.__name__}.{scope.column} is elevable but not write-only")
+
+
+def _check_c1(cls: type, scopes: tuple[ScopeColumn, ...]) -> ScopeColumn:
+    boundaries = [scope for scope in scopes if scope.is_boundary]
+    if len(boundaries) != 1:
+        raise ValueError(
+            f"C1: {cls.__name__} must declare exactly one boundary scope, found {len(boundaries)}"
+        )
+    return boundaries[0]
+
+
+def _check_c8(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
+    if fields[boundary.column].field.nullable:
+        raise ValueError(f"C8: {cls.__name__}.{boundary.column} boundary column cannot be nullable")
+
+
+def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
+    primary_key = tuple(name for name, info in fields.items() if info.field.primary_key)
+    keys = [primary_key, *declared_unique(cls)]
+    keys += [(name,) for name, info in fields.items() if info.field.unique]
+    for key in keys:
+        if boundary.column not in key:
+            columns = ", ".join(key)
+            raise ValueError(
+                f"C5: {cls.__name__} key {columns} lacks the boundary column {boundary.column}"
+            )

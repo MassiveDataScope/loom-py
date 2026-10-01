@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import msgspec
 
 from loom.core.model.enums import OnDelete, ServerDefault, ServerOnUpdate
+
+Reach = Literal["read", "write", "both"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +35,9 @@ class Field:
     on_delete: OnDelete | None = None
     default: Any = msgspec.UNSET
     length: int | None = None
+    scope: str | None = None
+    on: Reach = "both"
+    elevable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +63,9 @@ def ColumnField(
     default: Any = msgspec.UNSET,
     length: int | None = None,
     db_type: ColumnType | None = None,
+    scope: str | None = None,
+    on: Reach = "both",
+    elevable: bool = False,
 ) -> Any:
     """Declare column metadata without using explicit ``Annotated`` syntax."""
     selected_type = db_type or column_type
@@ -77,10 +85,12 @@ def ColumnField(
                 on_delete=on_delete,
                 default=default,
                 length=length,
+                scope=scope,
+                on=on,
+                elevable=elevable,
             ),
         ),
     )
 
 
-# Convenience alias if users prefer the shorter name.
 column_field = ColumnField
