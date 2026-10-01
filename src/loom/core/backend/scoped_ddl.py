@@ -1,18 +1,18 @@
-"""DDL emitted next to a table's creation so the guard protects it in the same transaction.
+"""Calls to the guard made next to a table's creation, so it is protected in the same transaction.
 
-Every statement is rendered from the compiled model and the application schema
-the product configured; loom names nothing. The listeners fire only on
-Postgres, so another dialect creates plain tables.
+Every statement is a constant; the schema, table, scopes and privileges travel
+as bound parameters and Postgres quotes them. loom names nothing. The
+listeners fire only on Postgres, so another dialect creates plain tables.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
-from typing import get_args
+from collections.abc import Callable, Mapping
+from typing import Any, get_args
 
-from sqlalchemy import DDL, Table, event
+from sqlalchemy import Connection, Table, TextClause, event, text
 from sqlalchemy.dialects.postgresql.base import RESERVED_WORDS
 
 from loom.core.config import ConfigError
@@ -29,67 +29,78 @@ _IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
 _SPECIAL_ROLES = frozenset({"public", "none", "current_role", "current_user", "session_user"})
 _ORDER = (Privilege.SELECT, Privilege.INSERT, Privilege.UPDATE, Privilege.DELETE)
 
+OPEN_HATCH = "SELECT open_hatch()"
+PROTECT = (
+    "SELECT protect_scoped_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
+    "CAST(:scopes AS jsonb), CAST(:privileges AS text[]))"
+)
+UNPROTECT = (
+    "SELECT unprotect_scoped_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)))"
+)
+GRANT_TABLE = (
+    "SELECT grant_table(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
+    "CAST(:readers AS text[]), CAST(:writers AS text[]))"
+)
+ASSERT_SCHEMA = "SELECT assert_scoped_schema()"
+ENTER_GUARD = "SELECT set_config('search_path', quote_ident(:guard) || ', pg_catalog', true)"
+MISSING_EVENT_TRIGGERS = (
+    "SELECT t.name FROM (VALUES (:guard || '_ddl', 'ddl_command_end', 'on_ddl_end'), "
+    "(:guard || '_drop', 'sql_drop', 'on_sql_drop')) AS t(name, event, handler) "
+    "WHERE NOT EXISTS (SELECT 1 FROM pg_event_trigger e JOIN pg_roles o ON o.oid = e.evtowner "
+    "JOIN pg_proc p ON p.oid = e.evtfoid JOIN pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE e.evtname = t.name AND e.evtevent = t.event AND e.evtenabled = 'A' "
+    "AND e.evttags IS NULL AND o.rolsuper AND n.nspname = :guard AND p.proname = t.handler "
+    "AND p.pronargs = 0)"
+)
 
-def hatch_statement(schema: str) -> str:
-    """Open the guard's transaction-local hatch so the table can be created before protection."""
-    guard = guard_name(schema)
-    return f"SELECT set_config('{guard}.protecting', 'on', true)"
+Parameters = dict[str, Any]
+_OPEN_HATCH = text(OPEN_HATCH)
+_PROTECT = text(PROTECT)
+_GRANT_TABLE = text(GRANT_TABLE)
 
 
-def protect_statement(schema: str, table: str, scoped: ScopedTable) -> str:
-    """Call the guard's protection with the qualified table, its scopes and its privileges."""
-    guard = guard_name(schema)
-    sql_identifier(table)
+def scope_documents(scoped: ScopedTable) -> list[dict[str, Any]]:
+    """The scopes of ``scoped`` as the guard reads them, after validating each column and reach."""
     for scope in scoped.scopes:
         sql_identifier(scope.column)
         if scope.on not in get_args(Reach):
             raise ValueError(
                 f"scope {scope.scope!r} has reach {scope.on!r}; expected one of {get_args(Reach)}"
             )
-    scopes = json.dumps(
-        [
-            {"col": s.column, "scope": s.scope, "on": s.on, "elevable": s.elevable}
-            for s in scoped.scopes
-        ]
-    )
-    return (
-        f"SELECT {guard}.protect_scoped_table('{schema}.{table}', '{scopes}', "
-        f"ARRAY[{_privilege_list(scoped.privileges)}])"
-    )
+    return [
+        {"col": s.column, "scope": s.scope, "on": s.on, "elevable": s.elevable}
+        for s in scoped.scopes
+    ]
 
 
-def unprotect_statement(schema: str, table: str) -> str:
-    """Call the guard's unprotection for the qualified table."""
-    guard = guard_name(schema)
-    sql_identifier(table)
-    return f"SELECT {guard}.unprotect_scoped_table('{schema}.{table}')"
+def privilege_names(privileges: frozenset[Privilege]) -> list[str]:
+    """The privileges in the guard's canonical order."""
+    return [p.value for p in _ORDER if p in privileges]
 
 
-def grant_statements(
-    schema: str,
-    table: str,
-    privileges: Mapping[str, frozenset[Privilege]],
-    *,
-    serial_columns: Sequence[str] = (),
-) -> list[str]:
-    """Plain grants for an unscoped table, one per group, plus sequence usage for inserters."""
-    schema_identifier(schema)
-    sql_identifier(table)
-    statements: list[str] = []
-    for group in ("readers", "writers"):
-        granted = privileges.get(group, frozenset())
-        if not granted:
-            continue
-        names = ", ".join(p.value for p in _ORDER if p in granted)
-        statements.append(f"GRANT {names} ON {schema}.{table} TO {schema}_{group}")
-        if Privilege.INSERT in granted:
-            statements += [
-                "DO $$ BEGIN EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', "
-                f"pg_get_serial_sequence('{schema}.{table}', '{sql_identifier(column)}'), "
-                f"'{schema}_{group}'); END $$"
-                for column in serial_columns
-            ]
-    return statements
+def protect_parameters(schema: str, table: str, scoped: ScopedTable) -> Parameters:
+    """Bound parameters of :data:`PROTECT` for ``schema.table``."""
+    return {
+        **table_parameters(schema, table),
+        "scopes": json.dumps(scope_documents(scoped)),
+        "privileges": privilege_names(scoped.privileges),
+    }
+
+
+def grant_parameters(
+    schema: str, table: str, privileges: Mapping[str, frozenset[Privilege]]
+) -> Parameters:
+    """Bound parameters of :data:`GRANT_TABLE` for an unscoped table."""
+    return {
+        **table_parameters(schema, table),
+        "readers": privilege_names(privileges.get("readers", frozenset())),
+        "writers": privilege_names(privileges.get("writers", frozenset())),
+    }
+
+
+def table_parameters(schema: str, table: str) -> Parameters:
+    """The validated schema and table a guard call resolves inside Postgres."""
+    return {"schema": schema_identifier(schema), "table": sql_identifier(table)}
 
 
 def check_dialect(
@@ -118,24 +129,30 @@ def register_listeners(
     schema: str,
     scoped: ScopedTable | None,
     privileges: Mapping[str, frozenset[Privilege]],
-    serial_columns: Sequence[str],
 ) -> None:
-    """Attach the Postgres-only DDL listeners once per table."""
+    """Attach the Postgres-only listeners once per table."""
     if table.info.get(_REGISTERED):
         return
     table.info[_REGISTERED] = True
     if scoped is not None:
-        _listen(table, "before_create", hatch_statement(schema))
-        _listen(table, "after_create", protect_statement(schema, table.name, scoped))
+        _listen(table, "before_create", _OPEN_HATCH, {})
+        _listen(table, "after_create", _PROTECT, protect_parameters(schema, table.name, scoped))
         return
-    for statement in grant_statements(
-        schema, table.name, privileges, serial_columns=serial_columns
-    ):
-        _listen(table, "after_create", statement)
+    if any(privileges.values()):
+        parameters = grant_parameters(schema, table.name, privileges)
+        _listen(table, "after_create", _GRANT_TABLE, parameters)
 
 
-def _listen(table: Table, when: str, statement: str) -> None:
-    event.listen(table, when, DDL(statement).execute_if(dialect=POSTGRES_DIALECT))
+def _listen(table: Table, when: str, clause: TextClause, parameters: Parameters) -> None:
+    event.listen(table, when, _postgres_only(clause, parameters))
+
+
+def _postgres_only(clause: TextClause, parameters: Parameters) -> Callable[..., None]:
+    def listener(_target: Table, connection: Connection, **_: Any) -> None:
+        if connection.dialect.name == POSTGRES_DIALECT:
+            connection.execute(clause, parameters)
+
+    return listener
 
 
 def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str:
@@ -165,28 +182,3 @@ def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str
 def schema_identifier(name: str) -> str:
     """Validate a scoped schema name; short enough that every guard object name fits."""
     return sql_identifier(name, max_length=MAX_SCHEMA_LENGTH)
-
-
-def guard_name(schema: str) -> str:
-    """Return the name of the guard schema of ``schema``."""
-    return f"loom_guard_{schema_identifier(schema)}"
-
-
-def missing_event_triggers_statement(schema: str) -> str:
-    """Select the guard's event triggers of ``schema`` that are missing or not enabled."""
-    guard = guard_name(schema)
-    return (
-        "SELECT name FROM (VALUES "
-        f"('{guard}_ddl', 'ddl_command_end'), ('{guard}_drop', 'sql_drop')) AS t(name, event) "
-        "WHERE NOT EXISTS (SELECT 1 FROM pg_event_trigger e WHERE e.evtname = t.name "
-        "AND e.evtevent = t.event AND e.evtenabled = 'O')"
-    )
-
-
-def assert_statement(schema: str) -> str:
-    """Call the guard's closing assertion of ``schema``."""
-    return f"SELECT {guard_name(schema)}.assert_scoped_schema()"
-
-
-def _privilege_list(privileges: frozenset[Privilege]) -> str:
-    return ",".join(f"'{p.value}'" for p in _ORDER if p in privileges)

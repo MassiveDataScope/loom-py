@@ -244,13 +244,8 @@ def _compile_model(
             schema=schema,
             scoped=scoped,
             privileges=declared_privileges(struct_cls),
-            serial_columns=_serial_columns(column_fields),
         )
     return sa_cls
-
-
-def _serial_columns(fields: dict[str, ColumnFieldInfo]) -> tuple[str, ...]:
-    return tuple(name for name, info in fields.items() if info.field.autoincrement)
 
 
 def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:

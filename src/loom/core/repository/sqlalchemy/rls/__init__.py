@@ -1,8 +1,8 @@
 """Row-level security support for the SQLAlchemy backend.
 
-The product declares its database users and schema here; loom renders and
-applies the guard objects from that declaration and never names anything
-itself.
+The product declares its database users, names and schema here; loom installs
+a static guard and configures it from that declaration as bound data, and
+never names anything itself.
 """
 
 from __future__ import annotations
@@ -10,12 +10,12 @@ from __future__ import annotations
 from loom.core.repository.sqlalchemy.rls.bootstrap import (
     MIN_SERVER_VERSION_NUM,
     apply_bootstrap,
-    render_bootstrap,
 )
 from loom.core.repository.sqlalchemy.rls.config import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
+    SchemaNames,
 )
 from loom.core.repository.sqlalchemy.rls.elevate import (
     SQLAlchemyElevationSink,
@@ -32,15 +32,15 @@ __all__ = [
     "BootstrapConfig",
     "Finding",
     "Report",
-    "SQLAlchemyElevationSink",
     "DatabaseRoles",
     "DatabaseUser",
+    "SQLAlchemyElevationSink",
+    "SchemaNames",
     "apply_bootstrap",
     "create_schema",
     "elevate",
     "install_pool_reset",
     "register_scope_source",
-    "render_bootstrap",
     "rls_session_settings",
     "validate_elevations",
     "verify",

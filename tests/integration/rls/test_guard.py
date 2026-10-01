@@ -17,6 +17,7 @@ from loom.core.repository.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
+    SchemaNames,
     apply_bootstrap,
 )
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, scalar
@@ -55,6 +56,7 @@ async def test_the_bootstrap_is_idempotent(
                 "guard_b_rw": DatabaseUser(login=True, access="write"),
                 "guard_b_ops": DatabaseUser(login=True, access="bypass"),
             },
+            names=SchemaNames.derived("guard_b"),
         ),
         passwords={},
     )
@@ -81,6 +83,7 @@ async def test_an_existing_role_with_other_attributes_is_refused(
         schema="guard_c",
         roles=DatabaseRoles(owner="guard_c_owner", migrator="guard_c_migrator"),
         database_users={"guard_c_ro": DatabaseUser(login=True, access="read")},
+        names=SchemaNames.derived("guard_c"),
     )
 
     with pytest.raises(asyncpg.PostgresError) as failure:

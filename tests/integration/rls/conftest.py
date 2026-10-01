@@ -146,6 +146,7 @@ def scoped_database(module_database_uri: str, created_roles: set[str]) -> Bootst
             BootstrapConfig,
             DatabaseRoles,
             DatabaseUser,
+            SchemaNames,
             apply_bootstrap,
         )
 
@@ -166,6 +167,7 @@ def scoped_database(module_database_uri: str, created_roles: set[str]) -> Bootst
                 f"{schema}_rw": DatabaseUser(login=True, access="write"),
                 f"{schema}_ops": DatabaseUser(login=True, access="bypass"),
             },
+            names=options.pop("names", SchemaNames.derived(schema)),
             **options,
         )
         created_roles.update(
@@ -223,6 +225,9 @@ def application_for(
                     for user, access in product.USERS.items()
                 },
                 "scopes": dict(product.SCOPE_BINDINGS),
+                "guard": f"loom_guard_{name}",
+                "groups": {"readers": f"{name}_readers", "writers": f"{name}_writers"},
+                "version_tables": {"structure": "alembic_version", "data": "alembic_version_data"},
             },
         },
     }

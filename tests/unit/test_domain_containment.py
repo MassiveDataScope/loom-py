@@ -3,8 +3,8 @@
 loom ships the mechanism; the product supplies every name. These tests fail on
 any domain word, default column name, default session key, default database
 user name or environment label inside the packages this feature adds, inside
-the SQL the bootstrap renders for a synthetic configuration, and inside the
-session-settings module the mechanism builds on.
+the static guard SQL and the document the bootstrap binds for a synthetic
+configuration, and inside the session-settings module the mechanism builds on.
 """
 
 from __future__ import annotations
@@ -114,7 +114,8 @@ def _dataclass_defaults(path: Path, class_name: str) -> dict[str, bool]:
 @pytest.mark.parametrize(
     ("class_name", "fields_without_default"),
     [
-        ("BootstrapConfig", {"schema", "roles", "database_users"}),
+        ("BootstrapConfig", {"schema", "roles", "database_users", "names"}),
+        ("SchemaNames", {"guard", "readers", "writers", "version_table", "data_version_table"}),
         ("DatabaseRoles", {"owner", "migrator"}),
         ("DatabaseUser", {"login", "access"}),
     ],
@@ -131,27 +132,49 @@ def test_bootstrap_types_have_no_name_defaults(
     assert {name for name in fields_without_default if defaults.get(name, True)} == set()
 
 
-def test_rendered_bootstrap_contains_only_injected_names() -> None:
+def _guard_sql() -> list[Path]:
+    return sorted((_SRC / "core/repository/sqlalchemy/rls/guard").glob("*.sql"))
+
+
+def test_the_static_guard_sql_carries_no_domain_vocabulary_or_default_name() -> None:
+    paths = _guard_sql()
+
+    assert paths != []
+    for path in paths:
+        text = path.read_text()
+        assert _offending_lines(text, _DOMAIN_WORDS) == []
+        assert _offending_lines(text, _DEFAULT_LITERALS) == []
+
+
+def test_the_bound_bootstrap_document_contains_only_injected_names() -> None:
     from loom.core.repository.sqlalchemy.rls import (
         BootstrapConfig,
         DatabaseRoles,
         DatabaseUser,
-        render_bootstrap,
+        SchemaNames,
     )
 
-    sql = render_bootstrap(
-        BootstrapConfig(
-            schema="s1",
-            roles=DatabaseRoles(owner="r_owner", migrator="r_migrator"),
-            database_users={
-                "u_read": DatabaseUser(login=True, access="read"),
-                "u_write": DatabaseUser(login=True, access="write"),
-                "u_bypass": DatabaseUser(login=True, access="bypass"),
-            },
-        )
-    )
+    document = BootstrapConfig(
+        schema="s1",
+        roles=DatabaseRoles(owner="r_owner", migrator="r_migrator"),
+        database_users={
+            "u_read": DatabaseUser(login=True, access="read"),
+            "u_write": DatabaseUser(login=True, access="write"),
+            "u_bypass": DatabaseUser(login=True, access="bypass"),
+        },
+        names=SchemaNames(
+            guard="g_s1",
+            readers="grp_r",
+            writers="grp_w",
+            version_table="v_struct",
+            data_version_table="v_data",
+        ),
+    ).document()
 
-    assert _offending_lines(sql, _DOMAIN_WORDS) == []
-    assert _offending_lines(sql, _DEFAULT_LITERALS) == []
+    text = repr(document)
+    assert _offending_lines(text, _DOMAIN_WORDS) == []
+    assert _offending_lines(text, _DEFAULT_LITERALS) == []
     for injected in ("s1", "r_owner", "r_migrator", "u_read", "u_write", "u_bypass"):
-        assert injected in sql
+        assert injected in text
+    for injected in ("grp_r", "grp_w", "v_struct", "v_data"):
+        assert injected in text

@@ -2,8 +2,8 @@
 
 The hook reads the compiled metadata only. For each table it emits one
 sequence under the guard's hatch: create then protect, unprotect then drop, or
-unprotect, change, protect when a scope column changes. A revision that would
-leave a scoped table unprotected is never written.
+unprotect, change, protect when a scope column changes. The revision carries
+loom's guard operations, never SQL.
 """
 
 from __future__ import annotations
@@ -12,17 +12,17 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from alembic.operations import ops
-from sqlalchemy import Table
 
-from loom.core.backend.scoped_ddl import (
-    grant_statements,
-    hatch_statement,
-    protect_statement,
-    unprotect_statement,
-)
+from loom.core.backend.scoped_ddl import privilege_names, scope_documents
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
+from loom.core.repository.sqlalchemy.migrations.operations import (
+    GrantTableOp,
+    OpenHatchOp,
+    ProtectScopedTableOp,
+    UnprotectScopedTableOp,
+)
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
@@ -46,14 +46,9 @@ def scope_protection_hook(application: Application) -> RevisionHook:
 
 class _Rewriter:
     def __init__(self, application: Application) -> None:
-        name = application.database.schema.name
-        if name is None:
-            raise ValueError("the migration hook needs database.schema.name")
-        self._schema = name
         self._scoped: Mapping[str, ScopedTable] = {
             table.name: table for table in application.scoped.values()
         }
-        self._tables: Mapping[str, Table] = dict(application.metadata.tables)
         self._privileges: dict[str, Mapping[str, frozenset[Privilege]]] = {
             get_table_name(model): declared_privileges(model)
             for model in application.models
@@ -81,10 +76,9 @@ class _Rewriter:
         privileges = self._privileges.get(op.table_name)
         if privileges is None:
             return [op]
-        statements = grant_statements(
-            self._schema, op.table_name, privileges, serial_columns=self._serials(op.table_name)
-        )
-        return [op, *(ops.ExecuteSQLOp(statement) for statement in statements)]
+        readers = privilege_names(privileges.get("readers", frozenset()))
+        writers = privilege_names(privileges.get("writers", frozenset()))
+        return [op, GrantTableOp(op.table_name, readers, writers)]
 
     def _touches_scope(self, op: ops.ModifyTableOps) -> bool:
         scoped = self._scoped.get(op.table_name)
@@ -93,23 +87,19 @@ class _Rewriter:
         columns = {column.column for column in scoped.scopes}
         return any(_column_name(inner) in columns for inner in op.ops)
 
-    def _serials(self, table_name: str) -> tuple[str, ...]:
-        table = self._tables.get(table_name)
-        if table is None:
-            return ()
-        return tuple(column.name for column in table.columns if column.autoincrement is True)
+    def _hatch(self) -> OpenHatchOp:
+        return OpenHatchOp()
 
-    def _hatch(self) -> ops.ExecuteSQLOp:
-        return ops.ExecuteSQLOp(hatch_statement(self._schema))
-
-    def _protect(self, table_name: str) -> ops.ExecuteSQLOp:
+    def _protect(self, table_name: str) -> ProtectScopedTableOp:
         scoped = self._scoped.get(table_name)
         if scoped is None:
             raise ValueError(f"{table_name!r} is not a scoped table of this application")
-        return ops.ExecuteSQLOp(protect_statement(self._schema, table_name, scoped))
+        return ProtectScopedTableOp(
+            table_name, scope_documents(scoped), privilege_names(scoped.privileges)
+        )
 
-    def _unprotect(self, table_name: str) -> ops.ExecuteSQLOp:
-        return ops.ExecuteSQLOp(unprotect_statement(self._schema, table_name))
+    def _unprotect(self, table_name: str) -> UnprotectScopedTableOp:
+        return UnprotectScopedTableOp(table_name)
 
 
 def _column_name(op: ops.MigrateOperation) -> str | None:

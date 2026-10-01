@@ -81,6 +81,7 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
                 "schema": {
                     "mode": "external",
                     "scopes": {"owner": "identity.subject", "editor": "request.editor"},
+                    "guard": "loom_guard_notes_wired",
                 },
             },
         }

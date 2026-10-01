@@ -72,7 +72,7 @@ async def test_a_freshly_created_schema_verifies_clean(products) -> None:
         assert report.ok, report.findings
 
 
-HATCH = "SELECT set_config('loom_guard_notes.protecting', 'on', true)"
+HATCH = "SELECT loom_guard_notes.open_hatch()"
 REGISTERED_QUAL = (
     "SELECT qual FROM loom_guard_notes.scoped_policy "
     "WHERE rel = 'notes.notes'::regclass AND policyname = 'loom_select'"
@@ -93,7 +93,7 @@ REGISTERED_QUAL = (
             [
                 "ALTER EVENT TRIGGER loom_guard_notes_ddl DISABLE",
                 "GRANT SELECT ON notes.notes TO notes_rw",
-                "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE",
+                "ALTER EVENT TRIGGER loom_guard_notes_ddl ENABLE ALWAYS",
             ],
             ["REVOKE SELECT ON notes.notes FROM notes_rw"],
             "assertion",
@@ -105,14 +105,14 @@ REGISTERED_QUAL = (
             "bypass.privileges",
         ),
         (
-            "bypass grant on alembic_version",
+            "bypass grant on the structural version table",
             [
                 "SET ROLE notes_owner",
                 "CREATE TABLE notes.alembic_version (version_num varchar(32) PRIMARY KEY)",
                 "RESET ROLE",
             ],
             ["DROP TABLE notes.alembic_version"],
-            "bypass.alembic_version",
+            "bypass.version_table",
         ),
         (
             "sequence privilege other than USAGE for writers",

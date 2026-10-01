@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Collection, Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext, MigrationInfo
 from alembic.script import Script, ScriptDirectory
 from alembic.util.exc import CommandError
 from sqlalchemy import Connection, event, text
@@ -24,24 +25,34 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import assert_statement, guard_name
+from loom.core.backend.scoped_ddl import ASSERT_SCHEMA
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
-from loom.core.repository.sqlalchemy.rls.config import (
-    BYPASS_VERSION_PRIVILEGES,
-    DATA_VERSION_TABLE,
-    VERSION_TABLE,
-    BootstrapConfig,
-)
+from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, SchemaNames
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
+
+IncludeObject = Callable[[Any, "str | None", str, bool, Any], bool]
 
 DATA_TREE = "data"
 STRUCTURAL_TREE = "structural"
 READ_ONLY = "loom.read_only"
 GUARD_SQLSTATE = "LG002"
 _TIMEOUT = re.compile(r"^\d+(ms|s|min)?$")
+
+LOCK = "SELECT pg_advisory_lock(hashtextextended('loom.schema:' || :schema, 0))"
+UNLOCK = "SELECT pg_advisory_unlock(hashtextextended('loom.schema:' || :schema, 0))"
+LANDING = "SELECT current_user, current_schema()"
+BYPASS_SELF = "SELECT current_user, rolbypassrls FROM pg_roles WHERE rolname = current_user"
+PREPARE_VERSION_TABLES = "SELECT prepare_version_tables()"
+REGISTERED_TABLES = "SELECT registered_tables()"
+SET_TIMEOUTS = (
+    "SELECT set_config('lock_timeout', :lock, true), "
+    "set_config('statement_timeout', :statement, true)"
+)
+_ASSERT_SCHEMA = text(ASSERT_SCHEMA)
+_SET_TIMEOUTS = text(SET_TIMEOUTS)
 
 
 def alembic_config(script_location: str, url: str) -> Config:
@@ -77,10 +88,9 @@ def run_migrations(
     from alembic import context
 
     bootstrap = _require_bootstrap(application)
-    schema, owner = bootstrap.schema, bootstrap.roles.owner
+    schema, owner, names = bootstrap.schema, bootstrap.roles.owner, bootstrap.names
     read_only = bool(context.config.attributes.get(READ_ONLY))
     _reject_revisions(context.config, data_tree=False)
-    connection.execute(text(f"SET ROLE {owner}"))
     _require_landing(connection, owner, schema)
     if read_only:
         connection.commit()
@@ -88,7 +98,7 @@ def run_migrations(
         _lock(connection, schema)
     try:
         if not read_only:
-            _prepare_version_tables(connection, bootstrap)
+            connection.execute(text(PREPARE_VERSION_TABLES))
         connection.commit()
         _install_timeouts(connection, lock_timeout, statement_timeout)
         context.configure(
@@ -96,11 +106,11 @@ def run_migrations(
             target_metadata=application.metadata,
             transaction_per_migration=True,
             compare_type=True,
-            version_table=VERSION_TABLE,
+            version_table=names.version_table,
             version_table_schema=schema,
-            include_object=include_object,
+            include_object=include_object_for(names),
             process_revision_directives=scope_protection_hook(application),
-            on_version_apply=_assertion_for(schema),
+            on_version_apply=_assert_after_revision,
         )
         context.run_migrations()
     finally:
@@ -122,18 +132,19 @@ def run_data_migrations(
     """
     from alembic import context
 
-    schema = _require_bootstrap(application).schema
+    bootstrap = _require_bootstrap(application)
+    schema, names = bootstrap.schema, bootstrap.names
     _reject_revisions(context.config, data_tree=True)
     _require_bypass(connection, application)
     _lock(connection, schema)
     try:
-        _require_structural_head(connection, context.config, schema)
+        _require_structural_head(connection, context.config, schema, names)
         connection.commit()
         _install_timeouts(connection, lock_timeout, statement_timeout)
         context.configure(
             connection=connection,
             transaction_per_migration=True,
-            version_table=DATA_VERSION_TABLE,
+            version_table=names.data_version_table,
             version_table_schema=schema,
         )
         context.run_migrations()
@@ -170,18 +181,11 @@ def _sqlstate(exc: DBAPIError) -> str | None:
 
 async def _registry_drift(config: Config, application: Application) -> None:
     bootstrap = _require_bootstrap(application)
-    schema, owner = bootstrap.schema, bootstrap.roles.owner
     url = str(config.get_main_option("sqlalchemy.url")).replace("%%", "%")
     engine = create_async_engine(url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
-            await connection.execute(text(f"SET ROLE {owner}"))
-            rows = await connection.execute(
-                text(
-                    f"SELECT c.relname FROM {guard_name(schema)}.scoped_table t "
-                    "JOIN pg_class c ON c.oid = t.rel"
-                )
-            )
+            rows = await connection.execute(text(REGISTERED_TABLES))
             registered = {row[0] for row in rows}
     finally:
         await engine.dispose()
@@ -190,7 +194,7 @@ async def _registry_drift(config: Config, application: Application) -> None:
         missing = sorted(expected - registered)
         extra = sorted(registered - expected)
         raise ConfigError(
-            f"registry drift in loom_guard_{schema}: missing {missing}, unexpected {extra}"
+            f"registry drift in {bootstrap.names.guard}: missing {missing}, unexpected {extra}"
         )
 
 
@@ -225,7 +229,7 @@ def _revisions(config: Config) -> Iterator[Script]:
 
 
 def _require_landing(connection: Connection, owner: str, schema: str) -> None:
-    row = connection.execute(text("SELECT current_user, current_schema()")).one()
+    row = connection.execute(text(LANDING)).one()
     if row[0] != owner or row[1] != schema:
         raise ConfigError(
             f"the migrator must act as {owner!r} inside schema {schema!r}, "
@@ -234,9 +238,7 @@ def _require_landing(connection: Connection, owner: str, schema: str) -> None:
 
 
 def _require_bypass(connection: Connection, application: Application) -> None:
-    user, bypass = connection.execute(
-        text("SELECT current_user, rolbypassrls FROM pg_roles WHERE rolname = current_user")
-    ).one()
+    user, bypass = connection.execute(text(BYPASS_SELF)).one()
     users = application.bootstrap.database_users if application.bootstrap else {}
     declared = users.get(str(user))
     if not bypass or declared is None or declared.access != "bypass":
@@ -246,15 +248,19 @@ def _require_bypass(connection: Connection, application: Application) -> None:
         )
 
 
-def _require_structural_head(connection: Connection, config: Config, schema: str) -> None:
+def _require_structural_head(
+    connection: Connection, config: Config, schema: str, names: SchemaNames
+) -> None:
     location = Path(str(config.get_main_option("script_location")))
     structural = Config()
     structural.set_main_option("script_location", str(location.parent))
     heads = set(ScriptDirectory.from_config(structural).get_heads())
-    applied = {
-        row[0]
-        for row in connection.execute(text(f'SELECT version_num FROM "{schema}".{VERSION_TABLE}'))
-    }
+    applied = set(
+        MigrationContext.configure(
+            connection,
+            opts={"version_table": names.version_table, "version_table_schema": schema},
+        ).get_current_heads()
+    )
     if heads != applied:
         raise ConfigError(
             "the structural tree must be at head before data migrations: "
@@ -263,69 +269,54 @@ def _require_structural_head(connection: Connection, config: Config, schema: str
 
 
 def _lock(connection: Connection, schema: str) -> None:
-    connection.execute(
-        text("SELECT pg_advisory_lock(hashtextextended('loom.schema:' || :schema, 0))"),
-        {"schema": schema},
-    )
+    connection.execute(text(LOCK), {"schema": schema})
 
 
 def _unlock(connection: Connection, schema: str) -> None:
     connection.rollback()
-    connection.execute(
-        text("SELECT pg_advisory_unlock(hashtextextended('loom.schema:' || :schema, 0))"),
-        {"schema": schema},
-    )
+    connection.execute(text(UNLOCK), {"schema": schema})
     connection.commit()
 
 
 def _install_timeouts(connection: Connection, lock_timeout: str, statement_timeout: str) -> None:
-    lock = validate_timeout(lock_timeout)
-    statement = validate_timeout(statement_timeout)
+    timeouts = {
+        "lock": validate_timeout(lock_timeout),
+        "statement": validate_timeout(statement_timeout),
+    }
 
     def on_begin(conn: Connection) -> None:
-        conn.exec_driver_sql(f"SET LOCAL lock_timeout = '{lock}'")
-        conn.exec_driver_sql(f"SET LOCAL statement_timeout = '{statement}'")
+        conn.execute(_SET_TIMEOUTS, timeouts)
 
     event.listen(connection, "begin", on_begin)
 
 
-def _assertion_for(schema: str) -> Any:
-    statement = text(assert_statement(schema))
-
-    def on_version_apply(*, ctx: Any, **_: Any) -> None:
-        ctx.connection.execute(statement)
-
-    return on_version_apply
-
-
-def _prepare_version_tables(connection: Connection, bootstrap: BootstrapConfig) -> None:
-    """Create both version tables and fix the bypass users' read-only access before any revision."""
-    for table in (VERSION_TABLE, DATA_VERSION_TABLE):
-        connection.execute(
-            text(
-                f"CREATE TABLE IF NOT EXISTS {bootstrap.schema}.{table} "
-                "(version_num VARCHAR(32) NOT NULL, "
-                f"CONSTRAINT {table}_pkc PRIMARY KEY (version_num))"
-            )
-        )
-    privileges = ", ".join(sorted(BYPASS_VERSION_PRIVILEGES))
-    for user in bootstrap.bypass_users:
-        connection.execute(text(f"REVOKE ALL ON {bootstrap.schema}.{VERSION_TABLE} FROM {user}"))
-        connection.execute(
-            text(f"GRANT {privileges} ON {bootstrap.schema}.{VERSION_TABLE} TO {user}")
-        )
+def _assert_after_revision(
+    ctx: MigrationContext,
+    step: MigrationInfo,
+    heads: Collection[Any],
+    run_args: Mapping[str, Any],
+) -> None:
+    del step, heads, run_args
+    connection = ctx.connection
+    if connection is not None:
+        connection.execute(_ASSERT_SCHEMA)
 
 
-def include_object(
-    _obj: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
-) -> bool:
+def include_object_for(names: SchemaNames) -> IncludeObject:
     """Leave version tables alone and never autogenerate the drop of an undeclared table.
 
     A table the database has and the models do not may be one discovery
     missed; dropping it is written by hand, never generated.
     """
-    if type_ != "table":
-        return True
-    if name in {VERSION_TABLE, DATA_VERSION_TABLE}:
-        return False
-    return not (reflected and compare_to is None)
+    version_tables = {names.version_table, names.data_version_table}
+
+    def include_object(
+        _obj: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
+    ) -> bool:
+        if type_ != "table":
+            return True
+        if name in version_tables:
+            return False
+        return not (reflected and compare_to is None)
+
+    return include_object

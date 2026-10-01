@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -16,7 +17,7 @@ from loom.core.repository.sqlalchemy.rls import (
     rls_session_settings,
 )
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, resolve_binding
-from loom.core.repository.sqlalchemy.session_settings import settings_statement
+from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_statement
 
 
 class Note(BaseModel, RowScoped):
@@ -55,12 +56,10 @@ def _as(identity: Identity | None):
 def test_three_part_keys_are_accepted_by_the_settings_statement() -> None:
     clause, params = settings_statement({"loom.scope.holder": "x", "loom.scope.editor.any": "on"})
 
-    assert "set_config(:k0, :v0, true)" in str(clause)
-    assert params == {
-        "k0": "loom.scope.holder",
-        "v0": "x",
-        "k1": "loom.scope.editor.any",
-        "v1": "on",
+    assert str(clause) == SET_SETTINGS
+    assert json.loads(params["settings"]) == {
+        "loom.scope.holder": "x",
+        "loom.scope.editor.any": "on",
     }
 
 

@@ -75,6 +75,16 @@ class _UserSection(msgspec.Struct, kw_only=True):
     access: str
 
 
+class _GroupsSection(msgspec.Struct, kw_only=True):
+    readers: str
+    writers: str
+
+
+class _VersionTablesSection(msgspec.Struct, kw_only=True):
+    structure: str
+    data: str
+
+
 class SchemaConfig(msgspec.Struct, kw_only=True):
     """The ``database.schema`` section; every name is absent until the product writes it."""
 
@@ -84,6 +94,9 @@ class SchemaConfig(msgspec.Struct, kw_only=True):
     roles: _RolesSection | None = None
     database_users: dict[str, _UserSection] | None = None
     scopes: dict[str, str] | None = None
+    guard: str | None = None
+    groups: _GroupsSection | None = None
+    version_tables: _VersionTablesSection | None = None
 
 
 class DatabaseConfig(msgspec.Struct, kw_only=True):
@@ -184,15 +197,28 @@ def _schema_name(name: str) -> str:
 
 
 def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
-    from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseRoles
+    from loom.core.repository.sqlalchemy.rls.config import (
+        BootstrapConfig,
+        DatabaseRoles,
+        SchemaNames,
+    )
 
     name = _required(schema.name, "name")
     roles = _required(schema.roles, "roles")
     users = _required(schema.database_users, "database_users")
+    groups = _required(schema.groups, "groups")
+    version_tables = _required(schema.version_tables, "version_tables")
     config = BootstrapConfig(
         schema=name,
         roles=DatabaseRoles(owner=roles.owner, migrator=roles.migrator),
         database_users={user: _database_user(user, section) for user, section in users.items()},
+        names=SchemaNames(
+            guard=_required(schema.guard, "guard"),
+            readers=groups.readers,
+            writers=groups.writers,
+            version_table=version_tables.structure,
+            data_version_table=version_tables.data,
+        ),
     )
     try:
         return config.validated()
@@ -231,5 +257,8 @@ def _scope_sources(
 
 def _required(value: _T | None, key: str) -> _T:
     if value is None:
-        raise ConfigError(f"database.schema.{key} is required when a model is RowScoped")
+        raise ConfigError(
+            f"database.schema.{key} is required when a model is RowScoped: "
+            "run `loom schema init <schema>` to write the derived names"
+        )
     return value

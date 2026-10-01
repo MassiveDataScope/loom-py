@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -16,6 +17,10 @@ policies against ``current_setting(key, true)``.
 """
 
 _KEY = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
+SET_SETTINGS = (
+    "SELECT set_config(s.key, s.value, true) FROM jsonb_each_text(CAST(:settings AS jsonb)) AS s"
+)
+_SET_SETTINGS = text(SET_SETTINGS)
 
 
 def settings_statement(
@@ -23,8 +28,8 @@ def settings_statement(
 ) -> tuple[TextClause, dict[str, str]] | None:
     """Build the one statement that sets *values* for the current transaction.
 
-    Every key and value is bound as a parameter: the compiled SQL carries only
-    placeholders. Keys are two or more identifiers joined by dots, such as
+    The statement is a constant; the keys and values travel as one bound JSON
+    document. Keys are two or more identifiers joined by dots, such as
     ``prefix.name``, which is what Postgres requires of a custom setting.
 
     Args:
@@ -40,9 +45,7 @@ def settings_statement(
     """
     if not values:
         return None
-    calls: list[str] = []
-    params: dict[str, str] = {}
-    for index, (key, value) in enumerate(values.items()):
+    for key, value in values.items():
         if not isinstance(key, str) or _KEY.fullmatch(key) is None:
             raise ValueError(
                 f"session setting key must be a dotted str such as 'prefix.name', got {key!r}"
@@ -51,10 +54,7 @@ def settings_statement(
             raise TypeError(
                 f"session setting value for {key!r} must be str, got {type(value).__name__}"
             )
-        calls.append(f"set_config(:k{index}, :v{index}, true)")
-        params[f"k{index}"] = key
-        params[f"v{index}"] = value
-    return text("SELECT " + ", ".join(calls)), params
+    return _SET_SETTINGS, {"settings": json.dumps(dict(values))}
 
 
 def install_session_settings(session_class: type[Session], provider: SessionSettings) -> None:

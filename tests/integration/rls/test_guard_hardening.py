@@ -13,7 +13,7 @@ from loom.core.repository.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
-    render_bootstrap,
+    SchemaNames,
 )
 from tests.integration.rls.conftest import BootstrapFactory
 
@@ -42,7 +42,7 @@ async def _state(conn: asyncpg.Connection, *statements: str) -> str:
 def _as_owner(schema: str, *statements: str) -> tuple[str, ...]:
     return (
         f"SET LOCAL ROLE {schema}_owner",
-        f"SELECT set_config('loom_guard_{schema}.protecting', 'on', true)",
+        f"SELECT loom_guard_{schema}.open_hatch()",
         *statements,
     )
 
@@ -185,10 +185,13 @@ def test_schema_names_that_postgres_would_truncate_fold_or_reserve_are_refused(
         schema=schema,
         roles=DatabaseRoles(owner="o", migrator="m"),
         database_users={"u": DatabaseUser(login=True, access="read")},
+        names=SchemaNames(
+            guard="g", readers="r", writers="w", version_table="v", data_version_table="vd"
+        ),
     )
 
     with pytest.raises(ValueError, match="identifier"):
-        render_bootstrap(config)
+        config.validated()
 
 
 @pytest.mark.parametrize("user", ["current_user", "session_user", "Public"])
@@ -197,7 +200,8 @@ def test_database_user_names_that_postgres_resolves_specially_are_refused(user: 
         schema="app",
         roles=DatabaseRoles(owner="o", migrator="m"),
         database_users={user: DatabaseUser(login=True, access="read")},
+        names=SchemaNames.derived("app"),
     )
 
     with pytest.raises(ValueError, match="identifier"):
-        render_bootstrap(config)
+        config.validated()

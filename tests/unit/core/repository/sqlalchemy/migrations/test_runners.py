@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from loom.core.repository.sqlalchemy.migrations import alembic_config
-from loom.core.repository.sqlalchemy.migrations.runners import validate_timeout
+from loom.core.repository.sqlalchemy.migrations.runners import (
+    include_object_for,
+    validate_timeout,
+)
+from loom.core.repository.sqlalchemy.rls import SchemaNames
 
 URL = "postgresql+asyncpg://migrator:secret@localhost/app"
 
@@ -44,7 +48,7 @@ def test_timeouts_reject_anything_else(value: str) -> None:
 
 
 def test_autogenerate_never_drops_a_table_the_models_do_not_declare() -> None:
-    from loom.core.repository.sqlalchemy.migrations.runners import include_object
+    include_object = include_object_for(SchemaNames.derived("notes"))
 
     assert include_object(None, "orphan", "table", True, None) is False
     assert include_object(None, "alembic_version", "table", True, None) is False
@@ -52,6 +56,21 @@ def test_autogenerate_never_drops_a_table_the_models_do_not_declare() -> None:
     assert include_object(None, "notes", "table", True, object()) is True
     assert include_object(None, "notes", "table", False, None) is True
     assert include_object(None, "body", "column", True, None) is True
+
+
+def test_autogenerate_leaves_the_declared_version_tables_alone() -> None:
+    names = SchemaNames(
+        guard="g_notes",
+        readers="grp_r",
+        writers="grp_w",
+        version_table="v_struct",
+        data_version_table="v_data",
+    )
+    include_object = include_object_for(names)
+
+    assert include_object(None, "v_struct", "table", True, object()) is False
+    assert include_object(None, "v_data", "table", False, object()) is False
+    assert include_object(None, "alembic_version", "table", False, object()) is True
 
 
 def test_the_locator_puts_the_code_path_on_sys_path(tmp_path, monkeypatch) -> None:

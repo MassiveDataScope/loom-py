@@ -1,8 +1,9 @@
-"""Render and apply the bootstrap of one application schema.
+"""Install the static guard of one application schema and configure it from bound data.
 
-The SQL comes from a package template; the product's names are substituted
-in, nothing else. Passwords never enter the rendered text: ``apply_bootstrap``
-sends SCRAM-SHA-256 verifiers computed on the client.
+No SQL is built from the product's declaration: the guard revisions are static
+files pinned by digest, and every name reaches Postgres as a bound parameter
+that the guard quotes itself. Passwords never reach the server: only
+SCRAM-SHA-256 verifiers computed on the client do.
 """
 
 from __future__ import annotations
@@ -10,53 +11,31 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 from collections.abc import Callable, Mapping
-from importlib.resources import files
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import sql_identifier
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.rls.config import (
-    BYPASS_VERSION_PRIVILEGES,
-    VERSION_TABLE,
-    BootstrapConfig,
-    DatabaseUser,
-)
+from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import pending_revisions, preflight_sql
 
 MIN_SERVER_VERSION_NUM = 140000
 SCRAM_ITERATIONS = 4096
 
-_TEMPLATE = files("loom.core.repository.sqlalchemy.rls") / "templates" / "bootstrap.sql"
-
-
-def render_bootstrap(config: BootstrapConfig) -> str:
-    """Return the idempotent SQL that provisions ``config.schema`` and its guard."""
-    config.validated()
-    readers, writers = _groups(config.schema)
-    bypass = list(config.bypass_users)
-    substitutions = {
-        "{MIN_SERVER_VERSION_NUM}": str(MIN_SERVER_VERSION_NUM),
-        "{S}": config.schema,
-        "{OWNER}": config.roles.owner,
-        "{MIGRATOR}": config.roles.migrator,
-        "{READERS}": readers,
-        "{WRITERS}": writers,
-        "{BYPASS_LIST}": ", ".join(f"'{user}'" for user in bypass) or "NULL",
-        "{ROLE_ROWS}": _role_rows(config, readers, writers),
-        "{USER_STATEMENTS}": _user_statements(
-            config.schema, config.database_users, readers, writers
-        ),
-        "{BYPASS_STATEMENTS}": _bypass_statements(config, bypass),
-        "{REVOKE_PUBLIC}": _revoke_public(config.revoke_public),
-    }
-    text = _TEMPLATE.read_text()
-    for placeholder, value in substitutions.items():
-        text = text.replace(placeholder, value)
-    return text
+CREATE_GUARD = "SELECT pg_temp.loom_create_guard($1, $2)"
+LOCK_GUARD = "SELECT pg_advisory_xact_lock(hashtextextended('loom.guard:' || $1, 0))"
+ENTER_GUARD = (
+    "SELECT set_config('search_path', quote_ident($1) || ', pg_catalog, pg_temp', true), "
+    "set_config($1 || '.installing', 'on', true)"
+)
+APPLIED_REVISIONS = "SELECT n, sha256 FROM revision ORDER BY n"
+RECORD_REVISION = "INSERT INTO revision (n, sha256) VALUES ($1, $2)"
+CONFIGURE = "SELECT configure($1::jsonb)"
+SET_PASSWORD = "SELECT set_password_verifier($1, $2)"
 
 
 def scram_sha256_verifier(password: str, *, salt: bytes, iterations: int = SCRAM_ITERATIONS) -> str:
@@ -72,45 +51,59 @@ def scram_sha256_verifier(password: str, *, salt: bytes, iterations: int = SCRAM
     )
 
 
-def password_statements(
-    passwords: Mapping[str, str], *, salt_factory: Callable[[], bytes] = lambda: os.urandom(16)
-) -> list[str]:
-    """One ``ALTER ROLE`` per user carrying a verifier, never the password itself."""
-    return [
-        f"ALTER ROLE {sql_identifier(user)} PASSWORD "
-        f"'{scram_sha256_verifier(password, salt=salt_factory())}'"
-        for user, password in passwords.items()
-    ]
-
-
 async def apply_bootstrap(
-    superuser_url: str, config: BootstrapConfig, passwords: Mapping[str, str]
+    superuser_url: str,
+    config: BootstrapConfig,
+    passwords: Mapping[str, str],
+    *,
+    salt_factory: Callable[[], bytes] = lambda: os.urandom(16),
 ) -> None:
-    """Apply the rendered bootstrap and the password verifiers in one transaction.
+    """Install or upgrade the guard of ``config.schema`` and configure it, in one transaction.
 
     Raises:
-        ConfigError: When the server refuses to create the event trigger, which
-            needs superuser or ``rds_superuser``.
+        ConfigError: When a name is invalid, the server refuses to create the
+            event triggers (superuser or ``rds_superuser`` needed), the guard
+            schema exists but is not loom's, or the guard holds revisions this
+            release does not know.
     """
-    script = render_bootstrap(config)
-    statements = password_statements(passwords)
+    try:
+        config.validated()
+    except ValueError as exc:
+        raise ConfigError(f"database.schema: {exc}") from exc
+    verifiers = {
+        user: scram_sha256_verifier(password, salt=salt_factory())
+        for user, password in passwords.items()
+    }
+    guard = config.names.guard
     engine = create_async_engine(superuser_url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
             driver = await _driver(connection)
             async with driver.transaction():
-                try:
-                    await driver.execute(script)
-                except Exception as exc:
-                    if _needs_superuser(exc):
-                        raise ConfigError(
-                            f"bootstrap of {config.schema} needs superuser or rds_superuser: {exc}"
-                        ) from exc
-                    raise
-                for statement in statements:
-                    await driver.execute(statement)
+                await _create_guard(driver, config)
+                await driver.execute(LOCK_GUARD, guard)
+                await driver.execute(ENTER_GUARD, guard)
+                applied = {row["n"]: row["sha256"] for row in await driver.fetch(APPLIED_REVISIONS)}
+                for revision in pending_revisions(applied):
+                    await driver.execute(revision.sql())
+                    await driver.execute(RECORD_REVISION, revision.number, revision.sha256)
+                await driver.execute(CONFIGURE, json.dumps(config.document()))
+                for user, verifier in verifiers.items():
+                    await driver.execute(SET_PASSWORD, user, verifier)
     finally:
         await engine.dispose()
+
+
+async def _create_guard(driver: Any, config: BootstrapConfig) -> None:
+    await driver.execute(preflight_sql())
+    try:
+        await driver.execute(CREATE_GUARD, config.names.guard, MIN_SERVER_VERSION_NUM)
+    except Exception as exc:
+        if _needs_superuser(exc):
+            raise ConfigError(
+                f"bootstrap of {config.schema} needs superuser or rds_superuser: {exc}"
+            ) from exc
+        raise
 
 
 async def _driver(connection: AsyncConnection) -> Any:
@@ -123,67 +116,3 @@ async def _driver(connection: AsyncConnection) -> Any:
 
 def _needs_superuser(exc: Exception) -> bool:
     return "event trigger" in str(exc).lower() and getattr(exc, "sqlstate", "") == "42501"
-
-
-def _revoke_public(revoke: bool) -> str:
-    return "REVOKE ALL ON SCHEMA public FROM PUBLIC;" if revoke else ""
-
-
-def _groups(schema: str) -> tuple[str, str]:
-    return f"{schema}_readers", f"{schema}_writers"
-
-
-def _role_row(name: str, *, login: bool, bypass: bool, inherit: bool) -> str:
-    flags = ", ".join(str(flag).lower() for flag in (login, bypass, inherit))
-    return f"('{name}', {flags})"
-
-
-def _role_rows(config: BootstrapConfig, readers: str, writers: str) -> str:
-    rows = [
-        _role_row(config.roles.owner, login=False, bypass=False, inherit=True),
-        _role_row(config.roles.migrator, login=True, bypass=False, inherit=False),
-        _role_row(readers, login=False, bypass=False, inherit=True),
-        _role_row(writers, login=False, bypass=False, inherit=True),
-    ]
-    for name, spec in config.database_users.items():
-        bypass = spec.access == "bypass"
-        rows.append(_role_row(name, login=spec.login, bypass=bypass, inherit=not bypass))
-    return ", ".join(rows)
-
-
-def _user_statements(
-    schema: str, users: Mapping[str, DatabaseUser], readers: str, writers: str
-) -> str:
-    lines: list[str] = []
-    for name, spec in users.items():
-        if spec.access == "read":
-            lines.append(f"GRANT {readers} TO {name};")
-        elif spec.access == "write":
-            lines.append(f"GRANT {readers}, {writers} TO {name};")
-        if spec.login:
-            lines.append(f"ALTER ROLE {name} SET search_path = {schema};")
-    return "\n".join(lines)
-
-
-def _bypass_statements(config: BootstrapConfig, bypass: list[str]) -> str:
-    lines: list[str] = []
-    for user in bypass:
-        lines += [
-            f"GRANT USAGE ON SCHEMA {config.schema} TO {user};",
-            f"ALTER DEFAULT PRIVILEGES FOR ROLE {config.roles.owner} IN SCHEMA {config.schema} "
-            f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {user};",
-            f"ALTER DEFAULT PRIVILEGES FOR ROLE {config.roles.owner} IN SCHEMA {config.schema} "
-            f"GRANT USAGE ON SEQUENCES TO {user};",
-            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {config.schema} "
-            f"TO {user};",
-            f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA {config.schema} TO {user};",
-            f"DO $$ BEGIN IF to_regclass('{config.schema}.{VERSION_TABLE}') IS NOT NULL THEN "
-            f"REVOKE ALL ON TABLE {config.schema}.{VERSION_TABLE} FROM {user}; "
-            f"GRANT {_version_privileges()} ON TABLE {config.schema}.{VERSION_TABLE} TO {user}; "
-            f"END IF; END $$;",
-        ]
-    return "\n".join(lines)
-
-
-def _version_privileges() -> str:
-    return ", ".join(sorted(BYPASS_VERSION_PRIVILEGES))

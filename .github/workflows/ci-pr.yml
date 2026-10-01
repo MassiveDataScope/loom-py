@@ -217,6 +217,13 @@ jobs:
           git fetch --no-tags --prune origin \
             "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
 
+      - name: Released guard revisions are immutable
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+          bash scripts/ci/check_released_guard.sh
+
       # The report is the primary version's; the other legs gate through `needs`.
       - name: Download fast lane results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

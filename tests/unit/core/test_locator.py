@@ -8,6 +8,7 @@ import yaml
 
 from loom.core.config.errors import ConfigError
 from loom.core.locator import Application, load_application
+from loom.core.repository.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"
@@ -34,6 +35,9 @@ def _scoped_schema() -> dict[str, object]:
             "notes_ops": {"login": True, "access": "bypass"},
         },
         "scopes": {"owner": "identity.subject", "editor": "request.editor"},
+        "guard": "notes_guard",
+        "groups": {"readers": "notes_group_r", "writers": "notes_group_w"},
+        "version_tables": {"structure": "notes_versions", "data": "notes_data_versions"},
     }
 
 
@@ -57,6 +61,13 @@ def test_a_scoped_application_is_loaded_with_its_own_metadata_and_bootstrap(
     assert application.bootstrap is not None
     assert application.bootstrap.schema == "notes"
     assert application.bootstrap.roles.owner == "notes_owner"
+    assert application.bootstrap.names == SchemaNames(
+        guard="notes_guard",
+        readers="notes_group_r",
+        writers="notes_group_w",
+        version_table="notes_versions",
+        data_version_table="notes_data_versions",
+    )
     assert application.database.url == "postgresql+asyncpg://u:p@localhost/db"
     assert application.scope_sources == {"owner": "identity.subject", "editor": "request.editor"}
 
@@ -84,7 +95,10 @@ def test_an_unknown_access_value_names_the_user(tmp_path: Path) -> None:
         load_application(config_path)
 
 
-@pytest.mark.parametrize("missing", ["name", "roles", "database_users", "scopes"])
+@pytest.mark.parametrize(
+    "missing",
+    ["name", "roles", "database_users", "scopes", "guard", "groups", "version_tables"],
+)
 def test_a_missing_schema_key_names_itself(tmp_path: Path, missing: str) -> None:
     schema = _scoped_schema()
     del schema[missing]
@@ -92,6 +106,36 @@ def test_a_missing_schema_key_names_itself(tmp_path: Path, missing: str) -> None
     config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
     with pytest.raises(ConfigError, match=rf"database\.schema\.{missing}"):
+        load_application(config_path)
+
+
+def test_a_missing_name_points_at_schema_init(tmp_path: Path) -> None:
+    schema = _scoped_schema()
+    del schema["guard"]
+
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+    with pytest.raises(ConfigError, match="loom schema init"):
+        load_application(config_path)
+
+
+def test_groups_sharing_a_name_with_a_role_are_rejected(tmp_path: Path) -> None:
+    schema = _scoped_schema()
+    schema["groups"] = {"readers": "notes_owner", "writers": "notes_group_w"}
+
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+    with pytest.raises(ConfigError, match=r"database\.schema:.*distinct names"):
+        load_application(config_path)
+
+
+def test_a_version_table_that_is_not_an_identifier_is_rejected(tmp_path: Path) -> None:
+    schema = _scoped_schema()
+    schema["version_tables"] = {"structure": "Versions", "data": "notes_data_versions"}
+
+    config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
+
+    with pytest.raises(ConfigError, match=r"database\.schema:.*'Versions'"):
         load_application(config_path)
 
 

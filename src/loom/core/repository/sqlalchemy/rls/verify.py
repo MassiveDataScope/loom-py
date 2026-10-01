@@ -2,7 +2,9 @@
 
 The assertion forbids excess at every DDL; ``verify`` additionally requires
 that every group, bypass user and global table holds exactly what the model
-and the declaration say, and that memberships match each user's access.
+and the declaration say, that memberships match each user's access, and that
+the guard installed in the database is the one this release of loom shipped:
+same functions and code, same owners and grants, same configuration.
 """
 
 from __future__ import annotations
@@ -11,22 +13,20 @@ from collections import defaultdict
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.backend.scoped_ddl import assert_statement, missing_event_triggers_statement
+from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, ENTER_GUARD
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import ScopedTable
-from loom.core.repository.sqlalchemy.rls.config import (
-    BYPASS_VERSION_PRIVILEGES,
-    VERSION_TABLE,
-    BootstrapConfig,
-)
+from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
+from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_RELATIONS
+from loom.core.repository.sqlalchemy.rls.integrity import guard_problems
 
 if TYPE_CHECKING:
     from loom.core.locator import Application
@@ -56,6 +56,26 @@ _FOREIGN_KEYS = text(
     "JOIN pg_class p ON p.oid = con.confrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
     "WHERE con.contype = 'f' AND n.nspname = :schema"
 )
+_GUARD_RELATIONS = text(
+    "SELECT c.relname, c.relkind::text, o.rolsuper AS owner_is_superuser, "
+    "(SELECT count(*) FROM pg_trigger t WHERE t.tgrelid = c.oid) AS triggers, "
+    "(SELECT count(*) FROM pg_rewrite r WHERE r.ev_class = c.oid) AS rules "
+    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "JOIN pg_roles o ON o.oid = c.relowner WHERE n.nspname = :guard"
+)
+_GUARD_SCHEMA = text(
+    "SELECT o.rolsuper AS owner_is_superuser, "
+    "coalesce((SELECT array_agg(coalesce(g.rolname, 'PUBLIC') || ':' || a.privilege_type "
+    "ORDER BY 1) FROM aclexplode(n.nspacl) a LEFT JOIN pg_roles g ON g.oid = a.grantee "
+    "WHERE a.grantee <> n.nspowner), ARRAY[]::text[]) AS grants "
+    "FROM pg_namespace n JOIN pg_roles o ON o.oid = n.nspowner WHERE n.nspname = :guard"
+)
+_GUARD_CONFIG = text(
+    "SELECT app_schema, owner_role, migrator_role, readers_role, writers_role, "
+    "bypass_roles, version_table, data_version_table FROM config"
+)
+_ENTER_GUARD = text(ENTER_GUARD)
+_ASSERT_SCHEMA = text(ASSERT_SCHEMA)
 _MEMBERS = text(
     "SELECT m.rolname AS member, r.rolname AS role, r.rolbypassrls, m.rolinherit, "
     "CASE WHEN current_setting('server_version_num')::int >= 160000 "
@@ -91,15 +111,17 @@ async def verify(url: str, application: Application) -> Report:
     engine = create_async_engine(url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
-            findings = await _assertion(connection, bootstrap.schema)
-            findings += await _event_triggers(connection, bootstrap.schema)
+            await connection.execute(_ENTER_GUARD, {"guard": bootstrap.names.guard})
+            findings = await _guard_integrity(connection, bootstrap)
+            findings += await _assertion(connection)
+            await connection.execute(_ENTER_GUARD, {"guard": bootstrap.names.guard})
             acl, sequences = await _acl(connection, bootstrap.schema)
-            findings += _group_privileges(acl, application.scoped, bootstrap.schema)
+            findings += _group_privileges(acl, application.scoped, bootstrap)
             findings += await _sequence_usage(connection, acl, application.scoped, bootstrap)
             findings += _bypass_privileges(acl, sequences, bootstrap)
-            findings += _global_privileges(acl, application, bootstrap.schema)
+            findings += _global_privileges(acl, application, bootstrap)
             findings += await _global_parent_findings(
-                connection, acl, application.scoped, bootstrap.schema
+                connection, acl, application.scoped, bootstrap
             )
             findings += await _memberships(connection, bootstrap)
     finally:
@@ -107,18 +129,76 @@ async def verify(url: str, application: Application) -> Report:
     return Report(ok=not findings, findings=tuple(findings))
 
 
-async def _event_triggers(connection: AsyncConnection, schema: str) -> list[Finding]:
-    result = await connection.execute(text(missing_event_triggers_statement(schema)))
-    missing = [str(row[0]) for row in result]
-    return [
-        Finding(None, "guard.event_triggers", f"{name}: enabled", f"{name}: missing or disabled")
-        for name in sorted(missing)
+async def _guard_integrity(
+    connection: AsyncConnection, bootstrap: BootstrapConfig
+) -> list[Finding]:
+    guard = {"guard": bootstrap.names.guard}
+    problems = await guard_problems(connection, bootstrap.names.guard, bootstrap.roles.owner)
+    findings = [
+        Finding(None, p.check, f"{p.subject}: {p.expected}", f"{p.subject}: {p.actual}")
+        for p in problems
     ]
+    relations = list(await connection.execute(_GUARD_RELATIONS, guard))
+    findings += _relation_findings(relations)
+    schema_row = (await connection.execute(_GUARD_SCHEMA, guard)).one_or_none()
+    findings += _guard_schema_findings(schema_row, bootstrap.roles.owner)
+    config_row = (await connection.execute(_GUARD_CONFIG)).one_or_none()
+    findings += _config_findings(config_row, bootstrap)
+    return findings
 
 
-async def _assertion(connection: AsyncConnection, schema: str) -> list[Finding]:
+def _relation_findings(rows: list[Any]) -> list[Finding]:
+    found = {str(row.relname) for row in rows}
+    findings: list[Finding] = []
+    if found != GUARD_RELATIONS:
+        findings.append(_diff(None, "guard.relations", "guard", set(GUARD_RELATIONS), found))
+    for row in rows:
+        if not row.owner_is_superuser or row.triggers or row.rules:
+            findings.append(
+                Finding(
+                    str(row.relname),
+                    "guard.relation",
+                    "superuser-owned, no triggers or rules",
+                    "changed",
+                )
+            )
+    return findings
+
+
+def _guard_schema_findings(row: Any, owner: str) -> list[Finding]:
+    if row is None:
+        return [Finding(None, "guard.schema", "present", "missing")]
+    findings: list[Finding] = []
+    if not row.owner_is_superuser:
+        findings.append(Finding(None, "guard.schema_owner", "superuser", "other"))
+    if set(row.grants) != {f"{owner}:USAGE"}:
+        findings.append(
+            _diff(None, "guard.schema_grants", "guard", {f"{owner}:USAGE"}, set(row.grants))
+        )
+    return findings
+
+
+def _config_findings(row: Any, bootstrap: BootstrapConfig) -> list[Finding]:
+    names = bootstrap.names
+    expected = (
+        bootstrap.schema,
+        bootstrap.roles.owner,
+        bootstrap.roles.migrator,
+        names.readers,
+        names.writers,
+        tuple(bootstrap.bypass_users),
+        names.version_table,
+        names.data_version_table,
+    )
+    actual = None if row is None else (*row[:5], tuple(row[5]), row[6], row[7])
+    if actual != expected:
+        return [Finding(None, "guard.config", str(expected), str(actual))]
+    return []
+
+
+async def _assertion(connection: AsyncConnection) -> list[Finding]:
     try:
-        await connection.execute(text(assert_statement(schema)))
+        await connection.execute(_ASSERT_SCHEMA)
     except DBAPIError as exc:
         await connection.rollback()
         return [Finding(None, "assertion", "passes", str(exc.orig))]
@@ -137,13 +217,14 @@ async def _acl(connection: AsyncConnection, schema: str) -> tuple[Acl, frozenset
 
 
 def _group_privileges(
-    acl: Acl, scoped: Mapping[tuple[str | None, str], ScopedTable], schema: str
+    acl: Acl, scoped: Mapping[tuple[str | None, str], ScopedTable], bootstrap: BootstrapConfig
 ) -> list[Finding]:
+    names = bootstrap.names
     findings: list[Finding] = []
     for table in scoped.values():
         expected = {
-            f"{schema}_readers": {p.value for p in table.privileges if p is Privilege.SELECT},
-            f"{schema}_writers": {p.value for p in table.privileges if p in WRITES},
+            names.readers: {p.value for p in table.privileges if p is Privilege.SELECT},
+            names.writers: {p.value for p in table.privileges if p in WRITES},
         }
         for group, wanted in expected.items():
             actual = acl[table.name].get(group, set())
@@ -159,7 +240,7 @@ async def _sequence_usage(
     bootstrap: BootstrapConfig,
 ) -> list[Finding]:
     inserting = {t.name for t in scoped.values() if Privilege.INSERT in t.privileges}
-    writers = f"{bootstrap.schema}_writers"
+    writers = bootstrap.names.writers
     findings: list[Finding] = []
     for row in await connection.execute(_SERIALS, {"schema": bootstrap.schema}):
         table_name, sequence = str(row.table_name), str(row.sequence_name)
@@ -175,21 +256,20 @@ def _bypass_privileges(
     acl: Acl, sequences: frozenset[str], bootstrap: BootstrapConfig
 ) -> list[Finding]:
     bypass = bootstrap.bypass_users
+    version_table = bootstrap.names.version_table
     all_row_privileges = {p.value for p in READ_WRITE}
     findings: list[Finding] = []
     for relname, grants in acl.items():
         for user in bypass:
             actual = grants.get(user, set())
-            if relname == VERSION_TABLE and actual != BYPASS_VERSION_PRIVILEGES:
+            if relname == version_table and actual != BYPASS_VERSION_PRIVILEGES:
                 findings.append(
-                    _diff(
-                        relname, "bypass.alembic_version", user, BYPASS_VERSION_PRIVILEGES, actual
-                    )
+                    _diff(relname, "bypass.version_table", user, BYPASS_VERSION_PRIVILEGES, actual)
                 )
             elif relname in sequences and "USAGE" not in actual:
                 findings.append(_diff(relname, "bypass.sequence_usage", user, {"USAGE"}, actual))
             elif (
-                relname != VERSION_TABLE
+                relname != version_table
                 and relname not in sequences
                 and not all_row_privileges <= actual
             ):
@@ -199,20 +279,21 @@ def _bypass_privileges(
     return findings
 
 
-def _global_privileges(acl: Acl, application: Application, schema: str) -> list[Finding]:
+def _global_privileges(
+    acl: Acl, application: Application, bootstrap: BootstrapConfig
+) -> list[Finding]:
+    groups = {"readers": bootstrap.names.readers, "writers": bootstrap.names.writers}
     findings: list[Finding] = []
     for model in application.models:
         if is_row_scoped(model):
             continue
         table = get_table_name(model)
         declared = declared_privileges(model)
-        for group in ("readers", "writers"):
+        for group, role in groups.items():
             wanted = {p.value for p in declared.get(group, frozenset())}
-            actual = acl[table].get(f"{schema}_{group}", set())
+            actual = acl[table].get(role, set())
             if actual != wanted:
-                findings.append(
-                    _diff(table, "global.privileges", f"{schema}_{group}", wanted, actual)
-                )
+                findings.append(_diff(table, "global.privileges", role, wanted, actual))
     return findings
 
 
@@ -220,12 +301,12 @@ async def _global_parent_findings(
     connection: AsyncConnection,
     acl: Acl,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
-    schema: str,
+    bootstrap: BootstrapConfig,
 ) -> list[Finding]:
     scoped_names = {t.name for t in scoped.values()}
-    groups = (f"{schema}_readers", f"{schema}_writers")
+    groups = (bootstrap.names.readers, bootstrap.names.writers)
     findings: list[Finding] = []
-    for row in await connection.execute(_FOREIGN_KEYS, {"schema": schema}):
+    for row in await connection.execute(_FOREIGN_KEYS, {"schema": bootstrap.schema}):
         child, parent = str(row.child), str(row.parent)
         if child in scoped_names and parent not in scoped_names:
             findings.extend(_action_findings(child, (str(row.on_delete), str(row.on_update))))
@@ -276,7 +357,7 @@ async def _memberships(connection: AsyncConnection, bootstrap: BootstrapConfig) 
 def _access_memberships(
     memberships: Mapping[str, set[str]], bootstrap: BootstrapConfig
 ) -> list[Finding]:
-    readers, writers = f"{bootstrap.schema}_readers", f"{bootstrap.schema}_writers"
+    readers, writers = bootstrap.names.readers, bootstrap.names.writers
     by_access = {"read": {readers}, "write": {readers, writers}, "bypass": set()}
     findings: list[Finding] = []
     for user, spec in bootstrap.database_users.items():

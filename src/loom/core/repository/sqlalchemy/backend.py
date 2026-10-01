@@ -28,6 +28,7 @@ from loom.core.repository.sqlalchemy.rls.elevate import (
     SQLAlchemyElevationSink,
     validate_elevations,
 )
+from loom.core.repository.sqlalchemy.rls.integrity import guard_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -39,6 +40,7 @@ class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
     mode: Literal["create_all", "external"] = "create_all"
     allow_unprotected_dialect: bool = False
     scopes: dict[str, str] = msgspec.field(default_factory=dict)
+    guard: str | None = None
 
 
 class _DatabaseConfig(msgspec.Struct, kw_only=True):
@@ -207,7 +209,7 @@ async def _lifespan(
         )
     async with session_manager.engine.begin() as connection:
         if config.mode == "external":
-            await _check_external(connection, scoped)
+            await _check_external(connection, scoped, config.guard)
         else:
             await connection.run_sync(get_metadata().create_all)
     try:
@@ -218,7 +220,9 @@ async def _lifespan(
 
 
 async def _check_external(
-    connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
+    connection: AsyncConnection,
+    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    guard: str | None,
 ) -> None:
     names = [table.name for table in get_metadata().sorted_tables]
     present = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
@@ -231,6 +235,22 @@ async def _check_external(
         await _reject_privileged_connection(connection)
         if scoped:
             await _check_forced_rls(connection, scoped)
+            await _check_guard(connection, guard)
+
+
+async def _check_guard(connection: AsyncConnection, guard: str | None) -> None:
+    if guard is None:
+        raise ConfigError(
+            "database.schema.guard is required when a model is RowScoped: "
+            "run `loom schema init <schema>` to write the derived names"
+        )
+    problems = await guard_problems(connection, guard)
+    if problems:
+        details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)
+        raise ConfigError(
+            f"the guard {guard} in the database is not the one this release of loom ships: "
+            f"{details}"
+        )
 
 
 async def _reject_privileged_connection(connection: AsyncConnection) -> None:

@@ -1,4 +1,4 @@
-"""The gate evidence replayed against the bootstrap loom renders (T013).
+"""The gate evidence replayed against the guard loom installs (T013).
 
 Three synthetic products share one database. Every label below is a line of
 ``gate-evidence/fixture-round7.tail.sql``; the SQL is the fixture's, the guard
@@ -22,6 +22,7 @@ from loom.core.repository.sqlalchemy.rls import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
+    SchemaNames,
     apply_bootstrap,
 )
 
@@ -65,6 +66,7 @@ def _config(schema: str) -> BootstrapConfig:
         schema=schema,
         roles=DatabaseRoles(owner=f"{schema}_owner", migrator=f"{schema}_migrator"),
         database_users=users,
+        names=SchemaNames.derived(schema),
     )
 
 
@@ -152,7 +154,7 @@ def _owner_key(owner: str) -> str:
 
 
 def _hatch(schema: str) -> str:
-    return f"SELECT set_config('loom_guard_{schema}.protecting', 'on', true)"
+    return f"SELECT loom_guard_{schema}.open_hatch()"
 
 
 def _protect(schema: str, table: str, scopes: str, privileges: str) -> str:
@@ -180,6 +182,11 @@ def _trigger(events: str, function: str, when: str = "") -> list[str]:
         f"FOR EACH STATEMENT {when}EXECUTE FUNCTION {function}",
         "ALTER TABLE notes.notes ENABLE ALWAYS TRIGGER loom_deny_owner_dml",
     ]
+
+
+def _guard_trigger(events: str, when: str = "") -> list[str]:
+    """Rebuild the owner trigger on the guard's own function, which only a superuser may attach."""
+    return ["RESET ROLE", *_trigger(events, DENY, when), "SET LOCAL ROLE notes_owner"]
 
 
 def _scoped(table: str) -> str:
@@ -551,15 +558,15 @@ class TestDecisionClosures:
                 ],
                 "LG002",
             ),
-            ("D6h trigger for DELETE only", _trigger("DELETE", DENY), "LG002"),
+            ("D6h trigger for DELETE only", _guard_trigger("DELETE"), "LG002"),
             (
                 "D6i trigger with a WHEN clause",
-                _trigger(ALL_EVENTS, DENY, "WHEN (false) "),
+                _guard_trigger(ALL_EVENTS, "WHEN (false) "),
                 "LG002",
             ),
             (
                 "D6m trigger with UPDATE OF a column",
-                _trigger("INSERT OR UPDATE OF body OR DELETE OR TRUNCATE", DENY),
+                _guard_trigger("INSERT OR UPDATE OF body OR DELETE OR TRUNCATE"),
                 "LG002",
             ),
             (
@@ -603,6 +610,17 @@ class TestDecisionClosures:
             guarded, role="notes_owner", prelude=[_hatch("notes"), *prelude], statement=ASSERT_NOTES
         )
         assert got == want, label
+
+    async def test_d6o_the_owner_cannot_attach_the_guard_trigger_function(
+        self, guarded: Guarded
+    ) -> None:
+        drop, create, _ = _trigger("DELETE", DENY)
+
+        got = await _run(
+            guarded, role="notes_owner", prelude=[_hatch("notes"), drop], statement=create
+        )
+
+        assert got == "42501"
 
     @pytest.mark.parametrize(
         ("label", "statement"),
