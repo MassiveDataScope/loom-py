@@ -1355,6 +1355,7 @@ def _build_kernel_runtime(
         modules=[wiring.repo_registration_module, *extra_modules],
         uow_factory=wiring.uow_factory,
         metrics=metrics,
+        elevation_sink=wiring.elevation_sink,
     )
 
 

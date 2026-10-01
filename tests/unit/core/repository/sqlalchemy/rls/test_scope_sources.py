@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, resolve_binding
 from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
@@ -16,6 +15,7 @@ from loom.core.repository.sqlalchemy.rls import (
     register_scope_source,
     rls_session_settings,
 )
+from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, resolve_binding
 from loom.core.repository.sqlalchemy.session_settings import settings_statement
 
 
@@ -99,9 +99,14 @@ def test_the_provider_emits_every_key_as_empty_when_nobody_is_authenticated() ->
     }
 
 
-def test_the_provider_emits_the_resolved_values_and_the_elevation_flags() -> None:
+def test_the_provider_emits_the_resolved_values_and_the_elevation_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom.core.repository.sqlalchemy.rls import provider as provider_module
+
+    monkeypatch.setattr(provider_module, "elevated_scopes", lambda: frozenset({"editor"}))
     register_scope_source("editor", lambda: "ana")
-    provider = rls_session_settings(_application(), elevated=lambda: frozenset({"editor"}))
+    provider = rls_session_settings(_application())
     token = set_identity(Identity(subject="sub-1", attributes={"region": "7"}))
     try:
         assert provider() == {

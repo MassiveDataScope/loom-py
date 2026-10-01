@@ -62,3 +62,65 @@ async def test_create_schema_without_the_bootstrap_names_the_entry_point(
 
     with pytest.raises(ConfigError, match=r"apply_bootstrap|loom schema bootstrap"):
         await create_schema(database.migrator, application)
+
+
+async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    from loom.core.config import ConfigContext
+    from loom.core.identity import Identity, reset_identity, set_identity
+    from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+    from loom.core.repository.sqlalchemy.rls.sources import (
+        clear_scope_sources,
+        register_scope_source,
+    )
+
+    database = await scoped_database("notes_wired")
+    application = application_for(notes, database, tmp_path, schema="notes_wired")
+    await create_schema(database.migrator, application)
+    seed = (
+        "INSERT INTO notes_wired.notes (owner_id, editor, body) "
+        "VALUES ('u1', 'e', 'mine'), ('u2', 'e', 'theirs')"
+    )
+    engine = create_async_engine(database.bypass, poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.execute(text(seed))
+    await engine.dispose()
+
+    def backend(url: str):
+        config = {
+            "app": {"name": "wired"},
+            "database": {
+                "url": url,
+                "schema": {
+                    "mode": "external",
+                    "scopes": {"owner": "identity.subject", "editor": "request.editor"},
+                },
+            },
+        }
+        return SQLAlchemyBackend().build(ConfigContext.from_dict(config), notes.MODELS)
+
+    register_scope_source("editor", lambda: None)
+    try:
+        wiring = backend(database.write)
+        wiring.prepare_models(notes.MODELS)
+        async with wiring.lifespan_init():
+            manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
+            token = set_identity(Identity(subject="u1"))
+            try:
+                async with manager.session() as session:
+                    bodies = (await session.execute(text("SELECT body FROM notes"))).scalars()
+                    assert list(bodies) == ["mine"]
+            finally:
+                reset_identity(token)
+            async with manager.session() as session:
+                anonymous = await session.execute(text("SELECT count(*) FROM notes"))
+                assert anonymous.scalar() == 0
+
+        bypass = backend(database.bypass)
+        bypass.prepare_models(notes.MODELS)
+        with pytest.raises(ConfigError, match="bypass"):
+            async with bypass.lifespan_init():
+                pass
+    finally:
+        clear_scope_sources()

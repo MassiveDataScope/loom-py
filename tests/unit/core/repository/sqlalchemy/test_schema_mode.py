@@ -131,3 +131,54 @@ async def test_external_mode_fails_at_startup_when_a_table_is_missing() -> None:
     with pytest.raises(ConfigError, match="plain_items"):
         async with wiring.lifespan_init():
             pass
+
+
+def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
+    external = _SchemaConfig(mode="external")
+
+    with pytest.raises(ConfigError, match="scoped_items"):
+        startup_checks(external, "sqlite", _scoped(), has_session_settings=True)
+
+    allowed = _SchemaConfig(mode="external", allow_unprotected_dialect=True)
+    assert startup_checks(allowed, "sqlite", _scoped(), has_session_settings=True) == (
+        "scoped_items",
+    )
+
+
+def test_external_mode_wires_the_scoped_provider_and_the_elevation_sink() -> None:
+    from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
+
+    external = _wiring("postgresql+asyncpg://app:secret@localhost/app", Plain, mode="external")
+    create_all = _wiring("sqlite+aiosqlite://", Plain)
+
+    assert isinstance(external.elevation_sink, SQLAlchemyElevationSink)
+    assert external.uow_factory._session_manager.has_session_settings
+    assert create_all.elevation_sink is None
+    assert not create_all.uow_factory._session_manager.has_session_settings
+
+
+async def test_external_mode_validates_scope_bindings_at_startup() -> None:
+    wiring = _wiring(
+        "postgresql+asyncpg://app:secret@localhost/app",
+        Scoped,
+        mode="external",
+        scopes={"holder": "request.unregistered_source"},
+    )
+    wiring.prepare_models((Scoped,))
+
+    with pytest.raises(ConfigError, match="unregistered_source"):
+        async with wiring.lifespan_init():
+            pass
+
+
+def test_create_kernel_hands_the_elevation_sink_to_the_executor() -> None:
+    from loom.core.bootstrap.kernel import create_kernel
+    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
+
+    sink = SQLAlchemyElevationSink()
+    config = msgspec.convert({"url": "sqlite+aiosqlite://"}, _DatabaseConfig)
+
+    runtime = create_kernel(config=config, use_cases=[], modules=[], elevation_sink=sink)
+
+    assert runtime.container.resolve(RuntimeExecutor)._elevation_sink is sink

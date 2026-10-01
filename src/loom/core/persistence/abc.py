@@ -14,6 +14,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol
 
+from loom.core.authz.elevation import ElevationSink
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
@@ -53,6 +54,8 @@ class PersistenceWiring:
             (schema compilation, identifier validation, ...); defaults to
             :func:`no_model_preparation`.
         readiness: Optional asynchronous readiness probe.
+        elevation_sink: Where elevations reach an open transaction; ``None``
+            when the backend serves no row-scoped tables.
     """
 
     uow_factory: UnitOfWorkFactory | None
@@ -61,6 +64,7 @@ class PersistenceWiring:
     lifespan_init: Callable[[], AbstractAsyncContextManager[None]] = no_lifespan
     prepare_models: Callable[[Sequence[type[BaseModel]]], None] = no_model_preparation
     readiness: Callable[[], Awaitable[bool]] | None = None
+    elevation_sink: ElevationSink | None = None
 
 
 class PersistenceBackend(Protocol):

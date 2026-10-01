@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.bootstrap import BootstrapResult, bootstrap_app
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
@@ -51,6 +52,7 @@ def create_kernel(
     metrics: MetricsAdapter | None = None,
     uow_factory: UnitOfWorkFactory | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
+    elevation_sink: ElevationSink | None = None,
 ) -> KernelRuntime:
     """Create a shared kernel runtime for application adapters.
 
@@ -64,6 +66,8 @@ def create_kernel(
         uow_factory: Optional UnitOfWork factory for transactional execution.
         repo_resolver: Optional repository resolver used by marker-based loads.
             Defaults to ``container.resolve_repo``.
+        elevation_sink: Optional port through which elevations reach an open
+            transaction; the persistence backend provides it for row-scoped tables.
 
     Returns:
         Fully built :class:`KernelRuntime`.
@@ -81,6 +85,7 @@ def create_kernel(
         uow_factory=uow_factory,
         metrics=base.metrics,
         repo_resolver=resolver,
+        elevation_sink=elevation_sink,
     )
     registry = UseCaseRegistry.build(list(use_cases))
     app = AppInvoker(

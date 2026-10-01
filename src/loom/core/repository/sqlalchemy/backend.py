@@ -8,9 +8,10 @@ from contextlib import asynccontextmanager
 from typing import ClassVar, Literal
 
 import msgspec
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from loom.core.authz.product import load_authz_product
 from loom.core.backend.scoped_ddl import check_dialect
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
@@ -21,6 +22,11 @@ from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.rls.elevate import (
+    SQLAlchemyElevationSink,
+    validate_elevations,
+)
+from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
@@ -30,6 +36,7 @@ _logger = logging.getLogger(__name__)
 class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
     mode: Literal["create_all", "external"] = "create_all"
     allow_unprotected_dialect: bool = False
+    scopes: dict[str, str] = msgspec.field(default_factory=dict)
 
 
 class _DatabaseConfig(msgspec.Struct, kw_only=True):
@@ -63,22 +70,31 @@ class SQLAlchemyBackend:
             ConfigError: When the ``database`` section is missing or invalid.
         """
         db_cfg = ctx.section(ConfigKey.DATABASE, _DatabaseConfig)
-        session_manager = _build_session_manager(db_cfg)
+        postgres = make_url(db_cfg.url).get_backend_name() == "postgresql"
+        settings = (
+            DeferredScopedSettings(db_cfg.schema.scopes)
+            if db_cfg.schema.mode == "external" and postgres
+            else None
+        )
+        session_manager = _build_session_manager(db_cfg, settings)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
             repo_registration_module=build_sqlalchemy_repository_registration_module(
                 session_manager, models
             ),
-            lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema),
+            lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema, settings),
             default_repository_type=RepositorySQLAlchemy,
             prepare_models=_prepare_models,
             readiness=lambda: _readiness(session_manager),
+            elevation_sink=SQLAlchemyElevationSink() if settings is not None else None,
         )
 
 
-def _build_session_manager(db_cfg: _DatabaseConfig) -> SessionManager:
+def _build_session_manager(
+    db_cfg: _DatabaseConfig, settings: DeferredScopedSettings | None
+) -> SessionManager:
     echo = db_cfg.echo if db_cfg.echo is not None else False
-    return SessionManager(
+    manager = SessionManager(
         db_cfg.url,
         echo=echo,
         pool_pre_ping=db_cfg.pool_pre_ping,
@@ -87,7 +103,11 @@ def _build_session_manager(db_cfg: _DatabaseConfig) -> SessionManager:
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        session_settings=settings,
     )
+    if settings is not None:
+        install_pool_reset(manager.engine)
+    return manager
 
 
 def _prepare_models(models: Sequence[type[BaseModel]]) -> None:
@@ -132,7 +152,7 @@ def startup_checks(
             the opt-out, or when ``create_all`` meets scoped tables on Postgres.
     """
     if config.mode == "external":
-        return ()
+        return check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
     if has_session_settings:
         raise ConfigError(
             "the schema is never created with the application's session settings; "
@@ -149,8 +169,17 @@ def startup_checks(
 
 
 @asynccontextmanager
-async def _lifespan(session_manager: SessionManager, config: _SchemaConfig) -> AsyncIterator[None]:
+async def _lifespan(
+    session_manager: SessionManager,
+    config: _SchemaConfig,
+    settings: DeferredScopedSettings | None,
+) -> AsyncIterator[None]:
     scoped = scoped_tables()
+    if settings is not None:
+        settings.bind(scoped)
+        product = load_authz_product()
+        if product is not None:
+            validate_elevations(product, scoped)
     unprotected = startup_checks(
         config,
         session_manager.engine.dialect.name,
@@ -190,14 +219,20 @@ async def _check_external(
 async def _check_forced_rls(
     connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
 ) -> None:
+    role = text("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+    if (await connection.execute(role)).scalar():
+        raise ConfigError(
+            "the application connects as a superuser or a bypass role, which ignores "
+            "row-level security; use the URL of a read or write database user"
+        )
     query = text(
-        "SELECT relname FROM pg_class WHERE oid = to_regclass(:name) "
-        "AND NOT (relrowsecurity AND relforcerowsecurity)"
+        "SELECT relrowsecurity AND relforcerowsecurity FROM pg_class "
+        "WHERE relname = :name AND relnamespace = current_schema()::regnamespace"
     )
     unforced = [
         table.name
         for table in scoped.values()
-        if (await connection.execute(query, {"name": table.name})).scalar() is not None
+        if not (await connection.execute(query, {"name": table.name})).scalar()
     ]
     if unforced:
         raise ConfigError(f"scoped tables without forced row-level security: {', '.join(unforced)}")
