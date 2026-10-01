@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap.bootstrap import BootstrapResult, bootstrap_app
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
@@ -81,6 +82,7 @@ def create_kernel(
         uow_factory=uow_factory,
         metrics=base.metrics,
         repo_resolver=resolver,
+        elevation_sink=_registered_sink(base.container),
     )
     registry = UseCaseRegistry.build(list(use_cases))
     app = AppInvoker(
@@ -102,3 +104,10 @@ def create_kernel(
         registry=registry,
         app=app,
     )
+
+
+def _registered_sink(container: LoomContainer) -> ElevationSink | None:
+    if container.is_registered(ElevationSink):
+        sink: ElevationSink = container.resolve(ElevationSink)
+        return sink
+    return None

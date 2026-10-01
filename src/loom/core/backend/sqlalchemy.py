@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import functools
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import msgspec
@@ -10,12 +13,15 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     MetaData,
     Numeric,
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
@@ -23,11 +29,17 @@ from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.dialects.postgresql import TSVECTOR as PG_TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, mapped_column, relationship
+from sqlalchemy.orm import registry as sa_registry
 
 from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
-from loom.core.model.enums import Cardinality, ServerDefault, ServerOnUpdate
+from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
+from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnType, Field
 from loom.core.model.introspection import (
+    ColumnFieldInfo,
+    declared_indexes,
+    declared_privileges,
+    declared_unique,
     extract_model_from_hint,
     get_column_fields,
     get_id_attribute,
@@ -35,8 +47,11 @@ from loom.core.model.introspection import (
     get_relations,
     get_table_name,
     resolve_type_hints,
+    scope_columns,
 )
+from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
+from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
 
 _SA_TYPE_MAP: dict[str, type] = {
@@ -73,6 +88,46 @@ class SABase(DeclarativeBase):
 _registry: dict[type, Any] = {}
 _table_registry: dict[str, Any] = {}
 _core_registry: dict[type, CoreModel] = {}
+_pending_relations: dict[type, dict[str, Relation]] = {}
+
+
+@dataclass(slots=True)
+class _Compilation:
+    """Everything compiled into one ``MetaData``; the shared one is the default."""
+
+    metadata: MetaData
+    base: type
+    compiled: dict[type, Any]
+    tables: dict[str, Any]
+    core: dict[type, CoreModel]
+    pending: dict[type, dict[str, Relation]]
+    scoped: dict[tuple[str | None, str], ScopedTable] = field(default_factory=dict)
+
+
+_COMPILATION_KEY = "loom.compilation"
+
+
+@functools.cache
+def _shared() -> _Compilation:
+    return _Compilation(
+        SABase.metadata, SABase, _registry, _table_registry, _core_registry, _pending_relations
+    )
+
+
+def _compilation_for(metadata: MetaData | None) -> _Compilation:
+    if metadata is None or metadata is SABase.metadata:
+        return _shared()
+    existing = metadata.info.get(_COMPILATION_KEY)
+    if existing is None:
+        base = sa_registry(metadata=metadata).generate_base()
+        existing = _Compilation(metadata, base, {}, {}, {}, {})
+        metadata.info[_COMPILATION_KEY] = existing
+    return existing
+
+
+def scoped_tables(metadata: MetaData | None = None) -> Mapping[tuple[str | None, str], ScopedTable]:
+    """Row-scoped tables compiled into ``metadata``, keyed by ``(schema, name)``."""
+    return dict(_compilation_for(metadata).scoped)
 
 
 def _build_sa_column_type(col_type: ColumnType) -> Any:
@@ -113,16 +168,16 @@ def _build_field_kwargs(field: Field) -> dict[str, Any]:
     return kwargs
 
 
-def _build_mapped_column(field_info: Any) -> Any:
+def _build_mapped_column(field_info: Any, *, inline_foreign_key: bool = True) -> Any:
     col_type = _build_sa_column_type(field_info.column_type)
-    field: Field = field_info.field
-    kwargs = _build_field_kwargs(field)
+    column: Field = field_info.field
+    kwargs = _build_field_kwargs(column)
 
-    if field.foreign_key is not None:
+    if column.foreign_key is not None and inline_foreign_key:
         fk_kwargs: dict[str, Any] = {}
-        if field.on_delete is not None:
-            fk_kwargs["ondelete"] = field.on_delete.value
-        return mapped_column(ForeignKey(field.foreign_key, **fk_kwargs), type_=col_type, **kwargs)
+        if column.on_delete is not None:
+            fk_kwargs["ondelete"] = column.on_delete.value
+        return mapped_column(ForeignKey(column.foreign_key, **fk_kwargs), type_=col_type, **kwargs)
 
     return mapped_column(col_type, **kwargs)
 
@@ -132,65 +187,212 @@ def _resolve_fk_target_table(foreign_key: str) -> str:
     return foreign_key.rsplit(".", 1)[0]
 
 
-def _find_target_sa_class(target_table: str) -> Any:
+def _find_target_sa_class(target_table: str, comp: _Compilation) -> Any:
     """Find compiled SA class by table name (O(1) via inverse index)."""
-    return _table_registry.get(target_table)
+    return comp.tables.get(target_table)
 
 
-# Deferred relationship queue — resolved by compile_all or configure_relationships
-_pending_relations: dict[type, dict[str, Relation]] = {}
-
-
-def compile_model(struct_cls: type) -> Any:
+def compile_model(struct_cls: type, *, metadata: MetaData | None = None) -> Any:
     """Compile a loom ``BaseModel`` Struct into a SQLAlchemy declarative class."""
-    if struct_cls in _registry:
-        return _registry[struct_cls]
+    return _compile_model(struct_cls, _compilation_for(metadata), {})
+
+
+def _compile_model(
+    struct_cls: type, comp: _Compilation, models_by_table: Mapping[str, type]
+) -> Any:
+    if struct_cls in comp.compiled:
+        return comp.compiled[struct_cls]
 
     table_name = get_table_name(struct_cls)
     column_fields = get_column_fields(struct_cls)
-    relations = get_relations(struct_cls)
+    scopes = scope_columns(struct_cls)
+    boundary = next((scope for scope in scopes if scope.is_boundary), None)
+    constraints, composite_columns = _foreign_key_constraints(
+        struct_cls, column_fields, boundary, models_by_table, comp
+    )
+    constraints += _declared_constraints(struct_cls, table_name)
 
     attrs: dict[str, Any] = {
         "__tablename__": table_name,
         "__struct_cls__": struct_cls,
     }
-
     for name, field_info in column_fields.items():
-        attrs[name] = _build_mapped_column(field_info)
+        attrs[name] = _build_mapped_column(
+            field_info, inline_foreign_key=name not in composite_columns
+        )
+    if constraints:
+        attrs["__table_args__"] = tuple(constraints)
 
-    # Register early so FK-target lookups can find this class
-    sa_cls = type(struct_cls.__name__ + "SA", (SABase,), attrs)
-    _registry[struct_cls] = sa_cls
-    _table_registry[table_name] = sa_cls
-
-    # Relationships are added after all column-based setup
-    _pending_relations[struct_cls] = relations
-
+    sa_cls: Any = type(struct_cls.__name__ + "SA", (comp.base,), attrs)
+    comp.compiled[struct_cls] = sa_cls
+    comp.tables[table_name] = sa_cls
+    comp.pending[struct_cls] = get_relations(struct_cls)
+    table = sa_cls.__table__
+    scoped = None
+    if scopes:
+        scoped = ScopedTable(
+            schema=table.schema,
+            name=table.name,
+            scopes=scopes,
+            privileges=frozenset(getattr(struct_cls, "__scope_privileges__", READ_WRITE)),
+        )
+        comp.scoped[(table.schema, table.name)] = scoped
+    schema = comp.metadata.info.get(SCHEMA_KEY)
+    if schema is not None:
+        register_listeners(
+            table,
+            schema=schema,
+            scoped=scoped,
+            privileges=declared_privileges(struct_cls),
+        )
     return sa_cls
 
 
-def _configure_relationships() -> None:
-    """Resolve and attach deferred relationships to compiled SA classes."""
-    for struct_cls, relations in _pending_relations.items():
-        if relations:
-            _attach_relations(_registry[struct_cls], struct_cls, relations)
-    _pending_relations.clear()
+def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
+    constraints: list[Any] = [UniqueConstraint(*columns) for columns in declared_unique(struct_cls)]
+    constraints += [
+        Index(f"ix_{table_name}_{'_'.join(columns)}", *columns)
+        for columns in declared_indexes(struct_cls)
+    ]
+    return constraints
 
 
-def _attach_relations(sa_cls: Any, struct_cls: type, relations: dict[str, Relation]) -> None:
-    # An unresolved annotation is not fatal: _resolve_relation_target then falls
-    # back to the column-name and table-name scans.
-    hints = resolve_type_hints(struct_cls)
-    for rel_name, rel in relations.items():
-        target_sa = _resolve_relation_target(rel, hints.get(rel_name))
-        if target_sa is not None:
-            sa_cls.__mapper__.add_property(
-                rel_name,
-                relationship(target_sa, **_relationship_kwargs(rel)),
+def _target_model(
+    table: str, models_by_table: Mapping[str, type], comp: _Compilation
+) -> type | None:
+    model = models_by_table.get(table)
+    if model is not None:
+        return model
+    sa_cls = comp.tables.get(table)
+    return getattr(sa_cls, "__struct_cls__", None)
+
+
+def _foreign_key_constraints(
+    struct_cls: type,
+    fields: dict[str, ColumnFieldInfo],
+    boundary: ScopeColumn | None,
+    models_by_table: Mapping[str, type],
+    comp: _Compilation,
+) -> tuple[list[Any], set[str]]:
+    constraints: list[Any] = []
+    composite: set[str] = set()
+    for name, info in fields.items():
+        if info.field.foreign_key is None:
+            continue
+        constraint = _constraint_for_field(
+            struct_cls, name, info.field, boundary, models_by_table, comp
+        )
+        if constraint is not None:
+            constraints.append(constraint)
+            composite.add(name)
+    return constraints, composite
+
+
+def _constraint_for_field(
+    struct_cls: type,
+    name: str,
+    field: Field,
+    boundary: ScopeColumn | None,
+    models_by_table: Mapping[str, type],
+    comp: _Compilation,
+) -> Any | None:
+    target_table, _, ref = (field.foreign_key or "").rpartition(".")
+    target = _target_model(target_table, models_by_table, comp)
+    if target is None:
+        if boundary is not None:
+            raise ValueError(
+                f"{get_table_name(struct_cls)}.{name} references {target_table}, which is "
+                "not compiled with it; compile both models together so C6, C7 and C9 apply"
+            )
+        return None
+    target_boundary = next((s for s in scope_columns(target) if s.is_boundary), None)
+    if boundary is None:
+        _check_c7(struct_cls, target_table, target_boundary)
+        return None
+    if target_boundary is None:
+        _check_c9(struct_cls, field.on_delete, target)
+        return None
+    return _composite_fk(struct_cls, name, field, boundary, target, target_boundary, ref)
+
+
+def _check_c7(struct_cls: type, target_table: str, target_boundary: ScopeColumn | None) -> None:
+    if target_boundary is not None:
+        raise ValueError(
+            f"C7: {struct_cls.__name__} is unscoped and cannot reference scoped {target_table}"
+        )
+
+
+def _check_c9(struct_cls: type, action: OnDelete | None, target: type) -> None:
+    if action is not None and action not in (OnDelete.RESTRICT, OnDelete.NO_ACTION):
+        raise ValueError(f"C9: {struct_cls.__name__} references a global table with {action}")
+    for group, privileges in declared_privileges(target).items():
+        if privileges & {Privilege.UPDATE, Privilege.DELETE}:
+            raise ValueError(
+                f"C9: {struct_cls.__name__} references {target.__name__}, writable by group {group}"
             )
 
 
-def _relationship_kwargs(rel: Relation) -> dict[str, Any]:
+def _composite_fk(
+    struct_cls: type,
+    column: str,
+    column_field: Field,
+    boundary: ScopeColumn,
+    target: type,
+    target_boundary: ScopeColumn,
+    ref: str,
+) -> ForeignKeyConstraint:
+    action = column_field.on_delete
+    if action in (OnDelete.SET_NULL, OnDelete.SET_DEFAULT):
+        raise ValueError(f"C6: {struct_cls.__name__}.{column} cannot use {action}")
+    if target_boundary.scope != boundary.scope:
+        raise ValueError(
+            f"C6: {struct_cls.__name__}.{column} references a table scoped by "
+            f"{target_boundary.scope!r}, not {boundary.scope!r}"
+        )
+    _check_c6_target_key(struct_cls, column, target, target_boundary.column, ref)
+    target_table = get_table_name(target)
+    return ForeignKeyConstraint(
+        [boundary.column, column],
+        [f"{target_table}.{target_boundary.column}", f"{target_table}.{ref}"],
+        ondelete=action.value if action is not None else None,
+    )
+
+
+def _check_c6_target_key(
+    struct_cls: type, column: str, target: type, target_boundary: str, ref: str
+) -> None:
+    fields = get_column_fields(target)
+    keys = [tuple(name for name, info in fields.items() if info.field.primary_key)]
+    keys += list(declared_unique(target))
+    if not any({target_boundary, ref} == set(key) for key in keys):
+        raise ValueError(
+            f"C6: {struct_cls.__name__}.{column} needs a key on "
+            f"({target_boundary}, {ref}) in {target.__name__}"
+        )
+
+
+def _configure_relationships(comp: _Compilation) -> None:
+    """Resolve and attach deferred relationships to compiled SA classes."""
+    for struct_cls, relations in comp.pending.items():
+        if relations:
+            _attach_relations(comp.compiled[struct_cls], struct_cls, relations, comp)
+    comp.pending.clear()
+
+
+def _attach_relations(
+    sa_cls: Any, struct_cls: type, relations: dict[str, Relation], comp: _Compilation
+) -> None:
+    hints = resolve_type_hints(struct_cls)
+    for rel_name, rel in relations.items():
+        target_sa = _resolve_relation_target(rel, hints.get(rel_name), comp)
+        if target_sa is not None:
+            sa_cls.__mapper__.add_property(
+                rel_name,
+                relationship(target_sa, **_relationship_kwargs(rel, comp)),
+            )
+
+
+def _relationship_kwargs(rel: Relation, comp: _Compilation) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "lazy": "noload",
         "uselist": _CARDINALITY_USELIST.get(rel.cardinality, True),
@@ -202,11 +404,11 @@ def _relationship_kwargs(rel: Relation) -> dict[str, Any]:
     if rel.back_populates:
         kwargs["back_populates"] = rel.back_populates
     if rel.secondary:
-        kwargs["secondary"] = _resolve_secondary_table(rel.secondary)
+        kwargs["secondary"] = _resolve_secondary_table(rel.secondary, comp)
     return kwargs
 
 
-def _resolve_relation_target(rel: Relation, hint: Any) -> Any:
+def _resolve_relation_target(rel: Relation, hint: Any, comp: _Compilation) -> Any:
     """Return the SA class for the given relation, using the field annotation as primary source.
 
     Annotation-based lookup is exact and avoids ambiguity when multiple tables
@@ -214,18 +416,18 @@ def _resolve_relation_target(rel: Relation, hint: Any) -> Any:
     as fallbacks for relations without a resolvable annotation.
     """
     if rel.cardinality == Cardinality.MANY_TO_MANY:
-        return _find_target_sa_by_secondary(rel.secondary, rel.foreign_key)
+        return _find_target_sa_by_secondary(rel.secondary, rel.foreign_key, comp)
 
     target_model = extract_model_from_hint(hint)
     if target_model is not None:
-        sa = _registry.get(target_model)
+        sa = comp.compiled.get(target_model)
         if sa is not None:
             return sa
 
     if rel.cardinality in (Cardinality.ONE_TO_MANY, Cardinality.ONE_TO_ONE):
-        return _find_target_sa_by_fk_column(rel.foreign_key)
+        return _find_target_sa_by_fk_column(rel.foreign_key, comp)
 
-    return _find_target_sa_class(_resolve_fk_target_table(rel.foreign_key))
+    return _find_target_sa_class(_resolve_fk_target_table(rel.foreign_key), comp)
 
 
 def _fk_col_name(foreign_key: str) -> str:
@@ -236,7 +438,7 @@ def _fk_col_name(foreign_key: str) -> str:
     return foreign_key.rsplit(".", 1)[-1]
 
 
-def _find_target_sa_by_fk_column(foreign_key: str) -> Any:
+def _find_target_sa_by_fk_column(foreign_key: str, comp: _Compilation) -> Any:
     """For ONE_TO_MANY: the FK column lives on the target table.
 
     Accepts both short (``"record_id"``) and fully-qualified
@@ -244,7 +446,7 @@ def _find_target_sa_by_fk_column(foreign_key: str) -> Any:
     before the ``table.c`` lookup so either format finds the right class.
     """
     col_name = _fk_col_name(foreign_key)
-    for _struct_cls, sa_cls in _registry.items():
+    for _struct_cls, sa_cls in comp.compiled.items():
         table = getattr(sa_cls, "__table__", None)
         if table is None:
             continue
@@ -253,38 +455,37 @@ def _find_target_sa_by_fk_column(foreign_key: str) -> Any:
     return None
 
 
-def _find_target_sa_by_secondary(secondary_name: str | None, foreign_key: str) -> Any:
+def _find_target_sa_by_secondary(
+    secondary_name: str | None, foreign_key: str, comp: _Compilation
+) -> Any:
     """For MANY_TO_MANY: find the target class that is NOT the secondary table
     and is referenced by the secondary's FK columns.
     """
     if secondary_name is None:
         return None
-    secondary_table = _resolve_secondary_table(secondary_name)
+    secondary_table = _resolve_secondary_table(secondary_name, comp)
     if secondary_table is None:
         return None
 
-    # Find all FK targets from the secondary table that aren't the owner
     fk_targets: set[str] = set()
     for col in secondary_table.columns:
         for fk in col.foreign_keys:
             fk_targets.add(fk.column.table.name)
 
-    # The target is the one NOT containing the foreign_key column
-    for _struct_cls, sa_cls in _registry.items():
+    for _struct_cls, sa_cls in comp.compiled.items():
         table_name = getattr(sa_cls, "__tablename__", None)
         if table_name in fk_targets:
-            # Check this table doesn't have the FK column
             table = getattr(sa_cls, "__table__", None)
             if table is not None and foreign_key not in table.c:
                 return sa_cls
     return None
 
 
-def _resolve_secondary_table(name: str | None) -> Table | None:
+def _resolve_secondary_table(name: str | None, comp: _Compilation) -> Table | None:
     """Resolve a secondary table name to an actual SA Table."""
     if name is None:
         return None
-    return SABase.metadata.tables.get(name)
+    return comp.metadata.tables.get(name)
 
 
 def _resolve_loader_model(loader: Any) -> type | None:
@@ -420,7 +621,7 @@ def _resolve_compile_closure(*roots: type) -> tuple[type, ...]:
     return tuple(ordered)
 
 
-def compile_all(*classes: type) -> None:
+def compile_all(*classes: type, metadata: MetaData | None = None) -> None:
     """Batch-compile multiple model classes, resolve relationships, build Core artifacts.
 
     Automatically discovers and compiles all transitive model dependencies
@@ -442,12 +643,14 @@ def compile_all(*classes: type) -> None:
         # is annotated as list[ProductReview].
         compile_all(Product)
     """
+    comp = _compilation_for(metadata)
     ordered = _resolve_compile_closure(*classes)
+    models_by_table = {get_table_name(cls): cls for cls in ordered}
     for cls in ordered:
-        compile_model(cls)
-    _configure_relationships()
+        _compile_model(cls, comp, models_by_table)
+    _configure_relationships(comp)
     for cls in ordered:
-        _compile_core_model(cls)
+        _compile_core_model(cls, comp)
 
 
 def get_compiled(struct_cls: type) -> type | None:
@@ -481,6 +684,7 @@ def reset_registry() -> None:
     _table_registry.clear()
     _core_registry.clear()
     _pending_relations.clear()
+    _shared().scoped.clear()
     SABase.metadata.clear()
     SABase.registry.dispose()
 
@@ -490,8 +694,8 @@ def reset_registry() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _compile_core_model(struct_cls: type) -> None:
-    sa_cls = _registry.get(struct_cls)
+def _compile_core_model(struct_cls: type, comp: _Compilation) -> None:
+    sa_cls = comp.compiled.get(struct_cls)
     if sa_cls is None:
         return
 
@@ -504,7 +708,7 @@ def _compile_core_model(struct_cls: type) -> None:
     all_columns = tuple(table.c[name] for name in column_fields if name in table.c)
 
     profiles = _collect_profiles(relations, projections)
-    relation_steps = _compile_relation_steps(struct_cls, relations)
+    relation_steps = _compile_relation_steps(struct_cls, relations, comp)
     profile_plans = _build_profile_plans(
         profiles, all_columns, id_attr, relations, relation_steps, projections, struct_cls
     )
@@ -513,7 +717,7 @@ def _compile_core_model(struct_cls: type) -> None:
     for name, col in zip(column_fields, all_columns, strict=False):
         setattr(core_model, name, col)
 
-    _core_registry[struct_cls] = core_model
+    comp.core[struct_cls] = core_model
 
 
 def _collect_profiles(
@@ -702,10 +906,11 @@ def _find_relation_for_loader(
 def _compile_relation_steps(
     struct_cls: type,
     relations: dict[str, Any],
+    comp: _Compilation,
 ) -> dict[str, CoreRelationStep]:
     steps: dict[str, CoreRelationStep] = {}
     for rel_name, rel in relations.items():
-        step = _compile_relation_step(struct_cls, rel_name, rel)
+        step = _compile_relation_step(struct_cls, rel_name, rel, comp)
         if step is not None:
             steps[rel_name] = step
     return steps
@@ -715,13 +920,14 @@ def _compile_relation_step(
     struct_cls: type,
     rel_name: str,
     rel: Relation,
+    comp: _Compilation,
 ) -> CoreRelationStep | None:
     if rel.cardinality in (Cardinality.ONE_TO_MANY, Cardinality.ONE_TO_ONE):
-        return _compile_one_to_x_step(struct_cls, rel_name, rel)
+        return _compile_one_to_x_step(struct_cls, rel_name, rel, comp)
     if rel.cardinality is Cardinality.MANY_TO_ONE:
-        return _compile_many_to_one_step(struct_cls, rel_name, rel)
+        return _compile_many_to_one_step(struct_cls, rel_name, rel, comp)
     if rel.cardinality is Cardinality.MANY_TO_MANY:
-        return _compile_many_to_many_step(struct_cls, rel_name, rel)
+        return _compile_many_to_many_step(struct_cls, rel_name, rel, comp)
     return None
 
 
@@ -729,9 +935,10 @@ def _compile_one_to_x_step(
     struct_cls: type,
     rel_name: str,
     rel: Relation,
+    comp: _Compilation,
 ) -> CoreRelationStep | None:
     hint = resolve_type_hints(struct_cls).get(rel_name)
-    target_sa = _resolve_relation_target(rel, hint)
+    target_sa = _resolve_relation_target(rel, hint, comp)
     if target_sa is None:
         return None
     related_struct = getattr(target_sa, "__struct_cls__", None)
@@ -755,9 +962,10 @@ def _compile_many_to_one_step(
     struct_cls: type,
     rel_name: str,
     rel: Relation,
+    comp: _Compilation,
 ) -> CoreRelationStep | None:
     target_table_name, target_pk_name = rel.foreign_key.rsplit(".", 1)
-    target_sa = _find_target_sa_class(target_table_name)
+    target_sa = _find_target_sa_class(target_table_name, comp)
     if target_sa is None:
         return None
     related_struct = getattr(target_sa, "__struct_cls__", None)
@@ -784,10 +992,11 @@ def _compile_many_to_many_step(
     struct_cls: type,
     rel_name: str,
     rel: Relation,
+    comp: _Compilation,
 ) -> CoreRelationStep | None:
     if rel.secondary is None:
         return None
-    secondary_table: Any = SABase.metadata.tables.get(rel.secondary)
+    secondary_table: Any = comp.metadata.tables.get(rel.secondary)
     if secondary_table is None:
         return None
     owner_table_name = get_table_name(struct_cls)
@@ -796,7 +1005,7 @@ def _compile_many_to_many_step(
     )
     if secondary_owner_fk is None or secondary_target_fk is None or target_table_name is None:
         return None
-    target_sa = _find_target_sa_class(target_table_name)
+    target_sa = _find_target_sa_class(target_table_name, comp)
     if target_sa is None:
         return None
     related_struct = getattr(target_sa, "__struct_cls__", None)

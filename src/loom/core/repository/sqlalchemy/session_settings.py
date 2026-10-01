@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import TextClause, event, text
 from sqlalchemy.orm import Session
@@ -10,12 +11,16 @@ from sqlalchemy.orm import Session
 SessionSettings = Callable[[], Mapping[str, str] | None]
 """Returns the settings to apply to the transaction about to start, or ``None`` to apply none.
 
-loom does not interpret the keys or values. A product returns, for example, the tenant
-and the subject of the current request, and writes its Postgres policies against
-``current_setting(key, true)``.
+loom does not interpret the keys or values. A product returns, for example, the
+boundary value and the subject of the current request, and writes its Postgres
+policies against ``current_setting(key, true)``.
 """
 
-_KEY = re.compile(r"[A-Za-z_]\w*\.[A-Za-z_]\w*")
+_KEY: Final = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
+SET_SETTINGS: Final = (
+    "SELECT set_config(s.key, s.value, true) FROM jsonb_each_text(CAST(:settings AS jsonb)) AS s"
+)
+_SET_SETTINGS: Final = text(SET_SETTINGS)
 
 
 def settings_statement(
@@ -23,38 +28,43 @@ def settings_statement(
 ) -> tuple[TextClause, dict[str, str]] | None:
     """Build the one statement that sets *values* for the current transaction.
 
-    Every key and value is bound as a parameter: the compiled SQL carries only
-    placeholders. Keys must be application-prefixed identifiers, ``prefix.name``,
-    which is what Postgres requires of a custom setting.
+    Returns:
+        :data:`SET_SETTINGS` as a clause with the parameters of
+        :func:`settings_parameters`, or ``None`` when there is nothing to set.
+    """
+    parameters = settings_parameters(values)
+    return None if parameters is None else (_SET_SETTINGS, parameters)
+
+
+def settings_parameters(values: Mapping[str, str] | None) -> dict[str, str] | None:
+    """The bound parameters of :data:`SET_SETTINGS` that set *values*.
+
+    The statement is a constant; the keys and values travel as one bound JSON
+    document. Keys are two or more identifiers joined by dots, such as
+    ``prefix.name``, which is what Postgres requires of a custom setting.
 
     Args:
         values: The settings to apply, or ``None``.
 
     Returns:
-        The ``SELECT set_config(...)`` clause with its parameters, or ``None``
-        when there is nothing to set.
+        The one bound JSON document, or ``None`` when there is nothing to set.
 
     Raises:
-        ValueError: If a key is not a string of the form ``prefix.name``.
+        ValueError: If a key is not a dotted string of two or more identifiers.
         TypeError: If a value is not a ``str``.
     """
     if not values:
         return None
-    calls: list[str] = []
-    params: dict[str, str] = {}
-    for index, (key, value) in enumerate(values.items()):
+    for key, value in values.items():
         if not isinstance(key, str) or _KEY.fullmatch(key) is None:
             raise ValueError(
-                f"session setting key must be a str of the form 'prefix.name', got {key!r}"
+                f"session setting key must be a dotted str such as 'prefix.name', got {key!r}"
             )
         if not isinstance(value, str):
             raise TypeError(
                 f"session setting value for {key!r} must be str, got {type(value).__name__}"
             )
-        calls.append(f"set_config(:k{index}, :v{index}, true)")
-        params[f"k{index}"] = key
-        params[f"v{index}"] = value
-    return text("SELECT " + ", ".join(calls)), params
+    return {"settings": json.dumps(dict(values))}
 
 
 def install_session_settings(session_class: type[Session], provider: SessionSettings) -> None:
@@ -75,9 +85,9 @@ def install_session_settings(session_class: type[Session], provider: SessionSett
         if transaction.nested:
             return
         try:
-            statement = settings_statement(provider())
-            if statement is not None:
-                connection.execute(*statement)
+            parameters = settings_parameters(provider())
+            if parameters is not None:
+                connection.execute(_SET_SETTINGS, parameters)
         except BaseException:
             connection.invalidate()
             raise

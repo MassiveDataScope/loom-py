@@ -23,6 +23,9 @@ dependencies = [
     "opentelemetry-api>=1.27,<2.0",
 ]
 
+[project.scripts]
+loom = "loom.cli:main"
+
 [project.optional-dependencies]
 # The testing helpers under loom.*.testing define pytest fixtures, so importing
 # them needs pytest at runtime like any other declared dependency.
@@ -40,6 +43,7 @@ rest = [
 sqlalchemy = [
     "sqlalchemy>=2.0,<3.0",
     "greenlet>=3.0",
+    "alembic>=1.13,<2",
 ]
 clickhouse = [
     "clickhouse-connect>=0.9.2,<1.0",
@@ -163,6 +167,10 @@ celery = [
     "kombu>=5.3,<6.0",
     "redis>=5.0,<6.0",
 ]
+cli = [
+    "pyyaml>=6",
+    "typer>=0.12,<1",
+]
 
 [project.entry-points."loom.ai.engines"]
 pydantic-ai = "loom.ai.engines.pydantic_ai.provider:PydanticAIEngineProvider"
@@ -225,6 +233,7 @@ dev = [
     "aiocache>=0.12,<1.0",
     "aiosqlite>=0.20.0",
     "asyncpg>=0.30",
+    "alembic>=1.13,<2",
     # Declared, not merely transitive: one cache test pins what the key renderer
     # cannot separate inside an object msgspec expands itself, and an attrs class
     # is the only such object the stdlib can build.
@@ -274,6 +283,7 @@ dev = [
     "fasta2a>=0.6,<1",
     "a2a-sdk>=1.1,<2",
     "pydantic-ai-harness[skills]>=0.28,<1",
+    "typer>=0.12,<1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -287,6 +297,7 @@ packages = [
 include = [
     "src/loom/py.typed",
     "src/loom/ai/declarative/schemas/*.json",
+    "src/loom/core/repository/sqlalchemy/rls/guard/*.sql",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -407,6 +418,12 @@ module = [
     "prefect.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "loom.core.backend.scoped_ddl",
+]
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"

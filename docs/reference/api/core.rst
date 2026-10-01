@@ -21,6 +21,8 @@ Command and Model
 
    loom.core.command
    loom.core.model
+   loom.core.model.scoped
+   loom.core.model.privilege
 
 Engine and Errors
 -----------------
@@ -47,6 +49,16 @@ Authorization
    :toctree: generated
 
    loom.core.authz
+   loom.core.authz.elevation
+   loom.core.authz.product
+
+Application locator
+-------------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.core.locator
 
 Config
 ------

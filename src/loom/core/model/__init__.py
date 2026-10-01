@@ -10,20 +10,27 @@ from loom.core.model._loom_type import (
 )
 from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
-from loom.core.model.field import ColumnField, ColumnType, Field
+from loom.core.model.field import ColumnField, ColumnType, Field, ScopedField
 from loom.core.model.introspection import (
     ColumnFieldInfo,
+    declared_indexes,
+    declared_privileges,
+    declared_unique,
     get_column_fields,
     get_id_attribute,
     get_projections,
     get_relations,
     get_table_name,
+    is_row_scoped,
+    scope_columns,
 )
+from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.projection import (
     Projection,
     ProjectionField,
 )
 from loom.core.model.relation import Relation, RelationField
+from loom.core.model.scoped import RowScoped, ScopeColumn, ScopedTable
 from loom.core.model.struct import LoomFrozenStruct, LoomStruct
 from loom.core.model.timestamped import TimestampedModel
 from loom.core.model.types import (
@@ -42,6 +49,16 @@ from loom.core.model.types_postgres import Postgres
 
 __all__ = [
     "BaseModel",
+    "READ_WRITE",
+    "Privilege",
+    "RowScoped",
+    "ScopeColumn",
+    "ScopedTable",
+    "declared_indexes",
+    "declared_privileges",
+    "declared_unique",
+    "is_row_scoped",
+    "scope_columns",
     "BoundaryValidationError",
     "LoomFrozenStruct",
     "LoomStruct",
@@ -51,6 +68,7 @@ __all__ = [
     "Cardinality",
     "ColumnFieldInfo",
     "ColumnField",
+    "ScopedField",
     "ColumnType",
     "DateTime",
     "Field",

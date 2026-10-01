@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import (
+    SET_SETTINGS,
     SessionSettings,
     install_session_settings,
     settings_statement,
@@ -21,8 +23,10 @@ def test_keys_and_values_are_bound_parameters_and_never_inlined_in_the_sql() -> 
 
     assert result is not None
     clause, params = result
-    assert params == {"k0": "app.tenant_id", "v0": "acme", "k1": "app.subject", "v1": "u-1"}
-    assert str(clause) == "SELECT set_config(:k0, :v0, true), set_config(:k1, :v1, true)"
+    assert str(clause) == SET_SETTINGS
+    assert json.loads(params["settings"]) == {"app.tenant_id": "acme", "app.subject": "u-1"}
+    assert "acme" not in str(clause)
+    assert "app.tenant_id" not in str(clause)
 
 
 @pytest.mark.parametrize("values", [None, {}])
@@ -34,7 +38,6 @@ def test_none_or_empty_values_give_no_statement(values: Mapping[str, str] | None
     "key",
     [
         "tenant_id",
-        "app.tenant_id.extra",
         "app.",
         ".tenant_id",
         "app.tenant-id",
@@ -180,3 +183,10 @@ async def test_from_config_installs_the_provider_on_a_postgres_url() -> None:
         assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
     finally:
         await manager.dispose()
+
+
+def test_keys_with_more_than_two_parts_are_accepted() -> None:
+    clause, params = settings_statement({"app.scope.extra": "x"})
+
+    assert str(clause) == SET_SETTINGS
+    assert json.loads(params["settings"]) == {"app.scope.extra": "x"}

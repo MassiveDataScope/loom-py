@@ -30,9 +30,46 @@ jobs:
   # minted inside one names that workflow, not this file, and the publisher on
   # PyPI names this file. So the upload lives here, on the distribution the
   # called workflow left behind.
-  publish:
+  released-guard:
     needs: release
     if: ${{ needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.merge_sha || github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: distributions
+          path: dist
+
+      - name: Released guard revisions are immutable against the last published wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          published="$RUNNER_TEMP/published"
+          python -m pip download --no-deps --only-binary=:all: --dest "$published" loom-kernel
+          shopt -s nullglob
+          previous=("$published"/*.whl)
+          candidate=(dist/*.whl)
+          if [ "${#previous[@]}" -ne 1 ] || [ "${#candidate[@]}" -ne 1 ]; then
+            echo "::error::expected one published and one candidate wheel"
+            exit 1
+          fi
+          bash scripts/ci/check_released_guard.sh wheel "${previous[0]}" "${candidate[0]}"
+
+  publish:
+    needs: [release, released-guard]
+    if: ${{ needs.release.result == 'success' && needs.released-guard.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write

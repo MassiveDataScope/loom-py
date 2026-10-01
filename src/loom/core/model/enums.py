@@ -6,6 +6,7 @@ from enum import StrEnum
 class OnDelete(StrEnum):
     CASCADE = "CASCADE"
     SET_NULL = "SET NULL"
+    SET_DEFAULT = "SET DEFAULT"
     RESTRICT = "RESTRICT"
     NO_ACTION = "NO ACTION"
 

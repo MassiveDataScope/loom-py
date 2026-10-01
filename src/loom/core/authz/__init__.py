@@ -16,15 +16,20 @@ from loom.core.authz._decide import (
 )
 from loom.core.authz._grants import Grant, GrantSource, InMemoryGrantSource
 from loom.core.authz._roles import (
+    CompositionRules,
     Permission,
     Role,
     RoleCatalog,
+    RoleSpec,
     UnknownPermission,
     UnknownRole,
 )
 from loom.core.authz._scope import Scope
+from loom.core.authz.product import AuthzProduct, load_authz_product
 
 __all__ = [
+    "AuthzProduct",
+    "CompositionRules",
     "Decision",
     "Grant",
     "GrantCheck",
@@ -33,11 +38,13 @@ __all__ = [
     "Permission",
     "Role",
     "RoleCatalog",
+    "RoleSpec",
     "Scope",
     "UnknownPermission",
     "UnknownRole",
     "can_grant",
     "can_revoke",
     "evaluate",
+    "load_authz_product",
     "scopes_with",
 ]

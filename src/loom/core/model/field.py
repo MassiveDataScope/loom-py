@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import msgspec
 
 from loom.core.model.enums import OnDelete, ServerDefault, ServerOnUpdate
+
+Reach = Literal["read", "write", "both"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +35,9 @@ class Field:
     on_delete: OnDelete | None = None
     default: Any = msgspec.UNSET
     length: int | None = None
+    scope: str | None = None
+    on: Reach = "both"
+    elevable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,5 +87,42 @@ def ColumnField(
     )
 
 
-# Convenience alias if users prefer the shorter name.
+def ScopedField(
+    column_type: ColumnType | None = None,
+    *,
+    scope: str,
+    on: Reach = "both",
+    elevable: bool = False,
+    primary_key: bool = False,
+    nullable: bool = False,
+    foreign_key: str | None = None,
+    on_delete: OnDelete | None = None,
+    length: int | None = None,
+    db_type: ColumnType | None = None,
+) -> Any:
+    """Declare the column that scopes the rows of a ``RowScoped`` model.
+
+    ``scope`` names the session value the column is compared with; ``on`` limits
+    the comparison to reads or writes, and ``elevable`` lets an authorized
+    execution lift a write-only scope within the table's boundary.
+    """
+    selected_type = db_type or column_type
+    return cast(
+        Any,
+        ColumnFieldSpec(
+            column_type=selected_type,
+            field=Field(
+                primary_key=primary_key,
+                nullable=nullable,
+                foreign_key=foreign_key,
+                on_delete=on_delete,
+                length=length,
+                scope=scope,
+                on=on,
+                elevable=elevable,
+            ),
+        ),
+    )
+
+
 column_field = ColumnField
