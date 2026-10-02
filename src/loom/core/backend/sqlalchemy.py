@@ -10,6 +10,8 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Constraint,
     DateTime,
     Float,
     ForeignKey,
@@ -24,6 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.dialects.postgresql import INET as PG_INET
@@ -32,6 +35,8 @@ from sqlalchemy.dialects.postgresql import TSVECTOR as PG_TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, mapped_column, relationship
 from sqlalchemy.orm import registry as sa_registry
+from sqlalchemy.sql.naming import conv
+from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 
 from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
@@ -39,7 +44,10 @@ from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOn
 from loom.core.model.field import ColumnType, Field
 from loom.core.model.introspection import (
     ColumnFieldInfo,
+    PartialUnique,
+    declared_checks,
     declared_indexes,
+    declared_partial_unique,
     declared_privileges,
     declared_unique,
     extract_model_from_hint,
@@ -55,6 +63,7 @@ from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
+from loom.core.schema_names import MAX_IDENTIFIER_LENGTH
 
 _SA_TYPE_MAP: dict[str, type] = {
     "String": String,
@@ -109,6 +118,7 @@ class _Compilation:
 
 
 _COMPILATION_KEY = "loom.compilation"
+_RULE_KEY = "loom.rule"
 
 
 @functools.cache
@@ -228,6 +238,8 @@ def _compile_model(
         attrs["__table_args__"] = tuple(constraints)
 
     sa_cls: Any = type(struct_cls.__name__ + "SA", (comp.base,), attrs)
+    _check_declared_name_lengths(struct_cls, constraints)
+    _check_distinct_names(struct_cls, sa_cls.__table__)
     comp.compiled[struct_cls] = sa_cls
     comp.tables[table_name] = sa_cls
     comp.pending[struct_cls] = get_relations(struct_cls)
@@ -253,12 +265,101 @@ def _compile_model(
 
 
 def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
+    """Keys, indexes and checks declared on the model, in declaration order.
+
+    ``__unique__`` constraints are unnamed, so the metadata's naming convention
+    names them. ``__checks__`` are named by their rule, which a ``ck``
+    convention may use as ``%(constraint_name)s``. Indexes carry a name loom
+    builds; :class:`~sqlalchemy.sql.naming.conv` marks it final so no convention
+    renames it, and :func:`_check_declared_name_lengths` refuses one over
+    Postgres's limit.
+
+    Alembic's autogenerate compares neither CHECK constraints nor the ``WHERE``
+    predicate of an index: a change to either one is written by hand in a
+    revision, and ``check`` does not report it as drift.
+    """
     constraints: list[Any] = [UniqueConstraint(*columns) for columns in declared_unique(struct_cls)]
     constraints += [
-        Index(f"ix_{table_name}_{'_'.join(columns)}", *columns)
+        Index(
+            conv(f"ix_{table_name}_{'_'.join(columns)}"),
+            *columns,
+            info={_RULE_KEY: ("__indexes__", ", ".join(columns))},
+        )
         for columns in declared_indexes(struct_cls)
     ]
+    constraints += [
+        _partial_unique_index(table_name, partial)
+        for partial in declared_partial_unique(struct_cls)
+    ]
+    constraints += [
+        _check_constraint(rule, expression)
+        for rule, expression in declared_checks(struct_cls).items()
+    ]
     return constraints
+
+
+def _check_distinct_names(struct_cls: type, table: Table) -> None:
+    """Refuse a table where two constraints or indexes resolve to the same name.
+
+    Postgres would reject the second one at DDL time. Under a naming
+    convention the usual cause is ``fk_%(table_name)s_%(column_0_name)s``: every
+    composite FK of a scoped table starts with the boundary column.
+    """
+    seen: set[str] = set()
+    items: list[Constraint | Index] = [*table.constraints, *table.indexes]
+    for item in items:
+        if item.name is None:
+            continue
+        name = str(item.name)
+        if name in seen:
+            raise ValueError(
+                f"{struct_cls.__name__}: table {table.name} has two constraints named {name!r}; "
+                "name them apart, for FKs with fk_%(table_name)s_%(column_0_N_name)s"
+            )
+        seen.add(name)
+
+
+def _partial_unique_index(table_name: str, partial: PartialUnique) -> Index:
+    """The unique index of one ``__partial_unique__`` rule.
+
+    ``partial.where`` is a DDL fragment the product declared on its model, a
+    static class attribute; it never carries a runtime value.
+    """
+    return Index(
+        conv(f"uq_{table_name}_{partial.rule}"),
+        *partial.columns,
+        unique=True,
+        postgresql_where=text(partial.where),
+        info={_RULE_KEY: ("__partial_unique__", partial.rule)},
+    )
+
+
+def _check_constraint(rule: str, expression: str) -> CheckConstraint:
+    """The CHECK constraint of one ``__checks__`` rule.
+
+    ``expression`` is a DDL fragment the product declared on its model, a
+    static class attribute; it never carries a runtime value.
+    """
+    return CheckConstraint(expression, name=rule, info={_RULE_KEY: ("__checks__", rule)})
+
+
+def _check_declared_name_lengths(struct_cls: type, constraints: list[Any]) -> None:
+    """Refuse a declared check or index whose final name Postgres would truncate.
+
+    SQLAlchemy would raise only when emitting DDL for a plain name, and would
+    shorten a final (``conv``) name with a hash; both are refused here instead.
+    """
+    for constraint in constraints:
+        declared = constraint.info.get(_RULE_KEY)
+        if declared is None:
+            continue
+        attr, rule = declared
+        name = str(constraint.name)
+        if len(name.encode()) > MAX_IDENTIFIER_LENGTH:
+            raise ValueError(
+                f"{struct_cls.__name__}: {attr} rule {rule!r} is named {name!r}, longer than "
+                f"the {MAX_IDENTIFIER_LENGTH} bytes Postgres keeps; shorten it"
+            )
 
 
 def _target_model(
@@ -682,8 +783,15 @@ def get_metadata() -> MetaData:
     return SABase.metadata
 
 
-def reset_registry() -> None:
-    """Clear compiled models — primarily for testing."""
+def reset_registry(*, naming_convention: Mapping[str, str] | None = None) -> None:
+    """Clear compiled models and set the shared metadata's naming convention.
+
+    The runtime compiles into the shared metadata after this call, so the
+    convention it receives, the one ``database.schema.naming_convention``
+    declares, names the tables ``create_all`` creates exactly as the
+    application metadata of the migration path does. ``None`` restores
+    SQLAlchemy's default.
+    """
     _registry.clear()
     _table_registry.clear()
     _core_registry.clear()
@@ -691,6 +799,9 @@ def reset_registry() -> None:
     _shared().scoped.clear()
     SABase.metadata.clear()
     SABase.registry.dispose()
+    SABase.metadata.naming_convention = (
+        dict(naming_convention) if naming_convention else DEFAULT_NAMING_CONVENTION
+    )
 
 
 # ---------------------------------------------------------------------------

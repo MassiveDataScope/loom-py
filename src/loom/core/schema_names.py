@@ -7,11 +7,13 @@ propose a configuration without the database extras installed.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
 MAX_IDENTIFIER_LENGTH: Final = 63
 MAX_SCHEMA_LENGTH: Final = 47
+NAMING_CONVENTION_KINDS: Final = frozenset({"pk", "fk", "uq", "ck", "ix"})
 POSTGRES_RESERVED_WORDS: Final = frozenset(
     {
         "all",
@@ -156,6 +158,27 @@ def sql_identifier(name: str, *, max_length: int = MAX_IDENTIFIER_LENGTH) -> str
 def schema_identifier(name: str) -> str:
     """Validate a scoped schema name; short enough that every guard object name fits."""
     return sql_identifier(name, max_length=MAX_SCHEMA_LENGTH)
+
+
+def naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
+    """Validate a SQLAlchemy ``naming_convention`` keyed by constraint kind.
+
+    ``None`` keeps SQLAlchemy's default. The runtime and the migration paths
+    both read ``database.schema.naming_convention`` through this function, so
+    they compile the same names.
+
+    Raises:
+        ValueError: Naming the first key that is not ``pk``, ``fk``, ``uq``, ``ck`` or ``ix``.
+    """
+    if value is None:
+        return None
+    unknown = sorted(set(value) - NAMING_CONVENTION_KINDS)
+    if unknown:
+        raise ValueError(
+            f"unknown kind {unknown[0]!r}; expected one of "
+            f"{', '.join(sorted(NAMING_CONVENTION_KINDS))}"
+        )
+    return dict(value)
 
 
 @dataclass(frozen=True, slots=True)

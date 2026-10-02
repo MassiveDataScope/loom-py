@@ -279,7 +279,7 @@ model. Each rule fails with `ValueError` naming the rule, the model and the colu
 | C2 | `elevable=True` only with `on="write"`, so no table is scoped only by an elevable scope |
 | C3 | Scope names are identifiers, unique within the table |
 | C4 | No `scope`, `on` or `elevable` on an unmarked model; no `on` or `elevable` without `scope` |
-| C5 | Every primary key, `__unique__` entry and `unique=True` column of a scoped table contains the boundary column, without exception |
+| C5 | Every primary key, `__unique__` entry, `__partial_unique__` entry and `unique=True` column of a scoped table contains the boundary column, without exception |
 | C6 | A single-column FK between two scoped tables compiles to `(boundary, col) -> (boundary, ref)`. The referenced table declares the same boundary scope and a key that is exactly `(boundary, ref)`, its primary key or a `__unique__` entry, with no other column; `on_delete` is `RESTRICT`, `NO ACTION` or `CASCADE`, never `SET NULL` or `SET DEFAULT` |
 | C7 | No FK from an unscoped table to a scoped table |
 | C8 | The boundary column is not nullable. Other scope columns are the model's choice; a row with a `NULL` read scope is invisible to every non-bypass user |
@@ -296,13 +296,46 @@ C6, C7 and C9 apply.
 
 ### Keys, indexes and global privileges
 
-Three class attributes declare what would otherwise be hand SQL in a revision:
+These class attributes declare what would otherwise be hand SQL in a revision:
 
 | Attribute | Applies to | Effect |
 |---|---|---|
 | `__unique__` | any model | composite `UNIQUE` constraints; on a scoped table each contains the boundary (C5) |
-| `__indexes__` | any model | non-unique indexes; boundary column first is the usual choice on a scoped table |
+| `__indexes__` | any model | non-unique indexes named `ix_<table>_<columns>`; boundary column first is the usual choice on a scoped table |
+| `__checks__` | any model | `{rule: sql_expression}`; one `CHECK` constraint per rule, named by the rule |
+| `__partial_unique__` | any model | `{rule: (columns, where)}`; one unique index `uq_<table>_<rule>` over `columns`, restricted to the rows matching the SQL predicate `where`; on a scoped table `columns` contains the boundary (C5) |
 | `__privileges__` | unscoped models only | `{"readers" \| "writers": frozenset[Privilege]}`; plain `GRANT` statements to the schema groups, plus `USAGE` on serial sequences for `INSERT` |
+
+```python
+class Seat(BaseModel, RowScoped):
+    __tablename__ = "seats"
+    __checks__ = {"status_code": "status_code IN ('active', 'removed')"}
+    __partial_unique__ = {"owner": (("tenant_id", "roster_id"), "is_owner")}
+    tenant_id: str = ScopedField(String(36), primary_key=True, scope="tenant")
+    id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
+    roster_id: int = ColumnField(Integer, foreign_key="rosters.id")
+    status_code: str = ColumnField(Text)
+    is_owner: bool = ColumnField(Boolean)
+```
+
+A rule is a SQL identifier: lowercase letters, digits and `_`, not a reserved word. The
+expression and the predicate are SQL that loom passes through as written; they are part
+of the model, never built from a request or a setting (see
+[Why the guard is static SQL](#why-the-guard-is-static-sql)). An unknown column, an
+empty expression or predicate, or a rule that is not an identifier raises `ValueError`
+naming the model and the rule. The guard holds a partial unique index to the same rule
+as any other: one without the boundary column is refused with `LG002`.
+
+Names are final where loom builds them (`ix_...`, `uq_<table>_<rule>`) and follow
+`database.schema.naming_convention` otherwise; see [Configuration](#configuration). A
+check, `__indexes__` or `__partial_unique__` name longer than the 63 bytes Postgres keeps
+raises `ValueError` at compile time instead of being truncated, and so do two
+constraints or indexes of one table that resolve to the same name.
+
+Alembic's autogenerate compares neither `CHECK` constraints nor the `WHERE` predicate of
+an index. A new check or partial unique index is emitted with its table or as a new
+index; changing an existing expression or predicate is written by hand in a revision,
+and `check` does not report it as drift.
 
 {class}`~loom.core.model.Privilege` is a closed set: `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`. `TRUNCATE`, `REFERENCES` and `TRIGGER` cannot be expressed: `TRUNCATE` ignores
@@ -441,6 +474,26 @@ database:
 | `roles` | none | `owner` and `migrator` |
 | `database_users` | none | the login users and their `access` |
 | `scopes` | none | one source per declared scope, validated at startup in `external` mode |
+| `naming_convention` | SQLAlchemy's | SQLAlchemy `naming_convention` keyed by `pk`, `fk`, `uq`, `ck` and `ix`; applied to the application metadata of the migration path and to the tables the runtime compiles, so both name every constraint alike. Another key raises `ConfigError` |
+
+A convention that names every constraint loom compiles:
+
+```yaml
+database:
+  schema:
+    naming_convention:
+      pk: "pk_%(table_name)s"
+      fk: "fk_%(table_name)s_%(column_0_N_name)s"
+      uq: "uq_%(table_name)s_%(column_0_N_name)s"
+      ck: "ck_%(table_name)s_%(constraint_name)s"
+      ix: "ix_%(table_name)s_%(column_0_N_name)s"
+```
+
+Use `%(column_0_N_name)s` for `fk`, not `%(column_0_name)s`: every composite FK of a
+scoped table starts with the boundary column, so two of them would get the same name;
+compilation refuses it with `ValueError`. `ck` takes the rule of `__checks__` as
+`%(constraint_name)s`. The names loom builds for `__indexes__` and `__partial_unique__`
+are final and no convention renames them.
 
 {func}`~loom.core.locator.load_application` reads this file (the path given, or
 `LOOM_CONFIG`), adds `app.code_path` (default `src`, relative to the configuration file) to `sys.path` as the server does,
@@ -824,9 +877,10 @@ guard first, and resolves the table in the application schema the runner configu
 it runs only through `run_migrations`; anywhere else it raises `ConfigError` (`guard
 operations run only through loom's run_migrations`).
 
-The hook also emits the composite FKs, `__unique__` and `__indexes__`, and refuses to
-write a revision that would leave a scoped table unprotected. A structural revision that
-writes rows of a scoped table fails with `LG001`: move the change to the data tree.
+The hook also emits the composite FKs, `__unique__`, `__indexes__`, `__checks__` and
+`__partial_unique__`, and refuses to write a revision that would leave a scoped table
+unprotected. A structural revision that writes rows of a scoped table fails with
+`LG001`: move the change to the data tree.
 
 Autogenerate never proposes dropping a table the models do not declare: it may be one
 that discovery did not find. A drop is written by hand; for a scoped table, in the same
@@ -1033,8 +1087,13 @@ The guard is two files shipped inside loom, `rls/guard/preflight.sql` and
 `rls/guard/0001.sql`, byte-identical for every schema and every product. Nothing in them
 is rendered: the schema, the roles, the groups and the version tables reach Postgres as
 bound parameters and live in a configuration table inside the guard. loom's Python code
-builds no SQL either; its statements are literals with bound parameters, and a lint in
-loom's test suite enforces it.
+builds no SQL from runtime values either; its statements are literals with bound
+parameters, and a lint in loom's test suite enforces it. The DDL fragments a product
+declares on its models, the `__checks__` expressions and the `__partial_unique__`
+predicates, are product code: static class attributes with the same trust as a
+hand-written Alembic revision, compiled into the table's DDL and never interpolating
+runtime input. The lint exempts exactly the two calls that compile them and fails on
+any other.
 
 - **What runs is what was reviewed and released.** Each file is pinned by its SHA-256 in
   {mod}`~loom.core.repository.sqlalchemy.rls.guard_manifest`. The bootstrap refuses a

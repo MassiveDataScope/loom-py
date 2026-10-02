@@ -4,6 +4,28 @@
 
 ### core
 
+- **core:** a model declares named checks and partial unique indexes.
+  `__checks__ = {rule: sql_expression}` compiles one `CHECK` constraint per
+  rule, named by the rule; `__partial_unique__ = {rule: (columns, where)}`
+  compiles a unique index `uq_<table>_<rule>` restricted to the rows matching
+  `where`, and on a row-scoped table its columns must contain the boundary
+  (C5, refused at compile time as the guard refuses it with `LG002`). The
+  expression and the predicate are product code, static class attributes with
+  the trust of a hand-written Alembic revision; the static-SQL lint exempts
+  exactly the two calls that compile them and now also watches
+  `CheckConstraint`. Alembic's autogenerate compares neither checks nor index
+  predicates, so changing one is a hand-written revision.
+- **core:** `database.schema.naming_convention` hands a SQLAlchemy
+  `naming_convention` (`pk`, `fk`, `uq`, `ck`, `ix`) to the application
+  metadata of the migration path and to the metadata the runtime compiles, so
+  both name constraints alike; absent, nothing changes. Use
+  `fk_%(table_name)s_%(column_0_N_name)s`: every composite FK of a scoped
+  table starts with the boundary column. Compilation now refuses two
+  constraints or indexes of one table resolving to the same name, and a
+  check, `__indexes__` or `__partial_unique__` name over Postgres's 63 bytes,
+  instead of failing or truncating at DDL time. `reset_registry` takes the
+  convention as `naming_convention=`.
+
 - **core:** two column types. `Bytes` (`loom.core.model.Bytes`, also inferred
   from a `bytes` annotation, which used to fall back to `JSON`) compiles to
   `LargeBinary`, `bytea` on Postgres; `Postgres.INET` compiles to Postgres

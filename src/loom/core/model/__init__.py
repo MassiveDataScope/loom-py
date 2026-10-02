@@ -13,7 +13,10 @@ from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault
 from loom.core.model.field import ColumnField, ColumnType, Field, ScopedField
 from loom.core.model.introspection import (
     ColumnFieldInfo,
+    PartialUnique,
+    declared_checks,
     declared_indexes,
+    declared_partial_unique,
     declared_privileges,
     declared_unique,
     get_column_fields,
@@ -55,7 +58,10 @@ __all__ = [
     "RowScoped",
     "ScopeColumn",
     "ScopedTable",
+    "PartialUnique",
+    "declared_checks",
     "declared_indexes",
+    "declared_partial_unique",
     "declared_privileges",
     "declared_unique",
     "is_row_scoped",

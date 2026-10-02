@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.schema_names import naming_convention
 
 _logger = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
     allow_unprotected_dialect: bool = False
     scopes: dict[str, str] = msgspec.field(default_factory=dict)
     guard: str | None = None
+    naming_convention: dict[str, str] | None = None
 
 
 class _DatabaseConfig(msgspec.Struct, kw_only=True):
@@ -89,6 +92,7 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
+        convention = _naming_convention(db_cfg.schema)
         session_manager = _build_session_manager(db_cfg, settings)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
@@ -98,7 +102,7 @@ class SQLAlchemyBackend:
             ),
             lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema, settings),
             default_repository_type=RepositorySQLAlchemy,
-            prepare_models=_prepare_models,
+            prepare_models=functools.partial(_prepare_models, convention=convention),
             readiness=lambda: _readiness(session_manager),
         )
 
@@ -136,15 +140,24 @@ def _build_session_manager(
     return manager
 
 
-def _prepare_models(models: Sequence[type[BaseModel]]) -> None:
-    """Compile the discovered models into the shared SQLAlchemy registry."""
+def _naming_convention(config: _SchemaConfig) -> dict[str, str] | None:
+    try:
+        return naming_convention(config.naming_convention)
+    except ValueError as exc:
+        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
+
+
+def _prepare_models(
+    models: Sequence[type[BaseModel]], *, convention: Mapping[str, str] | None = None
+) -> None:
+    """Compile the discovered models into the shared registry under the declared convention."""
     if not models:
         _logger.warning(
             "no BaseModel classes discovered: the application starts with an empty "
             "relational schema. Declare your first model, or set "
             "persistence.backend: none if it never persists."
         )
-    reset_registry()
+    reset_registry(naming_convention=convention)
     compile_all(*models)
 
 
