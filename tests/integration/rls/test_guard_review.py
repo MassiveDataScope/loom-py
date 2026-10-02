@@ -232,10 +232,12 @@ async def test_n2_verify_and_startup_report_a_deregistered_table_with_a_hand_pol
     await execute(
         admin,
         f"ALTER EVENT TRIGGER {guard}_ddl DISABLE",
+        f"ALTER EVENT TRIGGER {guard}_drop DISABLE",
         f"DELETE FROM {guard}.scoped_policy WHERE rel = '{schema}.notes'::regclass",
         f"DELETE FROM {guard}.scoped_table WHERE rel = '{schema}.notes'::regclass",
         f"DROP POLICY loom_select ON {schema}.notes",
         f"CREATE POLICY loose ON {schema}.notes USING (true)",
+        f"ALTER EVENT TRIGGER {guard}_drop ENABLE ALWAYS",
         f"ALTER EVENT TRIGGER {guard}_ddl ENABLE ALWAYS",
     )
     try:
@@ -356,12 +358,14 @@ async def test_arch8_startup_refuses_an_owner_trigger_outside_the_guard(
     await execute(
         admin,
         f"ALTER EVENT TRIGGER {guard}_ddl DISABLE",
+        f"ALTER EVENT TRIGGER {guard}_drop DISABLE",
         f"CREATE FUNCTION {schema}_owner_dml() RETURNS trigger LANGUAGE plpgsql "
         "AS $$ BEGIN RETURN NULL; END $$",
         f"DROP TRIGGER loom_deny_owner_dml ON {schema}.notes",
         f"CREATE TRIGGER loom_deny_owner_dml BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE "
         f"ON {schema}.notes FOR EACH STATEMENT EXECUTE FUNCTION public.{schema}_owner_dml()",
         f"ALTER TABLE {schema}.notes ENABLE ALWAYS TRIGGER loom_deny_owner_dml",
+        f"ALTER EVENT TRIGGER {guard}_drop ENABLE ALWAYS",
         f"ALTER EVENT TRIGGER {guard}_ddl ENABLE ALWAYS",
     )
     try:
