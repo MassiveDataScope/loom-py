@@ -63,7 +63,13 @@ GUARD_CONFIG: Final = (
     "SELECT app_schema, owner_role, migrator_role, readers_role, writers_role, version_table, "
     "data_version_table, installer, users::text AS users FROM config"
 )
-REGISTERED: Final = "SELECT c.relname FROM scoped_table t JOIN pg_class c ON c.oid = t.rel"
+REGISTERED: Final = (
+    "SELECT c.relname, p.relname AS parent, "
+    "t.scopes = pt.scopes AND t.privileges = pt.privileges AS as_parent "
+    "FROM scoped_table t JOIN pg_class c ON c.oid = t.rel "
+    "LEFT JOIN pg_inherits i ON i.inhrelid = c.oid LEFT JOIN pg_class p ON p.oid = i.inhparent "
+    "LEFT JOIN scoped_table pt ON pt.rel = p.oid"
+)
 MEMBERS: Final = (
     "SELECT m.rolname AS member, r.rolname AS role, r.rolbypassrls, m.rolsuper, "
     "CASE WHEN current_setting('server_version_num')::int >= 160000 "
@@ -173,11 +179,27 @@ def _users(users: Any) -> list[tuple[str, bool, str]]:
 async def _registry(
     connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
 ) -> list[Finding]:
-    registered = {str(row[0]) for row in await connection.execute(_REGISTERED)}
+    """Every scoped model table is registered, and nothing else but their partitions.
+
+    A partition is not in the model: it counts when its parent is a
+    partitioned scoped table of the model, and must carry its parent's scopes
+    and privileges.
+    """
+    partitioned = {table.name for table in scoped.values() if table.partition_by is not None}
+    registered: set[str] = set()
+    findings: list[Finding] = []
+    for row in await connection.execute(_REGISTERED):
+        name, parent = str(row.relname), row.parent
+        if parent is None or str(parent) not in partitioned:
+            registered.add(name)
+        elif not row.as_parent:
+            findings.append(
+                Finding(name, "partition.registration", f"scopes of {parent}", "different")
+            )
     expected = {table.name for table in scoped.values()}
     if registered != expected:
-        return [_diff(None, "registry", "registered tables", expected, registered)]
-    return []
+        findings.append(_diff(None, "registry", "registered tables", expected, registered))
+    return findings
 
 
 async def _protection(

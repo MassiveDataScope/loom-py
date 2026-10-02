@@ -29,6 +29,7 @@ from loom.core.repository.sqlalchemy.rls import (
     verify,
 )
 from loom.core.repository.sqlalchemy.rls.bootstrap import QUIET_LOGS
+from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
 from loom.core.schema_names import SchemaNames
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
@@ -40,6 +41,8 @@ from tests.integration.rls.conftest import (
 )
 
 pytestmark = pytest.mark.integration
+
+_UNRELEASED = GUARD_REVISIONS[-1].number + 1
 
 SCOPES = '[{"col":"org","scope":"org","on":"both"}]'
 PRIVILEGES = "ARRAY['SELECT','INSERT','UPDATE','DELETE']"
@@ -375,7 +378,7 @@ async def test_arch1_a_guard_below_the_minimum_revision_stops_create_schema(
     schema = _name()
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
-    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", 2)
+    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", _UNRELEASED)
 
     with pytest.raises(ConfigError, match="guard revision pending"):
         await create_schema(database.migrator, application)
@@ -385,7 +388,7 @@ async def test_arch1_startup_reports_a_guard_below_the_minimum_revision(
     scoped_database: BootstrapFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     database, application = await _installed(scoped_database, tmp_path)
-    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", 2)
+    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", _UNRELEASED)
 
     assert "guard.revision" in await _startup_checks(database.write, application)
 

@@ -23,6 +23,7 @@ from loom.core.config import ConfigError
 from loom.core.locator import CONFIG_ENV_VAR, Application
 from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH, alembic_config, check
 from loom.core.repository.sqlalchemy.rls import integrity
+from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
 from tests.integration.agnosticism import notes, rosters, sites
 from tests.integration.rls.conftest import (
     BootstrapFactory,
@@ -33,6 +34,8 @@ from tests.integration.rls.conftest import (
 )
 
 pytestmark = pytest.mark.integration
+
+_UNRELEASED = GUARD_REVISIONS[-1].number + 1
 
 _SCRIPT_TEMPLATE = '''"""${message}"""
 
@@ -471,7 +474,73 @@ async def test_a_guard_below_the_minimum_revision_stops_the_runner(
     trees = Trees(tmp_path, application)
     config = trees.config(trees.structural, database.migrator)
     await asyncio.to_thread(command.revision, config, "initial", autogenerate=True)
-    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", 2)
+    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", _UNRELEASED)
 
     with pytest.raises(ConfigError, match="guard revision pending"):
         await asyncio.to_thread(command.upgrade, config, "head")
+
+
+_PARTITIONS_REVISION = '''"""Partitions of note_events for the first quarter of 2026."""
+
+from alembic import op
+import loom.core.repository.sqlalchemy.migrations.operations
+
+revision = "p0002"
+down_revision = {down!r}
+
+
+def upgrade() -> None:
+    op.ensure_range_partitions("note_events", "2026-01-01", "2026-04-01", interval="month")
+
+
+def downgrade() -> None:
+    op.detach_range_partitions(
+        "note_events", "2026-01-01", "2026-04-01", interval="month", drop=True
+    )
+'''
+
+
+async def test_a_partitioned_table_takes_partitions_from_a_revision_and_checks_clean(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    from loom.core.repository.sqlalchemy.rls import verify
+
+    database = await scoped_database("notes_parts")
+    trees = await _upgraded_trees(database, notes, tmp_path, schema="notes_parts")
+    (initial,) = (trees.structural / "versions").glob("*.py")
+    source = initial.read_text()
+    assert "postgresql_partition_by='RANGE (at)'" in source
+    assert "op.drop_partitions('note_events')" in source
+    down = initial.stem.split("_", 1)[0]
+    trees.write_revision(
+        trees.structural, "p0002_partitions", _PARTITIONS_REVISION.format(down=down)
+    )
+    config = trees.config(trees.structural, database.migrator)
+
+    await asyncio.to_thread(command.upgrade, config, "head")
+
+    partitions = (
+        "SELECT string_agg(c.relname, ',' ORDER BY c.relname) FROM pg_inherits i "
+        "JOIN pg_class c ON c.oid = i.inhrelid "
+        "JOIN loom_guard_notes_parts.scoped_table t ON t.rel = c.oid "
+        "WHERE i.inhparent = 'notes_parts.note_events'::regclass"
+    )
+    assert await scalar(database.superuser, partitions) == (
+        "note_events_p202601,note_events_p202602,note_events_p202603"
+    )
+    await asyncio.to_thread(check, config, trees.application)
+    report = await verify(database.superuser, trees.application)
+    assert report.ok, report.findings
+
+    await asyncio.to_thread(command.downgrade, config, down)
+    assert await scalar(database.superuser, partitions) is None
+    await asyncio.to_thread(command.upgrade, config, "head")
+    await asyncio.to_thread(command.downgrade, config, "base")
+
+    tables = (
+        "SELECT string_agg(tablename, ',' ORDER BY tablename) FROM pg_tables "
+        "WHERE schemaname = 'notes_parts'"
+    )
+    assert await scalar(database.superuser, tables) == "alembic_version,alembic_version_data"
+    registered = "SELECT count(*) FROM loom_guard_notes_parts.scoped_table"
+    assert await scalar(database.superuser, registered) == 0

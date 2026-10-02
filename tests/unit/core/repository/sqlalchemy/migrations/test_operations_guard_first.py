@@ -8,6 +8,7 @@ from loom.core.backend.scoped_ddl import APP_FIRST, GUARD_FIRST, OPEN_HATCH, PRO
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.migrations.operations import (
     GUARD_OPTION,
+    EnsureRangePartitionsOp,
     OpenHatchOp,
     ProtectScopedTableOp,
     run_guard_operation,
@@ -63,3 +64,25 @@ def test_a_guard_operation_without_the_guard_option_is_refused() -> None:
     operation = OpenHatchOp()
     with pytest.raises(ConfigError, match="run_migrations"):
         _run(operation, {"version_table_schema": "notes"})
+
+
+class _EmptyCatalogOperations(_Operations):
+    def __init__(self, opts: dict[str, Any]) -> None:
+        super().__init__(opts)
+        self.bind = _EmptyCatalogBind()
+
+
+class _EmptyCatalogBind(_Bind):
+    def execute(self, clause: Any, parameters: Any = None) -> list[Any]:
+        super().execute(clause, parameters)
+        return []
+
+
+def test_a_partition_operation_checks_the_guard_revision_before_calling_the_guard() -> None:
+    operations = _EmptyCatalogOperations(GUARDED)
+    operation = EnsureRangePartitionsOp("note_events", "2026-01-01", "2026-02-01")
+
+    with pytest.raises(ConfigError, match="not one this release"):
+        run_guard_operation(operations, operation)
+
+    assert GUARD_FIRST not in [call[0] for call in operations.bind.calls]

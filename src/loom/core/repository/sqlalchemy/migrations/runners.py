@@ -30,6 +30,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.backend.scoped_ddl import (
     ASSERT_SCHEMA,
     GUARD_FIRST,
+    LANDING,
     LOCK_TIMEOUT,
     validate_timeout,
 )
@@ -52,10 +53,14 @@ GUARD_SQLSTATE: Final = "LG002"
 
 LOCK: Final = "SELECT pg_advisory_lock(hashtextextended('loom.schema:' || :schema, 0))"
 UNLOCK: Final = "SELECT pg_advisory_unlock(hashtextextended('loom.schema:' || :schema, 0))"
-LANDING: Final = "SELECT current_user, current_schema()"
 BYPASS_SELF: Final = "SELECT current_user, rolbypassrls FROM pg_roles WHERE rolname = current_user"
 PREPARE_VERSION_TABLES: Final = "SELECT prepare_version_tables()"
 REGISTERED_TABLES: Final = "SELECT registered_tables()"
+PARTITION_PARENTS: Final = (
+    "SELECT c.relname, p.relname AS parent FROM pg_inherits i "
+    "JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent "
+    "JOIN pg_namespace n ON n.oid = p.relnamespace WHERE n.nspname = :schema"
+)
 SET_TIMEOUTS: Final = (
     "SELECT set_config('lock_timeout', :lock, true), "
     "set_config('statement_timeout', :statement, true)"
@@ -66,6 +71,7 @@ _LANDING: Final = text(LANDING)
 _BYPASS_SELF: Final = text(BYPASS_SELF)
 _PREPARE_VERSION_TABLES: Final = text(PREPARE_VERSION_TABLES)
 _REGISTERED_TABLES: Final = text(REGISTERED_TABLES)
+_PARTITION_PARENTS: Final = text(PARTITION_PARENTS)
 _ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _LOCK_TIMEOUT: Final = text(LOCK_TIMEOUT)
@@ -169,8 +175,11 @@ def check(config: Config, application: Application) -> None:
     """Fail when the models, the database or the guard registry disagree.
 
     Tables and columns are compared by Alembic's autogenerate; the registry is
-    compared against the application's scoped tables. Policy and privilege
-    drift belong to ``verify``. Call it from a thread without a running loop.
+    compared against the application's scoped tables. Partitions are in
+    neither: :func:`include_object_for` keeps autogenerate away from tables the
+    models do not declare, and a registered partition of a partitioned scoped
+    table is not registry drift. Policy and privilege drift belong to
+    ``verify``. Call it from a thread without a running loop.
 
     Raises:
         ConfigError: Naming the first drift found.
@@ -200,10 +209,14 @@ async def _registry_drift(config: Config, application: Application) -> None:
         async with engine.connect() as connection:
             await connection.execute(_GUARD_FIRST, _guard(bootstrap.names.guard))
             rows = await connection.execute(_REGISTERED_TABLES)
-            registered = {row[0] for row in rows}
+            registered = {str(row[0]) for row in rows}
+            parents = await connection.execute(_PARTITION_PARENTS, {"schema": bootstrap.schema})
+            partitions = {str(row.relname): str(row.parent) for row in parents}
     finally:
         await engine.dispose()
     expected = {table.name for table in application.scoped.values()}
+    partitioned = {t.name for t in application.scoped.values() if t.partition_by is not None}
+    registered = {name for name in registered if partitions.get(name) not in partitioned}
     if registered != expected:
         missing = sorted(expected - registered)
         extra = sorted(registered - expected)
@@ -339,7 +352,9 @@ def include_object_for(names: SchemaNames) -> IncludeObject:
     """Leave version tables alone and never autogenerate the drop of an undeclared table.
 
     A table the database has and the models do not may be one discovery
-    missed; dropping it is written by hand, never generated.
+    missed, or a partition of a partitioned scoped table, which the guard
+    creates and the models never declare; dropping it is written by hand, or
+    by ``op.detach_range_partitions``, never generated.
     """
     version_tables = {names.version_table, names.data_version_table}
 

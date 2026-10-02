@@ -18,6 +18,7 @@ from sqlalchemy import Connection, Table, event, text
 
 from loom.core.config import ConfigError
 from loom.core.model.field import Reach
+from loom.core.model.partition import PartitionRange
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
 from loom.core.schema_names import schema_identifier, sql_identifier
@@ -42,6 +43,21 @@ GRANT_TABLE: Final = (
     "CAST(:readers AS text[]), CAST(:writers AS text[]))"
 )
 ASSERT_SCHEMA: Final = "SELECT assert_scoped_schema()"
+CREATE_RANGE_PARTITION: Final = (
+    "SELECT create_range_partition("
+    "to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
+    "CAST(:partition AS text), CAST(:lower AS text), CAST(:upper AS text))"
+)
+DETACH_PARTITION: Final = (
+    "SELECT detach_partition(to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)), "
+    "CAST(:partition AS text), CAST(:drop AS boolean))"
+)
+PARTITIONS: Final = (
+    "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+    "WHERE i.inhparent = to_regclass(quote_ident(:schema) || '.' || quote_ident(:table)) "
+    "ORDER BY c.relname"
+)
+LANDING: Final = "SELECT current_user, current_schema()"
 GUARD_FIRST: Final = (
     "SELECT set_config('search_path', quote_ident(:guard) || ', pg_catalog, pg_temp', true)"
 )
@@ -106,6 +122,23 @@ def grant_parameters(
         "readers": privilege_names(privileges.get("readers", frozenset())),
         "writers": privilege_names(privileges.get("writers", frozenset())),
     }
+
+
+def create_partition_parameters(schema: str, table: str, partition: PartitionRange) -> Parameters:
+    """Bound parameters of :data:`CREATE_RANGE_PARTITION` for one partition of ``schema.table``."""
+    return {
+        **table_parameters(schema, table),
+        "partition": sql_identifier(partition.name),
+        "lower": partition.lower,
+        "upper": partition.upper,
+    }
+
+
+def detach_partition_parameters(
+    schema: str, table: str, partition: str, *, drop: bool
+) -> Parameters:
+    """Bound parameters of :data:`DETACH_PARTITION` for one partition of ``schema.table``."""
+    return {**table_parameters(schema, table), "partition": sql_identifier(partition), "drop": drop}
 
 
 def table_parameters(schema: str, table: str) -> Parameters:
