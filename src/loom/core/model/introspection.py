@@ -15,7 +15,16 @@ from loom.core.model.privilege import Privilege
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn
-from loom.core.model.types import JSON, Boolean, DateTime, Float, Integer, Numeric, String
+from loom.core.model.types import (
+    JSON,
+    Boolean,
+    Bytes,
+    DateTime,
+    Float,
+    Integer,
+    Numeric,
+    String,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +335,7 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     int: Integer,
     float: Float,
     bool: Boolean,
+    bytes: Bytes,
     datetime: DateTime(tz=True),
     Decimal: Numeric(),
 }

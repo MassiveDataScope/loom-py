@@ -4,6 +4,13 @@
 
 ### core
 
+- **core:** two column types. `Bytes` (`loom.core.model.Bytes`, also inferred
+  from a `bytes` annotation, which used to fall back to `JSON`) compiles to
+  `LargeBinary`, `bytea` on Postgres; `Postgres.INET` compiles to Postgres
+  `inet`. The SQLAlchemy repository binds `bytes` as they are instead of
+  base64 text, and a network address the driver returns for `inet` reaches a
+  `str` field as its text form (`10.0.0.1`, `2001:db8::1/64`).
+
 - **core:** a memory cache alias can be bounded. `cache: max_size` (entries) and
   the new `cache: max_bytes` (stored payload bytes) serve every
   `aiocache.SimpleMemoryCache` alias through `loom.core.cache.memory.BoundedMemoryCache`,

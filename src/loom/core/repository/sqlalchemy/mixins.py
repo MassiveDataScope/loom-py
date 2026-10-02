@@ -39,7 +39,7 @@ from loom.core.repository.sqlalchemy.transactional import record_mutation
 
 _SENTINEL = object()
 # Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
-_NATIVE_COLUMN_TYPES = (datetime, date, time, Decimal, UUID)
+_NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
 _JSON_TYPE_NAMES = frozenset({"JSON", "Postgres.JSONB"})
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
 

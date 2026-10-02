@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Numeric,
     String,
@@ -25,6 +26,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
+from sqlalchemy.dialects.postgresql import INET as PG_INET
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.dialects.postgresql import TSVECTOR as PG_TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -62,11 +64,13 @@ _SA_TYPE_MAP: dict[str, type] = {
     "Boolean": Boolean,
     "Text": Text,
     "JSON": JSON,
+    "Bytes": LargeBinary,
     "DateTime": DateTime,
     "Numeric": Numeric,
     "Postgres.JSONB": PG_JSONB,
     "Postgres.UUID": PG_UUID,
     "Postgres.TSVECTOR": PG_TSVECTOR,
+    "Postgres.INET": PG_INET,
 }
 
 _SERVER_DEFAULT_MAP = {

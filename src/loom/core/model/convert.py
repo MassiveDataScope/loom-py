@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Mapping
 from functools import cache
 from typing import Any, TypeVar, get_args, get_origin
@@ -9,6 +10,13 @@ from typing import Any, TypeVar, get_args, get_origin
 import msgspec
 
 StructT = TypeVar("StructT", bound=msgspec.Struct)
+# What a Postgres driver returns for ``inet``; a model field holds its text form.
+_NETWORK_VALUES = (
+    ipaddress.IPv4Address,
+    ipaddress.IPv6Address,
+    ipaddress.IPv4Interface,
+    ipaddress.IPv6Interface,
+)
 _FieldPlan = dict[str, tuple[str, type[msgspec.Struct] | None]]
 
 
@@ -51,6 +59,8 @@ def _holds_struct(value: Any) -> bool:
 
 
 def _coerce(value: Any, nested: type[msgspec.Struct] | None) -> Any:
+    if isinstance(value, _NETWORK_VALUES):
+        return str(value)
     if nested is not None:
         return _nest(value, nested)
     return msgspec.to_builtins(value) if _holds_struct(value) else value
@@ -64,7 +74,8 @@ def to_struct(struct_type: type[StructT], values: Mapping[str, Any]) -> StructT:
     top level and inside fields annotated with a struct type (``Related``,
     ``list[Related]``, ``Related | None``) whose values arrive as mappings.
     Values stored in a looser form (an enum's value, an ISO datetime string,
-    a decimal string) come back as the annotated type. Struct instances
+    a decimal string) come back as the annotated type; a network address
+    the driver decoded from ``inet`` comes back as its text. Struct instances
     placed in a field whose annotation is not a struct (``list[dict[str,
     Any]]`` relations, ``Any``) are reduced to their builtin form so the
     annotation holds. A mapping annotation such as ``dict[str, Related]`` is

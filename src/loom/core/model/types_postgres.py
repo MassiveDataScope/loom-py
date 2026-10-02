@@ -9,6 +9,7 @@ class _PostgresTypes:
     JSONB = ColumnType("Postgres.JSONB")
     UUID = ColumnType("Postgres.UUID")
     TSVECTOR = ColumnType("Postgres.TSVECTOR")
+    INET = ColumnType("Postgres.INET")
 
     @staticmethod
     def ARRAY(item: ColumnType) -> ColumnType:
