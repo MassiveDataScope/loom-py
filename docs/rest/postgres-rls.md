@@ -1145,7 +1145,12 @@ functions write it through them. Two event triggers, enabled `ALWAYS`, run its c
 rejects DDL on the guard schema outside the bootstrap, then, unless the hatch is open,
 runs the assertion for every DDL that touches the guard or the application schema and
 for every DDL that reports no schema, such as `GRANT` and `REVOKE`; `sql_drop` rejects
-the drop of a registered table. The hatch never admits DDL on the guard itself.
+DDL that drops guard objects outside the bootstrap and the drop of a registered table,
+then, unless the hatch is open, runs the assertion whenever the drop removes an object
+of the application schema, so `DROP POLICY` or `DROP TRIGGER` on a scoped table fails
+in the same statement while dropping a plain index still succeeds (since guard revision
+2; on revision 1 such a drop only failed at the next DDL). The hatch never admits DDL
+on the guard itself.
 
 Every call loom makes into the guard (the bootstrap, the runners and their Alembic
 operations, `create_schema`, `check` and `verify`) first sets the transaction's

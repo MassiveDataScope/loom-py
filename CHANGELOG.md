@@ -282,6 +282,15 @@
 
 ### core
 
+- **core:** the RLS guard refuses, in the same statement, a drop outside the
+  hatch that breaks its invariants. `DROP POLICY` or `DROP TRIGGER
+  loom_deny_owner_dml` on a scoped table used to commit, because drops are not
+  reported to `ddl_command_end`; the schema then failed the assertion (`LG002`)
+  only at the next DDL. The `sql_drop` trigger now runs the assertion when the
+  drop removes an object of the application schema and the hatch is closed;
+  dropping a plain index still succeeds. Shipped in guard revision 2
+  (`0002.sql`, `CREATE OR REPLACE FUNCTION on_sql_drop`); re-apply the
+  bootstrap to install it.
 - **core:** a model with a relation or projection field imports again on
   Python 3.12.4 and later when its module uses
   `from __future__ import annotations`. It failed with

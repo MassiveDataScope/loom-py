@@ -46,6 +46,18 @@ BEGIN
   IF drop_table THEN EXECUTE format('DROP TABLE %s', part); END IF;
   RETURN true;
 END $$;
+CREATE OR REPLACE FUNCTION on_sql_drop() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE bad text;
+BEGIN
+  PERFORM forbid_guard_ddl(EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() d
+                                   WHERE d.schema_name = guard_schema() OR d.object_identity = quote_ident(guard_schema())));
+  SELECT string_agg(object_identity, ', ') INTO bad FROM pg_event_trigger_dropped_objects() d
+    WHERE d.object_type IN ('table','partitioned table') AND d.objid IN (SELECT rel::oid FROM scoped_table);
+  IF bad IS NOT NULL THEN PERFORM violation(format('unprotect before dropping a registered table: %s', bad)); END IF;
+  IF hatch_open() OR NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() d WHERE d.schema_name = app_schema()) THEN
+    RETURN; END IF;
+  PERFORM assert_scoped_schema();
+END $$;
 DO $$
 DECLARE fn regprocedure;
 BEGIN
