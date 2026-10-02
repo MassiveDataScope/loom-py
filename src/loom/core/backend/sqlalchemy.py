@@ -48,6 +48,7 @@ from loom.core.model.introspection import (
     declared_checks,
     declared_indexes,
     declared_partial_unique,
+    declared_partition,
     declared_privileges,
     declared_unique,
     extract_model_from_hint,
@@ -225,6 +226,7 @@ def _compile_model(
         struct_cls, column_fields, boundary, models_by_table, comp
     )
     constraints += _declared_constraints(struct_cls, table_name)
+    partition = declared_partition(struct_cls)
 
     attrs: dict[str, Any] = {
         "__tablename__": table_name,
@@ -234,8 +236,11 @@ def _compile_model(
         attrs[name] = _build_mapped_column(
             field_info, inline_foreign_key=name not in composite_columns
         )
-    if constraints:
-        attrs["__table_args__"] = tuple(constraints)
+    table_args: list[Any] = list(constraints)
+    if partition is not None:
+        table_args.append({"postgresql_partition_by": f"RANGE ({partition.column})"})
+    if table_args:
+        attrs["__table_args__"] = tuple(table_args)
 
     sa_cls: Any = type(struct_cls.__name__ + "SA", (comp.base,), attrs)
     _check_declared_name_lengths(struct_cls, constraints)
@@ -251,6 +256,7 @@ def _compile_model(
             name=table.name,
             scopes=scopes,
             privileges=frozenset(getattr(struct_cls, "__scope_privileges__", READ_WRITE)),
+            partition_by=None if partition is None else partition.column,
         )
         comp.scoped[(table.schema, table.name)] = scoped
     schema = comp.metadata.info.get(SCHEMA_KEY)

@@ -37,12 +37,17 @@ class ScopeColumn:
 
 @dataclass(frozen=True, slots=True)
 class ScopedTable:
-    """A compiled scoped table: its scopes and the privileges it grants."""
+    """A compiled scoped table: its scopes, the privileges it grants and its partition column.
+
+    ``partition_by`` names the column a range-partitioned table is partitioned
+    by, ``None`` for a plain table.
+    """
 
     schema: str | None
     name: str
     scopes: tuple[ScopeColumn, ...]
     privileges: frozenset[Privilege]
+    partition_by: str | None = None
 
     @property
     def boundary(self) -> ScopeColumn:
