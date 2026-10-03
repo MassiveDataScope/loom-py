@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -153,3 +154,24 @@ def test_a_struct_of_another_type_is_retyped_to_the_annotation() -> None:
     )
 
     assert customer.address == _Address(street_name="Main", zip_code="01234")
+
+
+class _Host(msgspec.Struct):
+    address: str
+    network: str
+    fingerprint: bytes
+
+
+def test_network_addresses_read_from_the_driver_come_back_as_text() -> None:
+    host = to_struct(
+        _Host,
+        {
+            "address": ipaddress.ip_address("10.0.0.1"),
+            "network": ipaddress.ip_interface("2001:db8::1/64"),
+            "fingerprint": b"\x00\xff",
+        },
+    )
+
+    assert host.address == "10.0.0.1"
+    assert host.network == "2001:db8::1/64"
+    assert host.fingerprint == b"\x00\xff"

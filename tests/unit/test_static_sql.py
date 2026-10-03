@@ -23,12 +23,39 @@ SCANNED_MODULES = (
 )
 BOOTSTRAP = SQLALCHEMY / "rls" / "bootstrap.py"
 SINKS = frozenset(
-    {"execute", "executemany", "fetch", "fetchrow", "fetchval", "exec_driver_sql", "text", "DDL"}
+    {
+        "execute",
+        "executemany",
+        "fetch",
+        "fetchrow",
+        "fetchval",
+        "exec_driver_sql",
+        "text",
+        "DDL",
+        "CheckConstraint",
+    }
 )
 CLAUSE_SINKS = frozenset({"text", "DDL"})
 SQL_KEYWORDS = frozenset({"statement", "text", "query", "sql", "sqltext", "clause"})
 PINNED_LOADERS = frozenset({"revision.sql()", "preflight_sql()"})
 PLACEHOLDER = re.compile(r"\{[A-Za-z_]\w*\}")
+# The only SQL loom takes from outside its own source: the DDL fragments a product
+# declares on its models (``__checks__`` expressions, ``__partial_unique__``
+# predicates). They are product code with the trust of a hand-written Alembic
+# revision and must be static literals with no runtime input; loom checks only that
+# each is a non-empty string, so that is the product's responsibility. Each entry names
+# the module, the one function that consumes the fragment and the exact call, so the
+# same call anywhere else, or any other call in these functions, is still a violation.
+DECLARED_DDL_FRAGMENTS = frozenset(
+    {
+        ("loom/core/backend/sqlalchemy.py", "_partial_unique_index", "text(partial.where)"),
+        (
+            "loom/core/backend/sqlalchemy.py",
+            "_check_constraint",
+            "CheckConstraint(expression, name=rule, info={_RULE_KEY: ('__checks__', rule)})",
+        ),
+    }
+)
 
 
 def _modules() -> list[Path]:
@@ -178,9 +205,35 @@ def _sink_calls(path: Path, root: Path = SRC) -> Iterator[tuple[_Module, ast.Cal
             yield module, node
 
 
+def _enclosing_functions(path: Path) -> dict[tuple[int, int], str]:
+    """The innermost function around each call of ``path``, keyed by the call's position.
+
+    ``ast.walk`` visits outer functions before the functions they contain, so
+    the last assignment for a call is its innermost function.
+    """
+    enclosing: dict[tuple[int, int], str] = {}
+    for function in ast.walk(_parse(path)):
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for call in ast.walk(function):
+                if isinstance(call, ast.Call):
+                    enclosing[(call.lineno, call.col_offset)] = function.name
+    return enclosing
+
+
+def _is_declared_fragment(path: Path, root: Path, function: str, call: ast.Call) -> bool:
+    if not path.is_relative_to(root):
+        return False
+    entry = (path.relative_to(root).as_posix(), function, ast.unparse(call))
+    return entry in DECLARED_DDL_FRAGMENTS
+
+
 def _violations(path: Path, root: Path = SRC) -> list[str]:
     violations: list[str] = []
+    functions = _enclosing_functions(path)
     for module, call in _sink_calls(path, root):
+        function = functions.get((call.lineno, call.col_offset), "")
+        if _is_declared_fragment(path, root, function, call):
+            continue
         arguments = _sql_arguments(call)
         starred = any(isinstance(argument, ast.Starred) for argument in call.args)
         if starred or not arguments or not all(module.accepts(a) for a in arguments):
@@ -267,6 +320,9 @@ def _module(tmp_path: Path, body: str) -> Path:
         "driver.fetchval(query)",
         "driver.execute(revision.sql(x))",
         "driver.execute(other.sql())",
+        "sa.CheckConstraint(x)",
+        'sa.CheckConstraint(f"{x} > 0", name="positive")',
+        "sa.CheckConstraint(sqltext=x)",
     ],
 )
 def test_dynamic_sql_is_rejected(body: str, tmp_path: Path) -> None:
@@ -286,6 +342,7 @@ def test_dynamic_sql_is_rejected(body: str, tmp_path: Path) -> None:
         "driver.fetchval(QUERY, x)",
         "driver.execute(revision.sql())",
         "driver.execute(preflight_sql())",
+        'sa.CheckConstraint(QUERY, name="positive")',
     ],
 )
 def test_final_constants_and_pinned_loaders_are_accepted(body: str, tmp_path: Path) -> None:
@@ -317,3 +374,37 @@ def test_packaged_sql_has_no_placeholders() -> None:
     ]
 
     assert offenders == []
+
+
+def test_every_declared_fragment_exemption_matches_a_call_in_the_source() -> None:
+    found: set[tuple[str, str, str]] = set()
+    for path in _modules():
+        functions = _enclosing_functions(path)
+        relative = path.relative_to(SRC).as_posix()
+        for _, call in _sink_calls(path):
+            function = functions.get((call.lineno, call.col_offset), "")
+            found.add((relative, function, ast.unparse(call)))
+
+    assert DECLARED_DDL_FRAGMENTS - found == set()
+
+
+@pytest.mark.parametrize(
+    ("function", "violations"),
+    [
+        ("_partial_unique_index", ["3: CheckConstraint(expression, name=rule)"]),
+        ("anywhere_else", ["2: text(partial.where)", "3: CheckConstraint(expression, name=rule)"]),
+    ],
+)
+def test_a_declared_fragment_is_exempt_only_in_its_own_function(
+    function: str, violations: list[str], tmp_path: Path
+) -> None:
+    module = tmp_path / "loom" / "core" / "backend" / "sqlalchemy.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        f"def {function}(partial, expression, rule):\n"
+        "    text(partial.where)\n"
+        "    CheckConstraint(expression, name=rule)\n",
+        encoding="utf-8",
+    )
+
+    assert _violations(module, root=tmp_path) == violations

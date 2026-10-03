@@ -23,7 +23,7 @@ from loom.core.config import ConfigError
 from loom.core.locator import CONFIG_ENV_VAR, Application
 from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH, alembic_config, check
 from loom.core.repository.sqlalchemy.rls import integrity
-from tests.integration.agnosticism import notes, sites
+from tests.integration.agnosticism import notes, rosters, sites
 from tests.integration.rls.conftest import (
     BootstrapFactory,
     ScopedDatabase,
@@ -333,6 +333,39 @@ async def test_check_passes_at_head_and_reports_column_and_registry_drift(
         "DROP EVENT TRIGGER loom_guard_notes_check_ddl",
         "DROP EVENT TRIGGER loom_guard_notes_check_drop",
     )
+
+
+async def test_checks_partial_unique_and_naming_convention_upgrade_under_the_guard(
+    scoped_database: BootstrapFactory, tmp_path: Path
+) -> None:
+    database = await scoped_database("rosters_auto")
+    trees = await _upgraded_trees(database, rosters, tmp_path, schema="rosters_auto")
+
+    (revision,) = (trees.structural / "versions").glob("*.py")
+    source = revision.read_text()
+    assert source.count("op.protect_scoped_table(") == 2
+    assert "name=op.f('ck_seats_status_code')" in source
+    assert "name=op.f('fk_seats_tenant_id_roster_id')" in source
+    assert "name=op.f('uq_rosters_tenant_id_code')" in source
+    assert "op.create_index(op.f('uq_seats_owner'), 'seats', ['tenant_id', 'roster_id'], " in source
+    assert "unique=True, postgresql_where=sa.text('is_owner'))" in source
+    registered = "SELECT count(*) FROM loom_guard_rosters_auto.scoped_table"
+    assert await scalar(database.superuser, registered) == 2
+    constraints = (
+        "SELECT string_agg(conname, ',' ORDER BY conname) FROM pg_constraint "
+        "WHERE conrelid IN ('rosters_auto.rosters'::regclass, 'rosters_auto.seats'::regclass)"
+    )
+    assert await scalar(database.superuser, constraints) == (
+        "ck_seats_status_code,fk_seats_tenant_id_roster_id,pk_rosters,pk_seats,uq_rosters_tenant_id_code"
+    )
+    partial = (
+        "SELECT pg_get_expr(i.indpred, i.indrelid) FROM pg_index i "
+        "WHERE i.indexrelid = 'rosters_auto.uq_seats_owner'::regclass AND i.indisunique"
+    )
+    assert await scalar(database.superuser, partial) == "is_owner"
+
+    config = trees.config(trees.structural, database.migrator)
+    await asyncio.to_thread(check, config, trees.application)
 
 
 _FAILING_REVISION = '''"""A first revision that fails after Alembic created its version table."""

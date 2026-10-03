@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -14,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from loom.core.authz.elevation import ElevationSink
 from loom.core.authz.product import load_authz_product
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
+from loom.core.backend.sqlalchemy import (
+    compile_all,
+    configured_naming_convention,
+    get_metadata,
+    reset_registry,
+    scoped_tables,
+)
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
@@ -50,6 +57,7 @@ class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
     allow_unprotected_dialect: bool = False
     scopes: dict[str, str] = msgspec.field(default_factory=dict)
     guard: str | None = None
+    naming_convention: dict[str, str] | None = None
 
 
 class _DatabaseConfig(msgspec.Struct, kw_only=True):
@@ -89,6 +97,7 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
+        convention = configured_naming_convention(db_cfg.schema.naming_convention)
         session_manager = _build_session_manager(db_cfg, settings)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
@@ -98,7 +107,7 @@ class SQLAlchemyBackend:
             ),
             lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema, settings),
             default_repository_type=RepositorySQLAlchemy,
-            prepare_models=_prepare_models,
+            prepare_models=functools.partial(_prepare_models, convention=convention),
             readiness=lambda: _readiness(session_manager),
         )
 
@@ -136,15 +145,17 @@ def _build_session_manager(
     return manager
 
 
-def _prepare_models(models: Sequence[type[BaseModel]]) -> None:
-    """Compile the discovered models into the shared SQLAlchemy registry."""
+def _prepare_models(
+    models: Sequence[type[BaseModel]], *, convention: Mapping[str, str] | None = None
+) -> None:
+    """Compile the discovered models into the shared registry under the declared convention."""
     if not models:
         _logger.warning(
             "no BaseModel classes discovered: the application starts with an empty "
             "relational schema. Declare your first model, or set "
             "persistence.backend: none if it never persists."
         )
-    reset_registry()
+    reset_registry(naming_convention=convention)
     compile_all(*models)
 
 
@@ -225,7 +236,7 @@ async def _lifespan(
         yield
     finally:
         await session_manager.dispose()
-        reset_registry()
+        reset_registry(naming_convention=None)
 
 
 async def _check_external(

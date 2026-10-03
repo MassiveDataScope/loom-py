@@ -17,6 +17,7 @@ Float = ColumnType("Float")
 Boolean = ColumnType("Boolean")
 Text = ColumnType("Text")
 JSON = ColumnType("JSON")
+Bytes = ColumnType("Bytes")
 
 
 def DateTime(*, tz: bool = True) -> ColumnType:

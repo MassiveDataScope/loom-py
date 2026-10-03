@@ -87,7 +87,12 @@ class _VersionTablesSection(msgspec.Struct, kw_only=True):
 
 
 class SchemaConfig(msgspec.Struct, kw_only=True):
-    """The ``database.schema`` section; every name is absent until the product writes it."""
+    """The ``database.schema`` section; every name is absent until the product writes it.
+
+    ``naming_convention`` is handed to the application's ``MetaData`` as
+    SQLAlchemy's ``naming_convention``, keyed by ``pk``, ``fk``, ``uq``, ``ck``
+    and ``ix``; absent, SQLAlchemy's default applies.
+    """
 
     mode: SchemaMode = "create_all"
     allow_unprotected_dialect: bool = False
@@ -98,6 +103,7 @@ class SchemaConfig(msgspec.Struct, kw_only=True):
     guard: str | None = None
     groups: _GroupsSection | None = None
     version_tables: _VersionTablesSection | None = None
+    naming_convention: dict[str, str] | None = None
 
 
 class DatabaseConfig(msgspec.Struct, kw_only=True):
@@ -138,7 +144,11 @@ def load_application(config_path: str | None = None) -> Application:
     from sqlalchemy import MetaData
 
     from loom.core.backend.scoped_ddl import SCHEMA_KEY
-    from loom.core.backend.sqlalchemy import compile_all, scoped_tables
+    from loom.core.backend.sqlalchemy import (
+        compile_all,
+        configured_naming_convention,
+        scoped_tables,
+    )
 
     path = _resolve_path(config_path)
     context = ConfigContext.from_yaml(path)
@@ -146,7 +156,9 @@ def load_application(config_path: str | None = None) -> Application:
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
     _ensure_on_path(app.code_path, Path(path).resolve().parent)
     models = _discover(app.discovery).models
-    metadata = MetaData()
+    metadata = MetaData(
+        naming_convention=configured_naming_convention(database.schema.naming_convention)
+    )
     if database.schema.name is not None:
         metadata.info[SCHEMA_KEY] = _schema_name(database.schema.name)
     compile_all(*models, metadata=metadata)

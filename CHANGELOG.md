@@ -4,6 +4,39 @@
 
 ### core
 
+- **core:** a model declares named checks and partial unique indexes.
+  `__checks__ = {rule: sql_expression}` compiles one `CHECK` constraint per
+  rule, named by the rule; `__partial_unique__ = {rule: (columns, where)}`
+  compiles a unique index `uq_<table>_<rule>` restricted to the rows matching
+  `where`, and on a row-scoped table its columns must contain the boundary
+  (C5, refused at compile time as the guard refuses it with `LG002`). The
+  expression and the predicate are product code with the trust of a
+  hand-written Alembic revision and must be static literals with no runtime
+  input; loom checks only that each is a non-empty string. The static-SQL lint
+  exempts exactly the two calls that compile them and now also watches
+  `CheckConstraint`. Alembic's autogenerate does not compare checks or index
+  predicates, so adding, changing or removing a check on an existing table,
+  or changing a predicate, is a hand-written revision.
+- **core:** `database.schema.naming_convention` hands a SQLAlchemy
+  `naming_convention` (`pk`, `fk`, `uq`, `ck`, `ix`) to the application
+  metadata of the migration path and to the metadata the REST runtime and the
+  Celery worker compile, so all of them name constraints alike; absent,
+  nothing changes. Use
+  `fk_%(table_name)s_%(column_0_N_name)s`: every composite FK of a scoped
+  table starts with the boundary column. Compilation now refuses two
+  constraints or indexes of one table resolving to the same name, and a
+  check, `__indexes__` or `__partial_unique__` name over Postgres's 63 bytes,
+  instead of failing or truncating at DDL time. `reset_registry` takes the
+  convention as `naming_convention=`; called without it, it leaves the
+  convention as it is, and `None` restores SQLAlchemy's default.
+
+- **core:** two column types. `Bytes` (`loom.core.model.Bytes`, also inferred
+  from a `bytes` annotation, which used to fall back to `JSON`) compiles to
+  `LargeBinary`, `bytea` on Postgres; `Postgres.INET` compiles to Postgres
+  `inet`. The SQLAlchemy repository binds `bytes` as they are instead of
+  base64 text, and a network address the driver returns for `inet` reaches a
+  `str` field as its text form (`10.0.0.1`, `2001:db8::1/64`).
+
 - **core:** a memory cache alias can be bounded. `cache: max_size` (entries) and
   the new `cache: max_bytes` (stored payload bytes) serve every
   `aiocache.SimpleMemoryCache` alias through `loom.core.cache.memory.BoundedMemoryCache`,

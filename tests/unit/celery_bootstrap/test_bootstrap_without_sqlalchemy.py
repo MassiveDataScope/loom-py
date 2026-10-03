@@ -89,5 +89,11 @@ def test_compile_db_layer_names_sqlalchemy_extra_when_missing(
     """Compiling models for a configured database without the extra raises a hinting ImportError."""
     monkeypatch.setitem(sys.modules, "loom.core.backend.sqlalchemy", None)
 
+    session_manager = object()
     with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        boot._compile_db_layer(object(), [boot.BaseModel], ())  # type: ignore[arg-type]
+        boot._compile_db_layer(
+            session_manager,  # type: ignore[arg-type]
+            [boot.BaseModel],
+            (),
+            naming_convention=None,
+        )

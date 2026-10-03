@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
 from loom.core.locator import Application, load_application
@@ -230,4 +231,36 @@ def test_an_invalid_schema_name_is_a_config_error_naming_the_key(tmp_path: Path)
     config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
 
     with pytest.raises(ConfigError, match=r"database\.schema"):
+        load_application(config_path)
+
+
+def test_a_naming_convention_names_the_constraints_of_the_compiled_metadata(
+    tmp_path: Path,
+) -> None:
+    convention = {"pk": "pk_%(table_name)s", "ck": "ck_%(table_name)s_%(constraint_name)s"}
+    schema = {**_scoped_schema(), "naming_convention": convention}
+
+    application = load_application(_write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema)))
+
+    assert application.metadata.naming_convention["pk"] == "pk_%(table_name)s"
+    assert application.metadata.tables["notes"].primary_key.name == "pk_notes"
+
+
+def test_without_a_naming_convention_the_metadata_keeps_sqlalchemy_defaults(
+    tmp_path: Path,
+) -> None:
+    application = load_application(
+        _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **_scoped_schema()))
+    )
+
+    assert application.metadata.naming_convention == MetaData().naming_convention
+    assert application.metadata.tables["notes"].primary_key.name is None
+
+
+def test_a_naming_convention_for_an_unknown_kind_names_the_key(tmp_path: Path) -> None:
+    schema = {**_scoped_schema(), "naming_convention": {"primary": "pk_%(table_name)s"}}
+
+    config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
+
+    with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
         load_application(config_path)

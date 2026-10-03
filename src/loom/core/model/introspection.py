@@ -15,7 +15,26 @@ from loom.core.model.privilege import Privilege
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn
-from loom.core.model.types import JSON, Boolean, DateTime, Float, Integer, Numeric, String
+from loom.core.model.types import (
+    JSON,
+    Boolean,
+    Bytes,
+    DateTime,
+    Float,
+    Integer,
+    Numeric,
+    String,
+)
+from loom.core.schema_names import sql_identifier
+
+
+@dataclass(frozen=True, slots=True)
+class PartialUnique:
+    """A unique index over ``columns`` restricted to the rows matching ``where``."""
+
+    rule: str
+    columns: tuple[str, ...]
+    where: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +345,7 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     int: Integer,
     float: Float,
     bool: Boolean,
+    bytes: Bytes,
     datetime: DateTime(tz=True),
     Decimal: Numeric(),
 }
@@ -385,6 +405,69 @@ def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
 def declared_indexes(cls: type) -> tuple[tuple[str, ...], ...]:
     """Non-unique indexes declared with ``__indexes__``."""
     return _declared_column_tuples(cls, "__indexes__")
+
+
+def declared_checks(cls: type) -> Mapping[str, str]:
+    """Named CHECK constraints declared with ``__checks__`` as ``{rule: sql_expression}``.
+
+    The rule is the constraint name, or its ``%(constraint_name)s`` under a
+    naming convention; the expression is SQL that loom passes through verbatim.
+    """
+    raw = _declared_mapping(cls, "__checks__")
+    result: dict[str, str] = {}
+    for rule, expression in raw.items():
+        name = _rule_identifier(cls, "__checks__", rule)
+        if not isinstance(expression, str) or not expression.strip():
+            raise ValueError(
+                f"{cls.__name__}: __checks__ rule {rule!r} needs a non-empty SQL expression"
+            )
+        result[name] = expression
+    return result
+
+
+def declared_partial_unique(cls: type) -> tuple[PartialUnique, ...]:
+    """Partial unique indexes declared with ``__partial_unique__``.
+
+    Each entry reads ``{rule: (columns, where)}``: ``columns`` is a tuple of
+    column names, ``where`` the SQL predicate passed through verbatim.
+    """
+    raw = _declared_mapping(cls, "__partial_unique__")
+    known = get_column_fields(cls)
+    return tuple(_partial_unique(cls, rule, entry, known) for rule, entry in raw.items())
+
+
+def _partial_unique(
+    cls: type, rule: object, entry: object, known: Mapping[str, ColumnFieldInfo]
+) -> PartialUnique:
+    name = _rule_identifier(cls, "__partial_unique__", rule)
+    prefix = f"{cls.__name__}: __partial_unique__ rule {rule!r}"
+    if not isinstance(entry, tuple) or len(entry) != 2:
+        raise ValueError(f"{prefix} must be a (columns, where) pair")
+    columns, where = entry
+    if not isinstance(columns, tuple) or not columns:
+        raise ValueError(f"{prefix} needs a non-empty tuple of columns")
+    if not isinstance(where, str) or not where.strip():
+        raise ValueError(f"{prefix} needs a non-empty SQL predicate")
+    for column in columns:
+        if column not in known:
+            raise ValueError(f"{prefix} names unknown column {column!r}")
+    return PartialUnique(rule=name, columns=columns, where=where)
+
+
+def _declared_mapping(cls: type, attr: str) -> Mapping[object, object]:
+    raw: object = getattr(cls, attr, None) or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{cls.__name__}: {attr} must be a mapping of rule to declaration")
+    return cast(Mapping[object, object], raw)
+
+
+def _rule_identifier(cls: type, attr: str, rule: object) -> str:
+    if not isinstance(rule, str):
+        raise ValueError(f"{cls.__name__}: {attr} rule {rule!r} must be a string")
+    try:
+        return sql_identifier(rule)
+    except ValueError as exc:
+        raise ValueError(f"{cls.__name__}: {attr} rule {rule!r}: {exc}") from exc
 
 
 def declared_privileges(cls: type) -> Mapping[str, frozenset[Privilege]]:
@@ -472,4 +555,11 @@ def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColu
             columns = ", ".join(key)
             raise ValueError(
                 f"C5: {cls.__name__} key {columns} lacks the boundary column {boundary.column}"
+            )
+    for partial in declared_partial_unique(cls):
+        if boundary.column not in partial.columns:
+            columns = ", ".join(partial.columns)
+            raise ValueError(
+                f"C5: {cls.__name__} partial unique {partial.rule} ({columns}) "
+                f"lacks the boundary column {boundary.column}"
             )

@@ -229,6 +229,7 @@ def application_for(
                 "guard": f"loom_guard_{name}",
                 "groups": {"readers": f"{name}_readers", "writers": f"{name}_writers"},
                 "version_tables": {"structure": "alembic_version", "data": "alembic_version_data"},
+                "naming_convention": getattr(product, "NAMING_CONVENTION", None),
             },
         },
     }
