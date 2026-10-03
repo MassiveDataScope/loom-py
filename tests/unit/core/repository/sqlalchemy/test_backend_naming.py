@@ -73,8 +73,9 @@ def test_runtime_compilation_names_constraints_as_the_migration_metadata_does(
 def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(tmp_path: Path) -> None:
     path = _config_file(tmp_path, {"primary": "pk_%(table_name)s"})
 
+    backend, context = SQLAlchemyBackend(), ConfigContext.from_yaml(str(path))
     with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
-        SQLAlchemyBackend().build(ConfigContext.from_yaml(str(path)), rosters.MODELS)
+        backend.build(context, rosters.MODELS)
 
 
 def test_resetting_the_registry_without_a_convention_keeps_the_one_set() -> None:
