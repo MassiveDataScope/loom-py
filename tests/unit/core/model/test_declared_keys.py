@@ -139,6 +139,38 @@ def test_a_check_without_an_sql_expression_is_rejected(expression: object) -> No
         declared_checks(Blank)
 
 
+@pytest.mark.parametrize("declared", [[("positive", "id > 0")], "id > 0", ("id > 0",)])
+def test_checks_that_are_not_a_mapping_are_rejected(declared: object) -> None:
+    class Listed(BaseModel):
+        __tablename__ = "listed"
+        __checks__ = declared
+        id: int = ColumnField(Integer, primary_key=True)
+
+    with pytest.raises(ValueError, match=r"Listed: __checks__ must be a mapping"):
+        declared_checks(Listed)
+
+
+def test_a_check_rule_that_is_not_a_string_is_rejected() -> None:
+    class Numbered(BaseModel):
+        __tablename__ = "numbered"
+        __checks__ = {1: "id > 0"}
+        id: int = ColumnField(Integer, primary_key=True)
+
+    with pytest.raises(ValueError, match=r"Numbered: __checks__ rule 1 must be a string"):
+        declared_checks(Numbered)
+
+
+def test_partial_unique_that_is_not_a_mapping_is_rejected() -> None:
+    class Listed(BaseModel):
+        __tablename__ = "listed"
+        __partial_unique__ = [("owner", (("id",), "is_owner"))]
+        id: int = ColumnField(Integer, primary_key=True)
+        is_owner: bool = ColumnField(Boolean)
+
+    with pytest.raises(ValueError, match=r"Listed: __partial_unique__ must be a mapping"):
+        declared_partial_unique(Listed)
+
+
 def test_partial_unique_indexes_are_read_from_the_model() -> None:
     assert declared_partial_unique(Seat) == (
         PartialUnique(rule="owner", columns=("holder",), where="is_owner"),

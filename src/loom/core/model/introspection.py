@@ -413,15 +413,15 @@ def declared_checks(cls: type) -> Mapping[str, str]:
     The rule is the constraint name, or its ``%(constraint_name)s`` under a
     naming convention; the expression is SQL that loom passes through verbatim.
     """
-    raw = getattr(cls, "__checks__", None) or {}
+    raw = _declared_mapping(cls, "__checks__")
     result: dict[str, str] = {}
     for rule, expression in raw.items():
-        _rule_identifier(cls, "__checks__", rule)
+        name = _rule_identifier(cls, "__checks__", rule)
         if not isinstance(expression, str) or not expression.strip():
             raise ValueError(
                 f"{cls.__name__}: __checks__ rule {rule!r} needs a non-empty SQL expression"
             )
-        result[rule] = expression
+        result[name] = expression
     return result
 
 
@@ -431,15 +431,15 @@ def declared_partial_unique(cls: type) -> tuple[PartialUnique, ...]:
     Each entry reads ``{rule: (columns, where)}``: ``columns`` is a tuple of
     column names, ``where`` the SQL predicate passed through verbatim.
     """
-    raw = getattr(cls, "__partial_unique__", None) or {}
+    raw = _declared_mapping(cls, "__partial_unique__")
     known = get_column_fields(cls)
     return tuple(_partial_unique(cls, rule, entry, known) for rule, entry in raw.items())
 
 
 def _partial_unique(
-    cls: type, rule: str, entry: object, known: Mapping[str, ColumnFieldInfo]
+    cls: type, rule: object, entry: object, known: Mapping[str, ColumnFieldInfo]
 ) -> PartialUnique:
-    _rule_identifier(cls, "__partial_unique__", rule)
+    name = _rule_identifier(cls, "__partial_unique__", rule)
     prefix = f"{cls.__name__}: __partial_unique__ rule {rule!r}"
     if not isinstance(entry, tuple) or len(entry) != 2:
         raise ValueError(f"{prefix} must be a (columns, where) pair")
@@ -451,12 +451,21 @@ def _partial_unique(
     for column in columns:
         if column not in known:
             raise ValueError(f"{prefix} names unknown column {column!r}")
-    return PartialUnique(rule=rule, columns=columns, where=where)
+    return PartialUnique(rule=name, columns=columns, where=where)
 
 
-def _rule_identifier(cls: type, attr: str, rule: object) -> None:
+def _declared_mapping(cls: type, attr: str) -> Mapping[object, object]:
+    raw: object = getattr(cls, attr, None) or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{cls.__name__}: {attr} must be a mapping of rule to declaration")
+    return cast(Mapping[object, object], raw)
+
+
+def _rule_identifier(cls: type, attr: str, rule: object) -> str:
+    if not isinstance(rule, str):
+        raise ValueError(f"{cls.__name__}: {attr} rule {rule!r} must be a string")
     try:
-        sql_identifier(str(rule))
+        return sql_identifier(rule)
     except ValueError as exc:
         raise ValueError(f"{cls.__name__}: {attr} rule {rule!r}: {exc}") from exc
 

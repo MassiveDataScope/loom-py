@@ -321,8 +321,9 @@ class Seat(BaseModel, RowScoped):
 A rule is a SQL identifier: lowercase letters, digits and `_`, not a reserved word. The
 expression and the predicate are SQL that loom passes through as written; they must be
 static literals in the model, never built from a request or a setting (see
-[Why the guard is static SQL](#why-the-guard-is-static-sql)). An unknown column, an
-empty expression or predicate, or a rule that is not an identifier raises `ValueError`
+[Why the guard is static SQL](#why-the-guard-is-static-sql)). An attribute that is not a
+mapping raises `ValueError` naming the model; an unknown column, an empty expression or
+predicate, or a rule that is not a string or not an identifier raises `ValueError`
 naming the model and the rule. The guard holds a partial unique index to the same rule
 as any other: one without the boundary column is refused with `LG002`.
 
