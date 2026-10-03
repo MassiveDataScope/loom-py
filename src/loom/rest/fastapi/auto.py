@@ -1564,6 +1564,12 @@ def create_app(
             use cases are verified.  Use them to bind ports no repository
             provides (a clock, an identity verifier, a bridge to another
             bounded context).  Same semantics as the Celery ``create_app``.
+            Registration is last-write-wins and the framework registers its
+            own bindings after these modules (repositories, cache,
+            ``JobService``, ``SqlQueryService``, ``CallerBoundSql``,
+            ``ObservabilityRuntime`` and, on PostgreSQL with an external
+            schema, ``ElevationSink``), so
+            a module binding one of those keys is silently replaced.
 
     Returns:
         Configured :class:`fastapi.FastAPI` application, ready to serve.

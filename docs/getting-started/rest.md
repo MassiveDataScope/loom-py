@@ -520,6 +520,13 @@ use cases are verified — the same semantics as the Celery `create_app`. A use
 case injecting `Clock` without the module still aborts startup with a
 `ResolutionError` naming the use case and the missing binding.
 
+Modules bind ports, they do not override the framework. `register` is
+last-write-wins, and `create_app` registers its own bindings after your modules:
+the repositories, the cache module, `JobService`, `SqlQueryService`,
+`CallerBoundSql`, `ObservabilityRuntime` and, on PostgreSQL with
+`database.schema.mode: external`, `ElevationSink`. A module that binds one of those keys is silently
+replaced.
+
 ---
 
 ## Rules + Computes (advanced)
