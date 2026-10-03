@@ -493,7 +493,8 @@ def declared_partition(cls: type) -> RangePartition | None:
         raise ValueError(f"{prefix} column {column!r} must be a DateTime column")
     if not info.field.primary_key:
         raise ValueError(f"{prefix} column {column!r} must be part of the primary key")
-    for key in _unique_keys(cls, fields):
+    partials = [partial.columns for partial in declared_partial_unique(cls)]
+    for key in [*_unique_keys(cls, fields), *partials]:
         if column not in key:
             raise ValueError(
                 f"{prefix} unique key ({', '.join(key)}) lacks the partition column {column!r}"
@@ -502,9 +503,9 @@ def declared_partition(cls: type) -> RangePartition | None:
 
 
 def _unique_keys(cls: type, fields: Mapping[str, ColumnFieldInfo]) -> list[tuple[str, ...]]:
+    """The full unique keys besides the primary key: ``__unique__`` and ``unique=True``."""
     keys = list(declared_unique(cls))
     keys += [(name,) for name, info in fields.items() if info.field.unique]
-    keys += [partial.columns for partial in declared_partial_unique(cls)]
     return keys
 
 
@@ -602,9 +603,7 @@ def _check_c8(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColu
 
 def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
     primary_key = tuple(name for name, info in fields.items() if info.field.primary_key)
-    keys = [primary_key, *declared_unique(cls)]
-    keys += [(name,) for name, info in fields.items() if info.field.unique]
-    for key in keys:
+    for key in [primary_key, *_unique_keys(cls, fields)]:
         if boundary.column not in key:
             columns = ", ".join(key)
             raise ValueError(
