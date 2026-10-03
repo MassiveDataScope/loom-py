@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -159,8 +160,16 @@ async def _guarded(
     except ValueError as exc:
         raise ConfigError(f"partitions: {exc}") from exc
     if isinstance(target, AsyncConnection):
-        yield await _prepared(target, bootstrap, lock_timeout), bootstrap.schema
-        await target.execute(_APP_FIRST, _path(bootstrap))
+        await _prepared(target, bootstrap, lock_timeout)
+        aborted = False
+        try:
+            yield target, bootstrap.schema
+        except DBAPIError:
+            aborted = True  # the rollback of the aborted transaction undoes the local path
+            raise
+        finally:
+            if not aborted:
+                await target.execute(_APP_FIRST, _path(bootstrap))
         return
     engine = create_async_engine(target, poolclass=NullPool)
     try:

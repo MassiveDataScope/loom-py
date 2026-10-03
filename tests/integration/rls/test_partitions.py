@@ -17,6 +17,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.backend import scoped_ddl
 from loom.core.config import ConfigError
 from loom.core.locator import Application
 from loom.core.repository.sqlalchemy.rls import (
@@ -26,6 +27,7 @@ from loom.core.repository.sqlalchemy.rls import (
     guard_manifest,
     verify,
 )
+from loom.core.schema_names import sql_identifier
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     BootstrapFactory,
@@ -206,6 +208,31 @@ async def test_partitions_created_in_a_rolled_back_transaction_do_not_exist(
         f"SELECT count(*) FROM pg_inherits WHERE inhparent = '{schema}.note_events'::regclass"
     )
     assert await scalar(database.superuser, partitions) == 0
+
+
+async def test_a_python_error_mid_call_restores_the_path_of_the_callers_transaction(
+    scoped_database: BootstrapFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schema, database, application = await _installed(scoped_database, tmp_path)
+
+    def failing(value: str) -> str:
+        if value == MONTHS[1]:
+            raise ValueError(f"{value!r} refused by the test")
+        return sql_identifier(value)
+
+    monkeypatch.setattr(scoped_ddl, "sql_identifier", failing)
+    engine = create_async_engine(database.migrator, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            with pytest.raises(ValueError, match="refused by the test"):
+                await ensure_range_partitions(connection, application, notes.NoteEvent, JAN, APR)
+            path = "SELECT current_setting('search_path')"
+            assert (
+                await connection.execute(text(path))
+            ).scalar() == f"{schema}, loom_guard_{schema}"
+            await connection.rollback()
+    finally:
+        await engine.dispose()
 
 
 async def test_retention_detaches_or_drops_partitions_through_the_guard(

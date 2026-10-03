@@ -16,6 +16,7 @@ from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations import MigrateOperation, Operations
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from loom.core.backend.scoped_ddl import (
     APP_FIRST,
@@ -279,8 +280,15 @@ def run_guard_operation(operations: GuardOperations, op: MigrateOperation) -> No
     if isinstance(op, _PARTITION_OPS):
         require_guard_revision_sync(bind, str(guard), minimum=PARTITION_GUARD_REVISION)
     bind.execute(_GUARD_FIRST, path)
-    _call_guard(bind, str(schema), op)
-    bind.execute(_APP_FIRST, path)
+    aborted = False
+    try:
+        _call_guard(bind, str(schema), op)
+    except DBAPIError:
+        aborted = True  # the rollback of the aborted transaction undoes the local path
+        raise
+    finally:
+        if not aborted:
+            bind.execute(_APP_FIRST, path)
 
 
 def _call_guard(bind: _Bind, schema: str, op: MigrateOperation) -> None:
