@@ -335,11 +335,7 @@ def _partial_unique_index(table_name: str, partial: PartialUnique) -> Index:
 
 
 def _check_constraint(rule: str, expression: str) -> CheckConstraint:
-    """The CHECK constraint of one ``__checks__`` rule.
-
-    ``expression`` is a DDL fragment the product declared on its model, a
-    static class attribute; it never carries a runtime value.
-    """
+    """The CHECK constraint of one ``__checks__`` rule; its expression is trusted DDL."""
     return CheckConstraint(expression, name=rule, info={_RULE_KEY: ("__checks__", rule)})
 
 
