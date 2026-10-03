@@ -12,7 +12,7 @@ parameters; the guard quotes them.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final
 
@@ -24,11 +24,12 @@ from sqlalchemy.pool import NullPool
 from loom.core.backend.scoped_ddl import (
     APP_FIRST,
     ASSERT_SCHEMA,
+    CREATE_RANGE_PARTITION,
+    DETACH_PARTITION,
     GUARD_FIRST,
     LANDING,
     LOCK_TIMEOUT,
     SCHEMA_LOCK,
-    PartitionCall,
     create_partition_calls,
     detach_partition_calls,
     validate_timeout,
@@ -44,6 +45,8 @@ from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
 if TYPE_CHECKING:
     from loom.core.locator import Application
 
+_CREATE_RANGE_PARTITION: Final = text(CREATE_RANGE_PARTITION)
+_DETACH_PARTITION: Final = text(DETACH_PARTITION)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _APP_FIRST: Final = text(APP_FIRST)
 _ASSERT_SCHEMA: Final = text(ASSERT_SCHEMA)
@@ -81,7 +84,14 @@ async def ensure_range_partitions(
     scoped = _partitioned(application, model)
     partitions = range_partitions(scoped.name, start, end, interval)
     async with _guarded(target, application, lock_timeout) as (connection, schema):
-        return await _call(connection, create_partition_calls(schema, scoped.name, partitions))
+        calls = create_partition_calls(schema, scoped.name, partitions)
+        return tuple(
+            [
+                name
+                for name, parameters in calls
+                if (await connection.execute(_CREATE_RANGE_PARTITION, parameters)).scalar()
+            ]
+        )
 
 
 async def detach_range_partitions(
@@ -112,20 +122,14 @@ async def detach_range_partitions(
     scoped = _partitioned(application, model)
     names = [p.name for p in range_partitions(scoped.name, start, end, interval)]
     async with _guarded(target, application, lock_timeout) as (connection, schema):
-        return await _call(
-            connection, detach_partition_calls(schema, scoped.name, names, drop=drop)
+        calls = detach_partition_calls(schema, scoped.name, names, drop=drop)
+        return tuple(
+            [
+                name
+                for name, parameters in calls
+                if (await connection.execute(_DETACH_PARTITION, parameters)).scalar()
+            ]
         )
-
-
-async def _call(connection: AsyncConnection, calls: Iterable[PartitionCall]) -> tuple[str, ...]:
-    """Run each guard call; the names of the partitions the guard acted on."""
-    return tuple(
-        [
-            name
-            for name, statement, parameters in calls
-            if (await connection.execute(statement, parameters)).scalar()
-        ]
-    )
 
 
 def _partitioned(application: Application, model: type | str) -> ScopedTable:

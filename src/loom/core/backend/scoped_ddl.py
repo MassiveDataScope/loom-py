@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, Final, get_args
 
-from sqlalchemy import Connection, Table, TextClause, event, text
+from sqlalchemy import Connection, Table, event, text
 
 from loom.core.config import ConfigError
 from loom.core.model.field import Reach
@@ -78,14 +78,12 @@ MISSING_EVENT_TRIGGERS: Final = (
 
 Parameters = dict[str, Any]
 GuardCall = Callable[[Connection, Parameters], None]
-PartitionCall = tuple[str, TextClause, Parameters]
+PartitionCall = tuple[str, Parameters]
 _OPEN_HATCH: Final = text(OPEN_HATCH)
 _PROTECT: Final = text(PROTECT)
 _GRANT_TABLE: Final = text(GRANT_TABLE)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _APP_FIRST: Final = text(APP_FIRST)
-_CREATE_RANGE_PARTITION: Final = text(CREATE_RANGE_PARTITION)
-_DETACH_PARTITION: Final = text(DETACH_PARTITION)
 
 
 def scope_documents(scoped: ScopedTable) -> list[dict[str, Any]]:
@@ -147,24 +145,23 @@ def detach_partition_parameters(
 def create_partition_calls(
     schema: str, table: str, partitions: Iterable[PartitionRange]
 ) -> Iterator[PartitionCall]:
-    """The guard call creating each partition of ``schema.table``, with its name, in order.
+    """Each partition's name and the parameters of :data:`CREATE_RANGE_PARTITION`, in order.
 
     The guard answers each call with whether it created the partition.
     """
     for partition in partitions:
-        parameters = create_partition_parameters(schema, table, partition)
-        yield partition.name, _CREATE_RANGE_PARTITION, parameters
+        yield partition.name, create_partition_parameters(schema, table, partition)
 
 
 def detach_partition_calls(
     schema: str, table: str, names: Iterable[str], *, drop: bool
 ) -> Iterator[PartitionCall]:
-    """The guard call detaching each named partition of ``schema.table``, in order.
+    """Each name and the parameters of :data:`DETACH_PARTITION`, in order.
 
     The guard answers each call with whether the partition existed.
     """
     for name in names:
-        yield name, _DETACH_PARTITION, detach_partition_parameters(schema, table, name, drop=drop)
+        yield name, detach_partition_parameters(schema, table, name, drop=drop)
 
 
 def table_parameters(schema: str, table: str) -> Parameters:

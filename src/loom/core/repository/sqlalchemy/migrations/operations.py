@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from typing import Any, Final, NoReturn, Protocol
 
 from alembic.autogenerate import renderers
@@ -20,13 +20,14 @@ from sqlalchemy.exc import DBAPIError
 
 from loom.core.backend.scoped_ddl import (
     APP_FIRST,
+    CREATE_RANGE_PARTITION,
+    DETACH_PARTITION,
     GRANT_TABLE,
     GUARD_FIRST,
     OPEN_HATCH,
     PARTITIONS,
     PROTECT,
     UNPROTECT,
-    PartitionCall,
     create_partition_calls,
     detach_partition_calls,
     table_parameters,
@@ -43,6 +44,8 @@ _UNPROTECT: Final = text(UNPROTECT)
 _GRANT_TABLE: Final = text(GRANT_TABLE)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _APP_FIRST: Final = text(APP_FIRST)
+_CREATE_RANGE_PARTITION: Final = text(CREATE_RANGE_PARTITION)
+_DETACH_PARTITION: Final = text(DETACH_PARTITION)
 _PARTITIONS: Final = text(PARTITIONS)
 GUARD_OPTION: Final = "loom_guard"
 
@@ -312,19 +315,24 @@ def _call_guard(bind: _Bind, schema: str, op: MigrateOperation) -> None:
 
 
 def _call_partitions(bind: _Bind, schema: str, op: _PartitionOp) -> None:
-    for _name, statement, parameters in _partition_calls(bind, schema, op):
-        bind.execute(statement, parameters)
-
-
-def _partition_calls(bind: _Bind, schema: str, op: _PartitionOp) -> Iterator[PartitionCall]:
     if isinstance(op, EnsureRangePartitionsOp):
         partitions = range_partitions(op.table, op.start, op.end, op.interval)
-        return create_partition_calls(schema, op.table, partitions)
+        for _name, parameters in create_partition_calls(schema, op.table, partitions):
+            bind.execute(_CREATE_RANGE_PARTITION, parameters)
+        return
+    names, drop = _detached(bind, schema, op)
+    for _name, parameters in detach_partition_calls(schema, op.table, names, drop=drop):
+        bind.execute(_DETACH_PARTITION, parameters)
+
+
+def _detached(
+    bind: _Bind, schema: str, op: DetachRangePartitionsOp | DropPartitionsOp
+) -> tuple[list[str], bool]:
     if isinstance(op, DetachRangePartitionsOp):
         partitions = range_partitions(op.table, op.start, op.end, op.interval)
-        return detach_partition_calls(schema, op.table, [p.name for p in partitions], drop=op.drop)
+        return [p.name for p in partitions], op.drop
     rows = bind.execute(_PARTITIONS, table_parameters(schema, op.table))
-    return detach_partition_calls(schema, op.table, [str(row[0]) for row in rows], drop=True)
+    return [str(row[0]) for row in rows], True
 
 
 _PARTITION_OPS: Final = (EnsureRangePartitionsOp, DetachRangePartitionsOp, DropPartitionsOp)
