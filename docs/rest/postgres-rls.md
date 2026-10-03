@@ -319,8 +319,8 @@ class Seat(BaseModel, RowScoped):
 ```
 
 A rule is a SQL identifier: lowercase letters, digits and `_`, not a reserved word. The
-expression and the predicate are SQL that loom passes through as written; they are part
-of the model, never built from a request or a setting (see
+expression and the predicate are SQL that loom passes through as written; they must be
+static literals in the model, never built from a request or a setting (see
 [Why the guard is static SQL](#why-the-guard-is-static-sql)). An unknown column, an
 empty expression or predicate, or a rule that is not an identifier raises `ValueError`
 naming the model and the rule. The guard holds a partial unique index to the same rule
@@ -332,10 +332,12 @@ check, `__indexes__` or `__partial_unique__` name longer than the 63 bytes Postg
 raises `ValueError` at compile time instead of being truncated, and so do two
 constraints or indexes of one table that resolve to the same name.
 
-Alembic's autogenerate compares neither `CHECK` constraints nor the `WHERE` predicate of
-an index. A new check or partial unique index is emitted with its table or as a new
-index; changing an existing expression or predicate is written by hand in a revision,
-and `check` does not report it as drift.
+Alembic's autogenerate does not compare `CHECK` constraints, and compares the columns of
+an index but not its `WHERE` predicate. A check or partial unique index declared with a
+new table is emitted inside its `create_table`, and a new partial unique index on an
+existing table as a `create_index`. Adding, changing or removing a check on an existing
+table, and changing a predicate, are written by hand in a revision; `check` does not
+report them as drift.
 
 {class}`~loom.core.model.Privilege` is a closed set: `SELECT`, `INSERT`, `UPDATE`,
 `DELETE`. `TRUNCATE`, `REFERENCES` and `TRIGGER` cannot be expressed: `TRUNCATE` ignores
@@ -877,9 +879,12 @@ guard first, and resolves the table in the application schema the runner configu
 it runs only through `run_migrations`; anywhere else it raises `ConfigError` (`guard
 operations run only through loom's run_migrations`).
 
-The hook also emits the composite FKs, `__unique__`, `__indexes__`, `__checks__` and
-`__partial_unique__`, and refuses to write a revision that would leave a scoped table
-unprotected. A structural revision that writes rows of a scoped table fails with
+The composite FKs, `__unique__`, `__indexes__`, `__checks__` and `__partial_unique__` are
+not the hook's: Alembic's autogenerate emits them from the compiled metadata, inside
+`create_table` or as separate operations such as `create_index`, and the hook leaves
+them as they are. What the hook adds is the guard sequence around each create, drop or
+scope-column change of a scoped table, and the grants after the creation of an unscoped
+table that declares `__privileges__`. A structural revision that writes rows of a scoped table fails with
 `LG001`: move the change to the data tree.
 
 Autogenerate never proposes dropping a table the models do not declare: it may be one
@@ -1090,10 +1095,11 @@ bound parameters and live in a configuration table inside the guard. loom's Pyth
 builds no SQL from runtime values either; its statements are literals with bound
 parameters, and a lint in loom's test suite enforces it. The DDL fragments a product
 declares on its models, the `__checks__` expressions and the `__partial_unique__`
-predicates, are product code: static class attributes with the same trust as a
-hand-written Alembic revision, compiled into the table's DDL and never interpolating
-runtime input. The lint exempts exactly the two calls that compile them and fails on
-any other.
+predicates, are product code with the same trust as a hand-written Alembic revision,
+compiled into the table's DDL as written. Each one must be a static literal that
+carries no runtime input; loom checks only that it is a non-empty string, so keeping
+it static is the product's responsibility. The lint exempts exactly the two calls that
+compile them and fails on any other.
 
 - **What runs is what was reviewed and released.** Each file is pinned by its SHA-256 in
   {mod}`~loom.core.repository.sqlalchemy.rls.guard_manifest`. The bootstrap refuses a

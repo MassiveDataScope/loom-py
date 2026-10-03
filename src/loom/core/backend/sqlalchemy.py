@@ -274,9 +274,10 @@ def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
     renames it, and :func:`_check_declared_name_lengths` refuses one over
     Postgres's limit.
 
-    Alembic's autogenerate compares neither CHECK constraints nor the ``WHERE``
-    predicate of an index: a change to either one is written by hand in a
-    revision, and ``check`` does not report it as drift.
+    Alembic's autogenerate does not compare CHECK constraints and does not
+    compare the ``WHERE`` predicate of an index: adding, changing or removing a
+    check on an existing table, and changing a predicate, are written by hand in
+    a revision, and ``check`` does not report them as drift.
     """
     constraints: list[Any] = [UniqueConstraint(*columns) for columns in declared_unique(struct_cls)]
     constraints += [
@@ -322,8 +323,9 @@ def _check_distinct_names(struct_cls: type, table: Table) -> None:
 def _partial_unique_index(table_name: str, partial: PartialUnique) -> Index:
     """The unique index of one ``__partial_unique__`` rule.
 
-    ``partial.where`` is a DDL fragment the product declared on its model, a
-    static class attribute; it never carries a runtime value.
+    ``partial.where`` is a DDL fragment the product declared on its model. It
+    must be a static literal with no runtime input; loom checks only that it is
+    a non-empty string.
     """
     return Index(
         conv(f"uq_{table_name}_{partial.rule}"),
@@ -335,7 +337,12 @@ def _partial_unique_index(table_name: str, partial: PartialUnique) -> Index:
 
 
 def _check_constraint(rule: str, expression: str) -> CheckConstraint:
-    """The CHECK constraint of one ``__checks__`` rule; its expression is trusted DDL."""
+    """The CHECK constraint of one ``__checks__`` rule.
+
+    ``expression`` is a DDL fragment the product declared on its model. It must
+    be a static literal with no runtime input; loom checks only that it is a
+    non-empty string.
+    """
     return CheckConstraint(expression, name=rule, info={_RULE_KEY: ("__checks__", rule)})
 
 
