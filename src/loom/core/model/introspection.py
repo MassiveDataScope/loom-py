@@ -485,6 +485,14 @@ def declared_partition(cls: type) -> RangePartition | None:
             f"{prefix} strategy {strategy!r} is not supported; only RANGE partitioning is"
         )
     fields = get_column_fields(cls)
+    _check_partition_column(cls, prefix, column, fields)
+    _check_unique_keys_hold_partition_column(cls, prefix, column, fields)
+    return RangePartition(column=column)
+
+
+def _check_partition_column(
+    cls: type, prefix: str, column: str, fields: Mapping[str, ColumnFieldInfo]
+) -> None:
     info = fields.get(column)
     if info is None:
         raise ValueError(f"{prefix} names unknown column {column!r}")
@@ -493,13 +501,17 @@ def declared_partition(cls: type) -> RangePartition | None:
         raise ValueError(f"{prefix} column {column!r} must be a DateTime column")
     if not info.field.primary_key:
         raise ValueError(f"{prefix} column {column!r} must be part of the primary key")
+
+
+def _check_unique_keys_hold_partition_column(
+    cls: type, prefix: str, column: str, fields: Mapping[str, ColumnFieldInfo]
+) -> None:
     partials = [partial.columns for partial in declared_partial_unique(cls)]
     for key in [*_unique_keys(cls, fields), *partials]:
         if column not in key:
             raise ValueError(
                 f"{prefix} unique key ({', '.join(key)}) lacks the partition column {column!r}"
             )
-    return RangePartition(column=column)
 
 
 def _unique_keys(cls: type, fields: Mapping[str, ColumnFieldInfo]) -> list[tuple[str, ...]]:
