@@ -41,8 +41,9 @@ PINNED_LOADERS = frozenset({"revision.sql()", "preflight_sql()"})
 PLACEHOLDER = re.compile(r"\{[A-Za-z_]\w*\}")
 # The only SQL loom takes from outside its own source: the DDL fragments a product
 # declares on its models (``__checks__`` expressions, ``__partial_unique__``
-# predicates). They are static class attributes, product code with the trust of a
-# hand-written Alembic revision, and never carry a runtime value. Each entry names
+# predicates). They are product code with the trust of a hand-written Alembic
+# revision and must be static literals with no runtime input; loom checks only that
+# each is a non-empty string, so that is the product's responsibility. Each entry names
 # the module, the one function that consumes the fragment and the exact call, so the
 # same call anywhere else, or any other call in these functions, is still a violation.
 DECLARED_DDL_FRAGMENTS = frozenset(

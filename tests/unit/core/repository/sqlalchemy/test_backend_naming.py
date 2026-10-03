@@ -18,9 +18,9 @@ from tests.integration.agnosticism import rosters
 
 @pytest.fixture(autouse=True)
 def _shared_registry() -> Iterator[None]:
-    reset_registry()
+    reset_registry(naming_convention=None)
     yield
-    reset_registry()
+    reset_registry(naming_convention=None)
 
 
 def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
@@ -77,10 +77,38 @@ def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(tmp_path
         SQLAlchemyBackend().build(ConfigContext.from_yaml(str(path)), rosters.MODELS)
 
 
-def test_resetting_the_registry_restores_the_default_convention() -> None:
+def test_resetting_the_registry_without_a_convention_keeps_the_one_set() -> None:
     reset_registry(naming_convention={"pk": "pk_%(table_name)s"})
-    assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
 
     reset_registry()
+
+    assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
+
+
+def test_resetting_the_registry_with_none_restores_the_default_convention() -> None:
+    reset_registry(naming_convention={"pk": "pk_%(table_name)s"})
+
+    reset_registry(naming_convention=None)
+
+    assert get_metadata().naming_convention == MetaData().naming_convention
+
+
+async def test_the_lifespan_teardown_restores_the_default_convention() -> None:
+    ctx = ConfigContext.from_dict(
+        {
+            "app": {"name": "demo"},
+            "database": {
+                "url": "sqlite+aiosqlite:///",
+                "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+            },
+        }
+    )
+    wiring = SQLAlchemyBackend().build(ctx, ())
+    assert wiring.prepare_models is not None
+    assert wiring.lifespan_init is not None
+    wiring.prepare_models(())
+
+    async with wiring.lifespan_init():
+        assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
 
     assert get_metadata().naming_convention == MetaData().naming_convention

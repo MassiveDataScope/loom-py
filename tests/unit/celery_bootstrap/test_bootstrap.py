@@ -316,6 +316,30 @@ class TestBootstrapWorkerTaskRegistration:
             in result.celery_app.tasks
         )
 
+    def test_compiles_models_under_the_configured_naming_convention(self, tmp_path: Any) -> None:
+        """The worker names constraints as the REST runtime and the migrations do."""
+        from loom.core.backend.sqlalchemy import get_metadata, reset_registry
+
+        module_name = "tests.unit.celery_bootstrap._manifest_naming_for_test"
+        module = types.ModuleType(module_name)
+        cast(Any, module).MODELS = [_DiscoveredModel]
+        cast(Any, module).JOBS = [_SyncJob]
+        sys.modules[module_name] = module
+        cfg = {
+            "app": {"discovery": {"mode": "manifest", "manifest": {"module": module_name}}},
+            "database": {
+                "url": "sqlite+aiosqlite:///test.db",
+                "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+            },
+        }
+        try:
+            self._run(tmp_path, extra_cfg=cfg, jobs=None)
+            table = get_metadata().tables[_DiscoveredModel.__tablename__]
+            assert table.primary_key.name == f"pk_{_DiscoveredModel.__tablename__}"
+        finally:
+            sys.modules.pop(module_name, None)
+            reset_registry(naming_convention=None)
+
     def test_discovers_callbacks_from_modules_when_jobs_not_passed(self, tmp_path: Any) -> None:
         cfg = {
             "app": {

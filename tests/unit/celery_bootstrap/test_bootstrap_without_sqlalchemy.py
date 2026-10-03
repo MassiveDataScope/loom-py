@@ -90,4 +90,9 @@ def test_compile_db_layer_names_sqlalchemy_extra_when_missing(
     monkeypatch.setitem(sys.modules, "loom.core.backend.sqlalchemy", None)
 
     with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        boot._compile_db_layer(object(), [boot.BaseModel], ())  # type: ignore[arg-type]
+        boot._compile_db_layer(
+            object(),  # type: ignore[arg-type]
+            [boot.BaseModel],
+            (),
+            naming_convention=None,
+        )

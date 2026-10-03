@@ -163,9 +163,9 @@ def schema_identifier(name: str) -> str:
 def naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
     """Validate a SQLAlchemy ``naming_convention`` keyed by constraint kind.
 
-    ``None`` keeps SQLAlchemy's default. The runtime and the migration paths
-    both read ``database.schema.naming_convention`` through this function, so
-    they compile the same names.
+    ``None`` keeps SQLAlchemy's default. The REST runtime, the Celery worker and
+    the migration path all read ``database.schema.naming_convention`` through
+    this function, so they compile the same names.
 
     Raises:
         ValueError: Naming the first key that is not ``pk``, ``fk``, ``uq``, ``ck`` or ``ix``.

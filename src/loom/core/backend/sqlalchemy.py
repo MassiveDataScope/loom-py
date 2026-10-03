@@ -3,7 +3,8 @@ from __future__ import annotations
 import functools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from enum import Enum
+from typing import Any, Final
 
 import msgspec
 from sqlalchemy import (
@@ -40,6 +41,7 @@ from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 
 from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
+from loom.core.config import ConfigError
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnType, Field
 from loom.core.model.introspection import (
@@ -64,7 +66,7 @@ from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
-from loom.core.schema_names import MAX_IDENTIFIER_LENGTH
+from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 
 _SA_TYPE_MAP: dict[str, type] = {
     "String": String,
@@ -120,6 +122,15 @@ class _Compilation:
 
 _COMPILATION_KEY = "loom.compilation"
 _RULE_KEY = "loom.rule"
+
+
+class _Keep(Enum):
+    """The default of :func:`reset_registry`: leave the naming convention as it is."""
+
+    CONVENTION = "keep"
+
+
+_KEEP_CONVENTION: Final = _Keep.CONVENTION
 
 
 @functools.cache
@@ -270,7 +281,7 @@ def _compile_model(
     return sa_cls
 
 
-def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
+def _declared_constraints(struct_cls: type, table_name: str) -> list[Constraint | Index]:
     """Keys, indexes and checks declared on the model, in declaration order.
 
     ``__unique__`` constraints are unnamed, so the metadata's naming convention
@@ -280,11 +291,14 @@ def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
     renames it, and :func:`_check_declared_name_lengths` refuses one over
     Postgres's limit.
 
-    Alembic's autogenerate compares neither CHECK constraints nor the ``WHERE``
-    predicate of an index: a change to either one is written by hand in a
-    revision, and ``check`` does not report it as drift.
+    Alembic's autogenerate does not compare CHECK constraints and does not
+    compare the ``WHERE`` predicate of an index: adding, changing or removing a
+    check on an existing table, and changing a predicate, are written by hand in
+    a revision, and ``check`` does not report them as drift.
     """
-    constraints: list[Any] = [UniqueConstraint(*columns) for columns in declared_unique(struct_cls)]
+    constraints: list[Constraint | Index] = [
+        UniqueConstraint(*columns) for columns in declared_unique(struct_cls)
+    ]
     constraints += [
         Index(
             conv(f"ix_{table_name}_{'_'.join(columns)}"),
@@ -328,8 +342,9 @@ def _check_distinct_names(struct_cls: type, table: Table) -> None:
 def _partial_unique_index(table_name: str, partial: PartialUnique) -> Index:
     """The unique index of one ``__partial_unique__`` rule.
 
-    ``partial.where`` is a DDL fragment the product declared on its model, a
-    static class attribute; it never carries a runtime value.
+    ``partial.where`` is a DDL fragment the product declared on its model. It
+    must be a static literal with no runtime input; loom checks only that it is
+    a non-empty string.
     """
     return Index(
         conv(f"uq_{table_name}_{partial.rule}"),
@@ -343,13 +358,14 @@ def _partial_unique_index(table_name: str, partial: PartialUnique) -> Index:
 def _check_constraint(rule: str, expression: str) -> CheckConstraint:
     """The CHECK constraint of one ``__checks__`` rule.
 
-    ``expression`` is a DDL fragment the product declared on its model, a
-    static class attribute; it never carries a runtime value.
+    ``expression`` is a DDL fragment the product declared on its model. It must
+    be a static literal with no runtime input; loom checks only that it is a
+    non-empty string.
     """
     return CheckConstraint(expression, name=rule, info={_RULE_KEY: ("__checks__", rule)})
 
 
-def _check_declared_name_lengths(struct_cls: type, constraints: list[Any]) -> None:
+def _check_declared_name_lengths(struct_cls: type, constraints: list[Constraint | Index]) -> None:
     """Refuse a declared check or index whose final name Postgres would truncate.
 
     SQLAlchemy would raise only when emitting DDL for a plain name, and would
@@ -789,14 +805,28 @@ def get_metadata() -> MetaData:
     return SABase.metadata
 
 
-def reset_registry(*, naming_convention: Mapping[str, str] | None = None) -> None:
-    """Clear compiled models and set the shared metadata's naming convention.
+def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
+    """Validate the ``database.schema.naming_convention`` setting.
+
+    Raises:
+        ConfigError: Naming the setting and the first unknown kind.
+    """
+    try:
+        return naming_convention(value)
+    except ValueError as exc:
+        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
+
+
+def reset_registry(
+    *, naming_convention: Mapping[str, str] | None | _Keep = _KEEP_CONVENTION
+) -> None:
+    """Clear compiled models and, when asked, set the shared metadata's naming convention.
 
     The runtime compiles into the shared metadata after this call, so the
     convention it receives, the one ``database.schema.naming_convention``
     declares, names the tables ``create_all`` creates exactly as the
-    application metadata of the migration path does. ``None`` restores
-    SQLAlchemy's default.
+    application metadata of the migration path does. Without the argument the
+    convention is left as it is; ``None`` restores SQLAlchemy's default.
     """
     _registry.clear()
     _table_registry.clear()
@@ -805,6 +835,8 @@ def reset_registry(*, naming_convention: Mapping[str, str] | None = None) -> Non
     _shared().scoped.clear()
     SABase.metadata.clear()
     SABase.registry.dispose()
+    if naming_convention is _KEEP_CONVENTION:
+        return
     SABase.metadata.naming_convention = (
         dict(naming_convention) if naming_convention else DEFAULT_NAMING_CONVENTION
     )
