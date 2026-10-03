@@ -1092,8 +1092,9 @@ def downgrade() -> None:
 
 The downgrade is written by hand: `ensure_range_partitions` leaves existing partitions
 alone, so only the revision's author knows which of the range it created, and the
-operation has no reverse (`EnsureRangePartitionsOp.reverse()` raises `ConfigError`). The downgrade above drops the whole range with its rows, which is
-right only when the upgrade created every partition of it.
+operation has no reverse (`EnsureRangePartitionsOp.reverse()` raises `ConfigError`).
+The downgrade above drops the whole range with its rows, which is right only when the
+upgrade created every partition of it.
 
 From Python, for instance a scheduled job that keeps the next months ready, with the
 migrator's URL or an open connection of the migrator:
