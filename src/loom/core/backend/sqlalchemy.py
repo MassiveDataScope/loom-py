@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -676,29 +677,48 @@ def _topological_sort(
 ) -> list[type]:
     """Kahn's algorithm: return *models* with dependency leaves first.
 
-    If a cycle is detected (remaining nodes after BFS exhaustion), the
-    cyclic models are appended in arbitrary order.  Circular references
-    are valid because ``compile_model`` is idempotent and relationships
-    are resolved after all models are registered.
+    Ties are released in the input order of *models*.  If a cycle is detected
+    (remaining nodes after BFS exhaustion), the cyclic models are appended in
+    their input order.  Circular references are valid because
+    ``compile_model`` is idempotent and relationships are resolved after all
+    models are registered.
     """
-    from collections import deque
+    in_degree, dependents = _dependency_graph(models, deps)
+    result = _release_in_dependency_order(models, in_degree, dependents)
+    processed = set(result)
+    result.extend(m for m in models if m not in processed)
+    return result
 
+
+def _dependency_graph(
+    models: list[type],
+    deps: dict[type, frozenset[type]],
+) -> tuple[dict[type, int], dict[type, list[type]]]:
+    """Index the dependency edges that stay within *models*.
+
+    Returns:
+        ``in_degree[m]``: how many of ``m``'s deps are in *models*, and
+        ``dependents[dep]``: the models depending on ``dep``, in input order.
+    """
     model_set = set(models)
-
-    # in_degree[m] = number of m's deps that are within our compilation set
     in_degree: dict[type, int] = dict.fromkeys(models, 0)
-    # dependents[dep] = list of models that depend on dep
     dependents: dict[type, list[type]] = {m: [] for m in models}
-
     for m in models:
         for dep in deps.get(m, frozenset()):
             if dep in model_set:
                 in_degree[m] += 1
                 dependents[dep].append(m)
+    return in_degree, dependents
 
+
+def _release_in_dependency_order(
+    models: list[type],
+    in_degree: dict[type, int],
+    dependents: dict[type, list[type]],
+) -> list[type]:
+    """Run Kahn's BFS, consuming *in_degree*; models left in a cycle are omitted."""
     queue: deque[type] = deque(m for m in models if in_degree[m] == 0)
     result: list[type] = []
-
     while queue:
         node = queue.popleft()
         result.append(node)
@@ -706,10 +726,6 @@ def _topological_sort(
             in_degree[dependent] -= 1
             if in_degree[dependent] == 0:
                 queue.append(dependent)
-
-    # Cyclic nodes: append in original order
-    processed = set(result)
-    result.extend(m for m in models if m not in processed)
     return result
 
 
@@ -727,8 +743,6 @@ def _resolve_compile_closure(*roots: type) -> tuple[type, ...]:
     Returns:
         Tuple of all models (roots + transitive deps) in compilation order.
     """
-    from collections import deque
-
     seen: set[type] = set()
     all_deps: dict[type, frozenset[type]] = {}
     queue: deque[type] = deque(roots)

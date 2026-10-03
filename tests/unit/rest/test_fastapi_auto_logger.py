@@ -79,8 +79,9 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         ctx: Any,
         metrics: Any | None = None,
         config_interfaces: Any = (),
+        modules: Any = (),
     ) -> tuple[Any, Any, Any, Any]:
-        del app_cfg, ctx, metrics, config_interfaces
+        del app_cfg, ctx, metrics, config_interfaces, modules
         result = SimpleNamespace(
             # create_app now verifies every compiled plan's Agent() markers
             # (spec 014, T202) before it registers the agent resolver, so the

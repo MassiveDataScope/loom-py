@@ -146,6 +146,12 @@
   (`_safe_pydantic_schema`) through the same `LoomType` the cache and MCP
   boundaries already use; `LoomRestAdapter`'s Struct projection goes
   through it too.
+- **rest:** `create_app` accepts `modules: Sequence[Callable[[LoomContainer], None]]`,
+  mirroring the Celery `create_app`. Each module is called with the container,
+  in order, before repositories are registered and before use cases are
+  verified, so a use case can inject a port no repository provides (a clock,
+  an identity verifier, a bridge to another bounded context). Without the
+  module, startup still fails with the same `ResolutionError`.
 
 ### prefect
 

@@ -201,11 +201,12 @@ class Shift(BaseModel, RowScoped):
 
 def test_two_constraints_of_one_table_resolving_to_one_name_fail_at_compile_time() -> None:
     by_first_column = {**CONVENTION, "fk": "fk_%(table_name)s_%(column_0_name)s"}
+    metadata = MetaData(naming_convention=by_first_column)
 
     with pytest.raises(
         ValueError, match=r"Shift: table shifts has two constraints named 'fk_shifts_tenant_id'"
     ):
-        compile_all(Roster, Shift, metadata=MetaData(naming_convention=by_first_column))
+        compile_all(Roster, Shift, metadata=metadata)
 
 
 def test_the_recommended_fk_convention_names_every_composite_fk_apart() -> None:
