@@ -69,7 +69,7 @@ async def ensure_range_partitions(
     ``target`` is the migrator's URL, run in its own transaction, or an open
     connection of the migrator, run inside the caller's transaction. Each
     partition is created, registered and protected by the guard in that
-    transaction; one that already exists is left alone.
+    transaction.
 
     Returns:
         The names of the partitions created, in order.
