@@ -10,11 +10,13 @@
   compiles a unique index `uq_<table>_<rule>` restricted to the rows matching
   `where`, and on a row-scoped table its columns must contain the boundary
   (C5, refused at compile time as the guard refuses it with `LG002`). The
-  expression and the predicate are product code, static class attributes with
-  the trust of a hand-written Alembic revision; the static-SQL lint exempts
-  exactly the two calls that compile them and now also watches
-  `CheckConstraint`. Alembic's autogenerate compares neither checks nor index
-  predicates, so changing one is a hand-written revision.
+  expression and the predicate are product code with the trust of a
+  hand-written Alembic revision and must be static literals with no runtime
+  input; loom checks only that each is a non-empty string. The static-SQL lint
+  exempts exactly the two calls that compile them and now also watches
+  `CheckConstraint`. Alembic's autogenerate does not compare checks or index
+  predicates, so adding, changing or removing a check on an existing table,
+  or changing a predicate, is a hand-written revision.
 - **core:** `database.schema.naming_convention` hands a SQLAlchemy
   `naming_convention` (`pk`, `fk`, `uq`, `ck`, `ix`) to the application
   metadata of the migration path and to the metadata the REST runtime and the
