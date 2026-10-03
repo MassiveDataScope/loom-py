@@ -59,3 +59,36 @@ def test_an_invalid_partition_declaration_fails_at_compile_time() -> None:
 
     with pytest.raises(ValueError, match="only RANGE partitioning"):
         _metadata(Wrong)
+
+
+def test_a_foreign_key_to_a_partitioned_table_off_its_partition_column_fails_to_compile() -> None:
+    """Postgres requires the referenced key to hold the partition column; C6 enforces it.
+
+    The partitioned target may only carry keys holding ``at``, so a key on
+    ``(owner_id, kind)`` cannot exist and the reference is refused.
+    """
+
+    class EventNote(BaseModel, RowScoped):
+        __tablename__ = "event_notes"
+        owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
+        id: int = ColumnField(Integer, primary_key=True)
+        event_kind: str = ColumnField(Text, foreign_key="events.kind")
+
+    with pytest.raises(ValueError, match=r"C6: EventNote\.event_kind needs a key"):
+        _metadata(Event, EventNote)
+
+
+def test_a_foreign_key_to_a_partitioned_table_on_its_partition_column_compiles() -> None:
+    class EventMark(BaseModel, RowScoped):
+        __tablename__ = "event_marks"
+        owner_id: str = ScopedField(String(36), primary_key=True, scope="owner")
+        id: int = ColumnField(Integer, primary_key=True)
+        event_at: dt.datetime = ColumnField(DateTime(), foreign_key="events.at")
+
+    table = _metadata(Event, EventMark).tables["event_marks"]
+
+    (foreign_key,) = table.foreign_key_constraints
+    assert [element.target_fullname for element in foreign_key.elements] == [
+        "events.owner_id",
+        "events.at",
+    ]
