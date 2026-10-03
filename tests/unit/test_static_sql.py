@@ -46,6 +46,10 @@ PLACEHOLDER = re.compile(r"\{[A-Za-z_]\w*\}")
 # each is a non-empty string, so that is the product's responsibility. Each entry names
 # the module, the one function that consumes the fragment and the exact call, so the
 # same call anywhere else, or any other call in these functions, is still a violation.
+# ``postgresql_partition_by=f"RANGE ({partition.column})"`` is not listed: it is a string
+# table option, not a call to a sink, and the column is safe to interpolate because
+# ``declared_partition`` passes it through ``sql_identifier`` and requires it to be a
+# column of the model.
 DECLARED_DDL_FRAGMENTS = frozenset(
     {
         ("loom/core/backend/sqlalchemy.py", "_partial_unique_index", "text(partial.where)"),
