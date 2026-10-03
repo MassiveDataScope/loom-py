@@ -27,7 +27,8 @@
   constraints or indexes of one table resolving to the same name, and a
   check, `__indexes__` or `__partial_unique__` name over Postgres's 63 bytes,
   instead of failing or truncating at DDL time. `reset_registry` takes the
-  convention as `naming_convention=`.
+  convention as `naming_convention=`; called without it, it leaves the
+  convention as it is, and `None` restores SQLAlchemy's default.
 
 - **core:** two column types. `Bytes` (`loom.core.model.Bytes`, also inferred
   from a `bytes` annotation, which used to fall back to `JSON`) compiles to

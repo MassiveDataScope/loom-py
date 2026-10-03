@@ -236,7 +236,7 @@ async def _lifespan(
         yield
     finally:
         await session_manager.dispose()
-        reset_registry()
+        reset_registry(naming_convention=None)
 
 
 async def _check_external(

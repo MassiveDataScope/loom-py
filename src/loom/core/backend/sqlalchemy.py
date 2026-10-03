@@ -3,7 +3,8 @@ from __future__ import annotations
 import functools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from enum import Enum
+from typing import Any, Final
 
 import msgspec
 from sqlalchemy import (
@@ -120,6 +121,15 @@ class _Compilation:
 
 _COMPILATION_KEY = "loom.compilation"
 _RULE_KEY = "loom.rule"
+
+
+class _Keep(Enum):
+    """The default of :func:`reset_registry`: leave the naming convention as it is."""
+
+    CONVENTION = "keep"
+
+
+_KEEP_CONVENTION: Final = _Keep.CONVENTION
 
 
 @functools.cache
@@ -801,14 +811,16 @@ def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, s
         raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
 
 
-def reset_registry(*, naming_convention: Mapping[str, str] | None = None) -> None:
-    """Clear compiled models and set the shared metadata's naming convention.
+def reset_registry(
+    *, naming_convention: Mapping[str, str] | None | _Keep = _KEEP_CONVENTION
+) -> None:
+    """Clear compiled models and, when asked, set the shared metadata's naming convention.
 
     The runtime compiles into the shared metadata after this call, so the
     convention it receives, the one ``database.schema.naming_convention``
     declares, names the tables ``create_all`` creates exactly as the
-    application metadata of the migration path does. ``None`` restores
-    SQLAlchemy's default.
+    application metadata of the migration path does. Without the argument the
+    convention is left as it is; ``None`` restores SQLAlchemy's default.
     """
     _registry.clear()
     _table_registry.clear()
@@ -817,6 +829,8 @@ def reset_registry(*, naming_convention: Mapping[str, str] | None = None) -> Non
     _shared().scoped.clear()
     SABase.metadata.clear()
     SABase.registry.dispose()
+    if naming_convention is _KEEP_CONVENTION:
+        return
     SABase.metadata.naming_convention = (
         dict(naming_convention) if naming_convention else DEFAULT_NAMING_CONVENTION
     )

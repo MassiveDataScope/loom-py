@@ -338,7 +338,7 @@ class TestBootstrapWorkerTaskRegistration:
             assert table.primary_key.name == f"pk_{_DiscoveredModel.__tablename__}"
         finally:
             sys.modules.pop(module_name, None)
-            reset_registry()
+            reset_registry(naming_convention=None)
 
     def test_discovers_callbacks_from_modules_when_jobs_not_passed(self, tmp_path: Any) -> None:
         cfg = {
