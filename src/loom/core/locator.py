@@ -26,7 +26,7 @@ from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
 from loom.core.model.scoped import ScopedTable
-from loom.core.schema_names import SchemaNames, naming_convention
+from loom.core.schema_names import SchemaNames
 
 if TYPE_CHECKING:
     from sqlalchemy import MetaData
@@ -144,7 +144,11 @@ def load_application(config_path: str | None = None) -> Application:
     from sqlalchemy import MetaData
 
     from loom.core.backend.scoped_ddl import SCHEMA_KEY
-    from loom.core.backend.sqlalchemy import compile_all, scoped_tables
+    from loom.core.backend.sqlalchemy import (
+        compile_all,
+        configured_naming_convention,
+        scoped_tables,
+    )
 
     path = _resolve_path(config_path)
     context = ConfigContext.from_yaml(path)
@@ -152,7 +156,9 @@ def load_application(config_path: str | None = None) -> Application:
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
     _ensure_on_path(app.code_path, Path(path).resolve().parent)
     models = _discover(app.discovery).models
-    metadata = MetaData(naming_convention=_naming_convention(database.schema))
+    metadata = MetaData(
+        naming_convention=configured_naming_convention(database.schema.naming_convention)
+    )
     if database.schema.name is not None:
         metadata.info[SCHEMA_KEY] = _schema_name(database.schema.name)
     compile_all(*models, metadata=metadata)
@@ -192,13 +198,6 @@ def _discover(discovery: _Discovery) -> DiscoveryResult:
     if engine is None:
         raise ConfigError(f"app.discovery.mode {discovery.mode!r} is not supported")
     return engine(discovery)
-
-
-def _naming_convention(schema: SchemaConfig) -> dict[str, str] | None:
-    try:
-        return naming_convention(schema.naming_convention)
-    except ValueError as exc:
-        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
 
 
 def _schema_name(name: str) -> str:

@@ -40,6 +40,7 @@ from sqlalchemy.sql.schema import DEFAULT_NAMING_CONVENTION
 
 from loom.core.backend.core_model import CoreModel, CoreProfilePlan, CoreRelationStep
 from loom.core.backend.scoped_ddl import SCHEMA_KEY, register_listeners
+from loom.core.config import ConfigError
 from loom.core.model.enums import Cardinality, OnDelete, ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnType, Field
 from loom.core.model.introspection import (
@@ -63,7 +64,7 @@ from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
-from loom.core.schema_names import MAX_IDENTIFIER_LENGTH
+from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 
 _SA_TYPE_MAP: dict[str, type] = {
     "String": String,
@@ -784,6 +785,18 @@ def get_compiled_core(struct_cls: type) -> CoreModel | None:
 def get_metadata() -> MetaData:
     """Return the shared metadata for Alembic and table creation."""
     return SABase.metadata
+
+
+def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
+    """Validate the ``database.schema.naming_convention`` setting.
+
+    Raises:
+        ConfigError: Naming the setting and the first unknown kind.
+    """
+    try:
+        return naming_convention(value)
+    except ValueError as exc:
+        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
 
 
 def reset_registry(*, naming_convention: Mapping[str, str] | None = None) -> None:

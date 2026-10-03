@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from loom.core.authz.elevation import ElevationSink
 from loom.core.authz.product import load_authz_product
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
+from loom.core.backend.sqlalchemy import (
+    compile_all,
+    configured_naming_convention,
+    get_metadata,
+    reset_registry,
+    scoped_tables,
+)
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
@@ -33,7 +39,6 @@ from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.schema_names import naming_convention
 
 _logger = logging.getLogger(__name__)
 
@@ -92,7 +97,7 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
-        convention = _naming_convention(db_cfg.schema)
+        convention = configured_naming_convention(db_cfg.schema.naming_convention)
         session_manager = _build_session_manager(db_cfg, settings)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
@@ -138,13 +143,6 @@ def _build_session_manager(
     if settings is not None:
         install_pool_reset(manager.engine)
     return manager
-
-
-def _naming_convention(config: _SchemaConfig) -> dict[str, str] | None:
-    try:
-        return naming_convention(config.naming_convention)
-    except ValueError as exc:
-        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
 
 
 def _prepare_models(
