@@ -304,6 +304,7 @@ def _build_bootstrap(
     ctx: ConfigContext,
     metrics: Any | None = None,
     config_interfaces: tuple[type[RestInterface[Any]], ...] = (),
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> tuple[KernelRuntime, PersistenceWiring, DiscoveryResult, tuple[type[RestInterface[Any]], ...]]:
     discovered = _discover_components(app_cfg)
     # Captured before folding in config_interfaces: the explicit Python-only
@@ -323,6 +324,7 @@ def _build_bootstrap(
         discovered,
         wiring,
         metrics=metrics,
+        user_modules=modules,
         extra_modules=(cache_module_for(ctx),),
     )
     return result, wiring, discovered, python_interfaces
@@ -1347,12 +1349,15 @@ def _build_kernel_runtime(
     discovered: DiscoveryResult,
     wiring: PersistenceWiring,
     metrics: Any | None = None,
+    user_modules: Sequence[Callable[[LoomContainer], None]] = (),
     extra_modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> KernelRuntime:
+    # Same order as the Celery worker bootstrap: caller modules first, then
+    # repositories, then the framework's own modules.
     return create_kernel(
         config=app_cfg,
         use_cases=discovered.use_cases,
-        modules=[wiring.repo_registration_module, *extra_modules],
+        modules=[*user_modules, wiring.repo_registration_module, *extra_modules],
         uow_factory=wiring.uow_factory,
         metrics=metrics,
     )
@@ -1505,6 +1510,7 @@ def create_app(
     metrics_registry: CollectorRegistry | None = None,
     authenticator: Authenticator | None = None,
     resolvers: Sequence[ConfigResolver] = (),
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> FastAPI:
     """Create a FastAPI application from one or more YAML config files.
 
@@ -1553,6 +1559,17 @@ def create_app(
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.
+        modules: Optional DI registration modules, each called with the
+            container in order before repositories are registered and before
+            use cases are verified.  Use them to bind ports no repository
+            provides (a clock, an identity verifier, a bridge to another
+            bounded context).  Same semantics as the Celery ``create_app``.
+            Registration is last-write-wins and the framework registers its
+            own bindings after these modules (repositories, cache,
+            ``JobService``, ``SqlQueryService``, ``CallerBoundSql``,
+            ``ObservabilityRuntime`` and, on PostgreSQL with an external
+            schema, ``ElevationSink``), so
+            a module binding one of those keys is silently replaced.
 
     Returns:
         Configured :class:`fastapi.FastAPI` application, ready to serve.
@@ -1568,6 +1585,13 @@ def create_app(
     Example — a mechanism of your own::
 
         app = create_app("config/app.yaml", authenticator=MyMtlsAuthenticator())
+
+    Example — bind a port a use case injects::
+
+        def clock_module(container: LoomContainer) -> None:
+            container.register(Clock, SystemClock, scope=Scope.APPLICATION)
+
+        app = create_app("config/app.yaml", modules=[clock_module])
 
     Example — base + environment override::
 
@@ -1615,6 +1639,7 @@ def create_app(
         ctx,
         metrics=metrics_adapter,
         config_interfaces=config_interfaces,
+        modules=modules,
     )
     _configure_job_service(ctx, result, observability_runtime)
     _register_sql_collaborators(result.container, sql, observability_runtime)

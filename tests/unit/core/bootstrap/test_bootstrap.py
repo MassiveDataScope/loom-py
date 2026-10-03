@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import pytest
@@ -125,6 +126,19 @@ def test_bootstrap_modules_register_bindings() -> None:
         config=_FakeConfig(),
         use_cases=[RepoDepsUseCase],
         modules=[_repo_module],
+    )
+    assert result.container.is_registered(IOrderRepo)
+
+
+def _register_repo(container: LoomContainer, scope: Scope) -> None:
+    container.register(IOrderRepo, FakeOrderRepo, scope=scope)
+
+
+def test_bootstrap_accepts_a_module_without_dunder_name() -> None:
+    result = bootstrap_app(
+        config=_FakeConfig(),
+        use_cases=[RepoDepsUseCase],
+        modules=[partial(_register_repo, scope=Scope.APPLICATION)],
     )
     assert result.container.is_registered(IOrderRepo)
 

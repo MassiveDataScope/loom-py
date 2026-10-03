@@ -126,7 +126,9 @@ def bootstrap_app(
 
         # Step 2 — User module bindings
         for module in modules:
-            _logger.info(f"[BOOT] Registering module: {module.__name__}")
+            _logger.info(
+                f"[BOOT] Registering module: {getattr(module, '__qualname__', repr(module))}"
+            )
             module(container)
 
         # Step 3 — Compile use cases

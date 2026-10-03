@@ -482,6 +482,51 @@ calling the factory more than once is safe. `load_config` registers no
 defaults, and resolvers passed to it explicitly replace an earlier registration
 of the same name.
 
+### Binding your own ports (`modules=`)
+
+`create_app` registers repositories for you, and verifies at startup that every
+dependency a use case's constructor declares is bound. A port no repository
+provides — a clock, an identity verifier, a bridge implementing one bounded
+context's port on top of another — is bound by a module: a callable that
+receives the container.
+
+```python
+from datetime import UTC, datetime
+from typing import Protocol
+
+from loom.core.di.container import LoomContainer
+from loom.core.di.scope import Scope
+from loom.rest.fastapi.auto import create_app
+
+
+class Clock(Protocol):
+    def now(self) -> datetime: ...
+
+
+class SystemClock:
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+
+def clock_module(container: LoomContainer) -> None:
+    container.register(Clock, SystemClock, scope=Scope.APPLICATION)
+
+
+app = create_app("config/api.yaml", modules=[clock_module])
+```
+
+Modules run in the order given, before repositories are registered and before
+use cases are verified — the same semantics as the Celery `create_app`. A use
+case injecting `Clock` without the module still aborts startup with a
+`ResolutionError` naming the use case and the missing binding.
+
+Modules bind ports, they do not override the framework. `register` is
+last-write-wins, and `create_app` registers its own bindings after your modules:
+the repositories, the cache module, `JobService`, `SqlQueryService`,
+`CallerBoundSql`, `ObservabilityRuntime` and, on PostgreSQL with
+`database.schema.mode: external`, `ElevationSink`. A module that binds one of those keys is silently
+replaced.
+
 ---
 
 ## Rules + Computes (advanced)
