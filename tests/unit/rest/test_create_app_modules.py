@@ -2,8 +2,7 @@
 
 A use case whose constructor needs a port no repository provides (a clock, an
 identity verifier, a bridge between bounded contexts) starts only when a
-module binds that port; without the module, startup fails exactly as it did
-before the parameter existed.
+module binds that port; without the module, startup fails.
 """
 
 from __future__ import annotations
