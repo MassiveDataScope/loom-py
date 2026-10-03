@@ -476,7 +476,7 @@ database:
 | `roles` | none | `owner` and `migrator` |
 | `database_users` | none | the login users and their `access` |
 | `scopes` | none | one source per declared scope, validated at startup in `external` mode |
-| `naming_convention` | SQLAlchemy's | SQLAlchemy `naming_convention` keyed by `pk`, `fk`, `uq`, `ck` and `ix`; applied to the application metadata of the migration path and to the tables the runtime compiles, so both name every constraint alike. Another key raises `ConfigError` |
+| `naming_convention` | SQLAlchemy's | SQLAlchemy `naming_convention` keyed by `pk`, `fk`, `uq`, `ck` and `ix`; applied to the application metadata of the migration path and to the tables the REST runtime and the Celery worker compile, so all of them name every constraint alike. Another key raises `ConfigError` |
 
 A convention that names every constraint loom compiles:
 

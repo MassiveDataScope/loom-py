@@ -17,8 +17,9 @@
   predicates, so changing one is a hand-written revision.
 - **core:** `database.schema.naming_convention` hands a SQLAlchemy
   `naming_convention` (`pk`, `fk`, `uq`, `ck`, `ix`) to the application
-  metadata of the migration path and to the metadata the runtime compiles, so
-  both name constraints alike; absent, nothing changes. Use
+  metadata of the migration path and to the metadata the REST runtime and the
+  Celery worker compile, so all of them name constraints alike; absent,
+  nothing changes. Use
   `fk_%(table_name)s_%(column_0_N_name)s`: every composite FK of a scoped
   table starts with the boundary column. Compilation now refuses two
   constraints or indexes of one table resolving to the same name, and a

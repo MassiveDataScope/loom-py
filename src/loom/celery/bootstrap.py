@@ -118,6 +118,16 @@ _T = TypeVar("_T")
 # ---------------------------------------------------------------------------
 
 
+class _WorkerSchemaConfig(msgspec.Struct, kw_only=True):
+    """The part of ``database.schema`` the worker compiles models with.
+
+    Attributes:
+        naming_convention: SQLAlchemy naming convention keyed by constraint kind.
+    """
+
+    naming_convention: dict[str, str] | None = None
+
+
 class _WorkerDbConfig(msgspec.Struct, kw_only=True):
     """Database settings for the worker process.
 
@@ -125,11 +135,13 @@ class _WorkerDbConfig(msgspec.Struct, kw_only=True):
         url: Async SQLAlchemy connection URL.
         echo: Log all SQL statements when ``True``.
         pool_pre_ping: Test connections before checkout.
+        schema: Schema settings the models are compiled with.
     """
 
     url: str
     echo: bool = False
     pool_pre_ping: bool = True
+    schema: _WorkerSchemaConfig = msgspec.field(default_factory=_WorkerSchemaConfig)
 
 
 class _DiscoveryModules(msgspec.Struct, kw_only=True):
@@ -621,16 +633,28 @@ def _register_repositories(
     return build_sqlalchemy_repository_registration_module(session_manager, models)
 
 
-def _compile_models(models: Sequence[type[BaseModel]]) -> tuple[type[BaseModel], ...]:
+def _worker_naming_convention(ctx: ConfigContext) -> Mapping[str, str] | None:
+    """The ``database.schema.naming_convention`` the REST runtime and migrations also read."""
+    db_cfg = ctx.section(ConfigKey.DATABASE, _WorkerDbConfig)
+    return db_cfg.schema.naming_convention
+
+
+def _compile_models(
+    models: Sequence[type[BaseModel]], *, naming_convention: Mapping[str, str] | None
+) -> tuple[type[BaseModel], ...]:
     """Compile and normalize discovered models for SQLAlchemy repositories."""
     if not models:
         return ()
     try:
-        from loom.core.backend.sqlalchemy import compile_all, reset_registry
+        from loom.core.backend.sqlalchemy import (
+            compile_all,
+            configured_naming_convention,
+            reset_registry,
+        )
     except ImportError as exc:
         raise _sqlalchemy_extra_error() from exc
     ordered = tuple(dict.fromkeys(models))
-    reset_registry()
+    reset_registry(naming_convention=configured_naming_convention(naming_convention))
     compile_all(*ordered)
     return ordered
 
@@ -656,6 +680,8 @@ def _compile_db_layer(
     session_manager: SessionManager | None,
     models: Sequence[type[BaseModel]],
     user_modules: Sequence[Callable[[LoomContainer], None]],
+    *,
+    naming_convention: Mapping[str, str] | None,
 ) -> tuple[tuple[type[BaseModel], ...], tuple[Callable[[LoomContainer], None], ...]]:
     """Compile models and register repositories; no-op when DB is not configured.
 
@@ -663,6 +689,7 @@ def _compile_db_layer(
         session_manager: Active session manager, or ``None`` for pure jobs.
         models: Model classes discovered or declared for this worker.
         user_modules: Container modules provided by the caller.
+        naming_convention: The configured ``database.schema.naming_convention``.
 
     Returns:
         Tuple of (normalized_models, runtime_modules).  When no DB is
@@ -671,7 +698,7 @@ def _compile_db_layer(
     base = tuple(user_modules)
     if session_manager is None:
         return tuple(models), base
-    normalized = _compile_models(models)
+    normalized = _compile_models(models, naming_convention=naming_convention)
     if not normalized:
         return tuple(models), base
     return normalized, (*base, _register_repositories(session_manager, normalized))
@@ -904,7 +931,10 @@ def bootstrap_worker(
         _apply_job_config_if_present(ctx, job_type)
 
     uow_factory, session_manager = _resolve_uow_factory(ctx)
-    final_models, runtime_modules = _compile_db_layer(session_manager, resolved.models, modules)
+    convention = _worker_naming_convention(ctx) if session_manager is not None else None
+    final_models, runtime_modules = _compile_db_layer(
+        session_manager, resolved.models, modules, naming_convention=convention
+    )
     runtime_modules = (*runtime_modules, cache_module_for(ctx))
 
     resolved = _WorkerResolved(
