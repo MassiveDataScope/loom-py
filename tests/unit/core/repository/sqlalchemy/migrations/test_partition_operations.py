@@ -9,6 +9,7 @@ from sqlalchemy import MetaData
 
 from loom.core.backend.scoped_ddl import SCHEMA_KEY
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
+from loom.core.config import ConfigError
 from loom.core.locator import Application, DatabaseConfig, SchemaConfig
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.types import DateTime, String, Text
@@ -123,7 +124,7 @@ def test_partition_operations_render_as_loom_operations() -> None:
 def test_ensuring_partitions_has_no_reverse_because_it_cannot_tell_which_it_created() -> None:
     ensure = EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "day")
 
-    with pytest.raises(NotImplementedError, match=r"op\.detach_range_partitions\('events'"):
+    with pytest.raises(ConfigError, match=r"op\.detach_range_partitions\('events'"):
         ensure.reverse()
 
 

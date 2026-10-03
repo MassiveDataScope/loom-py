@@ -172,7 +172,7 @@ class EnsureRangePartitionsOp(MigrateOperation):
 
     def reverse(self) -> NoReturn:
         """Refuse: dropping the whole range would drop partitions that existed before."""
-        raise NotImplementedError(
+        raise ConfigError(
             f"the downgrade of {self.table!r} must detach only the partitions this revision "
             f"created: write op.detach_range_partitions({self.table!r}, <start>, <end>, "
             "interval=..., drop=...) by hand"
