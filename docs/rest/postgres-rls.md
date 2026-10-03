@@ -1065,7 +1065,14 @@ compile time the declaration must read `("RANGE", <column>)`; the column must ex
 a `DateTime` column and belong to the primary key, and every unique key
 (`__unique__`, `unique=True`, `__partial_unique__`) must contain it, as Postgres requires.
 LIST and HASH partitioning are refused by name, and so is `__partition_by__` on an
-unscoped model. Anything else is a `ValueError` naming the model.
+unscoped model. Anything else is a `ValueError` naming the model. A scoped foreign key
+to a partitioned table can only reference the partition column, since C6 needs a key on
+`(boundary, column)` and every key of the target holds the partition column.
+
+`mode: create_all` never creates a partitioned table on Postgres: a partitioned model is
+row-scoped, and startup refuses scoped models in that mode. On another dialect, with
+`allow_unprotected_dialect`, `postgresql_partition_by` does not apply and `create_all`
+creates a plain table that takes inserts without partitions.
 
 The parent holds no rows: an insert needs a partition that covers it, so partitions are
 created ahead of time, by the migrator, through the guard. Each partition is named after
