@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Union, cast, get_args, get_origin, get_type_hi
 import msgspec
 
 from loom.core.model.field import ColumnFieldSpec, ColumnType, Field
+from loom.core.model.partition import RangePartition
 from loom.core.model.privilege import Privilege
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
@@ -454,6 +455,72 @@ def _partial_unique(
     return PartialUnique(rule=name, columns=columns, where=where)
 
 
+_PARTITION_ATTR = "__partition_by__"
+_RANGE = "RANGE"
+_PARTITION_TYPES = frozenset({"DateTime"})
+
+
+def declared_partition(cls: type) -> RangePartition | None:
+    """The range partitioning declared with ``__partition_by__ = ("RANGE", "<column>")``.
+
+    The column must be a ``DateTime`` column of the primary key, and every
+    unique key must contain it, as Postgres requires of a partitioned table.
+    Only row-scoped models may be partitioned, so the guard protects every
+    partition; LIST and HASH partitioning are not supported.
+
+    Raises:
+        ValueError: Naming the model and what is wrong with the declaration.
+    """
+    raw = getattr(cls, _PARTITION_ATTR, None)
+    if raw is None:
+        return None
+    prefix = f"{cls.__name__}: {_PARTITION_ATTR}"
+    if not is_row_scoped(cls):
+        raise ValueError(f"{prefix} is only for row-scoped models")
+    if not (isinstance(raw, tuple) and len(raw) == 2 and all(isinstance(x, str) for x in raw)):
+        raise ValueError(f"{prefix} must be ('RANGE', <column>), got {raw!r}")
+    strategy, column = raw
+    if strategy != _RANGE:
+        raise ValueError(
+            f"{prefix} strategy {strategy!r} is not supported; only RANGE partitioning is"
+        )
+    fields = get_column_fields(cls)
+    _check_partition_column(cls, prefix, column, fields)
+    _check_unique_keys_hold_partition_column(cls, prefix, column, fields)
+    return RangePartition(column=column)
+
+
+def _check_partition_column(
+    cls: type, prefix: str, column: str, fields: Mapping[str, ColumnFieldInfo]
+) -> None:
+    info = fields.get(column)
+    if info is None:
+        raise ValueError(f"{prefix} names unknown column {column!r}")
+    _rule_identifier(cls, _PARTITION_ATTR, column)
+    if info.column_type.type_name not in _PARTITION_TYPES:
+        raise ValueError(f"{prefix} column {column!r} must be a DateTime column")
+    if not info.field.primary_key:
+        raise ValueError(f"{prefix} column {column!r} must be part of the primary key")
+
+
+def _check_unique_keys_hold_partition_column(
+    cls: type, prefix: str, column: str, fields: Mapping[str, ColumnFieldInfo]
+) -> None:
+    partials = [partial.columns for partial in declared_partial_unique(cls)]
+    for key in [*_unique_keys(cls, fields), *partials]:
+        if column not in key:
+            raise ValueError(
+                f"{prefix} unique key ({', '.join(key)}) lacks the partition column {column!r}"
+            )
+
+
+def _unique_keys(cls: type, fields: Mapping[str, ColumnFieldInfo]) -> list[tuple[str, ...]]:
+    """The full unique keys besides the primary key: ``__unique__`` and ``unique=True``."""
+    keys = list(declared_unique(cls))
+    keys += [(name,) for name, info in fields.items() if info.field.unique]
+    return keys
+
+
 def _declared_mapping(cls: type, attr: str) -> Mapping[object, object]:
     raw: object = getattr(cls, attr, None) or {}
     if not isinstance(raw, Mapping):
@@ -548,9 +615,7 @@ def _check_c8(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColu
 
 def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
     primary_key = tuple(name for name, info in fields.items() if info.field.primary_key)
-    keys = [primary_key, *declared_unique(cls)]
-    keys += [(name,) for name, info in fields.items() if info.field.unique]
-    for key in keys:
+    for key in [primary_key, *_unique_keys(cls, fields)]:
         if boundary.column not in key:
             columns = ", ".join(key)
             raise ValueError(

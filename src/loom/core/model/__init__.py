@@ -17,6 +17,7 @@ from loom.core.model.introspection import (
     declared_checks,
     declared_indexes,
     declared_partial_unique,
+    declared_partition,
     declared_privileges,
     declared_unique,
     get_column_fields,
@@ -27,6 +28,7 @@ from loom.core.model.introspection import (
     is_row_scoped,
     scope_columns,
 )
+from loom.core.model.partition import PartitionRange, RangePartition, range_partitions
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.projection import (
     Projection,
@@ -59,12 +61,16 @@ __all__ = [
     "ScopeColumn",
     "ScopedTable",
     "PartialUnique",
+    "PartitionRange",
+    "RangePartition",
     "declared_checks",
     "declared_indexes",
     "declared_partial_unique",
+    "declared_partition",
     "declared_privileges",
     "declared_unique",
     "is_row_scoped",
+    "range_partitions",
     "scope_columns",
     "BoundaryValidationError",
     "LoomFrozenStruct",

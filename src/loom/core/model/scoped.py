@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -37,13 +38,32 @@ class ScopeColumn:
 
 @dataclass(frozen=True, slots=True)
 class ScopedTable:
-    """A compiled scoped table: its scopes and the privileges it grants."""
+    """A compiled scoped table: its scopes, the privileges it grants and its partition column.
+
+    ``partition_by`` names the column a range-partitioned table is partitioned
+    by, ``None`` for a plain table.
+    """
 
     schema: str | None
     name: str
     scopes: tuple[ScopeColumn, ...]
     privileges: frozenset[Privilege]
+    partition_by: str | None = None
 
     @property
     def boundary(self) -> ScopeColumn:
         return next(scope for scope in self.scopes if scope.is_boundary)
+
+
+def registered_model_tables(
+    registered: Mapping[str, str | None], scoped: Iterable[ScopedTable]
+) -> frozenset[str]:
+    """The registered tables that stand for a model table.
+
+    ``registered`` maps each table the guard registered to the table it is a
+    partition of, or ``None``. A partition of a partitioned scoped table is
+    not in the model and stands for its parent, so it is left out; every
+    other registered table is kept.
+    """
+    partitioned = {table.name for table in scoped if table.partition_by is not None}
+    return frozenset(name for name, parent in registered.items() if parent not in partitioned)

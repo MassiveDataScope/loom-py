@@ -26,7 +26,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
-from loom.core.model.scoped import ScopedTable
+from loom.core.model.scoped import ScopedTable, registered_model_tables
 from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.integrity import Problem, guard_problems, table_problems
 
@@ -63,7 +63,13 @@ GUARD_CONFIG: Final = (
     "SELECT app_schema, owner_role, migrator_role, readers_role, writers_role, version_table, "
     "data_version_table, installer, users::text AS users FROM config"
 )
-REGISTERED: Final = "SELECT c.relname FROM scoped_table t JOIN pg_class c ON c.oid = t.rel"
+REGISTERED: Final = (
+    "SELECT c.relname, p.relname AS parent, "
+    "t.scopes = pt.scopes AND t.privileges = pt.privileges AS as_parent "
+    "FROM scoped_table t JOIN pg_class c ON c.oid = t.rel "
+    "LEFT JOIN pg_inherits i ON i.inhrelid = c.oid LEFT JOIN pg_class p ON p.oid = i.inhparent "
+    "LEFT JOIN scoped_table pt ON pt.rel = p.oid"
+)
 MEMBERS: Final = (
     "SELECT m.rolname AS member, r.rolname AS role, r.rolbypassrls, m.rolsuper, "
     "CASE WHEN current_setting('server_version_num')::int >= 160000 "
@@ -173,11 +179,24 @@ def _users(users: Any) -> list[tuple[str, bool, str]]:
 async def _registry(
     connection: AsyncConnection, scoped: Mapping[tuple[str | None, str], ScopedTable]
 ) -> list[Finding]:
-    registered = {str(row[0]) for row in await connection.execute(_REGISTERED)}
+    """Every scoped model table is registered, and nothing else but their partitions.
+
+    A partition is not in the model: it counts when its parent is a
+    partitioned scoped table of the model, and must carry its parent's scopes
+    and privileges.
+    """
+    rows = list(await connection.execute(_REGISTERED))
+    parents = {str(row.relname): None if row.parent is None else str(row.parent) for row in rows}
+    registered = registered_model_tables(parents, scoped.values())
+    findings = [
+        Finding(str(row.relname), "partition.registration", f"scopes of {row.parent}", "different")
+        for row in rows
+        if str(row.relname) not in registered and not row.as_parent
+    ]
     expected = {table.name for table in scoped.values()}
     if registered != expected:
-        return [_diff(None, "registry", "registered tables", expected, registered)]
-    return []
+        findings.append(_diff(None, "registry", "registered tables", expected, registered))
+    return findings
 
 
 async def _protection(

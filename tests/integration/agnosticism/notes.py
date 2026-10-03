@@ -34,6 +34,8 @@ class NoteItem(BaseModel, RowScoped):
 
 
 class NoteEvent(BaseModel, RowScoped):
+    """Read-only events, range-partitioned by month on ``at`` through the guard."""
+
     __tablename__ = "note_events"
     __scope_privileges__ = frozenset({Privilege.SELECT})
     __partition_by__ = ("RANGE", "at")

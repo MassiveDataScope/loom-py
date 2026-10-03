@@ -7,25 +7,35 @@ schema is the one the runner configured as the version table schema.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from collections.abc import Sequence
-from typing import Any, Final, Protocol
+from typing import Any, Final, NoReturn, Protocol, TypeAlias
 
 from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
 from alembic.operations import MigrateOperation, Operations
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from loom.core.backend.scoped_ddl import (
     APP_FIRST,
+    CREATE_RANGE_PARTITION,
+    DETACH_PARTITION,
     GRANT_TABLE,
     GUARD_FIRST,
     OPEN_HATCH,
+    PARTITIONS,
     PROTECT,
     UNPROTECT,
+    create_partition_calls,
+    detach_partition_calls,
     table_parameters,
 )
 from loom.core.config import ConfigError
+from loom.core.model.partition import Interval, as_date, range_partitions, validate_interval
+from loom.core.repository.sqlalchemy.rls.guard_manifest import PARTITION_GUARD_REVISION
+from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
 
 _IMPORT = "import loom.core.repository.sqlalchemy.migrations.operations"
 _OPEN_HATCH: Final = text(OPEN_HATCH)
@@ -34,6 +44,9 @@ _UNPROTECT: Final = text(UNPROTECT)
 _GRANT_TABLE: Final = text(GRANT_TABLE)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _APP_FIRST: Final = text(APP_FIRST)
+_CREATE_RANGE_PARTITION: Final = text(CREATE_RANGE_PARTITION)
+_DETACH_PARTITION: Final = text(DETACH_PARTITION)
+_PARTITIONS: Final = text(PARTITIONS)
 GUARD_OPTION: Final = "loom_guard"
 
 
@@ -125,6 +138,104 @@ class GrantTableOp(MigrateOperation):
         return ("grant_table", self.table)
 
 
+@Operations.register_operation("ensure_range_partitions")
+class EnsureRangePartitionsOp(MigrateOperation):
+    """Create the missing partitions of a range-partitioned scoped table covering ``[start, end)``.
+
+    The guard creates, registers and protects each partition in the
+    revision's transaction; one that already exists is left alone.
+    """
+
+    def __init__(
+        self,
+        table: str,
+        start: dt.date | str,
+        end: dt.date | str,
+        interval: Interval = "month",
+    ):
+        self.table = table
+        self.start = as_date(start)
+        self.end = as_date(end)
+        self.interval: Interval = validate_interval(interval)
+
+    @classmethod
+    def ensure_range_partitions(
+        cls,
+        operations: Operations,
+        table: str,
+        start: dt.date | str,
+        end: dt.date | str,
+        *,
+        interval: Interval = "month",
+    ) -> None:
+        operations.invoke(cls(table, start, end, interval))
+
+    def reverse(self) -> NoReturn:
+        # Refused: dropping the whole range would drop partitions that existed before.
+        raise ConfigError(
+            f"the downgrade of {self.table!r} must detach only the partitions this revision "
+            f"created: write op.detach_range_partitions({self.table!r}, <start>, <end>, "
+            "interval=..., drop=...) by hand"
+        )
+
+    def to_diff_tuple(self) -> tuple[str, str]:
+        return ("ensure_range_partitions", self.table)
+
+
+@Operations.register_operation("detach_range_partitions")
+class DetachRangePartitionsOp(MigrateOperation):
+    """Unprotect and detach, and with ``drop`` drop, the partitions covering ``[start, end)``."""
+
+    def __init__(
+        self,
+        table: str,
+        start: dt.date | str,
+        end: dt.date | str,
+        interval: Interval = "month",
+        *,
+        drop: bool = False,
+    ):
+        self.table = table
+        self.start = as_date(start)
+        self.end = as_date(end)
+        self.interval: Interval = validate_interval(interval)
+        self.drop = drop
+
+    @classmethod
+    def detach_range_partitions(
+        cls,
+        operations: Operations,
+        table: str,
+        start: dt.date | str,
+        end: dt.date | str,
+        *,
+        interval: Interval = "month",
+        drop: bool = False,
+    ) -> None:
+        operations.invoke(cls(table, start, end, interval, drop=drop))
+
+    def reverse(self) -> EnsureRangePartitionsOp:
+        return EnsureRangePartitionsOp(self.table, self.start, self.end, self.interval)
+
+    def to_diff_tuple(self) -> tuple[str, str]:
+        return ("detach_range_partitions", self.table)
+
+
+@Operations.register_operation("drop_partitions")
+class DropPartitionsOp(MigrateOperation):
+    """Unprotect, detach and drop every partition of a table, before the table is dropped."""
+
+    def __init__(self, table: str):
+        self.table = table
+
+    @classmethod
+    def drop_partitions(cls, operations: Operations, table: str) -> None:
+        operations.invoke(cls(table))
+
+    def to_diff_tuple(self) -> tuple[str, str]:
+        return ("drop_partitions", self.table)
+
+
 class HandWrittenProtectOp(MigrateOperation):
     """Stop a downgrade where only the developer knows the scopes of the target revision."""
 
@@ -140,6 +251,11 @@ class HandWrittenProtectOp(MigrateOperation):
 
     def to_diff_tuple(self) -> tuple[str, str]:
         return ("hand_written_protect", self.table)
+
+
+# A string, so it is not evaluated at import: the docs build mocks alembic, and
+# the decorated operation classes are then not types.
+_PartitionOp: TypeAlias = "EnsureRangePartitionsOp | DetachRangePartitionsOp | DropPartitionsOp"
 
 
 class _Bind(Protocol):
@@ -171,13 +287,24 @@ def run_guard_operation(operations: GuardOperations, op: MigrateOperation) -> No
         raise ConfigError("guard operations run only through loom's run_migrations")
     path = {"schema": str(schema), "guard": str(guard)}
     bind = operations.get_bind()
+    if isinstance(op, _PARTITION_OPS):
+        require_guard_revision_sync(bind, str(guard), minimum=PARTITION_GUARD_REVISION)
     bind.execute(_GUARD_FIRST, path)
-    _call_guard(bind, str(schema), op)
-    bind.execute(_APP_FIRST, path)
+    aborted = False
+    try:
+        _call_guard(bind, str(schema), op)
+    except DBAPIError:
+        aborted = True  # the rollback of the aborted transaction undoes the local path
+        raise
+    finally:
+        if not aborted:
+            bind.execute(_APP_FIRST, path)
 
 
 def _call_guard(bind: _Bind, schema: str, op: MigrateOperation) -> None:
-    if isinstance(op, ProtectScopedTableOp):
+    if isinstance(op, _PARTITION_OPS):
+        _call_partitions(bind, schema, op)
+    elif isinstance(op, ProtectScopedTableOp):
         scopes = {"scopes": json.dumps(op.scopes), "privileges": op.privileges}
         bind.execute(_PROTECT, {**table_parameters(schema, op.table), **scopes})
     elif isinstance(op, UnprotectScopedTableOp):
@@ -189,7 +316,34 @@ def _call_guard(bind: _Bind, schema: str, op: MigrateOperation) -> None:
         bind.execute(_OPEN_HATCH)
 
 
+def _call_partitions(bind: _Bind, schema: str, op: _PartitionOp) -> None:
+    if isinstance(op, EnsureRangePartitionsOp):
+        partitions = range_partitions(op.table, op.start, op.end, op.interval)
+        for _name, parameters in create_partition_calls(schema, op.table, partitions):
+            bind.execute(_CREATE_RANGE_PARTITION, parameters)
+        return
+    names, drop = _detached(bind, schema, op)
+    for _name, parameters in detach_partition_calls(schema, op.table, names, drop=drop):
+        bind.execute(_DETACH_PARTITION, parameters)
+
+
+def _detached(
+    bind: _Bind, schema: str, op: DetachRangePartitionsOp | DropPartitionsOp
+) -> tuple[list[str], bool]:
+    if isinstance(op, DetachRangePartitionsOp):
+        partitions = range_partitions(op.table, op.start, op.end, op.interval)
+        return [p.name for p in partitions], op.drop
+    rows = bind.execute(_PARTITIONS, table_parameters(schema, op.table))
+    return [str(row[0]) for row in rows], True
+
+
+_PARTITION_OPS: Final = (EnsureRangePartitionsOp, DetachRangePartitionsOp, DropPartitionsOp)
+
+
 @Operations.implementation_for(OpenHatchOp)
+@Operations.implementation_for(EnsureRangePartitionsOp)
+@Operations.implementation_for(DetachRangePartitionsOp)
+@Operations.implementation_for(DropPartitionsOp)
 @Operations.implementation_for(ProtectScopedTableOp)
 @Operations.implementation_for(UnprotectScopedTableOp)
 @Operations.implementation_for(GrantTableOp)
@@ -219,6 +373,30 @@ def _render_unprotect(context: AutogenContext, op: UnprotectScopedTableOp) -> st
 def _render_grant(context: AutogenContext, op: GrantTableOp) -> str:
     context.imports.add(_IMPORT)
     return f"op.grant_table({op.table!r}, {op.readers!r}, {op.writers!r})"
+
+
+@renderers.dispatch_for(EnsureRangePartitionsOp)
+def _render_ensure_partitions(context: AutogenContext, op: EnsureRangePartitionsOp) -> str:
+    context.imports.add(_IMPORT)
+    return (
+        f"op.ensure_range_partitions({op.table!r}, {op.start.isoformat()!r}, "
+        f"{op.end.isoformat()!r}, interval={op.interval!r})"
+    )
+
+
+@renderers.dispatch_for(DetachRangePartitionsOp)
+def _render_detach_partitions(context: AutogenContext, op: DetachRangePartitionsOp) -> str:
+    context.imports.add(_IMPORT)
+    return (
+        f"op.detach_range_partitions({op.table!r}, {op.start.isoformat()!r}, "
+        f"{op.end.isoformat()!r}, interval={op.interval!r}, drop={op.drop!r})"
+    )
+
+
+@renderers.dispatch_for(DropPartitionsOp)
+def _render_drop_partitions(context: AutogenContext, op: DropPartitionsOp) -> str:
+    context.imports.add(_IMPORT)
+    return f"op.drop_partitions({op.table!r})"
 
 
 @renderers.dispatch_for(HandWrittenProtectOp)

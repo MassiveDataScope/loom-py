@@ -81,8 +81,22 @@ GUARD_REVISIONS: Final[tuple[GuardRevision, ...]] = (
             "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         },
     ),
+    GuardRevision(
+        2,
+        "0002.sql",
+        "a1bc218a4b30bfec7119b1b9560afe04f53e132d303709de68384b710d7196a9",
+        {
+            "functions": "137f1619c20a465add893360e2102e2b7012bcadd5e4eb1e53343b7081f2dbb2",
+            "relations": "13ac502176825abf96ee3cef7fe718e50adbb1dedb80ad86790b554c572273fb",
+            "columns": "17e334109a9b8d44e4dd02b96ecbb888bcb456da2f91e97c3d855f8ce1c642b1",
+            "constraints": "dd6f74082263bed44a74c4afc2697726ed1336a61e020b05711033202dc7fe2d",
+            "triggers": "133e23ee841b691af4b325b321af86e78fdb5f164183c913c43977149c5e3a68",
+            "objects": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+    ),
 )
 MIN_COMPATIBLE_GUARD_REVISION: Final = 1
+PARTITION_GUARD_REVISION: Final = 2
 OWNER_FUNCTIONS: Final = frozenset(
     {
         "protect_scoped_table",
@@ -106,6 +120,8 @@ OWNER_FUNCTIONS: Final = frozenset(
         "is_member",
         "commands",
         "authorize",
+        "create_range_partition",
+        "detach_partition",
     }
 )
 OWNER_TABLES: Final = frozenset({"config", "scoped_table", "scoped_policy"})

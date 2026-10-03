@@ -22,6 +22,10 @@ from loom.core.repository.sqlalchemy.rls.elevate import (
     elevate,
     validate_elevations,
 )
+from loom.core.repository.sqlalchemy.rls.partitions import (
+    detach_range_partitions,
+    ensure_range_partitions,
+)
 from loom.core.repository.sqlalchemy.rls.provider import install_pool_reset, rls_session_settings
 from loom.core.repository.sqlalchemy.rls.schema import create_schema
 from loom.core.repository.sqlalchemy.rls.sources import register_scope_source
@@ -38,7 +42,9 @@ __all__ = [
     "SchemaNames",
     "apply_bootstrap",
     "create_schema",
+    "detach_range_partitions",
     "elevate",
+    "ensure_range_partitions",
     "install_pool_reset",
     "register_scope_source",
     "rls_session_settings",

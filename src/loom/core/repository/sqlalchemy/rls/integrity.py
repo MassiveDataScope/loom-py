@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
-from sqlalchemy import Connection, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from loom.core.backend.scoped_ddl import MISSING_EVENT_TRIGGERS
@@ -254,18 +254,28 @@ def require_revision(number: int | None, guard: str, *, minimum: int) -> None:
         )
 
 
-async def require_guard_revision(connection: AsyncConnection, guard: str) -> None:
-    """Refuse to call a guard below the minimum compatible revision.
+async def require_guard_revision(
+    connection: AsyncConnection, guard: str, *, minimum: int | None = None
+) -> None:
+    """Refuse to call a guard below ``minimum``, by default the minimum compatible revision.
 
     Raises:
         ConfigError: When the guard is unknown or its revision is pending.
     """
     rows = await connection.execute(_CATALOG, _catalog_parameters(guard, (FUNCTIONS,)))
     number = revision_of(catalog_digest(str(row.line) for row in rows))
-    require_revision(number, guard, minimum=MIN_COMPATIBLE_GUARD_REVISION)
+    require_revision(number, guard, minimum=_minimum(minimum))
 
 
-def require_guard_revision_sync(connection: Connection, guard: str) -> None:
+class SyncExecutor(Protocol):
+    """A synchronous connection, or the bind Alembic hands an operation."""
+
+    def execute(self, statement: Any, parameters: Any = ..., /) -> Any: ...
+
+
+def require_guard_revision_sync(
+    connection: SyncExecutor, guard: str, *, minimum: int | None = None
+) -> None:
     """The synchronous :func:`require_guard_revision`, for the migration runners.
 
     Raises:
@@ -273,7 +283,15 @@ def require_guard_revision_sync(connection: Connection, guard: str) -> None:
     """
     rows = connection.execute(_CATALOG, _catalog_parameters(guard, (FUNCTIONS,)))
     number = revision_of(catalog_digest(str(row.line) for row in rows))
-    require_revision(number, guard, minimum=MIN_COMPATIBLE_GUARD_REVISION)
+    require_revision(number, guard, minimum=_minimum(minimum))
+
+
+def _minimum(minimum: int | None) -> int:
+    return (
+        MIN_COMPATIBLE_GUARD_REVISION
+        if minimum is None
+        else max(minimum, MIN_COMPATIBLE_GUARD_REVISION)
+    )
 
 
 def catalog_problems(lines: Mapping[str, Sequence[str]], guard: str) -> list[Problem]:

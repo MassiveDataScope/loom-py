@@ -29,6 +29,7 @@ from loom.core.repository.sqlalchemy.rls import (
     verify,
 )
 from loom.core.repository.sqlalchemy.rls.bootstrap import QUIET_LOGS
+from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
 from loom.core.schema_names import SchemaNames
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
@@ -40,6 +41,8 @@ from tests.integration.rls.conftest import (
 )
 
 pytestmark = pytest.mark.integration
+
+_UNRELEASED = GUARD_REVISIONS[-1].number + 1
 
 SCOPES = '[{"col":"org","scope":"org","on":"both"}]'
 PRIVILEGES = "ARRAY['SELECT','INSERT','UPDATE','DELETE']"
@@ -229,10 +232,12 @@ async def test_n2_verify_and_startup_report_a_deregistered_table_with_a_hand_pol
     await execute(
         admin,
         f"ALTER EVENT TRIGGER {guard}_ddl DISABLE",
+        f"ALTER EVENT TRIGGER {guard}_drop DISABLE",
         f"DELETE FROM {guard}.scoped_policy WHERE rel = '{schema}.notes'::regclass",
         f"DELETE FROM {guard}.scoped_table WHERE rel = '{schema}.notes'::regclass",
         f"DROP POLICY loom_select ON {schema}.notes",
         f"CREATE POLICY loose ON {schema}.notes USING (true)",
+        f"ALTER EVENT TRIGGER {guard}_drop ENABLE ALWAYS",
         f"ALTER EVENT TRIGGER {guard}_ddl ENABLE ALWAYS",
     )
     try:
@@ -353,12 +358,14 @@ async def test_arch8_startup_refuses_an_owner_trigger_outside_the_guard(
     await execute(
         admin,
         f"ALTER EVENT TRIGGER {guard}_ddl DISABLE",
+        f"ALTER EVENT TRIGGER {guard}_drop DISABLE",
         f"CREATE FUNCTION {schema}_owner_dml() RETURNS trigger LANGUAGE plpgsql "
         "AS $$ BEGIN RETURN NULL; END $$",
         f"DROP TRIGGER loom_deny_owner_dml ON {schema}.notes",
         f"CREATE TRIGGER loom_deny_owner_dml BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE "
         f"ON {schema}.notes FOR EACH STATEMENT EXECUTE FUNCTION public.{schema}_owner_dml()",
         f"ALTER TABLE {schema}.notes ENABLE ALWAYS TRIGGER loom_deny_owner_dml",
+        f"ALTER EVENT TRIGGER {guard}_drop ENABLE ALWAYS",
         f"ALTER EVENT TRIGGER {guard}_ddl ENABLE ALWAYS",
     )
     try:
@@ -375,7 +382,7 @@ async def test_arch1_a_guard_below_the_minimum_revision_stops_create_schema(
     schema = _name()
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
-    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", 2)
+    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", _UNRELEASED)
 
     with pytest.raises(ConfigError, match="guard revision pending"):
         await create_schema(database.migrator, application)
@@ -385,7 +392,7 @@ async def test_arch1_startup_reports_a_guard_below_the_minimum_revision(
     scoped_database: BootstrapFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     database, application = await _installed(scoped_database, tmp_path)
-    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", 2)
+    monkeypatch.setattr(integrity, "MIN_COMPATIBLE_GUARD_REVISION", _UNRELEASED)
 
     assert "guard.revision" in await _startup_checks(database.write, application)
 
