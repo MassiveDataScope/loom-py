@@ -35,6 +35,7 @@ from loom.core.backend.scoped_ddl import (
     validate_timeout,
 )
 from loom.core.config import ConfigError
+from loom.core.model.scoped import registered_model_tables
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, SchemaNames
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
@@ -209,14 +210,15 @@ async def _registry_drift(config: Config, application: Application) -> None:
         async with engine.connect() as connection:
             await connection.execute(_GUARD_FIRST, _guard(bootstrap.names.guard))
             rows = await connection.execute(_REGISTERED_TABLES)
-            registered = {str(row[0]) for row in rows}
+            names = [str(row[0]) for row in rows]
             parents = await connection.execute(_PARTITION_PARENTS, {"schema": bootstrap.schema})
             partitions = {str(row.relname): str(row.parent) for row in parents}
     finally:
         await engine.dispose()
     expected = {table.name for table in application.scoped.values()}
-    partitioned = {t.name for t in application.scoped.values() if t.partition_by is not None}
-    registered = {name for name in registered if partitions.get(name) not in partitioned}
+    registered = registered_model_tables(
+        {name: partitions.get(name) for name in names}, application.scoped.values()
+    )
     if registered != expected:
         missing = sorted(expected - registered)
         extra = sorted(registered - expected)

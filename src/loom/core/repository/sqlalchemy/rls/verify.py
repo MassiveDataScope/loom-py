@@ -26,7 +26,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST
 from loom.core.model.introspection import declared_privileges, get_table_name, is_row_scoped
 from loom.core.model.privilege import READ_WRITE, Privilege
-from loom.core.model.scoped import ScopedTable
+from loom.core.model.scoped import ScopedTable, registered_model_tables
 from loom.core.repository.sqlalchemy.rls.config import BYPASS_VERSION_PRIVILEGES, BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.integrity import Problem, guard_problems, table_problems
 
@@ -185,17 +185,14 @@ async def _registry(
     partitioned scoped table of the model, and must carry its parent's scopes
     and privileges.
     """
-    partitioned = {table.name for table in scoped.values() if table.partition_by is not None}
-    registered: set[str] = set()
-    findings: list[Finding] = []
-    for row in await connection.execute(_REGISTERED):
-        name, parent = str(row.relname), row.parent
-        if parent is None or str(parent) not in partitioned:
-            registered.add(name)
-        elif not row.as_parent:
-            findings.append(
-                Finding(name, "partition.registration", f"scopes of {parent}", "different")
-            )
+    rows = list(await connection.execute(_REGISTERED))
+    parents = {str(row.relname): None if row.parent is None else str(row.parent) for row in rows}
+    registered = registered_model_tables(parents, scoped.values())
+    findings = [
+        Finding(str(row.relname), "partition.registration", f"scopes of {row.parent}", "different")
+        for row in rows
+        if str(row.relname) not in registered and not row.as_parent
+    ]
     expected = {table.name for table in scoped.values()}
     if registered != expected:
         findings.append(_diff(None, "registry", "registered tables", expected, registered))
