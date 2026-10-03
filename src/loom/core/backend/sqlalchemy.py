@@ -265,7 +265,7 @@ def _compile_model(
     return sa_cls
 
 
-def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
+def _declared_constraints(struct_cls: type, table_name: str) -> list[Constraint | Index]:
     """Keys, indexes and checks declared on the model, in declaration order.
 
     ``__unique__`` constraints are unnamed, so the metadata's naming convention
@@ -280,7 +280,9 @@ def _declared_constraints(struct_cls: type, table_name: str) -> list[Any]:
     check on an existing table, and changing a predicate, are written by hand in
     a revision, and ``check`` does not report them as drift.
     """
-    constraints: list[Any] = [UniqueConstraint(*columns) for columns in declared_unique(struct_cls)]
+    constraints: list[Constraint | Index] = [
+        UniqueConstraint(*columns) for columns in declared_unique(struct_cls)
+    ]
     constraints += [
         Index(
             conv(f"ix_{table_name}_{'_'.join(columns)}"),
@@ -347,7 +349,7 @@ def _check_constraint(rule: str, expression: str) -> CheckConstraint:
     return CheckConstraint(expression, name=rule, info={_RULE_KEY: ("__checks__", rule)})
 
 
-def _check_declared_name_lengths(struct_cls: type, constraints: list[Any]) -> None:
+def _check_declared_name_lengths(struct_cls: type, constraints: list[Constraint | Index]) -> None:
     """Refuse a declared check or index whose final name Postgres would truncate.
 
     SQLAlchemy would raise only when emitting DDL for a plain name, and would
