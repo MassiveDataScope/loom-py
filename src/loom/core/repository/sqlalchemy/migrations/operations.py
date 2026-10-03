@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any, Final, Protocol
 
 from alembic.autogenerate import renderers
@@ -20,16 +20,15 @@ from sqlalchemy.exc import DBAPIError
 
 from loom.core.backend.scoped_ddl import (
     APP_FIRST,
-    CREATE_RANGE_PARTITION,
-    DETACH_PARTITION,
     GRANT_TABLE,
     GUARD_FIRST,
     OPEN_HATCH,
     PARTITIONS,
     PROTECT,
     UNPROTECT,
-    create_partition_parameters,
-    detach_partition_parameters,
+    PartitionCall,
+    create_partition_calls,
+    detach_partition_calls,
     table_parameters,
 )
 from loom.core.config import ConfigError
@@ -44,8 +43,6 @@ _UNPROTECT: Final = text(UNPROTECT)
 _GRANT_TABLE: Final = text(GRANT_TABLE)
 _GUARD_FIRST: Final = text(GUARD_FIRST)
 _APP_FIRST: Final = text(APP_FIRST)
-_CREATE_RANGE_PARTITION: Final = text(CREATE_RANGE_PARTITION)
-_DETACH_PARTITION: Final = text(DETACH_PARTITION)
 _PARTITIONS: Final = text(PARTITIONS)
 GUARD_OPTION: Final = "loom_guard"
 
@@ -248,6 +245,9 @@ class HandWrittenProtectOp(MigrateOperation):
         return ("hand_written_protect", self.table)
 
 
+_PartitionOp = EnsureRangePartitionsOp | DetachRangePartitionsOp | DropPartitionsOp
+
+
 class _Bind(Protocol):
     def execute(self, clause: Any, parameters: Any = ..., /) -> Any: ...
 
@@ -306,24 +306,20 @@ def _call_guard(bind: _Bind, schema: str, op: MigrateOperation) -> None:
         bind.execute(_OPEN_HATCH)
 
 
-def _call_partitions(bind: _Bind, schema: str, op: MigrateOperation) -> None:
+def _call_partitions(bind: _Bind, schema: str, op: _PartitionOp) -> None:
+    for _name, statement, parameters in _partition_calls(bind, schema, op):
+        bind.execute(statement, parameters)
+
+
+def _partition_calls(bind: _Bind, schema: str, op: _PartitionOp) -> Iterator[PartitionCall]:
     if isinstance(op, EnsureRangePartitionsOp):
-        for partition in range_partitions(op.table, op.start, op.end, op.interval):
-            parameters = create_partition_parameters(schema, op.table, partition)
-            bind.execute(_CREATE_RANGE_PARTITION, parameters)
-        return
+        partitions = range_partitions(op.table, op.start, op.end, op.interval)
+        return create_partition_calls(schema, op.table, partitions)
     if isinstance(op, DetachRangePartitionsOp):
         partitions = range_partitions(op.table, op.start, op.end, op.interval)
-        _detach(bind, schema, op.table, [p.name for p in partitions], drop=op.drop)
-        return
-    if isinstance(op, DropPartitionsOp):
-        rows = bind.execute(_PARTITIONS, table_parameters(schema, op.table))
-        _detach(bind, schema, op.table, [str(row[0]) for row in rows], drop=True)
-
-
-def _detach(bind: _Bind, schema: str, table: str, names: Sequence[str], *, drop: bool) -> None:
-    for name in names:
-        bind.execute(_DETACH_PARTITION, detach_partition_parameters(schema, table, name, drop=drop))
+        return detach_partition_calls(schema, op.table, [p.name for p in partitions], drop=op.drop)
+    rows = bind.execute(_PARTITIONS, table_parameters(schema, op.table))
+    return detach_partition_calls(schema, op.table, [str(row[0]) for row in rows], drop=True)
 
 
 _PARTITION_OPS: Final = (EnsureRangePartitionsOp, DetachRangePartitionsOp, DropPartitionsOp)
