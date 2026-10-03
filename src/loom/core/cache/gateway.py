@@ -39,6 +39,52 @@ def _is_raw_backend(cache: Any) -> bool:
     return not isinstance(getattr(cache, "serializer", None), MsgspecSerializer)
 
 
+def _require_declared_aliases(config: CacheConfig) -> None:
+    """Refuse a data or counter alias that has no entry in ``aiocache_config``.
+
+    The ``default`` alias is exempt: :meth:`CacheGateway.apply_config` supplies
+    a fallback for it.
+    """
+    for declared in (config.aiocache_alias, config.effective_counter_alias):
+        if declared != _DEFAULT_ALIAS and declared not in config.aiocache_config:
+            raise ConfigError(
+                f"Cache alias {declared!r} is declared but missing from 'aiocache_config'."
+            )
+
+
+def _translate_backend(backend_cfg: Any, config: CacheConfig) -> Any:
+    """Return the aiocache entry for one alias.
+
+    Non-dict entries are forwarded as they are.  Dict entries are copied, and a
+    bounded ``SimpleMemoryCache`` entry becomes a ``BoundedMemoryCache`` one.
+    """
+    if not isinstance(backend_cfg, dict):
+        return backend_cfg
+    entry: dict[str, Any] = backend_cfg
+    if _is_bounded(entry, config) and _SIMPLE_MEMORY_CACHE in str(entry.get("cache", "")):
+        return _bounded_memory_entry(entry, config)
+    return dict(entry)
+
+
+def _is_bounded(entry: Mapping[str, Any], config: CacheConfig) -> bool:
+    """Return ``True`` when the config or the entry itself sets a memory bound."""
+    return (
+        config.max_size is not None
+        or config.max_bytes is not None
+        or "max_size" in entry
+        or "max_bytes" in entry
+    )
+
+
+def _bounded_memory_entry(entry: Mapping[str, Any], config: CacheConfig) -> dict[str, Any]:
+    """Copy *entry* onto ``BoundedMemoryCache``; the entry's own bounds win."""
+    bounded = {**entry, "cache": _BOUNDED_MEMORY_CACHE}
+    for key, bound in (("max_size", config.max_size), ("max_bytes", config.max_bytes)):
+        if bound is not None:
+            bounded.setdefault(key, bound)
+    return bounded
+
+
 class CacheGateway:
     """Facade over aiocache with msgpack serialization for entity data.
 
@@ -119,30 +165,11 @@ class CacheGateway:
             )
             CacheGateway.apply_config(cache_cfg)
         """
-        for declared in (config.aiocache_alias, config.effective_counter_alias):
-            if declared != _DEFAULT_ALIAS and declared not in config.aiocache_config:
-                raise ConfigError(
-                    f"Cache alias {declared!r} is declared but missing from 'aiocache_config'."
-                )
-        raw: dict[str, Any] = {}
-        for alias, backend_cfg in config.aiocache_config.items():
-            if not isinstance(backend_cfg, dict):
-                raw[alias] = backend_cfg
-                continue
-            entry = dict(backend_cfg)
-            bounded = (
-                config.max_size is not None
-                or config.max_bytes is not None
-                or "max_size" in entry
-                or "max_bytes" in entry
-            )
-            if bounded and _SIMPLE_MEMORY_CACHE in str(entry.get("cache", "")):
-                entry["cache"] = _BOUNDED_MEMORY_CACHE
-                if config.max_size is not None:
-                    entry.setdefault("max_size", config.max_size)
-                if config.max_bytes is not None:
-                    entry.setdefault("max_bytes", config.max_bytes)
-            raw[alias] = entry
+        _require_declared_aliases(config)
+        raw: dict[str, Any] = {
+            alias: _translate_backend(backend_cfg, config)
+            for alias, backend_cfg in config.aiocache_config.items()
+        }
         if _DEFAULT_ALIAS not in raw:
             raw[_DEFAULT_ALIAS] = dict(raw.get(config.aiocache_alias) or _MEMORY_FALLBACK)
         cls.configure(raw)
