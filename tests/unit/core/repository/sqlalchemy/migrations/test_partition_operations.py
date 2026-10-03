@@ -120,19 +120,11 @@ def test_partition_operations_render_as_loom_operations() -> None:
     assert "op.execute" not in code
 
 
-def test_the_reverse_of_ensuring_partitions_drops_the_same_partitions() -> None:
+def test_ensuring_partitions_has_no_reverse_because_it_cannot_tell_which_it_created() -> None:
     ensure = EnsureRangePartitionsOp("events", "2026-01-01", "2026-03-01", "day")
 
-    reverse = ensure.reverse()
-
-    assert isinstance(reverse, DetachRangePartitionsOp)
-    assert (reverse.table, reverse.start, reverse.end, reverse.interval, reverse.drop) == (
-        "events",
-        dt.date(2026, 1, 1),
-        dt.date(2026, 3, 1),
-        "day",
-        True,
-    )
+    with pytest.raises(NotImplementedError, match=r"op\.detach_range_partitions\('events'"):
+        ensure.reverse()
 
 
 def test_an_unknown_interval_is_refused_when_the_operation_is_built() -> None:

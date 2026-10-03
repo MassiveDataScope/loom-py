@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Iterator, Sequence
-from typing import Any, Final, Protocol
+from typing import Any, Final, NoReturn, Protocol
 
 from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
@@ -167,8 +167,13 @@ class EnsureRangePartitionsOp(MigrateOperation):
     ) -> None:
         operations.invoke(cls(table, start, end, interval))
 
-    def reverse(self) -> DetachRangePartitionsOp:
-        return DetachRangePartitionsOp(self.table, self.start, self.end, self.interval, drop=True)
+    def reverse(self) -> NoReturn:
+        """Refuse: dropping the whole range would drop partitions that existed before."""
+        raise NotImplementedError(
+            f"the downgrade of {self.table!r} must detach only the partitions this revision "
+            f"created: write op.detach_range_partitions({self.table!r}, <start>, <end>, "
+            "interval=..., drop=...) by hand"
+        )
 
     def to_diff_tuple(self) -> tuple[str, str]:
         return ("ensure_range_partitions", self.table)
