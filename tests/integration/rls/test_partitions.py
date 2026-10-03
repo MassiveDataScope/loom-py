@@ -178,10 +178,9 @@ async def test_the_application_users_cannot_create_or_detach_partitions(
         assert await _sqlstate(url, create) == "42501"
         assert await _sqlstate(url, detach) == "42501"
         assert await _sqlstate(url, by_hand) == "42501"
+        may = APR.replace(month=5)
         with pytest.raises(ConfigError, match="migrator"):
-            await ensure_range_partitions(
-                url, application, notes.NoteEvent, APR, APR.replace(month=5)
-            )
+            await ensure_range_partitions(url, application, notes.NoteEvent, APR, may)
     assert await _sqlstate(database.bypass, create) == "42501"
 
 
@@ -268,9 +267,10 @@ async def test_retention_detaches_or_drops_partitions_through_the_guard(
     assert await _sqlstate(database.read, f"SELECT 1 FROM {schema}.{MONTHS[0]}") == "42501"
     registered = f"SELECT count(*) FROM loom_guard_{schema}.scoped_table"
     assert await scalar(database.superuser, registered) == 4
+    february = dt.date(2026, 2, 1)
     with pytest.raises(DBAPIError, match="dropped by hand"):
         await detach_range_partitions(
-            database.migrator, application, notes.NoteEvent, JAN, dt.date(2026, 2, 1), drop=True
+            database.migrator, application, notes.NoteEvent, JAN, february, drop=True
         )
     report = await verify(database.superuser, application)
     assert report.ok, report.findings

@@ -92,8 +92,9 @@ def test_a_partition_operation_checks_the_guard_revision_before_calling_the_guar
 def test_a_python_error_inside_the_call_restores_the_application_path() -> None:
     operations = _Operations(GUARDED)
 
+    operation = ProtectScopedTableOp("Bad Name", [], ["SELECT"])
     with pytest.raises(ValueError, match="not a usable SQL identifier"):
-        run_guard_operation(operations, ProtectScopedTableOp("Bad Name", [], ["SELECT"]))
+        run_guard_operation(operations, operation)
 
     path = {"schema": "notes", "guard": "loom_guard_notes"}
     assert operations.bind.calls == [(GUARD_FIRST, path), (APP_FIRST, path)]
@@ -110,7 +111,8 @@ def test_a_database_error_leaves_the_path_to_the_rollback_of_the_aborted_transac
     operations = _Operations(GUARDED)
     operations.bind = _FailingBind()
 
+    operation = ProtectScopedTableOp("notes", [], ["SELECT"])
     with pytest.raises(DBAPIError):
-        run_guard_operation(operations, ProtectScopedTableOp("notes", [], ["SELECT"]))
+        run_guard_operation(operations, operation)
 
     assert [call[0] for call in operations.bind.calls] == [GUARD_FIRST, PROTECT]

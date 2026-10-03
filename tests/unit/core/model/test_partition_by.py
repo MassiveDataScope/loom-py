@@ -48,19 +48,22 @@ def test_a_model_without_partition_by_is_not_partitioned() -> None:
 
 @pytest.mark.parametrize("strategy", ["LIST", "HASH", "list"])
 def test_list_and_hash_are_refused_by_name(strategy: str) -> None:
+    model = _model((strategy, "at"))
     with pytest.raises(ValueError, match=rf"Bad: __partition_by__ strategy {strategy!r}.*RANGE"):
-        declared_partition(_model((strategy, "at")))
+        declared_partition(model)
 
 
 @pytest.mark.parametrize("value", ["RANGE", ("RANGE",), ("RANGE", "at", "x"), ("RANGE", 3)])
 def test_a_malformed_declaration_is_refused(value: object) -> None:
+    model = _model(value)
     with pytest.raises(ValueError, match=r"Bad: __partition_by__ must be \('RANGE', <column>\)"):
-        declared_partition(_model(value))
+        declared_partition(model)
 
 
 def test_an_unknown_column_is_refused() -> None:
+    model = _model(("RANGE", "when"))
     with pytest.raises(ValueError, match="names unknown column 'when'"):
-        declared_partition(_model(("RANGE", "when")))
+        declared_partition(model)
 
 
 def test_a_column_outside_the_primary_key_is_refused() -> None:
@@ -137,12 +140,14 @@ def test_an_empty_or_reversed_range_yields_nothing() -> None:
 
 
 def test_an_unknown_interval_is_refused() -> None:
+    start, end = dt.date(2026, 1, 1), dt.date(2026, 2, 1)
     with pytest.raises(ValueError, match="interval 'week'"):
-        range_partitions("events", dt.date(2026, 1, 1), dt.date(2026, 2, 1), "week")  # type: ignore[arg-type]
+        range_partitions("events", start, end, "week")  # type: ignore[arg-type]
 
 
 def test_a_partition_name_over_63_bytes_is_refused() -> None:
     table = "t" * 56
 
+    start, end = dt.date(2026, 1, 1), dt.date(2026, 1, 2)
     with pytest.raises(ValueError, match="longer than the 63 bytes"):
-        range_partitions(table, dt.date(2026, 1, 1), dt.date(2026, 1, 2), "day")
+        range_partitions(table, start, end, "day")
