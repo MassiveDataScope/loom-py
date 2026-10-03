@@ -8,7 +8,8 @@ module binds that port; without the module, startup fails.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Protocol
 
@@ -71,7 +72,9 @@ class NowInterface(RestInterface[str]):
 '''
 
 
-def _write_project(tmp_path: Path) -> str:
+@pytest.fixture
+def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Write the fixture project; undo its sys.path entry and imported module."""
     module = f"loom_modules_fixture_app_{_NON_IDENTIFIER.sub('_', tmp_path.name)}"
     (tmp_path / f"{module}.py").write_text(_APP_SOURCE, encoding="utf-8")
     config = {
@@ -85,9 +88,12 @@ def _write_project(tmp_path: Path) -> str:
         },
         "database": {"url": "sqlite+aiosqlite:///"},
     }
-    config_path = tmp_path / "app.yaml"
-    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    return str(config_path)
+    config_file = tmp_path / "app.yaml"
+    config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
+    # Snapshots sys.path, so create_app's own code_path insert is undone too.
+    monkeypatch.syspath_prepend(str(tmp_path.resolve()))
+    yield str(config_file)
+    sys.modules.pop(module, None)
 
 
 def _bind_clock_instance(container: LoomContainer) -> None:
@@ -100,9 +106,9 @@ def _bind_clock_class(container: LoomContainer) -> None:
 
 @pytest.mark.parametrize("module", [_bind_clock_instance, _bind_clock_class])
 def test_a_module_binding_reaches_the_use_case(
-    tmp_path: Path, module: Callable[[LoomContainer], None]
+    config_path: str, module: Callable[[LoomContainer], None]
 ) -> None:
-    app = create_app(_write_project(tmp_path), modules=[module])
+    app = create_app(config_path, modules=[module])
 
     with TestClient(app) as client:
         response = client.get("/now/")
@@ -111,7 +117,7 @@ def test_a_module_binding_reaches_the_use_case(
     assert response.json() == _FIXED_NOW
 
 
-def test_modules_run_in_the_given_order(tmp_path: Path) -> None:
+def test_modules_run_in_the_given_order(config_path: str) -> None:
     calls: list[str] = []
 
     def first(container: LoomContainer) -> None:
@@ -121,11 +127,11 @@ def test_modules_run_in_the_given_order(tmp_path: Path) -> None:
     def second(_: LoomContainer) -> None:
         calls.append("second")
 
-    create_app(_write_project(tmp_path), modules=(first, second))
+    create_app(config_path, modules=(first, second))
 
     assert calls == ["first", "second"]
 
 
-def test_startup_fails_without_the_module(tmp_path: Path) -> None:
+def test_startup_fails_without_the_module(config_path: str) -> None:
     with pytest.raises(ResolutionError, match=r"NowUseCase injects clock: .*Clock"):
-        create_app(_write_project(tmp_path))
+        create_app(config_path)
