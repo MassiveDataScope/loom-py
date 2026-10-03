@@ -92,8 +92,9 @@ def test_a_scoped_partial_unique_without_the_boundary_fails_at_compile_time() ->
         roster_id: int = ColumnField(Integer)
         is_owner: bool = ColumnField(Boolean)
 
+    metadata = MetaData()
     with pytest.raises(ValueError, match=r"C5: LooseSeat partial unique owner"):
-        compile_all(LooseSeat, metadata=MetaData())
+        compile_all(LooseSeat, metadata=metadata)
 
 
 def test_without_a_naming_convention_names_are_unchanged() -> None:
@@ -159,8 +160,9 @@ def test_a_check_name_longer_than_postgres_allows_fails_at_compile_time() -> Non
         id: int = ColumnField(Integer, primary_key=True)
 
     compile_all(Verbose, metadata=MetaData())
+    metadata = MetaData(naming_convention=CONVENTION)
     with pytest.raises(ValueError, match=rf"Verbose: __checks__ rule '{rule}'.*63 bytes"):
-        compile_all(Verbose, metadata=MetaData(naming_convention=CONVENTION))
+        compile_all(Verbose, metadata=metadata)
 
 
 def test_a_partial_unique_name_longer_than_postgres_allows_fails_at_compile_time() -> None:
@@ -172,8 +174,9 @@ def test_a_partial_unique_name_longer_than_postgres_allows_fails_at_compile_time
         id: int = ColumnField(Integer, primary_key=True)
         flag: bool = ColumnField(Boolean)
 
+    metadata = MetaData()
     with pytest.raises(ValueError, match=rf"Wordy: __partial_unique__ rule '{rule}'.*63 bytes"):
-        compile_all(Wordy, metadata=MetaData())
+        compile_all(Wordy, metadata=metadata)
 
 
 def test_an_index_name_longer_than_postgres_allows_fails_at_compile_time() -> None:
@@ -183,8 +186,9 @@ def test_an_index_name_longer_than_postgres_allows_fails_at_compile_time() -> No
         id: int = ColumnField(Integer, primary_key=True)
         long_column: int = ColumnField(Integer)
 
+    metadata = MetaData()
     with pytest.raises(ValueError, match=r"Indexed: __indexes__ rule 'long_column'.*63 bytes"):
-        compile_all(Indexed, metadata=MetaData())
+        compile_all(Indexed, metadata=metadata)
 
 
 class Shift(BaseModel, RowScoped):
@@ -222,5 +226,6 @@ def test_a_constraint_and_an_index_sharing_a_name_fail_at_compile_time() -> None
         __partial_unique__ = {"rule": (("id",), "id > 0")}
         id: int = ColumnField(Integer, primary_key=True)
 
+    metadata = MetaData()
     with pytest.raises(ValueError, match=r"Clash: table clash has two constraints named"):
-        compile_all(Clash, metadata=MetaData())
+        compile_all(Clash, metadata=metadata)
