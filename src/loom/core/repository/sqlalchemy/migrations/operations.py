@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Sequence
-from typing import Any, Final, NoReturn, Protocol
+from typing import Any, Final, NoReturn, Protocol, TypeAlias
 
 from alembic.autogenerate import renderers
 from alembic.autogenerate.api import AutogenContext
@@ -171,7 +171,7 @@ class EnsureRangePartitionsOp(MigrateOperation):
         operations.invoke(cls(table, start, end, interval))
 
     def reverse(self) -> NoReturn:
-        """Refuse: dropping the whole range would drop partitions that existed before."""
+        # Refused: dropping the whole range would drop partitions that existed before.
         raise ConfigError(
             f"the downgrade of {self.table!r} must detach only the partitions this revision "
             f"created: write op.detach_range_partitions({self.table!r}, <start>, <end>, "
@@ -253,7 +253,9 @@ class HandWrittenProtectOp(MigrateOperation):
         return ("hand_written_protect", self.table)
 
 
-_PartitionOp = EnsureRangePartitionsOp | DetachRangePartitionsOp | DropPartitionsOp
+# A string, so it is not evaluated at import: the docs build mocks alembic, and
+# the decorated operation classes are then not types.
+_PartitionOp: TypeAlias = "EnsureRangePartitionsOp | DetachRangePartitionsOp | DropPartitionsOp"
 
 
 class _Bind(Protocol):

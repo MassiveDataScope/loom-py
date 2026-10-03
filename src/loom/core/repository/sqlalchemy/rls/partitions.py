@@ -85,13 +85,11 @@ async def ensure_range_partitions(
     partitions = range_partitions(scoped.name, start, end, interval)
     async with _guarded(target, application, lock_timeout) as (connection, schema):
         calls = create_partition_calls(schema, scoped.name, partitions)
-        return tuple(
-            [
-                name
-                for name, parameters in calls
-                if (await connection.execute(_CREATE_RANGE_PARTITION, parameters)).scalar()
-            ]
-        )
+        changed: list[str] = []
+        for name, parameters in calls:
+            if (await connection.execute(_CREATE_RANGE_PARTITION, parameters)).scalar():
+                changed.append(name)
+        return tuple(changed)
 
 
 async def detach_range_partitions(
@@ -123,13 +121,11 @@ async def detach_range_partitions(
     names = [p.name for p in range_partitions(scoped.name, start, end, interval)]
     async with _guarded(target, application, lock_timeout) as (connection, schema):
         calls = detach_partition_calls(schema, scoped.name, names, drop=drop)
-        return tuple(
-            [
-                name
-                for name, parameters in calls
-                if (await connection.execute(_DETACH_PARTITION, parameters)).scalar()
-            ]
-        )
+        changed: list[str] = []
+        for name, parameters in calls:
+            if (await connection.execute(_DETACH_PARTITION, parameters)).scalar():
+                changed.append(name)
+        return tuple(changed)
 
 
 def _partitioned(application: Application, model: type | str) -> ScopedTable:
