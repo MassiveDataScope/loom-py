@@ -25,6 +25,7 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.repository.abc.query import CursorResult, PageResult
+from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
 from loom.core.use_case.markers import Input
@@ -199,6 +200,10 @@ class TestHttpErrorMapper:
             ErrorField.FIELD: "tenant",
             ErrorField.TRACE_ID: get_trace_id(),
         }
+
+    def test_a_rejected_sql_statement_answers_the_sql_field(self) -> None:
+        detail = _detail(self._mapper().to_http(SqlExecutionError("42601 syntax error")))
+        assert detail[ErrorField.FIELD] == "sql"
 
     @pytest.mark.parametrize(
         "error",

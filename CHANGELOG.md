@@ -144,9 +144,9 @@
   `HttpErrorMapper` dropped it, so two `rule_violation` 422s could only be
   told apart by their message text. The body adds `field` (`ErrorField.FIELD`,
   the key each `violations` item of `RuleViolations` already carries) next to
-  the unchanged `code`, `message` and `trace_id`; the status stays `422` and
-  every other error body is unchanged. Independent of any database,
-  `schema.mode` or row-level security.
+  the unchanged `code`, `message` and `trace_id`; the status stays `422`. This
+  includes the SQL endpoint's 422s, whose `field` is `sql` or `body`. Every
+  other error body is unchanged.
 - **rest:** a strict `pydantic.BaseModel` result, a `list` of them or an
   envelope holding one now renders directly on a REST route, through
   `MsgspecJSONResponse`'s `enc_hook`, and documents in OpenAPI
