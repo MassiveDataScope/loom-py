@@ -33,7 +33,9 @@ from loom.ai.engines.pydantic_ai._mcp import (
 )
 
 pytest.importorskip(
-    "pydantic_ai.mcp", reason="the MCP client is not installed: uv sync --group mcp-tests"
+    "pydantic_ai.mcp",
+    reason="the MCP client is not installed: uv sync --group mcp-tests",
+    exc_type=ImportError,
 )
 
 from fastmcp.client.transports.base import ClientTransport  # noqa: E402

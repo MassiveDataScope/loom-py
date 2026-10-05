@@ -29,7 +29,9 @@ from loom.ai.remote_auth import shared_mcp_auth
 from ...helpers.remote_auth_plugin import third_party_strategy
 
 pytest.importorskip(
-    "pydantic_ai.mcp", reason="the MCP client is not installed: uv sync --group mcp-tests"
+    "pydantic_ai.mcp",
+    reason="the MCP client is not installed: uv sync --group mcp-tests",
+    exc_type=ImportError,
 )
 
 _URL = "https://orders.example.com/mcp"
