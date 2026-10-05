@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import msgspec
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
@@ -23,12 +25,15 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.repository.abc.query import CursorResult, PageResult
+from loom.core.sql import SqlExecutionError
+from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.etl import Format, UnsupportedFormatError
 from loom.rest.auth import AuthenticationUnavailable
-from loom.rest.errors import HttpErrorMapper
+from loom.rest.errors import ErrorField, HttpErrorMapper
+from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.rest_adapter import LoomRestAdapter
 
 # ---------------------------------------------------------------------------
@@ -185,6 +190,37 @@ class TestHttpErrorMapper:
         assert len(detail["violations"]) == 2
         assert detail["violations"][0] == {"field": "email", "message": "invalid"}
 
+    def test_rule_violation_body_carries_its_field(self) -> None:
+        """Two 422s from different fields are told apart by key, not by message text."""
+        exc = self._mapper().to_http(RuleViolation("tenant", "malformed tenant header"))
+        assert exc.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert _detail(exc) == {
+            ErrorField.CODE: ErrorCode.RULE_VIOLATION,
+            ErrorField.MESSAGE: "malformed tenant header",
+            ErrorField.FIELD: "tenant",
+            ErrorField.TRACE_ID: get_trace_id(),
+        }
+
+    def test_a_rejected_sql_statement_answers_the_sql_field(self) -> None:
+        detail = _detail(self._mapper().to_http(SqlExecutionError("42601 syntax error")))
+        assert detail[ErrorField.FIELD] == "sql"
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            NotFound("User", id=1),
+            Forbidden(),
+            Unauthenticated(),
+            Conflict("duplicate"),
+            RuleViolations([RuleViolation("email", "invalid")]),
+            BoundaryValidationError("bad body", (("fullName", "Expected `str`"),)),
+            PostCommitError(committed=True, failures=(ConnectionError("broker down"),)),
+        ],
+        ids=lambda error: type(error).__name__,
+    )
+    def test_no_other_error_body_gains_a_top_level_field(self, error: LoomError) -> None:
+        assert ErrorField.FIELD not in _detail(self._mapper().to_http(error))
+
     def test_boundary_validation_maps_to_422_with_violations(self) -> None:
         error = BoundaryValidationError("bad body", (("fullName", "Expected `str`, got `int`"),))
         exc = self._mapper().to_http(error)
@@ -337,6 +373,15 @@ class TestLoomRestAdapterErrors:
             await adapter.handle(use_case, request)
         assert exc_info.value.status_code == 422
 
+    async def test_rule_violation_mapped_to_422_with_its_field(self) -> None:
+        executor = self._make_failing_executor(RuleViolation("tenant", "bad"))
+        adapter = LoomRestAdapter(executor)
+        request = AdapterRequest(params={})
+        with pytest.raises(HTTPException) as exc_info:
+            await adapter.handle(_SimpleUseCase(), request)
+        assert exc_info.value.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert _detail(exc_info.value)[ErrorField.FIELD] == "tenant"
+
     async def test_non_loom_error_not_caught(self) -> None:
         executor = self._make_failing_executor(RuntimeError("unexpected"))
         adapter = LoomRestAdapter(executor)
@@ -395,3 +440,37 @@ class TestLoomRestAdapterBoundaryValidation:
         detail = _detail(exc_info.value)
         assert detail["code"] == ErrorCode.BOUNDARY_VALIDATION
         assert detail["violations"][0]["field"] == "fullName"
+
+
+# ---------------------------------------------------------------------------
+# RuleViolation on the wire — no database, repository or row-level security
+# ---------------------------------------------------------------------------
+
+
+class _RejectTenantUseCase(UseCase[Any, str]):
+    async def execute(self) -> str:
+        raise RuleViolation("tenant", "no tenant is selectable")
+
+
+def _app_without_database() -> FastAPI:
+    """A bare app: no container, no database, no ``schema.mode``, no RLS guard."""
+    adapter = LoomRestAdapter(_real_executor(_RejectTenantUseCase))
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/tenant")
+    async def tenant() -> Any:
+        return await adapter.handle(_RejectTenantUseCase(), AdapterRequest(params={}))
+
+    return app
+
+
+def test_a_rule_violation_answers_its_field_without_any_database() -> None:
+    response = TestClient(_app_without_database()).get("/tenant")
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    detail = response.json()["detail"]
+    assert detail[ErrorField.CODE] == ErrorCode.RULE_VIOLATION
+    assert detail[ErrorField.MESSAGE] == "no tenant is selectable"
+    assert detail[ErrorField.FIELD] == "tenant"
+    assert ErrorField.TRACE_ID in detail

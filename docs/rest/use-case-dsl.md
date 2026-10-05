@@ -513,11 +513,22 @@ UPDATE_NORMALIZE_PRICE = (
 ## Rule — validate before execute
 
 Rules run after all computes. A failing rule raises a structured 422 response
-before `execute()` is called. A body that fails to convert into the `Command`
-in the first place — a wrong field type, a missing required field — never
-reaches a rule: it answers its own 422 with `code: "boundary_validation"` and
-a `violations` list shaped the same way (`{field, message}` pairs, `field`
-being the wire name the client sent).
+before `execute()` is called: `code: "rule_violations"` and a `violations` list
+of `{field, message}` pairs, one per failing rule. A body that fails to convert
+into the `Command` in the first place — a wrong field type, a missing required
+field — never reaches a rule: it answers its own 422 with
+`code: "boundary_validation"` and a `violations` list shaped the same way
+(`field` being the wire name the client sent).
+
+A single `RuleViolation(field, message)` raised from `execute()` also answers
+422, with `code: "rule_violation"`, its `message` and its `field` at the top
+level of the body, so a client tells two such 422s apart by `field` instead of
+by the message text:
+
+```json
+{"detail": {"code": "rule_violation", "message": "no tenant is selectable",
+            "field": "tenant", "trace_id": "abc-123"}}
+```
 
 ### Rule.check — field validation
 
