@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from http import HTTPStatus
 from typing import Any
 
 import msgspec
@@ -94,9 +95,6 @@ class AuthenticationMiddleware:
             await self._app(scope, receive, send)
             return
 
-        # Starlette's exception handlers sit inside the user middleware stack,
-        # so an outage escaping from here would reach ServerErrorMiddleware as
-        # a 500: it has to become a 503 at this layer.
         try:
             identity = await self._authenticator.authenticate(_credentials(scope))
         except AuthenticationUnavailable:
@@ -106,7 +104,12 @@ class AuthenticationMiddleware:
                 scope.get("path", _UNKNOWN_CLIENT),
                 exc_info=True,
             )
-            await _send_error(send, 503, ErrorCode.SERVICE_UNAVAILABLE, _UNAVAILABLE_MESSAGE)
+            await _send_error(
+                send,
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                ErrorCode.SERVICE_UNAVAILABLE,
+                _UNAVAILABLE_MESSAGE,
+            )
             return
 
         if identity is None:
@@ -189,12 +192,18 @@ async def send_unauthorized(send: _Send) -> None:
     Args:
         send: ASGI send callable of the request being refused.
     """
-    await _send_error(send, 401, ErrorCode.UNAUTHENTICATED, _UNAUTHORIZED_MESSAGE, BEARER_CHALLENGE)
+    await _send_error(
+        send,
+        HTTPStatus.UNAUTHORIZED,
+        ErrorCode.UNAUTHENTICATED,
+        _UNAUTHORIZED_MESSAGE,
+        BEARER_CHALLENGE,
+    )
 
 
 async def _send_error(
     send: _Send,
-    status: int,
+    status: HTTPStatus,
     code: ErrorCode,
     message: str,
     extra_headers: Mapping[str, str] | None = None,
@@ -214,5 +223,5 @@ async def _send_error(
             for name, value in (extra_headers or {}).items()
         ),
     ]
-    await send({"type": "http.response.start", "status": status, "headers": headers})
+    await send({"type": "http.response.start", "status": status.value, "headers": headers})
     await send({"type": "http.response.body", "body": body})
