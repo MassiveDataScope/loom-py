@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 from fastapi import HTTPException
 
 from loom.core.engine.post_commit import PostCommitError
-from loom.core.errors import LoomError, NotFound, RuleViolations
+from loom.core.errors import LoomError, NotFound, RuleViolation, RuleViolations
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
@@ -52,6 +52,8 @@ class HttpErrorMapper:
     per error type:
 
     - :class:`~loom.core.errors.NotFound` → ``entity``, ``id``
+    - :class:`~loom.core.errors.RuleViolation` → ``field`` (the key each
+      ``violations`` item of :class:`~loom.core.errors.RuleViolations` carries)
     - :class:`~loom.core.errors.RuleViolations` → ``violations``
     - :class:`~loom.core.model.BoundaryValidationError` → ``violations``
       (``422``; a schema failure, distinct from a rule failure)
@@ -107,6 +109,9 @@ class HttpErrorMapper:
         if isinstance(error, NotFound):
             detail[ErrorField.ENTITY] = error.entity
             detail[ErrorField.ID] = error.id
+
+        if isinstance(error, RuleViolation):
+            detail[ErrorField.FIELD] = error.field
 
         if isinstance(error, RuleViolations):
             detail[ErrorField.VIOLATIONS] = [
