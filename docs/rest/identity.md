@@ -239,6 +239,20 @@ app = create_app("config/app.yaml", authenticator=ApiKeyAuthenticator(store))
   whether the caller exists at all.
 - Returning `None` is a refusal. It carries no reason on purpose: the `401` must not
   say which part of the credentials failed.
+- Raising {class}`~loom.rest.auth.AuthenticationUnavailable` means the credentials
+  cannot be checked right now — the identity provider's key set, the key store or a
+  revocation list is unreachable. The request answers `503` with
+  `code: service_unavailable`, a fixed message and the `trace_id`, and no
+  `WWW-Authenticate` challenge, so clients keep credentials that are still valid. The
+  exception's message and its chained cause go to the server log at `WARNING`, never
+  to the caller. Any other exception keeps answering `500`.
+
+  ```python
+  try:
+      owner = await self._keys.owner_of(key)
+  except KeyStoreError as exc:
+      raise AuthenticationUnavailable("key store unreachable") from exc
+  ```
 - `provides_roles` is read by startup gates — a role-based SQL endpoint refuses to
   mount behind a mechanism that issues no role.
 - The authenticator argument is mutually exclusive with `app.rest.auth.jwt`: two

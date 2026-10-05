@@ -27,6 +27,7 @@ from loom.core.transport.adapter import AdapterRequest, LoomAdapter
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.etl import Format, UnsupportedFormatError
+from loom.rest.auth import AuthenticationUnavailable
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.rest_adapter import LoomRestAdapter
 
@@ -136,6 +137,14 @@ class TestHttpErrorMapper:
         """Only a 401 challenges the caller; a 403 is final."""
         exc = self._mapper().to_http(Forbidden())
         assert exc.headers is None
+
+    def test_authentication_unavailable_maps_to_503_without_a_challenge(self) -> None:
+        exc = self._mapper().to_http(AuthenticationUnavailable("issuer keys unreachable"))
+        assert (exc.status_code, _detail(exc)["code"], exc.headers) == (
+            503,
+            ErrorCode.SERVICE_UNAVAILABLE,
+            None,
+        )
 
     def test_conflict_maps_to_409(self) -> None:
         exc = self._mapper().to_http(Conflict("duplicate"))

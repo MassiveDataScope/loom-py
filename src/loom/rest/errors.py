@@ -80,6 +80,7 @@ class HttpErrorMapper:
         ErrorCode.UNSUPPORTED_FORMAT: 400,
         ErrorCode.UNSUPPORTED_QUERY: 400,
         ErrorCode.SYSTEM_ERROR: 500,
+        ErrorCode.SERVICE_UNAVAILABLE: 503,
         ErrorCode.POST_COMMIT_FAILURE: 500,
     }
 

@@ -34,4 +34,5 @@ class ErrorCode(StrEnum):
     UNSUPPORTED_FORMAT = "unsupported_format"
     UNSUPPORTED_QUERY = "unsupported_query"
     SYSTEM_ERROR = "system_error"
+    SERVICE_UNAVAILABLE = "service_unavailable"
     POST_COMMIT_FAILURE = "post_commit_failure"

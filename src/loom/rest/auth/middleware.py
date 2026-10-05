@@ -12,7 +12,7 @@ TLS without touching a single authorization rule.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import msgspec
@@ -20,7 +20,7 @@ import msgspec
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import reset_identity, set_identity
 from loom.core.tracing import get_trace_id
-from loom.rest.auth.abc import Authenticator, RequestCredentials
+from loom.rest.auth.abc import AuthenticationUnavailable, Authenticator, RequestCredentials
 from loom.rest.auth.config import JwtAuthConfig
 from loom.rest.auth.jwt import JwtAuthenticator
 from loom.rest.constants import BEARER_CHALLENGE
@@ -33,6 +33,7 @@ _ASGIApp = Callable[[_Scope, _Receive, _Send], Awaitable[None]]
 
 _HTTP_SCOPE = "http"
 _UNAUTHORIZED_MESSAGE = "Authentication required: missing or invalid credentials."
+_UNAVAILABLE_MESSAGE = "Authentication is temporarily unavailable."
 _UNKNOWN_CLIENT = "unknown"
 
 _logger = logging.getLogger(__name__)
@@ -55,6 +56,10 @@ class AuthenticationMiddleware:
     4. On success, installs the identity for the duration of the request and
        restores the previous one in a ``finally`` — without it, a reused
        worker task would inherit the previous caller.
+    5. When the authenticator raises
+       :class:`~loom.rest.auth.abc.AuthenticationUnavailable`, answers ``503``
+       with the standard error body and a fixed message, and logs the cause at
+       ``WARNING``.  Any other exception propagates unchanged.
 
     Non-HTTP scopes (WebSocket, lifespan) are passed through unchanged.
 
@@ -89,7 +94,21 @@ class AuthenticationMiddleware:
             await self._app(scope, receive, send)
             return
 
-        identity = await self._authenticator.authenticate(_credentials(scope))
+        # Starlette's exception handlers sit inside the user middleware stack,
+        # so an outage escaping from here would reach ServerErrorMiddleware as
+        # a 500: it has to become a 503 at this layer.
+        try:
+            identity = await self._authenticator.authenticate(_credentials(scope))
+        except AuthenticationUnavailable:
+            _logger.warning(
+                "authentication unavailable method=%s path=%s",
+                scope.get("method", _UNKNOWN_CLIENT),
+                scope.get("path", _UNKNOWN_CLIENT),
+                exc_info=True,
+            )
+            await _send_error(send, 503, ErrorCode.SERVICE_UNAVAILABLE, _UNAVAILABLE_MESSAGE)
+            return
+
         if identity is None:
             _logger.info(
                 "authentication refused method=%s path=%s client=%s",
@@ -170,9 +189,20 @@ async def send_unauthorized(send: _Send) -> None:
     Args:
         send: ASGI send callable of the request being refused.
     """
+    await _send_error(send, 401, ErrorCode.UNAUTHENTICATED, _UNAUTHORIZED_MESSAGE, BEARER_CHALLENGE)
+
+
+async def _send_error(
+    send: _Send,
+    status: int,
+    code: ErrorCode,
+    message: str,
+    extra_headers: Mapping[str, str] | None = None,
+) -> None:
+    """Send *status* with the standard ``code``/``message``/``trace_id`` body."""
     detail = {
-        "code": ErrorCode.UNAUTHENTICATED.value,
-        "message": _UNAUTHORIZED_MESSAGE,
+        "code": code.value,
+        "message": message,
         "trace_id": get_trace_id(),
     }
     body = msgspec.json.encode({"detail": detail})
@@ -181,8 +211,8 @@ async def send_unauthorized(send: _Send) -> None:
         (b"content-length", str(len(body)).encode("ascii")),
         *(
             (name.lower().encode("ascii"), value.encode("ascii"))
-            for name, value in BEARER_CHALLENGE.items()
+            for name, value in (extra_headers or {}).items()
         ),
     ]
-    await send({"type": "http.response.start", "status": 401, "headers": headers})
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
