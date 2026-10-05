@@ -353,7 +353,7 @@ jobs:
       # that passes without validating anything.
       - name: Upload coverage to Codecov
         if: ${{ always() && hashFiles('coverage.xml') != '' }}
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v5
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
@@ -699,7 +699,7 @@ jobs:
 
       - name: Upload integration coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v5
         with:
           files: coverage-integration.xml
           flags: postgres
