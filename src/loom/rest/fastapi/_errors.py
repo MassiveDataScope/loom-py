@@ -47,7 +47,7 @@ async def _handle_validation_error(request: Request, exc: Exception) -> Response
     del request
     violations = _violations(exc) if isinstance(exc, RequestValidationError) else ()
     return MsgspecJSONResponse(
-        status_code=422,
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         content={
             "detail": {
                 ErrorField.CODE: ErrorCode.RULE_VIOLATIONS.value,
