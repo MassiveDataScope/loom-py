@@ -139,6 +139,7 @@ class TestHttpErrorMapper:
         assert exc.headers is None
 
     def test_authentication_unavailable_maps_to_503_without_a_challenge(self) -> None:
+        """An outage is not a credential fault, so the 503 challenges no one."""
         exc = self._mapper().to_http(AuthenticationUnavailable("issuer keys unreachable"))
         assert (exc.status_code, _detail(exc)["code"], exc.headers) == (
             503,

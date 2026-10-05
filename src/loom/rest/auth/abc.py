@@ -68,12 +68,16 @@ class AuthenticationUnavailable(LoomError):
     key set, a session store, a revocation list — is neither a refusal nor a
     bug.  :class:`~loom.rest.auth.middleware.AuthenticationMiddleware` answers
     it with ``503 service_unavailable``: a ``401`` would make clients discard
-    credentials that are still valid, and a ``500`` would hide the cause.
+    credentials that are still valid, and a ``500`` would report a bug where
+    there is an outage.
     Any other exception an authenticator raises keeps propagating unchanged.
 
-    The message goes to the server log, never to the caller, so it may name
-    the unreachable dependency; it must never carry the credential.  Chain the
-    underlying error with ``raise ... from exc`` to keep its traceback.
+    Raised from an authenticator, the message goes to the server log, never to
+    the caller, so it may name the unreachable dependency; raised anywhere
+    else, :class:`~loom.rest.errors.HttpErrorMapper` answers ``503`` with it,
+    like any :class:`~loom.core.errors.LoomError`.  It must never carry the
+    credential.  Chain the underlying error with ``raise ... from exc`` to keep
+    its traceback.
 
     Args:
         message: Operator-facing description of what is unavailable.

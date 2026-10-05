@@ -255,6 +255,7 @@ _TRACE_ID = "trace-auth-1"
 
 async def _raw_call(
     authenticator: _HeaderAuthenticator | _FailingAuthenticator,
+    headers: tuple[tuple[bytes, bytes], ...] = (),
 ) -> list[dict[str, Any]]:
     """Drive the middleware directly and return every ASGI message it sends."""
     sent: list[dict[str, Any]] = []
@@ -266,7 +267,7 @@ async def _raw_call(
         await send({"type": "http.response.start", "status": 200, "headers": []})
 
     middleware = AuthenticationMiddleware(_inner, authenticator=authenticator)
-    scope = {"type": "http", "path": _PROTECTED, "method": "GET", "headers": []}
+    scope = {"type": "http", "path": _PROTECTED, "method": "GET", "headers": list(headers)}
     with active_trace_id(_TRACE_ID):
         await middleware(scope, _noop_receive, _send)
     return sent
@@ -275,7 +276,7 @@ async def _raw_call(
 async def test_an_unavailable_mechanism_answers_503() -> None:
     """An outage is neither a refusal (401) nor a bug (500)."""
     app = _app(_FailingAuthenticator(AuthenticationUnavailable("issuer keys unreachable")))
-    response = await _get(app, _PROTECTED, "alice")
+    response = await _get(app, _PROTECTED)
     assert response.status_code == 503
 
 
@@ -307,14 +308,14 @@ def test_create_app_answers_an_outage_with_503_and_the_trace_id(tmp_path: Path) 
 async def test_the_503_does_not_leak_the_mechanism_message() -> None:
     """The reason is for the operator's log, never for the caller."""
     app = _app(_FailingAuthenticator(AuthenticationUnavailable("https://idp.internal/jwks")))
-    response = await _get(app, _PROTECTED, "alice")
+    response = await _get(app, _PROTECTED)
     assert "idp.internal" not in response.text
 
 
 async def test_the_503_carries_no_authentication_challenge() -> None:
     """A challenge would invite the client to discard credentials that are still valid."""
     app = _app(_FailingAuthenticator(AuthenticationUnavailable("issuer keys unreachable")))
-    response = await _get(app, _PROTECTED, "alice")
+    response = await _get(app, _PROTECTED)
     assert "www-authenticate" not in response.headers
 
 
@@ -334,6 +335,25 @@ async def test_an_unavailable_mechanism_is_logged_with_its_cause(
     assert [record.exc_info[1] for record in caplog.records if record.exc_info] == [error]
 
 
+async def test_an_unavailable_mechanism_is_logged_as_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An outage of a dependency is not a bug of this service: ``WARNING``, not ``ERROR``."""
+    with caplog.at_level(logging.DEBUG, logger="loom.rest.auth.middleware"):
+        await _raw_call(_FailingAuthenticator(AuthenticationUnavailable("down")))
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+
+
+async def test_the_outage_log_never_carries_the_credential(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A log that holds the bearer token turns log access into API access."""
+    credential = ((b"authorization", b"Bearer secret-token"),)
+    with caplog.at_level(logging.DEBUG, logger="loom.rest.auth.middleware"):
+        await _raw_call(_FailingAuthenticator(AuthenticationUnavailable("down")), credential)
+    assert "secret-token" not in caplog.text
+
+
 async def test_any_other_authenticator_error_still_propagates() -> None:
     """Only the declared outage is mapped; a bug keeps reaching the server error path."""
     authenticator = _FailingAuthenticator(RuntimeError("authenticator bug"))
@@ -350,7 +370,7 @@ async def test_a_loom_system_error_from_the_authenticator_still_propagates() -> 
 
 async def test_any_other_authenticator_error_still_answers_500() -> None:
     """Behind the server error middleware an undeclared failure stays a 500."""
-    response = await _get(_app(_FailingAuthenticator(RuntimeError("bug"))), _PROTECTED, "alice")
+    response = await _get(_app(_FailingAuthenticator(RuntimeError("bug"))), _PROTECTED)
     assert response.status_code == 500
 
 

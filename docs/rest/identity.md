@@ -245,7 +245,10 @@ app = create_app("config/app.yaml", authenticator=ApiKeyAuthenticator(store))
   `code: service_unavailable`, a fixed message and the `trace_id`, and no
   `WWW-Authenticate` challenge, so clients keep credentials that are still valid. The
   exception's message and its chained cause go to the server log at `WARNING`, never
-  to the caller. Any other exception keeps answering `500`.
+  to the caller. Raised outside an authenticator — from a use case, for instance —
+  {class}`~loom.rest.errors.HttpErrorMapper` answers `503` with the exception's own
+  message, like any `LoomError`. Any other exception from an authenticator keeps
+  answering `500`.
 
   ```python
   try:
