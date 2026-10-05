@@ -363,6 +363,19 @@
   capability does not recover yet; see "A session that died after it opened is
   replaced by the next call" in `docs/ai/mcp.md`.
 
+### rest
+
+- **rest:** an authenticator can report an outage instead of answering `500`.
+  An exception raised inside `AuthenticationMiddleware` never reached
+  Starlette's exception handlers, so a custom authenticator whose identity
+  provider was unreachable answered a bare `500`. An authenticator now raises
+  `loom.rest.auth.AuthenticationUnavailable` and the request answers `503`
+  with the standard error body (`code: service_unavailable`, a fixed message,
+  `trace_id`) and no `WWW-Authenticate` challenge; the exception's message
+  and cause are logged at `WARNING`, never sent. `ErrorCode` gains
+  `SERVICE_UNAVAILABLE`, which `HttpErrorMapper` maps to `503`. Any other
+  exception from the authenticator, and the `401` refusal, are unchanged.
+
 ## ♻️ Refactor
 
 ### etl

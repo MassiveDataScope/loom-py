@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
+from loom.core.errors import LoomError
+from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity
 
 
@@ -57,6 +59,39 @@ class RequestCredentials:
             The header value, or ``None`` when the header is absent.
         """
         return self.headers.get(name.lower())
+
+
+class AuthenticationUnavailable(LoomError):
+    """Raised by an authenticator that cannot decide on the credentials right now.
+
+    An outage of something the mechanism depends on — an identity provider's
+    key set, a session store, a revocation list — is neither a refusal nor a
+    bug.  :class:`~loom.rest.auth.middleware.AuthenticationMiddleware` answers
+    it with ``503 service_unavailable``: a ``401`` would make clients discard
+    credentials that are still valid, and a ``500`` would report a bug where
+    there is an outage.
+    Any other exception an authenticator raises keeps propagating unchanged.
+
+    Raised from an authenticator, the message goes to the server log, never to
+    the caller, so it may name the unreachable dependency; raised anywhere
+    else, :class:`~loom.rest.errors.HttpErrorMapper` answers ``503`` with it,
+    like any :class:`~loom.core.errors.LoomError`.  It must never carry the
+    credential.  Chain the underlying error with ``raise ... from exc`` to keep
+    its traceback.
+
+    Args:
+        message: Operator-facing description of what is unavailable.
+
+    Example::
+
+        try:
+            keys = await self._jwks.fetch()
+        except httpx.HTTPError as exc:
+            raise AuthenticationUnavailable("issuer key set unreachable") from exc
+    """
+
+    def __init__(self, message: str = "Authentication is temporarily unavailable") -> None:
+        super().__init__(message, code=ErrorCode.SERVICE_UNAVAILABLE)
 
 
 @runtime_checkable
@@ -105,5 +140,9 @@ class Authenticator(Protocol):
             The verified identity, or ``None`` to refuse the request.  The
             refusal carries no reason on purpose: the response must not become
             an oracle about which part of the credentials failed.
+
+        Raises:
+            AuthenticationUnavailable: When the credentials cannot be verified
+                right now because a dependency of the mechanism is down.
         """
         ...

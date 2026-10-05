@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from http import HTTPStatus
 from typing import Any, ClassVar
 
 from fastapi import HTTPException
@@ -69,18 +70,19 @@ class HttpErrorMapper:
             raise mapper.to_http(exc) from exc
     """
 
-    _STATUS: ClassVar[dict[str, int]] = {
-        ErrorCode.NOT_FOUND: 404,
-        ErrorCode.UNAUTHENTICATED: 401,
-        ErrorCode.FORBIDDEN: 403,
-        ErrorCode.CONFLICT: 409,
-        ErrorCode.RULE_VIOLATIONS: 422,
-        ErrorCode.RULE_VIOLATION: 422,
-        ErrorCode.BOUNDARY_VALIDATION: 422,
-        ErrorCode.UNSUPPORTED_FORMAT: 400,
-        ErrorCode.UNSUPPORTED_QUERY: 400,
-        ErrorCode.SYSTEM_ERROR: 500,
-        ErrorCode.POST_COMMIT_FAILURE: 500,
+    _STATUS: ClassVar[dict[str, HTTPStatus]] = {
+        ErrorCode.NOT_FOUND: HTTPStatus.NOT_FOUND,
+        ErrorCode.UNAUTHENTICATED: HTTPStatus.UNAUTHORIZED,
+        ErrorCode.FORBIDDEN: HTTPStatus.FORBIDDEN,
+        ErrorCode.CONFLICT: HTTPStatus.CONFLICT,
+        ErrorCode.RULE_VIOLATIONS: HTTPStatus.UNPROCESSABLE_ENTITY,
+        ErrorCode.RULE_VIOLATION: HTTPStatus.UNPROCESSABLE_ENTITY,
+        ErrorCode.BOUNDARY_VALIDATION: HTTPStatus.UNPROCESSABLE_ENTITY,
+        ErrorCode.UNSUPPORTED_FORMAT: HTTPStatus.BAD_REQUEST,
+        ErrorCode.UNSUPPORTED_QUERY: HTTPStatus.BAD_REQUEST,
+        ErrorCode.SYSTEM_ERROR: HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.SERVICE_UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
+        ErrorCode.POST_COMMIT_FAILURE: HTTPStatus.INTERNAL_SERVER_ERROR,
     }
 
     def to_http(self, error: LoomError) -> HTTPException:
@@ -95,7 +97,7 @@ class HttpErrorMapper:
             also carries the ``WWW-Authenticate`` challenge required by
             RFC 9110 §11.6.1.
         """
-        status = self._STATUS.get(error.code, 500)
+        status = self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
         detail: dict[str, Any] = {
             ErrorField.CODE: error.code,
             ErrorField.MESSAGE: error.message,
@@ -123,6 +125,6 @@ class HttpErrorMapper:
         return HTTPException(status_code=status, detail=detail, headers=_challenge(status))
 
 
-def _challenge(status: int) -> dict[str, str] | None:
+def _challenge(status: HTTPStatus) -> dict[str, str] | None:
     """Return the ``WWW-Authenticate`` header a ``401`` must carry, else ``None``."""
-    return dict(BEARER_CHALLENGE) if status == 401 else None
+    return dict(BEARER_CHALLENGE) if status is HTTPStatus.UNAUTHORIZED else None
