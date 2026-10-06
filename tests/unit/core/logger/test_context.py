@@ -22,6 +22,13 @@ def _loom_formatter() -> logging.Formatter:
     )
 
 
+@pytest.fixture(autouse=True)
+def _empty_log_context() -> Iterator[None]:
+    structlog.contextvars.clear_contextvars()
+    yield
+    structlog.contextvars.clear_contextvars()
+
+
 @pytest.fixture
 def output() -> Iterator[io.StringIO]:
     stream = io.StringIO()
