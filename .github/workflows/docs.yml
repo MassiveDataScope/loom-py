@@ -78,7 +78,7 @@ jobs:
       # upload-pages-artifact creates the zip format required by deploy-pages.
       # Used instead of upload-artifact so the deploy job can consume it directly.
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_build/html
 
