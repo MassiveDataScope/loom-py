@@ -512,7 +512,7 @@ async def _dispatch_route(
             runtime.compiled_route.full_path,
             trace_id,
         )
-        return internal_error_response(trace_id)
+        return internal_error_response()
 
 
 def _handler_signature(

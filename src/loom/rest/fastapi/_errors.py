@@ -35,18 +35,17 @@ _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
 
 
-def internal_error_response(trace_id: str) -> MsgspecJSONResponse:
+def internal_error_response() -> MsgspecJSONResponse:
     """Return the generic ``500`` that hides an unexpected failure's details.
 
-    Args:
-        trace_id: Trace of the failed request, ``""`` when there is none.
+    It carries the active trace id, or ``""`` when there is none.
     """
     return MsgspecJSONResponse(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
             ErrorField.CODE: "internal_error",
             ErrorField.MESSAGE: "An unexpected error occurred",
-            ErrorField.TRACE_ID: trace_id,
+            ErrorField.TRACE_ID: get_trace_id() or "",
         },
     )
 

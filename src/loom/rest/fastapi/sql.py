@@ -266,7 +266,7 @@ def _make_sql_handler(
             raise _error_mapper.to_http(exc) from exc
         except Exception:
             _logger.exception("Unhandled error in SQL endpoint for connection %r", name)
-            return internal_error_response(get_trace_id() or "")
+            return internal_error_response()
 
     _handler.__name__ = handler_name
     return _handler
