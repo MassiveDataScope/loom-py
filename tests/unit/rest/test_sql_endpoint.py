@@ -420,3 +420,4 @@ def test_emits_the_router_runtime_equivalent_span_per_request() -> None:
         "POST",
         True,
     )
+    assert (type(start.meta["status_code"]), start.meta["status_code"]) == (int, 200)

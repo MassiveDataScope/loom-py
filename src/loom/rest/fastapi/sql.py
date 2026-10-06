@@ -245,7 +245,7 @@ def _make_sql_handler(
                 trace_id=get_trace_id(),
                 route=path,
                 method="POST",
-                status_code=200,
+                status_code=int(HTTPStatus.OK),
                 read_only=connection.readonly,
                 roles=_effective_roles_label(roles, connection),
                 subject=identity.subject,
