@@ -325,7 +325,7 @@ from loom.core.logger import get_logger, log_context
 logger = get_logger(__name__)
 
 with log_context(request_id=audit_request_id):
-    logger.info("audit.recorded")  # carries request_id, as does any stdlib record
+    logger.info("audit.recorded")  # carries request_id; stdlib records too, once configure_logging has run
 ```
 
 ---

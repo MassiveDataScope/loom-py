@@ -1,4 +1,4 @@
-"""Per-context log fields, without depending on the logging backend."""
+"""Per-context log fields, bound without the caller importing the logging backend."""
 
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ def log_context(**values: Any) -> Iterator[None]:
     or asyncio task and never reach a concurrent request.  On exit, normal or
     by exception, each key regains the value it had before the block.  The
     block must be entered and exited in the same context: exiting it in
-    another one, as a streaming response body may, raises ``ValueError``.
+    another one raises ``ValueError``.  As a decorator it binds only while the
+    call itself runs, which for an ``async def`` is the creation of the
+    coroutine, so use it as a ``with`` block inside the coroutine instead.
 
     Args:
         **values: Fields to attach, e.g. ``request_id="..."``.

@@ -59,6 +59,7 @@ def test_value_is_gone_after_exit(output: io.StringIO) -> None:
         pass
     get_logger("tests.log_context").info("after")
 
+    assert "after" in output.getvalue()
     assert _REQUEST_ID not in output.getvalue()
 
 
@@ -67,6 +68,7 @@ def test_value_is_gone_after_an_exception(output: io.StringIO) -> None:
         _fail_inside_context()
     get_logger("tests.log_context").info("after")
 
+    assert "after" in output.getvalue()
     assert _REQUEST_ID not in output.getvalue()
 
 
