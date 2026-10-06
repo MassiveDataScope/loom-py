@@ -89,10 +89,12 @@
   failed on anything but a mapping.
 
 - **core:** `loom.core.logger.log_context(**values)` adds fields to every log
-  record emitted inside the block — through `get_logger` or plain stdlib
-  logging — so an application can bind, say, an audit `request_id` without
-  importing structlog. The values follow the current thread or asyncio task,
-  and each key regains its previous value on exit, even by exception.
+  record emitted inside the block through `get_logger` with its default
+  factory, and to plain stdlib records once `configure_logging` has installed
+  loom's formatter, so an application can bind, say, an audit `request_id`
+  without importing structlog. The values follow the current thread or
+  asyncio task, and each key regains its previous value on exit, even by
+  exception. The block must be entered and exited in the same context.
 
 ### ai
 
@@ -256,12 +258,11 @@
 - **rest:** a JSON object body that fails `Command` validation now answers
   `422 boundary_validation` with a `violations` list (`{field, message}`
   pairs, `field` being the wire name the client sent, the same shape
-  `rule_violations` already uses) instead of a generic `500`; malformed
-  JSON and a non-object body are unchanged. `Command.from_payload` now
-  raises `BoundaryValidationError` — a `ValueError` — instead of
-  `msgspec.ValidationError`. The root `title` is dropped on pydantic
-  OpenAPI schemas for request bodies and responses alike, matching the
-  untitled document a Struct always produced.
+  `rule_violations` already uses) instead of a generic `500`.
+  `Command.from_payload` now raises `BoundaryValidationError` — a
+  `ValueError` — instead of `msgspec.ValidationError`. The root `title` is
+  dropped on pydantic OpenAPI schemas for request bodies and responses alike,
+  matching the untitled document a Struct always produced.
 - **rest:** a request body that is not well-formed JSON — a syntax error,
   bytes that are not UTF-8, or an empty body on a route that takes input —
   now answers `400` with the standard error body (`code: bad_request`, the

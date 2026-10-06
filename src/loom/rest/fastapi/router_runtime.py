@@ -3,13 +3,13 @@
 Generates async handler functions at startup, one per
 :class:`~loom.rest.compiler.CompiledRoute`.  Each handler:
 
-1. Extracts path parameters from ``request.path_params`` (populated by
+1. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
+   :class:`~loom.core.use_case.factory.UseCaseFactory`.
+2. Extracts path parameters from ``request.path_params`` (populated by
    Starlette's routing layer from the URL).
-2. Reads the raw request body and decodes it with ``msgspec.json.decode``,
+3. Reads the raw request body and decodes it with ``msgspec.json.decode``,
    answering ``400`` when it is empty or not well-formed JSON and ``422``
    when it is not a JSON object.
-3. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
-   :class:`~loom.core.use_case.factory.UseCaseFactory`.
 4. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
 5. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`.
 
