@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 
 import httpx
 import msgspec
+import pydantic
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -243,6 +245,52 @@ def test_the_400_carries_the_standard_error_body() -> None:
     """Validation refusals are normalised like every other framework error."""
     detail = _items_client().get(f"{_LIST_PATH}?limit=abc").json()["detail"]
     assert (detail["code"], "trace_id" in detail) == ("bad_request", True)
+
+
+@pytest.mark.parametrize(
+    ("query", "message"),
+    [
+        ("pagination=sideways", "Invalid pagination mode: 'sideways'."),
+        ("sort=id&direction=sideways", "direction must be 'ASC' or 'DESC'."),
+        ("__eq=1", "Invalid filter field: '__eq'."),
+    ],
+    ids=["pagination-mode", "sort-direction", "filter-without-field"],
+)
+def test_an_unusable_query_parameter_answers_the_standard_400(query: str, message: str) -> None:
+    """Each query-parsing refusal is a 400 with the standard body and its own message."""
+    response = _items_client().get(f"{_LIST_PATH}?{query}")
+    detail = response.json()["detail"]
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert (detail["code"], detail["message"]) == ("bad_request", message)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI request validation
+# ---------------------------------------------------------------------------
+
+
+class _Payload(pydantic.BaseModel):
+    name: str
+
+
+def _validated_body_client() -> TestClient:
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.post("/payload")
+    async def payload(body: _Payload) -> dict[str, str]:
+        return {"name": body.name}
+
+    return TestClient(app)
+
+
+def test_a_missing_body_is_a_violation_of_the_body_itself() -> None:
+    """A failure located at the body root names ``body``, not an empty field."""
+    response = _validated_body_client().post("/payload")
+    detail = response.json()["detail"]
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert detail["code"] == "rule_violations"
+    assert [violation["field"] for violation in detail["violations"]] == ["body"]
 
 
 # ---------------------------------------------------------------------------
