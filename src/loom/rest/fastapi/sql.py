@@ -146,7 +146,7 @@ def _payload_too_large(max_bytes: int) -> HTTPException:
     """Build a 413 with the framework standard error body."""
     message = f"Request body exceeds the maximum accepted size ({max_bytes} bytes)"
     return HTTPException(
-        status_code=413,
+        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         detail={
             ErrorField.CODE: "payload_too_large",
             ErrorField.MESSAGE: message,
@@ -208,7 +208,7 @@ def _decode_request(body: bytes, *, max_sql_bytes: int) -> _SqlQueryRequest:
 def _unexpected_error_response() -> MsgspecJSONResponse:
     """Replicate the router runtime generic 500 body without leaking internals."""
     return MsgspecJSONResponse(
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
             ErrorField.CODE: "internal_error",
             ErrorField.MESSAGE: "An unexpected error occurred",

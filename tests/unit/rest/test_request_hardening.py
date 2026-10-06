@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
+import msgspec
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -25,7 +26,7 @@ from loom.core.repository.abc.query import QuerySpec
 from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase
-from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware
+from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware, send_payload_too_large
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
@@ -118,6 +119,20 @@ def test_the_413_uses_the_standard_error_body() -> None:
         "payload_too_large",
         {"code", "message", "trace_id"},
     )
+
+
+async def test_the_raw_413_carries_a_plain_int_status_and_json_body() -> None:
+    """The ASGI start message carries the int ``413`` the protocol specifies."""
+    sent: list[dict[str, Any]] = []
+
+    async def _send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await send_payload_too_large(_send, 64)
+
+    start, body = sent
+    assert (type(start["status"]), start["status"]) == (int, 413)
+    assert msgspec.json.decode(body["body"])["detail"]["code"] == "payload_too_large"
 
 
 async def test_a_chunked_body_is_cut_when_it_crosses_the_cap() -> None:

@@ -13,6 +13,7 @@ SQL endpoint, for instance — apply theirs on top.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 
 import msgspec
@@ -189,5 +190,6 @@ async def send_payload_too_large(send: _Send, max_bytes: int) -> None:
         (b"content-length", str(len(body)).encode("ascii")),
         (b"connection", b"close"),
     ]
-    await send({"type": "http.response.start", "status": 413, "headers": headers})
+    status = int(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
