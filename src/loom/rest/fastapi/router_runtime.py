@@ -39,7 +39,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import Forbidden, LoomError
+from loom.core.errors import BODY_FIELD, Forbidden, LoomError
 from loom.core.identity import Identity, current_identity
 from loom.core.model import BoundaryValidationError
 from loom.core.observability.event import Scope
@@ -73,7 +73,6 @@ _DEFAULT_PAGE = 1
 _DEFAULT_LIMIT = 50
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
 _NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
-_BODY_FIELD = "body"
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -454,7 +453,7 @@ async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str
         ) from exc
     if not isinstance(payload, dict):
         raise BoundaryValidationError(
-            _NOT_AN_OBJECT_MESSAGE, ((_BODY_FIELD, _NOT_AN_OBJECT_MESSAGE),)
+            _NOT_AN_OBJECT_MESSAGE, ((BODY_FIELD, _NOT_AN_OBJECT_MESSAGE),)
         )
     return payload
 

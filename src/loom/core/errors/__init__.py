@@ -1,4 +1,5 @@
 from loom.core.errors.errors import (
+    BODY_FIELD,
     Conflict,
     DomainError,
     Forbidden,
@@ -11,6 +12,7 @@ from loom.core.errors.errors import (
 )
 
 __all__ = [
+    "BODY_FIELD",
     "Conflict",
     "DomainError",
     "Forbidden",

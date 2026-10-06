@@ -22,6 +22,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 
+from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest.errors import ErrorField
@@ -112,4 +113,4 @@ def _field_of(location: Any) -> str:
     if not isinstance(location, (list, tuple)):
         return str(location)
     parts = [str(part) for part in location if str(part) != _BODY_LOCATION]
-    return ".".join(parts) if parts else _BODY_LOCATION
+    return ".".join(parts) if parts else BODY_FIELD

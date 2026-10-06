@@ -33,7 +33,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from loom.core.config.errors import ConfigError
-from loom.core.errors import LoomError, RuleViolation
+from loom.core.errors import BODY_FIELD, LoomError, RuleViolation
 from loom.core.identity import current_identity
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
@@ -195,7 +195,7 @@ def _decode_request(body: bytes, *, max_sql_bytes: int) -> _SqlQueryRequest:
     try:
         query = _REQUEST_DECODER.decode(body)
     except msgspec.ValidationError as exc:
-        raise _invalid_request("body", str(exc)) from exc
+        raise _invalid_request(BODY_FIELD, str(exc)) from exc
     except (msgspec.DecodeError, UnicodeDecodeError) as exc:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail()
