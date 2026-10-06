@@ -520,12 +520,12 @@ field — never reaches a rule: it answers its own 422 with
 `code: "boundary_validation"` and a `violations` list shaped the same way
 (`field` being the wire name the client sent). A body that is not JSON at all
 — a syntax error, bytes that are not UTF-8, nesting too deep to decode, or an
-empty body on a route that takes input — answers `400` with `code: "bad_request"` and the fixed message
-`Request body is not valid JSON`, never echoing what was sent. Well-formed
-JSON that is not an object — an array, a string, a number, `null` — is a
-`boundary_validation` 422 whose message and single `body` violation read
-`Request body must be a JSON object`. The body is decoded as JSON whatever its
-`Content-Type` says.
+empty body on a route that takes input — answers `400` with
+`code: "bad_request"` and the fixed message `Request body is not valid JSON`,
+never echoing what was sent. Well-formed JSON that is not an object — an
+array, a string, a number, `null` — is a `boundary_validation` 422 whose
+message and single `body` violation read `Request body must be a JSON object`.
+The body is decoded as JSON whatever its `Content-Type` says.
 
 A single `RuleViolation(field, message)` raised from `execute()` also answers
 422, with `code: "rule_violation"`, its `message` and its `field` at the top

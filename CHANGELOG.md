@@ -271,8 +271,9 @@
   envelope. Well-formed JSON that is not an object (an array, a string, a
   number, `null`) answers `422 boundary_validation` with the fixed message
   `Request body must be a JSON object` and one `body` violation, instead of
-  that same `500`. Neither echoes the body. A JSON object that fails validation still
-  answers `422` as before, and the `Content-Type` header is still not checked.
+  that same `500`. Neither echoes the body. A JSON object that fails
+  validation still answers `422` as before, and the `Content-Type` header is
+  still not checked.
 - **rest:** the SQL endpoint answers a body that is not well-formed JSON the
   same way: `400` with `code: bad_request` and the fixed message
   `Request body is not valid JSON`, instead of a `422 rule_violation` that
