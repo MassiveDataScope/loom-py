@@ -54,7 +54,7 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
-from loom.rest._body import BodyTooLarge
+from loom.rest._body import BodyTooLarge, malformed_body_detail
 from loom.rest.compiler import CompiledRoute
 from loom.rest.constants import QueryParam
 from loom.rest.errors import ErrorField, HttpErrorMapper
@@ -72,7 +72,6 @@ _error_mapper = HttpErrorMapper()
 _DEFAULT_PAGE = 1
 _DEFAULT_LIMIT = 50
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
-_MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
 _NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
 _BODY_FIELD = "body"
 
@@ -451,7 +450,7 @@ async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str
         payload = msgspec.json.decode(body)
     except (msgspec.DecodeError, UnicodeDecodeError) as exc:
         raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail=_MALFORMED_BODY_MESSAGE
+            status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail()
         ) from exc
     if not isinstance(payload, dict):
         raise BoundaryValidationError(

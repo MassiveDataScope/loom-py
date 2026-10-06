@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -255,16 +257,52 @@ async def test_chunked_body_without_content_length_is_capped_cutting_the_read() 
     assert consumed < len(chunks)  # the read was cut, never buffered to the end
 
 
-def test_non_json_bytes_within_the_cap_return_the_standard_422() -> None:
-    """Raw non-JSON bytes (e.g. a gzip body Starlette never decompresses) → 422, not 500."""
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\x1f\x8b\x08\x00" + b"\x00" * 128,
+        b"{not json",
+        b"",
+        b'{"sql": "SELECT \xff"}',
+    ],
+    ids=["gzip_like", "syntax", "empty", "not_utf8_in_string"],
+)
+def test_malformed_body_returns_the_standard_400(body: bytes) -> None:
+    """A body that is not well-formed JSON → 400 ``bad_request``, never executed."""
     executor = FakeSqlExecutor()
     client = _client(executor)
-    gzip_like = b"\x1f\x8b\x08\x00" + b"\x00" * 128
     response = client.post(
-        "/sql/analytics", content=gzip_like, headers={"content-type": "application/json"}
+        "/sql/analytics", content=body, headers={"content-type": "application/json"}
     )
     detail = response.json()["detail"]
-    assert (response.status_code, detail["code"], executor.calls) == (422, "rule_violation", [])
+    assert (response.status_code, executor.calls) == (HTTPStatus.BAD_REQUEST, [])
+    assert detail.keys() == {"code", "message", "trace_id"}
+    assert (detail["code"], detail["message"]) == ("bad_request", "Request body is not valid JSON")
+
+
+def test_malformed_body_is_not_echoed() -> None:
+    """The 400 carries a fixed message, not the decoder's view of the input."""
+    client = _client(FakeSqlExecutor())
+    response = client.post(
+        "/sql/analytics",
+        content=b'{"sql": "echo-marker',
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert "echo-marker" not in response.text
+
+
+def test_well_formed_body_of_wrong_type_stays_422() -> None:
+    """Valid JSON that does not fit the schema keeps the ``rule_violation`` 422."""
+    executor = FakeSqlExecutor()
+    client = _client(executor)
+    response = client.post("/sql/analytics", json={"sql": 1})
+    detail = response.json()["detail"]
+    assert (response.status_code, detail["code"], executor.calls) == (
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+        "rule_violation",
+        [],
+    )
 
 
 def test_rejects_body_with_settings_without_executing_it() -> None:

@@ -1,4 +1,5 @@
-"""Request-body size cap for the whole application.
+"""Request-body guards: the size cap for the whole application and the
+standard error of a body that is not well-formed JSON.
 
 Neither uvicorn nor Starlette caps the size of a request body: an endpoint that
 calls ``await request.body()`` will happily buffer whatever the client keeps
@@ -28,6 +29,8 @@ DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 """Body budget applied to every route unless the application raises it."""
 
 PAYLOAD_TOO_LARGE_CODE = "payload_too_large"
+MALFORMED_BODY_CODE = "bad_request"
+MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
 _HTTP_SCOPE = "http"
 _REQUEST_MESSAGE = "http.request"
 _CONTENT_LENGTH = b"content-length"
@@ -59,6 +62,18 @@ def payload_too_large_detail(max_bytes: int) -> dict[str, Any]:
     return {
         "code": PAYLOAD_TOO_LARGE_CODE,
         "message": payload_too_large_message(max_bytes),
+        "trace_id": get_trace_id(),
+    }
+
+
+def malformed_body_detail() -> dict[str, Any]:
+    """Return the standard error body of a ``400`` for a body that is not well-formed JSON.
+
+    The message is fixed, so the offending input is never echoed back.
+    """
+    return {
+        "code": MALFORMED_BODY_CODE,
+        "message": MALFORMED_BODY_MESSAGE,
         "trace_id": get_trace_id(),
     }
 
