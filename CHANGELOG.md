@@ -266,9 +266,11 @@
   bytes that are not UTF-8, or an empty body on a route that takes input —
   now answers `400` with the standard error body (`code: bad_request`, the
   fixed message `Request body is not valid JSON`, `trace_id`) instead of a
-  bare `500`; the body is never echoed. A well-formed body that fails
-  validation still answers `422`, and the `Content-Type` header is still not
-  checked.
+  bare `500`. Well-formed JSON that is not an object (an array, a string, a
+  number, `null`) answers `422 boundary_validation` with the fixed message
+  `Request body must be a JSON object` and one `body` violation, instead of a
+  `500`. Neither echoes the body. A JSON object that fails validation still
+  answers `422` as before, and the `Content-Type` header is still not checked.
 
 ### prefect
 

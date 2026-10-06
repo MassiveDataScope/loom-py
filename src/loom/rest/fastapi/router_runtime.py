@@ -6,7 +6,8 @@ Generates async handler functions at startup, one per
 1. Extracts path parameters from ``request.path_params`` (populated by
    Starlette's routing layer from the URL).
 2. Reads the raw request body and decodes it with ``msgspec.json.decode``,
-   answering ``400`` when it is empty or not well-formed JSON.
+   answering ``400`` when it is empty or not well-formed JSON and ``422``
+   when it is not a JSON object.
 3. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
    :class:`~loom.core.use_case.factory.UseCaseFactory`.
 4. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
@@ -40,6 +41,7 @@ from starlette.responses import Response
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
 from loom.core.identity import Identity, current_identity
+from loom.core.model import BoundaryValidationError
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -71,6 +73,8 @@ _DEFAULT_PAGE = 1
 _DEFAULT_LIMIT = 50
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
 _MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
+_NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
+_BODY_FIELD = "body"
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -424,21 +428,30 @@ def _build_execution_params(
 
 
 async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str, Any] | None:
-    """Return the decoded JSON body, or ``None`` when the route takes no input.
+    """Return the decoded JSON object, or ``None`` when the route takes no input.
+
+    Both messages are fixed, so the offending input is never echoed.
 
     Raises:
         HTTPException: ``400`` when the body is empty or not well-formed UTF-8
-            JSON.  The message is fixed so the offending input is never echoed.
+            JSON.
+        BoundaryValidationError: When the body is well-formed JSON but not an
+            object.
     """
     if not has_input_binding:
         return None
     body = await request.body()
     try:
-        return typing.cast("dict[str, Any]", msgspec.json.decode(body))
+        payload = msgspec.json.decode(body)
     except (msgspec.DecodeError, UnicodeDecodeError) as exc:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST, detail=_MALFORMED_BODY_MESSAGE
         ) from exc
+    if not isinstance(payload, dict):
+        raise BoundaryValidationError(
+            _NOT_AN_OBJECT_MESSAGE, ((_BODY_FIELD, _NOT_AN_OBJECT_MESSAGE),)
+        )
+    return payload
 
 
 async def _execute_route(

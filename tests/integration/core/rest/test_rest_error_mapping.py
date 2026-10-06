@@ -123,6 +123,42 @@ class TestMalformedBody:
 
 
 # ---------------------------------------------------------------------------
+# Well-formed body that is not an object (→ 422)
+# ---------------------------------------------------------------------------
+
+_NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
+
+
+class TestNonObjectBody:
+    @pytest.mark.parametrize(
+        "body", [b"[1]", b'"x"', b"1", b"null"], ids=["array", "string", "number", "null"]
+    )
+    def test_non_object_body_returns_422_boundary_validation(
+        self,
+        client_with_empty_repo,  # type: ignore[no-untyped-def]
+        body: bytes,
+    ) -> None:
+        resp = client_with_empty_repo.post(
+            "/products/", content=body, headers={"content-type": "application/json"}
+        )
+
+        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        detail = _error_detail(resp)
+        assert detail.keys() == {"code", "message", "trace_id", "violations"}
+        assert (detail["code"], detail["message"]) == (
+            "boundary_validation",
+            _NOT_AN_OBJECT_MESSAGE,
+        )
+        assert detail["violations"] == [{"field": "body", "message": _NOT_AN_OBJECT_MESSAGE}]
+
+    def test_non_object_body_is_not_echoed(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
+        resp = client_with_empty_repo.patch("/products/1", json=["echo-marker"])
+
+        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert "echo-marker" not in resp.text
+
+
+# ---------------------------------------------------------------------------
 # Not found (NotFound → 404)
 # ---------------------------------------------------------------------------
 
