@@ -15,11 +15,17 @@ _REQUEST_ID = "req-7f3a"
 
 def _loom_formatter() -> logging.Formatter:
     """Return the formatter ``configure_logging`` installed on the root logger."""
-    return next(
-        handler.formatter
-        for handler in logging.getLogger().handlers
-        if isinstance(handler.formatter, structlog.stdlib.ProcessorFormatter)
+    formatter = next(
+        (
+            handler.formatter
+            for handler in logging.getLogger().handlers
+            if isinstance(handler.formatter, structlog.stdlib.ProcessorFormatter)
+        ),
+        None,
     )
+    if formatter is None:
+        pytest.fail("configure_logging() has not installed loom's formatter")
+    return formatter
 
 
 @pytest.fixture(autouse=True)

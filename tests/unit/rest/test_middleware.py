@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from structlog.contextvars import get_contextvars
+from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
 
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
@@ -180,12 +180,15 @@ class TestTraceIdMiddlewareLogContext:
         assert app.seen_log_context.get("trace_id") == "log-tid"
 
     @pytest.mark.asyncio
-    async def test_log_context_cleared_after_request(self) -> None:
+    async def test_log_context_restored_after_request(self) -> None:
         mw = TraceIdMiddleware(_AppCapture())
+        bind_contextvars(trace_id="outer")
+        try:
+            await mw(_make_http_scope(), _null_receive, _make_async_sink([]))
 
-        await mw(_make_http_scope(), _null_receive, _make_async_sink([]))
-
-        assert "trace_id" not in get_contextvars()
+            assert get_contextvars().get("trace_id") == "outer"
+        finally:
+            clear_contextvars()
 
 
 class TestTraceIdMiddlewareContextReset:

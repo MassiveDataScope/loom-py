@@ -44,7 +44,7 @@ def assert_too_deep_for_msgspec(body: bytes) -> None:
     def decode() -> None:
         try:
             msgspec.json.decode(body)
-        except RecursionError as exc:
+        except BaseException as exc:
             outcome.append(exc)
         else:
             outcome.append(None)

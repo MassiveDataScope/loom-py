@@ -23,6 +23,8 @@ from tests.unit.core.sql._fakes import (
     make_sql_config,
 )
 
+_MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
+
 
 def _endpoint_connection(**overrides: Any) -> SqlConnectionConfig:
     """Connection with its endpoint enabled in the single-role 'external' shape.
@@ -302,7 +304,7 @@ def test_malformed_body_returns_the_standard_400(body: bytes) -> None:
     detail = response.json()["detail"]
     assert (response.status_code, executor.calls) == (HTTPStatus.BAD_REQUEST, [])
     assert detail.keys() == {"code", "message", "trace_id"}
-    assert (detail["code"], detail["message"]) == ("bad_request", "Request body is not valid JSON")
+    assert (detail["code"], detail["message"]) == ("bad_request", _MALFORMED_BODY_MESSAGE)
 
 
 def test_malformed_body_is_not_echoed() -> None:
@@ -331,7 +333,7 @@ def test_too_deeply_nested_body_returns_the_standard_400() -> None:
 
     detail = response.json()["detail"]
     assert (response.status_code, executor.calls) == (HTTPStatus.BAD_REQUEST, [])
-    assert detail["message"] == "Request body is not valid JSON"
+    assert detail["message"] == _MALFORMED_BODY_MESSAGE
 
 
 def test_well_formed_body_of_wrong_type_stays_422() -> None:
