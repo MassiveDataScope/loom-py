@@ -42,10 +42,10 @@ from loom.core.sql.config import SqlConfig, SqlConnectionConfig, roles_need_iden
 from loom.core.sql.roles import resolve_query_roles
 from loom.core.sql.service import SqlQueryService
 from loom.core.tracing import get_trace_id
-from loom.rest._body import MALFORMED_BODY_ERRORS
+from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator
-from loom.rest.errors import ErrorField, HttpErrorMapper
-from loom.rest.fastapi._errors import malformed_body_error
+from loom.rest.errors import HttpErrorMapper
+from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _logger = logging.getLogger(__name__)
@@ -145,14 +145,8 @@ def _invalid_request(field: str, message: str) -> HTTPException:
 
 def _payload_too_large(max_bytes: int) -> HTTPException:
     """Build a 413 with the framework standard error body."""
-    message = f"Request body exceeds the maximum accepted size ({max_bytes} bytes)"
     return HTTPException(
-        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-        detail={
-            ErrorField.CODE: "payload_too_large",
-            ErrorField.MESSAGE: message,
-            ErrorField.TRACE_ID: get_trace_id(),
-        },
+        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE, detail=payload_too_large_detail(max_bytes)
     )
 
 
@@ -202,18 +196,6 @@ def _decode_request(body: bytes, *, max_sql_bytes: int) -> _SqlQueryRequest:
     if len(query.sql.encode("utf-8")) > max_sql_bytes:
         raise _invalid_request("sql", f"SQL statement exceeds max_sql_bytes ({max_sql_bytes})")
     return query
-
-
-def _unexpected_error_response() -> MsgspecJSONResponse:
-    """Replicate the router runtime generic 500 body without leaking internals."""
-    return MsgspecJSONResponse(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        content={
-            ErrorField.CODE: "internal_error",
-            ErrorField.MESSAGE: "An unexpected error occurred",
-            ErrorField.TRACE_ID: get_trace_id() or "",
-        },
-    )
 
 
 def _effective_roles_label(roles: tuple[str, ...], connection: SqlConnectionConfig) -> str:
@@ -284,7 +266,7 @@ def _make_sql_handler(
             raise _error_mapper.to_http(exc) from exc
         except Exception:
             _logger.exception("Unhandled error in SQL endpoint for connection %r", name)
-            return _unexpected_error_response()
+            return internal_error_response(get_trace_id() or "")
 
     _handler.__name__ = handler_name
     return _handler

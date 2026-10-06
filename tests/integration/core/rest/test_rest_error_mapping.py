@@ -275,6 +275,9 @@ class TestSystemErrors:
         resp = client.post("/products/", json={"name": "Widget", "price": 10.0})
 
         assert resp.status_code == 500
+        assert resp.content == (
+            b'{"code":"internal_error","message":"An unexpected error occurred","trace_id":""}'
+        )
 
 
 # ---------------------------------------------------------------------------

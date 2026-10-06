@@ -57,8 +57,8 @@ from loom.core.use_case.factory import UseCaseFactory
 from loom.rest._body import MALFORMED_BODY_ERRORS, BodyTooLarge
 from loom.rest.compiler import CompiledRoute
 from loom.rest.constants import QueryParam
-from loom.rest.errors import ErrorField, HttpErrorMapper
-from loom.rest.fastapi._errors import malformed_body_error
+from loom.rest.errors import HttpErrorMapper
+from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
     build_query_parameters_schema,
@@ -102,18 +102,6 @@ def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route:
         ",".join(required_roles),
     )
     raise Forbidden(_NOT_AUTHORIZED_MESSAGE)
-
-
-def _internal_error_response(trace_id: str) -> MsgspecJSONResponse:
-    """Build the generic 500 response returned by REST handlers."""
-    return MsgspecJSONResponse(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        content={
-            ErrorField.CODE: "internal_error",
-            ErrorField.MESSAGE: "An unexpected error occurred",
-            ErrorField.TRACE_ID: trace_id,
-        },
-    )
 
 
 def _extract_path_params(path: str) -> list[str]:
@@ -524,7 +512,7 @@ async def _dispatch_route(
             runtime.compiled_route.full_path,
             trace_id,
         )
-        return _internal_error_response(trace_id)
+        return internal_error_response(trace_id)
 
 
 def _handler_signature(

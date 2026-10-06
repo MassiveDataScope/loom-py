@@ -204,12 +204,36 @@ def test_returns_generic_500_when_the_backend_is_unreachable() -> None:
     )
 
 
+def test_an_unexpected_error_answers_the_generic_500_body() -> None:
+    """An unhandled failure answers the router's generic 500, byte for byte."""
+    client = _client(FakeSqlExecutor(error=RuntimeError("boom")))
+    response = client.post("/sql/analytics", json={"sql": "SELECT 1"})
+    assert (response.status_code, response.content) == (
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        b'{"code":"internal_error","message":"An unexpected error occurred","trace_id":""}',
+    )
+
+
 def test_rejects_sql_exceeding_max_sql_bytes_without_executing_it() -> None:
     """SQL larger than ``max_sql_bytes`` is rejected at the input edge (413/422)."""
     executor = FakeSqlExecutor()
     client = _client(executor, max_sql_bytes=64)
     response = client.post("/sql/analytics", json={"sql": "SELECT '" + "x" * 200 + "'"})
     assert (response.status_code in (413, 422), executor.calls) == (True, [])
+
+
+def test_the_413_body_is_the_standard_payload_too_large_body() -> None:
+    """The 413 carries the same bytes as the application-wide body cap."""
+    client = _client(FakeSqlExecutor(), max_sql_bytes=64)
+    response = client.post(
+        "/sql/analytics",
+        content=b"x" * (128 * 1024),
+        headers={"content-type": "application/json"},
+    )
+    assert response.content == (
+        b'{"detail":{"code":"payload_too_large","message":"Request body exceeds the maximum'
+        b' accepted size (65600 bytes)","trace_id":null}}'
+    )
 
 
 def test_rejects_a_giant_body_with_413_without_invoking_the_executor() -> None:
