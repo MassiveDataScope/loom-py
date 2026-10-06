@@ -169,15 +169,6 @@ def _coerce_scalar(value: str) -> Any:
         return value
 
 
-def _parse_filter_op(op: str) -> FilterOp:
-    try:
-        return FilterOp(op.lower())
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail=f"Unsupported filter operator: {op!r}"
-        ) from exc
-
-
 def _parse_pagination_mode(
     raw: str | None,
     cursor: str | None,
@@ -241,7 +232,7 @@ def _parse_filter_specs(query_params: QueryParams) -> list[FilterSpec]:
 
         maybe_op = parts[-1].lower()
         if maybe_op in _FILTER_OP_VALUES:
-            op = _parse_filter_op(maybe_op)
+            op = FilterOp(maybe_op)
             field_parts = parts[:-1]
         else:
             op = FilterOp.EQ
