@@ -7,7 +7,9 @@ therefore had to parse two formats, the failing *input* was echoed back, and a
 link to the Pydantic documentation advertised the internals.
 
 Registering these handlers makes every error of the application look the same,
-correlatable by ``trace_id`` and free of internal detail.
+correlatable by ``trace_id`` and free of internal detail.  The module also
+builds the ``400`` the router runtime and the SQL endpoint raise for a malformed
+body and the generic ``500`` they return for an unexpected failure.
 
 Internal module: consumed by :func:`loom.rest.fastapi.app.create_fastapi_app`,
 the router runtime and the SQL endpoint.
@@ -31,6 +33,8 @@ from loom.rest.errors import ErrorField
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
+_INTERNAL_ERROR_CODE = "internal_error"
+_INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
 _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
 
@@ -43,8 +47,8 @@ def internal_error_response() -> MsgspecJSONResponse:
     return MsgspecJSONResponse(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
-            ErrorField.CODE: "internal_error",
-            ErrorField.MESSAGE: "An unexpected error occurred",
+            ErrorField.CODE: _INTERNAL_ERROR_CODE,
+            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
             ErrorField.TRACE_ID: get_trace_id() or "",
         },
     )
