@@ -88,6 +88,12 @@
   naming a scalar leaf (`"api.token"`) and convert that value; before, they
   failed on anything but a mapping.
 
+- **core:** `loom.core.logger.log_context(**values)` adds fields to every log
+  record emitted inside the block — through `get_logger` or plain stdlib
+  logging — so an application can bind, say, an audit `request_id` without
+  importing structlog. The values follow the current thread or asyncio task,
+  and each key regains its previous value on exit, even by exception.
+
 ### ai
 
 - **ai:** `provider: typesafe` binds TypeSafe's Jev, a decision model that
