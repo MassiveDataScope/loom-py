@@ -42,9 +42,10 @@ from loom.core.sql.config import SqlConfig, SqlConnectionConfig, roles_need_iden
 from loom.core.sql.roles import resolve_query_roles
 from loom.core.sql.service import SqlQueryService
 from loom.core.tracing import get_trace_id
-from loom.rest._body import malformed_body_detail
+from loom.rest._body import MALFORMED_BODY_ERRORS
 from loom.rest.auth.abc import Authenticator
 from loom.rest.errors import ErrorField, HttpErrorMapper
+from loom.rest.fastapi._errors import malformed_body_error
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _logger = logging.getLogger(__name__)
@@ -196,10 +197,8 @@ def _decode_request(body: bytes, *, max_sql_bytes: int) -> _SqlQueryRequest:
         query = _REQUEST_DECODER.decode(body)
     except msgspec.ValidationError as exc:
         raise _invalid_request(BODY_FIELD, str(exc)) from exc
-    except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as exc:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail()
-        ) from exc
+    except MALFORMED_BODY_ERRORS as exc:
+        raise malformed_body_error() from exc
     if len(query.sql.encode("utf-8")) > max_sql_bytes:
         raise _invalid_request("sql", f"SQL statement exceeds max_sql_bytes ({max_sql_bytes})")
     return query

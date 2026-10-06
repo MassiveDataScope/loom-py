@@ -9,7 +9,8 @@ link to the Pydantic documentation advertised the internals.
 Registering these handlers makes every error of the application look the same,
 correlatable by ``trace_id`` and free of internal detail.
 
-Internal module: consumed by :func:`loom.rest.fastapi.app.create_fastapi_app`.
+Internal module: consumed by :func:`loom.rest.fastapi.app.create_fastapi_app`,
+the router runtime and the SQL endpoint.
 """
 
 from __future__ import annotations
@@ -25,12 +26,18 @@ from starlette.responses import Response
 from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
+from loom.rest._body import malformed_body_detail
 from loom.rest.errors import ErrorField
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
 _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
+
+
+def malformed_body_error() -> HTTPException:
+    """Return the ``400`` for a request body that is not well-formed JSON."""
+    return HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail())
 
 
 def register_error_handlers(app: FastAPI) -> None:

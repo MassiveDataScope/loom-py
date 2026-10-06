@@ -32,6 +32,12 @@ DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 PAYLOAD_TOO_LARGE_CODE = "payload_too_large"
 MALFORMED_BODY_CODE = "bad_request"
 MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
+MALFORMED_BODY_ERRORS: tuple[type[Exception], ...] = (
+    msgspec.DecodeError,
+    UnicodeDecodeError,
+    RecursionError,
+)
+"""Decoder errors that mean the body is not well-formed JSON."""
 _HTTP_SCOPE = "http"
 _REQUEST_MESSAGE = "http.request"
 _CONTENT_LENGTH = b"content-length"

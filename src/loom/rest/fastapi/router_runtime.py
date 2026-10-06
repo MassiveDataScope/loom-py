@@ -54,10 +54,11 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
-from loom.rest._body import BodyTooLarge, malformed_body_detail
+from loom.rest._body import MALFORMED_BODY_ERRORS, BodyTooLarge
 from loom.rest.compiler import CompiledRoute
 from loom.rest.constants import QueryParam
 from loom.rest.errors import ErrorField, HttpErrorMapper
+from loom.rest.fastapi._errors import malformed_body_error
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
     build_query_parameters_schema,
@@ -434,7 +435,7 @@ def _build_execution_params(
 async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str, Any] | None:
     """Return the decoded JSON object, or ``None`` when the route takes no input.
 
-    Both messages are fixed, so the offending input is never echoed.
+    The 400 and 422 messages are fixed, so the offending input is never echoed.
 
     Raises:
         HTTPException: ``400`` when the body is empty, not well-formed UTF-8
@@ -447,10 +448,8 @@ async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str
     body = await request.body()
     try:
         payload = msgspec.json.decode(body)
-    except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as exc:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail()
-        ) from exc
+    except MALFORMED_BODY_ERRORS as exc:
+        raise malformed_body_error() from exc
     if not isinstance(payload, dict):
         raise BoundaryValidationError(
             _NOT_AN_OBJECT_MESSAGE, ((BODY_FIELD, _NOT_AN_OBJECT_MESSAGE),)
