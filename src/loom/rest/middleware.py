@@ -13,8 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from structlog.contextvars import bind_contextvars, reset_contextvars
-
+from loom.core.logger import log_context
 from loom.core.tracing import generate_trace_id, reset_trace_id, set_trace_id
 
 # ASGI type aliases
@@ -76,8 +75,6 @@ class TraceIdMiddleware:
 
         tid = _accepted_trace_id(_extract_header(scope.get("headers", []), self._header_bytes))
 
-        token = set_trace_id(tid)
-        context_tokens = bind_contextvars(trace_id=tid)
         header_injected = False
 
         async def send_with_trace(message: dict[str, Any]) -> None:
@@ -89,10 +86,11 @@ class TraceIdMiddleware:
                 message = {**message, "headers": headers}
             await send(message)
 
+        token = set_trace_id(tid)
         try:
-            await self._app(scope, receive, send_with_trace)
+            with log_context(trace_id=tid):
+                await self._app(scope, receive, send_with_trace)
         finally:
-            reset_contextvars(**context_tokens)
             reset_trace_id(token)
 
 
