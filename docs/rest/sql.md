@@ -248,7 +248,7 @@ Errors use the standard framework body (`detail.code`, `detail.message`,
 
 | Status | When |
 |--------|------|
-| 400 | Body that is not well-formed JSON (syntax error, bytes that are not UTF-8, empty) — `code: bad_request`, fixed message, the body is never echoed |
+| 400 | Body that is not well-formed JSON (syntax error, bytes that are not UTF-8, nesting too deep to decode, empty) — `code: bad_request`, fixed message, the body is never echoed |
 | 401 | Missing, expired or otherwise invalid token (emitted by the JWT middleware, before the endpoint) |
 | 404 | Unknown connection name |
 | 403 | The verified identity grants no allowed role, the body asks for a role the identity does not hold, or the role is outside the allowlist |

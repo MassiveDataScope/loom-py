@@ -16,6 +16,7 @@ from loom.core.sql.abc import SqlExecutionError
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
 from loom.core.sql.service import SqlQueryService
 from loom.rest.fastapi.sql import bind_sql_endpoints
+from tests.helpers.deep_json import assert_too_deep_for_msgspec, fixed_thread_stack, nested_array
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
@@ -290,6 +291,23 @@ def test_malformed_body_is_not_echoed() -> None:
     )
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert "echo-marker" not in response.text
+
+
+def test_too_deeply_nested_body_returns_the_standard_400() -> None:
+    """Parameters nested past msgspec's recursion bound → 400, never executed."""
+    executor = FakeSqlExecutor()
+    client = _client(executor)
+    body = b'{"sql": "SELECT 1", "parameters": {"p": ' + nested_array() + b"}}"
+    assert_too_deep_for_msgspec(body)
+
+    with fixed_thread_stack():
+        response = client.post(
+            "/sql/analytics", content=body, headers={"content-type": "application/json"}
+        )
+
+    detail = response.json()["detail"]
+    assert (response.status_code, executor.calls) == (HTTPStatus.BAD_REQUEST, [])
+    assert detail["message"] == "Request body is not valid JSON"
 
 
 def test_well_formed_body_of_wrong_type_stays_422() -> None:

@@ -196,7 +196,7 @@ def _decode_request(body: bytes, *, max_sql_bytes: int) -> _SqlQueryRequest:
         query = _REQUEST_DECODER.decode(body)
     except msgspec.ValidationError as exc:
         raise _invalid_request(BODY_FIELD, str(exc)) from exc
-    except (msgspec.DecodeError, UnicodeDecodeError) as exc:
+    except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as exc:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail()
         ) from exc

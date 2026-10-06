@@ -264,19 +264,21 @@
   dropped on pydantic OpenAPI schemas for request bodies and responses alike,
   matching the untitled document a Struct always produced.
 - **rest:** a request body that is not well-formed JSON — a syntax error,
-  bytes that are not UTF-8, or an empty body on a route that takes input —
-  now answers `400` with the standard error body (`code: bad_request`, the
-  fixed message `Request body is not valid JSON`, `trace_id`) instead of a
-  bare `500`. Well-formed JSON that is not an object (an array, a string, a
+  bytes that are not UTF-8, nesting too deep to decode, or an empty body on a
+  route that takes input — now answers `400` with the standard error body
+  (`code: bad_request`, the fixed message `Request body is not valid JSON`,
+  `trace_id`) instead of a generic `500 internal_error` without the `detail`
+  envelope. Well-formed JSON that is not an object (an array, a string, a
   number, `null`) answers `422 boundary_validation` with the fixed message
-  `Request body must be a JSON object` and one `body` violation, instead of a
-  `500`. Neither echoes the body. A JSON object that fails validation still
+  `Request body must be a JSON object` and one `body` violation, instead of
+  that same `500`. Neither echoes the body. A JSON object that fails validation still
   answers `422` as before, and the `Content-Type` header is still not checked.
 - **rest:** the SQL endpoint answers a body that is not well-formed JSON the
   same way: `400` with `code: bad_request` and the fixed message
   `Request body is not valid JSON`, instead of a `422 rule_violation` that
   carried the decoder's message. Bytes that are not UTF-8 inside a JSON
-  string, which answered `500`, are now that `400` too. A well-formed body
+  string and nesting too deep to decode, which answered a generic
+  `500 internal_error`, are now that `400` too. A well-formed body
   that does not fit the schema still answers `422 rule_violation`.
 
 ### prefect

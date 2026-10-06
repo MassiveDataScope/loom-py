@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from loom.core.errors import Conflict, Forbidden, NotFound
 from loom.testing import HttpTestHarness, InMemoryRepository
+from tests.helpers.deep_json import assert_too_deep_for_msgspec, fixed_thread_stack, nested_array
 from tests.integration.fake_repo.product.interface import ProductRestInterface
 from tests.integration.fake_repo.product.model import Product
 
@@ -113,6 +114,18 @@ class TestMalformedBody:
 
         assert resp.status_code == HTTPStatus.BAD_REQUEST
         assert "echo-marker" not in resp.text
+
+    def test_too_deeply_nested_body_returns_400(self, client_with_empty_repo: TestClient) -> None:
+        body = nested_array()
+        assert_too_deep_for_msgspec(body)
+
+        with fixed_thread_stack():
+            resp = client_with_empty_repo.post(
+                "/products/", content=body, headers={"content-type": "application/json"}
+            )
+
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert _error_detail(resp)["message"] == _MALFORMED_BODY_MESSAGE
 
     def test_route_without_input_ignores_the_body(self, client_with_empty_repo: TestClient) -> None:
         resp = client_with_empty_repo.request(

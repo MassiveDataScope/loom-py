@@ -8,8 +8,8 @@ Generates async handler functions at startup, one per
 2. Extracts path parameters from ``request.path_params`` (populated by
    Starlette's routing layer from the URL).
 3. Reads the raw request body and decodes it with ``msgspec.json.decode``,
-   answering ``400`` when it is empty or not well-formed JSON and ``422``
-   when it is not a JSON object.
+   answering ``400`` when it is empty, not well-formed JSON or nested too
+   deeply to decode, and ``422`` when it is not a JSON object.
 4. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
 5. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`.
 
@@ -437,8 +437,8 @@ async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str
     Both messages are fixed, so the offending input is never echoed.
 
     Raises:
-        HTTPException: ``400`` when the body is empty or not well-formed UTF-8
-            JSON.
+        HTTPException: ``400`` when the body is empty, not well-formed UTF-8
+            JSON, or nested too deeply to decode.
         BoundaryValidationError: When the body is well-formed JSON but not an
             object.
     """
@@ -447,7 +447,7 @@ async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str
     body = await request.body()
     try:
         payload = msgspec.json.decode(body)
-    except (msgspec.DecodeError, UnicodeDecodeError) as exc:
+    except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as exc:
         raise HTTPException(
             status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail()
         ) from exc
