@@ -16,6 +16,7 @@ from __future__ import annotations
 from http import HTTPStatus
 
 import pytest
+from fastapi.testclient import TestClient
 
 from loom.core.errors import Conflict, Forbidden, NotFound
 from loom.testing import HttpTestHarness, InMemoryRepository
@@ -92,9 +93,7 @@ class TestMalformedBody:
         ids=["syntax", "empty", "not_utf8", "not_utf8_in_string"],
     )
     def test_malformed_body_returns_400_with_error_body(
-        self,
-        client_with_empty_repo,  # type: ignore[no-untyped-def]
-        body: bytes,
+        self, client_with_empty_repo: TestClient, body: bytes
     ) -> None:
         resp = client_with_empty_repo.post(
             "/products/", content=body, headers={"content-type": "application/json"}
@@ -105,7 +104,7 @@ class TestMalformedBody:
         assert detail.keys() == {"code", "message", "trace_id"}
         assert (detail["code"], detail["message"]) == ("bad_request", _MALFORMED_BODY_MESSAGE)
 
-    def test_malformed_body_is_not_echoed(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
+    def test_malformed_body_is_not_echoed(self, client_with_empty_repo: TestClient) -> None:
         resp = client_with_empty_repo.patch(
             "/products/1",
             content=b'{"name": "echo-marker',
@@ -115,28 +114,38 @@ class TestMalformedBody:
         assert resp.status_code == HTTPStatus.BAD_REQUEST
         assert "echo-marker" not in resp.text
 
-    def test_well_formed_body_of_wrong_type_stays_422(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
-        resp = client_with_empty_repo.post("/products/", json={"name": "Widget", "price": "free"})
+    def test_route_without_input_ignores_the_body(self, client_with_empty_repo: TestClient) -> None:
+        resp = client_with_empty_repo.request(
+            "GET",
+            "/products/1",
+            content=b"{not json",
+            headers={"content-type": "application/json"},
+        )
 
-        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-        assert _error_detail(resp)["code"] == "boundary_validation"
+        assert resp.status_code == HTTPStatus.OK
 
 
 # ---------------------------------------------------------------------------
-# Well-formed body that is not an object (→ 422)
+# Well-formed body that fails boundary validation (→ 422)
 # ---------------------------------------------------------------------------
 
 _NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
 
 
-class TestNonObjectBody:
+class TestBoundaryValidation:
+    def test_well_formed_body_of_wrong_type_stays_422(
+        self, client_with_empty_repo: TestClient
+    ) -> None:
+        resp = client_with_empty_repo.post("/products/", json={"name": "Widget", "price": "free"})
+
+        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert _error_detail(resp)["code"] == "boundary_validation"
+
     @pytest.mark.parametrize(
         "body", [b"[1]", b'"x"', b"1", b"null"], ids=["array", "string", "number", "null"]
     )
     def test_non_object_body_returns_422_boundary_validation(
-        self,
-        client_with_empty_repo,  # type: ignore[no-untyped-def]
-        body: bytes,
+        self, client_with_empty_repo: TestClient, body: bytes
     ) -> None:
         resp = client_with_empty_repo.post(
             "/products/", content=body, headers={"content-type": "application/json"}
@@ -151,7 +160,7 @@ class TestNonObjectBody:
         )
         assert detail["violations"] == [{"field": "body", "message": _NOT_AN_OBJECT_MESSAGE}]
 
-    def test_non_object_body_is_not_echoed(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
+    def test_non_object_body_is_not_echoed(self, client_with_empty_repo: TestClient) -> None:
         resp = client_with_empty_repo.patch("/products/1", json=["echo-marker"])
 
         assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
