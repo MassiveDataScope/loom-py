@@ -13,6 +13,8 @@ Response shape: FastAPI wraps HTTPException detail under the ``detail`` key.
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 import pytest
 
 from loom.core.errors import Conflict, Forbidden, NotFound
@@ -74,6 +76,50 @@ class TestValidationErrors:
         resp = client_with_empty_repo.patch("/products/99", json={})
 
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Malformed body (not JSON → 400)
+# ---------------------------------------------------------------------------
+
+_MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
+
+
+class TestMalformedBody:
+    @pytest.mark.parametrize(
+        "body",
+        [b"{not json", b"", b"\xff\xfe", b'{"name": "\xff", "price": 1.0}'],
+        ids=["syntax", "empty", "not_utf8", "not_utf8_in_string"],
+    )
+    def test_malformed_body_returns_400_with_error_body(
+        self,
+        client_with_empty_repo,  # type: ignore[no-untyped-def]
+        body: bytes,
+    ) -> None:
+        resp = client_with_empty_repo.post(
+            "/products/", content=body, headers={"content-type": "application/json"}
+        )
+
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        detail = _error_detail(resp)
+        assert detail.keys() == {"code", "message", "trace_id"}
+        assert (detail["code"], detail["message"]) == ("bad_request", _MALFORMED_BODY_MESSAGE)
+
+    def test_malformed_body_is_not_echoed(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
+        resp = client_with_empty_repo.patch(
+            "/products/1",
+            content=b'{"name": "echo-marker',
+            headers={"content-type": "application/json"},
+        )
+
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "echo-marker" not in resp.text
+
+    def test_well_formed_body_of_wrong_type_stays_422(self, client_with_empty_repo) -> None:  # type: ignore[no-untyped-def]
+        resp = client_with_empty_repo.post("/products/", json={"name": "Widget", "price": "free"})
+
+        assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert _error_detail(resp)["code"] == "boundary_validation"
 
 
 # ---------------------------------------------------------------------------

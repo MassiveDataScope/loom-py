@@ -5,8 +5,8 @@ Generates async handler functions at startup, one per
 
 1. Extracts path parameters from ``request.path_params`` (populated by
    Starlette's routing layer from the URL).
-2. Reads the raw request body and decodes it with ``msgspec.json.decode``
-   when bytes are present.
+2. Reads the raw request body and decodes it with ``msgspec.json.decode``,
+   answering ``400`` when it is empty or not well-formed JSON.
 3. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
    :class:`~loom.core.use_case.factory.UseCaseFactory`.
 4. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
@@ -28,6 +28,7 @@ import types
 import typing
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 import msgspec
@@ -69,6 +70,7 @@ _error_mapper = HttpErrorMapper()
 _DEFAULT_PAGE = 1
 _DEFAULT_LIMIT = 50
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
+_MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -422,12 +424,21 @@ def _build_execution_params(
 
 
 async def _decode_payload(request: Request, has_input_binding: bool) -> dict[str, Any] | None:
+    """Return the decoded JSON body, or ``None`` when the route takes no input.
+
+    Raises:
+        HTTPException: ``400`` when the body is empty or not well-formed UTF-8
+            JSON.  The message is fixed so the offending input is never echoed.
+    """
     if not has_input_binding:
         return None
     body = await request.body()
-    if not body:
-        return None
-    return typing.cast("dict[str, Any]", msgspec.json.decode(body))
+    try:
+        return typing.cast("dict[str, Any]", msgspec.json.decode(body))
+    except (msgspec.DecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail=_MALFORMED_BODY_MESSAGE
+        ) from exc
 
 
 async def _execute_route(

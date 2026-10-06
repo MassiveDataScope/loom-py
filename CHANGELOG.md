@@ -256,6 +256,13 @@
   `msgspec.ValidationError`. The root `title` is dropped on pydantic
   OpenAPI schemas for request bodies and responses alike, matching the
   untitled document a Struct always produced.
+- **rest:** a request body that is not well-formed JSON — a syntax error,
+  bytes that are not UTF-8, or an empty body on a route that takes input —
+  now answers `400` with the standard error body (`code: bad_request`, the
+  fixed message `Request body is not valid JSON`, `trace_id`) instead of a
+  bare `500`; the body is never echoed. A well-formed body that fails
+  validation still answers `422`, and the `Content-Type` header is still not
+  checked.
 
 ### prefect
 
