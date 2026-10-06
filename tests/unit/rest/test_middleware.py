@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
 
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
@@ -43,10 +44,12 @@ class _AppCapture:
 
     def __init__(self) -> None:
         self.seen_trace_id: str | None = None
+        self.seen_log_context: dict[str, Any] = {}
         self.response_started = False
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         self.seen_trace_id = get_trace_id()
+        self.seen_log_context = get_contextvars()
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b""})
 
@@ -163,6 +166,29 @@ class TestTraceIdMiddlewareResponseHeader:
         header_dict = dict(start_msg["headers"])
         assert b"x-request-id" in header_dict
         assert len(header_dict[b"x-request-id"]) == 32
+
+
+class TestTraceIdMiddlewareLogContext:
+    @pytest.mark.asyncio
+    async def test_trace_id_bound_into_log_context(self) -> None:
+        app = _AppCapture()
+        mw = TraceIdMiddleware(app)
+        scope = _make_http_scope([(b"x-request-id", b"log-tid")])
+
+        await mw(scope, _null_receive, _make_async_sink([]))
+
+        assert app.seen_log_context.get("trace_id") == "log-tid"
+
+    @pytest.mark.asyncio
+    async def test_log_context_restored_after_request(self) -> None:
+        mw = TraceIdMiddleware(_AppCapture())
+        bind_contextvars(trace_id="outer")
+        try:
+            await mw(_make_http_scope(), _null_receive, _make_async_sink([]))
+
+            assert get_contextvars().get("trace_id") == "outer"
+        finally:
+            clear_contextvars()
 
 
 class TestTraceIdMiddlewareContextReset:

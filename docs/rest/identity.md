@@ -314,6 +314,20 @@ app:
   `[A-Za-z0-9._-]{1,128}`; anything else is replaced by a generated one, because the
   value is echoed back and reaches every log line.
 
+Fields of your own — an audit `request_id`, a tenant — join every log line the same
+way through `loom.core.logger.log_context`, without importing the logging backend.
+The values belong to the current task, so concurrent requests never see each other's,
+and each key regains its previous value when the block exits, even by exception:
+
+```python
+from loom.core.logger import get_logger, log_context
+
+logger = get_logger(__name__)
+
+with log_context(request_id=audit_request_id):
+    logger.info("audit.recorded")  # carries request_id; stdlib records too, once configure_logging has run
+```
+
 ---
 
 ## Identity in jobs

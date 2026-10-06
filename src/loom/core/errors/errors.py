@@ -114,6 +114,10 @@ class Conflict(DomainError):
         super().__init__(message, code=ErrorCode.CONFLICT)
 
 
+BODY_FIELD = "body"
+"""Field a violation names when it concerns the request body as a whole."""
+
+
 class RuleViolation(DomainError):
     """Raised when a single business rule is violated.
 

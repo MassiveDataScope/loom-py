@@ -13,8 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from structlog.contextvars import bind_contextvars, reset_contextvars
-
+from loom.core.logger import log_context
 from loom.core.tracing import generate_trace_id, reset_trace_id, set_trace_id
 
 # ASGI type aliases
@@ -39,8 +38,8 @@ class TraceIdMiddleware:
        (``[A-Za-z0-9._-]``, 1-128 chars); generates a UUID4 otherwise. A
        client-supplied identifier is echoed back and reaches every log line,
        so an unvalidated one is a log-forging primitive.
-    3. Activates the trace-id in the current async context via
-       :func:`~loom.core.tracing.set_trace_id`.
+    3. Activates the trace-id via :func:`~loom.core.tracing.set_trace_id` and
+       binds it onto every log record with :func:`~loom.core.logger.log_context`.
     4. Injects the trace-id into the response headers so clients can
        correlate logs.
     5. Resets the context after the response is sent.
@@ -76,8 +75,6 @@ class TraceIdMiddleware:
 
         tid = _accepted_trace_id(_extract_header(scope.get("headers", []), self._header_bytes))
 
-        token = set_trace_id(tid)
-        context_tokens = bind_contextvars(trace_id=tid)
         header_injected = False
 
         async def send_with_trace(message: dict[str, Any]) -> None:
@@ -89,10 +86,11 @@ class TraceIdMiddleware:
                 message = {**message, "headers": headers}
             await send(message)
 
+        token = set_trace_id(tid)
         try:
-            await self._app(scope, receive, send_with_trace)
+            with log_context(trace_id=tid):
+                await self._app(scope, receive, send_with_trace)
         finally:
-            reset_contextvars(**context_tokens)
             reset_trace_id(token)
 
 

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 
 import httpx
+import msgspec
+import pydantic
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -25,7 +28,7 @@ from loom.core.repository.abc.query import QuerySpec
 from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase
-from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware
+from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware, send_payload_too_large
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
@@ -118,6 +121,20 @@ def test_the_413_uses_the_standard_error_body() -> None:
         "payload_too_large",
         {"code", "message", "trace_id"},
     )
+
+
+async def test_the_raw_413_carries_a_plain_int_status_and_json_body() -> None:
+    """The ASGI start message carries the int ``413`` the protocol specifies."""
+    sent: list[dict[str, Any]] = []
+
+    async def _send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await send_payload_too_large(_send, 64)
+
+    start, body = sent
+    assert (type(start["status"]), start["status"]) == (int, 413)
+    assert msgspec.json.decode(body["body"])["detail"]["code"] == "payload_too_large"
 
 
 async def test_a_chunked_body_is_cut_when_it_crosses_the_cap() -> None:
@@ -228,6 +245,52 @@ def test_the_400_carries_the_standard_error_body() -> None:
     """Validation refusals are normalised like every other framework error."""
     detail = _items_client().get(f"{_LIST_PATH}?limit=abc").json()["detail"]
     assert (detail["code"], "trace_id" in detail) == ("bad_request", True)
+
+
+@pytest.mark.parametrize(
+    ("query", "message"),
+    [
+        ("pagination=sideways", "Invalid pagination mode: 'sideways'."),
+        ("sort=id&direction=sideways", "direction must be 'ASC' or 'DESC'."),
+        ("__eq=1", "Invalid filter field: '__eq'."),
+    ],
+    ids=["pagination-mode", "sort-direction", "filter-without-field"],
+)
+def test_an_unusable_query_parameter_answers_the_standard_400(query: str, message: str) -> None:
+    """Each query-parsing refusal is a 400 with the standard body and its own message."""
+    response = _items_client().get(f"{_LIST_PATH}?{query}")
+    detail = response.json()["detail"]
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert (detail["code"], detail["message"]) == ("bad_request", message)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI request validation
+# ---------------------------------------------------------------------------
+
+
+class _Payload(pydantic.BaseModel):
+    name: str
+
+
+def _validated_body_client() -> TestClient:
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.post("/payload")
+    async def payload(body: _Payload) -> dict[str, str]:
+        return {"name": body.name}
+
+    return TestClient(app)
+
+
+def test_a_missing_body_is_a_violation_of_the_body_itself() -> None:
+    """A failure located at the body root names ``body``, not an empty field."""
+    response = _validated_body_client().post("/payload")
+    detail = response.json()["detail"]
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert detail["code"] == "rule_violations"
+    assert [violation["field"] for violation in detail["violations"]] == ["body"]
 
 
 # ---------------------------------------------------------------------------

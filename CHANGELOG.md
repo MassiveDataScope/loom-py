@@ -88,6 +88,14 @@
   naming a scalar leaf (`"api.token"`) and convert that value; before, they
   failed on anything but a mapping.
 
+- **core:** `loom.core.logger.log_context(**values)` adds fields to every log
+  record emitted inside the block through `get_logger` with its default
+  factory, and to plain stdlib records once `configure_logging` has installed
+  loom's formatter, so an application can bind, say, an audit `request_id`
+  without importing structlog. The values follow the current thread or
+  asyncio task, and each key regains its previous value on exit, even by
+  exception. The block must be entered and exited in the same context.
+
 ### ai
 
 - **ai:** `provider: typesafe` binds TypeSafe's Jev, a decision model that
@@ -250,12 +258,29 @@
 - **rest:** a JSON object body that fails `Command` validation now answers
   `422 boundary_validation` with a `violations` list (`{field, message}`
   pairs, `field` being the wire name the client sent, the same shape
-  `rule_violations` already uses) instead of a generic `500`; malformed
-  JSON and a non-object body are unchanged. `Command.from_payload` now
-  raises `BoundaryValidationError` — a `ValueError` — instead of
-  `msgspec.ValidationError`. The root `title` is dropped on pydantic
-  OpenAPI schemas for request bodies and responses alike, matching the
-  untitled document a Struct always produced.
+  `rule_violations` already uses) instead of a generic `500`.
+  `Command.from_payload` now raises `BoundaryValidationError` — a
+  `ValueError` — instead of `msgspec.ValidationError`. The root `title` is
+  dropped on pydantic OpenAPI schemas for request bodies and responses alike,
+  matching the untitled document a Struct always produced.
+- **rest:** a request body that is not well-formed JSON — a syntax error,
+  bytes that are not UTF-8, nesting too deep to decode, or an empty body on a
+  route that takes input — now answers `400` with the standard error body
+  (`code: bad_request`, the fixed message `Request body is not valid JSON`,
+  `trace_id`) instead of a generic `500 internal_error` without the `detail`
+  envelope. Well-formed JSON that is not an object (an array, a string, a
+  number, `null`) answers `422 boundary_validation` with the fixed message
+  `Request body must be a JSON object` and one `body` violation, instead of
+  that same `500`. Neither echoes the body. A JSON object that fails
+  validation still answers `422` as before, and the `Content-Type` header is
+  still not checked.
+- **rest:** the SQL endpoint answers a body that is not well-formed JSON the
+  same way: `400` with `code: bad_request` and the fixed message
+  `Request body is not valid JSON`, instead of a `422 rule_violation` that
+  carried the decoder's message. Bytes that are not UTF-8 inside a JSON
+  string and nesting too deep to decode, which answered a generic
+  `500 internal_error`, are now that `400` too. A well-formed body
+  that does not fit the schema still answers `422 rule_violation`.
 
 ### prefect
 
