@@ -108,7 +108,7 @@ def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route:
 def _internal_error_response(trace_id: str) -> MsgspecJSONResponse:
     """Build the generic 500 response returned by REST handlers."""
     return MsgspecJSONResponse(
-        status_code=500,
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
             ErrorField.CODE: "internal_error",
             ErrorField.MESSAGE: "An unexpected error occurred",
@@ -186,7 +186,9 @@ def _parse_filter_op(op: str) -> FilterOp:
     try:
         return FilterOp(op.lower())
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Unsupported filter operator: {op!r}") from exc
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail=f"Unsupported filter operator: {op!r}"
+        ) from exc
 
 
 def _parse_pagination_mode(
@@ -199,7 +201,7 @@ def _parse_pagination_mode(
     if not allow_override:
         if raw is not None and raw.lower() != default_mode.value:
             raise HTTPException(
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
                 detail=(
                     "Query parameter 'pagination' cannot override this route's "
                     f"default mode ({default_mode.value!r})."
@@ -207,7 +209,7 @@ def _parse_pagination_mode(
             )
         if cursor is not None and default_mode is PaginationMode.OFFSET:
             raise HTTPException(
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
                 detail=(
                     "Cursor parameters are not allowed when pagination mode is fixed to 'offset'."
                 ),
@@ -222,7 +224,7 @@ def _parse_pagination_mode(
         return PaginationMode(raw.lower())
     except ValueError as exc:
         raise HTTPException(
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             detail=f"Invalid pagination mode: {raw!r}.",
         ) from exc
 
@@ -230,7 +232,9 @@ def _parse_pagination_mode(
 def _parse_sort(sort_field: str | None, direction_raw: str) -> tuple[SortSpec, ...]:
     direction = direction_raw.upper()
     if direction not in {"ASC", "DESC"}:
-        raise HTTPException(status_code=400, detail="direction must be 'ASC' or 'DESC'.")
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail="direction must be 'ASC' or 'DESC'."
+        )
     requested_fields = (sort_field,) if sort_field else ()
     return tuple(
         SortSpec(field=_normalize_field_name(field), direction=typing.cast(Any, direction))
@@ -257,7 +261,9 @@ def _parse_filter_specs(query_params: QueryParams) -> list[FilterSpec]:
             field_parts = parts
 
         if not field_parts:
-            raise HTTPException(status_code=400, detail=f"Invalid filter field: {key!r}.")
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST, detail=f"Invalid filter field: {key!r}."
+            )
         field = ".".join(_normalize_field_name(part) for part in field_parts)
 
         if op == FilterOp.IN:
@@ -282,12 +288,12 @@ def _positive_int(query_params: QueryParams, name: str, default: int) -> int:
         value = int(raw)
     except ValueError as exc:
         raise HTTPException(
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             detail=f"Query parameter {name!r} must be an integer, got {raw!r}.",
         ) from exc
     if value < 1:
         raise HTTPException(
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             detail=f"Query parameter {name!r} must be greater than or equal to 1.",
         )
     return value
@@ -396,14 +402,14 @@ def _resolve_profile(request: Request, compiled_route: CompiledRoute) -> str:
 
     if not compiled_route.effective_expose_profile:
         raise HTTPException(
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             detail="Query parameter 'profile' is not allowed for this route.",
         )
 
     allowed = compiled_route.effective_allowed_profiles
     if allowed and requested not in allowed:
         raise HTTPException(
-            status_code=400,
+            status_code=HTTPStatus.BAD_REQUEST,
             detail=(f"Invalid profile {requested!r}. Allowed: {', '.join(allowed)}"),
         )
     return requested
