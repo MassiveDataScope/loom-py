@@ -15,7 +15,7 @@ classifiers = [
 ]
 dependencies = [
     "msgspec>=0.18,<1.0",
-    "structlog>=24.4,<26.0",
+    "structlog>=24.4,<27.0",
     "omegaconf>=2.3,<3.0",
     "prometheus-client>=0.20",
     "aiocache>=0.12,<1.0",
