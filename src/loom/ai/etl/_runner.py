@@ -38,7 +38,9 @@ class PolarsAgentRunner:
     runs its batch on an event loop of its own, in a dedicated thread, which
     sees the caller's context variables, when the calling thread already runs
     one. :meth:`validate` and :meth:`version` compile each agent once per
-    runner.
+    runner; :meth:`map` recompiles it and leaves that compilation for
+    :meth:`version`, so ``version`` always equals the ``agent_version`` the
+    last ``map`` wrote.
 
     Args:
         config: Parsed ``ai:`` section.
@@ -81,7 +83,7 @@ class PolarsAgentRunner:
         )
 
     def version(self, name: str) -> str:
-        """Return the fingerprint of agent *name*'s compiled plan."""
+        """Return the fingerprint of agent *name*'s latest compiled plan."""
         return _only_plan(self._plans(name), name).fingerprint
 
     def map(
@@ -112,7 +114,9 @@ class PolarsAgentRunner:
             ``agent_error``, the four token counts and ``agent_cost_usd``.
 
         Raises:
-            ValueError: When a key is named like a column the agent writes.
+            ValueError: When a key is named like a column the agent writes,
+                or *max_usd* is set and the artifact declares no
+                ``policies.max_usd`` to reserve per run.
         """
         columns = output_columns(output_type)
         require_free_keys(keys, columns)
@@ -121,14 +125,14 @@ class PolarsAgentRunner:
             return no_answers(rows, columns)
         runtime = self._runtime(name)
         plan = _only_plan(runtime.plans, name)
-        projection = loom_type(output_type)
+        self._compiled[name] = runtime.plans
         batch = Batch(
             runtime=runtime,
             name=name,
             limit=self._config.max_concurrent_runs,
             ledger=SpendLedger(max_usd),
-            reservation=worst_case(plan) or Decimal(0),
-            to_builtins=projection.to_builtins,
+            reservation=_reservation(plan, max_usd),
+            to_builtins=loom_type(output_type).to_builtins,
         )
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
         return answers_frame(rows, outcomes, columns, plan.fingerprint)
@@ -152,6 +156,17 @@ def _only_plan(plans: tuple[AgentPlan, ...], name: str) -> AgentPlan:
     if not plans:
         raise LookupError(f"no agent artifact declares an agent named {name!r}")
     return plans[0]
+
+
+def _reservation(plan: AgentPlan, max_usd: Decimal | None) -> Decimal:
+    worst = worst_case(plan)
+    if worst is not None:
+        return worst
+    if max_usd is not None:
+        raise ValueError(
+            f"agent {plan.name!r} has a step budget but no 'policies.max_usd' to reserve per run"
+        )
+    return Decimal(0)
 
 
 def _run_blocking(work: Callable[[], Coroutine[Any, Any, ResultT]]) -> ResultT:

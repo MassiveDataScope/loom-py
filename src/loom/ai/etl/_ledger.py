@@ -8,14 +8,13 @@ from loom.ai.compiler import AgentPlan
 
 
 def worst_case(plan: AgentPlan) -> Decimal | None:
-    """Return what one run of *plan* may cost at most, ``None`` when nothing caps it.
+    """Return the reservation of one run of *plan*, ``None`` when nothing caps it.
 
-    The cap of one attempt, ``policies.max_usd``, times its attempts,
-    ``retries + 1``.
+    ``policies.max_usd``, which the engine checks against the run's spend over
+    every attempt after each response: a run may only exceed it by the cost of
+    its last response.
     """
-    if plan.policies.max_usd is None:
-        return None
-    return plan.policies.max_usd * (plan.policies.retries + 1)
+    return plan.policies.max_usd
 
 
 class SpendLedger:

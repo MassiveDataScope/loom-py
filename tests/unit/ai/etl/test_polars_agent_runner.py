@@ -36,6 +36,8 @@ policies: {retries: 0, max_usd: 0.01}
 """
 _PRICE = ModelPrice(input=Decimal("100"), output=Decimal("200"))
 _ROW_COST = Decimal("0.002")
+_PRICEY_INPUT_TOKENS = 1000
+_PRICEY_ROW_COST = Decimal("0.101")
 _GPT_4O_ROW_COST = calc_price(
     RequestUsage(input_tokens=10, output_tokens=5), "gpt-4o", provider_id="openai"
 ).total_price
@@ -68,7 +70,10 @@ def _answer(prompt: str, info: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=503, model_name="scripted", body=None)
     return ModelResponse(
         parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={"answer": prompt.upper()})],
-        usage=RequestUsage(input_tokens=10, output_tokens=5),
+        usage=RequestUsage(
+            input_tokens=_PRICEY_INPUT_TOKENS if prompt.startswith("pricey") else 10,
+            output_tokens=5,
+        ),
         model_name="scripted",
     )
 
@@ -107,9 +112,10 @@ def _runner(
     concurrency: int = 4,
     prices: dict[str, ModelPrice] | None = None,
     providers_built: list[object] | None = None,
+    agent: str = _AGENT,
 ) -> PolarsAgentRunner:
     (tmp_path / "agents").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "agents" / "seller_reply.agent.yaml").write_text(_AGENT)
+    (tmp_path / "agents" / "seller_reply.agent.yaml").write_text(agent)
     config = AiConfig(
         engine="pydantic-ai",
         specs=("agents/*.agent.yaml",),
@@ -303,6 +309,32 @@ class TestBudget:
         assert out["agent_error"].drop_nulls().unique().to_list() == ["BUDGET_EXHAUSTED"]
         assert probe.peak > 1
 
+    @pytest.mark.parametrize("concurrency", [1, 4])
+    def test_a_run_overshoots_only_by_its_last_response(
+        self, tmp_path: Path, concurrency: int
+    ) -> None:
+        probe = _ConcurrencyProbe()
+        budget = Decimal("0.04")
+
+        out = _map(
+            _runner(tmp_path, probe.model, concurrency=concurrency),
+            _messages(*(f"pricey{i}" for i in range(12))),
+            max_usd=budget,
+        )
+
+        spent = Decimal(str(out["agent_cost_usd"].sum()))
+        sent = out.filter(pl.col("agent_error") != "BUDGET_EXHAUSTED")
+        assert budget < spent <= budget + concurrency * _PRICEY_ROW_COST
+        assert sent.height <= concurrency
+        assert sent["agent_error"].unique().to_list() == ["USAGE_LIMIT_EXCEEDED"]
+        assert sent["agent_cost_usd"].to_list() == [float(_PRICEY_ROW_COST)] * sent.height
+
+    def test_a_step_budget_without_a_run_cap_is_refused(self, tmp_path: Path) -> None:
+        runner = _runner(tmp_path, agent=_AGENT.replace(", max_usd: 0.01", ""))
+
+        with pytest.raises(ValueError, match="policies.max_usd"):
+            _map(runner, _messages("hola"), max_usd=Decimal("1"))
+
     def test_without_a_budget_every_row_is_sent(self, tmp_path: Path) -> None:
         out = _map(_runner(tmp_path, concurrency=1), _messages(*(f"m{i}" for i in range(12))))
 
@@ -354,3 +386,17 @@ class TestVersion:
 
         assert len(version) == 64
         assert version == _runner(tmp_path).version("seller_reply")
+
+    def test_map_writes_the_version_of_the_plan_it_ran_and_version_follows(
+        self, tmp_path: Path
+    ) -> None:
+        runner = _runner(tmp_path)
+        before = runner.version("seller_reply")
+        (tmp_path / "agents" / "seller_reply.agent.yaml").write_text(
+            _AGENT.replace("classify the reply", "classify the seller reply")
+        )
+
+        out = _map(runner, _messages("hola"))
+
+        assert out["agent_version"].to_list() == [runner.version("seller_reply")]
+        assert runner.version("seller_reply") != before

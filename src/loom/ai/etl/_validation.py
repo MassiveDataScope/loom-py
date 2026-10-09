@@ -111,9 +111,8 @@ def _uncapped(plan: AgentPlan) -> str:
 
 def _over_budget(plan: AgentPlan, worst: Decimal, max_usd: Decimal) -> str:
     return (
-        f"one run of agent {plan.name!r} may cost up to {worst} USD "
-        "('policies.max_usd' times 'retries' + 1), more than the step budget of "
-        f"{max_usd} USD; raise the budget or lower the cap"
+        f"one run of agent {plan.name!r} reserves {worst} USD ('policies.max_usd'), "
+        f"more than the step budget of {max_usd} USD; raise the budget or lower the cap"
     )
 
 

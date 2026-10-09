@@ -154,15 +154,16 @@ class TestBudgetUnenforceable:
     ) -> None:
         runner = _runner(tmp_path, model="gpt-4o", cap=_CAP)
 
-        issues = runner.validate("typed", Reply, max_usd=Decimal("0.019"))
+        issues = runner.validate("typed", Reply, max_usd=Decimal("0.009"))
 
         assert [issue.kind for issue in issues] == [AgentIssueKind.BUDGET_UNENFORCEABLE]
-        assert "0.02" in issues[0].message
+        assert "0.01 USD" in issues[0].message
+        assert "retries" not in issues[0].message
 
-    def test_a_step_budget_that_holds_one_worst_case_run_is_accepted(self, tmp_path: Path) -> None:
+    def test_retries_do_not_multiply_the_worst_case_of_a_run(self, tmp_path: Path) -> None:
         runner = _runner(tmp_path, model="gpt-4o", cap=_CAP)
 
-        assert _kinds(runner, "typed", max_usd=Decimal("0.02")) == []
+        assert _kinds(runner, "typed", max_usd=Decimal("0.01")) == []
 
     def test_a_run_cap_without_a_step_budget_is_accepted(self, tmp_path: Path) -> None:
         assert _kinds(_runner(tmp_path, model="gpt-4o", cap=_CAP), "typed") == []
