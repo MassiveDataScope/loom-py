@@ -9,6 +9,7 @@ from typing import Any
 from loom.ai.abc import AgentEngineProvider
 from loom.ai.compiler import AgentPlan
 from loom.ai.errors import AgentCompilationError
+from loom.ai.etl._ledger import worst_case
 from loom.ai.registry import engine_prices_model
 from loom.etl.runtime.contracts import AgentIssue, AgentIssueKind
 
@@ -53,7 +54,18 @@ def _plan_issues(
         issues.append(_issue(AgentIssueKind.OUTPUT_MISMATCH, _mismatch(plan, output_type)))
     if _budgeted(plan, max_usd) and not _priced(plan, provider):
         issues.append(_issue(AgentIssueKind.UNPRICED_BUDGET, _unpriced(plan)))
+    if max_usd is not None:
+        issues.extend(_ceiling_issues(plan, max_usd))
     return tuple(issues)
+
+
+def _ceiling_issues(plan: AgentPlan, max_usd: Decimal) -> tuple[AgentIssue, ...]:
+    worst = worst_case(plan)
+    if worst is None:
+        return (_issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _uncapped(plan)),)
+    if worst > max_usd:
+        return (_issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _over_budget(plan, worst, max_usd)),)
+    return ()
 
 
 def _budgeted(plan: AgentPlan, max_usd: Decimal | None) -> bool:
@@ -76,6 +88,21 @@ def _mismatch(plan: AgentPlan, output_type: type[Any]) -> str:
     return (
         f"agent {plan.name!r} does not answer {output_type.__qualname__}; its artifact must "
         f"declare 'output: {{kind: type_ref}}' naming that type"
+    )
+
+
+def _uncapped(plan: AgentPlan) -> str:
+    return (
+        f"agent {plan.name!r} has a step budget, but its artifact declares no "
+        "'policies.max_usd', so no run has a worst case to reserve; declare one"
+    )
+
+
+def _over_budget(plan: AgentPlan, worst: Decimal, max_usd: Decimal) -> str:
+    return (
+        f"one run of agent {plan.name!r} may cost up to {worst} USD "
+        "('policies.max_usd' times 'retries' + 1), more than the step budget of "
+        f"{max_usd} USD; raise the budget or lower the cap"
     )
 
 

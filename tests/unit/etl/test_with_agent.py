@@ -193,6 +193,7 @@ class TestCompileThroughThePort:
             (AgentIssueKind.COMPILATION_FAILED, ETLErrorCode.AGENT_COMPILATION_FAILED),
             (AgentIssueKind.OUTPUT_MISMATCH, ETLErrorCode.AGENT_OUTPUT_MISMATCH),
             (AgentIssueKind.UNPRICED_BUDGET, ETLErrorCode.AGENT_UNPRICED_BUDGET),
+            (AgentIssueKind.BUDGET_UNENFORCEABLE, ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE),
         ],
     )
     def test_each_issue_kind_has_its_own_code(

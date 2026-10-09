@@ -19,7 +19,7 @@ from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
 from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame, prompt_rows
-from loom.ai.etl._ledger import SpendLedger
+from loom.ai.etl._ledger import SpendLedger, worst_case
 from loom.ai.etl._validation import validation_issues
 from loom.ai.registry import resolve_engine_provider
 from loom.ai.runtime import AgentRuntime
@@ -114,7 +114,7 @@ class PolarsAgentRunner:
             name=name,
             limit=self._config.max_concurrent_runs,
             ledger=SpendLedger(max_usd),
-            reservation=_worst_case(plan),
+            reservation=worst_case(plan) or Decimal(0),
             to_builtins=projection.to_builtins,
         )
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
@@ -139,12 +139,6 @@ def _only_plan(runtime: AgentRuntime, name: str) -> AgentPlan:
     if not runtime.plans:
         raise LookupError(f"no agent artifact declares an agent named {name!r}")
     return runtime.plans[0]
-
-
-def _worst_case(plan: AgentPlan) -> Decimal:
-    if plan.policies.max_usd is None:
-        return Decimal(0)
-    return plan.policies.max_usd * (plan.policies.retries + 1)
 
 
 def _run_blocking(work: Callable[[], Coroutine[Any, Any, ResultT]]) -> ResultT:

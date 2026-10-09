@@ -1,4 +1,4 @@
-"""PolarsAgentRunner.validate: the four reasons an agent cannot serve a step."""
+"""PolarsAgentRunner.validate: the reasons an agent cannot serve a step."""
 
 from __future__ import annotations
 
@@ -104,27 +104,52 @@ class TestOutputMismatch:
         assert _kinds(_runner(tmp_path), "untyped") == [AgentIssueKind.OUTPUT_MISMATCH]
 
 
+_CAP = ", max_usd: 0.01"
+
+
 class TestUnpricedBudget:
-    @pytest.mark.parametrize(
-        ("cap", "budget"),
-        [("", Decimal("2")), (", max_usd: 0.01", None)],
-        ids=["step budget", "run cap"],
-    )
+    @pytest.mark.parametrize("budget", [Decimal("2"), None], ids=["step budget", "run cap"])
     def test_a_budget_on_an_unpriced_model_is_refused(
-        self, tmp_path: Path, cap: str, budget: Decimal | None
+        self, tmp_path: Path, budget: Decimal | None
     ) -> None:
-        issues = _runner(tmp_path, cap=cap).validate("typed", Reply, max_usd=budget)
+        issues = _runner(tmp_path, cap=_CAP).validate("typed", Reply, max_usd=budget)
 
         assert [issue.kind for issue in issues] == [AgentIssueKind.UNPRICED_BUDGET]
         assert "unknown-model" in issues[0].message
 
     def test_a_configured_price_makes_the_budget_enforceable(self, tmp_path: Path) -> None:
         prices = {"unknown-model": ModelPrice(input=Decimal("1"), output=Decimal("1"))}
-        runner = _runner(tmp_path, prices=prices)
+        runner = _runner(tmp_path, prices=prices, cap=_CAP)
 
         assert _kinds(runner, "typed", max_usd=Decimal("2")) == []
 
     def test_a_model_the_engine_prices_needs_no_configured_price(self, tmp_path: Path) -> None:
-        runner = _runner(tmp_path, model="gpt-4o")
+        runner = _runner(tmp_path, model="gpt-4o", cap=_CAP)
 
         assert _kinds(runner, "typed", max_usd=Decimal("2")) == []
+
+
+class TestBudgetUnenforceable:
+    def test_a_step_budget_without_a_run_cap_is_refused(self, tmp_path: Path) -> None:
+        issues = _runner(tmp_path, model="gpt-4o").validate("typed", Reply, max_usd=Decimal("2"))
+
+        assert [issue.kind for issue in issues] == [AgentIssueKind.BUDGET_UNENFORCEABLE]
+        assert "policies.max_usd" in issues[0].message
+
+    def test_a_run_whose_worst_case_exceeds_the_step_budget_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        runner = _runner(tmp_path, model="gpt-4o", cap=_CAP)
+
+        issues = runner.validate("typed", Reply, max_usd=Decimal("0.019"))
+
+        assert [issue.kind for issue in issues] == [AgentIssueKind.BUDGET_UNENFORCEABLE]
+        assert "0.02" in issues[0].message
+
+    def test_a_step_budget_that_holds_one_worst_case_run_is_accepted(self, tmp_path: Path) -> None:
+        runner = _runner(tmp_path, model="gpt-4o", cap=_CAP)
+
+        assert _kinds(runner, "typed", max_usd=Decimal("0.02")) == []
+
+    def test_a_run_cap_without_a_step_budget_is_accepted(self, tmp_path: Path) -> None:
+        assert _kinds(_runner(tmp_path, model="gpt-4o", cap=_CAP), "typed") == []

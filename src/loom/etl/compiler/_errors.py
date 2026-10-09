@@ -47,6 +47,7 @@ class ETLErrorCode(StrEnum):
     AGENT_COMPILATION_FAILED = "AGENT_COMPILATION_FAILED"
     AGENT_OUTPUT_MISMATCH = "AGENT_OUTPUT_MISMATCH"
     AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET"
+    AGENT_BUDGET_UNENFORCEABLE = "AGENT_BUDGET_UNENFORCEABLE"
 
 
 class ETLCompilationError(Exception):
@@ -433,6 +434,11 @@ class ETLCompilationError(Exception):
     def agent_unpriced_budget(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
         """A budget is declared for an agent whose model has no known price."""
         return cls._agent(ETLErrorCode.AGENT_UNPRICED_BUDGET, step, alias, reason)
+
+    @classmethod
+    def agent_budget_unenforceable(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """A step budget no worst case of one run can be reserved against."""
+        return cls._agent(ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE, step, alias, reason)
 
     @classmethod
     def _agent(cls, code: ETLErrorCode, step: type, alias: str, reason: str) -> ETLCompilationError:

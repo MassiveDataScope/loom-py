@@ -245,6 +245,23 @@ class TestBudget:
         assert out["agent_input_tokens"].to_list()[8:] == [0] * 4
         assert Decimal(str(out["agent_cost_usd"].sum())) <= Decimal("0.025")
 
+    @pytest.mark.parametrize("concurrency", [2, 4, 8])
+    def test_concurrent_runs_never_spend_past_the_budget(
+        self, tmp_path: Path, concurrency: int
+    ) -> None:
+        probe = _ConcurrencyProbe()
+        budget = Decimal("0.025")
+
+        out = _map(
+            _runner(tmp_path, probe.model, concurrency=concurrency),
+            _messages(*(f"m{i}" for i in range(30))),
+            max_usd=budget,
+        )
+
+        assert Decimal(str(out["agent_cost_usd"].sum())) <= budget
+        assert out["agent_error"].drop_nulls().unique().to_list() == ["BUDGET_EXHAUSTED"]
+        assert probe.peak > 1
+
     def test_without_a_budget_every_row_is_sent(self, tmp_path: Path) -> None:
         out = _map(_runner(tmp_path, concurrency=1), _messages(*(f"m{i}" for i in range(12))))
 
