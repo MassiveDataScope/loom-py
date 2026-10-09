@@ -160,8 +160,10 @@ class ETLRunner:
         resolved, with its interpolations and resolvers, when the step runs.
 
         An ``ai:`` section serves the steps' ``WithAgent`` declarations; its
-        ``specs`` globs resolve against the directory holding the YAML (the
-        working directory for a cloud URI) and may not leave it.
+        ``specs`` globs resolve against ``ai.root``, a path relative to the
+        directory holding the YAML (the working directory for a cloud URI),
+        or against that directory when ``ai.root`` is absent, and may not
+        leave it.
 
         Args:
             resolvers: Resolvers for ``${name:key}`` placeholders, registered

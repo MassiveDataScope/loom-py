@@ -330,6 +330,30 @@ def _pipeline_yaml(tmp_path: Path, *, with_ai: bool = True) -> str:
     return str(path)
 
 
+def _nested_yaml(tmp_path: Path, *, root: str, specs: str) -> str:
+    agents = tmp_path / "src" / "pipelines" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "seller_reply.agent.yaml").write_text(_AGENT_YAML)
+    pipelines = tmp_path / "config" / "pipelines"
+    pipelines.mkdir(parents=True)
+    path = pipelines / "labels.yaml"
+    path.write_text(
+        "storage:\n"
+        "  missing_table_policy: create\n"
+        "  defaults:\n"
+        "    table_path:\n"
+        f"      uri: {tmp_path / 'lake'}\n"
+        "ai:\n"
+        "  engine: pydantic-ai\n"
+        f"  root: {root}\n"
+        f"  specs: ['{specs}']\n"
+        "  models:\n"
+        "    classifier: {provider: openai, model: gpt-4o}\n",
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 @pytest.mark.usefixtures("clear_builtin_resolvers")
 class TestRunnerFromYaml:
     def test_specs_resolve_against_the_config_directory(
@@ -401,3 +425,20 @@ class TestSparkEngine:
         assert agents is not None
         with pytest.raises(RuntimeError, match="Polars"):
             agents.version("seller_reply")
+
+    def test_ai_root_lets_a_config_in_a_subfolder_reach_the_artifacts(self, tmp_path: Path) -> None:
+        path = _nested_yaml(tmp_path, root="../..", specs="src/pipelines/agents/*.agent.yaml")
+
+        ETLRunner.from_yaml(path).run(_VersionPipeline, _PARAMS)
+
+        written = pl.scan_delta(str(tmp_path / "lake" / "fact" / "agent_version")).collect()
+        assert len(written["agent_version"][0]) == 64
+
+    def test_a_glob_may_not_leave_ai_root(self, tmp_path: Path) -> None:
+        path = _nested_yaml(tmp_path, root="..", specs="../src/pipelines/agents/*.agent.yaml")
+
+        with pytest.raises(ETLCompilationError) as error:
+            ETLRunner.from_yaml(path).run(_VersionPipeline, _PARAMS)
+
+        assert error.value.code is ETLErrorCode.AGENT_COMPILATION_FAILED
+        assert "AGENT_SPECS_ESCAPE_ROOT" in str(error.value)
