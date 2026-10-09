@@ -279,7 +279,7 @@ respondio:
 
 A step that needs a model to answer something about each row declares the
 agent with `WithAgent("name", output=T)` and receives an `AgentMapper` in
-`execute()`. See [Agents in ETL steps](agents.md).
+`execute()`. See [Agents in ETL steps](agent-steps.md).
 
 ## Write modes
 
