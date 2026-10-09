@@ -58,18 +58,18 @@ def _plan_issues(
         issues.append(_issue(AgentIssueKind.COLUMN_COLLISION, _collision(plan, clashes)))
     if _budgeted(plan, max_usd) and not _priced(plan, provider):
         issues.append(_issue(AgentIssueKind.UNPRICED_BUDGET, _unpriced(plan)))
-    if max_usd is not None:
-        issues.extend(_ceiling_issues(plan, max_usd))
+    if max_usd is not None and (ceiling := _ceiling_issue(plan, max_usd)) is not None:
+        issues.append(ceiling)
     return tuple(issues)
 
 
-def _ceiling_issues(plan: AgentPlan, max_usd: Decimal) -> tuple[AgentIssue, ...]:
+def _ceiling_issue(plan: AgentPlan, max_usd: Decimal) -> AgentIssue | None:
     worst = worst_case(plan)
     if worst is None:
-        return (_issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _uncapped(plan)),)
+        return _issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _uncapped(plan))
     if worst > max_usd:
-        return (_issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _over_budget(plan, worst, max_usd)),)
-    return ()
+        return _issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _over_budget(plan, worst, max_usd))
+    return None
 
 
 def _budgeted(plan: AgentPlan, max_usd: Decimal | None) -> bool:

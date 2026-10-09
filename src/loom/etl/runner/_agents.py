@@ -9,10 +9,10 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, NoReturn
 
-from loom.etl.runtime.contracts import AgentIssue, AgentIssueKind
+from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssue, AgentIssueKind
 
 
-class UnservedAgents:
+class UnservedAgents(AgentBatchRunner):
     """Refuses every ``WithAgent`` at compile time: agents map Polars frames only.
 
     Args:

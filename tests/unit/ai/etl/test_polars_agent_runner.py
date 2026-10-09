@@ -225,9 +225,10 @@ class TestColumns:
     @pytest.mark.parametrize("key", ["answer", "agent_version"])
     def test_a_key_named_like_an_answer_column_is_refused(self, tmp_path: Path, key: str) -> None:
         frame = pl.DataFrame({key: ["k"], "text": ["hola"]})
+        runner = _runner(tmp_path)
 
         with pytest.raises(ValueError, match=key):
-            _runner(tmp_path).map(
+            runner.map(
                 "seller_reply", frame, keys=(key,), prompt="text", output_type=Reply, max_usd=None
             )
 
@@ -331,9 +332,10 @@ class TestBudget:
 
     def test_a_step_budget_without_a_run_cap_is_refused(self, tmp_path: Path) -> None:
         runner = _runner(tmp_path, agent=_AGENT.replace(", max_usd: 0.01", ""))
+        frame = _messages("hola")
 
         with pytest.raises(ValueError, match="policies.max_usd"):
-            _map(runner, _messages("hola"), max_usd=Decimal("1"))
+            _map(runner, frame, max_usd=Decimal("1"))
 
     def test_without_a_budget_every_row_is_sent(self, tmp_path: Path) -> None:
         out = _map(_runner(tmp_path, concurrency=1), _messages(*(f"m{i}" for i in range(12))))

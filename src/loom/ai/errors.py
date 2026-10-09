@@ -49,6 +49,7 @@ _FIELD_CAPABILITIES_CONNECTION: Final = "capabilities.connection"
 _FIELD_CAPABILITIES_LIBRARY: Final = "capabilities.library"
 _FIELD_CAPABILITIES_FACTORY: Final = "capabilities.factory"
 _FIELD_AI_ENGINE: Final = "ai.engine"
+_FIELD_AI_SPECS: Final = "ai.specs"
 _FIELD_DEPS_TYPE: Final = "deps_type"
 _FIELD_DEPS_SCHEMA: Final = "deps_schema"
 _FIELD_INSTRUCTIONS: Final = "instructions"
@@ -1248,7 +1249,7 @@ def agent_specs_conflict() -> AgentCompilationIssue:
             "the 'ai.specs' config key; declare them in exactly one of the two"
         ),
         component="ai",
-        field="ai.specs",
+        field=_FIELD_AI_SPECS,
     )
 
 
@@ -1261,7 +1262,7 @@ def agent_specs_missing() -> AgentCompilationIssue:
             "or the manifest 'AGENTS' attribute"
         ),
         component="ai",
-        field="ai.specs",
+        field=_FIELD_AI_SPECS,
     )
 
 
@@ -1274,7 +1275,7 @@ def agent_specs_escape_root(pattern: str) -> AgentCompilationIssue:
             "resolved against; write it relative to that directory, without '..'"
         ),
         component="ai",
-        field="ai.specs",
+        field=_FIELD_AI_SPECS,
     )
 
 

@@ -86,10 +86,11 @@ class TestAssembly:
         assert [plan.name for plan in runtime.plans] == ["alpha"]
 
     def test_a_glob_leaving_the_root_is_refused(self, tmp_path: Path) -> None:
+        config = _config("../agents/*.agent.yaml")
+        provider = _provider()
+
         with pytest.raises(AgentCompilationError) as error:
-            build_agent_runtime(
-                _config("../agents/*.agent.yaml"), root=tmp_path, engine_provider=_provider()
-            )
+            build_agent_runtime(config, root=tmp_path, engine_provider=provider)
 
         assert error.value.issues[0].code == AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT
 

@@ -244,9 +244,10 @@ class TestExecutorInjection:
 
     def test_without_a_runner_fails_clearly(self) -> None:
         executor = ETLExecutor(StubSourceReader({"messages": "frame"}), StubTargetWriter())
+        plan = ETLCompiler().compile_step(LabelStep)
 
         with pytest.raises(RuntimeError, match=r"WithAgent.*ai:"):
-            executor.run_step(ETLCompiler().compile_step(LabelStep), _PARAMS)
+            executor.run_step(plan, _PARAMS)
 
 
 def test_the_etl_pillar_never_imports_the_ai_pillar() -> None:
@@ -443,9 +444,10 @@ class TestSparkEngine:
 
     def test_a_glob_may_not_leave_ai_root(self, tmp_path: Path) -> None:
         path = _nested_yaml(tmp_path, root="..", specs="../src/pipelines/agents/*.agent.yaml")
+        runner = ETLRunner.from_yaml(path)
 
         with pytest.raises(ETLCompilationError) as error:
-            ETLRunner.from_yaml(path).run(_VersionPipeline, _PARAMS)
+            runner.run(_VersionPipeline, _PARAMS)
 
         assert error.value.code is ETLErrorCode.AGENT_COMPILATION_FAILED
         assert "AGENT_SPECS_ESCAPE_ROOT" in str(error.value)

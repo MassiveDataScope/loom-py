@@ -32,7 +32,7 @@ from loom.core.use_case.registry import UseCaseRegistry
 __all__ = ["build_agent_runtime"]
 
 
-class _NoDependencies:
+class _NoDependencies(DepsFactory):
     """Dependency factory of a runtime whose agents reach no application service."""
 
     def build(
