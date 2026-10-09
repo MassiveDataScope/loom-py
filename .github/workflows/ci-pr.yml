@@ -611,6 +611,68 @@ jobs:
             echo "::warning title=pydantic-ai churn canary failed::The agent suites fail against the latest pydantic-ai. This does NOT block the PR. It means the next upgrade of the pinned version needs work first — read the job log, then either adapt the adapter or hold the pin."
           fi
 
+  # Runs the agent suites against the LOWEST pydantic-ai the extras declare, so
+  # the floor in pyproject.toml is a tested claim: the lock covers the pinned
+  # version, the canary the latest, and this job the bottom of the range.
+  # Blocking: a floor that does not pass must be raised, not advertised.
+  pydantic-ai-floor:
+    if: ${{ !startsWith(github.head_ref, 'docs/release-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: |
+          pip install --only-binary :all: "uv==0.10.2"
+
+      - name: Configure uv environment path
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/uv-ci-floor" >> "$GITHUB_ENV"
+
+      - name: Sync the locked environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen
+
+      # Read from the `ai-pydantic` extra, so raising the floor there is the
+      # only edit a new floor needs.
+      - name: Resolve the declared floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          floor="$(uv run --no-sync python - <<'PY'
+          import tomllib
+          from packaging.requirements import Requirement
+
+          with open("pyproject.toml", "rb") as handle:
+              extras = tomllib.load(handle)["project"]["optional-dependencies"]
+          specifier = Requirement(extras["ai-pydantic"][0]).specifier
+          print(next(spec.version for spec in specifier if spec.operator == ">="))
+          PY
+          )"
+          echo "Declared floor: pydantic-ai-slim==${floor}"
+          echo "pydantic_ai_floor=${floor}" >> "$GITHUB_ENV"
+
+      - name: Install the floor release, pinned and wheels-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip install --python "$UV_PROJECT_ENVIRONMENT" --only-binary :all: \
+            "pydantic-ai-slim[anthropic,bedrock,openai,spec,typesafe]==${pydantic_ai_floor}"
+
+      - name: Run the agent suites against the floor release
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest tests/unit/ai tests/contract/ai tests/integration/ai -q
+
   # ---------------------------------------------------------------------------
   # Integration lane: everything marked `integration` needs a real external
   # service, so it runs here with the services actually provisioned — never as a

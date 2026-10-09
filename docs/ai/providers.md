@@ -229,6 +229,14 @@ loom does not infer it per provider. Two consequences follow from that:
   by tool alone, so a `native` pin on it fails start-up with
   `OUTPUT_MODE_UNSUPPORTED`.
 
+The `tool` mode and thinking work together. Loom sends no `tool_choice` of its
+own, so whether the request forces the output tool is the engine's choice.
+For an Anthropic model with adaptive thinking (`options: {thinking: true}` on
+a model that supports it), pydantic-ai 2.52 and later send `tool_choice:
+auto`, and the model reasons before it calls the tool. Earlier releases force
+the tool, and the model then answers without thinking; install
+`pydantic-ai-slim` 2.52 or later when a binding configures thinking.
+
 ## Asking for the answer whole, not as a stream
 
 Loom streams every run, so it can supervise it as it happens; the provider

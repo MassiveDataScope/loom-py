@@ -1176,8 +1176,9 @@ ai:
 ```
 
 The compiler carries the bound model's price on the plan (`AgentPlan.price`),
-and the engine prices every response with it before `genai-prices` is
-consulted, replacing whatever the catalogue would have said: `AgentUsage.cost`
+and the engine prices every response with it as the model returns it, before
+the run's usage records it and before `genai-prices` is consulted, replacing
+whatever the model reported or the catalogue would have said: `AgentUsage.cost`
 is `(input - cache_read - cache_write) * input + output * output +
 cache_read * cache_read + cache_write * cache_write`, per million, since
 `input_tokens` already counts the cached tokens. With a price configured,
@@ -1185,9 +1186,10 @@ cache_read * cache_read + cache_write * cache_write`, per million, since
 is not logged. A negative rate is refused when the config is read.
 
 
-serve` into `refuse`, for every deployment that sets it.** Both
-`CostNotFoundWarning` and `CostCalculationFailedWarning` subclass `Warning`
-directly, not `UserWarning` — unlike pydantic-ai's own deprecation warnings,
+serve` into `refuse`, for every deployment that sets it.**
+`CostNotFoundWarning`, `CostCalculationFailedWarning` and, from pydantic-ai
+2.52, `UsageExtractionFailedWarning` subclass `Warning` directly, not
+`UserWarning` — unlike pydantic-ai's own deprecation warnings,
 which choose `UserWarning` specifically to stay visible under Python's
 *default* filter. A bare `Warning` is exactly what `-W error` elevates to an
 exception, so under that flag pydantic-ai raises instead of warning, the
@@ -1201,12 +1203,13 @@ provider already billed for it — is silently unavailable, and the caller gets
 a discarded answer and a `500` instead. This is not a bug in `classify`, which
 must recognise the exception once it is raised (see the totality test in
 `tests/unit/ai/engines/test_pydantic_ai_errors.py`, which fails the day
-pydantic-ai adds a third bare `Warning` it does not cover); it is a property
+pydantic-ai adds a bare `Warning` it does not cover); it is a property
 of running under `-W error` at all. An operator who wants `on_unpriced_spend:
-serve` to mean what it says under a strict interpreter must exempt both
+serve` to mean what it says under a strict interpreter must exempt those
 classes explicitly, narrower than blanket `-W error`, for example
 `-W error -W default::pydantic_ai.exceptions.CostNotFoundWarning -W
-default::pydantic_ai.exceptions.CostCalculationFailedWarning`.
+default::pydantic_ai.exceptions.CostCalculationFailedWarning -W
+default::pydantic_ai.exceptions.UsageExtractionFailedWarning`.
 
 The start-up probe is fed the identifiers the *built* pydantic-ai model
 reports — its `model_name` and its provider's `name` — never loom's own

@@ -12,7 +12,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 
-from loom.ai.abc import AgentEngine, FinalEvent
+from loom.ai.abc import AgentEngine, AgentEvent, ErrorEvent, FinalEvent, OutputCheck
 from loom.ai.declarative import PolicySpec
 from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
@@ -31,16 +31,39 @@ _LIMITS_LOGGER = "loom.ai.engines.pydantic_ai._limits"
 
 
 def _engine(
-    *, policies: PolicySpec, usage: RequestUsage = _USAGE, price: ModelPrice | None = _PRICE
+    *,
+    policies: PolicySpec,
+    usage: RequestUsage = _USAGE,
+    price: ModelPrice | None = _PRICE,
+    output_check: OutputCheck | None = None,
 ) -> AgentEngine:
     plan = msgspec.structs.replace(
         make_plan(
             policies=policies,
             inference=InferenceTarget(provider="openai", model="unknown-model"),
+            output_check=output_check,
         ),
         price=price,
     )
     return build_engine(plan, ScriptedUsageModel(encode(_ANSWER), usage))
+
+
+def _reject_first_answer() -> OutputCheck:
+    rejected: list[object] = []
+
+    def check(payload: object) -> str | None:
+        if rejected:
+            return None
+        rejected.append(payload)
+        return "answer again"
+
+    return check
+
+
+async def _streamed(engine: AgentEngine) -> AgentEvent:
+    async with engine.run_stream("go", identity=_IDENTITY) as stream:
+        events = [event async for event in stream]
+    return events[-1]
 
 
 class TestConfiguredPriceWins:
@@ -71,6 +94,34 @@ class TestConfiguredPriceWins:
         assert isinstance(final, FinalEvent)
         assert final.usage.cost == _EXPECTED
 
+    async def test_a_streamed_run_overrides_a_cost_the_model_reported(self) -> None:
+        reported = RequestUsage(
+            input_tokens=100, output_tokens=10, cache_read_tokens=40, cost=Decimal("9")
+        )
+        engine = _engine(policies=PolicySpec(retries=0), usage=reported)
+
+        final = await _streamed(engine)
+
+        assert isinstance(final, FinalEvent)
+        assert final.usage.cost == _EXPECTED
+
+    async def test_every_request_of_a_run_is_priced(self) -> None:
+        engine = _engine(policies=PolicySpec(retries=1), output_check=_reject_first_answer())
+
+        result = await engine.run("go", identity=_IDENTITY)
+
+        assert result.usage.requests == 2
+        assert result.usage.cost == 2 * _EXPECTED
+
+    async def test_every_request_of_a_streamed_run_is_priced(self) -> None:
+        engine = _engine(policies=PolicySpec(retries=1), output_check=_reject_first_answer())
+
+        final = await _streamed(engine)
+
+        assert isinstance(final, FinalEvent)
+        assert final.usage.requests == 2
+        assert final.usage.cost == 2 * _EXPECTED
+
 
 class TestCapsBecomeEnforceable:
     async def test_refuse_answers_once_the_model_is_priced(self) -> None:
@@ -90,6 +141,36 @@ class TestCapsBecomeEnforceable:
             await engine.run("go", identity=_IDENTITY)
 
         assert failure.value.code == AgentRunErrorCode.USAGE_LIMIT_EXCEEDED
+
+    async def test_serve_enforces_the_cap_on_a_streamed_run(self) -> None:
+        engine = _engine(policies=PolicySpec(retries=0, max_usd=Decimal("0.01")))
+
+        terminal = await _streamed(engine)
+
+        assert isinstance(terminal, ErrorEvent)
+        assert terminal.code == AgentRunErrorCode.USAGE_LIMIT_EXCEEDED
+
+    async def test_the_cap_stops_a_run_once_its_priced_requests_add_up(self) -> None:
+        engine = _engine(
+            policies=PolicySpec(retries=1, max_usd=Decimal("0.1")),
+            output_check=_reject_first_answer(),
+        )
+
+        with pytest.raises(AgentRunError) as failure:
+            await engine.run("go", identity=_IDENTITY)
+
+        assert failure.value.code == AgentRunErrorCode.USAGE_LIMIT_EXCEEDED
+
+    async def test_refuse_answers_a_streamed_run_once_the_model_is_priced(self) -> None:
+        engine = _engine(
+            policies=PolicySpec(retries=0, max_usd=Decimal("1"), on_unpriced_spend="refuse")
+        )
+
+        final = await _streamed(engine)
+
+        assert isinstance(final, FinalEvent)
+        assert final.usage.cost == _EXPECTED
+        assert "unpriced_requests" not in final.usage.details
 
 
 class TestStartUpNotice:
