@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -16,6 +17,9 @@ from loom.core.identity import Identity
 
 PROMPT_MISSING: Final = "PROMPT_MISSING"
 BUDGET_EXHAUSTED: Final = "BUDGET_EXHAUSTED"
+UNEXPECTED_ERROR: Final = "UNEXPECTED_ERROR"
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -76,13 +80,24 @@ class Batch:
             return await self._run(prompt, identity)
 
     async def _run(self, prompt: str, identity: Identity) -> RowOutcome:
+        usage: AgentUsage | None = None
         try:
             result = await self.runtime.run(self.name, prompt, identity=identity)
+            usage = result.usage
+            output = self.to_builtins(result.output)
         except AgentRunError as error:
-            self._settle(error.usage)
-            return RowOutcome(output=None, error=error.code.value, usage=error.usage)
-        self._settle(result.usage)
-        return RowOutcome(output=self.to_builtins(result.output), error=None, usage=result.usage)
+            return self._failed(error.code.value, error.usage)
+        except Exception as error:
+            _log.warning(
+                "agent %r failed a row with an unexpected %s", self.name, type(error).__qualname__
+            )
+            return self._failed(UNEXPECTED_ERROR, usage)
+        self._settle(usage)
+        return RowOutcome(output=output, error=None, usage=usage)
+
+    def _failed(self, code: str, usage: AgentUsage | None) -> RowOutcome:
+        self._settle(usage)
+        return RowOutcome(output=None, error=code, usage=usage)
 
     def _settle(self, usage: AgentUsage | None) -> None:
         self.ledger.settle(self.reservation, None if usage is None else usage.cost)

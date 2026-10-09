@@ -7,6 +7,7 @@ import threading
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pytest
@@ -16,9 +17,10 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from loom.ai import AiConfig, InferenceTarget, ModelPrice
+from loom.ai import AgentResult, AiConfig, InferenceTarget, ModelPrice
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
 from loom.ai.etl import PolarsAgentRunner
+from loom.ai.runtime import AgentRuntime
 from tests.unit.ai.etl._types import Reply
 
 _AGENT = """\
@@ -32,6 +34,22 @@ policies: {retries: 0, max_usd: 0.01}
 """
 _PRICE = ModelPrice(input=Decimal("100"), output=Decimal("200"))
 _ROW_COST = Decimal("0.002")
+
+
+class _Crash(Exception):
+    pass
+
+
+@pytest.fixture
+def crash_on_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = AgentRuntime.run
+
+    async def run(self: AgentRuntime, name: str, prompt: str, **options: Any) -> AgentResult:
+        if prompt == "crash":
+            raise _Crash("the runtime broke")
+        return await original(self, name, prompt, **options)
+
+    monkeypatch.setattr(AgentRuntime, "run", run)
 
 
 def _prompt_of(messages: list[ModelMessage]) -> str:
@@ -133,6 +151,25 @@ class TestRows:
         assert out["agent_status"].to_list() == ["ok", "error", "ok"]
         assert out["agent_error"].to_list() == [None, "PROVIDER_UNAVAILABLE", None]
         assert out["answer"].to_list() == ["HOLA", None, "VALE"]
+
+    @pytest.mark.usefixtures("crash_on_prompt")
+    def test_an_unexpected_exception_is_an_error_row(self, tmp_path: Path) -> None:
+        out = _map(_runner(tmp_path), _messages("hola", "crash", "vale"))
+
+        assert out["agent_status"].to_list() == ["ok", "error", "ok"]
+        assert out["agent_error"].to_list() == [None, "UNEXPECTED_ERROR", None]
+        assert out["answer"].to_list() == ["HOLA", None, "VALE"]
+        assert out["agent_input_tokens"].to_list() == [10, 0, 10]
+
+    @pytest.mark.usefixtures("crash_on_prompt")
+    def test_an_unexpected_exception_keeps_its_reservation_spent(self, tmp_path: Path) -> None:
+        out = _map(
+            _runner(tmp_path, concurrency=1),
+            _messages("crash", "a", "b"),
+            max_usd=Decimal("0.021"),
+        )
+
+        assert out["agent_error"].to_list() == ["UNEXPECTED_ERROR", None, "BUDGET_EXHAUSTED"]
 
     def test_a_row_without_prompt_is_not_sent(self, tmp_path: Path) -> None:
         out = _map(_runner(tmp_path), _messages("hola", None))
