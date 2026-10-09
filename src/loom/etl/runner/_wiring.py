@@ -194,10 +194,11 @@ def agents_for_engine(
         spark: Active SparkSession, when one is given.
 
     Returns:
-        *agents* on Polars or when it is ``None``; otherwise the refusing runner.
+        *agents* on Polars, when it is ``None`` or when it already refuses;
+        otherwise the refusing runner.
     """
     engine = _resolve_engine(config, spark)
-    if agents is None or engine == StorageEngine.POLARS:
+    if agents is None or engine == StorageEngine.POLARS or isinstance(agents, UnservedAgents):
         return agents
     return UnservedAgents(engine)
 

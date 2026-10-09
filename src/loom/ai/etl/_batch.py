@@ -58,12 +58,7 @@ class Batch:
     to_builtins: Callable[[Any], Mapping[str, Any]]
 
     async def answer_all(self, prompts: Sequence[str | None]) -> list[RowOutcome]:
-        """Enter the runtime, answer every prompt in order, and close it in the same task.
-
-        No prompt, no runtime: an empty batch opens nothing.
-        """
-        if not prompts:
-            return []
+        """Enter the runtime, answer every prompt in order, and close it in the same task."""
         slots = asyncio.Semaphore(self.limit)
         identity = Identity(subject=f"etl:{self.name}")
         async with self.runtime:

@@ -409,6 +409,12 @@ class TestSparkEngine:
         assert error.code is ETLErrorCode.AGENT_UNSUPPORTED_ENGINE
         assert "spark" in str(error)
 
+    def test_a_spark_config_wraps_its_runner_once(self, tmp_path: Path) -> None:
+        config = StorageConfig(engine="spark")
+        built = make_agent_runner(self._context(), tmp_path, config=config, spark=None)
+
+        assert agents_for_engine(built, config, spark=None) is built
+
     def test_a_runner_given_to_a_spark_config_refuses_every_agent(self) -> None:
         agents = agents_for_engine(_FakeAgents(), StorageConfig(engine="spark"), spark=None)
 
