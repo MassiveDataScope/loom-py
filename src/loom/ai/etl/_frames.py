@@ -12,6 +12,15 @@ from loom.ai.etl._columns import Column
 
 STATUS_OK: Final = "ok"
 STATUS_ERROR: Final = "error"
+OUTPUT_UNREPRESENTABLE: Final = "OUTPUT_UNREPRESENTABLE"
+
+_CELL_ERRORS: Final = (
+    TypeError,
+    ValueError,
+    OverflowError,
+    RuntimeError,
+    pl.exceptions.PolarsError,
+)
 
 _PROMPT: Final = "__loom_agent_prompt__"
 
@@ -78,7 +87,10 @@ def answers_frame(
     """Join the keys, the answer fields and the run metadata, one row per outcome.
 
     Every answer column takes the type its field declares, so an empty batch
-    or a batch of errors only has the same schema as any other.
+    or a batch of errors only has the same schema as any other. An answer
+    with a value its column cannot hold (an ``int`` past ``Int64``, a
+    ``Decimal`` past ``Decimal(38, 9)``, ...) becomes an
+    ``OUTPUT_UNREPRESENTABLE`` error row that keeps its usage.
 
     Args:
         keys: Key columns of the input rows, in order.
@@ -89,13 +101,11 @@ def answers_frame(
     Returns:
         The output frame.
     """
-    answers = pl.DataFrame(
-        {
-            name: [column.cell(_field(o.output, name)) for o in outcomes]
-            for name, column in columns.items()
-        },
-        schema=pl.Schema({name: column.dtype for name, column in columns.items()}),
-    )
+    try:
+        answers = _answers(outcomes, columns)
+    except _CELL_ERRORS:
+        outcomes = [_representable(outcome, columns) for outcome in outcomes]
+        answers = _answers(outcomes, columns)
     metadata = pl.DataFrame(
         [_metadata(o, version) for o in outcomes], schema=_METADATA_SCHEMA, orient="row"
     )
@@ -105,6 +115,24 @@ def answers_frame(
 def no_answers(keys: pl.DataFrame, columns: Mapping[str, Column]) -> pl.DataFrame:
     """Return the output frame of a batch without rows: every column, typed, no row."""
     return answers_frame(keys.clear(), (), columns, version="")
+
+
+def _answers(outcomes: Sequence[RowOutcome], columns: Mapping[str, Column]) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            name: [column.cell(_field(o.output, name)) for o in outcomes]
+            for name, column in columns.items()
+        },
+        schema=pl.Schema({name: column.dtype for name, column in columns.items()}),
+    )
+
+
+def _representable(outcome: RowOutcome, columns: Mapping[str, Column]) -> RowOutcome:
+    try:
+        _answers((outcome,), columns)
+    except _CELL_ERRORS:
+        return RowOutcome(output=None, error=OUTPUT_UNREPRESENTABLE, usage=outcome.usage)
+    return outcome
 
 
 def _lazy(frame: object) -> pl.LazyFrame:

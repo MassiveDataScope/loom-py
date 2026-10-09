@@ -9,6 +9,7 @@ import msgspec
 import polars as pl
 import pytest
 
+from loom.ai.abc import AgentUsage
 from loom.ai.etl._batch import RowOutcome
 from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame
@@ -94,6 +95,29 @@ def test_an_error_row_leaves_every_answer_column_null() -> None:
     row = _frame(_failed()).row(0, named=True)
 
     assert all(row[name] is None for name in _RICH_SCHEMA)
+
+
+_USAGE = AgentUsage(
+    input_tokens=10, output_tokens=5, requests=1, duration_ms=1, cost=Decimal("0.5")
+)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [{"count": 2**63}, {"amount": "1e40"}, {"offer": {"amount": "1e40", "currency": "EUR"}}],
+    ids=["int past Int64", "Decimal past (38, 9)", "nested Decimal"],
+)
+def test_a_value_its_column_cannot_hold_fails_only_its_row(field: dict[str, object]) -> None:
+    oversized = {**msgspec.to_builtins(_ANSWER), **field}
+    outcome = RowOutcome(output=oversized, error=None, usage=_USAGE)
+
+    frame = _frame(_answered(), outcome, _answered())
+
+    assert frame["agent_status"].to_list() == ["ok", "error", "ok"]
+    assert frame["agent_error"].to_list() == [None, "OUTPUT_UNREPRESENTABLE", None]
+    assert all(frame.row(1, named=True)[name] is None for name in _RICH_SCHEMA)
+    assert frame["agent_cost_usd"][1] == 0.5
+    assert frame["label"].to_list() == ["acepta", None, "acepta"]
 
 
 def test_a_pydantic_output_names_its_columns_by_alias() -> None:
