@@ -430,6 +430,19 @@
 
 ### ai
 
+- **ai:** a configured `ai.prices` rate prices runs again with pydantic-ai
+  2.54. That release records a response's usage before the
+  `after_model_request` hook loom priced it in, so every run reported
+  `AgentUsage.cost=None`: `policies.max_usd` stopped binding, a reported cost
+  was summed instead of replaced, and the ETL budget ledger kept each run's
+  whole reservation. The price is now applied by a model wrapper as the model
+  returns each response, in both run modes, before any engine release records
+  it. The lock moves to pydantic-ai-slim 2.54.0, which sends `tool_choice:
+  auto` for a `tool` output with adaptive thinking, so Anthropic models reason
+  again (2.47 forced the tool). `UsageExtractionFailedWarning`, new in 2.52, is
+  classified `COST_NOT_MEASURABLE` like its siblings. Every `ai-*` extra now
+  declares `pydantic-ai-slim>=2.45`, the oldest release loom imports and passes
+  its agent suites with, and CI runs those suites against that floor.
 - **ai:** an MCP session that dies after it opened no longer fails every later
   call until the worker restarts. The worker holds one session per server for
   its whole life, and that holder kept the dead client from ever being

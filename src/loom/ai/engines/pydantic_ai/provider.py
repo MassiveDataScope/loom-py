@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 
 from loom.ai.abc import AgentEngine, DepsFactory, OutputCheck
@@ -36,7 +35,7 @@ from loom.ai.engines.pydantic_ai._instructions import (
     ensure_templating_available,
 )
 from loom.ai.engines.pydantic_ai._limits import (
-    ConfiguredPrice,
+    PricedModel,
     is_priceable,
     usage_limits,
     warn_if_model_not_priceable,
@@ -164,13 +163,9 @@ class PydanticAIEngineProvider:
         if not isinstance(plan, AgentPlan):
             raise TypeError(f"expected an AgentPlan, got {type(plan).__name__}")
         ensure_templating_available(plan)
-        model = self._resolve_model(plan.inference)
-        if plan.price is None:
-            warn_if_model_not_priceable(
-                model.model_name, _provider_name(model), plan.policies, f"agent '{plan.name}'"
-            )
+        model = _with_price(self._resolve_model(plan.inference), plan)
         toolsets = build_toolsets(plan, container, mcp=self._mcp)
-        capabilities = _with_price(build_capabilities(plan, container), plan)
+        capabilities = build_capabilities(plan, container)
         if not plan.inference.streaming and any(
             capability.has_wrap_run_event_stream for capability in capabilities
         ):
@@ -270,13 +265,14 @@ def _provider_name(model: Model) -> str | None:
     return model.provider.name if model.provider is not None else None
 
 
-def _with_price(
-    capabilities: tuple[AbstractCapability[Any], ...], plan: AgentPlan
-) -> tuple[AbstractCapability[Any], ...]:
-    """Append the plan's configured price, when it declares one, to *capabilities*."""
-    if plan.price is None:
-        return capabilities
-    return (*capabilities, ConfiguredPrice(price=plan.price))
+def _with_price(model: Model, plan: AgentPlan) -> Model:
+    """Price *model* with the plan's configured rates, or warn when it may stay unpriced."""
+    if plan.price is not None:
+        return PricedModel(model, plan.price)
+    warn_if_model_not_priceable(
+        model.model_name, _provider_name(model), plan.policies, f"agent '{plan.name}'"
+    )
+    return model
 
 
 def _register_output_check(agent: Agent[Any, Any], loom_type: LoomType, check: OutputCheck) -> None:

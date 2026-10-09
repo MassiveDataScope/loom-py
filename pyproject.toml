@@ -124,16 +124,16 @@ streaming = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.27,<2.0",
 ]
 ai-pydantic = [
-    "pydantic-ai-slim>=2,<3",
+    "pydantic-ai-slim>=2.45,<3",
 ]
 ai-bedrock = [
-    "pydantic-ai-slim[bedrock]>=2,<3",
+    "pydantic-ai-slim[bedrock]>=2.45,<3",
 ]
 ai-openai = [
-    "pydantic-ai-slim[openai]>=2,<3",
+    "pydantic-ai-slim[openai]>=2.45,<3",
 ]
 ai-anthropic = [
-    "pydantic-ai-slim[anthropic]>=2,<3",
+    "pydantic-ai-slim[anthropic]>=2.45,<3",
 ]
 # TypeSafe's Jev: a decision model that fills a typed output from a state, no
 # text. Its model class first shipped in pydantic-ai 2.45.
@@ -144,7 +144,7 @@ ai-typesafe = [
 # the engine compiles a Handlebars template and renders it per request. An
 # artefact whose instructions are literal never reaches the import.
 ai-templates = [
-    "pydantic-ai-slim[spec]>=2,<3",
+    "pydantic-ai-slim[spec]>=2.45,<3",
 ]
 ai-a2a = [
     "fasta2a>=0.6,<1",

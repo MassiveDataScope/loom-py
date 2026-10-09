@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from pydantic_ai import exceptions as pydantic_ai_exceptions
 from pydantic_ai.exceptions import (
     CostCalculationFailedWarning,
     CostNotFoundWarning,
@@ -26,6 +27,19 @@ from pydantic_ai.exceptions import (
 )
 
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+
+_UNMEASURED_SPEND_WARNINGS: tuple[type[Warning], ...] = tuple(
+    warning
+    for warning in (
+        CostNotFoundWarning,
+        CostCalculationFailedWarning,
+        getattr(pydantic_ai_exceptions, "UsageExtractionFailedWarning", None),
+    )
+    if warning is not None
+)
+"""pydantic-ai's bare ``Warning`` subclasses, all of them a spend the run could
+not measure. ``UsageExtractionFailedWarning`` first ships in a pydantic-ai
+release newer than the supported floor, so it is mapped only where it exists."""
 
 _STATUS_CODES: Mapping[int, AgentRunErrorCode] = MappingProxyType(
     {
@@ -49,13 +63,12 @@ _EXCEPTION_CODES: Mapping[type[Exception], AgentRunErrorCode] = MappingProxyType
         UnexpectedModelBehavior: AgentRunErrorCode.OUTPUT_SCHEMA_VIOLATION,
         ModelAPIError: AgentRunErrorCode.PROVIDER_UNAVAILABLE,
         TimeoutError: AgentRunErrorCode.RUN_TIMEOUT,
-        # Both subclass ``Warning``, not ``UserWarning``; see "Spend caps" in
+        # They subclass ``Warning``, not ``UserWarning``; see "Spend caps" in
         # docs/ai/artifacts.md for why that makes this mapping load-bearing
         # under ``-W error``. ``test_pydantic_ai_errors.py`` walks every
         # ``pydantic_ai._warnings`` subclass of ``Warning`` that is not a
-        # ``UserWarning`` and fails the day a third one is added here unmapped.
-        CostNotFoundWarning: AgentRunErrorCode.COST_NOT_MEASURABLE,
-        CostCalculationFailedWarning: AgentRunErrorCode.COST_NOT_MEASURABLE,
+        # ``UserWarning`` and fails the day a new one is left unmapped.
+        **dict.fromkeys(_UNMEASURED_SPEND_WARNINGS, AgentRunErrorCode.COST_NOT_MEASURABLE),
     }
 )
 
