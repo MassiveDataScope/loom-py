@@ -1158,7 +1158,33 @@ model, that a later response from the same model need not repeat. Neither
 the start-up probe nor the per-run guard distinguishes the two causes —
 both are treated the same way.
 
-**`-W error` (or pytest's `filterwarnings = error`) turns `on_unpriced_spend:
+**A configured price closes the gap.** `ai.prices` gives a model its rates,
+in USD per million tokens, keyed by the vendor model id the binding names:
+
+```yaml
+ai:
+  models:
+    classifier: {provider: bedrock, model: eu.anthropic.claude-haiku-5-5, region: eu-west-1}
+  prices:
+    eu.anthropic.claude-haiku-5-5:
+      input: 0.11          # uncached input token
+      output: 0.55
+      cache_read: 0.011    # optional; billed as input when absent
+      cache_write: 0.1375  # optional; billed as input when absent
+      source: AWS Pricing API eu-west-1   # optional, for the audit trail
+      as_of: 2026-10-09                   # optional
+```
+
+The compiler carries the bound model's price on the plan (`AgentPlan.price`),
+and the engine prices every response with it before `genai-prices` is
+consulted, replacing whatever the catalogue would have said: `AgentUsage.cost`
+is `(input - cache_read - cache_write) * input + output * output +
+cache_read * cache_read + cache_write * cache_write`, per million, since
+`input_tokens` already counts the cached tokens. With a price configured,
+`max_usd` is enforced, `on_unpriced_spend` never fires and the start-up notice
+is not logged. A negative rate is refused when the config is read.
+
+
 serve` into `refuse`, for every deployment that sets it.** Both
 `CostNotFoundWarning` and `CostCalculationFailedWarning` subclass `Warning`
 directly, not `UserWarning` — unlike pydantic-ai's own deprecation warnings,
@@ -1281,6 +1307,20 @@ them will eventually trip on the other:
 Reach for `max_iterations` to bound how many tool calls loom's own
 supervisor lets a run make before giving up; reach for `max_tool_calls` (or
 the other spend caps above) to bound what a run may cost the provider.
+
+## The agent's version — `AgentPlan.fingerprint`
+
+Every compiled plan carries a stable sha256 of what decides its answers: the
+instructions as compiled (text and template engine), the output schema, the
+output check, the policies, `spec_version` and the bound provider, model,
+`output_mode` and `options`. The name, description, metadata, artifact path,
+configured price and the binding's region, endpoint, credentials and
+`streaming` flag are left out, so moving a deployment keeps the version and
+changing the prompt or the model does not. ETL steps write it as
+`agent_version` (see [Agents in ETL steps](../etl/agents.md)).
+
+The output check enters by its import path (`module:qualname`): editing the
+body of the check keeps the fingerprint, renaming or moving it changes it.
 
 ## Validating offline
 

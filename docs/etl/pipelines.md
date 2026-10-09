@@ -275,6 +275,12 @@ respondio:
 - **Without `from_yaml`.** Pass `config_context=ConfigContext(...)` to
   `ETLRunner`, `ETLRunner.from_config` or `ETLExecutor`.
 
+## Agents (`WithAgent`)
+
+A step that needs a model to answer something about each row declares the
+agent with `WithAgent("name", output=T)` and receives an `AgentMapper` in
+`execute()`. See [Agents in ETL steps](agents.md).
+
 ## Write modes
 
 Every `IntoTable` target declares exactly one write mode by chaining a method.
