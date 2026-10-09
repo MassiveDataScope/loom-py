@@ -12,6 +12,7 @@ from typing import Any
 
 import polars as pl
 import pytest
+from genai_prices import calc_price
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models import Model
@@ -35,6 +36,9 @@ policies: {retries: 0, max_usd: 0.01}
 """
 _PRICE = ModelPrice(input=Decimal("100"), output=Decimal("200"))
 _ROW_COST = Decimal("0.002")
+_GPT_4O_ROW_COST = calc_price(
+    RequestUsage(input_tokens=10, output_tokens=5), "gpt-4o", provider_id="openai"
+).total_price
 
 
 class _Crash(Exception):
@@ -77,7 +81,8 @@ def _uppercasing_model() -> Model:
 
 
 class _ConcurrencyProbe:
-    def __init__(self) -> None:
+    def __init__(self, delay: float = 0.01) -> None:
+        self.delay = delay
         self.current = 0
         self.peak = 0
         self._lock = threading.Lock()
@@ -87,7 +92,7 @@ class _ConcurrencyProbe:
             with self._lock:
                 self.current += 1
                 self.peak = max(self.peak, self.current)
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(self.delay)
             with self._lock:
                 self.current -= 1
             return _answer(_prompt_of(messages), info)
@@ -96,22 +101,29 @@ class _ConcurrencyProbe:
 
 
 def _runner(
-    tmp_path: Path, model: Callable[[], Model] = _uppercasing_model, *, concurrency: int = 4
+    tmp_path: Path,
+    model: Callable[[], Model] = _uppercasing_model,
+    *,
+    concurrency: int = 4,
+    prices: dict[str, ModelPrice] | None = None,
+    providers_built: list[object] | None = None,
 ) -> PolarsAgentRunner:
-    (tmp_path / "agents").mkdir(exist_ok=True)
+    (tmp_path / "agents").mkdir(parents=True, exist_ok=True)
     (tmp_path / "agents" / "seller_reply.agent.yaml").write_text(_AGENT)
     config = AiConfig(
         engine="pydantic-ai",
         specs=("agents/*.agent.yaml",),
         models={"classifier": InferenceTarget(provider="openai", model="gpt-4o", streaming=False)},
-        prices={"gpt-4o": _PRICE},
+        prices={"gpt-4o": _PRICE} if prices is None else prices,
         max_concurrent_runs=concurrency,
     )
-    return PolarsAgentRunner(
-        config,
-        root=tmp_path,
-        engine_provider=lambda: PydanticAIEngineProvider(model_resolver=lambda _: model()),
-    )
+    built = [] if providers_built is None else providers_built
+
+    def provider() -> PydanticAIEngineProvider:
+        built.append(object())
+        return PydanticAIEngineProvider(model_resolver=lambda _: model())
+
+    return PolarsAgentRunner(config, root=tmp_path, engine_provider=provider)
 
 
 def _messages(*texts: str | None) -> pl.DataFrame:
@@ -243,11 +255,14 @@ class TestConcurrency:
         assert out["answer"].to_list() == ["CUIMO"]
 
     def test_two_steps_mapping_at_once_do_not_share_a_runtime(self, tmp_path: Path) -> None:
-        runner = _runner(tmp_path)
+        probe = _ConcurrencyProbe(delay=0.05)
+        runner = _runner(tmp_path, probe.model, concurrency=2)
+        start = threading.Barrier(2)
         results: list[pl.DataFrame] = []
 
         def work() -> None:
-            results.append(_map(runner, _messages("a", "b", "c")))
+            start.wait(timeout=5)
+            results.append(_map(runner, _messages(*(f"m{i}" for i in range(6)))))
 
         threads = [threading.Thread(target=work) for _ in range(2)]
         for thread in threads:
@@ -255,7 +270,8 @@ class TestConcurrency:
         for thread in threads:
             thread.join()
 
-        assert [frame["agent_status"].to_list() for frame in results] == [["ok"] * 3] * 2
+        assert [frame["agent_status"].to_list() for frame in results] == [["ok"] * 6] * 2
+        assert probe.peak > 2
 
 
 class TestBudget:
@@ -291,6 +307,45 @@ class TestBudget:
         out = _map(_runner(tmp_path, concurrency=1), _messages(*(f"m{i}" for i in range(12))))
 
         assert out["agent_status"].to_list() == ["ok"] * 12
+
+
+class TestEmptyBatch:
+    def test_an_empty_batch_neither_compiles_nor_opens_a_runtime(self, tmp_path: Path) -> None:
+        providers: list[object] = []
+
+        out = _map(
+            _runner(tmp_path, providers_built=providers), _messages().cast({"text": pl.String})
+        )
+
+        assert out.height == 0
+        assert out.schema["answer"] == pl.String()
+        assert providers == []
+
+
+def _gpt_4o() -> Model:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answer = _answer(_prompt_of(messages), info)
+        usage = RequestUsage(input_tokens=10, output_tokens=5)
+        usage.cost = calc_price(usage, "gpt-4o", provider_id="openai").total_price
+        return ModelResponse(
+            parts=answer.parts, usage=usage, model_name="gpt-4o", provider_name="openai"
+        )
+
+    return FunctionModel(respond)
+
+
+class TestPrices:
+    def test_a_configured_price_wins_over_the_engine_price_of_a_known_model(
+        self, tmp_path: Path
+    ) -> None:
+        own = _map(_runner(tmp_path, _gpt_4o), _messages("hola"))["agent_cost_usd"][0]
+        engine = _map(_runner(tmp_path / "engine", _gpt_4o, prices={}), _messages("hola"))[
+            "agent_cost_usd"
+        ][0]
+
+        assert own == pytest.approx(float(_ROW_COST))
+        assert engine == pytest.approx(float(_GPT_4O_ROW_COST))
+        assert _GPT_4O_ROW_COST != _ROW_COST
 
 
 class TestVersion:

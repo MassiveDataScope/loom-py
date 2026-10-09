@@ -102,6 +102,11 @@ def answers_frame(
     return pl.concat([keys, answers, metadata], how="horizontal")
 
 
+def no_answers(keys: pl.DataFrame, columns: Mapping[str, Column]) -> pl.DataFrame:
+    """Return the output frame of a batch without rows: every column, typed, no row."""
+    return answers_frame(keys.clear(), (), columns, version="")
+
+
 def _lazy(frame: object) -> pl.LazyFrame:
     if isinstance(frame, pl.LazyFrame):
         return frame

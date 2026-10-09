@@ -19,7 +19,7 @@ from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
 from loom.ai.etl._columns import output_columns
-from loom.ai.etl._frames import answers_frame, prompt_rows, require_free_keys
+from loom.ai.etl._frames import answers_frame, no_answers, prompt_rows, require_free_keys
 from loom.ai.etl._ledger import SpendLedger, worst_case
 from loom.ai.etl._validation import validation_issues
 from loom.ai.registry import resolve_engine_provider
@@ -96,6 +96,8 @@ class PolarsAgentRunner:
     ) -> pl.DataFrame:
         """Run agent *name* once per row of *frame*, never aborting on a row.
 
+        A frame without rows compiles nothing and opens no runtime.
+
         Args:
             name: Agent to run.
             frame: Polars ``DataFrame`` or ``LazyFrame``; collected here.
@@ -115,6 +117,8 @@ class PolarsAgentRunner:
         columns = output_columns(output_type)
         require_free_keys(keys, columns)
         rows, prompts = prompt_rows(frame, keys, prompt)
+        if not prompts:
+            return no_answers(rows, columns)
         runtime = self._runtime(name)
         plan = _only_plan(runtime.plans, name)
         projection = loom_type(output_type)

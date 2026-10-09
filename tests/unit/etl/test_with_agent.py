@@ -443,3 +443,22 @@ class TestSparkEngine:
 
         assert error.value.code is ETLErrorCode.AGENT_COMPILATION_FAILED
         assert "AGENT_SPECS_ESCAPE_ROOT" in str(error.value)
+
+
+def test_from_yaml_without_ai_never_imports_the_ai_pillar(tmp_path: Path) -> None:
+    script = (
+        "import sys\n"
+        "from loom.etl.runner import ETLRunner\n"
+        "ETLRunner.from_yaml(sys.argv[1])\n"
+        "leaked = sorted(m for m in sys.modules if m == 'loom.ai' or m.startswith('loom.ai.'))\n"
+        "print(','.join(leaked))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, _pipeline_yaml(tmp_path, with_ai=False)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == ""
