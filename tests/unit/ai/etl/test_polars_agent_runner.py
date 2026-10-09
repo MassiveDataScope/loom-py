@@ -158,6 +158,12 @@ class TestRows:
         assert out.height == 0
         assert {"id", "answer", "agent_version", "agent_status"} <= set(out.columns)
 
+    def test_a_batch_of_errors_keeps_the_declared_answer_types(self, tmp_path: Path) -> None:
+        out = _map(_runner(tmp_path), _messages("boom", "boom"))
+
+        assert out["agent_status"].to_list() == ["error", "error"]
+        assert out.schema["answer"] == pl.String()
+
 
 class TestConcurrency:
     def test_runs_wait_for_a_slot_instead_of_being_refused(self, tmp_path: Path) -> None:

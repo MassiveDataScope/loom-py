@@ -13,6 +13,10 @@ pytest.importorskip("deltalake")
 
 import polars as pl
 from deltalake import write_deltalake
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from loom.ai import AiConfig, InferenceTarget, ModelPrice
@@ -99,7 +103,14 @@ def _labels_schema_seed() -> pl.DataFrame:
     )
 
 
-def _runner(tmp_path: Path, models_built: list[TestModel]) -> ETLRunner:
+def _failing_model() -> Model:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=503, model_name="down", body=None)
+
+    return FunctionModel(respond)
+
+
+def _runner(tmp_path: Path, models_built: list[Model], *, failing: bool = False) -> ETLRunner:
     (tmp_path / "agents").mkdir()
     (tmp_path / "agents" / "seller_reply.agent.yaml").write_text(_AGENT)
     ai = AiConfig(
@@ -109,9 +120,10 @@ def _runner(tmp_path: Path, models_built: list[TestModel]) -> ETLRunner:
         prices={"eu.haiku": ModelPrice(input=Decimal("1"), output=Decimal("5"))},
     )
 
-    def build_model(target: InferenceTarget) -> TestModel:
-        models_built.append(TestModel(custom_output_args={"answer": "acepta"}))
-        return models_built[-1]
+    def build_model(target: InferenceTarget) -> Model:
+        model = _failing_model() if failing else TestModel(custom_output_args={"answer": "acepta"})
+        models_built.append(model)
+        return model
 
     agents = PolarsAgentRunner(
         ai,
@@ -132,7 +144,7 @@ def test_the_step_labels_every_pending_message_and_skips_them_on_rerun(tmp_path:
     lake = tmp_path / "lake"
     _seed(lake, "raw.messages", pl.DataFrame({"message_id": [1, 2, 3], "text": ["a", "b", "c"]}))
     _seed(lake, "fact.labels", _labels_schema_seed())
-    models_built: list[TestModel] = []
+    models_built: list[Model] = []
     runner = _runner(tmp_path, models_built)
     params = RunParams(run_date=date(2026, 10, 9))
 
@@ -147,3 +159,19 @@ def test_the_step_labels_every_pending_message_and_skips_them_on_rerun(tmp_path:
     assert first["agent_cost_usd"].null_count() == 0
     assert second.equals(first)
     assert len(models_built) == 1
+
+
+def test_a_batch_of_errors_is_upserted_into_an_existing_table(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    _seed(lake, "raw.messages", pl.DataFrame({"message_id": [1, 2], "text": ["a", "b"]}))
+    _seed(lake, "fact.labels", _labels_schema_seed())
+    runner = _runner(tmp_path, [], failing=True)
+
+    runner.run(_Pipeline, RunParams(run_date=date(2026, 10, 9)))
+    stored = _labels(lake).sort("message_id")
+
+    assert stored["message_id"].to_list() == [1, 2]
+    assert stored["agent_status"].to_list() == ["error", "error"]
+    assert stored["agent_error"].to_list() == ["PROVIDER_UNAVAILABLE"] * 2
+    assert stored["answer"].to_list() == [None, None]
+    assert stored.schema["answer"] == pl.String()

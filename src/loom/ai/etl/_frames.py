@@ -8,6 +8,7 @@ from typing import Any, Final
 import polars as pl
 
 from loom.ai.etl._batch import RowOutcome
+from loom.ai.etl._columns import Column
 
 STATUS_OK: Final = "ok"
 STATUS_ERROR: Final = "error"
@@ -50,20 +51,32 @@ def prompt_rows(
 
 
 def answers_frame(
-    keys: pl.DataFrame, outcomes: Sequence[RowOutcome], fields: Sequence[str], version: str
+    keys: pl.DataFrame,
+    outcomes: Sequence[RowOutcome],
+    columns: Mapping[str, Column],
+    version: str,
 ) -> pl.DataFrame:
     """Join the keys, the answer fields and the run metadata, one row per outcome.
+
+    Every answer column takes the type its field declares, so an empty batch
+    or a batch of errors only has the same schema as any other.
 
     Args:
         keys: Key columns of the input rows, in order.
         outcomes: One outcome per input row, in the same order.
-        fields: Fields of the declared output, one column each.
+        columns: Columns of the declared output's fields.
         version: Agent version written on every row.
 
     Returns:
         The output frame.
     """
-    answers = pl.DataFrame({field: [_field(o.output, field) for o in outcomes] for field in fields})
+    answers = pl.DataFrame(
+        {
+            name: [column.cell(_field(o.output, name)) for o in outcomes]
+            for name, column in columns.items()
+        },
+        schema=pl.Schema({name: column.dtype for name, column in columns.items()}),
+    )
     metadata = pl.DataFrame(
         [_metadata(o, version) for o in outcomes], schema=_METADATA_SCHEMA, orient="row"
     )

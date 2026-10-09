@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from functools import partial
@@ -17,6 +17,7 @@ from loom.ai.bootstrap import build_agent_runtime
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
+from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame, prompt_rows
 from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
@@ -117,7 +118,7 @@ class PolarsAgentRunner:
             to_builtins=projection.to_builtins,
         )
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
-        return answers_frame(rows, outcomes, _fields(projection.schema()), plan.fingerprint)
+        return answers_frame(rows, outcomes, output_columns(output_type), plan.fingerprint)
 
     def _runtime(self, name: str) -> AgentRuntime:
         return build_agent_runtime(
@@ -144,12 +145,6 @@ def _worst_case(plan: AgentPlan) -> Decimal:
     if plan.policies.max_usd is None:
         return Decimal(0)
     return plan.policies.max_usd * (plan.policies.retries + 1)
-
-
-def _fields(schema: Mapping[str, Any]) -> tuple[str, ...]:
-    reference = schema.get("$ref")
-    root = schema["$defs"][reference.rsplit("/", 1)[-1]] if reference else schema
-    return tuple(root.get("properties", {}))
 
 
 def _run_blocking(work: Callable[[], Coroutine[Any, Any, ResultT]]) -> ResultT:
