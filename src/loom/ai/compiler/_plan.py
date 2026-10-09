@@ -24,8 +24,10 @@ from typing import Any, ClassVar, Final
 import msgspec
 
 from loom.ai.abc import OutputCheck, StateShape
+from loom.ai.compiler._fingerprint import plan_fingerprint
 from loom.ai.declarative import PolicySpec
 from loom.ai.inference import InferenceTarget
+from loom.ai.pricing import ModelPrice
 from loom.core.engine.compilable import Compilable
 from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.sql.config import SqlConnectionConfig
@@ -391,6 +393,8 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
             artifact declares neither ``deps_type`` nor ``deps_schema``.
         spec_version: Artifact format version, retained for self-description.
         inference: Resolved model binding; one binding, no fallback (FR-019a).
+        price: Configured price of the bound model, from ``ai.prices``, or
+            ``None`` when the deployment declares none for it.
         output: Structured-output contract with its compiled boundary type.
         output_check: Resolved predicate over the answer the engine parsed,
             when the artifact declares ``output_check``; ``None`` otherwise.
@@ -402,12 +406,28 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         source_path: Artifact provenance for error messages, when known.
     """
 
+    @property
+    def fingerprint(self) -> str:
+        """Stable sha256 of everything that decides this agent's answers.
+
+        Covers the instructions as compiled, the output schema, the output
+        check, the policies, the format version, the kind and name of every
+        capability and the bound provider, model, output mode and options.
+        Leaves out the name, description, metadata, provenance, configured
+        price, where a capability is served from (URL, directory,
+        credentials, timeouts) and the binding's region, endpoint,
+        credentials and streaming flag. The output check enters by its import
+        path, so editing the check's body keeps the fingerprint.
+        """
+        return plan_fingerprint(self)
+
     name: str
     description: str
     instructions: tuple[CompiledInstruction, ...]
     state: StateShape | None = None
     spec_version: int
     inference: InferenceTarget
+    price: ModelPrice | None = None
     output: CompiledOutput
     output_check: OutputCheck | None = None
     capabilities: tuple[CompiledCapability, ...] = ()

@@ -24,15 +24,22 @@ from loom.etl.lineage._observer import LineageObserver
 from loom.etl.lineage._records import RunContext
 from loom.etl.pipeline._pipeline import ETLPipeline
 from loom.etl.runner._wiring import (
+    agents_for_engine,
+    make_agent_runner,
     make_backends,
     make_checkpoint_store,
     make_client_executor,
     make_lineage_store,
 )
-from loom.etl.runner.config_loader import _load_context, _parse_sections
+from loom.etl.runner.config_loader import _load_context, _parse_sections, config_dir
 from loom.etl.runner.errors import InvalidStageError
 from loom.etl.runner.filtering import _filter_plan
-from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader, TargetWriter
+from loom.etl.runtime.contracts import (
+    AgentBatchRunner,
+    ClientCommandExecutor,
+    SourceReader,
+    TargetWriter,
+)
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,
@@ -53,6 +60,9 @@ class ETLRunner:
         config_context: Config the steps' ``FromConfig`` values come from.
             :meth:`run` checks every declared key against it before any step
             runs, and each step resolves its values when it executes.
+        agents: Runner of the agents the steps' ``WithAgent`` declare.
+            :meth:`run` checks every declaration against it before any step
+            runs.
     """
 
     def __init__(
@@ -64,6 +74,7 @@ class ETLRunner:
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
         config_context: ConfigContext | None = None,
+        agents: AgentBatchRunner | None = None,
     ) -> None:
         self._executor = ETLExecutor(
             reader,
@@ -73,8 +84,9 @@ class ETLRunner:
             checkpoint_store,
             client_executor,
             config_context,
+            agents,
         )
-        self._compiler = ETLCompiler(config_context=config_context)
+        self._compiler = ETLCompiler(config_context=config_context, agents=agents)
         self._checkpoint_store = checkpoint_store
 
     @classmethod
@@ -88,6 +100,7 @@ class ETLRunner:
         cleaner: TempCleaner | None = None,
         extra_observers: Sequence[LifecycleObserver] | None = None,
         config_context: ConfigContext | None = None,
+        agents: AgentBatchRunner | None = None,
     ) -> ETLRunner:
         """Build an :class:`ETLRunner` from resolved config objects.
 
@@ -97,6 +110,9 @@ class ETLRunner:
                 to inject orchestrator-specific observers (e.g. the Prefect
                 TaskRun observer) without subclassing the runner.
             config_context: Config the steps' ``FromConfig`` values come from.
+            agents: Runner of the agents the steps' ``WithAgent`` declare. On
+                Spark every declaration is refused at compile time with
+                ``AGENT_UNSUPPORTED_ENGINE``: agents map Polars frames only.
         """
         resolved_obs_config = obs_config or ETLObservabilityConfig()
         reader, writer = make_backends(config, spark)
@@ -119,6 +135,7 @@ class ETLRunner:
             checkpoint_store,
             client_executor,
             config_context,
+            agents_for_engine(agents, config, spark),
         )
 
     @classmethod
@@ -142,6 +159,12 @@ class ETLRunner:
         read a key outside ``storage:`` (``respondio.api_token``); it is
         resolved, with its interpolations and resolvers, when the step runs.
 
+        An ``ai:`` section serves the steps' ``WithAgent`` declarations; its
+        ``specs`` globs resolve against ``ai.root``, a path relative to the
+        directory holding the YAML (the working directory for a cloud URI),
+        or against that directory when ``ai.root`` is absent, and may not
+        leave it.
+
         Args:
             resolvers: Resolvers for ``${name:key}`` placeholders, registered
                 before the built-in ``secrets`` and ``ssm`` defaults.  A
@@ -160,6 +183,7 @@ class ETLRunner:
             dispatcher=dispatcher,
             extra_observers=extra_observers,
             config_context=context,
+            agents=make_agent_runner(context, config_dir(path), config=storage_config, spark=spark),
         )
 
     @classmethod

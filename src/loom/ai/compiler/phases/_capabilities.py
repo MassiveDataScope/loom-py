@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from loom.ai._filters import select_names
+from loom.ai._paths import escapes, is_within
 from loom.ai.abc import NativeToolSupport
 from loom.ai.compiler._plan import (
     CompiledA2ACapability,
@@ -354,12 +355,6 @@ def _compile_a2a(capability: A2ACapability, context: _Context) -> _HandlerResult
     )
 
 
-def _library_escapes(library: str) -> bool:
-    """Report whether a library name would leave the directory it is anchored to."""
-    name = library.removeprefix(_LOCAL_LIBRARY_PREFIX)
-    return ".." in Path(name).parts
-
-
 def _library_base(library: str, context: _Context) -> _ResolveResult:
     """Return the directory ``library`` is anchored to, or why it has none."""
     if library.startswith(_LOCAL_LIBRARY_PREFIX):
@@ -373,15 +368,15 @@ def _library_base(library: str, context: _Context) -> _ResolveResult:
 
 
 def _resolve_library(library: str, context: _Context) -> _ResolveResult:
-    if _library_escapes(library):
+    if escapes(library.removeprefix(_LOCAL_LIBRARY_PREFIX)):
         return None, [skills_library_escapes(context.component, library)]
     base, issues = _library_base(library, context)
     if base is None:
         return None, issues
-    resolved = (base / library.removeprefix(_LOCAL_LIBRARY_PREFIX)).resolve()
-    if not resolved.is_relative_to(base.resolve()):
+    resolved = base / library.removeprefix(_LOCAL_LIBRARY_PREFIX)
+    if not is_within(resolved, base):
         return None, [skills_library_escapes(context.component, library)]
-    return resolved, []
+    return resolved.resolve(), []
 
 
 def _discover_skills(directory: Path) -> tuple[tuple[str, ...], str | None]:

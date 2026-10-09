@@ -11,7 +11,7 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.etl.lineage._config import ETLObservabilityConfig
-from loom.etl.runner.config_loader import _load_yaml
+from loom.etl.runner.config_loader import _load_yaml, config_dir
 from loom.etl.storage._config import STORAGE_KEYED_COLLECTIONS, StorageConfig
 
 
@@ -265,3 +265,24 @@ def test_load_yaml_forwards_resolvers_and_keeps_keyed_collections(tmp_path: Path
     kwargs = from_yaml.call_args.kwargs
     assert kwargs["keyed"] == STORAGE_KEYED_COLLECTIONS
     assert kwargs["resolvers"][0] is resolver
+
+
+class TestConfigDir:
+    def test_a_local_config_anchors_relative_paths_to_its_own_directory(
+        self, tmp_path: Path
+    ) -> None:
+        assert config_dir(str(tmp_path / "conf" / "loom.yaml")) == tmp_path / "conf"
+
+    def test_a_relative_config_path_is_made_absolute(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        assert config_dir("conf/loom.yaml") == tmp_path.resolve() / "conf"
+
+    def test_a_remote_config_anchors_relative_paths_to_the_working_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        assert config_dir("s3://bucket/conf/loom.yaml") == tmp_path.resolve()

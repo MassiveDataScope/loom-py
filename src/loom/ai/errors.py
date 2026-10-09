@@ -49,6 +49,7 @@ _FIELD_CAPABILITIES_CONNECTION: Final = "capabilities.connection"
 _FIELD_CAPABILITIES_LIBRARY: Final = "capabilities.library"
 _FIELD_CAPABILITIES_FACTORY: Final = "capabilities.factory"
 _FIELD_AI_ENGINE: Final = "ai.engine"
+_FIELD_AI_SPECS: Final = "ai.specs"
 _FIELD_DEPS_TYPE: Final = "deps_type"
 _FIELD_DEPS_SCHEMA: Final = "deps_schema"
 _FIELD_INSTRUCTIONS: Final = "instructions"
@@ -151,6 +152,7 @@ class AgentErrorCode(StrEnum):
     A2A_AGENT_UNREACHABLE = "A2A_AGENT_UNREACHABLE"
     AGENT_SPECS_CONFLICT = "AGENT_SPECS_CONFLICT"
     AGENT_SPECS_MISSING = "AGENT_SPECS_MISSING"
+    AGENT_SPECS_ESCAPE_ROOT = "AGENT_SPECS_ESCAPE_ROOT"
     REMOTE_CLIENTS_UNKNOWN = "REMOTE_CLIENTS_UNKNOWN"
     MAX_AGENT_DEPTH_INVALID = "MAX_AGENT_DEPTH_INVALID"
 
@@ -1247,7 +1249,7 @@ def agent_specs_conflict() -> AgentCompilationIssue:
             "the 'ai.specs' config key; declare them in exactly one of the two"
         ),
         component="ai",
-        field="ai.specs",
+        field=_FIELD_AI_SPECS,
     )
 
 
@@ -1260,7 +1262,20 @@ def agent_specs_missing() -> AgentCompilationIssue:
             "or the manifest 'AGENTS' attribute"
         ),
         component="ai",
-        field="ai.specs",
+        field=_FIELD_AI_SPECS,
+    )
+
+
+def agent_specs_escape_root(pattern: str) -> AgentCompilationIssue:
+    """An artifact glob reaches outside the root it is resolved against."""
+    return AgentCompilationIssue(
+        code=AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT,
+        message=(
+            f"agent artifact pattern '{pattern}' reaches outside the directory it is "
+            "resolved against; write it relative to that directory, without '..'"
+        ),
+        component="ai",
+        field=_FIELD_AI_SPECS,
     )
 
 

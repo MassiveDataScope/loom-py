@@ -137,6 +137,45 @@
   library produced the answer, the hook payload, `/agents/{name}/run`, the
   SSE `final` frame and the A2A output artifact all carry it as plain JSON
   builtins, built from the plan's `LoomType`.
+- **ai:** `ai.prices` declares model prices in USD per million tokens
+  (`input`, `output`, optional `cache_read`/`cache_write`, `source`,
+  `as_of`), keyed by the vendor model id (`loom.ai.ModelPrice`). The
+  compiler carries the bound model's price on the plan (`AgentPlan.price`)
+  and the pydantic-ai engine prices every response with it before
+  genai-prices, so `AgentUsage.cost`, `policies.max_usd` and
+  `on_unpriced_spend: refuse` work for a model the catalogue does not know
+  (a Bedrock inference profile such as `eu.anthropic.claude-haiku-5-5`):
+  `refuse` no longer fails after paying, and `serve` enforces the cap. The
+  start-up notice is skipped for a priced model. Engines may expose a
+  `prices_model(target)` oracle, read with
+  `loom.ai.registry.engine_prices_model`.
+- **ai:** `loom.ai.build_agent_runtime(config, *, root, names=None, ...)`
+  assembles an unentered `AgentRuntime` from an `ai:` section: engine,
+  artifacts under `root`, compilation. `create_app` now builds its runtime
+  through it. `AgentRuntime.plans` exposes the compiled plans.
+- **ai:** `AgentPlan.fingerprint`, a stable sha256 of what decides an
+  agent's answers: compiled instructions, output schema, output check (by
+  import path), policies, `spec_version`, the kind and name of every
+  capability and the bound provider, model, `output_mode` and `options`; not
+  the name, metadata, price, where a capability is served from, region,
+  endpoint, credentials or `streaming`.
+- **ai:** `loom.ai.etl.PolarsAgentRunner` runs an agent over a Polars frame
+  for ETL steps (see `etl`): a runtime of its own per call that also sees the
+  caller's context variables, concurrency that waits instead of refusing, one
+  output row per input row with errors as rows (an unexpected exception is an
+  `UNEXPECTED_ERROR` row, never an aborted batch, and an answer value its
+  column cannot hold an `OUTPUT_UNREPRESENTABLE` row that keeps its cost),
+  answer columns typed by the declared output (`date` as `Date`, `datetime`
+  as UTC `Datetime`, `Decimal` as `Decimal(38, 9)`, string choices as
+  `String`, ...) even for a batch
+  without rows or with errors only, tokens, cost and version per row, and a
+  budget per call that reserves `policies.max_usd` per run and is exceeded
+  only by the elastic excess of the last response of each run in flight (at
+  most `max_concurrent_runs` responses); a budget without `policies.max_usd`
+  raises `ValueError`. A frame without rows compiles nothing; `validate` and
+  `version` compile each agent once per runner, and each `map` recompiles it
+  and leaves that compilation for `version`, so `version` always equals the
+  `agent_version` the last `map` wrote.
 
 ### rest
 
@@ -211,6 +250,34 @@
   may quote the value. `ETLRunner`, `ETLRunner.from_config` and `ETLExecutor` take
   `config_context=`; `PolarsStepRunner` and `SparkStepRunner` take
   `with_config(mapping)` for fake values in tests.
+- **etl:** a step may map rows through an agent of the runner's `ai:`
+  section. `WithAgent("seller_reply", output=SellerReply, max_usd=None)`
+  declared as a class attribute is passed to `execute()` as an `AgentMapper`
+  whose `map(frame, keys=..., prompt=...)` returns, per input row, the keys,
+  the fields of `output` and `agent_version`, `agent_status`, `agent_error`,
+  `agent_input_tokens`, `agent_output_tokens`, `agent_cache_read_tokens`,
+  `agent_cache_write_tokens` and `agent_cost_usd`; `version` is the agent's
+  fingerprint, for the anti-join. A failed run is an error row; with
+  `max_usd`, the rows past the budget come back as `BUDGET_EXHAUSTED`
+  unsent; a step budget needs `policies.max_usd` on the artifact and room for
+  one run's `policies.max_usd`, and is overshot only by the elastic excess of
+  the last response of each run in flight (at most `max_concurrent_runs`
+  responses). `ETLRunner.from_yaml`
+  resolves `ai.specs` against `ai.root`, a path relative to the YAML's
+  directory (the directory itself when absent), so a config kept in a
+  subfolder reaches artifacts elsewhere in the repository while no glob may
+  leave that root, and loads `loom.ai.etl` by module path only when `ai:` is
+  present and the engine is Polars: `loom.etl` never imports `loom.ai`.
+  `ETLRunner.run` validates every declaration through the new
+  `AgentBatchRunner` port before any step runs, with new codes
+  `AGENT_NOT_FOUND`, `AGENT_COMPILATION_FAILED`, `AGENT_OUTPUT_MISMATCH`,
+  `AGENT_UNPRICED_BUDGET`, `AGENT_BUDGET_UNENFORCEABLE` (a step budget with
+  no `policies.max_usd`, or below it),
+  `AGENT_COLUMN_COLLISION` (an output field named like an `agent_*` column)
+  and `AGENT_UNSUPPORTED_ENGINE` (a Spark runner); the shape reuses
+  `MISSING_CONFIG_PARAMS`, `CONFIG_ALIAS_CONFLICT` and
+  `UNSUPPORTED_CONFIG_VALUE`. `ETLRunner`, `ETLRunner.from_config`,
+  `ETLCompiler` and `ETLExecutor` take `agents=`. Polars only.
 
 ## ⚠ Behaviour changes
 
@@ -227,6 +294,12 @@
 
 ### ai
 
+- **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
+  root it resolves against — a `..` segment, an absolute pattern or a match
+  that resolves outside the root through a symlink — with
+  `AGENT_SPECS_ESCAPE_ROOT`, before reading any artifact. A deployment whose
+  `ai.specs` climbs out of the application root with `..` must move its
+  artifacts under it. Absolute patterns already failed.
 - **ai:** `CompiledOutput.decoder` and `StateShape.decoder` are gone,
   replaced by `loom_type: LoomType` (`LoomType | None` on `StateShape`); a
   reader of either field must move to `loom_type.type` / `.decode_json()` /

@@ -18,7 +18,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Final, TypeVar
 
-from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, spec_malformed
+from loom.ai._paths import escapes, is_within
+from loom.ai.errors import (
+    AgentCompilationError,
+    AgentCompilationIssue,
+    agent_specs_escape_root,
+    spec_malformed,
+)
 
 from ._envelope import (
     LATEST_SPEC_VERSION,
@@ -122,10 +128,24 @@ _LOADERS: Final[Mapping[str, Callable[[bytes, str], DecodedSpec]]] = MappingProx
 )
 
 
+def _glob(pattern: str, root: Path) -> tuple[set[Path], list[AgentCompilationIssue]]:
+    if escapes(pattern):
+        return set(), [agent_specs_escape_root(pattern)]
+    matches = {path for path in root.glob(pattern) if path.is_file()}
+    if not all(is_within(path, root) for path in matches):
+        return set(), [agent_specs_escape_root(pattern)]
+    return matches, []
+
+
 def _resolve_paths(patterns: Sequence[str], root: Path) -> tuple[Path, ...]:
     matches: set[Path] = set()
+    issues: list[AgentCompilationIssue] = []
     for pattern in patterns:
-        matches.update(path for path in root.glob(pattern) if path.is_file())
+        found, pattern_issues = _glob(pattern, root)
+        matches.update(found)
+        issues.extend(pattern_issues)
+    if issues:
+        raise AgentCompilationError(issues)
     return tuple(sorted(matches))
 
 
@@ -154,8 +174,11 @@ def load_specs(
 ) -> tuple[DecodedSpec, ...]:
     """Load every artifact matching a set of globs.
 
-    Patterns are resolved relative to ``root``; matches are de-duplicated across
-    patterns and returned sorted by path, so the result is deterministic.
+    Patterns are resolved relative to ``root`` and may not leave it: an
+    absolute pattern, a ``..`` segment or a match whose resolved path lies
+    outside ``root`` is refused before any artifact is read. Matches are
+    de-duplicated across patterns and returned sorted by path, so the result
+    is deterministic.
     ``.yaml``/``.yml`` files decode as YAML, ``.json`` files as JSON, and any
     other extension is a failure.
 
@@ -172,8 +195,9 @@ def load_specs(
         One decoded artifact per matched file, ordered by path.
 
     Raises:
-        AgentCompilationError: Aggregating every fatal issue found across all
-            matched files.
+        AgentCompilationError: With ``AGENT_SPECS_ESCAPE_ROOT`` for every
+            pattern that leaves ``root``; otherwise aggregating every fatal
+            issue found across all matched files.
 
     Example:
         >>> load_specs(["*.agent.yaml"], root="agents")

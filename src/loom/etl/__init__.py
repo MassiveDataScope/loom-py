@@ -15,6 +15,7 @@ Authoring::
         FromTable,
         FromFile,
         FromConfig,
+        WithAgent,
         IntoTable,
         IntoFile,
         Format,
@@ -79,9 +80,11 @@ from loom.etl.declarative import (
     SchemaMode,
     Sources,
     SourceSet,
+    WithAgent,
     WriteOptions,
 )
 from loom.etl.declarative.target._client import IntoClient
+from loom.etl.executor import AgentMapper
 from loom.etl.io import (
     ClickHouseClientExecutor,
     FromClickHouse,
@@ -115,6 +118,7 @@ from loom.etl.pipeline import (
 )
 from loom.etl.runner import ETLRunner, InvalidStageError
 from loom.etl.runtime.contracts import (
+    AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,
     TableDiscovery,
@@ -174,6 +178,8 @@ __all__ = [
     "FromFile",
     "FromTemp",
     "FromConfig",
+    "WithAgent",
+    "AgentMapper",
     "FromClickHouse",
     "FromMongo",
     "FromDynamoDb",
@@ -225,6 +231,7 @@ __all__ = [
     "SourceReader",
     "TargetWriter",
     "ClientCommandExecutor",
+    "AgentBatchRunner",
     # ClickHouse client executor
     "ClickHouseClientExecutor",
     # storage locator

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from loom.etl.declarative.source import SourceSpec
@@ -46,6 +47,23 @@ class ConfigValueBinding:
 
 
 @dataclass(frozen=True)
+class AgentBinding:
+    """Compiled binding between an ``execute()`` keyword and a declared agent.
+
+    Args:
+        alias:       Name matching the ``execute()`` keyword parameter.
+        name:        Agent name.
+        output_type: Type every answer decodes into.
+        max_usd:     Budget of one execution of the step, or ``None``.
+    """
+
+    alias: str
+    name: str
+    output_type: type[Any]
+    max_usd: Decimal | None = None
+
+
+@dataclass(frozen=True)
 class TargetBinding:
     """Compiled binding for the step target.
 
@@ -68,6 +86,7 @@ class StepPlan:
         streaming:       Whether the step opts into Polars streaming execution.
                          Defaults to ``False``.
         config_bindings: Ordered ``FromConfig`` alias → key bindings.
+        agent_bindings:  Ordered ``WithAgent`` alias → agent bindings.
     """
 
     step_type: type[Any]
@@ -76,6 +95,7 @@ class StepPlan:
     target_binding: TargetBinding
     streaming: bool = False
     config_bindings: tuple[ConfigValueBinding, ...] = ()
+    agent_bindings: tuple[AgentBinding, ...] = ()
 
 
 @dataclass(frozen=True)

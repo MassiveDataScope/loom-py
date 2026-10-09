@@ -77,6 +77,7 @@ Companion demo application:
    :caption: ETL
 
    etl/pipelines
+   etl/agent-steps
    etl/testing
    etl/examples
 

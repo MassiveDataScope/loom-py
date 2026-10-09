@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import msgspec
@@ -14,6 +15,7 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.etl.checkpoint._cleaners import _is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.storage._config import (
     STORAGE_KEYED_COLLECTIONS,
@@ -82,6 +84,21 @@ def _load_context(path: str, *, resolvers: Sequence[ConfigResolver] = ()) -> Con
         resolvers=with_default_resolvers(resolvers),
         keyed=STORAGE_KEYED_COLLECTIONS,
     )
+
+
+def config_dir(path: str) -> Path:
+    """Return the directory the relative paths of a config resolve against.
+
+    Args:
+        path: Local path or cloud URI of the YAML file.
+
+    Returns:
+        The absolute directory holding a local file, or the working directory
+        for a cloud URI, which has no local directory of its own.
+    """
+    if _is_cloud_path(path):
+        return Path.cwd().resolve()
+    return Path(path).resolve().parent
 
 
 def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservabilityConfig]:

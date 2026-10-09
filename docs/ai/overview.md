@@ -91,6 +91,11 @@ ai:
       auth: jwt
 ```
 
+`specs` globs resolve against the application root (the YAML's own directory
+for an ETL pipeline) and may not leave it: an absolute pattern, a `..` segment
+or a match that resolves outside the root through a symlink fails with
+`AGENT_SPECS_ESCAPE_ROOT` before any artifact is read.
+
 Every agent matched by `specs` is compiled. Only the agents named in
 `endpoints`, with `enabled` **and** a named `auth`, are mounted on the HTTP
 and A2A doors. An agent absent from `endpoints` is still reachable — from
@@ -102,6 +107,27 @@ marker-filled handle always refuses an anonymous caller, with no
 `allow_anonymous` to relax it, unlike the HTTP door an operator explicitly
 opts an agent into. Exposure over the network is always an explicit opt-in,
 never a default; the code door is a distinct decision, not derived from it.
+
+### Building a runtime outside an HTTP app
+
+`loom.ai.build_agent_runtime(config, *, root, names=None, ...)` is the
+assembly `create_app` itself uses: it resolves the engine, loads the artifacts
+under `root`, compiles them and returns the `AgentRuntime` unentered. `names`
+restricts it to some agents; `registry`, `container`, `deps`, `sql` and
+`use_case_mcp` default to empty, and `engine_provider` replaces the provider
+resolved from `ai.engine`.
+
+```python
+from loom.ai import build_agent_runtime
+from loom.core.identity import Identity
+
+runtime = build_agent_runtime(ai_config, root=repo_root, names={"seller_reply"})
+async with runtime:
+    result = await runtime.run("seller_reply", prompt, identity=Identity(subject="batch"))
+```
+
+ETL steps reach agents declaratively instead, through
+[`WithAgent`](../etl/agent-steps.md).
 
 ### Nesting: how deep an agent may call another
 

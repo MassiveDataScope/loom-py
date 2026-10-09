@@ -11,7 +11,10 @@ Dependency direction
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from decimal import Decimal
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from loom.etl.declarative.expr._refs import TableRef
@@ -214,7 +217,98 @@ class ClientCommandExecutor(Protocol):
         ...
 
 
+class AgentIssueKind(StrEnum):
+    """Why a declared agent cannot serve a step."""
+
+    NOT_FOUND = "not_found"
+    COMPILATION_FAILED = "compilation_failed"
+    OUTPUT_MISMATCH = "output_mismatch"
+    UNPRICED_BUDGET = "unpriced_budget"
+    BUDGET_UNENFORCEABLE = "budget_unenforceable"
+    UNSUPPORTED_ENGINE = "unsupported_engine"
+    COLUMN_COLLISION = "column_collision"
+
+
+@dataclass(frozen=True)
+class AgentIssue:
+    """One reason a declared agent cannot serve a step.
+
+    Attributes:
+        kind: What is wrong.
+        message: Human-readable detail, naming the agent and never a secret.
+    """
+
+    kind: AgentIssueKind
+    message: str
+
+
+@runtime_checkable
+class AgentBatchRunner(Protocol):
+    """Optional capability protocol for running a declared agent over a frame.
+
+    Implemented by :mod:`loom.ai.etl` and injected into
+    :class:`~loom.etl.executor.ETLExecutor` and
+    :class:`~loom.etl.compiler.ETLCompiler` as a separate dependency, so the
+    ETL pillar depends on this contract and never on the AI pillar. Used
+    exclusively to serve :class:`~loom.etl.WithAgent` declarations.
+    """
+
+    def validate(
+        self, name: str, output_type: type[Any], *, max_usd: Decimal | None
+    ) -> tuple[AgentIssue, ...]:
+        """Check, without spending anything, that *name* can serve a step.
+
+        Args:
+            name: Agent name declared by the step.
+            output_type: Type the step expects every answer to decode into.
+            max_usd: Budget of one execution of the step, when declared.
+
+        Returns:
+            Every issue found; empty when the agent can serve the step.
+        """
+        ...
+
+    def version(self, name: str) -> str:
+        """Return the version of agent *name*, stable while its behaviour is.
+
+        Args:
+            name: Agent name declared by the step.
+
+        Returns:
+            The value written in the ``agent_version`` column.
+        """
+        ...
+
+    def map(
+        self,
+        name: str,
+        frame: Any,
+        *,
+        keys: Sequence[str],
+        prompt: object,
+        output_type: type[Any],
+        max_usd: Decimal | None,
+    ) -> Any:
+        """Run agent *name* once per row of *frame*.
+
+        Args:
+            name: Agent name declared by the step.
+            frame: Backend frame holding the rows to answer.
+            keys: Columns identifying a row, copied to the output.
+            prompt: Backend expression, or column name, giving each row's prompt.
+            output_type: Type every answer is decoded into.
+            max_usd: Budget of this call; ``None`` spends without a ceiling.
+
+        Returns:
+            One output row per input row, failures included.
+        """
+        ...
+
+
 __all__ = [
+    "AgentBatchRunner",
+    "AgentIssue",
+    "AgentIssueKind",
     "TableDiscovery",
     "SourceReader",
     "StreamingSourceReader",

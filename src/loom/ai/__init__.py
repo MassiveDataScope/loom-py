@@ -43,6 +43,7 @@ from loom.ai.abc import (
     ToolsetContext,
     ToolsetFactory,
 )
+from loom.ai.bootstrap import build_agent_runtime
 from loom.ai.config import A2AConfig, AgentEndpointConfig, AiConfig
 from loom.ai.errors import (
     AgentCompilationError,
@@ -54,6 +55,7 @@ from loom.ai.errors import (
     is_retriable,
 )
 from loom.ai.inference import InferenceTarget
+from loom.ai.pricing import ModelPrice
 from loom.ai.runtime import AgentHealth, AgentRuntime
 
 __all__ = [
@@ -89,6 +91,7 @@ __all__ = [
     "McpSession",
     "McpToolCallResult",
     "McpToolInfo",
+    "ModelPrice",
     "NativeCapableEngine",
     "OutputCheck",
     "Prompt",
@@ -98,4 +101,5 @@ __all__ = [
     "ToolResultEvent",
     "ToolsetContext",
     "ToolsetFactory",
+    "build_agent_runtime",
 ]

@@ -704,56 +704,29 @@ def _resolve_ai(
     # application without an 'ai:' section would pull the whole agent layer
     # into every Loom app (FR-050) — the same rule '_build_sql_registry'
     # follows for the ClickHouse extra.
-    from loom.ai.compiler import AgentCompiler
+    from loom.ai.bootstrap import build_agent_runtime
     from loom.ai.config import AiConfig
-    from loom.ai.declarative import load_specs
-    from loom.ai.registry import (
-        configure_engine_mcp_connect_timeout,
-        engine_client_factories,
-        engine_native_tool_support,
-        engine_supported_kinds,
-        resolve_engine_provider,
-    )
-    from loom.ai.runtime import AgentRuntime
+    from loom.ai.registry import resolve_engine_provider
 
     ai_cfg = ctx.section(ConfigKey.AI, AiConfig)
     provider = resolve_engine_provider(ai_cfg.engine)
-    # `ai.startup_timeout_ms` is the published start-up connect budget; handed
-    # to the engine here so its own MCP handshake deadline stops being the
-    # engine's undocumented five seconds (FR-051).
-    configure_engine_mcp_connect_timeout(provider, ai_cfg.startup_timeout_ms / 1000)
-    mcp_factory, a2a_factory = engine_client_factories(provider)
-    native_tools = engine_native_tool_support(provider)
-    compiler = AgentCompiler(
-        config=ai_cfg,
-        registry=kernel.registry,
-        supported_kinds=engine_supported_kinds(provider, ai_cfg.engine),
-        sql=sql_cfg,
-        native_tools=native_tools,
-    )
     specs = _effective_agent_specs(
         ai_cfg.specs, manifest_agent_specs, has_declaring_use_case=bool(use_case_mcp_bindings)
     )
-    decoded = load_specs(specs, root=code_path)
-    # DecodedSpec, not .spec: the artifact's own path is what resolves a
-    # './library' skill grant, and dropping it fails them in real wiring.
-    plans = compiler.compile_all(decoded)
-    use_case_mcp = _compile_use_case_mcp(use_case_mcp_bindings, kernel.registry, ai_cfg.mcp_servers)
-    runtime = AgentRuntime(
-        plans=plans,
-        config=ai_cfg,
+    runtime = build_agent_runtime(
+        ai_cfg,
+        root=code_path,
+        specs=specs,
         engine_provider=provider,
-        deps=_AgentDepsFactory(kernel.app),
+        registry=kernel.registry,
         container=kernel.container,
-        sql_config=sql_cfg,
-        # Without these an artifact granting 'mcp' or 'a2a' compiles and then
-        # fails to start: the runtime has no way to reach the server it must
-        # validate the grant against.
-        mcp_client_factory=mcp_factory,
-        a2a_client_factory=a2a_factory,
-        use_case_mcp=use_case_mcp,
+        deps=_AgentDepsFactory(kernel.app),
+        sql=sql_cfg,
+        use_case_mcp=_compile_use_case_mcp(
+            use_case_mcp_bindings, kernel.registry, ai_cfg.mcp_servers
+        ),
     )
-    return _AiWiring(config=ai_cfg, runtime=runtime, plans=plans)
+    return _AiWiring(config=ai_cfg, runtime=runtime, plans=runtime.plans)
 
 
 def _compile_use_case_mcp(

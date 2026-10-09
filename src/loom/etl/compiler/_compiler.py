@@ -18,6 +18,8 @@ Static validation
 * ``ETLProcess.steps`` entries are valid step types
 * ``ETLPipeline.processes`` entries are valid process types
 * with a config context, every ``FromConfig`` key resolves and validates
+* every ``WithAgent`` has a matching ``*``-only param in ``execute()``
+* with a config context or an agent runner, every ``WithAgent`` can be served
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import Any, cast
 
 from loom.core.config import ConfigContext
 from loom.etl.compiler._binding import (
+    resolve_agent_bindings,
     resolve_config_bindings,
     resolve_source_bindings,
     resolve_target_binding,
@@ -50,6 +53,11 @@ from loom.etl.compiler._validators import (
     validate_step,
     validate_step_catalog,
 )
+from loom.etl.compiler._validators_agents import (
+    validate_plan_agents,
+    validate_process_agents,
+    validate_step_agents,
+)
 from loom.etl.compiler._validators_config import (
     validate_plan_config,
     validate_process_config,
@@ -59,7 +67,7 @@ from loom.etl.declarative.target import AppendSpec
 from loom.etl.pipeline._pipeline import ETLPipeline
 from loom.etl.pipeline._process import ETLProcess
 from loom.etl.pipeline._step import ETLStep
-from loom.etl.runtime.contracts import TableDiscovery
+from loom.etl.runtime.contracts import AgentBatchRunner, TableDiscovery
 
 _log = logging.getLogger(__name__)
 
@@ -78,6 +86,9 @@ class ETLCompiler:
         config_context: Optional config the runner was built from.  When
                  provided, every ``FromConfig`` key is resolved and validated
                  at compile time; values are discarded, never stored on a plan.
+        agents:  Optional agent runner.  When provided, or when a config
+                 context is, every ``WithAgent`` is validated through it at
+                 compile time; without one, a declared agent cannot be served.
 
     Example::
 
@@ -89,9 +100,11 @@ class ETLCompiler:
         self,
         catalog: TableDiscovery | None = None,
         config_context: ConfigContext | None = None,
+        agents: AgentBatchRunner | None = None,
     ) -> None:
         self._catalog = catalog
         self._config_context = config_context
+        self._agents = agents
         self._step_cache: dict[type[Any], StepPlan] = {}
         self._process_cache: dict[type[Any], ProcessPlan] = {}
 
@@ -105,8 +118,9 @@ class ETLCompiler:
             Fully validated :class:`~loom.etl.compiler._plan.PipelinePlan`.
 
         Raises:
-            ETLCompilationError: If any structural constraint is violated, or
-                a ``FromConfig`` key does not resolve against the config context.
+            ETLCompilationError: If any structural constraint is violated, a
+                ``FromConfig`` key does not resolve against the config context,
+                or a ``WithAgent`` cannot be served.
         """
         params_type = _require_params_type(pipeline_type, "ETLPipeline")
         _log.debug(
@@ -122,6 +136,8 @@ class ETLCompiler:
             validate_plan_catalog(plan, self._catalog)
         if self._config_context is not None:
             validate_plan_config(plan, self._config_context)
+        if self._validates_agents:
+            validate_plan_agents(plan, self._agents)
         return plan
 
     def compile_process(self, process_type: type[ETLProcess[Any]]) -> ProcessPlan:
@@ -134,14 +150,17 @@ class ETLCompiler:
             Validated :class:`~loom.etl.compiler._plan.ProcessPlan`.
 
         Raises:
-            ETLCompilationError: If any structural constraint is violated, or
-                a ``FromConfig`` key does not resolve against the config context.
+            ETLCompilationError: If any structural constraint is violated, a
+                ``FromConfig`` key does not resolve against the config context,
+                or a ``WithAgent`` cannot be served.
         """
         plan = self._get_or_build_process(process_type)
         if self._catalog is not None:
             validate_process_catalog(plan, self._catalog)
         if self._config_context is not None:
             validate_process_config(plan, self._config_context)
+        if self._validates_agents:
+            validate_process_agents(plan, self._agents)
         return plan
 
     def compile_step(self, step_type: type[ETLStep[Any]]) -> StepPlan:
@@ -154,15 +173,22 @@ class ETLCompiler:
             Validated :class:`~loom.etl.compiler._plan.StepPlan`.
 
         Raises:
-            ETLCompilationError: If any structural constraint is violated, or
-                a ``FromConfig`` key does not resolve against the config context.
+            ETLCompilationError: If any structural constraint is violated, a
+                ``FromConfig`` key does not resolve against the config context,
+                or a ``WithAgent`` cannot be served.
         """
         plan = self._get_or_build_step(step_type)
         if self._catalog is not None:
             validate_step_catalog(plan, self._catalog)
         if self._config_context is not None:
             validate_step_config(plan, self._config_context)
+        if self._validates_agents:
+            validate_step_agents(plan, self._agents)
         return plan
+
+    @property
+    def _validates_agents(self) -> bool:
+        return self._agents is not None or self._config_context is not None
 
     # ------------------------------------------------------------------
     # Pipeline assembly
@@ -233,6 +259,7 @@ class ETLCompiler:
         source_bindings = resolve_source_bindings(step_type)
         target_binding = resolve_target_binding(step_type)
         config_bindings = resolve_config_bindings(step_type)
+        agent_bindings = resolve_agent_bindings(step_type)
         _log.debug(
             "compile step=%s sources=%d",
             step_type.__name__,
@@ -245,6 +272,7 @@ class ETLCompiler:
                 source_bindings=source_bindings,
                 target_binding=target_binding,
                 config_bindings=config_bindings,
+                agent_bindings=agent_bindings,
             )
         )
         _warn_append_target(step_type, target_binding.spec)
@@ -255,6 +283,7 @@ class ETLCompiler:
             target_binding=target_binding,
             streaming=step_type.streaming,
             config_bindings=config_bindings,
+            agent_bindings=agent_bindings,
         )
 
     # ------------------------------------------------------------------

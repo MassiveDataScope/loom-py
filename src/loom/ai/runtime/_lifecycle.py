@@ -332,6 +332,11 @@ class AgentRuntime:
         self._use_case_grants.clear()
         await stack.aclose()
 
+    @property
+    def plans(self) -> tuple[AgentPlan, ...]:
+        """Every compiled plan this runtime serves, in the order they were given."""
+        return tuple(self._plans.values())
+
     def agent_names(self) -> tuple[str, ...]:
         """Return the names of every agent this runtime serves.
 
