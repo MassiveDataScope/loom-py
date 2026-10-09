@@ -333,9 +333,10 @@ class TestBudget:
     def test_a_step_budget_without_a_run_cap_is_refused(self, tmp_path: Path) -> None:
         runner = _runner(tmp_path, agent=_AGENT.replace(", max_usd: 0.01", ""))
         frame = _messages("hola")
+        budget = Decimal("1")
 
         with pytest.raises(ValueError, match="policies.max_usd"):
-            _map(runner, frame, max_usd=Decimal("1"))
+            _map(runner, frame, max_usd=budget)
 
     def test_without_a_budget_every_row_is_sent(self, tmp_path: Path) -> None:
         out = _map(_runner(tmp_path, concurrency=1), _messages(*(f"m{i}" for i in range(12))))
