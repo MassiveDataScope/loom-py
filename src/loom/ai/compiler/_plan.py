@@ -24,6 +24,7 @@ from typing import Any, ClassVar, Final
 import msgspec
 
 from loom.ai.abc import OutputCheck, StateShape
+from loom.ai.compiler._fingerprint import plan_fingerprint
 from loom.ai.declarative import PolicySpec
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
@@ -404,6 +405,19 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         metadata: Free-form string labels carried alongside the agent.
         source_path: Artifact provenance for error messages, when known.
     """
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable sha256 of everything that decides this agent's answers.
+
+        Covers the instructions as compiled, the output schema, the output
+        check, the policies, the format version and the bound provider,
+        model, output mode and options. Leaves out the name, description,
+        metadata, provenance, configured price and the binding's region,
+        endpoint, credentials and streaming flag. The output check enters by
+        its import path, so editing the check's body keeps the fingerprint.
+        """
+        return plan_fingerprint(self)
 
     name: str
     description: str
