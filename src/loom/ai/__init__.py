@@ -43,6 +43,7 @@ from loom.ai.abc import (
     ToolsetContext,
     ToolsetFactory,
 )
+from loom.ai.bootstrap import build_agent_runtime
 from loom.ai.config import A2AConfig, AgentEndpointConfig, AiConfig
 from loom.ai.errors import (
     AgentCompilationError,
@@ -100,4 +101,5 @@ __all__ = [
     "ToolResultEvent",
     "ToolsetContext",
     "ToolsetFactory",
+    "build_agent_runtime",
 ]
