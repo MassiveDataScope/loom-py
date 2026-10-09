@@ -163,12 +163,19 @@
   for ETL steps (see `etl`): a runtime of its own per call that also sees the
   caller's context variables, concurrency that waits instead of refusing, one
   output row per input row with errors as rows (an unexpected exception is an
-  `UNEXPECTED_ERROR` row, never an aborted batch), answer columns typed by the
-  declared output (`date` as `Date`, `datetime` as UTC `Datetime`, `Decimal`
-  as `Decimal(38, 9)`, string choices as `String`, ...) even for a batch
+  `UNEXPECTED_ERROR` row, never an aborted batch, and an answer value its
+  column cannot hold an `OUTPUT_UNREPRESENTABLE` row that keeps its cost),
+  answer columns typed by the declared output (`date` as `Date`, `datetime`
+  as UTC `Datetime`, `Decimal` as `Decimal(38, 9)`, string choices as
+  `String`, ...) even for a batch
   without rows or with errors only, tokens, cost and version per row, and a
-  budget per call that is a hard ceiling. A frame without rows compiles
-  nothing; `validate` and `version` compile each agent once per runner.
+  budget per call that reserves `policies.max_usd` per run and is exceeded
+  only by the elastic excess of the last response of each run in flight (at
+  most `max_concurrent_runs` responses); a budget without `policies.max_usd`
+  raises `ValueError`. A frame without rows compiles nothing; `validate` and
+  `version` compile each agent once per runner, and each `map` recompiles it
+  and leaves that compilation for `version`, so `version` always equals the
+  `agent_version` the last `map` wrote.
 
 ### rest
 
@@ -253,7 +260,9 @@
   fingerprint, for the anti-join. A failed run is an error row; with
   `max_usd`, the rows past the budget come back as `BUDGET_EXHAUSTED`
   unsent; a step budget needs `policies.max_usd` on the artifact and room for
-  one run's worst case, so it is never overshot. `ETLRunner.from_yaml`
+  one run's `policies.max_usd`, and is overshot only by the elastic excess of
+  the last response of each run in flight (at most `max_concurrent_runs`
+  responses). `ETLRunner.from_yaml`
   resolves `ai.specs` against `ai.root`, a path relative to the YAML's
   directory (the directory itself when absent), so a config kept in a
   subfolder reaches artifacts elsewhere in the repository while no glob may
@@ -263,7 +272,7 @@
   `AgentBatchRunner` port before any step runs, with new codes
   `AGENT_NOT_FOUND`, `AGENT_COMPILATION_FAILED`, `AGENT_OUTPUT_MISMATCH`,
   `AGENT_UNPRICED_BUDGET`, `AGENT_BUDGET_UNENFORCEABLE` (a step budget with
-  no `policies.max_usd`, or below one run's worst case),
+  no `policies.max_usd`, or below it),
   `AGENT_COLUMN_COLLISION` (an output field named like an `agent_*` column)
   and `AGENT_UNSUPPORTED_ENGINE` (a Spark runner); the shape reuses
   `MISSING_CONFIG_PARAMS`, `CONFIG_ALIAS_CONFLICT` and
