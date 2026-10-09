@@ -9,7 +9,12 @@ from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 from loom.etl.compiler._errors import ETLCompilationError
-from loom.etl.compiler._plan import ConfigValueBinding, SourceBinding, TargetBinding
+from loom.etl.compiler._plan import (
+    AgentBinding,
+    ConfigValueBinding,
+    SourceBinding,
+    TargetBinding,
+)
 from loom.etl.pipeline._step import ETLStep
 
 
@@ -87,6 +92,22 @@ def resolve_config_bindings(step_type: type[ETLStep[Any]]) -> tuple[ConfigValueB
     return tuple(
         ConfigValueBinding(alias=alias, key=value.key, value_type=value.value_type)
         for alias, value in step_type._config_values.items()
+    )
+
+
+def resolve_agent_bindings(step_type: type[ETLStep[Any]]) -> tuple[AgentBinding, ...]:
+    """Build agent bindings from the step's ``WithAgent`` attributes.
+
+    Args:
+        step_type: Concrete ``ETLStep`` subclass.
+
+    Returns:
+        Tuple of :class:`~loom.etl.compiler._plan.AgentBinding`, in
+        declaration order.
+    """
+    return tuple(
+        AgentBinding(alias=alias, name=agent.name, output_type=agent.output, max_usd=agent.max_usd)
+        for alias, agent in step_type._agents.items()
     )
 
 

@@ -42,6 +42,7 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl.checkpoint import CheckpointCleanupError, CheckpointStore
 from loom.etl.compiler._plan import (
+    AgentBinding,
     ConfigValueBinding,
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -54,11 +55,13 @@ from loom.etl.compiler._plan import (
 from loom.etl.declarative.source import TempSourceSpec
 from loom.etl.declarative.target._client import ClientSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
+from loom.etl.executor._agents import AgentMapper
 from loom.etl.executor._dispatcher import ParallelDispatcher, ThreadDispatcher
 from loom.etl.lineage._records import RunContext, RunStatus, WriteContext
 from loom.etl.pipeline._step_sql import StepSQL
 from loom.etl.runtime._config_values import resolve_config_value
 from loom.etl.runtime.contracts import (
+    AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,
     SQLExecutor,
@@ -76,6 +79,7 @@ class ETLExecutor:
 
     * Read each source via the injected :class:`~loom.etl._io.SourceReader`.
     * Resolve the step's ``FromConfig`` values from the injected config context.
+    * Bind the step's ``WithAgent`` declarations to the injected agent runner.
     * Invoke the step's ``execute()`` with the resulting frames and values.
     * Write the result via the injected :class:`~loom.etl._io.TargetWriter`.
     * Emit lifecycle events to the shared observability runtime.
@@ -98,6 +102,8 @@ class ETLExecutor:
         config_context: Config the ``FromConfig`` values are resolved from,
                     when a step runs.  Required only by steps that
                     declare one.
+        agents:     Runner of the agents a ``WithAgent`` declares.  Required
+                    only by steps that declare one.
     """
 
     def __init__(
@@ -109,6 +115,7 @@ class ETLExecutor:
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
         config_context: ConfigContext | None = None,
+        agents: AgentBatchRunner | None = None,
     ) -> None:
         self._reader = reader
         self._writer = writer
@@ -117,6 +124,7 @@ class ETLExecutor:
         self._checkpoint_store: CheckpointStore | None = checkpoint_store
         self._client_executor: ClientCommandExecutor | None = client_executor
         self._config_context: ConfigContext | None = config_context
+        self._agents: AgentBatchRunner | None = agents
 
     @property
     def observability(self) -> ObservabilityRuntime:
@@ -266,7 +274,7 @@ class ETLExecutor:
             target=_span_target_label(plan.target_binding.spec),
             streaming=plan.streaming,
         ):
-            values = self._resolve_config_values(plan)
+            values = {**self._resolve_config_values(plan), **self._bind_agents(plan)}
             if isinstance(plan.target_binding.spec, ClientSpec):
                 step = plan.step_type()
                 client_exec = self._require_client_executor(step)
@@ -308,6 +316,26 @@ class ETLExecutor:
             b.alias: resolve_config_value(context, b.key, b.value_type)
             for b in plan.config_bindings
         }
+
+    def _bind_agents(self, plan: StepPlan) -> dict[str, AgentMapper]:
+        """Bind the plan's ``WithAgent`` declarations, keyed by ``execute()`` keyword."""
+        if not plan.agent_bindings:
+            return {}
+        runner = self._require_agents(plan.step_type, plan.agent_bindings)
+        return {b.alias: AgentMapper(runner, b) for b in plan.agent_bindings}
+
+    def _require_agents(
+        self, step_type: type[Any], bindings: tuple[AgentBinding, ...]
+    ) -> AgentBatchRunner:
+        """Return the agent runner, or raise if unconfigured."""
+        if self._agents is not None:
+            return self._agents
+        raise RuntimeError(
+            f"Step {step_type.__qualname__!r} declares WithAgent values "
+            f"{[b.alias for b in bindings]} but no agent runner was configured. "
+            "Declare an 'ai:' section and build the runner with ETLRunner.from_yaml(), "
+            "or pass agents= to ETLRunner / ETLExecutor."
+        )
 
     def _require_config_context(
         self, step_type: type[Any], bindings: tuple[ConfigValueBinding, ...]

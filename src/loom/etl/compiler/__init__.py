@@ -3,6 +3,7 @@
 from loom.etl.compiler._compiler import ETLCompiler
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
+    AgentBinding,
     ConfigValueBinding,
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -35,6 +36,7 @@ __all__ = [
     "PipelinePlan",
     "SourceBinding",
     "ConfigValueBinding",
+    "AgentBinding",
     "TargetBinding",
     "ParallelStepGroup",
     "ParallelProcessGroup",

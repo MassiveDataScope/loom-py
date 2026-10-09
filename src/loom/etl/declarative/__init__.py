@@ -10,6 +10,7 @@ from ._read_options import (
     ParquetReadOptions,
     ReadOptions,
 )
+from ._with_agent import WithAgent
 from ._write_options import CsvWriteOptions, JsonWriteOptions, ParquetWriteOptions, WriteOptions
 from .source import (
     ClickHouseSourceSpec,
@@ -67,6 +68,7 @@ __all__ = [
     "FromFile",
     "FromTemp",
     "FromConfig",
+    "WithAgent",
     "FromMongo",
     "FromClickHouse",
     "SourceRef",

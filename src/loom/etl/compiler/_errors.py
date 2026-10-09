@@ -43,6 +43,10 @@ class ETLErrorCode(StrEnum):
     CONFIG_ALIAS_CONFLICT = "CONFIG_ALIAS_CONFLICT"
     UNSUPPORTED_CONFIG_VALUE = "UNSUPPORTED_CONFIG_VALUE"
     UNRESOLVED_CONFIG_VALUE = "UNRESOLVED_CONFIG_VALUE"
+    AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
+    AGENT_COMPILATION_FAILED = "AGENT_COMPILATION_FAILED"
+    AGENT_OUTPUT_MISMATCH = "AGENT_OUTPUT_MISMATCH"
+    AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET"
 
 
 class ETLCompilationError(Exception):
@@ -355,38 +359,44 @@ class ETLCompilationError(Exception):
         )
 
     @classmethod
-    def missing_config_params(cls, step: type, missing: frozenset[str]) -> ETLCompilationError:
-        """FromConfig attributes absent as kw-only execute() parameters."""
+    def missing_config_params(
+        cls, step: type, missing: frozenset[str], marker: str = "FromConfig"
+    ) -> ETLCompilationError:
+        """FromConfig or WithAgent attributes absent as kw-only execute() parameters."""
         return cls(
             code=ETLErrorCode.MISSING_CONFIG_PARAMS,
             component=step.__qualname__,
             message=(
-                f"{step.__qualname__}.execute: FromConfig value(s) {sorted(missing)} "
+                f"{step.__qualname__}.execute: {marker} value(s) {sorted(missing)} "
                 "declared on the step but missing as keyword-only parameter(s) after '*'"
             ),
         )
 
     @classmethod
-    def config_alias_conflict(cls, step: type, aliases: frozenset[str]) -> ETLCompilationError:
-        """A FromConfig attribute shares its name with a source or the injected client."""
+    def config_alias_conflict(
+        cls, step: type, aliases: frozenset[str], marker: str = "FromConfig"
+    ) -> ETLCompilationError:
+        """A FromConfig or WithAgent attribute shares its name with a source or the client."""
         return cls(
             code=ETLErrorCode.CONFIG_ALIAS_CONFLICT,
             component=step.__qualname__,
             message=(
-                f"{step.__qualname__}: FromConfig value(s) {sorted(aliases)} share their "
+                f"{step.__qualname__}: {marker} value(s) {sorted(aliases)} share their "
                 "name with a source alias or the injected 'client'; rename the attribute"
             ),
         )
 
     @classmethod
-    def unsupported_config_value(cls, step: type) -> ETLCompilationError:
-        """A StepSQL declares FromConfig values it has no execute() to receive."""
+    def unsupported_config_value(
+        cls, step: type, marker: str = "FromConfig"
+    ) -> ETLCompilationError:
+        """A StepSQL declares FromConfig or WithAgent values it has no execute() to receive."""
         return cls(
             code=ETLErrorCode.UNSUPPORTED_CONFIG_VALUE,
             component=step.__qualname__,
             message=(
                 f"{step.__qualname__}: a StepSQL renders SQL and never calls execute(), "
-                "so it cannot receive FromConfig values"
+                f"so it cannot receive {marker} values"
             ),
         )
 
@@ -399,6 +409,35 @@ class ETLCompilationError(Exception):
         """
         return cls(
             code=ETLErrorCode.UNRESOLVED_CONFIG_VALUE,
+            component=step.__qualname__,
+            message=f"{step.__qualname__}.{alias}: {reason}",
+            field=alias,
+        )
+
+    @classmethod
+    def agent_not_found(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """A WithAgent names an agent no configured artifact declares."""
+        return cls._agent(ETLErrorCode.AGENT_NOT_FOUND, step, alias, reason)
+
+    @classmethod
+    def agent_compilation_failed(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """The artifact a WithAgent names does not compile; *reason* carries its issues."""
+        return cls._agent(ETLErrorCode.AGENT_COMPILATION_FAILED, step, alias, reason)
+
+    @classmethod
+    def agent_output_mismatch(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """A WithAgent output differs from the ``type_ref`` output of its artifact."""
+        return cls._agent(ETLErrorCode.AGENT_OUTPUT_MISMATCH, step, alias, reason)
+
+    @classmethod
+    def agent_unpriced_budget(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """A budget is declared for an agent whose model has no known price."""
+        return cls._agent(ETLErrorCode.AGENT_UNPRICED_BUDGET, step, alias, reason)
+
+    @classmethod
+    def _agent(cls, code: ETLErrorCode, step: type, alias: str, reason: str) -> ETLCompilationError:
+        return cls(
+            code=code,
             component=step.__qualname__,
             message=f"{step.__qualname__}.{alias}: {reason}",
             field=alias,

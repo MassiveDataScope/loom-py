@@ -32,7 +32,12 @@ from loom.etl.runner._wiring import (
 from loom.etl.runner.config_loader import _load_context, _parse_sections
 from loom.etl.runner.errors import InvalidStageError
 from loom.etl.runner.filtering import _filter_plan
-from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader, TargetWriter
+from loom.etl.runtime.contracts import (
+    AgentBatchRunner,
+    ClientCommandExecutor,
+    SourceReader,
+    TargetWriter,
+)
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,
@@ -53,6 +58,9 @@ class ETLRunner:
         config_context: Config the steps' ``FromConfig`` values come from.
             :meth:`run` checks every declared key against it before any step
             runs, and each step resolves its values when it executes.
+        agents: Runner of the agents the steps' ``WithAgent`` declare.
+            :meth:`run` checks every declaration against it before any step
+            runs.
     """
 
     def __init__(
@@ -64,6 +72,7 @@ class ETLRunner:
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
         config_context: ConfigContext | None = None,
+        agents: AgentBatchRunner | None = None,
     ) -> None:
         self._executor = ETLExecutor(
             reader,
@@ -73,8 +82,9 @@ class ETLRunner:
             checkpoint_store,
             client_executor,
             config_context,
+            agents,
         )
-        self._compiler = ETLCompiler(config_context=config_context)
+        self._compiler = ETLCompiler(config_context=config_context, agents=agents)
         self._checkpoint_store = checkpoint_store
 
     @classmethod

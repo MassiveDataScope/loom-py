@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from loom.etl.compiler import _validators as step_validator
-from loom.etl.compiler._plan import ConfigValueBinding, SourceBinding, TargetBinding
+from loom.etl.compiler._plan import AgentBinding, ConfigValueBinding, SourceBinding, TargetBinding
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target._table import ReplaceSpec
@@ -44,11 +44,13 @@ def test_validate_step_calls_all_validators_in_order(
         params_type: type[Any],
         source_bindings: tuple[SourceBinding, ...],
         config_bindings: tuple[ConfigValueBinding, ...],
+        agent_bindings: tuple[AgentBinding, ...],
     ) -> None:
         assert step_type is ctx.step_type
         assert params_type is ctx.params_type
         assert source_bindings == ctx.source_bindings
         assert config_bindings == ctx.config_bindings
+        assert agent_bindings == ctx.agent_bindings
         calls.append("signature")
 
     def _validate_upsert(step_type: type[Any], spec: Any) -> None:
