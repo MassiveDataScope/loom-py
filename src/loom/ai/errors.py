@@ -151,6 +151,7 @@ class AgentErrorCode(StrEnum):
     A2A_AGENT_UNREACHABLE = "A2A_AGENT_UNREACHABLE"
     AGENT_SPECS_CONFLICT = "AGENT_SPECS_CONFLICT"
     AGENT_SPECS_MISSING = "AGENT_SPECS_MISSING"
+    AGENT_SPECS_ESCAPE_ROOT = "AGENT_SPECS_ESCAPE_ROOT"
     REMOTE_CLIENTS_UNKNOWN = "REMOTE_CLIENTS_UNKNOWN"
     MAX_AGENT_DEPTH_INVALID = "MAX_AGENT_DEPTH_INVALID"
 
@@ -1258,6 +1259,19 @@ def agent_specs_missing() -> AgentCompilationIssue:
         message=(
             "the 'ai:' section is configured but declares no agent artifact; set 'ai.specs' "
             "or the manifest 'AGENTS' attribute"
+        ),
+        component="ai",
+        field="ai.specs",
+    )
+
+
+def agent_specs_escape_root(pattern: str) -> AgentCompilationIssue:
+    """An artifact glob reaches outside the root it is resolved against."""
+    return AgentCompilationIssue(
+        code=AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT,
+        message=(
+            f"agent artifact pattern '{pattern}' reaches outside the directory it is "
+            "resolved against; write it relative to that directory, without '..'"
         ),
         component="ai",
         field="ai.specs",
