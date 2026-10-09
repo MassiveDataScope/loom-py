@@ -225,6 +225,7 @@ class AgentIssueKind(StrEnum):
     OUTPUT_MISMATCH = "output_mismatch"
     UNPRICED_BUDGET = "unpriced_budget"
     BUDGET_UNENFORCEABLE = "budget_unenforceable"
+    UNSUPPORTED_ENGINE = "unsupported_engine"
 
 
 @dataclass(frozen=True)

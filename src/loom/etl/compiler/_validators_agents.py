@@ -33,6 +33,7 @@ _ERRORS: Final[Mapping[AgentIssueKind, Callable[[type, str, str], ETLCompilation
             AgentIssueKind.OUTPUT_MISMATCH: ETLCompilationError.agent_output_mismatch,
             AgentIssueKind.UNPRICED_BUDGET: ETLCompilationError.agent_unpriced_budget,
             AgentIssueKind.BUDGET_UNENFORCEABLE: ETLCompilationError.agent_budget_unenforceable,
+            AgentIssueKind.UNSUPPORTED_ENGINE: ETLCompilationError.agent_unsupported_engine,
         }
     )
 )

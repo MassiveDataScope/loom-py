@@ -24,6 +24,7 @@ from loom.etl.lineage._observer import LineageObserver
 from loom.etl.lineage._records import RunContext
 from loom.etl.pipeline._pipeline import ETLPipeline
 from loom.etl.runner._wiring import (
+    agents_for_engine,
     make_agent_runner,
     make_backends,
     make_checkpoint_store,
@@ -109,7 +110,9 @@ class ETLRunner:
                 to inject orchestrator-specific observers (e.g. the Prefect
                 TaskRun observer) without subclassing the runner.
             config_context: Config the steps' ``FromConfig`` values come from.
-            agents: Runner of the agents the steps' ``WithAgent`` declare.
+            agents: Runner of the agents the steps' ``WithAgent`` declare. On
+                Spark every declaration is refused at compile time with
+                ``AGENT_UNSUPPORTED_ENGINE``: agents map Polars frames only.
         """
         resolved_obs_config = obs_config or ETLObservabilityConfig()
         reader, writer = make_backends(config, spark)
@@ -132,7 +135,7 @@ class ETLRunner:
             checkpoint_store,
             client_executor,
             config_context,
-            agents,
+            agents_for_engine(agents, config, spark),
         )
 
     @classmethod
@@ -178,7 +181,7 @@ class ETLRunner:
             dispatcher=dispatcher,
             extra_observers=extra_observers,
             config_context=context,
-            agents=make_agent_runner(context, config_dir(path)),
+            agents=make_agent_runner(context, config_dir(path), config=storage_config, spark=spark),
         )
 
     @classmethod

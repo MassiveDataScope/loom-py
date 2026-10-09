@@ -18,6 +18,7 @@ from loom.etl.checkpoint._cleaners import _is_cloud_path
 from loom.etl.checkpoint._options import encryption_options
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore
+from loom.etl.runner._agents import UnservedAgents
 from loom.etl.runner._providers import load_backend_provider
 from loom.etl.runtime.contracts import (
     AgentBatchRunner,
@@ -25,7 +26,7 @@ from loom.etl.runtime.contracts import (
     SourceReader,
     TargetWriter,
 )
-from loom.etl.storage._config import StorageConfig
+from loom.etl.storage._config import StorageConfig, StorageEngine
 
 _log = logging.getLogger(__name__)
 
@@ -152,15 +153,20 @@ class _AgentsIsland(Protocol):
     def agent_runner(self, context: ConfigContext, *, root: Path) -> AgentBatchRunner: ...
 
 
-def make_agent_runner(context: ConfigContext, root: Path) -> AgentBatchRunner | None:
+def make_agent_runner(
+    context: ConfigContext, root: Path, *, config: StorageConfig, spark: Any = None
+) -> AgentBatchRunner | None:
     """Build the agent runner of the config's ``ai:`` section, or return ``None``.
 
-    The AI pillar is loaded by module path only when the section is present,
-    so a pipeline without agents never imports it.
+    The AI pillar is loaded by module path only when the section is present
+    and the engine is Polars, so a pipeline without agents never imports it.
+    On Spark the runner refuses every ``WithAgent`` at compile time.
 
     Args:
         context: Config the runner was built from.
-        root: Directory the ``ai.specs`` globs are resolved against.
+        root: Directory holding the YAML; ``ai.root`` resolves against it.
+        config: Resolved storage config, which decides the engine.
+        spark: Active SparkSession, when one is given.
 
     Returns:
         The runner, or ``None`` when the config declares no ``ai:`` section.
@@ -170,8 +176,30 @@ def make_agent_runner(context: ConfigContext, root: Path) -> AgentBatchRunner | 
     """
     if not context.has(ConfigKey.AI):
         return None
+    engine = _resolve_engine(config, spark)
+    if engine != StorageEngine.POLARS:
+        return UnservedAgents(engine)
     island = cast(_AgentsIsland, import_optional(_AGENTS_ISLAND, extra="etl-polars"))
     return island.agent_runner(context, root=root)
+
+
+def agents_for_engine(
+    agents: AgentBatchRunner | None, config: StorageConfig, spark: Any = None
+) -> AgentBatchRunner | None:
+    """Return *agents*, or a runner refusing every ``WithAgent`` when the engine is not Polars.
+
+    Args:
+        agents: Agent runner given to the ETL runner, if any.
+        config: Resolved storage config, which decides the engine.
+        spark: Active SparkSession, when one is given.
+
+    Returns:
+        *agents* on Polars or when it is ``None``; otherwise the refusing runner.
+    """
+    engine = _resolve_engine(config, spark)
+    if agents is None or engine == StorageEngine.POLARS:
+        return agents
+    return UnservedAgents(engine)
 
 
 def _make_checkpoint_backend(spark: Any, storage_options: dict[str, str]) -> Any:
@@ -199,6 +227,7 @@ __all__ = [
     "make_backends",
     "make_checkpoint_store",
     "make_agent_runner",
+    "agents_for_engine",
     "make_client_executor",
     "make_lineage_writer",
     "make_lineage_store",

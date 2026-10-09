@@ -48,6 +48,7 @@ class ETLErrorCode(StrEnum):
     AGENT_OUTPUT_MISMATCH = "AGENT_OUTPUT_MISMATCH"
     AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET"
     AGENT_BUDGET_UNENFORCEABLE = "AGENT_BUDGET_UNENFORCEABLE"
+    AGENT_UNSUPPORTED_ENGINE = "AGENT_UNSUPPORTED_ENGINE"
 
 
 class ETLCompilationError(Exception):
@@ -439,6 +440,11 @@ class ETLCompilationError(Exception):
     def agent_budget_unenforceable(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
         """A step budget no worst case of one run can be reserved against."""
         return cls._agent(ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE, step, alias, reason)
+
+    @classmethod
+    def agent_unsupported_engine(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """A WithAgent declared on a runner whose engine no agent runner serves."""
+        return cls._agent(ETLErrorCode.AGENT_UNSUPPORTED_ENGINE, step, alias, reason)
 
     @classmethod
     def _agent(cls, code: ETLErrorCode, step: type, alias: str, reason: str) -> ETLCompilationError:

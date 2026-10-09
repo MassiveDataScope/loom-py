@@ -31,7 +31,9 @@ from loom.etl import (
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.executor import ETLExecutor
 from loom.etl.runner import ETLRunner
+from loom.etl.runner._wiring import agents_for_engine, make_agent_runner
 from loom.etl.runtime import AgentIssue, AgentIssueKind
+from loom.etl.storage._config import StorageConfig
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 from tests.unit.ai.etl._types import Reply as StrictReply
 
@@ -194,6 +196,7 @@ class TestCompileThroughThePort:
             (AgentIssueKind.OUTPUT_MISMATCH, ETLErrorCode.AGENT_OUTPUT_MISMATCH),
             (AgentIssueKind.UNPRICED_BUDGET, ETLErrorCode.AGENT_UNPRICED_BUDGET),
             (AgentIssueKind.BUDGET_UNENFORCEABLE, ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE),
+            (AgentIssueKind.UNSUPPORTED_ENGINE, ETLErrorCode.AGENT_UNSUPPORTED_ENGINE),
         ],
     )
     def test_each_issue_kind_has_its_own_code(
@@ -358,3 +361,43 @@ class TestRunnerFromYaml:
 
         assert error.value.code is ETLErrorCode.AGENT_NOT_FOUND
         assert "'ai:'" in str(error.value)
+
+
+class TestSparkEngine:
+    def _context(self) -> ConfigContext:
+        return ConfigContext.from_dict({"ai": {"engine": "pydantic-ai", "models": {}}})
+
+    def test_a_spark_config_never_builds_the_agent_runner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*args: object, **kwargs: object) -> object:
+            raise AssertionError("the agents island was imported")
+
+        monkeypatch.setattr("loom.etl.runner._wiring.import_optional", refuse)
+
+        agents = make_agent_runner(
+            self._context(), tmp_path, config=StorageConfig(engine="spark"), spark=None
+        )
+
+        assert agents is not None
+        error = _compile_error(LabelStep, agents)
+        assert error.code is ETLErrorCode.AGENT_UNSUPPORTED_ENGINE
+        assert "spark" in str(error)
+
+    def test_a_runner_given_to_a_spark_config_refuses_every_agent(self) -> None:
+        agents = agents_for_engine(_FakeAgents(), StorageConfig(engine="spark"), spark=None)
+
+        assert agents is not None
+        assert _compile_error(LabelStep, agents).code is ETLErrorCode.AGENT_UNSUPPORTED_ENGINE
+
+    def test_a_polars_config_keeps_its_runner(self) -> None:
+        agents = _FakeAgents()
+
+        assert agents_for_engine(agents, StorageConfig(engine="polars"), spark=None) is agents
+
+    def test_the_refusing_runner_cannot_be_run(self) -> None:
+        agents = agents_for_engine(_FakeAgents(), StorageConfig(engine="spark"), spark=None)
+
+        assert agents is not None
+        with pytest.raises(RuntimeError, match="Polars"):
+            agents.version("seller_reply")
