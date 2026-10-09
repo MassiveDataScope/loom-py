@@ -26,6 +26,7 @@ import msgspec
 from loom.ai.abc import OutputCheck, StateShape
 from loom.ai.declarative import PolicySpec
 from loom.ai.inference import InferenceTarget
+from loom.ai.pricing import ModelPrice
 from loom.core.engine.compilable import Compilable
 from loom.core.model import LoomFrozenStruct, LoomType
 from loom.core.sql.config import SqlConnectionConfig
@@ -391,6 +392,8 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
             artifact declares neither ``deps_type`` nor ``deps_schema``.
         spec_version: Artifact format version, retained for self-description.
         inference: Resolved model binding; one binding, no fallback (FR-019a).
+        price: Configured price of the bound model, from ``ai.prices``, or
+            ``None`` when the deployment declares none for it.
         output: Structured-output contract with its compiled boundary type.
         output_check: Resolved predicate over the answer the engine parsed,
             when the artifact declares ``output_check``; ``None`` otherwise.
@@ -408,6 +411,7 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
     state: StateShape | None = None
     spec_version: int
     inference: InferenceTarget
+    price: ModelPrice | None = None
     output: CompiledOutput
     output_check: OutputCheck | None = None
     capabilities: tuple[CompiledCapability, ...] = ()

@@ -38,6 +38,7 @@ from loom.ai.errors import (
     remote_clients_unknown,
 )
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget
+from loom.ai.pricing import ModelPrice
 from loom.ai.remote_auth import is_strategy_registered, registered_strategy_names
 from loom.core.model import LoomFrozenStruct
 
@@ -339,6 +340,10 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             one of the two declares the artifacts of an application, and
             declaring both is a compilation error.
         models: Model-role bindings; must contain every role an agent declares.
+        prices: Prices keyed by vendor model id (``InferenceTarget.model``).
+            A plan bound to a listed model is priced with these rates rather
+            than the engine's own, which is what keeps ``policies.max_usd``
+            enforceable for a model the engine cannot price.
         skills_root: Filesystem root bare skill library names resolve against.
         mcp_servers: Named remote MCP servers artifacts refer to by name.
         a2a_agents: Named remote A2A agents artifacts refer to by name.
@@ -390,6 +395,7 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     engine: str
     models: dict[str, InferenceTarget]
     specs: tuple[str, ...] = ()
+    prices: dict[str, ModelPrice] = field(default_factory=dict)
     skills_root: str | None = None
     mcp_servers: dict[str, McpServerConfig] = field(default_factory=dict)
     a2a_agents: dict[str, A2AAgentConfig] = field(default_factory=dict)

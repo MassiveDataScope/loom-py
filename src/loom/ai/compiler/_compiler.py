@@ -37,6 +37,7 @@ from loom.ai.errors import (
     agent_name_duplicate,
 )
 from loom.ai.inference import InferenceTarget
+from loom.ai.pricing import ModelPrice
 from loom.core.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
@@ -176,6 +177,7 @@ class AgentCompiler:
             instructions,
             state,
             inference,
+            self._config.prices.get(inference.model),
             output,
             output_check,
             capabilities,
@@ -191,6 +193,7 @@ class AgentCompiler:
         instructions: tuple[CompiledInstruction, ...],
         state: StateShape | None,
         inference: InferenceTarget,
+        price: ModelPrice | None,
         output: CompiledOutput,
         output_check: OutputCheck | None,
         capabilities: tuple[CompiledCapability, ...],
@@ -205,6 +208,7 @@ class AgentCompiler:
             state=state,
             spec_version=spec.spec_version,
             inference=inference,
+            price=price,
             output=output,
             output_check=output_check,
             capabilities=capabilities,

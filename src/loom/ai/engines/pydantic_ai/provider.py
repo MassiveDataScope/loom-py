@@ -19,6 +19,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import Model
 
 from loom.ai.abc import AgentEngine, DepsFactory, OutputCheck
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability
@@ -33,7 +35,12 @@ from loom.ai.engines.pydantic_ai._instructions import (
     build_instructions,
     ensure_templating_available,
 )
-from loom.ai.engines.pydantic_ai._limits import usage_limits, warn_if_model_not_priceable
+from loom.ai.engines.pydantic_ai._limits import (
+    ConfiguredPrice,
+    is_priceable,
+    usage_limits,
+    warn_if_model_not_priceable,
+)
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._models import ModelResolver, resolve_model
 from loom.ai.engines.pydantic_ai._native import supported_native_tools
@@ -158,12 +165,12 @@ class PydanticAIEngineProvider:
             raise TypeError(f"expected an AgentPlan, got {type(plan).__name__}")
         ensure_templating_available(plan)
         model = self._resolve_model(plan.inference)
-        provider_name = model.provider.name if model.provider is not None else None
-        warn_if_model_not_priceable(
-            model.model_name, provider_name, plan.policies, f"agent '{plan.name}'"
-        )
+        if plan.price is None:
+            warn_if_model_not_priceable(
+                model.model_name, _provider_name(model), plan.policies, f"agent '{plan.name}'"
+            )
         toolsets = build_toolsets(plan, container, mcp=self._mcp)
-        capabilities = build_capabilities(plan, container)
+        capabilities = _with_price(build_capabilities(plan, container), plan)
         if not plan.inference.streaming and any(
             capability.has_wrap_run_event_stream for capability in capabilities
         ):
@@ -226,6 +233,26 @@ class PydanticAIEngineProvider:
         """
         return supported_native_tools(target)
 
+    def prices_model(self, target: InferenceTarget) -> bool:
+        """Report whether the model bound to *target* is priced without ``ai.prices``.
+
+        Read structurally by :func:`~loom.ai.registry.engine_prices_model`.
+        Builds the model as :meth:`create_engine` would, so the answer is the
+        one billing itself will give, and sends no request.
+
+        Args:
+            target: Resolved model binding of the agent's role.
+
+        Returns:
+            Whether genai-prices knows the built model.
+
+        Raises:
+            AgentCompilationError: When the provider is unknown or its SDK is
+                not installed.
+        """
+        model = self._resolve_model(target)
+        return is_priceable(model.model_name, _provider_name(model))
+
     def supported_capability_kinds(self) -> frozenset[str]:
         """Capability kinds this adapter can serve.
 
@@ -236,6 +263,20 @@ class PydanticAIEngineProvider:
             The supported ``kind`` identifiers.
         """
         return SUPPORTED_KINDS
+
+
+def _provider_name(model: Model) -> str | None:
+    """Return the name of the provider behind *model*, or ``None`` for a bare test double."""
+    return model.provider.name if model.provider is not None else None
+
+
+def _with_price(
+    capabilities: tuple[AbstractCapability[Any], ...], plan: AgentPlan
+) -> tuple[AbstractCapability[Any], ...]:
+    """Append the plan's configured price, when it declares one, to *capabilities*."""
+    if plan.price is None:
+        return capabilities
+    return (*capabilities, ConfiguredPrice(price=plan.price))
 
 
 def _register_output_check(agent: Agent[Any, Any], loom_type: LoomType, check: OutputCheck) -> None:

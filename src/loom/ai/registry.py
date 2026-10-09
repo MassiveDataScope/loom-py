@@ -12,6 +12,7 @@ name and the handshake is a ``getattr`` on the loaded object, never an
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:  # import cycle at runtime: runtime.py imports the compiler,
@@ -29,6 +30,7 @@ from loom.ai.errors import (
     provider_not_installed,
     provider_setting_missing,
 )
+from loom.ai.inference import InferenceTarget
 from loom.core.plugins.entrypoints import (
     ApiVersionMismatchError,
     ApiVersionRequirement,
@@ -190,6 +192,27 @@ def engine_native_tool_support(provider: object) -> NativeToolSupport | None:
         support = engine_native_tool_support(resolve_engine_provider("pydantic-ai"))
     """
     return cast("NativeToolSupport | None", getattr(provider, "native_tool_support", None))
+
+
+def engine_prices_model(provider: object, target: InferenceTarget) -> bool:
+    """Report whether an engine prices the model bound to *target* on its own.
+
+    Read off the resolved provider with ``getattr``, like
+    :func:`engine_native_tool_support`. An engine that supplies no
+    ``prices_model`` oracle is taken to price nothing, so a declared spend cap
+    is only trusted when a price is actually known.
+
+    Args:
+        provider: Engine provider resolved from the entry point group.
+        target: Resolved model binding of the agent's role.
+
+    Returns:
+        ``True`` only when the engine says it can price the bound model.
+    """
+    oracle = cast(
+        "Callable[[InferenceTarget], bool] | None", getattr(provider, "prices_model", None)
+    )
+    return oracle is not None and oracle(target)
 
 
 def engine_client_factories(
