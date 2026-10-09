@@ -28,6 +28,7 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/a2a/_rpc.py", "msgspec.json.Decoder"): 1,
     ("ai/compiler/_fingerprint.py", "msgspec.json.encode"): 1,
     ("ai/declarative/_envelope.py", "msgspec.json.decode"): 1,
+    ("ai/etl/_columns.py", "msgspec.json.encode"): 1,
     ("ai/describe.py", "msgspec.to_builtins"): 1,
     ("ai/engines/pydantic_ai/_events.py", "msgspec.json.decode"): 1,
     ("ai/engines/pydantic_ai/_returns.py", "msgspec.json.encode"): 1,
