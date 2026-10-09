@@ -24,12 +24,13 @@ from loom.etl.lineage._observer import LineageObserver
 from loom.etl.lineage._records import RunContext
 from loom.etl.pipeline._pipeline import ETLPipeline
 from loom.etl.runner._wiring import (
+    make_agent_runner,
     make_backends,
     make_checkpoint_store,
     make_client_executor,
     make_lineage_store,
 )
-from loom.etl.runner.config_loader import _load_context, _parse_sections
+from loom.etl.runner.config_loader import _load_context, _parse_sections, config_dir
 from loom.etl.runner.errors import InvalidStageError
 from loom.etl.runner.filtering import _filter_plan
 from loom.etl.runtime.contracts import (
@@ -98,6 +99,7 @@ class ETLRunner:
         cleaner: TempCleaner | None = None,
         extra_observers: Sequence[LifecycleObserver] | None = None,
         config_context: ConfigContext | None = None,
+        agents: AgentBatchRunner | None = None,
     ) -> ETLRunner:
         """Build an :class:`ETLRunner` from resolved config objects.
 
@@ -107,6 +109,7 @@ class ETLRunner:
                 to inject orchestrator-specific observers (e.g. the Prefect
                 TaskRun observer) without subclassing the runner.
             config_context: Config the steps' ``FromConfig`` values come from.
+            agents: Runner of the agents the steps' ``WithAgent`` declare.
         """
         resolved_obs_config = obs_config or ETLObservabilityConfig()
         reader, writer = make_backends(config, spark)
@@ -129,6 +132,7 @@ class ETLRunner:
             checkpoint_store,
             client_executor,
             config_context,
+            agents,
         )
 
     @classmethod
@@ -152,6 +156,10 @@ class ETLRunner:
         read a key outside ``storage:`` (``respondio.api_token``); it is
         resolved, with its interpolations and resolvers, when the step runs.
 
+        An ``ai:`` section serves the steps' ``WithAgent`` declarations; its
+        ``specs`` globs resolve against the directory holding the YAML (the
+        working directory for a cloud URI) and may not leave it.
+
         Args:
             resolvers: Resolvers for ``${name:key}`` placeholders, registered
                 before the built-in ``secrets`` and ``ssm`` defaults.  A
@@ -170,6 +178,7 @@ class ETLRunner:
             dispatcher=dispatcher,
             extra_observers=extra_observers,
             config_context=context,
+            agents=make_agent_runner(context, config_dir(path)),
         )
 
     @classmethod

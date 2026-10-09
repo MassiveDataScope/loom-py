@@ -6,8 +6,11 @@ Internal module — not part of the public API.
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Final, Protocol, cast
 
+from loom.core.config import ConfigContext, ConfigKey
+from loom.core.plugins.optional import import_optional
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
 from loom.etl.checkpoint._backends._spark import _SparkCheckpointBackend
@@ -16,10 +19,17 @@ from loom.etl.checkpoint._options import encryption_options
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore
 from loom.etl.runner._providers import load_backend_provider
-from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader, TargetWriter
+from loom.etl.runtime.contracts import (
+    AgentBatchRunner,
+    ClientCommandExecutor,
+    SourceReader,
+    TargetWriter,
+)
 from loom.etl.storage._config import StorageConfig
 
 _log = logging.getLogger(__name__)
+
+_AGENTS_ISLAND: Final = "loom.ai.etl"
 
 
 class _CheckpointConfig(Protocol):
@@ -136,6 +146,34 @@ def make_client_executor(
     return provider.create_client_executor(config, spark)
 
 
+class _AgentsIsland(Protocol):
+    """What :data:`_AGENTS_ISLAND` publishes."""
+
+    def agent_runner(self, context: ConfigContext, *, root: Path) -> AgentBatchRunner: ...
+
+
+def make_agent_runner(context: ConfigContext, root: Path) -> AgentBatchRunner | None:
+    """Build the agent runner of the config's ``ai:`` section, or return ``None``.
+
+    The AI pillar is loaded by module path only when the section is present,
+    so a pipeline without agents never imports it.
+
+    Args:
+        context: Config the runner was built from.
+        root: Directory the ``ai.specs`` globs are resolved against.
+
+    Returns:
+        The runner, or ``None`` when the config declares no ``ai:`` section.
+
+    Raises:
+        MissingExtraError: When the ``etl-polars`` extra is not installed.
+    """
+    if not context.has(ConfigKey.AI):
+        return None
+    island = cast(_AgentsIsland, import_optional(_AGENTS_ISLAND, extra="etl-polars"))
+    return island.agent_runner(context, root=root)
+
+
 def _make_checkpoint_backend(spark: Any, storage_options: dict[str, str]) -> Any:
     if spark is not None:
         encryption = encryption_options(storage_options)
@@ -160,6 +198,7 @@ def _resolve_engine(config: StorageConfig, spark: Any) -> str:
 __all__ = [
     "make_backends",
     "make_checkpoint_store",
+    "make_agent_runner",
     "make_client_executor",
     "make_lineage_writer",
     "make_lineage_store",

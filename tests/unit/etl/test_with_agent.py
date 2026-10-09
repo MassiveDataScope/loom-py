@@ -8,15 +8,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import msgspec
+import polars as pl
 import pytest
 
 from loom.core.config import ConfigContext
 from loom.etl import (
     AgentMapper,
     ETLParams,
+    ETLPipeline,
+    ETLProcess,
     ETLStep,
     FromTable,
     IntoTable,
@@ -26,8 +30,10 @@ from loom.etl import (
 )
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.executor import ETLExecutor
+from loom.etl.runner import ETLRunner
 from loom.etl.runtime import AgentIssue, AgentIssueKind
 from loom.etl.testing import StubSourceReader, StubTargetWriter
+from tests.unit.ai.etl._types import Reply as StrictReply
 
 
 class RunParams(ETLParams):  # type: ignore[misc]
@@ -251,3 +257,103 @@ def test_the_etl_pillar_never_imports_the_ai_pillar() -> None:
     )
 
     assert result.stdout.strip() == ""
+
+
+_AGENT_YAML = """\
+spec_version: 1
+name: seller_reply
+description: classifies a seller reply
+instructions: classify the reply
+model_role: classifier
+output: {kind: type_ref, ref: "tests.unit.ai.etl._types:Reply"}
+"""
+
+
+class StrictReplyStep(ETLStep[RunParams]):
+    labeller = WithAgent("seller_reply", output=StrictReply)
+    target = IntoTable("fact.agent_version").replace()
+
+    def execute(self, params: RunParams, *, labeller: AgentMapper) -> pl.LazyFrame:  # type: ignore[override]
+        return pl.LazyFrame({"agent_version": [labeller.version]})
+
+
+class UnknownAgentStep(ETLStep[RunParams]):
+    labeller = WithAgent("nobody", output=StrictReply)
+    target = IntoTable("fact.agent_version").replace()
+
+    def execute(self, params: RunParams, *, labeller: AgentMapper) -> pl.LazyFrame:  # type: ignore[override]
+        return pl.LazyFrame({"agent_version": [labeller.version]})
+
+
+class _VersionProcess(ETLProcess[RunParams]):
+    steps = [StrictReplyStep]
+
+
+class _VersionPipeline(ETLPipeline[RunParams]):
+    processes = [_VersionProcess]
+
+
+class _UnknownProcess(ETLProcess[RunParams]):
+    steps = [UnknownAgentStep]
+
+
+class _UnknownPipeline(ETLPipeline[RunParams]):
+    processes = [_UnknownProcess]
+
+
+def _pipeline_yaml(tmp_path: Path, *, with_ai: bool = True) -> str:
+    conf = tmp_path / "conf"
+    (conf / "agents").mkdir(parents=True)
+    (conf / "agents" / "seller_reply.agent.yaml").write_text(_AGENT_YAML)
+    ai = (
+        "ai:\n"
+        "  engine: pydantic-ai\n"
+        "  specs: ['agents/*.agent.yaml']\n"
+        "  models:\n"
+        "    classifier: {provider: openai, model: gpt-4o}\n"
+        if with_ai
+        else ""
+    )
+    path = conf / "loom.yaml"
+    path.write_text(
+        "storage:\n"
+        "  missing_table_policy: create\n"
+        "  defaults:\n"
+        "    table_path:\n"
+        f"      uri: {tmp_path / 'lake'}\n" + ai,
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+@pytest.mark.usefixtures("clear_builtin_resolvers")
+class TestRunnerFromYaml:
+    def test_specs_resolve_against_the_config_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _pipeline_yaml(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        ETLRunner.from_yaml(path).run(_VersionPipeline, _PARAMS)
+
+        written = pl.scan_delta(str(tmp_path / "lake" / "fact" / "agent_version")).collect()
+        assert len(written["agent_version"][0]) == 64
+
+    def test_an_unknown_agent_fails_before_any_step_runs(self, tmp_path: Path) -> None:
+        runner = ETLRunner.from_yaml(_pipeline_yaml(tmp_path))
+
+        with pytest.raises(ETLCompilationError) as error:
+            runner.run(_UnknownPipeline, _PARAMS)
+
+        assert error.value.code is ETLErrorCode.AGENT_NOT_FOUND
+        assert "'nobody'" in str(error.value)
+        assert not (tmp_path / "lake").exists()
+
+    def test_a_config_without_ai_cannot_serve_an_agent(self, tmp_path: Path) -> None:
+        runner = ETLRunner.from_yaml(_pipeline_yaml(tmp_path, with_ai=False))
+
+        with pytest.raises(ETLCompilationError) as error:
+            runner.run(_VersionPipeline, _PARAMS)
+
+        assert error.value.code is ETLErrorCode.AGENT_NOT_FOUND
+        assert "'ai:'" in str(error.value)
