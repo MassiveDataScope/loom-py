@@ -155,13 +155,20 @@
   through it. `AgentRuntime.plans` exposes the compiled plans.
 - **ai:** `AgentPlan.fingerprint`, a stable sha256 of what decides an
   agent's answers: compiled instructions, output schema, output check (by
-  import path), policies, `spec_version` and the bound provider, model,
-  `output_mode` and `options`; not the name, metadata, price, region,
+  import path), policies, `spec_version`, the kind and name of every
+  capability and the bound provider, model, `output_mode` and `options`; not
+  the name, metadata, price, where a capability is served from, region,
   endpoint, credentials or `streaming`.
 - **ai:** `loom.ai.etl.PolarsAgentRunner` runs an agent over a Polars frame
-  for ETL steps (see `etl`): a runtime of its own per call, concurrency that
-  waits instead of refusing, one output row per input row with errors as
-  rows, tokens, cost and version per row, and an optional budget per call.
+  for ETL steps (see `etl`): a runtime of its own per call that also sees the
+  caller's context variables, concurrency that waits instead of refusing, one
+  output row per input row with errors as rows (an unexpected exception is an
+  `UNEXPECTED_ERROR` row, never an aborted batch), answer columns typed by the
+  declared output (`date` as `Date`, `datetime` as UTC `Datetime`, `Decimal`
+  as `Decimal(38, 9)`, string choices as `String`, ...) even for a batch
+  without rows or with errors only, tokens, cost and version per row, and a
+  budget per call that is a hard ceiling. A frame without rows compiles
+  nothing; `validate` and `version` compile each agent once per runner.
 
 ### rest
 
@@ -245,12 +252,20 @@
   `agent_cache_write_tokens` and `agent_cost_usd`; `version` is the agent's
   fingerprint, for the anti-join. A failed run is an error row; with
   `max_usd`, the rows past the budget come back as `BUDGET_EXHAUSTED`
-  unsent. `ETLRunner.from_yaml` resolves `ai.specs` against the YAML's
-  directory and loads `loom.ai.etl` by module path only when `ai:` is
-  present: `loom.etl` never imports `loom.ai`. `ETLRunner.run` validates
-  every declaration through the new `AgentBatchRunner` port before any step
-  runs, with new codes `AGENT_NOT_FOUND`, `AGENT_COMPILATION_FAILED`,
-  `AGENT_OUTPUT_MISMATCH` and `AGENT_UNPRICED_BUDGET`; the shape reuses
+  unsent; a step budget needs `policies.max_usd` on the artifact and room for
+  one run's worst case, so it is never overshot. `ETLRunner.from_yaml`
+  resolves `ai.specs` against `ai.root`, a path relative to the YAML's
+  directory (the directory itself when absent), so a config kept in a
+  subfolder reaches artifacts elsewhere in the repository while no glob may
+  leave that root, and loads `loom.ai.etl` by module path only when `ai:` is
+  present and the engine is Polars: `loom.etl` never imports `loom.ai`.
+  `ETLRunner.run` validates every declaration through the new
+  `AgentBatchRunner` port before any step runs, with new codes
+  `AGENT_NOT_FOUND`, `AGENT_COMPILATION_FAILED`, `AGENT_OUTPUT_MISMATCH`,
+  `AGENT_UNPRICED_BUDGET`, `AGENT_BUDGET_UNENFORCEABLE` (a step budget with
+  no `policies.max_usd`, or below one run's worst case),
+  `AGENT_COLUMN_COLLISION` (an output field named like an `agent_*` column)
+  and `AGENT_UNSUPPORTED_ENGINE` (a Spark runner); the shape reuses
   `MISSING_CONFIG_PARAMS`, `CONFIG_ALIAS_CONFLICT` and
   `UNSUPPORTED_CONFIG_VALUE`. `ETLRunner`, `ETLRunner.from_config`,
   `ETLCompiler` and `ETLExecutor` take `agents=`. Polars only.

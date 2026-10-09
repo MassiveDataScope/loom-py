@@ -1312,11 +1312,15 @@ the other spend caps above) to bound what a run may cost the provider.
 
 Every compiled plan carries a stable sha256 of what decides its answers: the
 instructions as compiled (text and template engine), the output schema, the
-output check, the policies, `spec_version` and the bound provider, model,
-`output_mode` and `options`. The name, description, metadata, artifact path,
-configured price and the binding's region, endpoint, credentials and
-`streaming` flag are left out, so moving a deployment keeps the version and
-changing the prompt or the model does not. ETL steps write it as
+output check, the policies, `spec_version`, the kind and name of every
+capability (the use case keys, the SQL connection, the MCP server, the skill
+library and its skill names, the Python factory, the A2A agent, the native
+tool) and the bound provider, model, `output_mode` and `options`. The name,
+description, metadata, artifact path, configured price, where a capability is
+served from (URL, directory, credentials, timeouts, tool filters) and the
+binding's region, endpoint, credentials and `streaming` flag are left out, so
+moving a deployment keeps the version and changing the prompt, the model or
+the tools does not. ETL steps write it as
 `agent_version` (see [Agents in ETL steps](../etl/agents.md)).
 
 The output check enters by its import path (`module:qualname`): editing the
