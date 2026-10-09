@@ -68,7 +68,11 @@ class PolarsAgentRunner:
             Every issue found; empty when the agent can serve the step.
         """
         return validation_issues(
-            name, output_type, max_usd=max_usd, compile_plans=partial(self._plans, name)
+            name,
+            output_type,
+            max_usd=max_usd,
+            compile_plans=partial(self._plans, name),
+            engine_provider=self._engine_provider,
         )
 
     def version(self, name: str) -> str:

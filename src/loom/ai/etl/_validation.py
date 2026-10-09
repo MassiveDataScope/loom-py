@@ -6,8 +6,10 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
+from loom.ai.abc import AgentEngineProvider
 from loom.ai.compiler import AgentPlan
 from loom.ai.errors import AgentCompilationError
+from loom.ai.registry import engine_prices_model
 from loom.etl.runtime.contracts import AgentIssue, AgentIssueKind
 
 
@@ -17,6 +19,7 @@ def validation_issues(
     *,
     max_usd: Decimal | None,
     compile_plans: Callable[[], tuple[AgentPlan, ...]],
+    engine_provider: Callable[[], AgentEngineProvider],
 ) -> tuple[AgentIssue, ...]:
     """Return every reason agent *name* cannot serve a step, without spending anything.
 
@@ -25,19 +28,59 @@ def validation_issues(
         output_type: Type the step expects every answer to decode into.
         max_usd: Budget of one execution of the step, when declared.
         compile_plans: Compiles the artifacts declaring *name*.
+        engine_provider: Builds the engine provider asked whether it prices the model.
 
     Returns:
         The issues found, empty when the agent can serve the step.
     """
     try:
         plans = compile_plans()
+        if not plans:
+            return (_issue(AgentIssueKind.NOT_FOUND, f"no agent artifact declares {name!r}"),)
+        return _plan_issues(plans[0], output_type, max_usd, engine_provider())
     except AgentCompilationError as error:
-        return (AgentIssue(kind=AgentIssueKind.COMPILATION_FAILED, message=str(error)),)
-    if not plans:
-        return (
-            AgentIssue(
-                kind=AgentIssueKind.NOT_FOUND,
-                message=f"no agent artifact declares an agent named {name!r}",
-            ),
-        )
-    return ()
+        return (_issue(AgentIssueKind.COMPILATION_FAILED, _describe(error)),)
+
+
+def _plan_issues(
+    plan: AgentPlan,
+    output_type: type[Any],
+    max_usd: Decimal | None,
+    provider: AgentEngineProvider,
+) -> tuple[AgentIssue, ...]:
+    issues: list[AgentIssue] = []
+    if plan.output.loom_type.type is not output_type:
+        issues.append(_issue(AgentIssueKind.OUTPUT_MISMATCH, _mismatch(plan, output_type)))
+    if _budgeted(plan, max_usd) and not _priced(plan, provider):
+        issues.append(_issue(AgentIssueKind.UNPRICED_BUDGET, _unpriced(plan)))
+    return tuple(issues)
+
+
+def _budgeted(plan: AgentPlan, max_usd: Decimal | None) -> bool:
+    return max_usd is not None or plan.policies.max_usd is not None
+
+
+def _priced(plan: AgentPlan, provider: AgentEngineProvider) -> bool:
+    return plan.price is not None or engine_prices_model(provider, plan.inference)
+
+
+def _issue(kind: AgentIssueKind, message: str) -> AgentIssue:
+    return AgentIssue(kind=kind, message=message)
+
+
+def _describe(error: AgentCompilationError) -> str:
+    return "; ".join(f"{issue.code}: {issue.message}" for issue in error.issues)
+
+
+def _mismatch(plan: AgentPlan, output_type: type[Any]) -> str:
+    return (
+        f"agent {plan.name!r} does not answer {output_type.__qualname__}; its artifact must "
+        f"declare 'output: {{kind: type_ref}}' naming that type"
+    )
+
+
+def _unpriced(plan: AgentPlan) -> str:
+    return (
+        f"agent {plan.name!r} has a spend budget, but model {plan.inference.model!r} has no "
+        "known price; add it under 'ai.prices'"
+    )
