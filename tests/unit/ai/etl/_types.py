@@ -55,3 +55,8 @@ class PydanticReply(pydantic.BaseModel):
     answer: str
     day: date
     count: int | None = pydantic.Field(default=None, alias="howMany")
+
+
+class Clashing(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    answer: str
+    agent_status: str

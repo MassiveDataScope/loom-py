@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import threading
 from collections.abc import Callable
 from decimal import Decimal
@@ -202,6 +203,20 @@ class TestRows:
         assert out.schema["answer"] == pl.String()
 
 
+class TestColumns:
+    @pytest.mark.parametrize("key", ["answer", "agent_version"])
+    def test_a_key_named_like_an_answer_column_is_refused(self, tmp_path: Path, key: str) -> None:
+        frame = pl.DataFrame({key: ["k"], "text": ["hola"]})
+
+        with pytest.raises(ValueError, match=key):
+            _runner(tmp_path).map(
+                "seller_reply", frame, keys=(key,), prompt="text", output_type=Reply, max_usd=None
+            )
+
+
+_TENANT: contextvars.ContextVar[str] = contextvars.ContextVar("tenant", default="none")
+
+
 class TestConcurrency:
     def test_runs_wait_for_a_slot_instead_of_being_refused(self, tmp_path: Path) -> None:
         probe = _ConcurrencyProbe()
@@ -216,6 +231,16 @@ class TestConcurrency:
         out = _map(_runner(tmp_path), _messages("hola"))
 
         assert out["answer"].to_list() == ["HOLA"]
+
+    async def test_the_runs_see_the_context_of_the_caller(self, tmp_path: Path) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _answer(_TENANT.get(), info)
+
+        _TENANT.set("cuimo")
+
+        out = _map(_runner(tmp_path, lambda: FunctionModel(respond)), _messages("hola"))
+
+        assert out["answer"].to_list() == ["CUIMO"]
 
     def test_two_steps_mapping_at_once_do_not_share_a_runtime(self, tmp_path: Path) -> None:
         runner = _runner(tmp_path)

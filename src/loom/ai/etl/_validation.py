@@ -9,6 +9,8 @@ from typing import Any
 from loom.ai.abc import AgentEngineProvider
 from loom.ai.compiler import AgentPlan
 from loom.ai.errors import AgentCompilationError
+from loom.ai.etl._columns import output_columns
+from loom.ai.etl._frames import metadata_clashes
 from loom.ai.etl._ledger import worst_case
 from loom.ai.registry import engine_prices_model
 from loom.etl.runtime.contracts import AgentIssue, AgentIssueKind
@@ -52,6 +54,8 @@ def _plan_issues(
     issues: list[AgentIssue] = []
     if plan.output.loom_type.type is not output_type:
         issues.append(_issue(AgentIssueKind.OUTPUT_MISMATCH, _mismatch(plan, output_type)))
+    elif clashes := metadata_clashes(output_columns(output_type)):
+        issues.append(_issue(AgentIssueKind.COLUMN_COLLISION, _collision(plan, clashes)))
     if _budgeted(plan, max_usd) and not _priced(plan, provider):
         issues.append(_issue(AgentIssueKind.UNPRICED_BUDGET, _unpriced(plan)))
     if max_usd is not None:
@@ -88,6 +92,13 @@ def _mismatch(plan: AgentPlan, output_type: type[Any]) -> str:
     return (
         f"agent {plan.name!r} does not answer {output_type.__qualname__}; its artifact must "
         f"declare 'output: {{kind: type_ref}}' naming that type"
+    )
+
+
+def _collision(plan: AgentPlan, clashes: list[str]) -> str:
+    return (
+        f"agent {plan.name!r} answers field(s) {clashes}, named like the run metadata "
+        "columns the step writes; rename them in the output type"
     )
 
 

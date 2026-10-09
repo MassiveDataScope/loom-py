@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from collections.abc import Callable, Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
@@ -18,7 +19,7 @@ from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
 from loom.ai.etl._columns import output_columns
-from loom.ai.etl._frames import answers_frame, prompt_rows
+from loom.ai.etl._frames import answers_frame, prompt_rows, require_free_keys
 from loom.ai.etl._ledger import SpendLedger, worst_case
 from loom.ai.etl._validation import validation_issues
 from loom.ai.registry import resolve_engine_provider
@@ -34,8 +35,10 @@ class PolarsAgentRunner:
 
     Every call to :meth:`map` builds, enters and closes a runtime of its own,
     so two steps mapping at once never share one. ``map`` is synchronous: it
-    runs its batch on an event loop of its own, in a dedicated thread when
-    the calling thread already runs one.
+    runs its batch on an event loop of its own, in a dedicated thread, which
+    sees the caller's context variables, when the calling thread already runs
+    one. :meth:`validate` and :meth:`version` compile each agent once per
+    runner.
 
     Args:
         config: Parsed ``ai:`` section.
@@ -54,6 +57,7 @@ class PolarsAgentRunner:
         self._config = config
         self._root = root
         self._engine_provider = engine_provider or partial(resolve_engine_provider, config.engine)
+        self._compiled: dict[str, tuple[AgentPlan, ...]] = {}
 
     def validate(
         self, name: str, output_type: type[Any], *, max_usd: Decimal | None
@@ -78,7 +82,7 @@ class PolarsAgentRunner:
 
     def version(self, name: str) -> str:
         """Return the fingerprint of agent *name*'s compiled plan."""
-        return self._plan(name).fingerprint
+        return _only_plan(self._plans(name), name).fingerprint
 
     def map(
         self,
@@ -104,10 +108,15 @@ class PolarsAgentRunner:
             The keys, one column per field of *output_type*, and
             ``agent_version``, ``agent_status`` (``ok`` or ``error``),
             ``agent_error``, the four token counts and ``agent_cost_usd``.
+
+        Raises:
+            ValueError: When a key is named like a column the agent writes.
         """
+        columns = output_columns(output_type)
+        require_free_keys(keys, columns)
         rows, prompts = prompt_rows(frame, keys, prompt)
         runtime = self._runtime(name)
-        plan = _only_plan(runtime, name)
+        plan = _only_plan(runtime.plans, name)
         projection = loom_type(output_type)
         batch = Batch(
             runtime=runtime,
@@ -118,7 +127,7 @@ class PolarsAgentRunner:
             to_builtins=projection.to_builtins,
         )
         outcomes = _run_blocking(partial(batch.answer_all, prompts))
-        return answers_frame(rows, outcomes, output_columns(output_type), plan.fingerprint)
+        return answers_frame(rows, outcomes, columns, plan.fingerprint)
 
     def _runtime(self, name: str) -> AgentRuntime:
         return build_agent_runtime(
@@ -129,16 +138,16 @@ class PolarsAgentRunner:
         )
 
     def _plans(self, name: str) -> tuple[AgentPlan, ...]:
-        return self._runtime(name).plans
+        plans = self._compiled.get(name)
+        if plans is None:
+            plans = self._compiled[name] = self._runtime(name).plans
+        return plans
 
-    def _plan(self, name: str) -> AgentPlan:
-        return _only_plan(self._runtime(name), name)
 
-
-def _only_plan(runtime: AgentRuntime, name: str) -> AgentPlan:
-    if not runtime.plans:
+def _only_plan(plans: tuple[AgentPlan, ...], name: str) -> AgentPlan:
+    if not plans:
         raise LookupError(f"no agent artifact declares an agent named {name!r}")
-    return runtime.plans[0]
+    return plans[0]
 
 
 def _run_blocking(work: Callable[[], Coroutine[Any, Any, ResultT]]) -> ResultT:
@@ -146,5 +155,6 @@ def _run_blocking(work: Callable[[], Coroutine[Any, Any, ResultT]]) -> ResultT:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(work())
+    context = contextvars.copy_context()
     with ThreadPoolExecutor(max_workers=1) as thread:
-        return thread.submit(lambda: asyncio.run(work())).result()
+        return thread.submit(context.run, lambda: asyncio.run(work())).result()

@@ -226,6 +226,7 @@ class AgentIssueKind(StrEnum):
     UNPRICED_BUDGET = "unpriced_budget"
     BUDGET_UNENFORCEABLE = "budget_unenforceable"
     UNSUPPORTED_ENGINE = "unsupported_engine"
+    COLUMN_COLLISION = "column_collision"
 
 
 @dataclass(frozen=True)

@@ -197,6 +197,7 @@ class TestCompileThroughThePort:
             (AgentIssueKind.UNPRICED_BUDGET, ETLErrorCode.AGENT_UNPRICED_BUDGET),
             (AgentIssueKind.BUDGET_UNENFORCEABLE, ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE),
             (AgentIssueKind.UNSUPPORTED_ENGINE, ETLErrorCode.AGENT_UNSUPPORTED_ENGINE),
+            (AgentIssueKind.COLUMN_COLLISION, ETLErrorCode.AGENT_COLUMN_COLLISION),
         ],
     )
     def test_each_issue_kind_has_its_own_code(

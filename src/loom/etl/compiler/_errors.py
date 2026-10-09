@@ -49,6 +49,7 @@ class ETLErrorCode(StrEnum):
     AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET"
     AGENT_BUDGET_UNENFORCEABLE = "AGENT_BUDGET_UNENFORCEABLE"
     AGENT_UNSUPPORTED_ENGINE = "AGENT_UNSUPPORTED_ENGINE"
+    AGENT_COLUMN_COLLISION = "AGENT_COLUMN_COLLISION"
 
 
 class ETLCompilationError(Exception):
@@ -445,6 +446,11 @@ class ETLCompilationError(Exception):
     def agent_unsupported_engine(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
         """A WithAgent declared on a runner whose engine no agent runner serves."""
         return cls._agent(ETLErrorCode.AGENT_UNSUPPORTED_ENGINE, step, alias, reason)
+
+    @classmethod
+    def agent_column_collision(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
+        """An output field of a WithAgent is named like a run metadata column."""
+        return cls._agent(ETLErrorCode.AGENT_COLUMN_COLLISION, step, alias, reason)
 
     @classmethod
     def _agent(cls, code: ETLErrorCode, step: type, alias: str, reason: str) -> ETLCompilationError:

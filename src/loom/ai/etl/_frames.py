@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Final
 
 import polars as pl
@@ -27,6 +27,25 @@ _METADATA_SCHEMA: Final = pl.Schema(
         "agent_cost_usd": pl.Float64,
     }
 )
+
+
+def metadata_clashes(names: Iterable[str]) -> list[str]:
+    """Return the *names* a run metadata column (``agent_version``, ...) already takes."""
+    return [name for name in names if name in _METADATA_SCHEMA]
+
+
+def require_free_keys(keys: Sequence[str], columns: Mapping[str, Column]) -> None:
+    """Refuse key columns named like an answer or run metadata column.
+
+    Raises:
+        ValueError: Naming every clashing key.
+    """
+    clashes = [key for key in keys if key in columns] + metadata_clashes(keys)
+    if clashes:
+        raise ValueError(
+            f"key column(s) {clashes} share their name with a column the agent writes; "
+            "rename them before mapping"
+        )
 
 
 def prompt_rows(
