@@ -1321,7 +1321,7 @@ served from (URL, directory, credentials, timeouts, tool filters) and the
 binding's region, endpoint, credentials and `streaming` flag are left out, so
 moving a deployment keeps the version and changing the prompt, the model or
 the tools does not. ETL steps write it as
-`agent_version` (see [Agents in ETL steps](../etl/agents.md)).
+`agent_version` (see [Agents in ETL steps](../etl/agent-steps.md)).
 
 The output check enters by its import path (`module:qualname`): editing the
 body of the check keeps the fingerprint, renaming or moving it changes it.

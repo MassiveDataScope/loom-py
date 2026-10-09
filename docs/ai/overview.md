@@ -127,7 +127,7 @@ async with runtime:
 ```
 
 ETL steps reach agents declaratively instead, through
-[`WithAgent`](../etl/agents.md).
+[`WithAgent`](../etl/agent-steps.md).
 
 ### Nesting: how deep an agent may call another
 
