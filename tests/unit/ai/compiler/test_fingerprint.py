@@ -9,7 +9,13 @@ from typing import Any
 import msgspec
 import pytest
 
-from loom.ai.compiler import AgentPlan, CompiledInstruction
+from loom.ai.compiler import (
+    AgentPlan,
+    CompiledInstruction,
+    CompiledMcpCapability,
+    CompiledNativeCapability,
+    CompiledSkillsCapability,
+)
 from loom.ai.declarative import PolicySpec
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
@@ -33,6 +39,14 @@ def reject_everything(payload: Mapping[str, Any]) -> str | None:
     return "no"
 
 
+_CRM = CompiledMcpCapability(server="crm", url="https://crm.invalid/mcp")
+_SKILLS = CompiledSkillsCapability(library="sales", directory="/srv/skills", names=("pricing",))
+
+
+def _with(*capabilities: Any) -> AgentPlan:
+    return msgspec.structs.replace(_BASE, capabilities=capabilities)
+
+
 def _target(**changes: Any) -> AgentPlan:
     return msgspec.structs.replace(_BASE, inference=msgspec.structs.replace(_TARGET, **changes))
 
@@ -49,7 +63,7 @@ class TestStability:
 
     def test_the_digest_is_pinned_across_processes(self) -> None:
         assert (
-            _BASE.fingerprint == "0685609c0c439d412e74e0bcee293b4ad7526e19029a9b98d52a3af298918b31"
+            _BASE.fingerprint == "cf42bb6b5ced6ec3ae9ef816afcd492661a744e0e417adc73c66847db68f38f5"
         )
 
     def test_option_order_does_not_change_it(self) -> None:
@@ -79,7 +93,27 @@ _SENSITIVE: dict[str, AgentPlan] = {
     "model": _target(model="eu.anthropic.claude-sonnet-5-5"),
     "output mode": _target(output_mode="native"),
     "options": _target(options={"max_tokens": 4000}),
+    "an mcp server": _with(_CRM),
+    "a native tool": _with(CompiledNativeCapability(tool="web_search")),
+    "a skill library": _with(_SKILLS),
 }
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (_with(_CRM), _with(msgspec.structs.replace(_CRM, server="erp"))),
+        (
+            _with(CompiledNativeCapability(tool="web_search")),
+            _with(CompiledNativeCapability(tool="code_execution")),
+        ),
+        (_with(_SKILLS), _with(msgspec.structs.replace(_SKILLS, names=("pricing", "returns")))),
+        (_with(_SKILLS), _with(msgspec.structs.replace(_SKILLS, library="support"))),
+    ],
+    ids=["mcp server", "native tool", "skill names", "skill library"],
+)
+def test_capabilities_are_told_apart_by_kind_and_name(first: AgentPlan, second: AgentPlan) -> None:
+    assert first.fingerprint != second.fingerprint
 
 
 @pytest.mark.parametrize("changed", sorted(_SENSITIVE))
@@ -110,6 +144,14 @@ _INSENSITIVE: dict[str, AgentPlan] = {
         _BASE, price=ModelPrice(input=Decimal("1"), output=Decimal("2"))
     ),
 }
+
+
+def test_where_a_capability_is_served_from_leaves_it_unchanged() -> None:
+    moved = _with(msgspec.structs.replace(_CRM, url="https://crm.example/mcp", timeout_ms=5000))
+    relocated = _with(msgspec.structs.replace(_SKILLS, directory="/opt/skills"))
+
+    assert moved.fingerprint == _with(_CRM).fingerprint
+    assert relocated.fingerprint == _with(_SKILLS).fingerprint
 
 
 @pytest.mark.parametrize("changed", sorted(_INSENSITIVE))

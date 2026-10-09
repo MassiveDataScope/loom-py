@@ -411,11 +411,13 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         """Stable sha256 of everything that decides this agent's answers.
 
         Covers the instructions as compiled, the output schema, the output
-        check, the policies, the format version and the bound provider,
-        model, output mode and options. Leaves out the name, description,
-        metadata, provenance, configured price and the binding's region,
-        endpoint, credentials and streaming flag. The output check enters by
-        its import path, so editing the check's body keeps the fingerprint.
+        check, the policies, the format version, the kind and name of every
+        capability and the bound provider, model, output mode and options.
+        Leaves out the name, description, metadata, provenance, configured
+        price, where a capability is served from (URL, directory,
+        credentials, timeouts) and the binding's region, endpoint,
+        credentials and streaming flag. The output check enters by its import
+        path, so editing the check's body keeps the fingerprint.
         """
         return plan_fingerprint(self)
 
