@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Iterable
+from typing import Any
 
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
@@ -47,6 +48,9 @@ class InvalidStageError(ValueError):
             f"Unknown step or process names: {sorted(self.unknown)!r}. "
             "Check that the names match the class names of your ETLStep or ETLProcess subclasses."
         )
+
+    def __reduce__(self) -> tuple[type[InvalidStageError], tuple[frozenset[str]], dict[str, Any]]:
+        return type(self), (self.unknown,), self.__dict__
 
 
 def _unknown_names(

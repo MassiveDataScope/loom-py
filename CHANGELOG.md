@@ -444,7 +444,8 @@
   match include=[...]`, the constructor's parameter is `unknown`, and the
   names are kept on the new `unknown` attribute. Positional construction is
   unchanged; `InvalidStageError(include=...)` still works, emits a
-  `DeprecationWarning` and is removed in loom 3.0.
+  `DeprecationWarning` and is removed in loom 3.0. The error survives pickle
+  with its `unknown` names, so it crosses process boundaries intact.
 
 ## 🐛 Fixes
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import pickle
 
 import pytest
 
@@ -44,3 +45,15 @@ def test_the_include_keyword_still_builds_the_error_with_a_deprecation_warning()
 def test_the_names_are_given_exactly_once(kwargs: dict[str, frozenset[str]]) -> None:
     with pytest.raises(TypeError, match="InvalidStageError"):
         InvalidStageError(**kwargs)
+
+
+def test_invalid_stage_error_keeps_its_unknown_names_across_pickle() -> None:
+    error = InvalidStageError(frozenset({"MissingStep", "MissingProcess"}))
+    error.add_note("selected by the run")
+
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert type(restored) is InvalidStageError
+    assert restored.unknown == error.unknown
+    assert str(restored) == str(error)
+    assert restored.__notes__ == ["selected by the run"]
