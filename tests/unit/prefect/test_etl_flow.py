@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 import textwrap
 import time
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -173,10 +174,12 @@ def test_etl_flow_tags_default_to_empty_tuple(tmp_path: Path) -> None:
     assert meta.tags == ()
 
 
-def test_deploy_passes_meta_name_and_yaml_tags_no_loom_etl(tmp_path: Path) -> None:
+def test_deploy_passes_meta_name_and_yaml_tags_no_loom_etl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from unittest.mock import MagicMock
 
-    from loom.prefect.deploy._discovery import _deploy_single
+    from loom.prefect import deploy_flow
 
     content = textwrap.dedent(
         """\
@@ -202,13 +205,13 @@ def test_deploy_passes_meta_name_and_yaml_tags_no_loom_etl(tmp_path: Path) -> No
         config_path=str(yaml_path),
         source_file=__file__,
     )
-    meta = getattr(flow_obj, _LOOM_ETL_META_ATTR)
+    monkeypatch.setattr(sys.modules[__name__], "deploy_tags_etl", flow_obj, raising=False)
 
     sourced = MagicMock()
     sourced.deploy = MagicMock(return_value="deployment-id-abc")
     flow_obj.from_source = MagicMock(return_value=sourced)
 
-    deployment_id = _deploy_single(flow_obj, meta, work_pool="default-pool", env="prod")
+    deployment_id = deploy_flow(flow_obj, env="prod", work_pool="default-pool")
 
     assert deployment_id == "deployment-id-abc"
     deploy_kwargs = sourced.deploy.call_args.kwargs

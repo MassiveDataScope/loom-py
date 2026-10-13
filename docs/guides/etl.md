@@ -983,14 +983,25 @@ from loom.prefect import deploy_flow
 
 deployment_id = deploy_flow(
     daily_orders,
+    env="prod",                 # required, keyword only
     work_pool="loom-fargate",   # used when the YAML sets no work_pool for env
-    env="prod",
 )
 ```
 
-The entrypoint is `<source_file>:<flow function>`, relative to the
-`working_dir` job variable (`/app/src` by default), so the worker rebuilds the
-flow by importing that attribute. Any other object is a `TypeError`.
+With no `work_pool` in the call nor in `environments.<env>` of the YAML,
+`deploy_flow` raises `ValueError`. Any object not built by a loom factory is
+a `TypeError`.
+
+The entrypoint is `<source_file>:<attribute>`, relative to the `working_dir`
+job variable (`/app/src` by default), where `attribute` is the flow name with
+`-` replaced by `_` (`daily-orders` → `daily_orders`). The worker rebuilds the
+flow by importing that attribute from that file, so the module must expose
+it, as a plain attribute or through a module `__getattr__`; a flow assigned
+to another name cannot be rebuilt. `deploy_flow` checks this before
+registering and raises `ValueError` when the attribute is missing or holds
+another flow. It reads the attribute from the module already imported from
+`source_file`; when that module is not imported yet, it imports the file the
+way the worker does, so its top level runs once more on the deploy host.
 
 ### Declaring ETLs in YAML
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -85,7 +86,9 @@ def _deploy_kwargs(flow: Any) -> dict[str, Any]:
     sourced = MagicMock()
     sourced.deploy = MagicMock(return_value="deployment-id")
     flow.from_source = MagicMock(return_value=sourced)
-    deploy_flow(flow, work_pool="default", env="prod")
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(sys.modules[__name__], "conversations", flow, raising=False)
+        deploy_flow(flow, env="prod", work_pool="default")
     kwargs: dict[str, Any] = sourced.deploy.call_args.kwargs
     return kwargs
 
