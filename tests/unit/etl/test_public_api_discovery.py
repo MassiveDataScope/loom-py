@@ -15,6 +15,7 @@ import pytest
         "loom.etl.executor",
         "loom.etl.lineage",
         "loom.etl.lineage.sinks",
+        "loom.etl.maintenance",
         "loom.etl.declarative",
         "loom.etl.declarative.target",
         "loom.etl.pipeline",

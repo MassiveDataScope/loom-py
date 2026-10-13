@@ -462,6 +462,80 @@ runner = ETLRunner.from_spark(spark)
 
 This wires Spark reader/writer/catalog automatically.
 
+## Table maintenance
+
+A `MaintenanceStep` declares vacuum, compaction and Z-Order per table or per
+schema, and `MaintenanceRunner` runs them through delta-rs:
+
+```python
+from loom.etl.maintenance import MaintainSchema, MaintenanceRunner, MaintenanceStep
+
+
+class NightlyMaintenance(MaintenanceStep[None]):
+    operations = [MaintainSchema("raw").vacuum(retention_hours=168, dry_run=False).compact()]
+
+
+report = MaintenanceRunner.from_config(config).run(NightlyMaintenance)
+report.raise_if_errors()
+```
+
+### Custom operations
+
+An operation is any class implementing `OpSpec`: a `name` class variable, which
+keys its result in `TableMaintenanceResult.op_results`, and
+`execute(maintainer, uri, location)`, returning a `VacuumResult` or an
+`OptimizeResult` (or a subclass). Each `OperationDeclaration` resolves to one
+`MaintenanceSpec(table_ref, ops)` per table, so a declaration that wraps
+another and appends the op to every spec runs it after the declared ones:
+
+```python
+from dataclasses import dataclass, replace
+from typing import ClassVar
+
+from deltalake import DeltaTable
+
+from loom.etl.maintenance import (
+    DeltaTableMaintainer,
+    MaintainSchema,
+    MaintenanceSpec,
+    MaintenanceStep,
+    OperationDeclaration,
+    OptimizeResult,
+)
+from loom.etl.storage import StorageConfig, TableLocation
+
+
+@dataclass(frozen=True)
+class CheckpointSpec:
+    name: ClassVar[str] = "checkpoint"
+
+    def execute(
+        self, maintainer: DeltaTableMaintainer, uri: str, location: TableLocation
+    ) -> OptimizeResult:
+        DeltaTable(uri, storage_options=location.storage_options).create_checkpoint()
+        return OptimizeResult()
+
+
+class Checkpointed:
+    def __init__(self, inner: OperationDeclaration) -> None:
+        self._inner = inner
+
+    def resolve(self, config: StorageConfig) -> list[MaintenanceSpec]:
+        return [
+            replace(spec, ops=(*spec.ops, CheckpointSpec()))
+            for spec in self._inner.resolve(config)
+        ]
+
+
+class NightlyMaintenance(MaintenanceStep[None]):
+    operations = [Checkpointed(MaintainSchema("raw").vacuum(dry_run=False).compact())]
+```
+
+An op that fails is recorded as the table's `error`, like a built-in one, and
+the remaining ops of that table are skipped. `VacuumSpec`, `CompactSpec` and
+`ZOrderSpec`, the specs of the built-in ops, are exported too, for a custom
+`DeltaTableMaintainer` backend.
+
 ## Testing ETL steps
 
 Use the built-in test harnesses:

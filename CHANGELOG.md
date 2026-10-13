@@ -322,6 +322,12 @@
   Polars a `Null`-typed column still fails first, with `SchemaError`.
   The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
   gains the `allow_empty` field.
+- **etl:** `MaintenanceSpec`, `VacuumSpec`, `CompactSpec` and `ZOrderSpec` are
+  exported from `loom.etl.maintenance`, next to `OpSpec` and
+  `OperationDeclaration`, so a custom maintenance op (an `OpSpec` appended to
+  each `MaintenanceSpec` by a wrapping `OperationDeclaration`) and a custom
+  `DeltaTableMaintainer` are written without the private `_ops` module. The
+  ETL guide and the package docstring show how to write one.
 
 ## ⚠ Behaviour changes
 
