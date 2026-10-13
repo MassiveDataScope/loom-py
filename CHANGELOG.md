@@ -289,6 +289,14 @@
   exported from `loom.etl.compiler`. They flatten a compiled plan in
   execution order, parallel groups in declaration order, so code that walks
   a plan no longer reimplements them over the private `_plan` module.
+- **etl:** `loom.etl.backends.polars.decode_json_columns(frame, json_columns)`
+  decodes JSON text columns exactly as the Polars reader does for a source
+  declared with `parse_json`, normalising fields whose JSON type changes
+  between rows, and returns a frame of the same kind, eager or lazy. The
+  reader decodes through it. `FromTable.json_columns` and
+  `FromFile.json_columns` expose the declarations it takes, so a test can
+  decode a seed as the step would receive it. Spark keeps its `from_json`
+  decoding, which has no normalisation to share.
 
 ## ⚠ Behaviour changes
 
