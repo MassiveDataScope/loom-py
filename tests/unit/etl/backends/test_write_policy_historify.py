@@ -73,6 +73,9 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
     def _materialize_for_write(self, frame: list[int], streaming: bool) -> list[int]:
         return list(frame)  # return a copy so we can track it
 
+    def _is_empty(self, frame: list[int]) -> bool:
+        return not frame
+
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         return ""
 

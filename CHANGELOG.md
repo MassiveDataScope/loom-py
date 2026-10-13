@@ -309,7 +309,8 @@
   anything, so a dimension rebuilt from a read that came back empty keeps its
   rows and the step fails. Polars checks the row count of the frame the
   replace already collects, at no extra cost; Spark runs `isEmpty()`, one
-  job that stops at the first row, before the write recomputes the frame.
+  job that stops at the first row, before the write recomputes the frame. On
+  Polars a `Null`-typed column still fails first, with `SchemaError`.
   The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
   gains the `allow_empty` field.
 

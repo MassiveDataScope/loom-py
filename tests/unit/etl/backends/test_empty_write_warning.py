@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any
 
 import polars as pl
 import pytest
 
+from loom.etl.backends._write_policy import _WritePolicy
 from loom.etl.backends.polars._writer import PolarsTargetWriter
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.storage._locator import TableLocation
 from loom.etl.storage.routing import PathTarget
+from tests.helpers.version_limited_extras import require_pyspark
 
 _WARNING_EVENT = "write_produced_no_rows"
 
@@ -88,17 +91,21 @@ class TestMaterializeChecked:
 class TestBackendsThatCannotCountCheaply:
     def test_the_default_hook_reports_unknown_instead_of_scanning(self) -> None:
         """Spark would need an action to answer, so the base must stay silent."""
-        from loom.etl.backends._write_policy import _WritePolicy
-
         assert _WritePolicy._row_count_if_cheap(object(), object()) is None  # type: ignore[arg-type]
 
-    def test_the_default_emptiness_check_refuses_to_guess(self) -> None:
-        """A backend that cannot count cheaply must say how it checks emptiness."""
-        from loom.etl.backends._write_policy import _WritePolicy
 
-        class _Blind:
-            def _row_count_if_cheap(self, frame: object) -> None:
-                return None
+@pytest.mark.parametrize(
+    ("module", "writer"),
+    [
+        ("loom.etl.backends.polars", "PolarsTargetWriter"),
+        ("loom.etl.backends.spark", "SparkTargetWriter"),
+    ],
+)
+def test_every_concrete_writer_defines_its_emptiness_check(module: str, writer: str) -> None:
+    if module.endswith("spark"):
+        require_pyspark()
+    writer_type = getattr(importlib.import_module(module), writer)
 
-        with pytest.raises(NotImplementedError, match="_Blind"):
-            _WritePolicy._is_empty(_Blind(), object())  # type: ignore[arg-type]
+    assert issubclass(writer_type, _WritePolicy)
+    assert "_is_empty" in vars(writer_type)
+    assert not getattr(writer_type, "__abstractmethods__", frozenset())

@@ -57,6 +57,25 @@ result = EnrichEvents().execute(params, events=events.lazy())
 
 `json_columns` is the tuple of declarations on a `FromTable` or `FromFile`.
 
+### Targets that declare `replace(allow_empty=False)`
+
+`PolarsStepRunner` captures the step's result instead of writing it, and
+`StubTargetWriter` stores whatever it receives, so neither applies
+`allow_empty`: an empty result passes without `EmptyReplaceError`. Test the
+declaration on the compiled spec, and the guard itself with
+`PolarsTargetWriter` on a temporary directory if needed:
+
+```python
+from loom.etl.compiler import ETLCompiler
+from loom.etl.declarative.target import ReplaceSpec
+
+
+def test_dim_dealer_refuses_an_empty_replace():
+    spec = ETLCompiler().compile_step(BuildDimDealer).target_binding.spec
+    assert isinstance(spec, ReplaceSpec)
+    assert spec.allow_empty is False
+```
+
 ## Reusable seed datasets with `ETLScenario`
 
 `ETLScenario` stores seed data as plain tuples so the same dataset can be used

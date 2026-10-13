@@ -11,6 +11,9 @@ from pyspark.sql import DataFrame, SparkSession
 from loom.etl import EmptyReplaceError, IntoTable
 from loom.etl.backends.spark import SparkTargetWriter
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.storage._config import MissingTablePolicy
+
+from .conftest import spark_table_path
 
 _REF = TableRef("silver.dim_dealer")
 _SCHEMA = "id BIGINT, name STRING"
@@ -46,3 +49,18 @@ def test_rows_replace_the_table_as_usual(
     spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
 
     assert _rows(spark, path) == [(3, "c")]
+
+
+def test_an_empty_frame_does_not_create_a_missing_table(
+    spark: SparkSession,
+    spark_root: Path,
+) -> None:
+    writer = SparkTargetWriter(
+        spark, str(spark_root), missing_table_policy=MissingTablePolicy.CREATE
+    )
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with pytest.raises(EmptyReplaceError, match="silver.dim_dealer"):
+        writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
+
+    assert not spark_table_path(spark_root, _REF).exists()

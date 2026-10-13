@@ -321,8 +321,14 @@ The check reads the frame the write already has to produce. On Polars the
 lazy frame is collected once, as for any replace, and the check is the row
 count of that result: no second collect. On Spark it is `DataFrame.isEmpty()`,
 one job that stops at the first row; the write then computes the frame again,
-so an expensive upstream plan is evaluated partly twice unless the step caches
-it.
+so an expensive upstream plan is evaluated partly twice. When that plan is
+costly, return `frame.cache()` (or `persist()`) from the step so the check and
+the write share one computation. The option does not apply to a streaming
+Spark DataFrame, on which `isEmpty()` is not available.
+
+On Polars, a frame with a `Null`-typed column fails with `SchemaError` before
+the empty check, because that column type is a defect of the step that breaks
+every run, whatever the row count.
 
 ### replace\_partitions
 

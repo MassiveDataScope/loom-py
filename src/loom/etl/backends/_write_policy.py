@@ -519,18 +519,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         _ = frame
         return None
 
+    @abstractmethod
     def _is_empty(self, frame: WriteFrameT) -> bool:
-        """Whether the materialised *frame* has no rows.
-
-        The default reads :meth:`_row_count_if_cheap`; a backend that cannot
-        count without a scan overrides it with its cheapest emptiness check.
-        """
-        count = self._row_count_if_cheap(frame)
-        if count is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} cannot count rows cheaply and must override _is_empty"
-            )
-        return count == 0
+        """Whether the materialised *frame* has no rows."""
 
     def _materialize_checked(
         self,
@@ -547,9 +538,10 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 materialised frame has no rows.
         """
         materialized = self._materialize_for_write(frame, streaming)
-        if not allow_empty and self._is_empty(materialized):
-            raise EmptyReplaceError(target.logical_ref.ref)
-        if self._row_count_if_cheap(materialized) == 0:
+        if not allow_empty:
+            if self._is_empty(materialized):
+                raise EmptyReplaceError(target.logical_ref.ref)
+        elif self._row_count_if_cheap(materialized) == 0:
             _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
         return materialized
 
