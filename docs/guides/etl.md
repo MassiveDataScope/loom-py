@@ -1001,7 +1001,7 @@ and the parameters it copies from them:
 
 ```yaml
 trigger:
-  after: respondio_messages_daily
+  after: orders_ingest_daily
   inherit_params: [updated_at_from, updated_at_to]
 ```
 
@@ -1041,14 +1041,34 @@ also in `loom.prefect.flow`). Building the flow runs
 validation on a YAML file without building the flow:
 
 ```python
+from datetime import date
+
+import msgspec
 import yaml
 
 from loom.prefect.flow import check_inherited_params, flow_settings_from_mapping
 
-with open("flows/respondio_leads.yaml") as fh:
-    settings = flow_settings_from_mapping(yaml.safe_load(fh))
-check_inherited_params("respondio_leads", settings.trigger, RespondioParams)
+
+class MyParams(msgspec.Struct):
+    run_date: date
+    updated_at_from: str
+    updated_at_to: str
+
+
+settings = flow_settings_from_mapping(
+    yaml.safe_load(
+        """
+        trigger:
+          after: orders_ingest_daily
+          inherit_params: [updated_at_from, updated_at_to]
+        """
+    )
+)
+check_inherited_params(settings.trigger, MyParams, name="orders_report")
 ```
+
+In CI, load the flow's YAML file instead of the inline document and pass the
+flow's own params type.
 
 It raises `ValueError` for a name that is not a field of the params type, or
 whose field is not declared exactly `str`, `date` or `datetime`, and does

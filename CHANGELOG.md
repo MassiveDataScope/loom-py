@@ -226,10 +226,10 @@
   creation time. Without `trigger` the deployment is registered exactly as
   before.
 - **prefect:** `FlowTrigger`, the decoded `trigger` block, is exported from
-  `loom.prefect` and `loom.prefect.flow`, and `check_inherited_params(name,
-  trigger, params_type)` from `loom.prefect.flow`, so CI can check that every
+  `loom.prefect` and `loom.prefect.flow`, and `check_inherited_params(trigger,
+  params_type, *, name)` from `loom.prefect.flow`, so CI can check that every
   inherited parameter is a field declared `str`, `date` or `datetime` without
-  building the flow. `loom.prefect._meta.FlowTrigger` is the same class.
+  building the flow.
 
 ### etl
 
