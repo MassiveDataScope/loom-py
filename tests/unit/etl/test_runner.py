@@ -174,12 +174,15 @@ class TestFilterPlan:
         with pytest.raises(InvalidStageError):
             filter_plan(plan, stages)
 
-    def test_filter_reports_every_unknown_name(self) -> None:
+    def test_filter_reports_every_unknown_name_in_sorted_order(self) -> None:
         plan = _compile(PipelineAll)
-        with pytest.raises(InvalidStageError, match="Ghost") as exc_info:
-            filter_plan(plan, ["StepA", "Ghost", "Phantom"])
-        assert "Phantom" in str(exc_info.value)
-        assert "StepA" not in str(exc_info.value)
+        with pytest.raises(InvalidStageError) as exc_info:
+            filter_plan(plan, ["StepA", "Phantom", "Ghost"])
+        assert "include=['Ghost', 'Phantom']" in str(exc_info.value)
+
+    def test_filter_refuses_a_bare_string(self) -> None:
+        with pytest.raises(TypeError, match=r"not the string 'StepA'.*include=\{'StepA'\}"):
+            filter_plan(_compile(PipelineAll), "StepA")
 
     def test_filter_accepts_any_iterable_of_names(self) -> None:
         plan = _compile(PipelineAll)

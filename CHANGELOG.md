@@ -286,9 +286,10 @@
 - **etl:** `loom.etl.compiler.filter_plan(plan, include)` returns the plan
   `ETLRunner.run(..., include=...)` executes: a process name keeps the whole
   process, a step name keeps that step, and a name that is neither raises
-  `InvalidStageError`, so a deployment's selection can be checked without
-  running it. The runner now filters through it. `InvalidStageError` is
-  exported from `loom.etl.compiler` as well; it is the same class as
+  `InvalidStageError`, listing the unknown names sorted, so a deployment's
+  selection can be checked without running it. A bare string as `include`
+  raises `TypeError`. The runner now filters through it. `InvalidStageError`
+  is exported from `loom.etl.compiler` as well; it is the same class as
   `loom.etl.runner.InvalidStageError` and `loom.etl.InvalidStageError`.
 - **etl:** `iter_processes`, `iter_steps_in_process` and `iter_all_steps` are
   exported from `loom.etl.compiler`. They flatten a compiled plan in

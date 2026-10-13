@@ -30,7 +30,7 @@ class InvalidStageError(ValueError):
 
     def __init__(self, include: frozenset[str]) -> None:
         super().__init__(
-            f"No steps or processes match include={set(include)!r}. "
+            f"No steps or processes match include={sorted(include)!r}. "
             "Check that the names match the class names of your ETLStep or ETLProcess subclasses."
         )
 
@@ -47,12 +47,14 @@ def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
     Args:
         plan: Compiled pipeline plan, as returned by
             :meth:`~loom.etl.compiler.ETLCompiler.compile`.
-        include: Class names of steps or processes to keep.
+        include: Class names of steps or processes to keep. A bare string is
+            refused rather than read as its characters.
 
     Returns:
         A new :class:`PipelinePlan`; *plan* is not modified.
 
     Raises:
+        TypeError: When *include* is a ``str``.
         InvalidStageError: When a name in *include* is neither a step nor a
             process of *plan*.
 
@@ -63,6 +65,11 @@ def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
         >>> [step.step_type.__name__ for step in iter_all_steps(plan)]
         ['LoadStep']
     """
+    if isinstance(include, str):
+        raise TypeError(
+            f"filter_plan() takes an iterable of names, not the string {include!r}; "
+            f"wrap it, e.g. include={{{include!r}}}."
+        )
     names = frozenset(include)
     unknown = names - _collect_all_names(plan)
     if unknown:
