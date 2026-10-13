@@ -64,3 +64,19 @@ def test_an_empty_frame_does_not_create_a_missing_table(
         writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
 
     assert not spark_table_path(spark_root, _REF).exists()
+
+
+def test_a_streaming_frame_is_refused_before_the_table_is_touched(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+) -> None:
+    path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    stream = spark.readStream.format("delta").load(str(path))
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with pytest.raises(ValueError, match="streaming DataFrame") as raised:
+        spark_writer.write(stream, spec, None)
+
+    assert not isinstance(raised.value, EmptyReplaceError)
+    assert _rows(spark, path) == [(1, "a")]

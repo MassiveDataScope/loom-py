@@ -144,7 +144,18 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         return frame
 
     def _is_empty(self, frame: DataFrame) -> bool:
-        """Whether *frame* has no rows; runs one Spark job that stops at the first row."""
+        """Whether *frame* has no rows; runs one Spark job that stops at the first row.
+
+        Raises:
+            ValueError: When *frame* is a streaming DataFrame, whose rows
+                cannot be counted before the write.
+        """
+        if frame.isStreaming:
+            raise ValueError(
+                "replace(allow_empty=False) needs a batch DataFrame to check for rows, "
+                "but the frame to write is a streaming DataFrame. Read the source as a "
+                "batch DataFrame or declare replace() without allow_empty=False."
+            )
         return bool(frame.isEmpty())
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:

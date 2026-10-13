@@ -319,7 +319,9 @@
   rows and the step fails. Polars checks the row count of the frame the
   replace already collects, at no extra cost; Spark runs `isEmpty()`, one
   job that stops at the first row, before the write recomputes the frame. On
-  Polars a `Null`-typed column still fails first, with `SchemaError`.
+  Polars a `Null`-typed column still fails first, with `SchemaError`. On
+  Spark a streaming DataFrame, whose rows cannot be counted before the
+  write, raises `ValueError` and the table is left as it was.
   The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
   gains the `allow_empty` field.
 - **etl:** `MaintenanceSpec`, `VacuumSpec`, `CompactSpec` and `ZOrderSpec` are

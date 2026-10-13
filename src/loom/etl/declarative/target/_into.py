@@ -126,7 +126,9 @@ class IntoTable:
                          is neither replaced nor created.  Use it for a
                          table, such as a dimension, that an empty read must
                          never wipe.  Defaults to ``True``: an empty frame
-                         replaces the table with an empty one.
+                         replaces the table with an empty one.  The Spark
+                         backend refuses a streaming DataFrame with
+                         :exc:`ValueError`, since it cannot count its rows.
 
         Returns:
             New ``IntoTable`` with REPLACE mode.
