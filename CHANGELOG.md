@@ -328,6 +328,14 @@
   each `MaintenanceSpec` by a wrapping `OperationDeclaration`) and a custom
   `DeltaTableMaintainer` are written without the private `_ops` module. The
   ETL guide and the package docstring show how to write one.
+- **etl:** `loom.etl.schema.annotation_to_loom_type(ann)` converts one Python
+  type annotation to the `LoomType` it declares, as `resolve_schema` does for
+  each field of a contract (`X | None` maps as `X`; an unsupported annotation
+  raises `TypeError`), and `loom.etl.backends.polars` exports
+  `loom_type_to_polars` and `polars_to_loom_type`, so the Polars dtype of a
+  contract field is `loom_type_to_polars(annotation_to_loom_type(ann))`. The
+  private names `loom.etl.schema._contract._annotation_to_loom_type` and
+  `loom.etl.backends.polars._dtype.*` keep working.
 
 ## ⚠ Behaviour changes
 
