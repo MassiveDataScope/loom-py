@@ -99,6 +99,11 @@ class FromTable:
         """Declared filter predicates."""
         return self._predicates
 
+    @property
+    def json_columns(self) -> tuple[JsonColumnSpec, ...]:
+        """JSON columns declared with :meth:`parse_json`, in declaration order."""
+        return self._json_columns
+
     def with_schema(self, schema: SchemaContract) -> FromTable:
         """Return a new ``FromTable`` with a user-declared source schema.
 
@@ -297,6 +302,11 @@ class FromFile:
     def path(self) -> str:
         """File path template."""
         return self._path
+
+    @property
+    def json_columns(self) -> tuple[JsonColumnSpec, ...]:
+        """JSON columns declared with :meth:`parse_json`, in declaration order."""
+        return self._json_columns
 
     @property
     def format(self) -> Format:

@@ -35,9 +35,14 @@ SCD2 support types:
 * :class:`HistorifyKeyConflictError`   — duplicate entity state vectors
 * :class:`HistorifyDateCollisionError` — same-date LOG mode collisions
 * :class:`HistorifyTemporalConflictError` — future-open records without re-weave
+
+Write errors:
+
+* :class:`EmptyReplaceError` — ``replace(allow_empty=False)`` received no rows
 """
 
 from loom.etl.declarative.target._client import ClientSpec, IntoClient
+from loom.etl.declarative.target._errors import EmptyReplaceError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import (
     DeletePolicy,
@@ -127,4 +132,6 @@ __all__ = [
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
     "HistorifyTemporalConflictError",
+    # write errors
+    "EmptyReplaceError",
 ]

@@ -55,6 +55,7 @@ from loom.etl.declarative import (
     CsvReadOptions,
     CsvWriteOptions,
     DeletePolicy,
+    EmptyReplaceError,
     ExcelReadOptions,
     Format,
     FromConfig,
@@ -203,6 +204,7 @@ __all__ = [
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
     "HistorifyTemporalConflictError",
+    "EmptyReplaceError",
     # intermediates
     "CheckpointCleaner",
     "CheckpointScope",

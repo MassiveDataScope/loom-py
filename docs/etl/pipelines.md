@@ -303,6 +303,33 @@ target = IntoTable("staging.orders").replace()
 target = IntoTable("staging.orders").replace(schema=SchemaMode.OVERWRITE)
 ```
 
+An empty frame replaces the table with an empty one, and loom logs a
+`write_produced_no_rows` warning. For a table that an empty read must never
+wipe, such as a dimension rebuilt from a source that can come back empty,
+declare `allow_empty=False`:
+
+```python
+target = IntoTable("silver.dim_dealer").replace(allow_empty=False)
+```
+
+The writer then raises `EmptyReplaceError` (a `ValueError`, from `loom.etl`)
+when the frame has no rows, before it creates or writes anything, and the
+step fails with the table as it was. Only `replace()` takes the option; any
+other write mode refuses it with a `TypeError` when the step is declared.
+
+The check reads the frame the write already has to produce. On Polars the
+lazy frame is collected once, as for any replace, and the check is the row
+count of that result: no second collect. On Spark it is `DataFrame.isEmpty()`,
+one job that stops at the first row; the write then computes the frame again,
+so an expensive upstream plan is evaluated partly twice. When that plan is
+costly, return `frame.cache()` (or `persist()`) from the step so the check and
+the write share one computation. The option does not apply to a streaming
+Spark DataFrame, on which `isEmpty()` is not available.
+
+On Polars, a frame with a `Null`-typed column fails with `SchemaError` before
+the empty check, because that column type is a defect of the step that breaks
+every run, whatever the row count.
+
 ### replace\_partitions
 
 Replaces only the partitions **present in the batch**. The writer collects
@@ -394,7 +421,33 @@ runner.run(
 )
 ```
 
-If no name matches, `InvalidStageError` is raised.
+If a name matches no step or process, `InvalidStageError` is raised before
+anything runs.
+
+To know in advance what a selection runs, for example to check in CI that a
+deployment's `include` still names real stages, apply the same filter to the
+compiled plan with `filter_plan`:
+
+```python
+from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
+
+plan = filter_plan(ETLCompiler().compile(DailyPipeline), ["DailyProcess", "CleanOrders"])
+steps = [step.step_type.__name__ for step in iter_all_steps(plan)]
+```
+
+A process name keeps the whole process and a step name keeps that step; the
+result is the plan `runner.run(..., include=...)` executes, in the same order,
+and unknown names raise the same `InvalidStageError`.
+
+A compiled plan nests processes, steps and parallel groups. Three iterators
+flatten it in execution order, members of a parallel group in declaration
+order:
+
+| Function | Yields |
+|---|---|
+| `iter_processes(plan)` | every `ProcessPlan` of a `PipelinePlan` |
+| `iter_steps_in_process(process_plan)` | every `StepPlan` of a `ProcessPlan` |
+| `iter_all_steps(plan)` | every `StepPlan` of a `PipelinePlan` |
 
 ## Spark runtime
 

@@ -1001,7 +1001,7 @@ and the parameters it copies from them:
 
 ```yaml
 trigger:
-  after: respondio_messages_daily
+  after: orders_ingest_daily
   inherit_params: [updated_at_from, updated_at_to]
 ```
 
@@ -1034,6 +1034,45 @@ an optional field is refused because a null would arrive as the text `"None"`.
 The block is decoded strictly: `after` and `inherit_params` are its only keys,
 `after` must name a deployment, without surrounding spaces in either part, and
 each inherited name must be a field of the flow's params type.
+
+The block decodes into `FlowTrigger` (`from loom.prefect import FlowTrigger`,
+also in `loom.prefect.flow`). Building the flow runs
+`loom.prefect.flow.check_inherited_params` on it; a CI check can run the same
+validation on a YAML file without building the flow:
+
+```python
+from datetime import date
+
+import msgspec
+import yaml
+
+from loom.prefect.flow import check_inherited_params, flow_settings_from_mapping
+
+
+class MyParams(msgspec.Struct):
+    run_date: date
+    updated_at_from: str
+    updated_at_to: str
+
+
+settings = flow_settings_from_mapping(
+    yaml.safe_load(
+        """
+        trigger:
+          after: orders_ingest_daily
+          inherit_params: [updated_at_from, updated_at_to]
+        """
+    )
+)
+check_inherited_params(settings.trigger, MyParams, name="orders_report")
+```
+
+In CI, load the flow's YAML file instead of the inline document and pass the
+flow's own params type.
+
+It raises `ValueError` for a name that is not a field of the params type, or
+whose field is not declared exactly `str`, `date` or `datetime`, and does
+nothing when the trigger is `None`.
 
 ### Validation before any deployment
 

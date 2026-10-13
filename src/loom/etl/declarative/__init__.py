@@ -32,6 +32,7 @@ from .source import (
 )
 from .target import (
     DeletePolicy,
+    EmptyReplaceError,
     HistorifyDateCollisionError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
@@ -91,4 +92,6 @@ __all__ = [
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
     "HistorifyTemporalConflictError",
+    # write errors
+    "EmptyReplaceError",
 ]

@@ -5,8 +5,8 @@ from __future__ import annotations
 import functools
 import json
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
@@ -23,6 +23,7 @@ from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceS
 from loom.etl.declarative.source._specs import (
     ClickHouseSourceSpec,
     DynamoDbSourceSpec,
+    JsonColumnSpec,
     MongoSourceSpec,
 )
 from loom.etl.runtime.contracts import SourceReader
@@ -42,6 +43,8 @@ from ._dtype import loom_type_to_polars
 from ._predicate import predicate_to_polars
 
 _log = logging.getLogger(__name__)
+
+_FrameT = TypeVar("_FrameT", pl.DataFrame, pl.LazyFrame)
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +125,49 @@ def _normalize_json_string(json_str: str | None, *, loom_type: LoomType) -> str 
     if result is parsed:
         return json_str  # no structural change — skip re-serialization
     return json.dumps(result, ensure_ascii=False)
+
+
+def decode_json_columns(frame: _FrameT, json_columns: Iterable[JsonColumnSpec]) -> _FrameT:
+    """Decode JSON string columns the way :class:`PolarsSourceReader` does at read time.
+
+    Each column named in *json_columns* holds JSON text and is replaced by the
+    value decoded into its declared :class:`~loom.etl.schema.LoomType`. Rows
+    are first normalised to that type, so a field that is a string in some rows
+    and an object in others decodes instead of raising
+    :exc:`polars.exceptions.ComputeError`. A null or unparseable value decodes
+    to null. Other columns pass through unchanged.
+
+    Use it to reproduce in a test what a step receives from a source declared
+    with ``parse_json``.
+
+    Args:
+        frame: Eager or lazy frame holding the JSON text columns.
+        json_columns: Column declarations, e.g. ``FromTable(...).json_columns``
+            or ``FromFile(...).json_columns``.
+
+    Returns:
+        A frame of the same kind as *frame*, or *frame* itself when
+        *json_columns* is empty.
+
+    Example::
+
+        from loom.etl.backends.polars import decode_json_columns
+
+        events = FromTable("raw.events").parse_json("payload", Payload)
+        decoded = decode_json_columns(raw_frame, events.json_columns)
+    """
+    exprs = [
+        pl.col(jc.column)
+        .map_elements(
+            functools.partial(_normalize_json_string, loom_type=jc.loom_type),
+            return_dtype=pl.String,
+        )
+        .str.json_decode(loom_type_to_polars(jc.loom_type))
+        for jc in json_columns
+    ]
+    if not exprs:
+        return frame
+    return frame.with_columns(exprs)
 
 
 class PolarsSourceReader(SourceReader):
@@ -351,21 +397,10 @@ class PolarsSourceReader(SourceReader):
         Applies a per-row normalization pass before ``json_decode`` so that
         polymorphic fields (e.g. ``String`` in some rows, ``Object`` in others)
         are coerced to the declared :class:`~loom.etl.schema.LoomType` without
-        raising :exc:`polars.exceptions.ComputeError`.
+        raising :exc:`polars.exceptions.ComputeError`. See
+        :func:`decode_json_columns`.
         """
-        if not json_columns:
-            return frame
-
-        exprs = [
-            pl.col(jc.column)
-            .map_elements(
-                functools.partial(_normalize_json_string, loom_type=jc.loom_type),
-                return_dtype=pl.String,
-            )
-            .str.json_decode(loom_type_to_polars(jc.loom_type))
-            for jc in json_columns
-        ]
-        return frame.with_columns(exprs)
+        return decode_json_columns(frame, json_columns)
 
 
 def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
@@ -374,8 +409,8 @@ def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) 
 
 
 def _apply_json_decode(frame: pl.LazyFrame, json_columns: tuple[Any, ...]) -> pl.LazyFrame:
-    """Compatibility helper used by tests."""
-    return PolarsSourceReader._apply_json_decode(frame, json_columns)
+    """Compatibility alias of :func:`decode_json_columns`."""
+    return decode_json_columns(frame, json_columns)
 
 
 def execute_sql(frames: dict[str, pl.LazyFrame], query: str) -> pl.LazyFrame:
@@ -386,4 +421,10 @@ def execute_sql(frames: dict[str, pl.LazyFrame], query: str) -> pl.LazyFrame:
     return ctx.execute(query, eager=False)
 
 
-__all__ = ["PolarsSourceReader", "execute_sql", "_apply_source_schema", "_apply_json_decode"]
+__all__ = [
+    "PolarsSourceReader",
+    "decode_json_columns",
+    "execute_sql",
+    "_apply_source_schema",
+    "_apply_json_decode",
+]

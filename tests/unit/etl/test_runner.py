@@ -13,7 +13,7 @@ import pytest
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.etl.compiler import ETLCompiler
+from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -22,7 +22,6 @@ from loom.etl.compiler._plan import (
     StepPlan,
 )
 from loom.etl.runner import ETLRunner, InvalidStageError
-from loom.etl.runner.filtering import _filter_plan
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TempConfig
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 from tests.helpers.version_limited_extras import require_pyspark
@@ -120,7 +119,7 @@ class TestFilterPlan:
         expected_process: type[ETLProcess[P]],
         expected_steps: tuple[str, ...],
     ) -> None:
-        filtered = _filter_plan(_compile(PipelineAll), include)
+        filtered = filter_plan(_compile(PipelineAll), include)
         assert len(filtered.nodes) == 1
         proc = filtered.nodes[0]
         assert isinstance(proc, ProcessPlan)
@@ -147,7 +146,7 @@ class TestFilterPlan:
         expected_len: int,
         first_step: str | None,
     ) -> None:
-        filtered = _filter_plan(_compile(pipeline_type), include)
+        filtered = filter_plan(_compile(pipeline_type), include)
         top_node = filtered.nodes[0]
 
         if pipeline_type is PipelineParallelSteps:
@@ -173,7 +172,47 @@ class TestFilterPlan:
         plan = _compile(PipelineAll)
         stages = frozenset({"NonExistent"})
         with pytest.raises(InvalidStageError):
-            _filter_plan(plan, stages)
+            filter_plan(plan, stages)
+
+    def test_filter_reports_every_unknown_name_in_sorted_order(self) -> None:
+        plan = _compile(PipelineAll)
+        with pytest.raises(InvalidStageError) as exc_info:
+            filter_plan(plan, ["StepA", "Phantom", "Ghost"])
+        assert "include=['Ghost', 'Phantom']" in str(exc_info.value)
+
+    def test_filter_refuses_a_bare_string(self) -> None:
+        with pytest.raises(TypeError, match=r"not the string 'StepA'.*include=\{'StepA'\}"):
+            filter_plan(_compile(PipelineAll), "StepA")
+
+    def test_filter_accepts_any_iterable_of_names(self) -> None:
+        plan = _compile(PipelineAll)
+        filtered = filter_plan(plan, (name for name in ["StepB", "StepC"]))
+        assert [step.step_type.__name__ for step in iter_all_steps(filtered)] == [
+            "StepB",
+            "StepC",
+        ]
+
+    def test_filter_returns_a_new_plan_and_leaves_the_input_untouched(self) -> None:
+        plan = _compile(PipelineAll)
+        filtered = filter_plan(plan, {"StepC"})
+        assert filtered is not plan
+        assert filtered.pipeline_type is plan.pipeline_type
+        assert filtered.params_type is plan.params_type
+        assert [step.step_type.__name__ for step in iter_all_steps(plan)] == [
+            "StepA",
+            "StepB",
+            "StepC",
+        ]
+
+    def test_filter_with_an_empty_include_keeps_nothing(self) -> None:
+        assert filter_plan(_compile(PipelineAll), ()).nodes == ()
+
+    def test_the_deprecated_runner_filter_still_filters(self) -> None:
+        from loom.etl.runner import filtering
+
+        with pytest.warns(DeprecationWarning, match="filter_plan"):
+            filtered = filtering._filter_plan(_compile(PipelineAll), frozenset({"StepB"}))
+        assert [step.step_type.__name__ for step in iter_all_steps(filtered)] == ["StepB"]
 
 
 class TestRunnerRun:

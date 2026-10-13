@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,6 +57,11 @@ def test_definition_modules_support_reload_contracts() -> None:
         ("loom.etl.checkpoint", "CheckpointStore"),
         ("loom.etl.testing", "PolarsStepRunner"),
         ("loom.etl.compiler", "validate_plan_catalog"),
+        ("loom.etl.compiler", "filter_plan"),
+        ("loom.etl.compiler", "InvalidStageError"),
+        ("loom.etl.compiler", "iter_processes"),
+        ("loom.etl.compiler", "iter_steps_in_process"),
+        ("loom.etl.compiler", "iter_all_steps"),
         ("loom.etl.lineage", "LineageConfig"),
         ("loom.etl.lineage.sinks", "TableLineageStore"),
     ],
@@ -154,6 +160,41 @@ def test_reload_sql_and_compiler_definition_modules_with_basic_usage() -> None:
     rendered = predicate_dialect.fold_predicate(node, object(), _Dialect())
     assert rendered == "lit:1=lit:1"
     assert callable(predicate_utils.predicate_to_sql)
+
+
+def test_invalid_stage_error_is_one_class_across_its_import_paths() -> None:
+    import loom.etl
+    import loom.etl.compiler
+    import loom.etl.runner
+    import loom.etl.runner.errors
+
+    assert loom.etl.runner.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert loom.etl.runner.errors.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert loom.etl.InvalidStageError is loom.etl.compiler.InvalidStageError
+
+
+@pytest.mark.parametrize(
+    ("name", "replacement"),
+    [
+        ("_filter_plan", "loom.etl.compiler.filter_plan"),
+        ("_filter_process", "loom.etl.compiler.filter_plan"),
+        ("_collect_all_names", "loom.etl.compiler.iter_processes"),
+        ("_map_pipeline_nodes", "loom.etl.compiler.filter_plan"),
+        ("_map_process_nodes", "loom.etl.compiler.filter_plan"),
+    ],
+)
+def test_runner_filtering_names_warn_with_their_replacement(name: str, replacement: str) -> None:
+    import loom.etl.runner.filtering
+
+    with pytest.warns(DeprecationWarning, match=rf"{name} .*loom 3\.0.*{re.escape(replacement)}"):
+        assert callable(getattr(loom.etl.runner.filtering, name))
+
+
+def test_runner_filtering_rejects_unknown_names() -> None:
+    import loom.etl.runner.filtering
+
+    with pytest.raises(AttributeError, match="filter_plan"):
+        _ = loom.etl.runner.filtering.filter_plan
 
 
 def test_runner_error_message_includes_requested_include_set() -> None:

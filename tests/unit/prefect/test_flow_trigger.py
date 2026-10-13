@@ -246,3 +246,31 @@ def test_a_trigger_coexists_with_a_schedule(tmp_path: Path) -> None:
     kwargs = _deploy_kwargs(_flow(tmp_path, extra))
     assert len(kwargs["schedules"]) == 1
     assert len(kwargs["triggers"]) == 1
+
+
+def test_check_inherited_params_accepts_text_date_and_datetime_fields() -> None:
+    from loom.prefect.flow import check_inherited_params
+
+    trigger = FlowTrigger(after="upstream", inherit_params=("updated_at_from", "run_day", "source"))
+    check_inherited_params(trigger, _Params, name="downstream")
+    check_inherited_params(None, _Params, name="downstream")
+
+
+@pytest.mark.parametrize(
+    ("param", "match"),
+    [
+        ("run_date", "'run_date', not a field of _Params"),
+        ("batch", "'batch'.*only str, date and datetime"),
+        ("until", "'until'.*only str, date and datetime"),
+    ],
+)
+def test_check_inherited_params_refuses_what_the_trigger_cannot_carry(
+    param: str, match: str
+) -> None:
+    from loom.prefect.flow import check_inherited_params
+
+    trigger = FlowTrigger(after="upstream", inherit_params=(param,))
+    with pytest.raises(
+        ValueError, match=rf"flow 'downstream': trigger.inherit_params names {match}"
+    ):
+        check_inherited_params(trigger, _Params, name="downstream")

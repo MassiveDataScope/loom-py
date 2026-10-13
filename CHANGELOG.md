@@ -225,6 +225,11 @@
   downstream run inherits the placeholder text and resolves it against its own
   creation time. Without `trigger` the deployment is registered exactly as
   before.
+- **prefect:** `FlowTrigger`, the decoded `trigger` block, is exported from
+  `loom.prefect` and `loom.prefect.flow`, and `check_inherited_params(trigger,
+  params_type, *, name)` from `loom.prefect.flow`, so CI can check that every
+  inherited parameter is a field declared `str`, `date` or `datetime` without
+  building the flow.
 
 ### etl
 
@@ -278,6 +283,36 @@
   `MISSING_CONFIG_PARAMS`, `CONFIG_ALIAS_CONFLICT` and
   `UNSUPPORTED_CONFIG_VALUE`. `ETLRunner`, `ETLRunner.from_config`,
   `ETLCompiler` and `ETLExecutor` take `agents=`. Polars only.
+- **etl:** `loom.etl.compiler.filter_plan(plan, include)` returns the plan
+  `ETLRunner.run(..., include=...)` executes: a process name keeps the whole
+  process, a step name keeps that step, and a name that is neither raises
+  `InvalidStageError`, listing the unknown names sorted, so a deployment's
+  selection can be checked without running it. A bare string as `include`
+  raises `TypeError`. The runner now filters through it. `InvalidStageError`
+  is exported from `loom.etl.compiler` as well; it is the same class as
+  `loom.etl.runner.InvalidStageError` and `loom.etl.InvalidStageError`.
+- **etl:** `iter_processes`, `iter_steps_in_process` and `iter_all_steps` are
+  exported from `loom.etl.compiler`. They flatten a compiled plan in
+  execution order, parallel groups in declaration order, so code that walks
+  a plan no longer reimplements them over the private `_plan` module.
+- **etl:** `loom.etl.backends.polars.decode_json_columns(frame, json_columns)`
+  decodes JSON text columns exactly as the Polars reader does for a source
+  declared with `parse_json`, normalising fields whose JSON type changes
+  between rows, and returns a frame of the same kind, eager or lazy. The
+  reader decodes through it. `FromTable.json_columns` and
+  `FromFile.json_columns` expose the declarations it takes, so a test can
+  decode a seed as the step would receive it. Spark keeps its `from_json`
+  decoding, which has no normalisation to share.
+- **etl:** `IntoTable(...).replace(allow_empty=False)` refuses to wipe a table
+  with an empty frame: the writer raises `EmptyReplaceError` (a `ValueError`,
+  exported from `loom.etl`, carrying `table_ref`) before it creates or writes
+  anything, so a dimension rebuilt from a read that came back empty keeps its
+  rows and the step fails. Polars checks the row count of the frame the
+  replace already collects, at no extra cost; Spark runs `isEmpty()`, one
+  job that stops at the first row, before the write recomputes the frame. On
+  Polars a `Null`-typed column still fails first, with `SchemaError`.
+  The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
+  gains the `allow_empty` field.
 
 ## ⚠ Behaviour changes
 
@@ -367,6 +402,14 @@
   placeholders it started with and repeats the call with the same values,
   which is harmless. The update is one attempt with a 10-second timeout; if
   it fails, the flow logs it at `ERROR` in the run's logs and goes on.
+
+### etl
+
+- **etl:** the names of `loom.etl.runner.filtering` (`_filter_plan`,
+  `_filter_process`, `_collect_all_names`, `_map_pipeline_nodes`,
+  `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
+  `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
+  or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
 
 ## 🐛 Fixes
 

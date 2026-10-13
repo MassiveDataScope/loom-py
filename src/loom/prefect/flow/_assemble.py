@@ -132,7 +132,7 @@ def assemble_flow(
         ValueError: When the trigger inherits a parameter *params_type* does
             not declare.
     """
-    check_inherited_params(name, settings.trigger, params_type)
+    check_inherited_params(settings.trigger, params_type, name=name)
     safe_name = flow_attribute_name(name)
     flow_body: Any = body
     flow_body.__signature__ = signature
@@ -168,7 +168,7 @@ def assemble_flow(
 
 
 def check_inherited_params(
-    name: str, trigger: FlowTrigger | None, params_type: type[msgspec.Struct]
+    trigger: FlowTrigger | None, params_type: type[msgspec.Struct], *, name: str
 ) -> None:
     """Refuse a trigger inheriting a parameter it cannot carry.
 
@@ -177,6 +177,14 @@ def check_inherited_params(
     the upstream run held. An optional field is refused as well: a null
     upstream value renders as the text ``"None"``, which a date field
     rejects and a text field takes silently.
+
+    Every flow factory runs this check when it builds the flow; calling it
+    directly validates a trigger without building one, e.g. in CI.
+
+    Args:
+        trigger: The flow's trigger, or ``None``, which passes.
+        params_type: Struct the flow's parameters decode into.
+        name: Flow name, quoted in the error message.
 
     Raises:
         ValueError: When an entry of ``trigger.inherit_params`` is not a field

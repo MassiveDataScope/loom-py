@@ -130,6 +130,7 @@ _DUPLICATED_REEXPORTS = {
     ("loom.core.errors", "RuleViolations"),
     ("loom.core.use_case", "RuleViolation"),
     ("loom.core.use_case", "RuleViolations"),
+    ("loom.etl.compiler", "InvalidStageError"),
     ("loom.etl.lineage", "ETLObservabilityConfig"),
     ("loom.testing", "CompilationError"),
     ("loom.rest.model", "PaginationMode"),

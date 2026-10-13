@@ -151,6 +151,26 @@ class TestIntoTableModes:
         assert isinstance(spec, ReplaceSpec)
         assert spec.schema_mode is schema
 
+    def test_replace_allows_an_empty_frame_by_default(self) -> None:
+        assert IntoTable("staging.orders").replace()._to_spec().allow_empty is True
+        assert IntoTable("staging.orders")._to_spec().allow_empty is True
+
+    def test_replace_propagates_allow_empty(self) -> None:
+        spec = IntoTable("staging.orders").replace(allow_empty=False)._to_spec()
+        assert isinstance(spec, ReplaceSpec)
+        assert spec.allow_empty is False
+
+    @pytest.mark.parametrize(
+        "declare",
+        [
+            lambda: IntoTable("staging.orders").append(allow_empty=False),  # type: ignore[call-arg]
+            lambda: IntoTable("staging.orders").upsert(keys=("id",), allow_empty=False),  # type: ignore[call-arg]
+        ],
+    )
+    def test_allow_empty_is_only_a_replace_option(self, declare: Callable[[], Any]) -> None:
+        with pytest.raises(TypeError, match="allow_empty"):
+            declare()
+
     @pytest.mark.parametrize("schema", [SchemaMode.STRICT, SchemaMode.EVOLVE, SchemaMode.OVERWRITE])
     def test_replace_partition_propagates_schema_mode(self, schema: SchemaMode) -> None:
         spec = (
