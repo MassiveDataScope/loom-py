@@ -143,6 +143,10 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         _ = streaming
         return frame
 
+    def _is_empty(self, frame: DataFrame) -> bool:
+        """Run one job that stops at the first row; the write recomputes the frame."""
+        return frame.isEmpty()
+
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""
         return predicate_to_sql(predicate, params)

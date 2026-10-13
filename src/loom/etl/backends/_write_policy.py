@@ -15,6 +15,7 @@ from loom.core.logger import get_logger
 from loom.etl.declarative.target import (
     AppendSpec,
     ClientSpec,
+    EmptyReplaceError,
     FileSpec,
     ReplacePartitionsSpec,
     ReplaceSpec,
@@ -188,6 +189,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         streaming: bool,
         create_partition_cols: tuple[str, ...] = (),
         require_physical_partitions: tuple[str, ...] | None = None,
+        allow_empty: bool = True,
     ) -> _PreparedWrite[WriteFrameT, PhysicalSchemaT] | None:
         """Run the shared policy up to the point where the write mode differs.
 
@@ -207,6 +209,10 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             require_physical_partitions: Partition columns the existing table
                                          must physically carry, or ``None`` to
                                          skip that check.
+            allow_empty:                 When ``False``, raise
+                                         :class:`EmptyReplaceError` for a
+                                         frame with no rows, before the table
+                                         is created or written.
 
         Returns:
             The prepared write when the table already exists and the caller
@@ -220,7 +226,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 schema_mode=schema_mode,
                 missing_table_policy=self._missing_table_policy,
             )
-            materialized = self._materialize_checked(frame, target, streaming)
+            materialized = self._materialize_checked(
+                frame, target, streaming, allow_empty=allow_empty
+            )
             self._create(
                 materialized,
                 target,
@@ -232,7 +240,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             self._require_physical_partitions(target, require_physical_partitions)
         aligned = self._align(frame, existing, schema_mode)
         return _PreparedWrite(
-            frame=self._materialize_checked(aligned, target, streaming),
+            frame=self._materialize_checked(aligned, target, streaming, allow_empty=allow_empty),
             existing_schema=existing,
         )
 
@@ -260,7 +268,11 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
     ) -> None:
         """Replace policy: check exists → create OR align → write."""
         prepared = self._prepare_write(
-            frame, target, schema_mode=spec.schema_mode, streaming=streaming
+            frame,
+            target,
+            schema_mode=spec.schema_mode,
+            streaming=streaming,
+            allow_empty=spec.allow_empty,
         )
         if prepared is None:
             return
@@ -507,14 +519,36 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         _ = frame
         return None
 
+    def _is_empty(self, frame: WriteFrameT) -> bool:
+        """Whether the materialised *frame* has no rows.
+
+        The default reads :meth:`_row_count_if_cheap`; a backend that cannot
+        count without a scan overrides it with its cheapest emptiness check.
+        """
+        count = self._row_count_if_cheap(frame)
+        if count is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} cannot count rows cheaply and must override _is_empty"
+            )
+        return count == 0
+
     def _materialize_checked(
         self,
         frame: InputFrameT,
         target: ResolvedTarget,
         streaming: bool,
+        *,
+        allow_empty: bool = True,
     ) -> WriteFrameT:
-        """Materialise *frame*, warning when the write carries no rows."""
+        """Materialise *frame*, warning when the write carries no rows.
+
+        Raises:
+            EmptyReplaceError: When *allow_empty* is ``False`` and the
+                materialised frame has no rows.
+        """
         materialized = self._materialize_for_write(frame, streaming)
+        if not allow_empty and self._is_empty(materialized):
+            raise EmptyReplaceError(target.logical_ref.ref)
         if self._row_count_if_cheap(materialized) == 0:
             _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
         return materialized

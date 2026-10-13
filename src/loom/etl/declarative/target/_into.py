@@ -108,6 +108,7 @@ class IntoTable:
         *,
         schema: SchemaMode = SchemaMode.STRICT,
         streaming: bool = False,
+        allow_empty: bool = True,
     ) -> IntoTable:
         """Write mode: full replace of the target table.
 
@@ -115,16 +116,33 @@ class IntoTable:
         partition-scoped overwrite or :meth:`replace_where` for predicate-scoped.
 
         Args:
-            schema:    Schema evolution strategy.  Use
-                       :attr:`~SchemaMode.OVERWRITE` to replace the table schema
-                       entirely alongside the data.
-            streaming: When ``True`` the Polars backend writes via an Arrow
-                       ``RecordBatchReader`` instead of materialising.
+            schema:      Schema evolution strategy.  Use
+                         :attr:`~SchemaMode.OVERWRITE` to replace the table
+                         schema entirely alongside the data.
+            streaming:   When ``True`` the Polars backend writes via an Arrow
+                         ``RecordBatchReader`` instead of materialising.
+            allow_empty: When ``False``, a frame with no rows raises
+                         :class:`~loom.etl.EmptyReplaceError` and the table
+                         is neither replaced nor created.  Use it for a
+                         table, such as a dimension, that an empty read must
+                         never wipe.  Defaults to ``True``: an empty frame
+                         replaces the table with an empty one.
 
         Returns:
             New ``IntoTable`` with REPLACE mode.
+
+        Example::
+
+            target = IntoTable("silver.dim_dealer").replace(allow_empty=False)
         """
-        return self._with(ReplaceSpec(table_ref=self._ref, schema_mode=schema, streaming=streaming))
+        return self._with(
+            ReplaceSpec(
+                table_ref=self._ref,
+                schema_mode=schema,
+                streaming=streaming,
+                allow_empty=allow_empty,
+            )
+        )
 
     def replace_partitions(
         self,

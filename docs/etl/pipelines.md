@@ -303,6 +303,27 @@ target = IntoTable("staging.orders").replace()
 target = IntoTable("staging.orders").replace(schema=SchemaMode.OVERWRITE)
 ```
 
+An empty frame replaces the table with an empty one, and loom logs a
+`write_produced_no_rows` warning. For a table that an empty read must never
+wipe, such as a dimension rebuilt from a source that can come back empty,
+declare `allow_empty=False`:
+
+```python
+target = IntoTable("silver.dim_dealer").replace(allow_empty=False)
+```
+
+The writer then raises `EmptyReplaceError` (a `ValueError`, from `loom.etl`)
+when the frame has no rows, before it creates or writes anything, and the
+step fails with the table as it was. Only `replace()` takes the option; any
+other write mode refuses it with a `TypeError` when the step is declared.
+
+The check reads the frame the write already has to produce. On Polars the
+lazy frame is collected once, as for any replace, and the check is the row
+count of that result: no second collect. On Spark it is `DataFrame.isEmpty()`,
+one job that stops at the first row; the write then computes the frame again,
+so an expensive upstream plan is evaluated partly twice unless the step caches
+it.
+
 ### replace\_partitions
 
 Replaces only the partitions **present in the batch**. The writer collects

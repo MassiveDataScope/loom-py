@@ -91,3 +91,14 @@ class TestBackendsThatCannotCountCheaply:
         from loom.etl.backends._write_policy import _WritePolicy
 
         assert _WritePolicy._row_count_if_cheap(object(), object()) is None  # type: ignore[arg-type]
+
+    def test_the_default_emptiness_check_refuses_to_guess(self) -> None:
+        """A backend that cannot count cheaply must say how it checks emptiness."""
+        from loom.etl.backends._write_policy import _WritePolicy
+
+        class _Blind:
+            def _row_count_if_cheap(self, frame: object) -> None:
+                return None
+
+        with pytest.raises(NotImplementedError, match="_Blind"):
+            _WritePolicy._is_empty(_Blind(), object())  # type: ignore[arg-type]

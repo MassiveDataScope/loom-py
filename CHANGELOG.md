@@ -302,6 +302,15 @@
   `FromFile.json_columns` expose the declarations it takes, so a test can
   decode a seed as the step would receive it. Spark keeps its `from_json`
   decoding, which has no normalisation to share.
+- **etl:** `IntoTable(...).replace(allow_empty=False)` refuses to wipe a table
+  with an empty frame: the writer raises `EmptyReplaceError` (a `ValueError`,
+  exported from `loom.etl`, carrying `table_ref`) before it creates or writes
+  anything, so a dimension rebuilt from a read that came back empty keeps its
+  rows and the step fails. Polars checks the row count of the frame the
+  replace already collects, at no extra cost; Spark runs `isEmpty()`, one
+  job that stops at the first row, before the write recomputes the frame.
+  The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
+  gains the `allow_empty` field.
 
 ## ⚠ Behaviour changes
 

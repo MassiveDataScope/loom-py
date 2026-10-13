@@ -47,11 +47,15 @@ class ReplaceSpec:
                      only for :class:`ReplacePartitionsSpec`; other modes
                      accept the flag for forward-compatibility but still
                      materialise the frame.
+        allow_empty: When ``False`` the writer raises
+                     :class:`~loom.etl.EmptyReplaceError` instead of
+                     writing a frame with no rows.
     """
 
     table_ref: TableRef
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
+    allow_empty: bool = True
 
 
 @dataclass(frozen=True)
