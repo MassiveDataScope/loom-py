@@ -435,6 +435,12 @@
   `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
   `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
   or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
+- **etl:** `InvalidStageError` names what it reports: its message reads
+  `Unknown step or process names: [...]` instead of `No steps or processes
+  match include=[...]`, the constructor's parameter is `unknown`, and the
+  names are kept on the new `unknown` attribute. Positional construction is
+  unchanged; `InvalidStageError(include=...)` still works, emits a
+  `DeprecationWarning` and is removed in loom 3.0.
 
 ## 🐛 Fixes
 

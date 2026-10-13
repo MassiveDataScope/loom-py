@@ -6,6 +6,7 @@ from :mod:`loom.etl.compiler`.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Iterable
 
 from loom.etl.compiler._plan import (
@@ -22,17 +23,48 @@ from loom.etl.compiler._plan import (
 
 
 class InvalidStageError(ValueError):
-    """Raised when *include* names a step or process absent from the compiled plan.
+    """Raised when a selection names a step or process absent from the compiled plan.
 
     Args:
-        include: The names that match no step or process.
+        unknown: The selected names that match no step or process.
+        include: Deprecated keyword spelling of *unknown*, removed in loom 3.0.
+
+    Attributes:
+        unknown: The selected names that match no step or process.
+
+    Raises:
+        TypeError: When both or neither of *unknown* and *include* are given.
     """
 
-    def __init__(self, include: frozenset[str]) -> None:
+    def __init__(
+        self,
+        unknown: frozenset[str] | None = None,
+        *,
+        include: frozenset[str] | None = None,
+    ) -> None:
+        self.unknown = _unknown_names(unknown, include)
         super().__init__(
-            f"No steps or processes match include={sorted(include)!r}. "
+            f"Unknown step or process names: {sorted(self.unknown)!r}. "
             "Check that the names match the class names of your ETLStep or ETLProcess subclasses."
         )
+
+
+def _unknown_names(
+    unknown: frozenset[str] | None, include: frozenset[str] | None
+) -> frozenset[str]:
+    if include is None:
+        if unknown is None:
+            raise TypeError("InvalidStageError() requires the unknown names.")
+        return frozenset(unknown)
+    if unknown is not None:
+        raise TypeError("InvalidStageError() takes unknown= or the deprecated include=, not both.")
+    warnings.warn(
+        "InvalidStageError(include=...) is deprecated and will be removed in loom 3.0; "
+        "use InvalidStageError(unknown=...) instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return frozenset(include)
 
 
 def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
