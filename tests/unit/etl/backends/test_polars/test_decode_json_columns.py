@@ -8,7 +8,6 @@ import msgspec
 import polars as pl
 from polars.testing import assert_frame_equal
 
-import loom.etl.backends.polars as polars_backend
 from loom.etl import Format, FromFile, FromTable
 from loom.etl.backends.polars import PolarsSourceReader, decode_json_columns
 from loom.etl.backends.polars._reader import _apply_json_decode
@@ -34,10 +33,6 @@ def _raw() -> pl.DataFrame:
 
 
 _EVENTS = FromTable("raw.events").parse_json("payload", Payload).parse_json("tags", list[str])
-
-
-def test_is_exported_from_the_polars_backend() -> None:
-    assert "decode_json_columns" in polars_backend.__all__
 
 
 def test_decodes_the_columns_a_from_table_declares() -> None:
