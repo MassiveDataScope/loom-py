@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import os
 import pkgutil
 import sys
@@ -16,6 +15,8 @@ from typing import Any
 
 from prefect import Flow
 from prefect.events import DeploymentEventTrigger
+from prefect.exceptions import ScriptError
+from prefect.utilities.importtools import load_script_as_module
 
 from loom.prefect._meta import LOOM_ETL_CONFIG, LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
 from loom.prefect.deploy import entrypoint
@@ -102,8 +103,8 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
     Raises:
         TypeError: When ``flow`` was not built by a loom flow factory.
         ValueError: When neither ``work_pool`` nor the YAML names a work pool
-            for ``env``, or when ``source_file`` does not expose the flow
-            under its attribute name.
+            for ``env``, when ``source_file`` cannot be imported, or when it
+            does not expose the flow under its attribute name.
 
     Example::
 
@@ -126,8 +127,8 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
 def _check_exposed(meta: ETLFlowMeta) -> None:
     """Refuse a flow the worker cannot import from ``meta.source_file``."""
     attribute = flow_attribute_name(meta.name)
-    with _source_module(meta.source_file, attribute) as module:
-        exposed_meta = getattr(getattr(module, attribute, None), LOOM_ETL_META_ATTR, None)
+    module = _source_module(meta.source_file)
+    exposed_meta = getattr(getattr(module, attribute, None), LOOM_ETL_META_ATTR, None)
     if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
         raise ValueError(
             f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
@@ -135,25 +136,27 @@ def _check_exposed(meta: ETLFlowMeta) -> None:
         )
 
 
-@contextmanager
-def _source_module(source_file: str, attribute: str) -> Iterator[ModuleType]:
-    """Yield the module loaded from ``source_file``, importing it when absent."""
-    for module in list(sys.modules.values()):
+def _source_module(source_file: str) -> ModuleType:
+    """Return the module loaded from ``source_file``, importing it as the worker does."""
+    loaded = _loaded_module_name(source_file)
+    if loaded is not None:
+        return sys.modules[loaded]
+    try:
+        return load_script_as_module(source_file)
+    except ScriptError as exc:
+        failed = _loaded_module_name(source_file)
+        if failed is not None:
+            del sys.modules[failed]
+        raise ValueError(f"{source_file} is not an importable Python file: {exc}") from exc
+
+
+def _loaded_module_name(source_file: str) -> str | None:
+    """Return the ``sys.modules`` key of the module loaded from ``source_file``."""
+    for name, module in list(sys.modules.items()):
         module_file = getattr(module, "__file__", None)
         if module_file is not None and os.path.realpath(module_file) == source_file:
-            yield module
-            return
-    name = f"_loom_deploy_check_{attribute}"
-    spec = importlib.util.spec_from_file_location(name, source_file)
-    if spec is None or spec.loader is None or not Path(source_file).is_file():
-        raise ValueError(f"{source_file} is not an importable Python file.")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-        yield module
-    finally:
-        sys.modules.pop(name, None)
+            return name
+    return None
 
 
 def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:

@@ -180,8 +180,11 @@ def test_refuses_a_flow_its_module_exposes_under_another_attribute(
     from_source.assert_not_called()
 
 
-def test_refuses_a_flow_whose_source_file_does_not_exist(tmp_path: Path) -> None:
+def test_refuses_a_flow_whose_source_file_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     flow = _flow(tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(ValueError, match="is not an importable Python file"):
@@ -253,11 +256,47 @@ def test_deploys_a_flow_its_module_builds_on_demand(
         monkeypatch.delitem(sys.modules, "on_demand_flows")
     from_source, deploy = _stub_prefect(flow)
 
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
     deploy_flow(flow, env="prod")
 
     assert from_source.call_args.kwargs["entrypoint"] == "on_demand_flows.py:daily_orders"
     assert deploy.call_args.kwargs["name"] == "daily-orders"
-    assert "_loom_deploy_check_daily_orders" not in sys.modules
+
+
+def test_imports_a_flows_file_whose_top_level_imports_a_sibling_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    flow = _on_demand_flow(tmp_path, monkeypatch)
+    source = tmp_path / "on_demand_flows.py"
+    source.write_text(
+        f"import on_demand_sibling  # noqa: F401\n{_ON_DEMAND_MODULE}", encoding="utf-8"
+    )
+    (tmp_path / "on_demand_sibling.py").write_text("", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "on_demand_flows")
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if p != str(tmp_path)])
+    request.addfinalizer(lambda: sys.modules.pop("on_demand_sibling", None))
+    from_source, _ = _stub_prefect(flow)
+
+    deploy_flow(flow, env="prod")
+
+    assert from_source.call_args.kwargs["entrypoint"] == "on_demand_flows.py:daily_orders"
+
+
+def test_refuses_a_flows_file_whose_top_level_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = _on_demand_flow(tmp_path, monkeypatch)
+    (tmp_path / "on_demand_flows.py").write_text("import on_demand_missing\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "on_demand_flows")
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    from_source, _ = _stub_prefect(flow)
+
+    with pytest.raises(ValueError, match="on_demand_missing"):
+        deploy_flow(flow, env="prod")
+
+    from_source.assert_not_called()
+    assert "on_demand_flows" not in sys.modules
 
 
 def test_deploys_a_backfill_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
