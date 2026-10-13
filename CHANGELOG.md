@@ -401,6 +401,14 @@
   which is harmless. The update is one attempt with a 10-second timeout; if
   it fails, the flow logs it at `ERROR` in the run's logs and goes on.
 
+### etl
+
+- **etl:** the names of `loom.etl.runner.filtering` (`_filter_plan`,
+  `_filter_process`, `_collect_all_names`, `_map_pipeline_nodes`,
+  `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
+  `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
+  or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
+
 ## 🐛 Fixes
 
 ### core
