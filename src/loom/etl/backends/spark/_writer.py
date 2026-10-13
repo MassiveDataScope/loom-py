@@ -145,7 +145,7 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
 
     def _is_empty(self, frame: DataFrame) -> bool:
         """Whether *frame* has no rows; runs one Spark job that stops at the first row."""
-        return frame.isEmpty()
+        return bool(frame.isEmpty())
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""
