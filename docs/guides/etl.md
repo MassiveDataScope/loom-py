@@ -1273,3 +1273,6 @@ available in the companion repository:
 The ETL API reference is generated from public docstrings:
 
 - [ETL API reference](../reference/api/etl)
+- Schema types: `loom.etl.schema.annotation_to_loom_type(ann)` returns the `LoomType` a
+  contract field annotation declares, and `loom.etl.backends.polars` converts it with
+  `loom_type_to_polars` and back with `polars_to_loom_type`.
