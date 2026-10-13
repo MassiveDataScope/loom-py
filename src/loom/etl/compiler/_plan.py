@@ -163,6 +163,12 @@ def iter_processes(plan: PipelinePlan) -> Iterator[ProcessPlan]:
 
     Flattens top-level :class:`ParallelProcessGroup` nodes while preserving
     the declared order within each group.
+
+    Args:
+        plan: Compiled pipeline plan.
+
+    Yields:
+        Each :class:`ProcessPlan` of *plan*, once.
     """
     for node in plan.nodes:
         match node:
@@ -177,6 +183,12 @@ def iter_steps_in_process(plan: ProcessPlan) -> Iterator[StepPlan]:
 
     Flattens :class:`ParallelStepGroup` nodes while preserving the declared
     order within each group.
+
+    Args:
+        plan: Compiled process plan, e.g. one yielded by :func:`iter_processes`.
+
+    Yields:
+        Each :class:`StepPlan` of *plan*, once.
     """
     for node in plan.nodes:
         match node:
@@ -187,7 +199,18 @@ def iter_steps_in_process(plan: ProcessPlan) -> Iterator[StepPlan]:
 
 
 def iter_all_steps(plan: PipelinePlan) -> Iterator[StepPlan]:
-    """Yield every concrete step plan in a pipeline."""
+    """Yield every concrete step plan in a pipeline, in execution order.
+
+    Equivalent to :func:`iter_steps_in_process` over each process yielded by
+    :func:`iter_processes`.
+
+    Args:
+        plan: Compiled pipeline plan.
+
+    Yields:
+        Each :class:`StepPlan` of *plan*; a step class listed by two
+        processes is yielded once per process.
+    """
     for proc in iter_processes(plan):
         yield from iter_steps_in_process(proc)
 

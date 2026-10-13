@@ -285,6 +285,10 @@
   running it. The runner now filters through it. `InvalidStageError` is
   exported from `loom.etl.compiler` as well; it is the same class as
   `loom.etl.runner.InvalidStageError` and `loom.etl.InvalidStageError`.
+- **etl:** `iter_processes`, `iter_steps_in_process` and `iter_all_steps` are
+  exported from `loom.etl.compiler`. They flatten a compiled plan in
+  execution order, parallel groups in declaration order, so code that walks
+  a plan no longer reimplements them over the private `_plan` module.
 
 ## ⚠ Behaviour changes
 

@@ -5,9 +5,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from loom.etl.compiler import ETLCompiler
-from loom.etl.compiler._filter import _map_pipeline_nodes, _map_process_nodes
-from loom.etl.compiler._plan import (
+from loom.etl.compiler import (
+    ETLCompiler,
     ParallelProcessGroup,
     ParallelStepGroup,
     PipelinePlan,
@@ -16,9 +15,9 @@ from loom.etl.compiler._plan import (
     iter_all_steps,
     iter_processes,
     iter_steps_in_process,
-    visit_pipeline_nodes,
-    visit_process_nodes,
 )
+from loom.etl.compiler._filter import _map_pipeline_nodes, _map_process_nodes
+from loom.etl.compiler._plan import visit_pipeline_nodes, visit_process_nodes
 from loom.etl.declarative.source import FromTable
 from loom.etl.declarative.target import IntoTable
 from loom.etl.pipeline._params import ETLParams
@@ -205,3 +204,9 @@ def test_visit_process_nodes_uses_parallel_handler_when_provided() -> None:
     )
     assert visited == ["StepA"]
     assert groups == [("StepB", "StepC")]
+
+
+def test_iter_all_steps_is_iter_steps_in_process_over_iter_processes() -> None:
+    plan = ETLCompiler().compile(PipelineMixed)
+    nested = [step for proc in iter_processes(plan) for step in iter_steps_in_process(proc)]
+    assert list(iter_all_steps(plan)) == nested

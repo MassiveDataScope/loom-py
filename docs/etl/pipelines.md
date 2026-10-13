@@ -402,8 +402,7 @@ deployment's `include` still names real stages, apply the same filter to the
 compiled plan with `filter_plan`:
 
 ```python
-from loom.etl.compiler import ETLCompiler, filter_plan
-from loom.etl.compiler._plan import iter_all_steps
+from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
 
 plan = filter_plan(ETLCompiler().compile(DailyPipeline), ["DailyProcess", "CleanOrders"])
 steps = [step.step_type.__name__ for step in iter_all_steps(plan)]
@@ -412,6 +411,16 @@ steps = [step.step_type.__name__ for step in iter_all_steps(plan)]
 A process name keeps the whole process and a step name keeps that step; the
 result is the plan `runner.run(..., include=...)` executes, in the same order,
 and unknown names raise the same `InvalidStageError`.
+
+A compiled plan nests processes, steps and parallel groups. Three iterators
+flatten it in execution order, members of a parallel group in declaration
+order:
+
+| Function | Yields |
+|---|---|
+| `iter_processes(plan)` | every `ProcessPlan` of a `PipelinePlan` |
+| `iter_steps_in_process(process_plan)` | every `StepPlan` of a `ProcessPlan` |
+| `iter_all_steps(plan)` | every `StepPlan` of a `PipelinePlan` |
 
 ## Spark runtime
 

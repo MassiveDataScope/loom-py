@@ -14,6 +14,9 @@ from loom.etl.compiler._plan import (
     StepPlan,
     TargetBinding,
     flatten_step_names,
+    iter_all_steps,
+    iter_processes,
+    iter_steps_in_process,
 )
 from loom.etl.compiler._validators import (
     StepCompilationContext,
@@ -45,6 +48,9 @@ __all__ = [
     "StepCompilationContext",
     "filter_plan",
     "flatten_step_names",
+    "iter_all_steps",
+    "iter_processes",
+    "iter_steps_in_process",
     "validate_execute_signature",
     "validate_param_exprs",
     "validate_params_compat",

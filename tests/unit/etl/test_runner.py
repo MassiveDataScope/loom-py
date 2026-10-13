@@ -13,14 +13,13 @@ import pytest
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.etl.compiler import ETLCompiler, filter_plan
+from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
     ParallelStepGroup,
     PipelinePlan,
     ProcessPlan,
     StepPlan,
-    iter_all_steps,
 )
 from loom.etl.runner import ETLRunner, InvalidStageError
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TempConfig
