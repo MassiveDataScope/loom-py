@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from prefect import Flow
 from prefect.events import DeploymentEventTrigger
 
 from loom.prefect._meta import LOOM_ETL_CONFIG, LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
@@ -61,6 +62,52 @@ def discover_and_deploy_etls(
     if flows_package is not None:
         return _deploy_package(flows_package, work_pool, env)
     return [_deploy_declaration(d, work_pool, env) for d in read_declarations(str(config))]
+
+
+def deploy_flow(flow: Flow[..., Any], *, work_pool: str = "loom-fargate", env: str = "prod") -> str:
+    """Register the Prefect Deployment of one flow built by a loom flow factory.
+
+    Registers exactly what :func:`discover_and_deploy_etls` registers for the
+    same flow found in a ``flows_package``: the deployment takes the flow's
+    name, tags, default parameters, schedule and trigger, and the work-pool
+    settings of ``environments.<env>`` in its YAML. Use it when the flows
+    are not one module attribute per ETL, for instance built on demand by a
+    module ``__getattr__``, or to deploy a single ETL by name.
+
+    The deployment's entrypoint is ``<source_file>:<flow function>``, with
+    ``source_file`` taken relative to the ``working_dir`` job variable
+    (``/app/src`` by default), so the worker must be able to rebuild the
+    flow by importing that attribute from that file.
+
+    Args:
+        flow: A flow returned by :func:`~loom.prefect.etl_flow`,
+            :func:`~loom.prefect.backfill_flow` or
+            :func:`~loom.prefect.maintenance_flow`.
+        work_pool: Prefect work pool name, used when the YAML sets no
+            ``work_pool`` for ``env``.
+        env: Environment key used to pull ``job_variables`` from the flow's
+            YAML.
+
+    Returns:
+        The deployment id.
+
+    Raises:
+        TypeError: When ``flow`` was not built by a loom flow factory.
+
+    Example::
+
+        from loom.prefect import deploy_flow, etl_flow
+
+        daily_orders = etl_flow(name="daily-orders", ...)
+        deployment_id = deploy_flow(daily_orders, work_pool="loom-docker", env="dev")
+    """
+    meta = getattr(flow, LOOM_ETL_META_ATTR, None)
+    if not isinstance(meta, ETLFlowMeta):
+        raise TypeError(
+            f"deploy_flow() takes a flow built by etl_flow, backfill_flow or "
+            f"maintenance_flow; {flow!r} carries no loom ETL metadata."
+        )
+    return _deploy_single(flow, meta, work_pool, env)
 
 
 def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:
@@ -219,4 +266,4 @@ def _file_entrypoint(flow_obj: Any, meta: ETLFlowMeta, working_dir: str) -> str:
     return f"{relative.as_posix()}:{flow_obj.fn.__name__}"
 
 
-__all__ = ["discover_and_deploy_etls"]
+__all__ = ["deploy_flow", "discover_and_deploy_etls"]

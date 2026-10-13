@@ -230,6 +230,15 @@
   params_type, *, name)` from `loom.prefect.flow`, so CI can check that every
   inherited parameter is a field declared `str`, `date` or `datetime` without
   building the flow.
+- **prefect:** `deploy_flow(flow, *, work_pool="loom-fargate", env="prod")`,
+  exported from `loom.prefect` and `loom.prefect.deploy`, registers the
+  deployment of one flow built by `etl_flow`, `backfill_flow` or
+  `maintenance_flow`, with the same name, tags, parameters, schedule, trigger
+  and work-pool settings `discover_and_deploy_etls(flows_package=...)` gives
+  it, and returns its id. Flows built on demand, such as by a module
+  `__getattr__`, or a single ETL deployed by name no longer need the private
+  `_deploy_single` and metadata attribute. Any other object raises
+  `TypeError`.
 
 ### etl
 

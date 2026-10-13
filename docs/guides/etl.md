@@ -894,6 +894,30 @@ Globs follow the rules of [`includes`](#composing-files-with-includes): only
 regular `.yaml` / `.yml` files match, sorted by resolved path, and a pattern
 that matches nothing is a `ConfigError`.
 
+### Deploying one flow
+
+`deploy_flow` registers the deployment of a single flow returned by
+`etl_flow`, `backfill_flow` or `maintenance_flow`, exactly as
+`flows_package=` would register it. Use it when flows are built on demand
+(for instance by a module `__getattr__`) rather than kept as one module
+attribute per ETL, or to deploy one ETL by name:
+
+```python
+from flows import daily_orders  # an etl_flow(...), built eagerly or by __getattr__
+
+from loom.prefect import deploy_flow
+
+deployment_id = deploy_flow(
+    daily_orders,
+    work_pool="loom-fargate",   # used when the YAML sets no work_pool for env
+    env="prod",
+)
+```
+
+The entrypoint is `<source_file>:<flow function>`, relative to the
+`working_dir` job variable (`/app/src` by default), so the worker rebuilds the
+flow by importing that attribute. Any other object is a `TypeError`.
+
 ### Declaring ETLs in YAML
 
 A declaration file has one of two shapes. The first is a **per-ETL document**:

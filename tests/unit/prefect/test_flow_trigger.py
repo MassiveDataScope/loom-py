@@ -14,9 +14,8 @@ from prefect.server.schemas.core import FlowRun
 from prefect.utilities.schema_tools.hydration import HydrationContext, hydrate
 
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.prefect import etl_flow
+from loom.prefect import deploy_flow, etl_flow
 from loom.prefect._meta import LOOM_ETL_META_ATTR, FlowTrigger
-from loom.prefect.deploy._discovery import _deploy_single
 from loom.prefect.flow._assemble import flow_settings_from_mapping
 from loom.prefect.flow._params import resolve_run_params
 
@@ -83,7 +82,7 @@ def _deploy_kwargs(flow: Any) -> dict[str, Any]:
     sourced = MagicMock()
     sourced.deploy = MagicMock(return_value="deployment-id")
     flow.from_source = MagicMock(return_value=sourced)
-    _deploy_single(flow, getattr(flow, LOOM_ETL_META_ATTR), work_pool="default", env="prod")
+    deploy_flow(flow, work_pool="default", env="prod")
     kwargs: dict[str, Any] = sourced.deploy.call_args.kwargs
     return kwargs
 
