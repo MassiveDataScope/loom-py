@@ -178,6 +178,14 @@ def check_inherited_params(
     upstream value renders as the text ``"None"``, which a date field
     rejects and a text field takes silently.
 
+    Every flow factory runs this check when it builds the flow; calling it
+    directly validates a trigger without building one, e.g. in CI.
+
+    Args:
+        name: Flow name, quoted in the error message.
+        trigger: The flow's trigger, or ``None``, which passes.
+        params_type: Struct the flow's parameters decode into.
+
     Raises:
         ValueError: When an entry of ``trigger.inherit_params`` is not a field
             of *params_type*, or is not declared ``str``, ``date`` or

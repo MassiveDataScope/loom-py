@@ -16,6 +16,10 @@ Public surface
   ETL flow from an already-loaded YAML body.
 - :class:`FlowSettings` — the settings object those seams produce and
   consume.
+- :class:`FlowTrigger` — the per-flow YAML ``trigger`` block, as
+  :attr:`FlowSettings.trigger` carries it.
+- :func:`check_inherited_params` — the check every factory runs on a
+  trigger's ``inherit_params``, callable on its own (e.g. in CI).
 
 The sub-modules here split the factory's concerns:
 
@@ -38,8 +42,10 @@ The sub-modules here split the factory's concerns:
   schedules when the flow finally fails).
 """
 
+from loom.prefect._meta import FlowTrigger
 from loom.prefect.flow._assemble import (
     FlowSettings,
+    check_inherited_params,
     flow_attribute_name,
     flow_settings_from_mapping,
 )
@@ -50,8 +56,10 @@ from loom.prefect.flow._maintenance import maintenance_flow
 __all__ = [
     "BackfillChunk",
     "FlowSettings",
+    "FlowTrigger",
     "backfill_flow",
     "build_etl_flow",
+    "check_inherited_params",
     "etl_flow",
     "flow_attribute_name",
     "flow_settings_from_mapping",

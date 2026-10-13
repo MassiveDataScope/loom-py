@@ -25,6 +25,8 @@ Public API
   to the Prefect run logger.
 - :func:`resolve_placeholder` — date/datetime DSL used by parameter
   defaults (``${today}``, ``${now-1h}``, ...).
+- :class:`FlowTrigger` — the per-flow YAML ``trigger`` block: run after
+  another deployment completes, inheriting some of its parameters.
 
 Architecture contract
 ---------------------
@@ -36,6 +38,7 @@ to loom.
 from loom.prefect._config import FlowConfig
 from loom.prefect._config import _load_flow_config as load_flow_config
 from loom.prefect._ctx import FlowCtx
+from loom.prefect._meta import FlowTrigger
 from loom.prefect._placeholders import resolve_placeholder
 from loom.prefect.deploy import discover_and_deploy_etls
 from loom.prefect.flow import BackfillChunk, backfill_flow, etl_flow, maintenance_flow
@@ -51,6 +54,7 @@ __all__ = [
     "BackfillChunk",
     "FlowConfig",
     "FlowCtx",
+    "FlowTrigger",
     "ManifestStore",
     "PrefectObserver",
     "PrefectTaskRunObserver",

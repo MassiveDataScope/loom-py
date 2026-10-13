@@ -1035,6 +1035,25 @@ The block is decoded strictly: `after` and `inherit_params` are its only keys,
 `after` must name a deployment, without surrounding spaces in either part, and
 each inherited name must be a field of the flow's params type.
 
+The block decodes into `FlowTrigger` (`from loom.prefect import FlowTrigger`,
+also in `loom.prefect.flow`). Building the flow runs
+`loom.prefect.flow.check_inherited_params` on it; a CI check can run the same
+validation on a YAML file without building the flow:
+
+```python
+import yaml
+
+from loom.prefect.flow import check_inherited_params, flow_settings_from_mapping
+
+with open("flows/respondio_leads.yaml") as fh:
+    settings = flow_settings_from_mapping(yaml.safe_load(fh))
+check_inherited_params("respondio_leads", settings.trigger, RespondioParams)
+```
+
+It raises `ValueError` for a name that is not a field of the params type, or
+whose field is not declared exactly `str`, `date` or `datetime`, and does
+nothing when the trigger is `None`.
+
 ### Validation before any deployment
 
 Every declaration is read and checked before the first deployment is
