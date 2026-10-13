@@ -431,6 +431,9 @@
   placeholders it started with and repeats the call with the same values,
   which is harmless. The update is one attempt with a 10-second timeout; if
   it fails, the flow logs it at `ERROR` in the run's logs and goes on.
+- **prefect:** the private `_deploy_single(flow, meta, work_pool, env)` of
+  `loom.prefect.deploy._discovery` now takes `(flow, meta, plan)`; callers
+  migrate to the public `deploy_flow(flow, env=..., work_pool=...)`.
 
 ### etl
 

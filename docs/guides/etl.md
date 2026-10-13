@@ -1000,8 +1000,10 @@ it, as a plain attribute or through a module `__getattr__`; a flow assigned
 to another name cannot be rebuilt. `deploy_flow` checks this before
 registering and raises `ValueError` when the attribute is missing or holds
 another flow. It reads the attribute from the module already imported from
-`source_file`; when that module is not imported yet, it imports the file the
-way the worker does, so its top level runs once more on the deploy host.
+`source_file`. Only when that module is not imported yet does it import the
+file, through Prefect's script loader with the file's directory and the
+current directory on `sys.path`, as the worker does; its top level then runs
+on the deploy host, and an error there raises `ValueError`.
 
 ### Declaring ETLs in YAML
 
