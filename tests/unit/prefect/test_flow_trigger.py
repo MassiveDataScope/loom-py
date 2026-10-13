@@ -14,8 +14,11 @@ from prefect.server.schemas.core import FlowRun
 from prefect.utilities.schema_tools.hydration import HydrationContext, hydrate
 
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
+from loom.prefect import FlowTrigger as RootFlowTrigger
 from loom.prefect import deploy_flow, etl_flow
 from loom.prefect._meta import LOOM_ETL_META_ATTR, FlowTrigger
+from loom.prefect.flow import FlowTrigger as FlowPackageFlowTrigger
+from loom.prefect.flow import check_inherited_params
 from loom.prefect.flow._assemble import flow_settings_from_mapping
 from loom.prefect.flow._params import resolve_run_params
 
@@ -101,6 +104,26 @@ def test_trigger_is_read_into_the_settings() -> None:
     assert settings.trigger == FlowTrigger(
         after="messages_daily", inherit_params=("updated_at_from",)
     )
+
+
+@pytest.mark.parametrize("public_trigger", [RootFlowTrigger, FlowPackageFlowTrigger])
+def test_the_public_flow_trigger_is_what_a_flow_yaml_decodes_into(
+    public_trigger: type[FlowTrigger],
+) -> None:
+    trigger = public_trigger(after="messages/daily", inherit_params=("run_day",))
+    settings = flow_settings_from_mapping(
+        {"trigger": {"after": "messages/daily", "inherit_params": ["run_day"]}}
+    )
+
+    assert settings.trigger == trigger
+    assert (trigger.upstream_flow, trigger.upstream_deployment) == ("messages", "daily")
+    check_inherited_params(trigger, _Params, name="conversations")
+    with pytest.raises(ValueError, match="batch"):
+        check_inherited_params(
+            public_trigger(after="messages/daily", inherit_params=("batch",)),
+            _Params,
+            name="conversations",
+        )
 
 
 def test_inherit_params_is_optional() -> None:
