@@ -2,6 +2,7 @@
 
 from loom.etl.compiler._compiler import ETLCompiler
 from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
+from loom.etl.compiler._filter import InvalidStageError, filter_plan
 from loom.etl.compiler._plan import (
     AgentBinding,
     ConfigValueBinding,
@@ -31,6 +32,7 @@ __all__ = [
     "ETLCompiler",
     "ETLCompilationError",
     "ETLErrorCode",
+    "InvalidStageError",
     "StepPlan",
     "ProcessPlan",
     "PipelinePlan",
@@ -41,6 +43,7 @@ __all__ = [
     "ParallelStepGroup",
     "ParallelProcessGroup",
     "StepCompilationContext",
+    "filter_plan",
     "flatten_step_names",
     "validate_execute_signature",
     "validate_param_exprs",

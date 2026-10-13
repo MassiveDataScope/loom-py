@@ -8,6 +8,7 @@ Entrypoints and Runtime Contracts
    :toctree: generated
 
    loom.etl.runner
+   loom.etl.compiler
    loom.etl.runtime
 
 Declarative Authoring

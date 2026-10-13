@@ -56,6 +56,8 @@ def test_definition_modules_support_reload_contracts() -> None:
         ("loom.etl.checkpoint", "CheckpointStore"),
         ("loom.etl.testing", "PolarsStepRunner"),
         ("loom.etl.compiler", "validate_plan_catalog"),
+        ("loom.etl.compiler", "filter_plan"),
+        ("loom.etl.compiler", "InvalidStageError"),
         ("loom.etl.lineage", "LineageConfig"),
         ("loom.etl.lineage.sinks", "TableLineageStore"),
     ],
@@ -154,6 +156,19 @@ def test_reload_sql_and_compiler_definition_modules_with_basic_usage() -> None:
     rendered = predicate_dialect.fold_predicate(node, object(), _Dialect())
     assert rendered == "lit:1=lit:1"
     assert callable(predicate_utils.predicate_to_sql)
+
+
+def test_invalid_stage_error_is_one_class_across_its_import_paths() -> None:
+    import loom.etl
+    import loom.etl.compiler
+    import loom.etl.runner
+    import loom.etl.runner.errors
+    import loom.etl.runner.filtering
+
+    assert loom.etl.runner.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert loom.etl.runner.errors.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert loom.etl.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert loom.etl.runner.filtering._filter_plan is loom.etl.compiler.filter_plan
 
 
 def test_runner_error_message_includes_requested_include_set() -> None:

@@ -17,7 +17,7 @@ from loom.core.observability.protocol import LifecycleObserver
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import flush_runner
 from loom.etl.checkpoint import CheckpointStore, TempCleaner
-from loom.etl.compiler import ETLCompiler
+from loom.etl.compiler import ETLCompiler, filter_plan
 from loom.etl.executor import ETLExecutor, ParallelDispatcher
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.lineage._observer import LineageObserver
@@ -33,7 +33,6 @@ from loom.etl.runner._wiring import (
 )
 from loom.etl.runner.config_loader import _load_context, _parse_sections, config_dir
 from loom.etl.runner.errors import InvalidStageError
-from loom.etl.runner.filtering import _filter_plan
 from loom.etl.runtime.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
@@ -268,7 +267,7 @@ class ETLRunner:
         plan = self._compiler.compile(pipeline)
         if include is not None:
             _log.debug("filter plan include=%s", sorted(include))
-            plan = _filter_plan(plan, frozenset(include))
+            plan = filter_plan(plan, include)
         ctx = RunContext(
             run_id=run_id if run_id is not None else str(uuid.uuid4()),
             correlation_id=correlation_id,

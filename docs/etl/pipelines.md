@@ -394,7 +394,24 @@ runner.run(
 )
 ```
 
-If no name matches, `InvalidStageError` is raised.
+If a name matches no step or process, `InvalidStageError` is raised before
+anything runs.
+
+To know in advance what a selection runs, for example to check in CI that a
+deployment's `include` still names real stages, apply the same filter to the
+compiled plan with `filter_plan`:
+
+```python
+from loom.etl.compiler import ETLCompiler, filter_plan
+from loom.etl.compiler._plan import iter_all_steps
+
+plan = filter_plan(ETLCompiler().compile(DailyPipeline), ["DailyProcess", "CleanOrders"])
+steps = [step.step_type.__name__ for step in iter_all_steps(plan)]
+```
+
+A process name keeps the whole process and a step name keeps that step; the
+result is the plan `runner.run(..., include=...)` executes, in the same order,
+and unknown names raise the same `InvalidStageError`.
 
 ## Spark runtime
 
