@@ -230,7 +230,7 @@ def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, plan: _DeploymentPlan) -> s
     """
     sourced = flow_obj.from_source(
         source=plan.working_dir,
-        entrypoint=_file_entrypoint(flow_obj, meta, plan.working_dir),
+        entrypoint=_file_entrypoint(meta, plan.working_dir),
     )
     return _register(sourced, meta, plan)
 
@@ -300,8 +300,8 @@ def _completion_trigger(trigger: FlowTrigger) -> DeploymentEventTrigger:
     )
 
 
-def _file_entrypoint(flow_obj: Any, meta: ETLFlowMeta, working_dir: str) -> str:
-    """Return ``<path relative to working_dir>:<flow function>``.
+def _file_entrypoint(meta: ETLFlowMeta, working_dir: str) -> str:
+    """Return ``<path relative to working_dir>:<flow attribute>``.
 
     The source file captured at factory time may live under a different
     absolute prefix on the deploy host, so the path is re-anchored on the
@@ -317,7 +317,7 @@ def _file_entrypoint(flow_obj: Any, meta: ETLFlowMeta, working_dir: str) -> str:
             None,
         )
         relative = Path(*parts[anchor + 1 :]) if anchor is not None else Path(flow_file.name)
-    return f"{relative.as_posix()}:{flow_obj.fn.__name__}"
+    return f"{relative.as_posix()}:{flow_attribute_name(meta.name)}"
 
 
 __all__ = ["deploy_flow", "discover_and_deploy_etls"]
