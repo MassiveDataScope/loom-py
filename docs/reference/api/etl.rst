@@ -30,6 +30,7 @@ Execution Infrastructure
    loom.etl.storage
    loom.etl.checkpoint
    loom.etl.lineage
+   loom.etl.maintenance
 
 Backends
 --------

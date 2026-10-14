@@ -230,6 +230,19 @@
   params_type, *, name)` from `loom.prefect.flow`, so CI can check that every
   inherited parameter is a field declared `str`, `date` or `datetime` without
   building the flow.
+- **prefect:** `deploy_flow(flow, *, env, work_pool=None)`, exported from
+  `loom.prefect` and `loom.prefect.deploy`, registers the deployment of one
+  flow built by `etl_flow`, `backfill_flow` or `maintenance_flow`, with the
+  same name, tags, parameters, schedule, trigger and work-pool settings
+  `discover_and_deploy_etls(flows_package=...)` gives it, and returns its id.
+  Flows built on demand, such as by a module `__getattr__`, or a single ETL
+  deployed by name no longer need the private `_deploy_single` and metadata
+  attribute. `env` is required; `work_pool` is used when the YAML names no
+  pool for `env`, and with neither it raises `ValueError`. Before registering
+  it checks that the flow's `source_file` exposes the flow under its
+  attribute name (the flow name with `-` replaced by `_`), as the worker
+  imports it, and raises `ValueError` otherwise; a module not yet imported is
+  imported from that file. Any other object raises `TypeError`.
 
 ### etl
 
@@ -310,9 +323,25 @@
   rows and the step fails. Polars checks the row count of the frame the
   replace already collects, at no extra cost; Spark runs `isEmpty()`, one
   job that stops at the first row, before the write recomputes the frame. On
-  Polars a `Null`-typed column still fails first, with `SchemaError`.
+  Polars a `Null`-typed column still fails first, with `SchemaError`. On
+  Spark a streaming DataFrame, whose rows cannot be counted before the
+  write, raises `ValueError` and the table is left as it was.
   The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
   gains the `allow_empty` field.
+- **etl:** `MaintenanceSpec`, `VacuumSpec`, `CompactSpec` and `ZOrderSpec` are
+  exported from `loom.etl.maintenance`, next to `OpSpec` and
+  `OperationDeclaration`, so a custom maintenance op (an `OpSpec` appended to
+  each `MaintenanceSpec` by a wrapping `OperationDeclaration`) and a custom
+  `DeltaTableMaintainer` are written without the private `_ops` module. The
+  ETL guide and the package docstring show how to write one.
+- **etl:** `loom.etl.schema.annotation_to_loom_type(ann)` converts one Python
+  type annotation to the `LoomType` it declares, as `resolve_schema` does for
+  each field of a contract (`X | None` maps as `X`; an unsupported annotation
+  raises `TypeError`), and `loom.etl.backends.polars` exports
+  `loom_type_to_polars` and `polars_to_loom_type`, so the Polars dtype of a
+  contract field is `loom_type_to_polars(annotation_to_loom_type(ann))`. The
+  private names `loom.etl.schema._contract._annotation_to_loom_type` and
+  `loom.etl.backends.polars._dtype.*` keep working.
 
 ## ⚠ Behaviour changes
 
@@ -402,6 +431,9 @@
   placeholders it started with and repeats the call with the same values,
   which is harmless. The update is one attempt with a 10-second timeout; if
   it fails, the flow logs it at `ERROR` in the run's logs and goes on.
+- **prefect:** the private `_deploy_single(flow, meta, work_pool, env)` of
+  `loom.prefect.deploy._discovery` now takes `(flow, meta, plan)`; callers
+  migrate to the public `deploy_flow(flow, env=..., work_pool=...)`.
 
 ### etl
 
@@ -410,6 +442,13 @@
   `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
   `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
   or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
+- **etl:** `InvalidStageError` names what it reports: its message reads
+  `Unknown step or process names: [...]` instead of `No steps or processes
+  match include=[...]`, the constructor's parameter is `unknown`, and the
+  names are kept on the new `unknown` attribute. Positional construction is
+  unchanged; `InvalidStageError(include=...)` still works, emits a
+  `DeprecationWarning` and is removed in loom 3.0. The error survives pickle
+  with its `unknown` names, so it crosses process boundaries intact.
 
 ## 🐛 Fixes
 

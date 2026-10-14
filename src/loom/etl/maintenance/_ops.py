@@ -1,8 +1,9 @@
-"""Internal operation specs for Delta table maintenance.
+"""Operation specs for Delta table maintenance.
 
 These dataclasses are the compiled form of MaintainTable / MaintainSchema
-declarations — they carry the final parameter values that the backend will
-execute.  They are not part of the public API.
+declarations: they carry the final parameter values the backend executes.
+
+Internal module — import them from :mod:`loom.etl.maintenance`.
 """
 
 from __future__ import annotations
@@ -91,8 +92,14 @@ class ZOrderSpec:
 
 @dataclass(frozen=True)
 class MaintenanceSpec:
-    """All ops to execute against one concrete table (already resolved to its
-    logical ref — the runner resolves it to a URI via the locator).
+    """The ops to run, in order, against one table.
+
+    :meth:`~loom.etl.maintenance.OperationDeclaration.resolve` returns one per
+    table; the runner resolves ``table_ref`` to a location and runs each op.
+
+    Args:
+        table_ref: Logical table reference (e.g. ``"raw.events"``).
+        ops: Operations to execute against the table, in order.
     """
 
     table_ref: str

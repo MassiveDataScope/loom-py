@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -14,9 +15,11 @@ from prefect.server.schemas.core import FlowRun
 from prefect.utilities.schema_tools.hydration import HydrationContext, hydrate
 
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.prefect import etl_flow
+from loom.prefect import FlowTrigger as RootFlowTrigger
+from loom.prefect import deploy_flow, etl_flow
 from loom.prefect._meta import LOOM_ETL_META_ATTR, FlowTrigger
-from loom.prefect.deploy._discovery import _deploy_single
+from loom.prefect.flow import FlowTrigger as FlowPackageFlowTrigger
+from loom.prefect.flow import check_inherited_params
 from loom.prefect.flow._assemble import flow_settings_from_mapping
 from loom.prefect.flow._params import resolve_run_params
 
@@ -83,7 +86,9 @@ def _deploy_kwargs(flow: Any) -> dict[str, Any]:
     sourced = MagicMock()
     sourced.deploy = MagicMock(return_value="deployment-id")
     flow.from_source = MagicMock(return_value=sourced)
-    _deploy_single(flow, getattr(flow, LOOM_ETL_META_ATTR), work_pool="default", env="prod")
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(sys.modules[__name__], "conversations", flow, raising=False)
+        deploy_flow(flow, env="prod", work_pool="default")
     kwargs: dict[str, Any] = sourced.deploy.call_args.kwargs
     return kwargs
 
@@ -102,6 +107,26 @@ def test_trigger_is_read_into_the_settings() -> None:
     assert settings.trigger == FlowTrigger(
         after="messages_daily", inherit_params=("updated_at_from",)
     )
+
+
+@pytest.mark.parametrize("public_trigger", [RootFlowTrigger, FlowPackageFlowTrigger])
+def test_the_public_flow_trigger_is_what_a_flow_yaml_decodes_into(
+    public_trigger: type[FlowTrigger],
+) -> None:
+    trigger = public_trigger(after="messages/daily", inherit_params=("run_day",))
+    settings = flow_settings_from_mapping(
+        {"trigger": {"after": "messages/daily", "inherit_params": ["run_day"]}}
+    )
+
+    assert settings.trigger == trigger
+    assert (trigger.upstream_flow, trigger.upstream_deployment) == ("messages", "daily")
+    check_inherited_params(trigger, _Params, name="conversations")
+    with pytest.raises(ValueError, match="batch"):
+        check_inherited_params(
+            public_trigger(after="messages/daily", inherit_params=("batch",)),
+            _Params,
+            name="conversations",
+        )
 
 
 def test_inherit_params_is_optional() -> None:

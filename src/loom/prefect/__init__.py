@@ -18,6 +18,8 @@ Public API
   factory (hour/day/month/year partitions plus a finalize pass).
 - :func:`discover_and_deploy_etls` — walks a flows package and registers
   one Prefect deployment per ETL.
+- :func:`deploy_flow` — registers the Prefect deployment of one flow built
+  by a loom flow factory.
 - :class:`ManifestStore` / :class:`RunManifest` / :class:`StepEntry` —
   ephemeral retry manifest types.
 - :class:`S3JsonManifestStore` — S3-backed manifest implementation.
@@ -40,7 +42,7 @@ from loom.prefect._config import _load_flow_config as load_flow_config
 from loom.prefect._ctx import FlowCtx
 from loom.prefect._meta import FlowTrigger
 from loom.prefect._placeholders import resolve_placeholder
-from loom.prefect.deploy import discover_and_deploy_etls
+from loom.prefect.deploy import deploy_flow, discover_and_deploy_etls
 from loom.prefect.flow import BackfillChunk, backfill_flow, etl_flow, maintenance_flow
 from loom.prefect.manifest import (
     ManifestStore,
@@ -62,6 +64,7 @@ __all__ = [
     "S3JsonManifestStore",
     "StepEntry",
     "backfill_flow",
+    "deploy_flow",
     "discover_and_deploy_etls",
     "etl_flow",
     "maintenance_flow",

@@ -462,6 +462,80 @@ runner = ETLRunner.from_spark(spark)
 
 This wires Spark reader/writer/catalog automatically.
 
+## Table maintenance
+
+A `MaintenanceStep` declares vacuum, compaction and Z-Order per table or per
+schema, and `MaintenanceRunner` runs them through delta-rs:
+
+```python
+from loom.etl.maintenance import MaintainSchema, MaintenanceRunner, MaintenanceStep
+
+
+class NightlyMaintenance(MaintenanceStep[None]):
+    operations = [MaintainSchema("raw").vacuum(retention_hours=168, dry_run=False).compact()]
+
+
+report = MaintenanceRunner.from_config(config).run(NightlyMaintenance)
+report.raise_if_errors()
+```
+
+### Custom operations
+
+An operation is any class implementing `OpSpec`: a `name` class variable, which
+keys its result in `TableMaintenanceResult.op_results`, and
+`execute(maintainer, uri, location)`, returning a `VacuumResult` or an
+`OptimizeResult` (or a subclass). Each `OperationDeclaration` resolves to one
+`MaintenanceSpec(table_ref, ops)` per table, so a declaration that wraps
+another and appends the op to every spec runs it after the declared ones:
+
+```python
+from dataclasses import dataclass, replace
+from typing import ClassVar
+
+from deltalake import DeltaTable
+
+from loom.etl.maintenance import (
+    DeltaTableMaintainer,
+    MaintainSchema,
+    MaintenanceSpec,
+    MaintenanceStep,
+    OperationDeclaration,
+    OptimizeResult,
+)
+from loom.etl.storage import StorageConfig, TableLocation
+
+
+@dataclass(frozen=True)
+class CheckpointSpec:
+    name: ClassVar[str] = "checkpoint"
+
+    def execute(
+        self, maintainer: DeltaTableMaintainer, uri: str, location: TableLocation
+    ) -> OptimizeResult:
+        DeltaTable(uri, storage_options=location.storage_options).create_checkpoint()
+        return OptimizeResult()
+
+
+class Checkpointed:
+    def __init__(self, inner: OperationDeclaration) -> None:
+        self._inner = inner
+
+    def resolve(self, config: StorageConfig) -> list[MaintenanceSpec]:
+        return [
+            replace(spec, ops=(*spec.ops, CheckpointSpec()))
+            for spec in self._inner.resolve(config)
+        ]
+
+
+class NightlyMaintenance(MaintenanceStep[None]):
+    operations = [Checkpointed(MaintainSchema("raw").vacuum(dry_run=False).compact())]
+```
+
+An op that fails is recorded as the table's `error`, like a built-in one, and
+the remaining ops of that table are skipped. `VacuumSpec`, `CompactSpec` and
+`ZOrderSpec`, the specs of the built-in ops, are exported too, for a custom
+`DeltaTableMaintainer` backend.
+
 ## Testing ETL steps
 
 Use the built-in test harnesses:
@@ -894,6 +968,43 @@ Globs follow the rules of [`includes`](#composing-files-with-includes): only
 regular `.yaml` / `.yml` files match, sorted by resolved path, and a pattern
 that matches nothing is a `ConfigError`.
 
+### Deploying one flow
+
+`deploy_flow` registers the deployment of a single flow returned by
+`etl_flow`, `backfill_flow` or `maintenance_flow`, exactly as
+`flows_package=` would register it. Use it when flows are built on demand
+(for instance by a module `__getattr__`) rather than kept as one module
+attribute per ETL, or to deploy one ETL by name:
+
+```python
+from flows import daily_orders  # an etl_flow(...), built eagerly or by __getattr__
+
+from loom.prefect import deploy_flow
+
+deployment_id = deploy_flow(
+    daily_orders,
+    env="prod",                 # required, keyword only
+    work_pool="loom-fargate",   # used when the YAML sets no work_pool for env
+)
+```
+
+With no `work_pool` in the call nor in `environments.<env>` of the YAML,
+`deploy_flow` raises `ValueError`. Any object not built by a loom factory is
+a `TypeError`.
+
+The entrypoint is `<source_file>:<attribute>`, relative to the `working_dir`
+job variable (`/app/src` by default), where `attribute` is the flow name with
+`-` replaced by `_` (`daily-orders` → `daily_orders`). The worker rebuilds the
+flow by importing that attribute from that file, so the module must expose
+it, as a plain attribute or through a module `__getattr__`; a flow assigned
+to another name cannot be rebuilt. `deploy_flow` checks this before
+registering and raises `ValueError` when the attribute is missing or holds
+another flow. It reads the attribute from the module already imported from
+`source_file`. Only when that module is not imported yet does it import the
+file, through Prefect's script loader with the file's directory and the
+current directory on `sys.path`, as the worker does; its top level then runs
+on the deploy host, and an error there raises `ValueError`.
+
 ### Declaring ETLs in YAML
 
 A declaration file has one of two shapes. The first is a **per-ETL document**:
@@ -1164,3 +1275,6 @@ available in the companion repository:
 The ETL API reference is generated from public docstrings:
 
 - [ETL API reference](../reference/api/etl)
+- Schema types: `loom.etl.schema.annotation_to_loom_type(ann)` returns the `LoomType` a
+  contract field annotation declares, and `loom.etl.backends.polars` converts it with
+  `loom_type_to_polars` and back with `polars_to_loom_type`.

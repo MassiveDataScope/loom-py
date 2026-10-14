@@ -197,12 +197,12 @@ def test_runner_filtering_rejects_unknown_names() -> None:
         _ = loom.etl.runner.filtering.filter_plan
 
 
-def test_runner_error_message_includes_requested_include_set() -> None:
+def test_runner_error_message_lists_the_unknown_names() -> None:
     from loom.etl.runner.errors import InvalidStageError
 
     err = InvalidStageError(frozenset({"MissingStep", "MissingProcess"}))
     text = str(err)
-    assert "No steps or processes match include=" in text
+    assert "Unknown step or process names" in text
     assert "MissingStep" in text
     assert "MissingProcess" in text
 

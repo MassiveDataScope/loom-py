@@ -178,7 +178,8 @@ class TestFilterPlan:
         plan = _compile(PipelineAll)
         with pytest.raises(InvalidStageError) as exc_info:
             filter_plan(plan, ["StepA", "Phantom", "Ghost"])
-        assert "include=['Ghost', 'Phantom']" in str(exc_info.value)
+        assert exc_info.value.unknown == frozenset({"Ghost", "Phantom"})
+        assert "names: ['Ghost', 'Phantom']" in str(exc_info.value)
 
     def test_filter_refuses_a_bare_string(self) -> None:
         with pytest.raises(TypeError, match=r"not the string 'StepA'.*include=\{'StepA'\}"):

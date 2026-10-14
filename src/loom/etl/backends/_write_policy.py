@@ -521,7 +521,12 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
 
     @abstractmethod
     def _is_empty(self, frame: WriteFrameT) -> bool:
-        """Whether the materialised *frame* has no rows."""
+        """Whether the materialised *frame* has no rows.
+
+        Raises:
+            ValueError: When the backend cannot count the rows of *frame*
+                before the write, such as a Spark streaming DataFrame.
+        """
 
     def _materialize_checked(
         self,
@@ -536,6 +541,8 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         Raises:
             EmptyReplaceError: When *allow_empty* is ``False`` and the
                 materialised frame has no rows.
+            ValueError: When *allow_empty* is ``False`` and the backend
+                cannot count the rows of the materialised frame.
         """
         materialized = self._materialize_for_write(frame, streaming)
         if not allow_empty:

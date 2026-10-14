@@ -5,18 +5,24 @@ from __future__ import annotations
 import importlib
 import os
 import pkgutil
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+from prefect import Flow
 from prefect.events import DeploymentEventTrigger
+from prefect.exceptions import ScriptError
+from prefect.utilities.importtools import load_script_as_module
 
 from loom.prefect._meta import LOOM_ETL_CONFIG, LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
 from loom.prefect.deploy import entrypoint
 from loom.prefect.deploy._schedule import build_cron_schedule
 from loom.prefect.deploy._yaml_etls import EtlDeclaration, read_declarations
+from loom.prefect.flow import flow_attribute_name
 
 
 def discover_and_deploy_etls(
@@ -63,6 +69,96 @@ def discover_and_deploy_etls(
     return [_deploy_declaration(d, work_pool, env) for d in read_declarations(str(config))]
 
 
+def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None) -> str:
+    """Register the Prefect Deployment of one flow built by a loom flow factory.
+
+    Registers exactly what :func:`discover_and_deploy_etls` registers for the
+    same flow found in a ``flows_package``: the deployment takes the flow's
+    name, tags, default parameters, schedule and trigger, and the work-pool
+    settings of ``environments.<env>`` in its YAML. Use it when the flows
+    are not one module attribute per ETL, for instance built on demand by a
+    module ``__getattr__``, or to deploy a single ETL by name.
+
+    The deployment's entrypoint is ``<source_file>:<attribute>``, with
+    ``source_file`` taken relative to the ``working_dir`` job variable
+    (``/app/src`` by default) and ``attribute`` the flow name with hyphens
+    replaced by underscores. The worker rebuilds the flow by importing that
+    attribute, so ``deploy_flow`` checks the module exposes it, through a
+    plain attribute or a module ``__getattr__``, before registering. The
+    module already imported from ``source_file`` is used; otherwise the file
+    is imported the way the worker imports it, running its top level.
+
+    Args:
+        flow: A flow returned by :func:`~loom.prefect.etl_flow`,
+            :func:`~loom.prefect.backfill_flow` or
+            :func:`~loom.prefect.maintenance_flow`.
+        env: Environment key used to pull ``work_pool`` and
+            ``job_variables`` from the flow's YAML.
+        work_pool: Prefect work pool name, used when the YAML sets no
+            ``work_pool`` for ``env``.
+
+    Returns:
+        The deployment id.
+
+    Raises:
+        TypeError: When ``flow`` was not built by a loom flow factory.
+        ValueError: When neither ``work_pool`` nor the YAML names a work pool
+            for ``env``, when ``source_file`` cannot be imported, or when it
+            does not expose the flow under its attribute name.
+
+    Example::
+
+        from loom.prefect import deploy_flow, etl_flow
+
+        daily_orders = etl_flow(name="daily-orders", ...)
+        deployment_id = deploy_flow(daily_orders, env="dev", work_pool="loom-docker")
+    """
+    meta = getattr(flow, LOOM_ETL_META_ATTR, None)
+    if not isinstance(meta, ETLFlowMeta):
+        raise TypeError(
+            f"deploy_flow() takes a flow built by etl_flow, backfill_flow or "
+            f"maintenance_flow; {flow!r} carries no loom ETL metadata."
+        )
+    plan = _plan(meta, work_pool, env)
+    _check_exposed(meta)
+    return _deploy_single(flow, meta, plan)
+
+
+def _check_exposed(meta: ETLFlowMeta) -> None:
+    """Refuse a flow the worker cannot import from ``meta.source_file``."""
+    attribute = flow_attribute_name(meta.name)
+    module = _source_module(meta.source_file)
+    exposed_meta = getattr(getattr(module, attribute, None), LOOM_ETL_META_ATTR, None)
+    if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
+        raise ValueError(
+            f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
+            f"{attribute!r}; the worker imports the flow from that attribute."
+        )
+
+
+def _source_module(source_file: str) -> ModuleType:
+    """Return the module loaded from ``source_file``, importing it as the worker does."""
+    loaded = _loaded_module_name(source_file)
+    if loaded is not None:
+        return sys.modules[loaded]
+    try:
+        return load_script_as_module(source_file)
+    except ScriptError as exc:
+        failed = _loaded_module_name(source_file)
+        if failed is not None:
+            del sys.modules[failed]
+        raise ValueError(f"{source_file} is not an importable Python file: {exc}") from exc
+
+
+def _loaded_module_name(source_file: str) -> str | None:
+    """Return the ``sys.modules`` key of the module loaded from ``source_file``."""
+    for name, module in list(sys.modules.items()):
+        module_file = getattr(module, "__file__", None)
+        if module_file is not None and os.path.realpath(module_file) == source_file:
+            return name
+    return None
+
+
 def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:
     pkg = importlib.import_module(flows_package)
     pkg_path = getattr(pkg, "__path__", None)
@@ -76,7 +172,7 @@ def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:
             meta = getattr(attr, LOOM_ETL_META_ATTR, None)
             if meta is None:
                 continue
-            deployment_ids.append(_deploy_single(attr, meta, work_pool, env))
+            deployment_ids.append(_deploy_single(attr, meta, _plan(meta, work_pool, env)))
     return deployment_ids
 
 
@@ -124,7 +220,7 @@ def _exported(name: str, value: str) -> Iterator[None]:
             os.environ[name] = previous
 
 
-def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, work_pool: str, env: str) -> str:
+def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, plan: _DeploymentPlan) -> str:
     """Register one deployment of a flow defined in a user module.
 
     Prefect 3 quirk: ``Flow.deploy()`` does NOT accept an ``entrypoint``
@@ -132,21 +228,26 @@ def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, work_pool: str, env: str) -
     points back at this module), the canonical override is
     ``flow.from_source(source=..., entrypoint=...).deploy(image=..., ...)``.
     """
-    plan = _plan(meta, work_pool, env)
     sourced = flow_obj.from_source(
         source=plan.working_dir,
-        entrypoint=_file_entrypoint(flow_obj, meta, plan.working_dir),
+        entrypoint=_file_entrypoint(meta, plan.working_dir),
     )
     return _register(sourced, meta, plan)
 
 
-def _plan(meta: ETLFlowMeta, work_pool: str, env: str) -> _DeploymentPlan:
+def _plan(meta: ETLFlowMeta, work_pool: str | None, env: str) -> _DeploymentPlan:
     """Resolve the pool, image and job variables of ``meta`` for ``env``."""
     pool_env_config = meta.pool_config.get(env, {})
+    resolved_pool = pool_env_config.get("work_pool") or work_pool
+    if not resolved_pool:
+        raise ValueError(
+            f"no work pool for flow {meta.name!r} in env {env!r}: pass work_pool= "
+            f"or set environments.{env}.work_pool in its YAML."
+        )
     job_variables = dict(pool_env_config.get("job_variables") or {})
     image = job_variables.pop("image", None)
     return _DeploymentPlan(
-        work_pool=pool_env_config.get("work_pool") or work_pool,
+        work_pool=resolved_pool,
         working_dir=job_variables.get("working_dir", "/app/src"),
         image=image,
         job_variables=job_variables,
@@ -199,8 +300,8 @@ def _completion_trigger(trigger: FlowTrigger) -> DeploymentEventTrigger:
     )
 
 
-def _file_entrypoint(flow_obj: Any, meta: ETLFlowMeta, working_dir: str) -> str:
-    """Return ``<path relative to working_dir>:<flow function>``.
+def _file_entrypoint(meta: ETLFlowMeta, working_dir: str) -> str:
+    """Return ``<path relative to working_dir>:<flow attribute>``.
 
     The source file captured at factory time may live under a different
     absolute prefix on the deploy host, so the path is re-anchored on the
@@ -216,7 +317,7 @@ def _file_entrypoint(flow_obj: Any, meta: ETLFlowMeta, working_dir: str) -> str:
             None,
         )
         relative = Path(*parts[anchor + 1 :]) if anchor is not None else Path(flow_file.name)
-    return f"{relative.as_posix()}:{flow_obj.fn.__name__}"
+    return f"{relative.as_posix()}:{flow_attribute_name(meta.name)}"
 
 
-__all__ = ["discover_and_deploy_etls"]
+__all__ = ["deploy_flow", "discover_and_deploy_etls"]

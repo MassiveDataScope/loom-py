@@ -1,6 +1,7 @@
 """LoomType ↔ Polars DataType conversion utilities.
 
-Internal module — not part of the public API.
+Internal module — import ``loom_type_to_polars`` and ``polars_to_loom_type``
+from :mod:`loom.etl.backends.polars`.
 
 Two conversion layers
 ---------------------
