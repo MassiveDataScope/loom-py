@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import polars as pl
 
@@ -14,6 +14,8 @@ from loom.etl.declarative.target._history import (
     HistorifySpec,
     HistoryDateType,
 )
+
+_FrameT = TypeVar("_FrameT", pl.DataFrame, pl.LazyFrame)
 
 
 def _history_boundary_dtype(spec: HistorifySpec) -> type[pl.Date] | pl.Datetime:
@@ -172,11 +174,11 @@ class PolarsHistorifyBackend:
 
     @staticmethod
     def _collapse_same_track_runs(
-        frame: pl.DataFrame,
+        frame: _FrameT,
         spec: HistorifySpec,
         entity_key: list[str],
         eff_col: str,
-    ) -> pl.DataFrame:
+    ) -> _FrameT:
         """Collapse consecutive same-``track`` events per entity into one run.
 
         valid_from anchors to the first event of the run (``eff_col`` min),
@@ -187,7 +189,7 @@ class PolarsHistorifyBackend:
             return frame
 
         track = list(spec.track)
-        overwrite = list(spec.overwrite or ())
+        overwrite: list[str] = list(spec.overwrite or ())
         track_struct = pl.struct(track)
 
         runs = (
@@ -201,7 +203,7 @@ class PolarsHistorifyBackend:
         )
 
         reserved = {*entity_key, "__new_run__", "__run_id__", eff_col, *overwrite}
-        frozen_cols = [c for c in runs.columns if c not in reserved]
+        frozen_cols: list[str] = [c for c in frame.collect_schema().names() if c not in reserved]
         aggs = [
             pl.col(eff_col).min().alias(eff_col),
             *(pl.col(c).last().alias(c) for c in overwrite),
