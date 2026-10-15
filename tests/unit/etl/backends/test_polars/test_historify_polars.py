@@ -7,6 +7,7 @@ This module provides the Polars fixtures and backend-specific helper tests.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -317,6 +318,59 @@ class TestLogTrackNoneNoCollapse:
         )
         result = PolarsHistorifyBackend().build_log_boundaries(frame, spec)
         assert len(result) == 2
+
+
+class TestCollapseRunsLazy:
+    def test_lazy_frame_collapses_without_performance_warning(self) -> None:
+        spec = _log_spec(overwrite=("price",))
+        events = pl.DataFrame(
+            {
+                "subscription_id": [1, 1, 1, 2],
+                "plan": ["basic", "basic", "pro", "basic"],
+                "price": [10, 12, 30, 10],
+                "channel": ["web", "app", "app", "web"],
+                "event_date": [
+                    date(2024, 1, 1),
+                    date(2024, 2, 1),
+                    date(2024, 3, 1),
+                    date(2024, 1, 1),
+                ],
+            }
+        )
+        entity_key = list(spec.keys)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", pl.exceptions.PerformanceWarning)
+            lazy = PolarsHistorifyBackend._collapse_same_track_runs(
+                events.lazy(), spec, entity_key, "event_date"
+            )
+            result = lazy.collect()
+        eager = PolarsHistorifyBackend._collapse_same_track_runs(
+            events, spec, entity_key, "event_date"
+        )
+        assert result.to_dicts() == eager.to_dicts()
+        assert result.sort(["subscription_id", "event_date"]).to_dicts() == [
+            {
+                "subscription_id": 1,
+                "event_date": date(2024, 1, 1),
+                "price": 12,
+                "plan": "basic",
+                "channel": "web",
+            },
+            {
+                "subscription_id": 1,
+                "event_date": date(2024, 3, 1),
+                "price": 30,
+                "plan": "pro",
+                "channel": "app",
+            },
+            {
+                "subscription_id": 2,
+                "event_date": date(2024, 1, 1),
+                "price": 10,
+                "plan": "basic",
+                "channel": "web",
+            },
+        ]
 
 
 class TestStampNewRows:

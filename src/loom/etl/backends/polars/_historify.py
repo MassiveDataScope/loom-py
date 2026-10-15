@@ -201,7 +201,7 @@ class PolarsHistorifyBackend:
         )
 
         reserved = {*entity_key, "__new_run__", "__run_id__", eff_col, *overwrite}
-        frozen_cols = [c for c in runs.columns if c not in reserved]
+        frozen_cols = [c for c in frame.collect_schema().names() if c not in reserved]
         aggs = [
             pl.col(eff_col).min().alias(eff_col),
             *(pl.col(c).last().alias(c) for c in overwrite),
