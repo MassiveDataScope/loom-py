@@ -16,9 +16,8 @@ from typing import (
     runtime_checkable,
 )
 
-from structlog.contextvars import bind_contextvars, reset_contextvars
-
 from loom.core.async_bridge import AsyncBridge
+from loom.core.logger import log_context
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -199,19 +198,9 @@ def _node_meta(flow_name: str, idx: int, node_type: str) -> dict[str, object]:
     return {"flow": flow_name, "node_idx": idx, "node_type": node_type}
 
 
-@contextmanager
-def _node_log_context(flow_name: str, idx: int, node_type: str) -> Iterator[None]:
-    """Bind the node's identity onto structlog for the duration of its execution."""
-    tokens = bind_contextvars(
-        flow_name=flow_name,
-        node_idx=idx,
-        node_type=node_type,
-        method="execute",
-    )
-    try:
-        yield
-    finally:
-        reset_contextvars(**tokens)
+def _node_log_context(flow_name: str, idx: int, node_type: str) -> AbstractContextManager[None]:
+    """Bind the node's identity onto the log context for the duration of its execution."""
+    return log_context(flow_name=flow_name, node_idx=idx, node_type=node_type, method="execute")
 
 
 @contextmanager

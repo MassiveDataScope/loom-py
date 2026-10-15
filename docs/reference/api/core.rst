@@ -60,6 +60,14 @@ Application locator
 
    loom.core.locator
 
+Logging
+-------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.core.logger
+
 Config
 ------
 

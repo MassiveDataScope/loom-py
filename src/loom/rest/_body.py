@@ -1,4 +1,5 @@
-"""Request-body size cap for the whole application.
+"""Request-body guards: the size cap for the whole application and the
+standard error of a body that is not well-formed JSON.
 
 Neither uvicorn nor Starlette caps the size of a request body: an endpoint that
 calls ``await request.body()`` will happily buffer whatever the client keeps
@@ -12,6 +13,7 @@ SQL endpoint, for instance — apply theirs on top.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from http import HTTPStatus
 from typing import Any
 
 import msgspec
@@ -28,6 +30,14 @@ DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 """Body budget applied to every route unless the application raises it."""
 
 PAYLOAD_TOO_LARGE_CODE = "payload_too_large"
+MALFORMED_BODY_CODE = "bad_request"
+MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
+MALFORMED_BODY_ERRORS: tuple[type[Exception], ...] = (
+    msgspec.DecodeError,
+    UnicodeDecodeError,
+    RecursionError,
+)
+"""Decoder errors that mean the body is not well-formed JSON."""
 _HTTP_SCOPE = "http"
 _REQUEST_MESSAGE = "http.request"
 _CONTENT_LENGTH = b"content-length"
@@ -59,6 +69,18 @@ def payload_too_large_detail(max_bytes: int) -> dict[str, Any]:
     return {
         "code": PAYLOAD_TOO_LARGE_CODE,
         "message": payload_too_large_message(max_bytes),
+        "trace_id": get_trace_id(),
+    }
+
+
+def malformed_body_detail() -> dict[str, Any]:
+    """Return the standard error body of a ``400`` for a body that is not well-formed JSON.
+
+    The message is fixed, so the offending input is never echoed back.
+    """
+    return {
+        "code": MALFORMED_BODY_CODE,
+        "message": MALFORMED_BODY_MESSAGE,
         "trace_id": get_trace_id(),
     }
 
@@ -174,5 +196,6 @@ async def send_payload_too_large(send: _Send, max_bytes: int) -> None:
         (b"content-length", str(len(body)).encode("ascii")),
         (b"connection", b"close"),
     ]
-    await send({"type": "http.response.start", "status": 413, "headers": headers})
+    status = int(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
