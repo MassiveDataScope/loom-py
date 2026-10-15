@@ -479,7 +479,7 @@
 
 ### etl
 
-- **etl:** historify collapses `LOG` runs on a `LazyFrame` without a `PerformanceWarning`.
+- **etl:** historify collapses lazy runs without a `PerformanceWarning`.
 - **etl:** `IntoHistory(..., mode="snapshot")` no longer reopens a row on
   every run when a tracked column is null. Classification joined existing
   and incoming rows on `keys + track`, and a plain equi-join never matches
