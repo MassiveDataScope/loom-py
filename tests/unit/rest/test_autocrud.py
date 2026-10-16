@@ -61,6 +61,14 @@ class _RichModel(BaseModel):
     )
 
 
+class _CompositeModel(BaseModel):
+    __tablename__ = "test_composite_model_autocrud"
+
+    account_id: int = ColumnField(primary_key=True)
+    id: int = ColumnField(primary_key=True)
+    name: str = ColumnField(length=100)
+
+
 # ---------------------------------------------------------------------------
 # TestBuildAutoRoutes
 # ---------------------------------------------------------------------------
@@ -116,6 +124,17 @@ class TestBuildAutoRoutes:
 # ---------------------------------------------------------------------------
 # TestAutoCrudCache
 # ---------------------------------------------------------------------------
+
+
+class TestCompositeKeyRoutes:
+    def test_default_routes_leave_out_the_by_id_operations(self) -> None:
+        routes = build_auto_routes(_CompositeModel, include=())
+
+        assert {(route.method, route.path) for route in routes} == {("POST", "/"), ("GET", "/")}
+
+    def test_requested_by_id_operation_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"\(account_id, id\)"):
+            build_auto_routes(_CompositeModel, include=("list", "get"))
 
 
 class TestAutoCrudCache:

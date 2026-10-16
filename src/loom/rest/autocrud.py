@@ -27,7 +27,7 @@ import msgspec
 
 from loom.core.command import Command
 from loom.core.errors import NotFound
-from loom.core.model.introspection import get_column_fields
+from loom.core.model.introspection import get_column_fields, get_id_attributes
 from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
 from loom.core.repository.abc.repo_for import Creatable, Deletable, Listable, Readable, Updatable
 from loom.core.repository.registration import capabilities_of
@@ -68,6 +68,7 @@ _OP_PATH: dict[str, str] = {
     CrudOp.DELETE: _ID_ROUTE_PATH,
 }
 _OP_STATUS: dict[str, int] = {CrudOp.CREATE: 201}
+_BY_ID_OPS = frozenset({CrudOp.GET, CrudOp.UPDATE, CrudOp.DELETE})
 
 CRUD_OP_CAPABILITY: dict[CrudOp, type] = {
     CrudOp.CREATE: Creatable,
@@ -465,7 +466,8 @@ def _supported_ops(model: type[Any]) -> tuple[CrudOp, ...]:
     Delegates to :func:`supported_crud_ops` for the class an explicit
     ``repository_for`` registration names.  Without a registration the model
     is served by the default repository the persistence backend builds later,
-    so every operation is mounted.
+    so every operation is mounted.  A model with a composite primary key gets
+    no ``/{id}`` operation, since one path segment cannot carry its key.
 
     Args:
         model: Domain model type.
@@ -474,10 +476,21 @@ def _supported_ops(model: type[Any]) -> tuple[CrudOp, ...]:
         The supported operations in :data:`CRUD_OP_CAPABILITY` order.
     """
     repository_type = registered_repository_type(model)
-    if repository_type is None:
-        return _ALL_OPS
-    supported = supported_crud_ops(repository_type)
+    supported = (
+        frozenset(_ALL_OPS) if repository_type is None else supported_crud_ops(repository_type)
+    )
+    if _composite_key(model):
+        supported -= _BY_ID_OPS
     return tuple(op for op in CRUD_OP_CAPABILITY if op in supported)
+
+
+def _composite_key(model: type[Any]) -> tuple[str, ...] | None:
+    """Return the key columns of *model* when its primary key is composite, else ``None``."""
+    try:
+        names = get_id_attributes(model)
+    except ValueError:
+        return None
+    return names if len(names) > 1 else None
 
 
 def crud_op_of(use_case_type: type[Any]) -> CrudOp:
@@ -526,11 +539,15 @@ def build_auto_routes(
         include: Subset of operation names to expose.  If empty, the
             supported operations are derived automatically from the
             repository's ``-able`` capability protocols via its MRO.
-            An explicit list is always honoured as-is.
+            An explicit list is honoured as-is.
 
     Returns:
         Tuple of :class:`~loom.rest.model.RestRoute` instances, one per
         requested operation.
+
+    Raises:
+        ValueError: If *include* names a ``/{id}`` operation and the model's
+            primary key is composite.
 
     Example::
 
@@ -538,6 +555,13 @@ def build_auto_routes(
     """
     from loom.rest.model import RestRoute  # lazy — avoids circular import
 
+    key = _composite_key(model)
+    by_id = [str(op) for op in include if op in _BY_ID_OPS]
+    if key is not None and by_id:
+        raise ValueError(
+            f"{model.__name__} has the composite primary key ({', '.join(key)}); "
+            f"the /{{id}} path cannot address one row, so {', '.join(by_id)} cannot be generated"
+        )
     ops = include or _supported_ops(model)
     use_cases = _get_or_create(model)
     return tuple(

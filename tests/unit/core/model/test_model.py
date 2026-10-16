@@ -15,6 +15,7 @@ from loom.core.model import (
     RelationField,
     get_column_fields,
     get_id_attribute,
+    get_id_attributes,
     get_projections,
     get_relations,
     get_table_name,
@@ -44,6 +45,12 @@ class _Product(BaseModel):
     rating: Annotated[int, "stars"] = ProjectionField(loader=None, default=0)
 
 
+class _Line(BaseModel):
+    __tablename__ = "lines"
+    order_id: int = ColumnField(primary_key=True)
+    line_no: int = ColumnField(primary_key=True)
+
+
 def test_annotated_projection_keeps_its_metadata() -> None:
     types = {field.name: field.type for field in msgspec.structs.fields(_Product)}
     assert types["rating"] == Annotated[int, "stars"] | UnsetType
@@ -61,6 +68,10 @@ class TestModelIntrospection:
     def test_id_attribute_and_table_name(self) -> None:
         assert get_id_attribute(_Product) == "id"
         assert get_table_name(_Product) == "products"
+
+    def test_id_attributes_list_every_key_column_in_declaration_order(self) -> None:
+        assert get_id_attributes(_Product) == ("id",)
+        assert get_id_attributes(_Line) == ("order_id", "line_no")
 
     def test_relations_and_projections(self) -> None:
         assert "reviews" in get_relations(_Product)

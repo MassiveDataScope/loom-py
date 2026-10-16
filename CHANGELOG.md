@@ -375,6 +375,17 @@
 
 ### core
 
+- **core:** on a model with a composite primary key, the SQLAlchemy
+  repository's `get_by_id`, `exists`, `update` and `delete` take the key as a
+  tuple of every key value in declaration order (`repo.get_by_id((account_id,
+  entry_id))`) and raise `ValueError` for anything else, a scalar included,
+  instead of matching the first key column. A `Load` step and a cached
+  repository pass the id unchanged, so a scalar id raises there too. A cursor token
+  issued for such a model before this release is refused with
+  `UnsupportedQuery`, `400 unsupported_query`; clients restart from the first
+  page. `decode_cursor` takes `id_count`, the number of key columns, and
+  `get_id_attributes` returns every key column name.
+
 - **core:** the miss path of a cached `@cache_query`/`@cache_call` read,
   `McpHandle.call` and `CacheGateway.get_value`/`multi_get_values` now raise
   `BoundaryValidationError` — a `ValueError` — on a stale or malformed cached
@@ -457,6 +468,10 @@
 
 ### rest
 
+- **rest:** auto-CRUD mounts no `/{id}` route (get, update, delete) for a
+  model with a composite primary key, since one path segment cannot carry the
+  key; naming one of them in `include` raises `ValueError` when the routes are
+  built. Those routes matched the first key column only.
 - **rest:** a JSON object body that fails `Command` validation now answers
   `422 boundary_validation` with a `violations` list (`{field, message}`
   pairs, `field` being the wire name the client sent, the same shape
@@ -569,6 +584,15 @@
 ## 🐛 Fixes
 
 ### core
+
+- **core:** cursor pagination and the by-id operations of the SQLAlchemy
+  repository use the full primary key of a model whose key is composite, as
+  every `RowScoped` model's is. They used only the first key column: a cursor
+  walk ordered and compared on it alone and stopped after the first page, and
+  `get_by_id`, `exists`, `update` and `delete` matched that column only. The
+  cursor now orders and compares on every key column after the sort keys and
+  carries every key value in the token; offset pages and `list_paginated`
+  order by every key column too. Tokens of single-column keys are unchanged.
 
 - **core:** the RLS guard refuses, in the same statement, a drop outside the
   hatch that breaks its invariants. `DROP POLICY` or `DROP TRIGGER

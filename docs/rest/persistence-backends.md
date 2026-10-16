@@ -189,7 +189,10 @@ page and the primary key as tie-breaker. Backends issue and consume it through
 `encode_cursor(backend, keys, tie_breaker)` and
 `decode_cursor(token, backend, model, key_count=len(sort))`, which rejects a
 token whose key count differs from the sort; each repository class names
-itself with a `backend_name` class variable.
+itself with a `backend_name` class variable. A composite primary key is carried
+whole: the tie-breaker is the tuple of its values in key order, and
+`decode_cursor(..., id_count=2)` rejects a token carrying another number of
+key values.
 
 ```python
 from loom.core.repository.abc.cursor import decode_cursor, encode_cursor

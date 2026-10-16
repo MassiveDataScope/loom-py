@@ -1,7 +1,9 @@
 """Backend-neutral cursor tokens for keyset pagination.
 
 A token is the base64url form of a msgspec-encoded record
-``{"b": backend, "k": [sort key values...], "id": tie-breaker}``.  Every
+``{"b": backend, "k": [sort key values...], "id": tie-breaker}``, where the
+tie-breaker is the primary-key value, or the list of its values when the key
+is composite.  Every
 backend issues and consumes the same shape, so a token from another backend
 or in a legacy format is rejected at decode time with
 :class:`~loom.core.repository.abc.errors.UnsupportedQuery`.
@@ -28,7 +30,8 @@ class Cursor(LoomFrozenStruct, frozen=True):
     Args:
         backend: Name of the backend that issued the token.
         keys: Sort key values of the last row on the previous page, in sort order.
-        tie_breaker: Primary key of that row.
+        tie_breaker: Primary key of that row; a tuple in key order when the
+            key is composite.
     """
 
     backend: str
@@ -58,7 +61,7 @@ _Key = int | float | str | bool | None | _DateTimeKey | _DateKey | _UuidKey | _D
 class _Token(msgspec.Struct):
     b: str
     k: list[_Key]
-    id: _Key
+    id: _Key | list[_Key]
 
 
 def _wrap(value: object) -> _Key:
@@ -89,7 +92,8 @@ def encode_cursor(backend: str, keys: Sequence[object], tie_breaker: object) -> 
     Args:
         backend: Name of the issuing backend.
         keys: Sort key values of the last row on the page, in sort order.
-        tie_breaker: Primary key of that row.
+        tie_breaker: Primary key of that row; a tuple in key order when the
+            key is composite.
 
     Returns:
         base64url token that :func:`decode_cursor` accepts for ``backend``.
@@ -97,11 +101,18 @@ def encode_cursor(backend: str, keys: Sequence[object], tie_breaker: object) -> 
     Raises:
         TypeError: If a key has a type the token format cannot carry.
     """
-    token = _Token(b=backend, k=[_wrap(key) for key in keys], id=_wrap(tie_breaker))
+    tie: _Key | list[_Key] = (
+        [_wrap(value) for value in tie_breaker]
+        if isinstance(tie_breaker, tuple)
+        else _wrap(tie_breaker)
+    )
+    token = _Token(b=backend, k=[_wrap(key) for key in keys], id=tie)
     return base64.urlsafe_b64encode(msgspec.json.encode(token)).decode()
 
 
-def decode_cursor(token: str, backend: str, model: str, *, key_count: int | None = None) -> Cursor:
+def decode_cursor(
+    token: str, backend: str, model: str, *, key_count: int | None = None, id_count: int = 1
+) -> Cursor:
     """Decode a token issued by :func:`encode_cursor` for ``backend``.
 
     Args:
@@ -110,13 +121,17 @@ def decode_cursor(token: str, backend: str, model: str, *, key_count: int | None
         model: Qualified model name, used in the error.
         key_count: Number of sort keys the query orders by; when given, a
             token carrying a different number is rejected.
+        id_count: Number of primary-key columns. A single-column key is
+            carried as a scalar and a composite key as a list of that many
+            values; any other token is rejected.
 
     Returns:
         The decoded :class:`Cursor`.
 
     Raises:
         UnsupportedQuery: If the token is undecodable, in a legacy format,
-            was issued by another backend or does not match the sort.
+            was issued by another backend or does not match the sort or the
+            primary key.
     """
     try:
         record = msgspec.json.decode(base64.urlsafe_b64decode(token.encode()), type=_Token)
@@ -126,8 +141,15 @@ def decode_cursor(token: str, backend: str, model: str, *, key_count: int | None
         raise UnsupportedQuery(backend, model, "cursor token was issued by another backend")
     if key_count is not None and len(record.k) != key_count:
         raise UnsupportedQuery(backend, model, "cursor token does not match the sort")
+    carried = len(record.id) if isinstance(record.id, list) else None
+    if carried != (id_count if id_count > 1 else None):
+        raise UnsupportedQuery(backend, model, "cursor token does not match the primary key")
     return Cursor(
         backend=record.b,
         keys=tuple(_unwrap(key) for key in record.k),
-        tie_breaker=_unwrap(record.id),
+        tie_breaker=(
+            tuple(_unwrap(key) for key in record.id)
+            if isinstance(record.id, list)
+            else _unwrap(record.id)
+        ),
     )

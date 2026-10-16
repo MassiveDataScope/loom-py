@@ -145,12 +145,21 @@ def get_projections(cls: type) -> dict[str, Projection]:
     return _collect_inherited_dict_metadata(cls, "__loom_projections__")
 
 
+def get_id_attributes(cls: type) -> tuple[str, ...]:
+    """Return the names of the primary-key fields, in declaration order.
+
+    Raises:
+        ValueError: If the model declares no primary-key field.
+    """
+    names = tuple(name for name, info in get_column_fields(cls).items() if info.field.primary_key)
+    if not names:
+        raise ValueError(f"No primary key field found on {cls.__name__}")
+    return names
+
+
 def get_id_attribute(cls: type) -> str:
-    """Return the name of the primary key field."""
-    for name, info in get_column_fields(cls).items():
-        if info.field.primary_key:
-            return name
-    raise ValueError(f"No primary key field found on {cls.__name__}")
+    """Return the name of the first primary-key field."""
+    return get_id_attributes(cls)[0]
 
 
 def get_table_name(cls: type) -> str:
