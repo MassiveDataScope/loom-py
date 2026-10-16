@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, TypeVar
 
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
@@ -21,6 +21,9 @@ from loom.etl.compiler._plan import (
     iter_all_steps,
     iter_processes,
 )
+
+_Plan = TypeVar("_Plan", ProcessPlan, StepPlan)
+_Group = TypeVar("_Group", ParallelProcessGroup, ParallelStepGroup)
 
 
 class InvalidStageError(ValueError):
@@ -96,10 +99,10 @@ def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
 
     Example::
 
-        >>> from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
-        >>> plan = filter_plan(ETLCompiler().compile(MyPipeline), {"LoadStep"})
-        >>> [step.step_type.__name__ for step in iter_all_steps(plan)]
-        ['LoadStep']
+        from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
+
+        plan = filter_plan(ETLCompiler().compile(MyPipeline), {"LoadStep"})
+        [step.step_type.__name__ for step in iter_all_steps(plan)]  # ["LoadStep"]
     """
     if isinstance(include, str):
         raise TypeError(
@@ -146,20 +149,8 @@ def _map_pipeline_nodes(
     fn: Callable[[ProcessPlan], ProcessPlan | None],
 ) -> tuple[PipelineProcessNode, ...]:
     """Map/filter process nodes while preserving parallel-group shape."""
-    result: list[PipelineProcessNode] = []
-    for node in nodes:
-        match node:
-            case ProcessPlan():
-                mapped = fn(node)
-                if mapped is not None:
-                    result.append(mapped)
-            case ParallelProcessGroup(plans=plans):
-                kept = tuple(proc for proc in (fn(proc) for proc in plans) if proc is not None)
-                if len(kept) == 1:
-                    result.append(kept[0])
-                elif kept:
-                    result.append(ParallelProcessGroup(plans=kept))
-    return tuple(result)
+    mapped = (_map_members(_processes_of(node), fn, ParallelProcessGroup) for node in nodes)
+    return tuple(node for node in mapped if node is not None)
 
 
 def _map_process_nodes(
@@ -167,20 +158,40 @@ def _map_process_nodes(
     fn: Callable[[StepPlan], StepPlan | None],
 ) -> tuple[ProcessStepNode, ...]:
     """Map/filter step nodes while preserving parallel-group shape."""
-    result: list[ProcessStepNode] = []
-    for node in nodes:
-        match node:
-            case StepPlan():
-                mapped = fn(node)
-                if mapped is not None:
-                    result.append(mapped)
-            case ParallelStepGroup(plans=plans):
-                kept = tuple(step for step in (fn(step) for step in plans) if step is not None)
-                if len(kept) == 1:
-                    result.append(kept[0])
-                elif kept:
-                    result.append(ParallelStepGroup(plans=kept))
-    return tuple(result)
+    mapped = (_map_members(_steps_of(node), fn, ParallelStepGroup) for node in nodes)
+    return tuple(node for node in mapped if node is not None)
+
+
+def _processes_of(node: PipelineProcessNode) -> tuple[ProcessPlan, ...]:
+    match node:
+        case ProcessPlan():
+            return (node,)
+        case ParallelProcessGroup(plans=plans):
+            return plans
+        case _:
+            raise TypeError(f"not a pipeline node: {node!r}")
+
+
+def _steps_of(node: ProcessStepNode) -> tuple[StepPlan, ...]:
+    match node:
+        case StepPlan():
+            return (node,)
+        case ParallelStepGroup(plans=plans):
+            return plans
+        case _:
+            raise TypeError(f"not a process node: {node!r}")
+
+
+def _map_members(
+    members: tuple[_Plan, ...],
+    fn: Callable[[_Plan], _Plan | None],
+    group: Callable[[tuple[_Plan, ...]], _Group],
+) -> _Plan | _Group | None:
+    """Map *members*; a single survivor stands alone, several form a *group*."""
+    kept = tuple(plan for plan in map(fn, members) if plan is not None)
+    if len(kept) == 1:
+        return kept[0]
+    return group(kept) if kept else None
 
 
 __all__ = ["InvalidStageError", "filter_plan"]
