@@ -637,6 +637,32 @@ remote_clients: maybe
         assert "optional" in message
 
 
+class TestMaxConcurrentRuns:
+    """``ai.max_concurrent_runs`` below 1 would admit no run at all."""
+
+    def test_keeps_the_default_value(self) -> None:
+        assert _config_with().max_concurrent_runs == 8
+
+    @pytest.mark.parametrize("runs", [1, 2, 64])
+    def test_keeps_a_value_of_at_least_one(self, runs: int) -> None:
+        assert _config_with(max_concurrent_runs=runs).max_concurrent_runs == runs
+
+    @pytest.mark.parametrize("runs", [0, -1])
+    def test_fails_with_max_concurrent_runs_invalid_below_one(self, runs: int) -> None:
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _config_with(max_concurrent_runs=runs)
+
+        assert _codes(excinfo.value) == [AgentErrorCode.MAX_CONCURRENT_RUNS_INVALID]
+
+    def test_the_message_names_the_key_and_the_minimum(self) -> None:
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _config_with(max_concurrent_runs=0)
+
+        message = excinfo.value.issues[0].message
+        assert "ai.max_concurrent_runs" in message
+        assert "minimum of 1" in message
+
+
 class TestMaxAgentDepth:
     """``ai.max_agent_depth`` below 1 would refuse every run, top-level included."""
 

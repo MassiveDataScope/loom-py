@@ -409,6 +409,10 @@
   to `pl.Decimal(38, 12)` and `schema=SchemaMode.OVERWRITE` (delta-rs
   `schema_mode="overwrite"`); the costs already stored keep the precision of
   the float they were written as.
+- **ai:** an `ai:` section with `max_concurrent_runs` below 1 fails to load
+  with `MAX_CONCURRENT_RUNS_INVALID`, naming the key and the minimum. Before,
+  it loaded; `0` refused every run with `TOO_MANY_RUNS` and a negative value
+  failed when the runtime was built.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with
