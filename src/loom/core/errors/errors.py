@@ -109,7 +109,6 @@ class Forbidden(DomainError):
     Raises:
         ValueError: If ``reason`` is not a non-blank string, ``missing`` is a single
             ``str`` or ``bytes``, or an item of ``missing`` is not a non-blank string.
-            A malformed refusal is a programming error, so it fails where it is built.
     """
 
     def __init__(
@@ -120,12 +119,14 @@ class Forbidden(DomainError):
         missing: Iterable[str] = (),
     ) -> None:
         if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-            raise ValueError("Forbidden.reason must be a non-empty string or None")
+            raise ValueError("Forbidden.reason must be a non-blank string or None")
         if isinstance(missing, (str, bytes)):
-            raise ValueError("Forbidden.missing takes a sequence of permissions, not one string")
+            raise ValueError(
+                "Forbidden.missing takes an iterable of permissions, not one str or bytes"
+            )
         permissions = tuple(missing)
         if any(not isinstance(item, str) or not item.strip() for item in permissions):
-            raise ValueError("Forbidden.missing items must be non-empty strings")
+            raise ValueError("Forbidden.missing items must be non-blank strings")
         super().__init__(message, code=ErrorCode.FORBIDDEN)
         self.reason = reason
         self.missing: tuple[str, ...] = permissions

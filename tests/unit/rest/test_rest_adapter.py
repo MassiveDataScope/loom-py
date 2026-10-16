@@ -132,7 +132,7 @@ class TestHttpErrorMapper:
     def test_a_plain_forbidden_body_has_no_reason_or_missing(self) -> None:
         """A refusal without reason or missing answers only code, message and trace_id."""
         detail = _detail(self._mapper().to_http(Forbidden()))
-        assert "reason" not in detail and "missing" not in detail
+        assert set(detail) == {"code", "message", "trace_id"}
 
     def test_forbidden_carries_its_reason_and_missing_permissions(self) -> None:
         exc = self._mapper().to_http(

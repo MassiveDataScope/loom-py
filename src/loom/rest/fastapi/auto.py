@@ -658,8 +658,8 @@ def _effective_agent_specs(
             is tolerated instead of aborting: a deployment whose only AI usage
             is ``Mcp()`` need not ship a filler agent artifact it never runs.
             It still declares ``ai.engine`` and installs the extra:
-            ``build_agent_runtime`` resolves the engine, and the MCP client
-            factory comes from it.
+            ``_resolve_ai`` resolves the engine provider, and
+            ``build_agent_runtime`` takes the MCP client factory from it.
 
     Raises:
         AgentCompilationError: When both sources declare artifacts, or when
