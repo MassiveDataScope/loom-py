@@ -161,8 +161,8 @@ def _resolve_primary_key(repository: Repository[Any, Any, Any, Any]) -> _Primary
     except (TypeError, ValueError):
         return _FALLBACK_PRIMARY_KEY
     hints = resolve_type_hints(model)
-    types = tuple(hints.get(name) for name in attributes)
-    return _PrimaryKey(attributes, tuple(t if isinstance(t, type) else None for t in types))
+    types = tuple(hint if isinstance(hint, type) else None for hint in map(hints.get, attributes))
+    return _PrimaryKey(attributes, types)
 
 
 class CachedRepository(

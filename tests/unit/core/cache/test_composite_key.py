@@ -162,4 +162,4 @@ class TestEntityScopedRead:
 
     async def test_refuses_a_partial_key(self, env: _Env) -> None:
         with pytest.raises(TypeError, match=r"received a int .*expected tuple\[int, int\]"):
-            await env.wrapper.rank_of(7)  # type: ignore[arg-type]
+            await env.wrapper.rank_of(7)
