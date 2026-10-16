@@ -86,25 +86,24 @@ class WithAgent:
 
 def _budget(max_usd: object) -> Decimal:
     """Return *max_usd* as a finite :class:`~decimal.Decimal` above zero."""
-    amount = _as_decimal(max_usd)
-    if not amount.is_finite() or amount <= 0:
-        raise ValueError(f"WithAgent max_usd must be a finite amount above zero, got {max_usd}")
-    return amount
-
-
-def _as_decimal(max_usd: object) -> Decimal:
     if isinstance(max_usd, Decimal):
-        return max_usd
-    if isinstance(max_usd, bool):
+        amount = max_usd
+    elif isinstance(max_usd, bool):
         raise TypeError("WithAgent max_usd must be a Decimal or an int, got bool")
-    if isinstance(max_usd, numbers.Integral):
-        return Decimal(operator.index(max_usd))
-    if isinstance(max_usd, float):
+    elif isinstance(max_usd, numbers.Integral):
+        amount = Decimal(operator.index(max_usd))
+    elif isinstance(max_usd, float):
         warnings.warn(
             "WithAgent(max_usd=<float>) is deprecated and will be removed in loom 3.0; "
             'pass a Decimal, such as Decimal("2.50"), or an int instead.',
             DeprecationWarning,
-            stacklevel=4,
+            stacklevel=3,
         )
-        return Decimal(str(max_usd))
-    raise TypeError(f"WithAgent max_usd must be a Decimal or an int, got {type(max_usd).__name__}")
+        amount = Decimal(str(max_usd))
+    else:
+        raise TypeError(
+            f"WithAgent max_usd must be a Decimal or an int, got {type(max_usd).__name__}"
+        )
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError(f"WithAgent max_usd must be a finite amount above zero, got {max_usd}")
+    return amount
