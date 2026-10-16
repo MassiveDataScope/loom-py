@@ -17,11 +17,15 @@ from loom.core.model import loom_type
 from tests.unit.ai.etl._types import (
     Coded,
     Mood,
+    Node,
     Offer,
     Priority,
+    PydanticBranch,
+    PydanticNode,
     PydanticOffer,
     PydanticQuote,
     PydanticReply,
+    PydanticTree,
     Rich,
 )
 
@@ -161,6 +165,31 @@ def test_a_nested_pydantic_answer_is_read_back_field_by_field() -> None:
 
     assert row["best"] == {"amount": Decimal("1400"), "currencyCode": "EUR"}
     assert row["others"] == [{"amount": Decimal("1400"), "currencyCode": "EUR"}]
+
+
+@pytest.mark.parametrize("output_type", [PydanticNode, Node], ids=["pydantic", "msgspec"])
+def test_a_self_referencing_type_holds_its_nested_copies_as_json(output_type: type) -> None:
+    columns = output_columns(output_type)
+    keys = pl.DataFrame({"id": [0]}, schema={"id": pl.Int64()})
+    answer = {"name": "a", "children": [{"name": "b", "children": []}]}
+    outcome = RowOutcome(output=answer, error=None, usage=None)
+
+    row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
+
+    assert {name: column.dtype for name, column in columns.items()} == {
+        "name": pl.String(),
+        "children": pl.List(pl.String()),
+    }
+    assert row["children"] == ['{"name":"b","children":[]}']
+
+
+def test_mutually_referencing_models_stop_at_the_first_repeated_model() -> None:
+    columns = output_columns(PydanticTree)
+
+    assert {name: column.dtype for name, column in columns.items()} == {
+        "root": pl.Struct({"label": pl.String(), "tree": pl.String()}),
+    }
+    assert output_columns(PydanticBranch)["tree"].dtype == pl.Struct({"root": pl.String()})
 
 
 def test_a_union_value_is_held_as_its_json_whatever_its_type() -> None:

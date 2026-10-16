@@ -567,6 +567,10 @@
   `OUTPUT_MISMATCH` instead of raising its `TypeError`, checks the output
   before building the engine provider and builds it only when a budget is
   declared.
+- **ai:** an agent output type that contains itself, directly
+  (`children: list[Node]`) or through another type, no longer makes
+  `PolarsAgentRunner.validate` and `map` fail with `RecursionError`: the
+  repeated struct or pydantic model is a `String` column holding its JSON.
 - **ai:** a configured `ai.prices` rate prices runs again with pydantic-ai
   2.54. That release records a response's usage before the
   `after_model_request` hook loom priced it in, so every run reported

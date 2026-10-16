@@ -90,3 +90,31 @@ class PydanticDecision(pydantic.BaseModel):
 class Clashing(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     answer: str
     agent_status: str
+
+
+class PydanticNode(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    name: str
+    children: list[PydanticNode]
+
+
+class PydanticTree(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    root: PydanticBranch | None
+
+
+class PydanticBranch(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    label: str
+    tree: PydanticTree | None
+
+
+PydanticTree.model_rebuild()
+
+
+class Node(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    name: str
+    children: list[Node]

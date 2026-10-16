@@ -44,7 +44,9 @@ def output_columns(output_type: type[Any]) -> dict[str, Column]:
     the field requires naive values, a naive value otherwise read as UTC);
     ``Decimal`` ``Decimal(38, 9)``; lists and sets ``List``; nested structs
     and pydantic models ``Struct``; an optional field the type of its value.
-    Any other shape is ``String`` holding the JSON of the value.
+    A struct or model nested in itself, directly or through other types, is
+    ``String`` holding the JSON of the value from that repetition down. Any
+    other shape is ``String`` holding the JSON of the value.
 
     Args:
         output_type: A strict ``msgspec.Struct`` or ``pydantic.BaseModel``.
@@ -52,7 +54,10 @@ def output_columns(output_type: type[Any]) -> dict[str, Column]:
     Returns:
         The columns, in field order.
     """
-    return {name: _column(mi.type_info(annotation)) for name, annotation in _fields(output_type)}
+    path = frozenset({output_type})
+    return {
+        name: _column(mi.type_info(annotation), path) for name, annotation in _fields(output_type)
+    }
 
 
 def _fields(output_type: type[Any]) -> Iterable[tuple[str, Any]]:
@@ -68,29 +73,39 @@ def _model_fields(model: type[Any]) -> list[tuple[str, Any]]:
     ]
 
 
-def _column(info: mi.Type) -> Column:
+def _column(info: mi.Type, path: frozenset[type[Any]] = frozenset()) -> Column:
     if isinstance(info, mi.Metadata):
-        return _column(info.type)
+        return _column(info.type, path)
     if isinstance(info, mi.UnionType):
-        return _optional(info)
+        return _optional(info, path)
     if isinstance(info, mi.LiteralType):
         return _choice(info.values)
     if isinstance(info, mi.EnumType):
         return _choice(tuple(member.value for member in info.cls))
     if isinstance(info, mi.CollectionType):
-        return _list(_column(info.item_type))
+        return _list(_column(info.item_type, path))
     if isinstance(info, mi.StructType | mi.DataclassType | mi.TypedDictType):
-        return _struct({f.encode_name: _column(f.type) for f in info.fields})
+        return _nested(info.cls, [(f.encode_name, f.type) for f in info.fields], path)
     if isinstance(info, mi.CustomType) and is_pydantic_model(info.cls):
-        return _struct({name: _column(mi.type_info(a)) for name, a in _model_fields(info.cls)})
+        fields = [(name, mi.type_info(a)) for name, a in _model_fields(info.cls)]
+        return _nested(info.cls, fields, path)
     if isinstance(info, mi.DateTimeType):
         return Column(pl.Datetime("us", None if info.tz is False else "UTC"), _datetime)
     return _SCALARS.get(type(info), _JSON)
 
 
-def _optional(info: mi.UnionType) -> Column:
+def _nested(
+    cls: type[Any], fields: Iterable[tuple[str, mi.Type]], path: frozenset[type[Any]]
+) -> Column:
+    if cls in path:
+        return _JSON
+    inner = path | {cls}
+    return _struct({name: _column(info, inner) for name, info in fields})
+
+
+def _optional(info: mi.UnionType, path: frozenset[type[Any]]) -> Column:
     values = [member for member in info.types if not isinstance(member, mi.NoneType)]
-    return _column(values[0]) if len(values) == 1 else _JSON
+    return _column(values[0], path) if len(values) == 1 else _JSON
 
 
 def _choice(values: tuple[Any, ...]) -> Column:
