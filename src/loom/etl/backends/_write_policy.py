@@ -543,7 +543,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """Free what :meth:`_pin_rows` kept for *frame*, once nothing reads it.
 
         Called after the write, whether it succeeded or failed, and before
-        :class:`EmptyReplaceError` is raised. Holds nothing by default.
+        :class:`EmptyReplaceError` is raised. An override must not raise, so
+        the outcome of the write is the one the caller sees. Holds nothing by
+        default.
         """
         _ = frame
 

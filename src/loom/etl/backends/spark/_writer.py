@@ -177,16 +177,16 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             raise
 
     def _release_pinned(self, frame: DataFrame) -> None:
-        """Free the blocks :meth:`_pin_rows` kept for *frame*.
+        """Free the blocks :meth:`_pin_rows` kept for *frame*, best effort.
 
-        ``DataFrame.unpersist()`` does not free the blocks of a local
-        checkpoint: they belong to the RDD under the checkpointed frame's
-        logical plan, which is unpersisted instead.
+        A failure to free them is logged as a warning and never raised, so it
+        cannot replace the outcome of the write: the written table, the write
+        error or :class:`~loom.etl.EmptyReplaceError`.
         """
-        if _checkpoints_locally(frame):
-            frame._jdf.queryExecution().logical().rdd().unpersist(False)
-        else:
-            frame.unpersist()
+        try:
+            _free_pinned_blocks(frame)
+        except Exception:
+            _log.warning("Could not free the rows pinned for the write.", exc_info=True)
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""
@@ -486,6 +486,19 @@ def _checkpoints_locally(frame: object) -> bool:
     and raises ``NOT_IMPLEMENTED`` on ``localCheckpoint()``.
     """
     return isinstance(frame, DataFrame)
+
+
+def _free_pinned_blocks(frame: DataFrame) -> None:
+    """Free the blocks :meth:`SparkTargetWriter._pin_rows` kept for *frame*.
+
+    ``DataFrame.unpersist()`` does not free the blocks of a local
+    checkpoint: they belong to the RDD under the checkpointed frame's
+    logical plan, which is unpersisted instead.
+    """
+    if _checkpoints_locally(frame):
+        frame._jdf.queryExecution().logical().rdd().unpersist(False)
+    else:
+        frame.unpersist()
 
 
 def _has_no_rows(pinned: DataFrame) -> bool:

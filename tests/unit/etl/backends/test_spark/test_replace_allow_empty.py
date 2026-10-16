@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from pyspark.sql.types import BooleanType
 
 from loom.etl import EmptyReplaceError, IntoTable
 from loom.etl.backends.spark import SparkTargetWriter
+from loom.etl.backends.spark import _writer as spark_writer_module
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.storage._config import MissingTablePolicy
@@ -241,3 +243,102 @@ def test_the_checked_rows_are_released_after_creating_a_missing_table(
     assert len(pins.ids) == 1
     assert pins.still_kept() == set()
     assert _rows(spark, spark_table_path(spark_root, _REF)) == [(3, "c")]
+
+
+_RELEASE_FAILED = "release failed"
+
+
+@pytest.fixture
+def failing_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make freeing the pinned blocks raise, as a lost Spark context would."""
+
+    def fail(frame: DataFrame) -> None:
+        raise RuntimeError(_RELEASE_FAILED)
+
+    monkeypatch.setattr(spark_writer_module, "_free_pinned_blocks", fail)
+
+
+def _release_warned(caplog: pytest.LogCaptureFixture) -> bool:
+    return any(
+        record.levelno == logging.WARNING and _RELEASE_FAILED in str(record.exc_info)
+        for record in caplog.records
+    )
+
+
+@pytest.mark.usefixtures("failing_release")
+def test_a_failed_release_does_not_fail_a_successful_write(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with caplog.at_level(logging.WARNING):
+        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert _rows(spark, path) == [(3, "c")]
+    assert _release_warned(caplog)
+
+
+@pytest.mark.usefixtures("failing_release")
+def test_a_failed_release_does_not_hide_the_write_error(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+
+    def fail(frame: DataFrame, target: ResolvedTarget, *, schema_mode: SchemaMode) -> None:
+        raise ValueError("write failed")
+
+    monkeypatch.setattr(spark_writer, "_replace", fail)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="write failed"):
+        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert _release_warned(caplog)
+
+
+@pytest.mark.usefixtures("failing_release")
+def test_a_failed_release_does_not_hide_an_empty_frame(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with caplog.at_level(logging.WARNING), pytest.raises(EmptyReplaceError):
+        spark_writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
+
+    assert _rows(spark, path) == [(1, "a")]
+    assert _release_warned(caplog)
+
+
+@pytest.mark.usefixtures("failing_release")
+def test_a_failed_release_does_not_hide_a_failed_row_check(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+
+    def fail(frame: DataFrame) -> bool:
+        raise ValueError("row check failed")
+
+    monkeypatch.setattr(spark_writer_module, "_has_no_rows", fail)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="row check failed"):
+        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert _rows(spark, path) == [(1, "a")]
+    assert _release_warned(caplog)
