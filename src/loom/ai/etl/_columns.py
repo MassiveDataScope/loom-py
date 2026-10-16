@@ -42,11 +42,14 @@ def output_columns(output_type: type[Any]) -> dict[str, Column]:
     and integer choices ``Int64``; ``float`` ``Float64``; ``bool``
     ``Boolean``; ``date`` ``Date``; ``datetime`` a UTC ``Datetime`` (naive when
     the field requires naive values, a naive value otherwise read as UTC);
-    ``Decimal`` ``Decimal(38, 9)``; lists and sets ``List``; nested structs
-    and pydantic models ``Struct``; an optional field the type of its value.
-    A struct or model nested in itself, directly or through other types, is
-    ``String`` holding the JSON of the value from that repetition down. Any
-    other shape is ``String`` holding the JSON of the value.
+    ``Decimal`` ``Decimal(38, 9)``; ``UUID``, ``time``, ``timedelta`` and
+    ``bytes`` ``String`` holding the text the output type serialises them to;
+    lists and sets ``List``; nested structs and pydantic models ``Struct``;
+    an optional field the type of its value. A struct or model nested in
+    itself, directly or through other types, is ``String`` holding the JSON
+    of the value from that repetition down. Any other shape (a union of
+    several types, ``Any``, ``dict``, a fixed-length tuple, a ``Literal``
+    mixing value types) is ``String`` holding the JSON of the value.
 
     Args:
         output_type: A strict ``msgspec.Struct`` or ``pydantic.BaseModel``.
@@ -156,5 +159,9 @@ _SCALARS: Final[Mapping[type[mi.Type], Column]] = MappingProxyType(
         mi.BoolType: Column(pl.Boolean(), _same),
         mi.DateType: Column(pl.Date(), date.fromisoformat),
         mi.DecimalType: Column(DECIMAL_DTYPE, _decimal),
+        mi.UUIDType: Column(pl.String(), _same),
+        mi.TimeType: Column(pl.String(), _same),
+        mi.TimeDeltaType: Column(pl.String(), _same),
+        mi.BytesType: Column(pl.String(), _same),
     }
 )

@@ -173,11 +173,12 @@ and upserts into the same table:
 | `date` | `Date` |
 | `datetime` | `Datetime("us", "UTC")`; a naive value is read as UTC. `Datetime("us")` when the field requires naive values (`Meta(tz=False)`) |
 | `Decimal` | `Decimal(38, 9)`, keeping 9 decimal places |
+| `UUID`, `time`, `timedelta`, `bytes` | `String` holding the text the output type serialises the value to (for a msgspec struct: canonical UUID, ISO time, ISO 8601 duration such as `P1D`, base64) |
 | `list[T]`, `set[T]`, `tuple[T, ...]` | `List` of the type of `T` |
 | a nested struct or pydantic model | `Struct` of its fields' types |
 | a struct or pydantic model nested in itself, directly or through another type | `String` holding the value's JSON from the first repetition down |
 | `T \| None` | the type of `T` |
-| anything else (`dict`, a union of several types, ...) | `String` holding the value's JSON |
+| anything else (`dict`, `Any`, a union of several types, a fixed-length tuple, a `Literal` mixing value types) | `String` holding the value's JSON |
 
 An answer holding a value its column cannot (an `int` past `Int64`, a
 `Decimal` past `Decimal(38, 9)`, ...) becomes an error row with

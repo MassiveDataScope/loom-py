@@ -390,16 +390,15 @@
   written before must change that column's type.
 - **ai:** in `PolarsAgentRunner.map`, a `String` column holding a value's JSON
   now holds the JSON of a string too: `"5"` is written `"\"5\""` and `5` is
-  written `5`, where both were `5`. This covers every field without a column
-  type of its own whose answer is a string, such as a union with `str`, a
-  `UUID`, a `time` or a `timedelta` (`"P1D"` is written `"\"P1D\""`). Rows
-  written before hold the raw string and rows written after hold its JSON
-  encoding. A cell alone does not always tell them apart (an old `5` may have
-  been the string `"5"`), but `agent_version` does: every agent's fingerprint
-  changes with this release, so the old rows carry the old version. For a
-  field whose answer is always a string (a `UUID`, a `time`, a `timedelta`),
-  rewrite each old cell as the JSON encoding of its text; for a union with
-  `str`, re-run the old rows.
+  written `5`, where both were `5`. This covers a field typed as a union of
+  several types, `Any` or a `Literal` mixing value types whose answer is a
+  string. A `UUID`, `time`, `timedelta` or `bytes` field keeps its plain text
+  (`P1D` is written `P1D`). Rows written before hold the raw string and rows
+  written after hold its JSON encoding. A cell alone does not always tell
+  them apart (an old `5` may have been the string `"5"`), but `agent_version`
+  does: every agent's fingerprint changes with this release, so the old rows
+  carry the old version. Re-run the old rows of such a field, or rewrite each
+  old cell whose answer was a string as the JSON encoding of its text.
 - **ai:** the `agent_cost_usd` column `PolarsAgentRunner.map` writes is
   `Decimal(38, 12)` instead of `Float64`, carrying `AgentUsage.cost` without a
   float conversion, rounded half to even to 12 decimal places. Writing into a

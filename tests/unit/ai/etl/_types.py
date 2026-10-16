@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime
+import uuid
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -118,3 +119,10 @@ PydanticTree.model_rebuild()
 class Node(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     name: str
     children: list[Node]
+
+
+class Plain(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    id: uuid.UUID
+    at: time
+    wait: timedelta
+    blob: bytes

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta, timezone
+import uuid
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import msgspec
@@ -19,6 +20,7 @@ from tests.unit.ai.etl._types import (
     Mood,
     Node,
     Offer,
+    Plain,
     Priority,
     PydanticBranch,
     PydanticNode,
@@ -230,3 +232,24 @@ def test_a_cost_past_twelve_decimal_places_is_rounded_half_to_even(
 
     assert frame["agent_status"][0] == "ok"
     assert frame["agent_cost_usd"][0] == written
+
+
+def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text() -> None:
+    answer = Plain(
+        id=uuid.UUID(int=1), at=time(1, 2, 3), wait=timedelta(days=1, seconds=5), blob=b"\x00hi"
+    )
+    keys = pl.DataFrame({"id_": [0]}, schema={"id_": pl.Int64()})
+    outcome = RowOutcome(output=msgspec.to_builtins(answer), error=None, usage=None)
+    columns = output_columns(Plain)
+
+    row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
+
+    assert {name: column.dtype for name, column in columns.items()} == dict.fromkeys(
+        ("id", "at", "wait", "blob"), pl.String()
+    )
+    assert (row["id"], row["at"], row["wait"], row["blob"]) == (
+        "00000000-0000-0000-0000-000000000001",
+        "01:02:03",
+        "P1DT5S",
+        "AGhp",
+    )
