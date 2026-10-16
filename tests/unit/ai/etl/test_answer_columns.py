@@ -47,7 +47,7 @@ _METADATA_SCHEMA = {
     "agent_output_tokens": pl.Int64(),
     "agent_cache_read_tokens": pl.Int64(),
     "agent_cache_write_tokens": pl.Int64(),
-    "agent_cost_usd": pl.Float64(),
+    "agent_cost_usd": pl.Decimal(38, 12),
 }
 _ANSWER = Rich(
     label="acepta",
@@ -126,7 +126,7 @@ def test_a_value_its_column_cannot_hold_fails_only_its_row(field: dict[str, obje
     assert frame["agent_status"].to_list() == ["ok", "error", "ok"]
     assert frame["agent_error"].to_list() == [None, "OUTPUT_UNREPRESENTABLE", None]
     assert all(frame.row(1, named=True)[name] is None for name in _RICH_SCHEMA)
-    assert frame["agent_cost_usd"][1] == 0.5
+    assert frame["agent_cost_usd"][1] == Decimal("0.5")
     assert frame["label"].to_list() == ["acepta", None, "acepta"]
 
 
@@ -170,3 +170,12 @@ def test_a_union_value_is_held_as_its_json_whatever_its_type() -> None:
     frame = answers_frame(keys, outcomes, output_columns(Coded), "v1")
 
     assert frame["code"].to_list() == ['"5"', "5"]
+
+
+def test_the_cost_is_written_without_rounding_through_a_float() -> None:
+    cost = Decimal("0.000000123457")
+    usage = AgentUsage(input_tokens=1, output_tokens=1, requests=1, duration_ms=1, cost=cost)
+
+    frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
+
+    assert frame["agent_cost_usd"][0] == cost

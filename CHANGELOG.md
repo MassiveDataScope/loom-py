@@ -385,6 +385,10 @@
 - **ai:** in `PolarsAgentRunner.map`, a `String` column holding a value's JSON
   now holds the JSON of a string too: `"5"` is written `"\"5\""` and `5` is
   written `5`, where both were `5`.
+- **ai:** the `agent_cost_usd` column `PolarsAgentRunner.map` writes is
+  `Decimal(38, 12)` instead of `Float64`, carrying `AgentUsage.cost` without a
+  float conversion. A Delta table written before must change that column's
+  type.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with
