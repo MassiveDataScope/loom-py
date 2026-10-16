@@ -124,9 +124,10 @@ def test_a_cast_between_text_and_a_struct_or_list_is_refused_naming_the_column(
         {"id": [1], "payload": values}, schema={"id": pl.Int64, "payload": frame_dtype}
     )
     schema = pl.Schema({"id": pl.Int64, "payload": table_dtype})
+    lazy_frame = frame.lazy()
 
     with pytest.raises(SchemaError, match=r"'payload'.*SchemaMode\.OVERWRITE"):
-        apply_schema_polars(frame.lazy(), schema, mode)
+        apply_schema_polars(lazy_frame, schema, mode)
 
 
 def test_overwrite_writes_a_struct_over_a_string_column() -> None:

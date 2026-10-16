@@ -190,9 +190,10 @@ def test_writer_refuses_a_struct_into_a_string_column_and_leaves_the_table(
     _seed(tmp_path, "staging.answers", pl.DataFrame({"id": [0], "offer": ['{"amount":1}']}))
     frame = pl.DataFrame({"id": [1], "offer": [{"amount": 1.0}]}).lazy()
     spec = AppendSpec(table_ref=TableRef("staging.answers"), schema_mode=mode)
+    writer = PolarsTargetWriter(tmp_path)
 
     with pytest.raises(SchemaError, match=r"'offer'"):
-        PolarsTargetWriter(tmp_path).write(frame, spec, None)
+        writer.write(frame, spec, None)
 
     assert _read_table(tmp_path, "staging.answers").to_dicts() == [
         {"id": 0, "offer": '{"amount":1}'}

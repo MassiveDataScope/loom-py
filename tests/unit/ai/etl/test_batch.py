@@ -92,23 +92,26 @@ def test_fewer_prompts_than_the_limit_are_all_answered() -> None:
 
 def test_a_base_exception_in_one_row_reaches_the_caller_in_a_group() -> None:
     runtime = _Failing("5", _Abort())
+    rows = [str(row) for row in range(10)]
 
     with pytest.raises(BaseExceptionGroup) as excinfo:
-        _answer_all(runtime, [str(row) for row in range(10)])
+        _answer_all(runtime, rows)
 
     assert excinfo.group_contains(_Abort)
 
 
 def test_a_keyboard_interrupt_in_one_row_reaches_the_caller_as_itself() -> None:
     runtime = _Failing("5", KeyboardInterrupt())
+    rows = [str(row) for row in range(10)]
 
     with pytest.raises(KeyboardInterrupt):
-        _answer_all(runtime, [str(row) for row in range(10)])
+        _answer_all(runtime, rows)
 
 
 @pytest.mark.parametrize("rows", [1, 10])
 def test_a_row_whose_run_is_cancelled_fails_the_batch_naming_it(rows: int) -> None:
     runtime = _Failing("0", asyncio.CancelledError())
+    inputs = [str(row) for row in range(rows)]
 
     with pytest.raises(RuntimeError, match=r"labeller.*1 row\(s\).*first row 0"):
-        _answer_all(runtime, [str(row) for row in range(rows)])
+        _answer_all(runtime, inputs)
