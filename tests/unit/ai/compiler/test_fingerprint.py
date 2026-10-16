@@ -68,7 +68,9 @@ def _with(*capabilities: Any) -> AgentPlan:
 
 
 def _policies(**changes: Any) -> AgentPlan:
-    return msgspec.structs.replace(_BASE, policies=msgspec.structs.replace(_BASE.policies, **changes))
+    return msgspec.structs.replace(
+        _BASE, policies=msgspec.structs.replace(_BASE.policies, **changes)
+    )
 
 
 def _target(**changes: Any) -> AgentPlan:

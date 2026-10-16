@@ -185,6 +185,7 @@ class TestPricingProbe:
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """``ValueError`` is caught too: ``best_effort_price`` degrades on both."""
+
         def _raise_value_error(*args: object, **kwargs: object) -> object:
             raise ValueError("usage data genai-prices cannot price")
 

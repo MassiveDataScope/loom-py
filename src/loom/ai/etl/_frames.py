@@ -26,13 +26,13 @@ _PROMPT: Final = "__loom_agent_prompt__"
 
 _METADATA_SCHEMA: Final = pl.Schema(
     {
-        "agent_version": pl.String,
-        "agent_status": pl.String,
-        "agent_error": pl.String,
-        "agent_input_tokens": pl.Int64,
-        "agent_output_tokens": pl.Int64,
-        "agent_cache_read_tokens": pl.Int64,
-        "agent_cache_write_tokens": pl.Int64,
+        "agent_version": pl.String(),
+        "agent_status": pl.String(),
+        "agent_error": pl.String(),
+        "agent_input_tokens": pl.Int64(),
+        "agent_output_tokens": pl.Int64(),
+        "agent_cache_read_tokens": pl.Int64(),
+        "agent_cache_write_tokens": pl.Int64(),
         "agent_cost_usd": pl.Decimal(38, 12),
     }
 )
