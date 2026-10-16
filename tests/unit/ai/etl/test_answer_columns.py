@@ -15,6 +15,7 @@ from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame
 from loom.core.model import loom_type
 from tests.unit.ai.etl._types import (
+    Coded,
     Mood,
     Offer,
     Priority,
@@ -160,3 +161,12 @@ def test_a_nested_pydantic_answer_is_read_back_field_by_field() -> None:
 
     assert row["best"] == {"amount": Decimal("1400"), "currencyCode": "EUR"}
     assert row["others"] == [{"amount": Decimal("1400"), "currencyCode": "EUR"}]
+
+
+def test_a_union_value_is_held_as_its_json_whatever_its_type() -> None:
+    keys = pl.DataFrame({"id": [0, 1]}, schema={"id": pl.Int64()})
+    outcomes = [RowOutcome(output={"code": code}, error=None, usage=None) for code in ("5", 5)]
+
+    frame = answers_frame(keys, outcomes, output_columns(Coded), "v1")
+
+    assert frame["code"].to_list() == ['"5"', "5"]

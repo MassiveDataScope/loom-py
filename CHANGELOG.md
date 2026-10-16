@@ -382,6 +382,9 @@
   is another pydantic model is now a `Struct` column of that model's fields,
   named by alias, as the docs already said, instead of a `String` holding its
   JSON. A Delta table written before must change that column's type.
+- **ai:** in `PolarsAgentRunner.map`, a `String` column holding a value's JSON
+  now holds the JSON of a string too: `"5"` is written `"\"5\""` and `5` is
+  written `5`, where both were `5`.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with

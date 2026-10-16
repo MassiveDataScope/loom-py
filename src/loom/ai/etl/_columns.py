@@ -128,7 +128,7 @@ def _decimal(value: str | float | int) -> Decimal:
 
 
 def _json(value: Any) -> str:
-    return value if isinstance(value, str) else msgspec.json.encode(value).decode()
+    return msgspec.json.encode(value).decode()
 
 
 _JSON: Final = Column(pl.String(), _json)

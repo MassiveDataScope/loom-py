@@ -57,6 +57,10 @@ class PydanticReply(pydantic.BaseModel):
     count: int | None = pydantic.Field(default=None, alias="howMany")
 
 
+class Coded(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    code: int | str
+
+
 class PydanticOffer(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid")
 
