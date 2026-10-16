@@ -18,6 +18,7 @@ from loom.core.identity import Identity
 PROMPT_MISSING: Final = "PROMPT_MISSING"
 BUDGET_EXHAUSTED: Final = "BUDGET_EXHAUSTED"
 UNEXPECTED_ERROR: Final = "UNEXPECTED_ERROR"
+_SHOWN_ROWS: Final = 10
 
 _log = logging.getLogger(__name__)
 
@@ -62,6 +63,13 @@ class Batch:
 
         *limit* workers take the prompts in order from one shared iterator, so
         the batch creates at most *limit* tasks whatever the number of rows.
+        An exception that is not an ``Exception`` cancels the other workers
+        and reaches the caller: ``KeyboardInterrupt`` and ``SystemExit`` as
+        themselves, any other inside a ``BaseExceptionGroup``.
+
+        Raises:
+            RuntimeError: A run was cancelled while the batch was not, so its
+                worker stopped and left rows without an outcome.
         """
         identity = Identity(subject=f"etl:{self.name}")
         outcomes: dict[int, RowOutcome] = {}
@@ -69,6 +77,8 @@ class Batch:
         async with self.runtime, asyncio.TaskGroup() as workers:
             for _ in range(min(self.limit, len(prompts))):
                 workers.create_task(self._work(pending, outcomes, identity))
+        if missing := [row for row in range(len(prompts)) if row not in outcomes]:
+            raise RuntimeError(_unanswered(self.name, missing))
         return [outcomes[row] for row in range(len(prompts))]
 
     async def _work(
@@ -109,3 +119,12 @@ class Batch:
 
     def _settle(self, usage: AgentUsage | None) -> None:
         self.ledger.settle(self.reservation, None if usage is None else usage.cost)
+
+
+def _unanswered(name: str, missing: list[int]) -> str:
+    shown = missing[:_SHOWN_ROWS]
+    more = "" if len(missing) <= _SHOWN_ROWS else f" and {len(missing) - _SHOWN_ROWS} more"
+    return (
+        f"agent {name!r} left {len(missing)} row(s) {shown}{more} without an outcome: "
+        "a run was cancelled while the batch was not"
+    )

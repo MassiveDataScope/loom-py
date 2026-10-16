@@ -184,9 +184,12 @@ An answer holding a value its column cannot (an `int` past `Int64`, a
 `agent_error = OUTPUT_UNREPRESENTABLE`, its answer columns null and its tokens
 and cost kept; the other rows of the batch are unaffected.
 
-A failed row never aborts the batch, whatever failed: an exception that is not
-a run error becomes `UNEXPECTED_ERROR`, keeps its reservation as spent and is
-logged by its type. Whether to write error rows, drop them or
+A failed row never aborts the batch: an `Exception` that is not a run error
+becomes `UNEXPECTED_ERROR`, keeps its reservation as spent and is logged by
+its type. What is not an `Exception` aborts `map`: `KeyboardInterrupt` and
+`SystemExit` reach the caller as themselves, any other inside a
+`BaseExceptionGroup`, and a run cancelled while the batch was not raises a
+`RuntimeError` naming the rows left without an outcome. Whether to write error rows, drop them or
 count them against a threshold is the step's decision. Writing them with
 `agent_version` in the upsert keys and filtering `agent_status == "ok"` in the
 anti-join retries them on the next execution; leaving them in the `done` side
