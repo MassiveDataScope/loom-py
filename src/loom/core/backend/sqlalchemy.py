@@ -57,6 +57,7 @@ from loom.core.model.introspection import (
     extract_model_from_hint,
     get_column_fields,
     get_id_attribute,
+    get_id_attributes,
     get_projections,
     get_relations,
     get_table_name,
@@ -879,12 +880,42 @@ def _compile_core_model(struct_cls: type, comp: _Compilation) -> None:
     profile_plans = _build_profile_plans(
         profiles, all_columns, id_attr, relations, relation_steps, projections, struct_cls
     )
+    _refuse_composite_key_loads(struct_cls, profile_plans)
 
     core_model = CoreModel(struct_cls, table, id_attr, profile_plans)
     for name, col in zip(column_fields, all_columns, strict=False):
         setattr(core_model, name, col)
 
     comp.core[struct_cls] = core_model
+
+
+def _refuse_composite_key_loads(struct_cls: type, plans: dict[str, CoreProfilePlan]) -> None:
+    """Refuse relations and backend projections on a model with a composite primary key.
+
+    The core loaders match loaded rows to their owner by ``CoreProfilePlan.id_attr``,
+    the first primary-key column, so on a composite key they attach rows to the
+    wrong owner.
+    """
+    key = get_id_attributes(struct_cls)
+    loads = _fields_loaded_by_key(plans)
+    if len(key) > 1 and loads:
+        raise ValueError(
+            f"{struct_cls.__name__} has the composite primary key ({', '.join(key)}); the "
+            f"backend loads {', '.join(loads)} by its first key column only, so drop "
+            "them from the model and load them by hand"
+        )
+
+
+def _fields_loaded_by_key(plans: dict[str, CoreProfilePlan]) -> list[str]:
+    relations = {step.attr for plan in plans.values() for step in plan.relation_steps}
+    projections = {
+        step.name
+        for plan in plans.values()
+        for level in plan.projection_plan.levels
+        for step in level
+        if not step.prefer_memory
+    }
+    return sorted(relations | projections)
 
 
 def _collect_profiles(
