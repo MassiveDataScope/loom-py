@@ -578,6 +578,7 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             predicate=merge_plan.predicate,
             source_alias=SOURCE_ALIAS,
             target_alias=TARGET_ALIAS,
+            **self._merge_kwargs(location),
         ).when_matched_update(updates=merge_plan.update_set)
         return merger, merge_plan, location
 
@@ -751,14 +752,25 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         )
 
     @staticmethod
+    def _merge_kwargs(loc: TableLocation) -> dict[str, Any]:
+        """Build the Parquet writer and commit kwargs every Delta write takes.
+
+        ``DeltaTable.merge`` accepts only these two of the location settings;
+        ``write_deltalake`` takes them alongside the rest.
+        """
+        return {
+            "writer_properties": WriterProperties(**loc.writer) if loc.writer else None,
+            "commit_properties": CommitProperties(**loc.commit) if loc.commit else None,
+        }
+
+    @staticmethod
     def _write_kwargs(loc: TableLocation) -> dict[str, Any]:
-        """Build write kwargs from TableLocation."""
+        """Build ``write_deltalake`` kwargs from TableLocation."""
         return {
             "storage_options": loc.storage_options or None,
             "configuration": loc.delta_config or None,
-            "writer_properties": WriterProperties(**loc.writer) if loc.writer else None,
             "target_file_size": loc.target_file_size,
-            "commit_properties": CommitProperties(**loc.commit) if loc.commit else None,
+            **PolarsTargetWriter._merge_kwargs(loc),
         }
 
     @staticmethod

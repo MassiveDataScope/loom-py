@@ -479,6 +479,17 @@
 
 ### etl
 
+- **etl:** `upsert` and `update` on the Polars backend write with the route's
+  `writer` and `commit` settings. The delta-rs MERGE received neither, so the
+  Parquet files it rewrote came out with delta-rs defaults (SNAPPY, row groups
+  of 1,048,576 rows) whatever the route declared, and its commit carried no
+  `custom_metadata`. The MERGE now takes the same `WriterProperties` and
+  `CommitProperties` as `append`, `replace`, `replace_partitions` and
+  `replace_where`. delta-rs MERGE takes no target file size: its files follow
+  the table property `delta.targetFileSize`, not the route's
+  `target_file_size`. Tables already written by a MERGE keep their files until
+  they are rewritten (a later MERGE that touches them, or a compaction that
+  picks them up).
 - **etl:** historify collapses lazy runs without a `PerformanceWarning`.
 - **etl:** `IntoHistory(..., mode="snapshot")` no longer reopens a row on
   every run when a tracked column is null. Classification joined existing

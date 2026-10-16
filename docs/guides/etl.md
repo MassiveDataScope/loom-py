@@ -285,6 +285,12 @@ target = IntoTable("events.orders").upsert(
 `partition_cols` is optional but strongly recommended — without it every MERGE
 forces a full table scan.
 
+On the Polars backend the MERGE writes its Parquet files with the route's
+`writer` settings and commits with its `commit` settings, as every other write
+mode does. delta-rs MERGE takes no target file size: the files it rewrites
+follow the table property `delta.targetFileSize`, not the route's
+`target_file_size`.
+
 ### update
 
 Matched-only MERGE. Rows whose keys match are updated; source rows without a
