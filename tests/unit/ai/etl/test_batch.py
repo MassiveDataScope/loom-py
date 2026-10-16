@@ -122,3 +122,16 @@ class _CancelledRuns(_Runtime):
 def test_the_unanswered_rows_are_named_up_to_ten() -> None:
     with pytest.raises(RuntimeError, match=r"20 row\(s\) \[0, 1, .*, 9\] and 10 more"):
         _answer_all(_CancelledRuns(), [str(row) for row in range(20)])
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_a_limit_below_one_is_refused_at_construction(limit: int) -> None:
+    with pytest.raises(ValueError, match=r"limit must be at least 1, got " + str(limit)):
+        Batch(
+            runtime=cast(AgentRuntime, _Runtime()),
+            name="labeller",
+            limit=limit,
+            ledger=SpendLedger(None),
+            reservation=Decimal(0),
+            to_builtins=lambda output: output,
+        )

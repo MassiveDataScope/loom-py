@@ -49,6 +49,9 @@ class Batch:
         ledger: Spend of the batch against its budget.
         reservation: Worst case of one run, set aside before it starts.
         to_builtins: Projects an answer onto builtins.
+
+    Raises:
+        ValueError: *limit* is below 1.
     """
 
     runtime: AgentRuntime
@@ -57,6 +60,10 @@ class Batch:
     ledger: SpendLedger
     reservation: Decimal
     to_builtins: Callable[[Any], Mapping[str, Any]]
+
+    def __post_init__(self) -> None:
+        if self.limit < 1:
+            raise ValueError(f"limit must be at least 1, got {self.limit}")
 
     async def answer_all(self, prompts: Sequence[str | None]) -> list[RowOutcome]:
         """Enter the runtime, answer every prompt in order, and close it in the same task.
