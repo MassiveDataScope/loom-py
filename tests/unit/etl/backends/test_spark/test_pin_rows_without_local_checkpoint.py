@@ -78,9 +78,10 @@ def test_an_empty_frame_is_released_before_the_error(
 ) -> None:
     writer = _writer(tmp_path, monkeypatch)
     frame = _ConnectLikeFrame(rows=0)
+    spec = _spec()
 
     with pytest.raises(EmptyReplaceError, match="silver.dim_dealer"):
-        writer.write(frame, _spec(), None)  # type: ignore[arg-type]
+        writer.write(frame, spec, None)  # type: ignore[arg-type]
 
     assert [name for name, _ in frame.calls] == ["persist", "count", "unpersist"]
 
@@ -95,8 +96,9 @@ def test_the_frame_is_released_when_the_write_fails(
         raise RuntimeError("write failed")
 
     monkeypatch.setattr(writer, "_replace", fail)
+    spec = _spec()
 
     with pytest.raises(RuntimeError, match="write failed"):
-        writer.write(frame, _spec(), None)  # type: ignore[arg-type]
+        writer.write(frame, spec, None)  # type: ignore[arg-type]
 
     assert [name for name, _ in frame.calls] == ["persist", "count", "unpersist"]

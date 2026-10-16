@@ -196,9 +196,10 @@ def test_the_checked_rows_are_released_when_the_frame_is_empty(
     seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
     pins = _spy_pins(spark, spark_writer, monkeypatch)
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+    frame = spark.createDataFrame([], _SCHEMA)
 
     with pytest.raises(EmptyReplaceError):
-        spark_writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
+        spark_writer.write(frame, spec, None)
 
     assert len(pins.ids) == 1
     assert pins.still_kept() == set()
@@ -218,9 +219,10 @@ def test_the_checked_rows_are_released_when_the_write_fails(
 
     monkeypatch.setattr(spark_writer, "_replace", fail)
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+    frame = spark.createDataFrame([(3, "c")], _SCHEMA)
 
     with pytest.raises(RuntimeError, match="write failed"):
-        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+        spark_writer.write(frame, spec, None)
 
     assert len(pins.ids) == 1
     assert pins.still_kept() == set()
@@ -300,9 +302,10 @@ def test_a_failed_release_does_not_hide_the_write_error(
 
     monkeypatch.setattr(spark_writer, "_replace", fail)
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+    frame = spark.createDataFrame([(3, "c")], _SCHEMA)
 
     with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="write failed"):
-        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+        spark_writer.write(frame, spec, None)
 
     assert _release_warned(caplog)
 
@@ -316,9 +319,10 @@ def test_a_failed_release_does_not_hide_an_empty_frame(
 ) -> None:
     path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+    frame = spark.createDataFrame([], _SCHEMA)
 
     with caplog.at_level(logging.WARNING), pytest.raises(EmptyReplaceError):
-        spark_writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
+        spark_writer.write(frame, spec, None)
 
     assert _rows(spark, path) == [(1, "a")]
     assert _release_warned(caplog)
@@ -339,9 +343,10 @@ def test_a_failed_release_does_not_hide_a_failed_row_check(
 
     monkeypatch.setattr(DataFrame, "isEmpty", fail)
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+    frame = spark.createDataFrame([(3, "c")], _SCHEMA)
 
     with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="row check failed"):
-        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+        spark_writer.write(frame, spec, None)
 
     assert _rows(spark, path) == [(1, "a")]
     assert _release_warned(caplog)
