@@ -257,6 +257,47 @@ def test_a_package_exposing_a_flow_under_another_attribute_deploys_nothing(
     recorder.deploy.assert_not_called()
 
 
+def test_a_package_flow_without_a_work_pool_deploys_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder: _Recorder
+) -> None:
+    monkeypatch.syspath_prepend(str(tmp_path))
+    package = _write_flows_package(tmp_path, "flows_pkg_no_pool")
+    poolless = _write(tmp_path, "late_orders.yaml", "tags: [orders]\n")
+    daily = (tmp_path / package / "daily.py").read_text(encoding="utf-8")
+    (tmp_path / package / "late.py").write_text(
+        daily.replace("daily_orders = ", "late_orders = ")
+        .replace("daily-orders", "late-orders")
+        .replace(repr(str(FIXTURES / "daily_orders.yaml")), repr(str(poolless))),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="no work pool for flow 'late-orders'"):
+        discover_and_deploy_etls(flows_package=package, work_pool="")
+
+    assert recorder.calls == []
+    recorder.deploy.assert_not_called()
+
+
+def test_a_package_flow_whose_source_file_cannot_be_imported_deploys_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder: _Recorder
+) -> None:
+    monkeypatch.syspath_prepend(str(tmp_path))
+    package = _write_flows_package(tmp_path, "flows_pkg_unimportable")
+    daily = (tmp_path / package / "daily.py").read_text(encoding="utf-8")
+    (tmp_path / package / "late.py").write_text(
+        daily.replace("daily_orders = ", "late_orders = ")
+        .replace("daily-orders", "late-orders")
+        .replace("source_file=__file__", "source_file=__file__.replace('late.py', 'gone.py')"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="gone.py is not an importable Python file"):
+        discover_and_deploy_etls(flows_package=package)
+
+    assert recorder.calls == []
+    recorder.deploy.assert_not_called()
+
+
 def _without_env(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     job_variables = {k: v for k, v in kwargs["job_variables"].items() if k != "env"}
     return {**kwargs, "job_variables": job_variables}
