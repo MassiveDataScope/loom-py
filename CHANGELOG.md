@@ -255,6 +255,14 @@
   attribute name (the flow name with `-` replaced by `_`), as the worker
   imports it, and raises `ValueError` otherwise; a module not yet imported is
   imported from that file. Any other object raises `TypeError`.
+- **prefect:** a flow can notify an AWS SNS topic. The `notifications` list
+  takes `kind: sns` with `topic_arn` and the same `on_failure` (default
+  `true`) and `on_completion` (default `false`) filters as `kind: slack`; an
+  empty `topic_arn` skips the entry. Matching terminal states are published
+  through boto3 (`prefect` extra) in the topic's region with subject
+  `[<state>] <flow>` and a plain-text message with the run details, the end of
+  the error message and the Prefect link. A failed publish is logged and does
+  not fail the run. `SnsNotifier` is exported from `loom.prefect.notify`.
 
 ### etl
 
