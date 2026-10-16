@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository import PageParams
 from loom.core.repository.abc import (
     CursorResult,
     PaginationMode,
@@ -15,9 +16,14 @@ from loom.core.repository.abc import (
     UnsupportedQuery,
 )
 from loom.core.repository.abc.cursor import encode_cursor
+from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.transactional import (
+    reset_active_mutations,
+    set_active_mutations,
+)
 
 _Key = tuple[int, int]
 
@@ -73,6 +79,13 @@ async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_E
         [_CreateEntry(account_id=account, id=ident, rank=rank) for account, ident, rank in _SEED]
     )
     return repo
+
+
+@pytest.fixture
+def mutations() -> Iterator[list[MutationEvent]]:
+    events, token = set_active_mutations()
+    yield events
+    reset_active_mutations(token)
 
 
 async def _walk(
@@ -197,3 +210,31 @@ async def test_create_many_reselects_rows_by_every_key_column(
     )
 
     assert [(item.account_id, item.id, item.rank) for item in created] == [(9, 2, 5), (9, 1, 6)]
+
+
+async def test_list_paginated_orders_by_every_key_column(session_manager: SessionManager) -> None:
+    repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Entry
+    )
+    keys = [(7, 3), (7, 1), (7, 2)]
+    await repository.create_many(
+        [_CreateEntry(account_id=account, id=ident, rank=0) for account, ident in keys]
+    )
+
+    page = await repository.list_paginated(PageParams(page=1, limit=10))
+
+    assert [(item.account_id, item.id) for item in page.items] == sorted(keys)
+
+
+async def test_create_records_the_full_key_in_ids_and_tags(
+    session_manager: SessionManager, mutations: list[MutationEvent]
+) -> None:
+    repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Entry
+    )
+
+    await repository.create(_CreateEntry(account_id=8, id=4, rank=1))
+
+    (created,) = mutations
+    assert created.ids == ((8, 4),)
+    assert "composite_entries:id:(8, 4)" in created.tags
