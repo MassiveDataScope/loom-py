@@ -450,11 +450,15 @@
   `loom.prefect.deploy._discovery` now takes `(flow, meta, plan)`; callers
   migrate to the public `deploy_flow(flow, env=..., work_pool=...)`.
 - **prefect:** `discover_and_deploy_etls(flows_package=...)` checks every
-  flow of the package before it registers the first deployment. A flow its
-  module exposes under another attribute name, or whose source file cannot
-  be imported, raises `ValueError` and no deployment of the package is
-  registered, where that flow's deployment used to be registered with an
-  entrypoint the worker cannot import, alongside the others.
+  flow of the package, its work pool and that its module exposes it under its
+  attribute name as `deploy_flow` does, before it registers the first
+  deployment. A flow without a work pool for the environment, one its module
+  exposes under another attribute name, or one whose source file cannot be
+  imported raises `ValueError` and no deployment of the package is
+  registered. Flows used to be registered one by one: a flow without a work
+  pool raised after the flows before it were registered, and a flow exposed
+  under another name or not importable from its source file was registered
+  with an entrypoint the worker cannot import.
 
 ### etl
 
@@ -478,13 +482,14 @@
   their own. `ParallelDispatcher` lists running each task in a copy of the
   caller's context among the requirements on an implementation.
 - **etl:** `WithAgent(max_usd=...)` keeps the budget as a `Decimal`. An
-  `int` is converted exactly. A `float` emits a `DeprecationWarning`, is
-  converted through its `str()` (`0.1` becomes `Decimal("0.1")`) and is
-  removed in loom 3.0. A `bool`, accepted before, and any other type, such as
-  `str`, raise `TypeError`. `NaN`, `sNaN` and `Infinity`, as a `Decimal` or a
-  `float`, raise `ValueError`, like zero and a negative amount; a `Decimal`
-  `NaN` or `sNaN` used to raise `decimal.InvalidOperation`, and `Infinity` and
-  a `float` `nan` were accepted.
+  `int`, or another `numbers.Integral` such as `numpy.int64`, is converted
+  exactly. A `float` emits a `DeprecationWarning`, is converted through its
+  `str()` (`0.1` becomes `Decimal("0.1")`) and is removed in loom 3.0. A
+  `bool`, accepted before, and any other type, such as `str`, raise
+  `TypeError`. `NaN`, `sNaN` and `Infinity`, as a `Decimal` or a `float`,
+  raise `ValueError`, like zero and a negative amount; a `Decimal` `NaN` or
+  `sNaN` used to raise `decimal.InvalidOperation`, and a `Decimal`
+  `Infinity`, a `float` `inf` and a `float` `nan` were accepted.
 
 ## 🐛 Fixes
 
@@ -528,10 +533,15 @@
   for the rest of the session. A Spark Connect DataFrame has no
   `localCheckpoint()` in pyspark 3.5: it is persisted with `MEMORY_AND_DISK`,
   counted, written and unpersisted. That is weaker: Spark recomputes a cached
-  block it loses, so the write may read rows other than the ones counted. The
-  write policy's `_is_empty` hook becomes `_pin_rows`, which returns the
-  frame to write along with whether it is empty, and gains
-  `_release_pinned`, which frees what `_pin_rows` kept.
+  block it loses, so the write may read rows other than the ones counted.
+  Persisting and unpersisting go through Spark's shared cache manager, which
+  matches cached data by plan, so a frame with a plan equivalent to the
+  written frame's, cached before the write, is unpersisted too. Freeing the
+  rows is best effort: a failure is logged as a warning and never replaces
+  the outcome of the write, its error or `EmptyReplaceError`. The write
+  policy's `_is_empty` hook becomes `_pin_rows`, which returns the frame to
+  write along with whether it is empty, and gains `_release_pinned`, which
+  frees what `_pin_rows` kept and must not raise.
 - **etl:** the Polars checkpoint store memory-maps only a local checkpoint.
   It recognised cloud URIs by a lower-case prefix list without `r2://`, so a
   checkpoint under `r2://` or an upper-case scheme such as `S3://` was read
@@ -643,11 +653,6 @@
   module's `__getattr__` raises anything but `AttributeError` while the flow
   is looked up, `deploy_flow` raises its documented `ValueError`, chained to
   that exception.
-- **prefect:** `discover_and_deploy_etls(flows_package=...)` checks that each
-  flow's module exposes it under its attribute name, as `deploy_flow` does,
-  so it no longer registers a deployment whose entrypoint the worker cannot
-  import. Every flow's work pool and exposure are checked before the first
-  deployment is registered.
 
 ## ♻️ Refactor
 

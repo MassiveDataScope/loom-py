@@ -332,8 +332,13 @@ A Spark Connect DataFrame of pyspark 3.5 has no `localCheckpoint()`. The
 writer persists it with `MEMORY_AND_DISK`, checks it with `count()`, which
 caches every partition, writes it and unpersists it. That guarantee is weaker:
 Spark recomputes a cached block it loses, with its executor for instance, so
-the write can read rows other than the ones counted, none included. The option does not apply to
-a streaming Spark DataFrame, whose rows cannot be counted before the write.
+the write can read rows other than the ones counted, or no rows at all.
+Persisting and unpersisting go through Spark's shared cache manager, which
+matches cached data by plan: when a frame with a plan equivalent to the
+written frame's was cached before the write, it is unpersisted too.
+
+The option does not apply to a streaming Spark DataFrame, whose rows cannot
+be counted before the write.
 
 On Polars, a frame with a `Null`-typed column fails with `SchemaError` before
 the empty check, because that column type is a defect of the step that breaks
