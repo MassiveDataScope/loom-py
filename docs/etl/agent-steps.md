@@ -252,7 +252,8 @@ any step runs:
 
 | Code | Cause |
 |---|---|
-| `AGENT_NOT_FOUND` | no artifact under `ai.specs` declares the name, or the config has no `ai:` section |
+| `AGENT_RUNNER_NOT_CONFIGURED` | the config has no `ai:` section, so no agent runner serves the step |
+| `AGENT_NOT_FOUND` | no artifact under `ai.specs` declares the name |
 | `AGENT_COMPILATION_FAILED` | the artifact does not compile; the message carries every compiler issue with its code |
 | `AGENT_OUTPUT_MISMATCH` | `output=` is not the artifact's `type_ref` output (a `json_schema` output never matches) |
 | `AGENT_UNPRICED_BUDGET` | a budget is declared (`WithAgent(max_usd=...)` or the artifact's `policies.max_usd`) for a model neither `ai.prices` nor the engine can price |

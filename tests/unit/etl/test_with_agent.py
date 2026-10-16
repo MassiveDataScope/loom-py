@@ -211,10 +211,12 @@ class TestCompileThroughThePort:
         assert error.field == "labeller"
         assert "the reason" in str(error)
 
-    def test_a_runner_built_from_config_without_agents_reports_not_found(self) -> None:
+    def test_a_runner_built_from_config_without_agents_reports_no_runner(self) -> None:
         error = _compile_error(LabelStep, None)
 
-        assert error.code is ETLErrorCode.AGENT_NOT_FOUND
+        assert error.code is ETLErrorCode.AGENT_RUNNER_NOT_CONFIGURED
+        assert error.field == "labeller"
+        assert "'ai:'" in str(error)
 
     def test_a_compiler_without_config_nor_runner_skips_validation(self) -> None:
         plan = ETLCompiler().compile_step(LabelStep)
@@ -385,7 +387,7 @@ class TestRunnerFromYaml:
         with pytest.raises(ETLCompilationError) as error:
             runner.run(_VersionPipeline, _PARAMS)
 
-        assert error.value.code is ETLErrorCode.AGENT_NOT_FOUND
+        assert error.value.code is ETLErrorCode.AGENT_RUNNER_NOT_CONFIGURED
         assert "'ai:'" in str(error.value)
 
 

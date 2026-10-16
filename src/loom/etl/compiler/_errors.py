@@ -44,6 +44,7 @@ class ETLErrorCode(StrEnum):
     UNSUPPORTED_CONFIG_VALUE = "UNSUPPORTED_CONFIG_VALUE"
     UNRESOLVED_CONFIG_VALUE = "UNRESOLVED_CONFIG_VALUE"
     AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
+    AGENT_RUNNER_NOT_CONFIGURED = "AGENT_RUNNER_NOT_CONFIGURED"
     AGENT_COMPILATION_FAILED = "AGENT_COMPILATION_FAILED"
     AGENT_OUTPUT_MISMATCH = "AGENT_OUTPUT_MISMATCH"
     AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET"
@@ -421,6 +422,16 @@ class ETLCompilationError(Exception):
     def agent_not_found(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
         """A WithAgent names an agent no configured artifact declares."""
         return cls._agent(ETLErrorCode.AGENT_NOT_FOUND, step, alias, reason)
+
+    @classmethod
+    def agent_runner_not_configured(cls, step: type, alias: str) -> ETLCompilationError:
+        """A WithAgent is declared on a runner configured without an agent runner."""
+        return cls._agent(
+            ETLErrorCode.AGENT_RUNNER_NOT_CONFIGURED,
+            step,
+            alias,
+            "no agent runner is configured; declare an 'ai:' section in the runner config",
+        )
 
     @classmethod
     def agent_compilation_failed(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
