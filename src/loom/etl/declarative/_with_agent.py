@@ -27,7 +27,9 @@ class WithAgent:
             ``policies.max_usd``.
 
     Raises:
-        ValueError: When *name* is empty or *max_usd* is not positive.
+        TypeError: When *max_usd* is neither ``None`` nor a :class:`~decimal.Decimal`.
+        ValueError: When *name* is empty or *max_usd* is not a finite
+            amount greater than zero.
 
     Example::
 
@@ -45,8 +47,8 @@ class WithAgent:
     def __init__(self, name: str, *, output: type[Any], max_usd: Decimal | None = None) -> None:
         if not name:
             raise ValueError("WithAgent name must not be empty")
-        if max_usd is not None and max_usd <= 0:
-            raise ValueError(f"WithAgent max_usd must be positive, got {max_usd}")
+        if max_usd is not None:
+            _check_budget(max_usd)
         self._name = name
         self._output = output
         self._max_usd = max_usd
@@ -68,3 +70,10 @@ class WithAgent:
 
     def __repr__(self) -> str:
         return f"WithAgent({self._name!r}, {type_label(self._output)})"
+
+
+def _check_budget(max_usd: Decimal) -> None:
+    if not isinstance(max_usd, Decimal):
+        raise TypeError(f"WithAgent max_usd must be a Decimal, got {type(max_usd).__name__}")
+    if not max_usd.is_finite() or max_usd <= 0:
+        raise ValueError(f"WithAgent max_usd must be a finite amount above zero, got {max_usd}")

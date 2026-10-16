@@ -204,7 +204,10 @@ does not.
 - **Concurrency waits.** At most `ai.max_concurrent_runs` runs are in flight;
   the others wait for a slot instead of being refused with `TOO_MANY_RUNS`.
 - **Budget per execution.** `WithAgent(..., max_usd=...)` bounds what one
-  `map` call may spend, whatever `max_concurrent_runs`. Before each run its
+  `map` call may spend, whatever `max_concurrent_runs`. The budget is a
+  `Decimal` amount above zero: another type raises `TypeError` and zero, a
+  negative amount, `NaN` or `Infinity` raise `ValueError` when the `WithAgent`
+  is constructed. Before each run its
   `policies.max_usd` is set aside, and replaced by the real cost when the run
   ends (the reservation itself when the cost is unknown or the run failed
   unexpectedly). The first run that does not fit stops the batch: it and every

@@ -122,10 +122,18 @@ class TestDeclaration:
         with pytest.raises(ValueError, match="WithAgent"):
             WithAgent("", output=Reply)
 
-    @pytest.mark.parametrize("budget", [Decimal("0"), Decimal("-1")])
-    def test_rejects_a_budget_that_is_not_positive(self, budget: Decimal) -> None:
+    @pytest.mark.parametrize(
+        "budget",
+        [Decimal("0"), Decimal("-1"), Decimal("NaN"), Decimal("Infinity"), Decimal("sNaN")],
+    )
+    def test_rejects_a_budget_that_is_not_a_finite_positive_amount(self, budget: Decimal) -> None:
         with pytest.raises(ValueError, match="max_usd"):
             WithAgent("seller_reply", output=Reply, max_usd=budget)
+
+    @pytest.mark.parametrize("budget", [2.0, 2, "2"])
+    def test_rejects_a_budget_that_is_not_a_decimal(self, budget: object) -> None:
+        with pytest.raises(TypeError, match="max_usd"):
+            WithAgent("seller_reply", output=Reply, max_usd=budget)  # type: ignore[arg-type]
 
     def test_is_not_a_frame_source(self) -> None:
         assert set(LabelStep._agents) == {"labeller"}
