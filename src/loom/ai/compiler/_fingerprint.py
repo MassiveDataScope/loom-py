@@ -18,32 +18,22 @@ _CAPABILITY_NAMES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
     {
         "usecase": ("keys",),
         "sql": ("connection",),
-        "mcp": ("server",),
+        "mcp": ("server", "include", "exclude"),
         "skills": ("library", "names"),
         "python": ("factory_ref",),
-        "a2a": ("agent",),
+        "a2a": ("agent", "include", "exclude"),
         "native": ("tool",),
     }
 )
 
 
 def plan_fingerprint(plan: AgentPlan) -> str:
-    """Return the sha256 of what decides *plan*'s answers.
-
-    Args:
-        plan: Compiled plan.
-
-    Returns:
-        Hex digest over the instructions, output schema and check, policies,
-        format version, the kind and name of every capability and the model
-        binding, without the deployment details.
-    """
+    """Return the sha256 behind :attr:`AgentPlan.fingerprint`, which states what it covers."""
     facts = {
         "spec_version": plan.spec_version,
         "instructions": [[block.text, block.template] for block in plan.instructions],
         "output_schema": plan.output.schema,
         "output_check": _reference(plan.output_check),
-        "policies": plan.policies,
         "capabilities": [_capability(capability) for capability in plan.capabilities],
         "provider": plan.inference.provider,
         "model": plan.inference.model,

@@ -97,9 +97,9 @@ def _labels_schema_seed() -> pl.DataFrame:
             "agent_output_tokens": [0],
             "agent_cache_read_tokens": [0],
             "agent_cache_write_tokens": [0],
-            "agent_cost_usd": [0.0],
+            "agent_cost_usd": [Decimal(0)],
         },
-        schema_overrides={"agent_error": pl.String},
+        schema_overrides={"agent_error": pl.String, "agent_cost_usd": pl.Decimal(38, 12)},
     )
 
 

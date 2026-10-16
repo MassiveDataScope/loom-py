@@ -155,6 +155,7 @@ class AgentErrorCode(StrEnum):
     AGENT_SPECS_ESCAPE_ROOT = "AGENT_SPECS_ESCAPE_ROOT"
     REMOTE_CLIENTS_UNKNOWN = "REMOTE_CLIENTS_UNKNOWN"
     MAX_AGENT_DEPTH_INVALID = "MAX_AGENT_DEPTH_INVALID"
+    MAX_CONCURRENT_RUNS_INVALID = "MAX_CONCURRENT_RUNS_INVALID"
 
     # Use-case agent markers (model-as-actor)
     AGENT_MARKER_UNKNOWN = "AGENT_MARKER_UNKNOWN"
@@ -1314,6 +1315,23 @@ def max_agent_depth_invalid(value: int) -> AgentCompilationIssue:
         ),
         component="ai",
         field="ai.max_agent_depth",
+    )
+
+
+def max_concurrent_runs_invalid(value: int) -> AgentCompilationIssue:
+    """The run limit admits no run.
+
+    Args:
+        value: The rejected value of ``ai.max_concurrent_runs``.
+    """
+    return AgentCompilationIssue(
+        code=AgentErrorCode.MAX_CONCURRENT_RUNS_INVALID,
+        message=(
+            f"ai.max_concurrent_runs: {value} is below the minimum of 1; a worker "
+            "with no run slot refuses every run and an ETL batch answers no row"
+        ),
+        component="ai",
+        field="ai.max_concurrent_runs",
     )
 
 

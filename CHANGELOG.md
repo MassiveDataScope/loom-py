@@ -90,6 +90,9 @@
 
 ### ai
 
+- **ai:** `AiConfig` logs a warning for every key of `ai.prices` that no
+  binding of `ai.models` names, a price no run is priced with (a misspelt
+  model id, for instance).
 - **ai:** `provider: typesafe` binds TypeSafe's Jev, a decision model that
   fills a typed output from the state it is given and never writes text, so a
   role whose answer is a choice or a verdict can run on it. Extra
@@ -153,12 +156,14 @@
   assembles an unentered `AgentRuntime` from an `ai:` section: engine,
   artifacts under `root`, compilation. `create_app` now builds its runtime
   through it. `AgentRuntime.plans` exposes the compiled plans.
-- **ai:** `AgentPlan.fingerprint`, a stable sha256 of what decides an
-  agent's answers: compiled instructions, output schema, output check (by
-  import path), policies, `spec_version`, the kind and name of every
-  capability and the bound provider, model, `output_mode` and `options`; not
-  the name, metadata, price, where a capability is served from, region,
-  endpoint, credentials or `streaming`.
+- **ai:** `AgentPlan.fingerprint`, a stable sha256 of the declared facts
+  that decide an agent's answers: `spec_version`, compiled instructions,
+  output schema, output check (by import path), the kind and declared facts
+  of every capability (including the `include`/`exclude` filters of `mcp`
+  and `a2a`) and the bound provider, model, `output_mode` and `options`; not
+  the policies, the content of the skills, tools or use cases a capability
+  names, the name, metadata, price, where a capability is served from,
+  region, endpoint, credentials or `streaming`.
 - **ai:** `loom.ai.etl.PolarsAgentRunner` runs an agent over a Polars frame
   for ETL steps (see `etl`): a runtime of its own per call that also sees the
   caller's context variables, concurrency that waits instead of refusing, one
@@ -378,6 +383,51 @@
 
 ### ai
 
+- **ai:** `AgentPlan.fingerprint`, and so the ETL `agent_version` column,
+  changes once for every existing agent. It no longer covers any policy, so
+  changing `retries`, a timeout, `max_iterations`, `max_tool_calls`,
+  `max_requests`, a token cap, `max_usd`, `on_unpriced_spend` or
+  `max_history_bytes` keeps it; and it now covers the `include`/`exclude`
+  filters of `mcp` and `a2a` capabilities, so changing a filter changes it.
+  A step that keeps `agent_version` in its upsert keys and its anti-join
+  re-runs, and pays for, every row of the anti-join window on its next
+  execution after the upgrade.
+- **ai:** in `PolarsAgentRunner.map`, a field of a pydantic output whose type
+  is another pydantic model is now a `Struct` column of that model's fields,
+  named by alias, instead of a `String` holding its JSON. Writing it into a
+  Delta table created before fails with `SchemaError` naming the column (see
+  the `etl` entry on casts between text and nested types). To keep writing to
+  that table, rewrite it once with the column decoded through the model,
+  `pl.Series(name, [None if c is None else Model.model_validate_json(c).model_dump(by_alias=True) for c in frame[name]], dtype=<the Struct type>)`,
+  and `schema=SchemaMode.OVERWRITE` (delta-rs `schema_mode="overwrite"`).
+  `pl.col(name).str.json_decode(<the Struct type>)` fails with
+  `ComputeError` when the model has a `date` field (Polars 1.39.3).
+- **ai:** in `PolarsAgentRunner.map`, a `String` column holding a value's JSON
+  now holds the JSON of a string too: `"5"` is written `"\"5\""` and `5` is
+  written `5`, where both were `5`. This covers a field typed as a union of
+  several types, `Any` or a `Literal` mixing value types whose answer is a
+  string. A `UUID`, `time`, `timedelta` or `bytes` field keeps its plain text
+  (`P1D` is written `P1D`). Rows written before hold the raw string and rows
+  written after hold its JSON encoding. A cell alone does not always tell
+  them apart (an old `5` may have been the string `"5"`), but `agent_version`
+  does: every agent's fingerprint changes with this release, so the old rows
+  carry the old version. Re-run the old rows of such a field, or rewrite each
+  old cell whose answer was a string as the JSON encoding of its text.
+- **ai:** the `agent_cost_usd` column `PolarsAgentRunner.map` writes is
+  `Decimal(38, 12)` instead of `Float64`, carrying `AgentUsage.cost` without a
+  float conversion, rounded half to even to 12 decimal places. Writing into a
+  Delta table created before does not fail: an append, upsert or replace with
+  `SchemaMode.STRICT` or `EVOLVE` casts the column back to the table's
+  `Float64`. To keep the decimal, rewrite the table once with the column cast
+  to `pl.Decimal(38, 12)` and `schema=SchemaMode.OVERWRITE` (delta-rs
+  `schema_mode="overwrite"`); the costs already stored keep the precision of
+  the float they were written as.
+- **ai:** an `ai:` section with `max_concurrent_runs` below 1 fails to load
+  with `MAX_CONCURRENT_RUNS_INVALID`, naming the key and the minimum. Before,
+  it loaded; with `0` the runtime refused every run with `TOO_MANY_RUNS` and
+  `PolarsAgentRunner.map` on a frame with a prompt waited on a semaphore of
+  zero slots and did not return, and a negative value failed when the runtime
+  was built.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with
@@ -457,11 +507,28 @@
 
 ### etl
 
+- **etl:** a `WithAgent` compiled by a runner whose config has no `ai:`
+  section fails with the new code `AGENT_RUNNER_NOT_CONFIGURED` instead of
+  `AGENT_NOT_FOUND`, which now means only that no artifact declares the name.
 - **etl:** the names of `loom.etl.runner.filtering` (`_filter_plan`,
   `_filter_process`, `_collect_all_names`, `_map_pipeline_nodes`,
   `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
   `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
   or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
+- **etl:** the Polars writer refuses, under `SchemaMode.STRICT` and
+  `EVOLVE`, a frame column that is a `Struct` or `List` where the Delta table
+  has `String`, or `String` where the table has a `Struct` or `List`, at any
+  depth of a `Struct` or `List`, with `SchemaError` naming the column and
+  both types; nothing is written. The check is by dtype, so an all-null
+  `String` column written into a `List` column is refused too. Before, a
+  `Struct` was cast to its Polars display text (`{1.0}` for a `Float64`
+  field) and a `String` to a `List` wrapped or nulled each value, both
+  written without an error; a `List` to `String` and a `String` to `Struct`
+  failed inside Polars. The Spark writer does not refuse these casts: it
+  writes a `Struct` or `List` into a `String` column as text (`{1.0}`,
+  `[1]`). To change the column's type,
+  rewrite the table once with the column converted and
+  `schema=SchemaMode.OVERWRITE` (delta-rs `schema_mode="overwrite"`).
 - **etl:** `InvalidStageError` names what it reports: its message reads
   `Unknown step or process names: [...]` instead of `No steps or processes
   match include=[...]`, the constructor's parameter is `unknown`, and the
@@ -542,6 +609,20 @@
 
 ### ai
 
+- **ai:** `PolarsAgentRunner.map` runs at most `ai.max_concurrent_runs`
+  worker tasks, which take the rows in order, instead of creating one task
+  per row up front; the order of the output rows is unchanged. A run
+  cancelled while the batch was not raises a `RuntimeError` naming how many
+  rows were left without an outcome and the first of them, where the run's
+  `asyncio.CancelledError` reached the caller.
+- **ai:** `PolarsAgentRunner.validate` reports an output with a field no
+  column can hold (a union of two models, for instance) as
+  `OUTPUT_MISMATCH` instead of raising its `TypeError`, and checks the output
+  columns before asking whether the model is priced.
+- **ai:** an agent output type that contains itself, directly
+  (`children: list[Node]`) or through another type, no longer makes
+  `PolarsAgentRunner.validate` and `map` fail with `RecursionError`: the
+  repeated struct or pydantic model is a `String` column holding its JSON.
 - **ai:** a configured `ai.prices` rate prices runs again with pydantic-ai
   2.54. That release records a response's usage before the
   `after_model_request` hook loom priced it in, so every run reported

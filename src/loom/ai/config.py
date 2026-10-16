@@ -28,6 +28,7 @@ from loom.ai.errors import (
     endpoint_auth_missing,
     inference_target_incomplete,
     max_agent_depth_invalid,
+    max_concurrent_runs_invalid,
     mcp_auth_conflict,
     mcp_auth_strategy_unknown,
     mcp_credentials_inline,
@@ -343,7 +344,8 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         prices: Prices keyed by vendor model id (``InferenceTarget.model``).
             A plan bound to a listed model is priced with these rates rather
             than the engine's own, which is what keeps ``policies.max_usd``
-            enforceable for a model the engine cannot price.
+            enforceable for a model the engine cannot price. A key no
+            binding of ``models`` names is logged as a warning.
         skills_root: Filesystem root bare skill library names resolve against.
         mcp_servers: Named remote MCP servers artifacts refer to by name.
         a2a_agents: Named remote A2A agents artifacts refer to by name.
@@ -361,7 +363,8 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             that did open and whose tool listing times out still fails
             start-up, and no client becomes lazy — one that never opened is
             not reconnected later.
-        max_concurrent_runs: Per-worker run limit (FR-033a).
+        max_concurrent_runs: Per-worker run limit (FR-033a); below 1 the
+            config fails with ``MAX_CONCURRENT_RUNS_INVALID``.
         max_prompt_bytes: Enforced while reading the request body, against
             the ``prompt`` field alone (FR-015).
         max_state_bytes: Enforced while reading the request body, against the
@@ -422,8 +425,21 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             issues.append(remote_clients_unknown(self.remote_clients, _REMOTE_CLIENTS_MODES))
         if self.max_agent_depth < 1:
             issues.append(max_agent_depth_invalid(self.max_agent_depth))
+        if self.max_concurrent_runs < 1:
+            issues.append(max_concurrent_runs_invalid(self.max_concurrent_runs))
         if issues:
             raise AgentCompilationError(issues)
+        _warn_unused_prices(self.prices, self.models)
+
+
+def _warn_unused_prices(
+    prices: Mapping[str, ModelPrice], models: Mapping[str, InferenceTarget]
+) -> None:
+    bound = {target.model for target in models.values()}
+    for model in sorted(prices.keys() - bound):
+        _logger.warning(
+            "ai.prices[%r] names no model of ai.models; no run is priced with it", model
+        )
 
 
 _UrlIssue = Callable[[str, str, str], AgentCompilationIssue]

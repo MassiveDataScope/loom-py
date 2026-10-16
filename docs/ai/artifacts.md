@@ -1171,9 +1171,14 @@ ai:
       output: 0.55
       cache_read: 0.011    # optional; billed as input when absent
       cache_write: 0.1375  # optional; billed as input when absent
-      source: AWS Pricing API eu-west-1   # optional, for the audit trail
+      source: AWS Pricing API eu-west-1   # optional
       as_of: 2026-10-09                   # optional
 ```
+
+`source` and `as_of` are not read by loom; they record where the rates were
+taken from. A key of `ai.prices` that no binding of `ai.models` names is
+logged as a warning when the configuration is read, since no run is priced
+with it.
 
 The compiler carries the bound model's price on the plan (`AgentPlan.price`),
 and the engine prices every response with it as the model returns it, before
@@ -1209,7 +1214,7 @@ serve` to mean what it says under a strict interpreter must exempt those
 classes explicitly, narrower than blanket `-W error`, for example
 `-W error -W default::pydantic_ai.exceptions.CostNotFoundWarning -W
 default::pydantic_ai.exceptions.CostCalculationFailedWarning -W
-default::pydantic_ai.exceptions.UsageExtractionFailedWarning`.
+default::pydantic_ai.exceptions.UsageExtractionFailedWarning` (pydantic-ai 2.52+).
 
 The start-up probe is fed the identifiers the *built* pydantic-ai model
 reports — its `model_name` and its provider's `name` — never loom's own
@@ -1313,18 +1318,30 @@ the other spend caps above) to bound what a run may cost the provider.
 
 ## The agent's version — `AgentPlan.fingerprint`
 
-Every compiled plan carries a stable sha256 of what decides its answers: the
-instructions as compiled (text and template engine), the output schema, the
-output check, the policies, `spec_version`, the kind and name of every
-capability (the use case keys, the SQL connection, the MCP server, the skill
-library and its skill names, the Python factory, the A2A agent, the native
-tool) and the bound provider, model, `output_mode` and `options`. The name,
-description, metadata, artifact path, configured price, where a capability is
-served from (URL, directory, credentials, timeouts, tool filters) and the
-binding's region, endpoint, credentials and `streaming` flag are left out, so
-moving a deployment keeps the version and changing the prompt, the model or
-the tools does not. ETL steps write it as
-`agent_version` (see [Agents in ETL steps](../etl/agent-steps.md)).
+Every compiled plan carries a stable sha256 of the declared facts that decide
+its answers: `spec_version`, the instructions as compiled (text and template
+engine), the output schema, the output check, the kind and declared facts of
+every capability (the use case keys, the SQL connection, the MCP server and
+its `include`/`exclude` tool filters, the skill library and its skill names,
+the Python factory reference, the A2A agent and its `include`/`exclude` skill
+filters, the native tool) and the bound provider, model, `output_mode` and
+`options`. Nothing else enters it:
+
+- **No policy.** `retries`, the timeouts, `max_iterations`, `max_tool_calls`,
+  `max_requests`, the token caps, `max_usd`, `on_unpriced_spend` and
+  `max_history_bytes` each bound a run and fail it past that bound
+  (`max_history_bytes` also withholds from the hook a produced history above
+  it); none decides the content of an accepted answer.
+- **Not the content of what the capabilities name.** Editing a skill's text,
+  a tool's code or a use case keeps the version.
+- **No deployment detail.** The name, description, metadata, artifact path,
+  configured price, where a capability is served from (URL, directory,
+  credentials, timeouts) and the binding's region, endpoint, credentials and
+  `streaming` flag.
+
+Moving a deployment, changing a budget or a limit keeps the version; changing
+the prompt, the output, the model or the declared tools changes it. ETL steps
+write it as `agent_version` (see [Agents in ETL steps](../etl/agent-steps.md)).
 
 The output check enters by its import path (`module:qualname`): editing the
 body of the check keeps the fingerprint, renaming or moving it changes it.

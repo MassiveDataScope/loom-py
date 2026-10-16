@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import enum
-from datetime import date, datetime
+import uuid
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, TypedDict
 
 import msgspec
 import pydantic
@@ -57,6 +59,120 @@ class PydanticReply(pydantic.BaseModel):
     count: int | None = pydantic.Field(default=None, alias="howMany")
 
 
+class Coded(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    code: int | str
+
+
+class PydanticOffer(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    amount: Decimal
+    currency_code: str = pydantic.Field(alias="currencyCode")
+
+
+class PydanticQuote(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    best: PydanticOffer | None
+    others: list[PydanticOffer]
+
+
+class PydanticRefund(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    reason: str
+
+
+class PydanticDecision(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    action: PydanticOffer | PydanticRefund
+
+
 class Clashing(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     answer: str
     agent_status: str
+
+
+class PydanticNode(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    name: str
+    children: list[PydanticNode]
+
+
+class PydanticTree(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    root: PydanticBranch | None
+
+
+class PydanticBranch(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    label: str
+    tree: PydanticTree | None
+
+
+PydanticTree.model_rebuild()
+
+
+class Node(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    name: str
+    children: list[Node]
+
+
+class Plain(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    id: uuid.UUID
+    at: time
+    wait: timedelta
+    blob: bytes
+
+
+class PydanticPlain(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    at: time
+    wait: timedelta
+    blob: bytes
+
+
+class Leaf(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    value: int
+
+
+@dataclasses.dataclass(frozen=True)
+class LeafRecord:
+    value: int
+
+
+class LeafDict(TypedDict):
+    value: int
+
+
+class Siblings(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    first: Leaf
+    second: Leaf
+    first_record: LeafRecord
+    second_record: LeafRecord
+    first_dict: LeafDict
+    second_dict: LeafDict
+
+
+class Left(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    leaf: Leaf
+    record: LeafRecord
+    item: LeafDict
+
+
+@dataclasses.dataclass(frozen=True)
+class Right:
+    leaf: Leaf
+    record: LeafRecord
+    item: LeafDict
+
+
+class Diamond(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    left: Left
+    right: Right

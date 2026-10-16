@@ -11,19 +11,13 @@ from typing import Final
 
 from loom.etl.compiler._errors import ETLCompilationError
 from loom.etl.compiler._plan import (
-    AgentBinding,
     PipelinePlan,
     ProcessPlan,
     StepPlan,
     iter_all_steps,
     iter_steps_in_process,
 )
-from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssue, AgentIssueKind
-
-_NO_RUNNER = AgentIssue(
-    kind=AgentIssueKind.NOT_FOUND,
-    message="no agent runner is configured; declare an 'ai:' section in the runner config",
-)
+from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssueKind
 
 _ERRORS: Final[Mapping[AgentIssueKind, Callable[[type, str, str], ETLCompilationError]]] = (
     MappingProxyType(
@@ -52,16 +46,12 @@ def validate_step_agents(plan: StepPlan, runner: AgentBatchRunner | None) -> Non
             that cannot be served.
     """
     for binding in plan.agent_bindings:
-        issues = _issues(binding, runner)
+        if runner is None:
+            raise ETLCompilationError.agent_runner_not_configured(plan.step_type, binding.alias)
+        issues = runner.validate(binding.name, binding.output_type, max_usd=binding.max_usd)
         if issues:
             first = issues[0]
             raise _ERRORS[first.kind](plan.step_type, binding.alias, first.message)
-
-
-def _issues(binding: AgentBinding, runner: AgentBatchRunner | None) -> tuple[AgentIssue, ...]:
-    if runner is None:
-        return (_NO_RUNNER,)
-    return runner.validate(binding.name, binding.output_type, max_usd=binding.max_usd)
 
 
 def validate_process_agents(plan: ProcessPlan, runner: AgentBatchRunner | None) -> None:

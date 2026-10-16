@@ -153,7 +153,7 @@ One row per input row, in the input order, failures included:
 | `agent_status` | `ok` or `error` |
 | `agent_error` | null, a run error code (`PROVIDER_UNAVAILABLE`, `OUTPUT_SCHEMA_VIOLATION`, ...), `BUDGET_EXHAUSTED`, `PROMPT_MISSING`, `OUTPUT_UNREPRESENTABLE` or `UNEXPECTED_ERROR` |
 | `agent_input_tokens`, `agent_output_tokens`, `agent_cache_read_tokens`, `agent_cache_write_tokens` | what the run consumed, `0` when nothing was sent |
-| `agent_cost_usd` | what the run cost, null when it could not be priced |
+| `agent_cost_usd` | what the run cost in USD, as `Decimal(38, 12)` rounded half to even to 12 decimal places, null when it could not be priced |
 
 `prompt` is a Polars expression or a column name; a null prompt is not sent.
 A key named like a column `map` writes is refused with a `ValueError` before
@@ -173,19 +173,24 @@ and upserts into the same table:
 | `date` | `Date` |
 | `datetime` | `Datetime("us", "UTC")`; a naive value is read as UTC. `Datetime("us")` when the field requires naive values (`Meta(tz=False)`) |
 | `Decimal` | `Decimal(38, 9)`, keeping 9 decimal places |
+| `UUID`, `time`, `timedelta`, `bytes` | `String` holding the text the output type serialises the value to (for a msgspec struct: canonical UUID, ISO time, ISO 8601 duration such as `P1D`, base64) |
 | `list[T]`, `set[T]`, `tuple[T, ...]` | `List` of the type of `T` |
-| a nested struct | `Struct` of its fields' types |
+| a nested struct or pydantic model | `Struct` of its fields' types |
+| a struct or pydantic model nested in itself, directly or through another type | `String` holding the value's JSON from the first repetition down |
 | `T \| None` | the type of `T` |
-| anything else (`dict`, a union of several types, ...) | `String` holding the value's JSON |
+| anything else (`dict`, `Any`, a union of several types, a fixed-length tuple, a `Literal` mixing value types) | `String` holding the value's JSON |
 
 An answer holding a value its column cannot (an `int` past `Int64`, a
 `Decimal` past `Decimal(38, 9)`, ...) becomes an error row with
 `agent_error = OUTPUT_UNREPRESENTABLE`, its answer columns null and its tokens
 and cost kept; the other rows of the batch are unaffected.
 
-A failed row never aborts the batch, whatever failed: an exception that is not
-a run error becomes `UNEXPECTED_ERROR`, keeps its reservation as spent and is
-logged by its type. Whether to write error rows, drop them or
+A failed row never aborts the batch: an `Exception` that is not a run error
+becomes `UNEXPECTED_ERROR`, keeps its reservation as spent and is logged by
+its type. What is not an `Exception` aborts `map`: `KeyboardInterrupt` and
+`SystemExit` reach the caller as themselves, any other inside a
+`BaseExceptionGroup`, and a run cancelled while the batch was not raises a
+`RuntimeError` naming the rows left without an outcome. Whether to write error rows, drop them or
 count them against a threshold is the step's decision. Writing them with
 `agent_version` in the upsert keys and filtering `agent_status == "ok"` in the
 anti-join retries them on the next execution; leaving them in the `done` side
@@ -235,11 +240,16 @@ does not.
 `agent.version`, and the `agent_version` column, is the agent's
 [fingerprint](../ai/artifacts.md#the-agents-version--agentplanfingerprint): it
 changes when the instructions, the output schema, the output check, the
-policies, the tools (the kind and name of each capability) or the model
-binding change, and stays when the region, the credentials, the price, the
-budget or where a tool is served from change. Keeping `agent_version` in the
-upsert keys and in the anti-join relabels every row the day the agent changes,
-and leaves the old labels in place for comparison.
+declared tools (the kind and declared facts of each capability, including the
+`include`/`exclude` filters of MCP and A2A) or the model binding change, and
+stays when any policy (`retries`, the timeouts, `max_iterations`,
+`max_tool_calls`, `max_requests`, the token caps, `max_usd`,
+`on_unpriced_spend`, `max_history_bytes`), the step budget
+(`WithAgent(max_usd=...)`), the region, the credentials, the price or where a
+tool is served from change. Editing a skill's text or a tool's code does not
+change it either. Keeping `agent_version` in the upsert keys and in the
+anti-join re-runs, and pays for, every row of the anti-join window the day the
+agent changes, and leaves the old answers in place for comparison.
 
 ## What is checked before anything is spent
 
@@ -248,7 +258,8 @@ any step runs:
 
 | Code | Cause |
 |---|---|
-| `AGENT_NOT_FOUND` | no artifact under `ai.specs` declares the name, or the config has no `ai:` section |
+| `AGENT_RUNNER_NOT_CONFIGURED` | the config has no `ai:` section, so no agent runner serves the step |
+| `AGENT_NOT_FOUND` | no artifact under `ai.specs` declares the name |
 | `AGENT_COMPILATION_FAILED` | the artifact does not compile; the message carries every compiler issue with its code |
 | `AGENT_OUTPUT_MISMATCH` | `output=` is not the artifact's `type_ref` output (a `json_schema` output never matches) |
 | `AGENT_UNPRICED_BUDGET` | a budget is declared (`WithAgent(max_usd=...)` or the artifact's `policies.max_usd`) for a model neither `ai.prices` nor the engine can price |

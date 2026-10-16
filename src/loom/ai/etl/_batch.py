@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
@@ -58,21 +58,43 @@ class Batch:
     to_builtins: Callable[[Any], Mapping[str, Any]]
 
     async def answer_all(self, prompts: Sequence[str | None]) -> list[RowOutcome]:
-        """Enter the runtime, answer every prompt in order, and close it in the same task."""
-        slots = asyncio.Semaphore(self.limit)
-        identity = Identity(subject=f"etl:{self.name}")
-        async with self.runtime:
-            return list(await asyncio.gather(*(self._answer(p, slots, identity) for p in prompts)))
+        """Enter the runtime, answer every prompt in order, and close it in the same task.
 
-    async def _answer(
-        self, prompt: str | None, slots: asyncio.Semaphore, identity: Identity
-    ) -> RowOutcome:
+        *limit* workers take the prompts in order from one shared iterator, so
+        the batch creates at most *limit* tasks whatever the number of rows.
+
+        Raises:
+            RuntimeError: A run was cancelled while the batch was not, so its
+                worker stopped and left rows without an outcome.
+        """
+        identity = Identity(subject=f"etl:{self.name}")
+        outcomes: list[RowOutcome | None] = [None] * len(prompts)
+        pending = iter(enumerate(prompts))
+        async with self.runtime, asyncio.TaskGroup() as workers:
+            for _ in range(min(self.limit, len(prompts))):
+                workers.create_task(self._work(pending, outcomes, identity))
+        if None in outcomes:
+            raise RuntimeError(
+                f"agent {self.name!r} left {outcomes.count(None)} row(s) without an outcome, the "
+                f"first row {outcomes.index(None)}: a run was cancelled while the batch was not"
+            )
+        return [outcome for outcome in outcomes if outcome is not None]
+
+    async def _work(
+        self,
+        pending: Iterator[tuple[int, str | None]],
+        outcomes: list[RowOutcome | None],
+        identity: Identity,
+    ) -> None:
+        for row, prompt in pending:
+            outcomes[row] = await self._answer(prompt, identity)
+
+    async def _answer(self, prompt: str | None, identity: Identity) -> RowOutcome:
         if prompt is None:
             return RowOutcome(output=None, error=PROMPT_MISSING, usage=None)
-        async with slots:
-            if not self.ledger.reserve(self.reservation):
-                return RowOutcome(output=None, error=BUDGET_EXHAUSTED, usage=None)
-            return await self._run(prompt, identity)
+        if not self.ledger.reserve(self.reservation):
+            return RowOutcome(output=None, error=BUDGET_EXHAUSTED, usage=None)
+        return await self._run(prompt, identity)
 
     async def _run(self, prompt: str, identity: Identity) -> RowOutcome:
         usage: AgentUsage | None = None

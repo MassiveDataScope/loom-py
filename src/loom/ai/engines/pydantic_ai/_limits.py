@@ -1,4 +1,4 @@
-"""Spend caps projected onto the engine's own ``UsageLimits``.
+"""Spend caps projected onto the engine's own ``UsageLimits``, and the pricing of its responses.
 
 ``PolicySpec`` carries five caps (FR-040), four of them optional and one,
 ``max_requests``, always set to a default; :func:`usage_limits` projects all

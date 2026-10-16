@@ -408,16 +408,24 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
 
     @property
     def fingerprint(self) -> str:
-        """Stable sha256 of everything that decides this agent's answers.
+        """Stable sha256 of the declared facts that decide this agent's answers.
 
-        Covers the instructions as compiled, the output schema, the output
-        check, the policies, the format version, the kind and name of every
-        capability and the bound provider, model, output mode and options.
-        Leaves out the name, description, metadata, provenance, configured
-        price, where a capability is served from (URL, directory,
-        credentials, timeouts) and the binding's region, endpoint,
-        credentials and streaming flag. The output check enters by its import
-        path, so editing the check's body keeps the fingerprint.
+        Covers the format version, the instructions as compiled, the output
+        schema, the output check, the kind and declared facts of every
+        capability (use case keys, SQL connection, MCP server, skill library
+        and names, Python factory reference, A2A agent, native tool, and the
+        ``include``/``exclude`` filters of MCP and A2A) and the bound
+        provider, model, output mode and options. It covers what the plan
+        declares, not the content of the skills, tools or use cases it names:
+        editing a skill's text or a tool's code keeps the fingerprint. Leaves
+        out the name, description, metadata, provenance, configured price,
+        every policy (each bounds a run and fails it past that bound;
+        ``max_history_bytes`` also withholds from the hook a history above
+        it; none decides the content of an accepted answer), where a
+        capability is served from (URL, directory, credentials, timeouts) and
+        the binding's region, endpoint, credentials and streaming flag. The
+        output check enters by its import path, so editing the check's body
+        keeps the fingerprint.
         """
         return plan_fingerprint(self)
 

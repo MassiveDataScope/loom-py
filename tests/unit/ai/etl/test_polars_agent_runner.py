@@ -162,7 +162,7 @@ class TestRows:
         assert row["agent_error"] is None
         assert (row["agent_input_tokens"], row["agent_output_tokens"]) == (10, 5)
         assert (row["agent_cache_read_tokens"], row["agent_cache_write_tokens"]) == (0, 0)
-        assert row["agent_cost_usd"] == pytest.approx(float(_ROW_COST))
+        assert row["agent_cost_usd"] == _ROW_COST
 
     def test_a_failed_row_is_returned_as_an_error_row(self, tmp_path: Path) -> None:
         out = _map(_runner(tmp_path), _messages("hola", "boom", "vale"))
@@ -291,7 +291,7 @@ class TestBudget:
 
         assert out["agent_error"].to_list() == [None] * 8 + ["BUDGET_EXHAUSTED"] * 4
         assert out["agent_input_tokens"].to_list()[8:] == [0] * 4
-        assert Decimal(str(out["agent_cost_usd"].sum())) <= Decimal("0.025")
+        assert out["agent_cost_usd"].sum() <= Decimal("0.025")
 
     @pytest.mark.parametrize("concurrency", [2, 4, 8])
     def test_concurrent_runs_never_spend_past_the_budget(
@@ -306,7 +306,7 @@ class TestBudget:
             max_usd=budget,
         )
 
-        assert Decimal(str(out["agent_cost_usd"].sum())) <= budget
+        assert out["agent_cost_usd"].sum() <= budget
         assert out["agent_error"].drop_nulls().unique().to_list() == ["BUDGET_EXHAUSTED"]
         assert probe.peak > 1
 
@@ -323,12 +323,12 @@ class TestBudget:
             max_usd=budget,
         )
 
-        spent = Decimal(str(out["agent_cost_usd"].sum()))
+        spent = out["agent_cost_usd"].sum()
         sent = out.filter(pl.col("agent_error") != "BUDGET_EXHAUSTED")
         assert budget < spent <= budget + concurrency * _PRICEY_ROW_COST
         assert sent.height <= concurrency
         assert sent["agent_error"].unique().to_list() == ["USAGE_LIMIT_EXCEEDED"]
-        assert sent["agent_cost_usd"].to_list() == [float(_PRICEY_ROW_COST)] * sent.height
+        assert sent["agent_cost_usd"].to_list() == [_PRICEY_ROW_COST] * sent.height
 
     def test_a_step_budget_without_a_run_cap_is_refused(self, tmp_path: Path) -> None:
         runner = _runner(tmp_path, agent=_AGENT.replace(", max_usd: 0.01", ""))
@@ -378,8 +378,8 @@ class TestPrices:
             "agent_cost_usd"
         ][0]
 
-        assert own == pytest.approx(float(_ROW_COST))
-        assert engine == pytest.approx(float(_GPT_4O_ROW_COST))
+        assert own == _ROW_COST
+        assert engine == _GPT_4O_ROW_COST
         assert _GPT_4O_ROW_COST != _ROW_COST
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 
@@ -116,3 +117,22 @@ class TestPlanCarriesThePrice:
 
     def test_the_plan_carries_no_price_when_its_model_has_none(self) -> None:
         assert _compile(_config({"another-model": _PRICE})) is None
+
+
+class TestUnusedPrice:
+    def test_a_price_no_binding_names_is_announced(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="loom.ai.config"):
+            _config({_HAIKU: _PRICE, "eu.anthropic.claude-sonet-5-5": _PRICE})
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "ai.prices['eu.anthropic.claude-sonet-5-5'] names no model of ai.models; "
+            "no run is priced with it"
+        ]
+
+    def test_a_price_its_binding_names_is_not_announced(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="loom.ai.config"):
+            _config({_HAIKU: _PRICE})
+
+        assert caplog.records == []

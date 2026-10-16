@@ -7,6 +7,7 @@ import pytest
 
 from loom.etl.backends.polars._schema import SchemaNotFoundError, apply_schema_polars
 from loom.etl.declarative.target import SchemaMode
+from loom.etl.schema import SchemaError
 
 
 def _frame(**cols: object) -> pl.LazyFrame:
@@ -89,3 +90,48 @@ def test_missing_list_column_is_null_filled_with_exact_type() -> None:
 
     assert out["tags"][0] is None
     assert out["tags"].dtype == pl.List(pl.String)
+
+
+_POINT = pl.Struct({"x": pl.Float64})
+
+
+@pytest.mark.parametrize("mode", [SchemaMode.STRICT, SchemaMode.EVOLVE])
+@pytest.mark.parametrize(
+    ("values", "frame_dtype", "table_dtype"),
+    [
+        ([{"x": 1.0}], _POINT, pl.String()),
+        ([[1]], pl.List(pl.Int64), pl.String()),
+        (['{"x": 1}'], pl.String(), _POINT),
+        (["[1]"], pl.String(), pl.List(pl.Int64)),
+        ([None], pl.String(), pl.List(pl.Int64)),
+        ([{"p": {"x": 1.0}}], pl.Struct({"p": _POINT}), pl.Struct({"p": pl.String})),
+        ([[{"x": 1.0}]], pl.List(_POINT), pl.List(pl.String)),
+    ],
+    ids=[
+        "struct to string",
+        "list to string",
+        "string to struct",
+        "string to list",
+        "all-null string to list",
+        "nested struct to string",
+        "list of structs to list of strings",
+    ],
+)
+def test_a_cast_between_text_and_a_struct_or_list_is_refused_naming_the_column(
+    mode: SchemaMode, values: list[object], frame_dtype: pl.DataType, table_dtype: pl.DataType
+) -> None:
+    frame = pl.DataFrame(
+        {"id": [1], "payload": values}, schema={"id": pl.Int64, "payload": frame_dtype}
+    )
+    schema = pl.Schema({"id": pl.Int64, "payload": table_dtype})
+    lazy_frame = frame.lazy()
+
+    with pytest.raises(SchemaError, match=r"'payload'.*SchemaMode\.OVERWRITE"):
+        apply_schema_polars(lazy_frame, schema, mode)
+
+
+def test_overwrite_writes_a_struct_over_a_string_column() -> None:
+    frame = pl.DataFrame({"payload": [{"x": 1.0}]}).lazy()
+    schema = pl.Schema({"payload": pl.String})
+
+    assert apply_schema_polars(frame, schema, SchemaMode.OVERWRITE) is frame

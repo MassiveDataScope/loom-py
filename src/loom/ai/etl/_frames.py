@@ -26,14 +26,14 @@ _PROMPT: Final = "__loom_agent_prompt__"
 
 _METADATA_SCHEMA: Final = pl.Schema(
     {
-        "agent_version": pl.String,
-        "agent_status": pl.String,
-        "agent_error": pl.String,
-        "agent_input_tokens": pl.Int64,
-        "agent_output_tokens": pl.Int64,
-        "agent_cache_read_tokens": pl.Int64,
-        "agent_cache_write_tokens": pl.Int64,
-        "agent_cost_usd": pl.Float64,
+        "agent_version": pl.String(),
+        "agent_status": pl.String(),
+        "agent_error": pl.String(),
+        "agent_input_tokens": pl.Int64(),
+        "agent_output_tokens": pl.Int64(),
+        "agent_cache_read_tokens": pl.Int64(),
+        "agent_cache_write_tokens": pl.Int64(),
+        "agent_cost_usd": pl.Decimal(38, 12),
     }
 )
 
@@ -165,5 +165,5 @@ def _metadata(outcome: RowOutcome, version: str) -> tuple[object, ...]:
         0 if usage is None else usage.output_tokens,
         0 if usage is None else usage.cache_read_tokens,
         0 if usage is None else usage.cache_write_tokens,
-        None if usage is None or usage.cost is None else float(usage.cost),
+        None if usage is None else usage.cost,
     )
