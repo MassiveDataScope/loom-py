@@ -7,6 +7,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.config import ConfigError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.projection.loaders import CountLoader
 from loom.testing.in_memory import InMemoryRepository
@@ -50,6 +51,18 @@ class _Product(BaseModel):
         profiles=("with_details",),
         default=0,
     )
+
+
+class _Line(BaseModel):
+    __tablename__ = "in_memory_lines"
+
+    order_id: int = ColumnField(primary_key=True)
+    id: int = ColumnField(primary_key=True)
+
+
+def test_a_composite_primary_key_is_refused() -> None:
+    with pytest.raises(ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"):
+        InMemoryRepository(_Line)
 
 
 # ---------------------------------------------------------------------------
