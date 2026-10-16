@@ -1176,7 +1176,9 @@ ai:
 ```
 
 `source` and `as_of` are not read by loom; they record where the rates were
-taken from.
+taken from. A key of `ai.prices` that no binding of `ai.models` names is
+logged as a warning when the configuration is read, since no run is priced
+with it.
 
 The compiler carries the bound model's price on the plan (`AgentPlan.price`),
 and the engine prices every response with it as the model returns it, before

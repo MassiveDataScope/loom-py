@@ -90,6 +90,9 @@
 
 ### ai
 
+- **ai:** `AiConfig` logs a warning for every key of `ai.prices` that no
+  binding of `ai.models` names, a price no run is priced with (a misspelt
+  model id, for instance).
 - **ai:** `provider: typesafe` binds TypeSafe's Jev, a decision model that
   fills a typed output from the state it is given and never writes text, so a
   role whose answer is a choice or a verdict can run on it. Extra
