@@ -19,6 +19,7 @@ import msgspec
 from deltalake import CommitProperties, WriterProperties
 
 from loom.core.model import LoomFrozenStruct
+from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
@@ -307,9 +308,11 @@ class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True):
             (default 168 h / 7 days).
         dry_run: When ``True`` (default), lists files without deleting.
             Set ``dry_run=False`` explicitly for production runs.
-        full: When ``True``, also deletes files the Delta log does not
-            reference, older than the retention.  ``False`` (default) deletes
-            only the files the log records as removed.
+        full: When ``True``, also deletes every file under the table
+            directory that the Delta log does not reference and that is
+            older than the retention, whoever wrote it; only names starting
+            with an underscore are kept.  ``False`` (default) deletes only
+            the files the log records as removed.
     """
 
     retention_hours: int | None = None
@@ -643,9 +646,8 @@ def _resolve_polars_catalog_key(
 
 
 def _is_cloud_uri(path: str) -> bool:
-    cloud_schemes = frozenset({"s3", "gs", "gcs", "abfss", "abfs", "az", "r2"})
     parsed = urlparse(path.strip())
-    if parsed.scheme.lower() not in cloud_schemes:
+    if parsed.scheme.lower() not in CLOUD_SCHEMES:
         return False
     # Cloud roots must include authority/bucket/container to avoid accepting
     # incomplete URIs like "s3://".

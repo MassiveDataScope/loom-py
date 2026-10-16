@@ -42,11 +42,10 @@ class ReplaceSpec:
         table_ref:   Logical table reference.
         schema_mode: Schema evolution strategy.  ``OVERWRITE`` replaces the
                      table schema alongside the data.
-        streaming:   When ``True`` requests a streaming Arrow write.  In
-                     this release the Polars backend honours the flag
-                     only for :class:`ReplacePartitionsSpec`; other modes
-                     accept the flag for forward-compatibility but still
-                     materialise the frame.
+        streaming:   Set by ``replace(streaming=...)``; no backend reads it
+                     for a full replace.  The Polars backend collects the
+                     frame with the streaming engine when the step sets
+                     ``streaming = True``.
         allow_empty: When ``False`` the writer raises
                      :class:`~loom.etl.EmptyReplaceError` instead of
                      writing a frame with no rows.

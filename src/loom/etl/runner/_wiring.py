@@ -11,10 +11,10 @@ from typing import Any, Final, Protocol, cast
 
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.plugins.optional import import_optional
+from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
 from loom.etl.checkpoint._backends._spark import _SparkCheckpointBackend
-from loom.etl.checkpoint._cleaners import _is_cloud_path
 from loom.etl.checkpoint._options import encryption_options
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore
@@ -81,7 +81,7 @@ def make_checkpoint_store(
     """Build a checkpoint store from config or return ``None`` when disabled."""
     if not config.checkpoint_root:
         return None
-    if not _is_cloud_path(config.checkpoint_root):
+    if not is_cloud_path(config.checkpoint_root):
         raise ValueError(
             "checkpoint_root must be a cloud URI (s3://, gs://, abfss://, ...). "
             "Local checkpoint paths are not supported."

@@ -12,6 +12,7 @@ from pyspark.errors.exceptions.base import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 from pyspark.sql.column import Column
+from pyspark.storagelevel import StorageLevel
 
 from loom.etl.backends._format_registry import resolve_format_handler, write_options_or_default
 from loom.etl.backends._historify._transform import scd2_transform
@@ -143,8 +144,17 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         _ = streaming
         return frame
 
-    def _is_empty(self, frame: DataFrame) -> bool:
-        """Whether *frame* has no rows; runs one Spark job that stops at the first row.
+    def _pin_rows(self, frame: DataFrame) -> tuple[DataFrame, bool]:
+        """Return *frame* computed once and kept, and whether it has no rows.
+
+        A classic DataFrame is computed with ``localCheckpoint(eager=True)``:
+        the check and the write both read the rows kept on the executors, and
+        losing an executor before the write ends fails the write instead of
+        recomputing the frame. A DataFrame without ``localCheckpoint()``,
+        such as a pyspark 3.5 Spark Connect DataFrame, is persisted with
+        ``MEMORY_AND_DISK`` and counted; the write reads the cached rows, but
+        Spark recomputes a cached block it loses, so that write may read rows
+        other than the ones counted.
 
         Raises:
             ValueError: When *frame* is a streaming DataFrame, whose rows
@@ -156,7 +166,38 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
                 "but the frame to write is a streaming DataFrame. Read the source as a "
                 "batch DataFrame or declare replace() without allow_empty=False."
             )
-        return bool(frame.isEmpty())
+        # A pyspark 3.5 Spark Connect DataFrame is not a pyspark.sql.DataFrame
+        # and raises NOT_IMPLEMENTED on localCheckpoint().
+        classic = isinstance(frame, DataFrame)
+        if classic:
+            pinned = frame.localCheckpoint(eager=True)
+        else:
+            pinned = frame.persist(StorageLevel.MEMORY_AND_DISK)
+        try:
+            # A persisted frame is counted, which computes and caches every
+            # partition for the write; isEmpty() would stop at the first row.
+            return pinned, bool(pinned.isEmpty()) if classic else int(pinned.count()) == 0
+        except BaseException:
+            self._release_pinned(pinned)
+            raise
+
+    def _release_pinned(self, frame: DataFrame) -> None:
+        """Free the blocks :meth:`_pin_rows` kept for *frame*, best effort.
+
+        A failure to free them is logged as a warning and never raised, so it
+        cannot replace the outcome of the write: the written table, the write
+        error or :class:`~loom.etl.EmptyReplaceError`.
+        """
+        try:
+            if isinstance(frame, DataFrame):
+                # unpersist() does not free a local checkpoint's blocks: they
+                # belong to the RDD under the checkpointed frame's logical plan.
+                java_frame: Any = frame._jdf
+                java_frame.queryExecution().logical().rdd().unpersist(False)
+            else:
+                frame.unpersist()
+        except Exception:
+            _log.warning("Could not free the rows pinned for the write.", exc_info=True)
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""

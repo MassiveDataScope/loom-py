@@ -28,9 +28,11 @@ _current_flow_run_id: ContextVar[uuid.UUID | None] = ContextVar(
 def bind_task_run(task_run_id: uuid.UUID) -> Iterator[None]:
     """Bind *task_run_id* as the active step's TaskRun for the current context.
 
-    Records emitted while this context manager is active are routed to
-    the given TaskRun. Outside it (between steps, or in observer code
-    that runs after STEP_END) records fall back to the flow run.
+    Records emitted while this context manager is active carry
+    *task_run_id*, and the flow run the bridge was installed for when there
+    is one. Outside it (between steps, or in observer code that runs after
+    STEP_END) records carry the flow run only, and are not shipped when the
+    bridge has no flow run.
 
     Args:
         task_run_id: The Prefect TaskRun UUID returned by
@@ -56,8 +58,8 @@ def current_flow_run_id() -> uuid.UUID | None:
 class PrefectLogBridgeHandler(logging.Handler):
     """logging.Handler that ships records to the Prefect logs API.
 
-    Records carry the installed ``flow_run_id`` and, inside a step, the
-    active ``task_run_id`` from the ContextVar too.
+    Records carry the installed ``flow_run_id``, when there is one, and,
+    inside a step, the active ``task_run_id`` from the ContextVar too.
     A daemon worker drains the queue and retries with exponential
     backoff up to ``_MAX_ATTEMPTS`` before incrementing ``dropped_logs``.
     """
@@ -120,8 +122,9 @@ class PrefectLogBridgeHandler(logging.Handler):
             "level": record.levelno,
             "message": record.getMessage(),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC),
-            "flow_run_id": flow_run_id,
         }
+        if flow_run_id is not None:
+            payload["flow_run_id"] = flow_run_id
         if task_run_id is not None:
             payload["task_run_id"] = task_run_id
         return payload

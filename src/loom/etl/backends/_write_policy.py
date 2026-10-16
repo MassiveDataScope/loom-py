@@ -217,7 +217,8 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         Returns:
             The prepared write when the table already exists and the caller
             must still issue its mode-specific write, or ``None`` when the
-            table was absent and has just been created from *frame*.
+            table was absent and has just been created from *frame*. A caller
+            passing ``allow_empty=False`` must ``_release_pinned(prepared.frame)``.
         """
         existing = self._physical_schema(target)
         if existing is None:
@@ -229,12 +230,16 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             materialized = self._materialize_checked(
                 frame, target, streaming, allow_empty=allow_empty
             )
-            self._create(
-                materialized,
-                target,
-                schema_mode=schema_mode,
-                partition_cols=create_partition_cols,
-            )
+            try:
+                self._create(
+                    materialized,
+                    target,
+                    schema_mode=schema_mode,
+                    partition_cols=create_partition_cols,
+                )
+            finally:
+                if not allow_empty:
+                    self._release_pinned(materialized)
             return None
         if require_physical_partitions is not None:
             self._require_physical_partitions(target, require_physical_partitions)
@@ -276,7 +281,11 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         )
         if prepared is None:
             return
-        self._replace(prepared.frame, target, schema_mode=spec.schema_mode)
+        try:
+            self._replace(prepared.frame, target, schema_mode=spec.schema_mode)
+        finally:
+            if not spec.allow_empty:
+                self._release_pinned(prepared.frame)
 
     def _do_replace_partitions(
         self,
@@ -520,13 +529,26 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         return None
 
     @abstractmethod
-    def _is_empty(self, frame: WriteFrameT) -> bool:
-        """Whether the materialised *frame* has no rows.
+    def _pin_rows(self, frame: WriteFrameT) -> tuple[WriteFrameT, bool]:
+        """Return *frame* computed once, and whether it has no rows.
+
+        The write uses the returned frame, so it writes the rows that were
+        counted.
 
         Raises:
             ValueError: When the backend cannot count the rows of *frame*
                 before the write, such as a Spark streaming DataFrame.
         """
+
+    def _release_pinned(self, frame: WriteFrameT) -> None:
+        """Free what :meth:`_pin_rows` kept for *frame*, once nothing reads it.
+
+        Called after the write, whether it succeeded or failed, and before
+        :class:`EmptyReplaceError` is raised. An override must not raise, so
+        the outcome of the write is the one the caller sees. Holds nothing by
+        default.
+        """
+        _ = frame
 
     def _materialize_checked(
         self,
@@ -538,6 +560,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
     ) -> WriteFrameT:
         """Materialise *frame*, warning when the write carries no rows.
 
+        When *allow_empty* is ``False`` the returned frame is the one whose
+        rows were counted.
+
         Raises:
             EmptyReplaceError: When *allow_empty* is ``False`` and the
                 materialised frame has no rows.
@@ -545,12 +570,15 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 cannot count the rows of the materialised frame.
         """
         materialized = self._materialize_for_write(frame, streaming)
-        if not allow_empty:
-            if self._is_empty(materialized):
-                raise EmptyReplaceError(target.logical_ref.ref)
-        elif self._row_count_if_cheap(materialized) == 0:
-            _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
-        return materialized
+        if allow_empty:
+            if self._row_count_if_cheap(materialized) == 0:
+                _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
+            return materialized
+        pinned, empty = self._pin_rows(materialized)
+        if empty:
+            self._release_pinned(pinned)
+            raise EmptyReplaceError(target.logical_ref.ref)
+        return pinned
 
     @abstractmethod
     def _materialize_for_write(self, frame: InputFrameT, streaming: bool) -> WriteFrameT:

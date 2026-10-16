@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import msgspec
 import polars as pl
+from deltalake import write_deltalake
 from polars.testing import assert_frame_equal
 
 from loom.etl import Format, FromFile, FromTable
 from loom.etl.backends.polars import PolarsSourceReader, decode_json_columns
-from loom.etl.backends.polars._reader import _apply_json_decode
+
+from .conftest import table_path
 
 
 class Payload(msgspec.Struct):
@@ -81,11 +84,9 @@ def test_normalises_a_field_that_changes_type_between_rows() -> None:
     assert decoded["payload"].to_list()[1] == {"event_type": '{"name": "view"}', "user_id": 8}
 
 
-def test_the_reader_and_its_compatibility_helper_decode_through_it() -> None:
-    lazy = _raw().lazy()
-    expected = decode_json_columns(lazy, _EVENTS.json_columns).collect()
+def test_the_reader_decodes_the_columns_its_source_declares(tmp_path: Path) -> None:
+    write_deltalake(str(table_path(tmp_path, _EVENTS.table_ref)), _raw(), mode="overwrite")
 
-    assert_frame_equal(_apply_json_decode(lazy, _EVENTS.json_columns).collect(), expected)
-    assert_frame_equal(
-        PolarsSourceReader._apply_json_decode(lazy, _EVENTS.json_columns).collect(), expected
-    )
+    read = PolarsSourceReader(tmp_path).read(_EVENTS._to_spec("events"), None).collect()
+
+    assert_frame_equal(read, decode_json_columns(_raw(), _EVENTS.json_columns))

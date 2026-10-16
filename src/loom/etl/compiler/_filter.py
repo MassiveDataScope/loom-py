@@ -96,10 +96,10 @@ def filter_plan(plan: PipelinePlan, include: Iterable[str]) -> PipelinePlan:
 
     Example::
 
-        >>> from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
-        >>> plan = filter_plan(ETLCompiler().compile(MyPipeline), {"LoadStep"})
-        >>> [step.step_type.__name__ for step in iter_all_steps(plan)]
-        ['LoadStep']
+        from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
+
+        plan = filter_plan(ETLCompiler().compile(MyPipeline), {"LoadStep"})
+        [step.step_type.__name__ for step in iter_all_steps(plan)]  # ["LoadStep"]
     """
     if isinstance(include, str):
         raise TypeError(

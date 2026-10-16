@@ -119,8 +119,10 @@ class IntoTable:
             schema:      Schema evolution strategy.  Use
                          :attr:`~SchemaMode.OVERWRITE` to replace the table
                          schema entirely alongside the data.
-            streaming:   When ``True`` the Polars backend writes via an Arrow
-                         ``RecordBatchReader`` instead of materialising.
+            streaming:   Kept on the :class:`ReplaceSpec`; a full replace
+                         does not read it.  The Polars backend collects the
+                         frame with the streaming engine when the step sets
+                         ``streaming = True``.
             allow_empty: When ``False``, a frame with no rows raises
                          :class:`~loom.etl.EmptyReplaceError` and the table
                          is neither replaced nor created.  Use it for a

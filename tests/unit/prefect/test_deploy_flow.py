@@ -18,7 +18,9 @@ import pytest
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.maintenance import MaintenanceStep
 from loom.prefect import backfill_flow, deploy_flow, etl_flow, maintenance_flow
+from loom.prefect._meta import LOOM_ETL_META_ATTR
 from loom.prefect.deploy import deploy_flow as deploy_flow_from_deploy
+from loom.prefect.deploy import entrypoint
 
 _SOURCE_FILE = "/app/src/flows/daily_orders.py"
 
@@ -178,6 +180,99 @@ def test_refuses_a_flow_its_module_exposes_under_another_attribute(
         deploy_flow(flow, env="prod")
 
     from_source.assert_not_called()
+
+
+def test_refuses_a_flow_whose_module_getattr_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(attribute: str) -> Any:
+        raise RuntimeError(f"cannot build {attribute}")
+
+    flow = _flow(tmp_path)
+    _expose(monkeypatch, __getattr__=fail)
+    from_source, _ = _stub_prefect(flow)
+
+    with pytest.raises(ValueError, match="'daily-orders' as attribute 'daily_orders'") as raised:
+        deploy_flow(flow, env="prod")
+
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    from_source.assert_not_called()
+
+
+def test_refuses_a_flow_built_from_a_yaml_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = etl_flow(
+        name="daily-orders",
+        pipeline=_Pipeline,
+        params_type=_Params,
+        config_path=_config(tmp_path),
+        source_file=entrypoint.__file__,
+    )
+    from_source, _ = _stub_prefect(flow)
+
+    with pytest.raises(TypeError, match=r"discover_and_deploy_etls\(config=\.\.\.\)"):
+        deploy_flow(flow, env="prod")
+
+    from_source.assert_not_called()
+
+
+def _symlinked_flow_dir(tmp_path: Path) -> tuple[Path, Path]:
+    """A ``real`` directory with a flow file that must not be imported, and a link to it."""
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    (real_dir / "daily_orders.py").write_text(
+        "raise RuntimeError('imported a second time')\n", encoding="utf-8"
+    )
+    linked_dir = tmp_path / "linked"
+    linked_dir.symlink_to(real_dir, target_is_directory=True)
+    return real_dir, linked_dir
+
+
+def _expose_from(monkeypatch: pytest.MonkeyPatch, flow: Any, module_file: Path) -> None:
+    module = ModuleType("linked_flows.daily_orders")
+    module.__file__ = str(module_file)
+    module.daily_orders = flow  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+
+def test_reads_the_module_imported_through_a_symlinked_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_dir, linked_dir = _symlinked_flow_dir(tmp_path)
+    flow = etl_flow(
+        name="daily-orders",
+        pipeline=_Pipeline,
+        params_type=_Params,
+        config_path=_config(tmp_path),
+        source_file=str(real_dir / "daily_orders.py"),
+    )
+    _expose_from(monkeypatch, flow, linked_dir / "daily_orders.py")
+    _, deploy = _stub_prefect(flow)
+
+    assert deploy_flow(flow, env="prod") == "deployment-id"
+    deploy.assert_called_once()
+
+
+def test_reads_the_imported_module_when_the_metadata_names_it_through_a_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_dir, linked_dir = _symlinked_flow_dir(tmp_path)
+    flow = etl_flow(
+        name="daily-orders",
+        pipeline=_Pipeline,
+        params_type=_Params,
+        config_path=_config(tmp_path),
+        source_file=str(real_dir / "daily_orders.py"),
+    )
+    meta = getattr(flow, LOOM_ETL_META_ATTR)
+    linked_source = str(linked_dir / "daily_orders.py")
+    setattr(flow, LOOM_ETL_META_ATTR, msgspec.structs.replace(meta, source_file=linked_source))
+    _expose_from(monkeypatch, flow, real_dir / "daily_orders.py")
+    _, deploy = _stub_prefect(flow)
+
+    assert deploy_flow(flow, env="prod") == "deployment-id"
+    deploy.assert_called_once()
 
 
 def test_refuses_a_flow_whose_source_file_does_not_exist(

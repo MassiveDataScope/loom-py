@@ -217,9 +217,9 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         """Rows in the collected frame."""
         return frame.height
 
-    def _is_empty(self, frame: pl.DataFrame) -> bool:
-        """Whether the collected frame has no rows."""
-        return frame.is_empty()
+    def _pin_rows(self, frame: pl.DataFrame) -> tuple[pl.DataFrame, bool]:
+        """Return the collected frame, which already holds its rows, and whether it has none."""
+        return frame, frame.is_empty()
 
     def _materialize_for_write(self, frame: pl.LazyFrame, streaming: bool) -> pl.DataFrame:
         """Collect lazy frame to DataFrame before Delta write."""

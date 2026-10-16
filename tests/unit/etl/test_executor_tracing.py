@@ -1,13 +1,8 @@
-"""The span tree a real sequential ETL run exports.
+"""The span tree a real ETL run exports.
 
-``ETLExecutor`` opens three nested scopes — pipeline, process, step — from one
-thread. This asserts the exported ``parent_span_id`` chain rather than the
-lifecycle events, which ``test_executor`` already covers: before spans were
-opened by the runtime itself, the events were right and the tree was flat.
-
-Parallel groups are deliberately not asserted here: ``ThreadDispatcher``
-submits without ``copy_context``, so a parallel group's spans are roots. That
-is a separate change with its own review.
+``ETLExecutor`` opens three nested scopes — pipeline, process, step. This
+asserts the exported ``parent_span_id`` chain rather than the lifecycle
+events, which ``test_executor`` already covers.
 """
 
 from __future__ import annotations
@@ -48,8 +43,20 @@ class FailingLoad(ETLStep[TracingParams]):
         raise ValueError("intentional failure")
 
 
+class LoadReturns(ETLStep[TracingParams]):
+    orders = FromTable("raw.orders")
+    target = IntoTable("staging.returns").replace()
+
+    def execute(self, params: TracingParams, *, orders: Any) -> Any:  # type: ignore[override]
+        return orders
+
+
 class Staging(ETLProcess[TracingParams]):
     steps = [LoadOrders]
+
+
+class ParallelStaging(ETLProcess[TracingParams]):
+    steps = [[LoadOrders, LoadReturns]]
 
 
 class FailingStaging(ETLProcess[TracingParams]):
@@ -62,6 +69,10 @@ class DailySales(ETLPipeline[TracingParams]):
 
 class FailingSales(ETLPipeline[TracingParams]):
     processes = [FailingStaging]
+
+
+class ParallelSales(ETLPipeline[TracingParams]):
+    processes = [ParallelStaging]
 
 
 def _executor() -> tuple[ETLExecutor, InMemorySpanExporter]:
@@ -117,6 +128,19 @@ def test_a_sequential_pipeline_exports_one_tree() -> None:
     assert _parent_span_id(step) == _span_id(process)
     assert _parent_span_id(process) == _span_id(pipeline)
     assert _parent_span_id(pipeline) is None
+    assert len({_trace_id(span) for span in spans}) == 1
+
+
+def test_a_parallel_group_nests_its_steps_under_the_process() -> None:
+    executor, exporter = _executor()
+    plan = ETLCompiler().compile(ParallelSales)
+
+    executor.run_pipeline(plan, TracingParams(run_date=date(2024, 1, 5)))
+
+    spans = exporter.get_finished_spans()
+    process = _by_name(spans, "process:ParallelStaging")
+    for name in ("step:LoadOrders", "step:LoadReturns"):
+        assert _parent_span_id(_by_name(spans, name)) == _span_id(process)
     assert len({_trace_id(span) for span in spans}) == 1
 
 

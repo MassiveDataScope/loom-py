@@ -6,7 +6,7 @@ import functools
 import json
 import logging
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
@@ -40,11 +40,10 @@ from loom.etl.storage._locator import TableLocator, _as_locator
 from loom.etl.storage.routing import PathRouteResolver, PathTarget, TableRouteResolver
 
 from ._dtype import loom_type_to_polars
+from ._frame import FrameT
 from ._predicate import predicate_to_polars
 
 _log = logging.getLogger(__name__)
-
-_FrameT = TypeVar("_FrameT", pl.DataFrame, pl.LazyFrame)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +126,7 @@ def _normalize_json_string(json_str: str | None, *, loom_type: LoomType) -> str 
     return json.dumps(result, ensure_ascii=False)
 
 
-def decode_json_columns(frame: _FrameT, json_columns: Iterable[JsonColumnSpec]) -> _FrameT:
+def decode_json_columns(frame: FrameT, json_columns: Iterable[JsonColumnSpec]) -> FrameT:
     """Decode JSON string columns the way :class:`PolarsSourceReader` does at read time.
 
     Each column named in *json_columns* holds JSON text and is replaced by the
@@ -330,7 +329,7 @@ class PolarsSourceReader(SourceReader):
         if spec.schema:
             frame = self._apply_source_schema(frame, spec.schema)
         if spec.json_columns:
-            frame = self._apply_json_decode(frame, spec.json_columns)
+            frame = decode_json_columns(frame, spec.json_columns)
         return frame
 
     @staticmethod
@@ -390,27 +389,10 @@ class PolarsSourceReader(SourceReader):
         cast_exprs = [pl.col(col.name).cast(loom_type_to_polars(col.dtype)) for col in schema]
         return frame.with_columns(cast_exprs)
 
-    @staticmethod
-    def _apply_json_decode(frame: pl.LazyFrame, json_columns: tuple[Any, ...]) -> pl.LazyFrame:
-        """Decode JSON string columns.
-
-        Applies a per-row normalization pass before ``json_decode`` so that
-        polymorphic fields (e.g. ``String`` in some rows, ``Object`` in others)
-        are coerced to the declared :class:`~loom.etl.schema.LoomType` without
-        raising :exc:`polars.exceptions.ComputeError`. See
-        :func:`decode_json_columns`.
-        """
-        return decode_json_columns(frame, json_columns)
-
 
 def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
     """Compatibility helper used by tests."""
     return PolarsSourceReader._apply_source_schema(frame, schema)
-
-
-def _apply_json_decode(frame: pl.LazyFrame, json_columns: tuple[Any, ...]) -> pl.LazyFrame:
-    """Compatibility alias of :func:`decode_json_columns`."""
-    return decode_json_columns(frame, json_columns)
 
 
 def execute_sql(frames: dict[str, pl.LazyFrame], query: str) -> pl.LazyFrame:
@@ -426,5 +408,4 @@ __all__ = [
     "decode_json_columns",
     "execute_sql",
     "_apply_source_schema",
-    "_apply_json_decode",
 ]

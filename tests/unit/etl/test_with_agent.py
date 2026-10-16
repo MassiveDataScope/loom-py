@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import numbers
 import subprocess
 import sys
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -99,6 +101,19 @@ class _FakeAgents:
         return "labelled"
 
 
+class _Int64:
+    """An integral number that is not an ``int``, as ``numpy.int64`` is."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __index__(self) -> int:
+        return self._value
+
+
+numbers.Integral.register(_Int64)
+
+
 def _compile_error(step: type[Any], agents: _FakeAgents | None) -> ETLCompilationError:
     compiler = ETLCompiler(config_context=ConfigContext.from_dict({}), agents=agents)
     with pytest.raises(ETLCompilationError) as exc_info:
@@ -122,10 +137,49 @@ class TestDeclaration:
         with pytest.raises(ValueError, match="WithAgent"):
             WithAgent("", output=Reply)
 
-    @pytest.mark.parametrize("budget", [Decimal("0"), Decimal("-1")])
-    def test_rejects_a_budget_that_is_not_positive(self, budget: Decimal) -> None:
+    @pytest.mark.parametrize(
+        "budget",
+        [Decimal("0"), Decimal("-1"), Decimal("NaN"), Decimal("Infinity"), Decimal("sNaN")],
+    )
+    def test_rejects_a_budget_that_is_not_a_finite_positive_amount(self, budget: Decimal) -> None:
         with pytest.raises(ValueError, match="max_usd"):
             WithAgent("seller_reply", output=Reply, max_usd=budget)
+
+    @pytest.mark.parametrize("budget", [-1, 0, -0.5, 0.0, float("nan"), float("inf")])
+    def test_rejects_a_number_that_is_not_a_finite_positive_amount(self, budget: float) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(ValueError, match="max_usd"):
+                WithAgent("seller_reply", output=Reply, max_usd=budget)
+
+    @pytest.mark.parametrize("budget", ["2", True, [2]])
+    def test_rejects_a_budget_that_is_not_a_number(self, budget: object) -> None:
+        with pytest.raises(TypeError, match="max_usd"):
+            WithAgent("seller_reply", output=Reply, max_usd=budget)  # type: ignore[arg-type]
+
+    def test_an_int_budget_becomes_the_same_decimal_without_warning(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            agent = WithAgent("seller_reply", output=Reply, max_usd=2)
+
+        assert isinstance(agent.max_usd, Decimal)
+        assert agent.max_usd == Decimal(2)
+
+    def test_an_integral_that_is_not_an_int_becomes_the_same_decimal(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            agent = WithAgent("seller_reply", output=Reply, max_usd=_Int64(3))  # type: ignore[arg-type]
+
+        assert isinstance(agent.max_usd, Decimal)
+        assert agent.max_usd == Decimal(3)
+
+    def test_a_float_budget_warns_and_becomes_the_decimal_it_prints_as(self) -> None:
+        with pytest.warns(DeprecationWarning, match=r"max_usd.*loom 3\.0") as caught:
+            agent = WithAgent("seller_reply", output=Reply, max_usd=0.1)
+
+        assert isinstance(agent.max_usd, Decimal)
+        assert agent.max_usd == Decimal("0.1")
+        assert caught[0].filename == __file__
 
     def test_is_not_a_frame_source(self) -> None:
         assert set(LabelStep._agents) == {"labeller"}
