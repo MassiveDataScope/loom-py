@@ -239,6 +239,24 @@ def _write_flows_package(tmp_path: Path, name: str) -> str:
     return name
 
 
+def test_a_package_exposing_a_flow_under_another_attribute_deploys_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder: _Recorder
+) -> None:
+    monkeypatch.syspath_prepend(str(tmp_path))
+    package = _write_flows_package(tmp_path, "flows_pkg_misnamed")
+    misnamed = (tmp_path / package / "daily.py").read_text(encoding="utf-8")
+    (tmp_path / package / "late.py").write_text(
+        misnamed.replace("daily_orders = ", "orders = ").replace("daily-orders", "late-orders"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="'late-orders' as attribute 'late_orders'"):
+        discover_and_deploy_etls(flows_package=package)
+
+    assert recorder.calls == []
+    recorder.deploy.assert_not_called()
+
+
 def _without_env(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     job_variables = {k: v for k, v in kwargs["job_variables"].items() if k != "env"}
     return {**kwargs, "job_variables": job_variables}

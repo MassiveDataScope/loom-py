@@ -19,6 +19,7 @@ from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, Int
 from loom.etl.maintenance import MaintenanceStep
 from loom.prefect import backfill_flow, deploy_flow, etl_flow, maintenance_flow
 from loom.prefect.deploy import deploy_flow as deploy_flow_from_deploy
+from loom.prefect.deploy import entrypoint
 
 _SOURCE_FILE = "/app/src/flows/daily_orders.py"
 
@@ -175,6 +176,41 @@ def test_refuses_a_flow_its_module_exposes_under_another_attribute(
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(ValueError, match="'daily-orders' as attribute 'daily_orders'"):
+        deploy_flow(flow, env="prod")
+
+    from_source.assert_not_called()
+
+
+def test_refuses_a_flow_whose_module_getattr_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(attribute: str) -> Any:
+        raise RuntimeError(f"cannot build {attribute}")
+
+    flow = _flow(tmp_path)
+    _expose(monkeypatch, __getattr__=fail)
+    from_source, _ = _stub_prefect(flow)
+
+    with pytest.raises(ValueError, match="'daily-orders' as attribute 'daily_orders'") as raised:
+        deploy_flow(flow, env="prod")
+
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    from_source.assert_not_called()
+
+
+def test_refuses_a_flow_built_from_a_yaml_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = etl_flow(
+        name="daily-orders",
+        pipeline=_Pipeline,
+        params_type=_Params,
+        config_path=_config(tmp_path),
+        source_file=entrypoint.__file__,
+    )
+    from_source, _ = _stub_prefect(flow)
+
+    with pytest.raises(TypeError, match=r"discover_and_deploy_etls\(config=\.\.\.\)"):
         deploy_flow(flow, env="prod")
 
     from_source.assert_not_called()

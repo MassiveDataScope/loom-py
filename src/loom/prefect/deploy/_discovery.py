@@ -57,7 +57,10 @@ def discover_and_deploy_etls(
 
     Raises:
         ValueError: When both or neither of ``flows_package`` and ``config``
-            are given, or when ``flows_package`` is not a package.
+            are given, when ``flows_package`` is not a package, or when one of
+            its flows has no work pool for ``env`` or is not exposed under its
+            attribute name, as :func:`deploy_flow` checks; raised before any
+            deployment is registered.
         ConfigError: When a declaration in ``config`` is invalid or sets
             ``LOOM_ETL_CONFIG`` under ``job_variables.env``; raised before
             any deployment is registered.
@@ -101,7 +104,9 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
         The deployment id.
 
     Raises:
-        TypeError: When ``flow`` was not built by a loom flow factory.
+        TypeError: When ``flow`` was not built by a loom flow factory, or was
+            built from a YAML declaration, which
+            ``discover_and_deploy_etls(config=...)`` deploys.
         ValueError: When neither ``work_pool`` nor the YAML names a work pool
             for ``env``, when ``source_file`` cannot be imported, or when it
             does not expose the flow under its attribute name.
@@ -119,21 +124,36 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
             f"deploy_flow() takes a flow built by etl_flow, backfill_flow or "
             f"maintenance_flow; {flow!r} carries no loom ETL metadata."
         )
+    if _is_declared_in_yaml(meta):
+        raise TypeError(
+            f"deploy_flow() cannot deploy {meta.name!r}: it was built from a YAML "
+            f"declaration; deploy it with discover_and_deploy_etls(config=...)."
+        )
     plan = _plan(meta, work_pool, env)
     _check_exposed(meta)
     return _deploy_single(flow, meta, plan)
+
+
+def _is_declared_in_yaml(meta: ETLFlowMeta) -> bool:
+    """Whether the flow was built by :mod:`loom.prefect.deploy.entrypoint`."""
+    return os.path.realpath(meta.source_file) == os.path.realpath(entrypoint.__file__)
 
 
 def _check_exposed(meta: ETLFlowMeta) -> None:
     """Refuse a flow the worker cannot import from ``meta.source_file``."""
     attribute = flow_attribute_name(meta.name)
     module = _source_module(meta.source_file)
-    exposed_meta = getattr(getattr(module, attribute, None), LOOM_ETL_META_ATTR, None)
+    not_exposed = ValueError(
+        f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
+        f"{attribute!r}; the worker imports the flow from that attribute."
+    )
+    try:
+        exposed = getattr(module, attribute, None)
+    except Exception as exc:
+        raise not_exposed from exc
+    exposed_meta = getattr(exposed, LOOM_ETL_META_ATTR, None)
     if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
-        raise ValueError(
-            f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
-            f"{attribute!r}; the worker imports the flow from that attribute."
-        )
+        raise not_exposed
 
 
 def _source_module(source_file: str) -> ModuleType:
@@ -154,7 +174,9 @@ def _loaded_module_name(source_file: str) -> str | None:
     """Return the ``sys.modules`` key of the module loaded from ``source_file``."""
     for name, module in list(sys.modules.items()):
         module_file = getattr(module, "__file__", None)
-        if module_file is not None and os.path.realpath(module_file) == source_file:
+        if module_file is not None and os.path.realpath(module_file) == os.path.realpath(
+            source_file
+        ):
             return name
     return None
 
@@ -165,15 +187,23 @@ def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:
     if pkg_path is None:
         raise ValueError(f"{flows_package!r} is not a package")
 
-    deployment_ids: list[str] = []
+    flows = list(_package_flows(flows_package, pkg_path))
+    plans = [_plan(meta, work_pool, env) for _, meta in flows]
+    for _, meta in flows:
+        _check_exposed(meta)
+    return [
+        _deploy_single(flow, meta, plan) for (flow, meta), plan in zip(flows, plans, strict=True)
+    ]
+
+
+def _package_flows(flows_package: str, pkg_path: Any) -> Iterator[tuple[Any, ETLFlowMeta]]:
+    """Yield each loom flow, with its metadata, of the modules of ``flows_package``."""
     for module_info in pkgutil.iter_modules(pkg_path):
         module = importlib.import_module(f"{flows_package}.{module_info.name}")
         for attr in vars(module).values():
             meta = getattr(attr, LOOM_ETL_META_ATTR, None)
-            if meta is None:
-                continue
-            deployment_ids.append(_deploy_single(attr, meta, _plan(meta, work_pool, env)))
-    return deployment_ids
+            if meta is not None:
+                yield attr, meta
 
 
 @dataclass(frozen=True)
