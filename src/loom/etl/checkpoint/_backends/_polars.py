@@ -10,6 +10,7 @@ from typing import Any, TypeGuard
 import fsspec.core
 import polars as pl
 
+from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint._cleaners import _join_path
 from loom.etl.checkpoint._options import CheckpointOptions, checkpoint_options
 
@@ -36,10 +37,6 @@ class _PolarsCheckpointBackend:
         if scan_path is None:
             _log.info("checkpoint READ MISS name=%s base=%s", name, base)
             return None
-        # Imported here: loom.etl.storage imports loom.etl.declarative through
-        # loom.etl.runtime, and loom.etl.declarative imports this module.
-        from loom.etl.storage._uri import is_cloud_path
-
         kwargs: dict[str, Any] = {"memory_map": not is_cloud_path(base)}
         # The read declares no encryption: decryption is server-side.
         read_opts = self._options.object_store_read

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from loom.etl.storage._uri import is_cloud_path
+from loom.etl._uri import is_cloud_path
 
 
 @pytest.mark.parametrize(

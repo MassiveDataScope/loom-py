@@ -15,13 +15,13 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.etl._uri import is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.storage._config import (
     STORAGE_KEYED_COLLECTIONS,
     StorageConfig,
     normalise_storage_section,
 )
-from loom.etl.storage._uri import is_cloud_path
 
 
 def _load_yaml(

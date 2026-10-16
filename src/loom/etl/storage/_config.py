@@ -19,8 +19,8 @@ import msgspec
 from deltalake import CommitProperties, WriterProperties
 
 from loom.core.model import LoomFrozenStruct
+from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
-from loom.etl.storage._uri import CLOUD_SCHEMES
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
 """Dotted paths of the ``storage:`` collections merged by key across ``includes``."""

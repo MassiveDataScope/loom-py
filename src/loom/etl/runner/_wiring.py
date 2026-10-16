@@ -11,6 +11,7 @@ from typing import Any, Final, Protocol, cast
 
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.plugins.optional import import_optional
+from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
 from loom.etl.checkpoint._backends._spark import _SparkCheckpointBackend
@@ -26,7 +27,6 @@ from loom.etl.runtime.contracts import (
     TargetWriter,
 )
 from loom.etl.storage._config import StorageConfig, StorageEngine
-from loom.etl.storage._uri import is_cloud_path
 
 _log = logging.getLogger(__name__)
 

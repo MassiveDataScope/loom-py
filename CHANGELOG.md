@@ -546,7 +546,7 @@
   It recognised cloud URIs by a lower-case prefix list without `r2://`, so a
   checkpoint under `r2://` or an upper-case scheme such as `S3://` was read
   with `memory_map=True`; it now uses the scheme set of
-  `loom.etl.storage._uri`, compared case-insensitively.
+  `loom.etl._uri`, compared case-insensitively.
 - **etl:** documentation states what the writers do. `replace(streaming=...)`
   and `ReplaceSpec.streaming` claimed a streaming Arrow write on Polars; no
   backend reads the flag for a full replace, and the collect engine follows
@@ -676,7 +676,7 @@
   `decode_json_columns`; the private `_apply_json_decode` staticmethod and
   module function of `loom.etl.backends.polars._reader` are removed.
 - **etl:** the private `_is_cloud_path` of `loom.etl.checkpoint._cleaners`
-  moves, with the same scheme set, to `loom.etl.storage._uri.is_cloud_path`,
+  moves, with the same scheme set, to `loom.etl._uri.is_cloud_path`,
   and the Polars backend defines its frame type variable once.
 
 # 🚀 Release 2.1.2 ([#238](https://github.com/the-reacher-data/loom-py/pull/238))
