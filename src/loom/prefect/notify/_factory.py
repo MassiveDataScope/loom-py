@@ -7,6 +7,7 @@ from typing import Any
 
 from loom.prefect.notify._port import Notifier
 from loom.prefect.notify._slack import SlackNotifier
+from loom.prefect.notify._sns import SnsNotifier
 
 
 def _build_slack(cfg: dict[str, Any]) -> Notifier | None:
@@ -21,8 +22,20 @@ def _build_slack(cfg: dict[str, Any]) -> Notifier | None:
     )
 
 
+def _build_sns(cfg: dict[str, Any]) -> Notifier | None:
+    topic_arn = (cfg.get("topic_arn") or "").strip()
+    if not topic_arn:
+        return None
+    return SnsNotifier(
+        topic_arn=topic_arn,
+        on_failure=bool(cfg.get("on_failure", True)),
+        on_completion=bool(cfg.get("on_completion", False)),
+    )
+
+
 _BUILDERS: dict[str, Callable[[dict[str, Any]], Notifier | None]] = {
     "slack": _build_slack,
+    "sns": _build_sns,
 }
 
 

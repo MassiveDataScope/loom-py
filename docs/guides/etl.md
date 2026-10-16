@@ -1223,6 +1223,36 @@ It raises `ValueError` for a name that is not a field of the params type, or
 whose field is not declared exactly `str`, `date` or `datetime`, and does
 nothing when the trigger is `None`.
 
+### Notifying on terminal states
+
+The `notifications` list sends each terminal state of a run to one or more
+sinks. Every entry names its `kind`; `on_failure` (default `true`) reports
+`Failed` and `Crashed` runs, `on_completion` (default `false`) reports
+`Completed` runs. An entry whose target is empty is skipped, so an environment
+variable that is unset disables it:
+
+```yaml
+notifications:
+  - kind: slack
+    webhook_url: ${oc.env:SLACK_WEBHOOK_URL,""}
+    channel: "#data-alerts"          # optional; the webhook's channel otherwise
+    on_failure: true
+    on_completion: true
+  - kind: sns
+    topic_arn: ${oc.env:ETL_FAILURES_TOPIC_ARN,""}
+    on_failure: true
+```
+
+`slack` posts to an incoming webhook. `sns` publishes to the topic through
+boto3 (`prefect` extra) in the topic's region, with the default credential
+chain, so the run's role needs `sns:Publish` on the topic. The subject is
+`[<state>] <flow>`; the message carries the run details, the end of the error
+message and the Prefect link. A notifier that fails to deliver logs a warning
+and never fails the run.
+
+`${oc.env:...}` is resolved when the YAML is loaded, on the deploy host and
+again on the worker, so the variable must be set in both environments.
+
 ### Validation before any deployment
 
 Every declaration is read and checked before the first deployment is
