@@ -28,6 +28,9 @@ from typing import Protocol, runtime_checkable
 class ParallelDispatcher(Protocol):
     """Protocol for executing a group of independent tasks in parallel.
 
+    Each task should run in a copy of the caller's context, so a step keeps
+    the run's context variables (its flow run, its trace parent).
+
     All tasks in a group are independent — the executor guarantees no
     data dependency between them.  Implementations must:
 
