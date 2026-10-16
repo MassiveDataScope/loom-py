@@ -29,9 +29,10 @@ def bind_task_run(task_run_id: uuid.UUID) -> Iterator[None]:
     """Bind *task_run_id* as the active step's TaskRun for the current context.
 
     Records emitted while this context manager is active carry
-    *task_run_id* as well as the flow run the bridge was installed for.
-    Outside it (between steps, or in observer code that runs after
-    STEP_END) records carry the flow run only.
+    *task_run_id*, and the flow run the bridge was installed for when there
+    is one. Outside it (between steps, or in observer code that runs after
+    STEP_END) records carry the flow run only, and are not shipped when the
+    bridge has no flow run.
 
     Args:
         task_run_id: The Prefect TaskRun UUID returned by
