@@ -1,19 +1,12 @@
-"""Parallel dispatcher protocol and built-in implementations.
+"""Parallel dispatcher protocol and its thread-pool implementation.
 
 The dispatcher is the extension point for how parallel step/process groups
 are executed.  The executor delegates all parallelism decisions here,
-keeping itself free of scheduling concerns.
+keeping itself free of scheduling concerns.  :class:`ThreadDispatcher` is
+the default; any object implementing :class:`ParallelDispatcher` replaces
+it::
 
-Swap implementations to move from local threads to distributed workers::
-
-    # Local (default)
-    ETLExecutor(reader, writer, dispatcher=ThreadDispatcher())
-
-    # Celery (sprint 5+)
-    ETLExecutor(reader, writer, dispatcher=CeleryGroupDispatcher(app))
-
-    # Databricks Jobs (enterprise)
-    ETLExecutor(reader, writer, dispatcher=DatabricksJobDispatcher(client))
+    ETLExecutor(reader, writer, dispatcher=ThreadDispatcher(max_workers=4))
 """
 
 from __future__ import annotations
@@ -39,9 +32,26 @@ class ParallelDispatcher(Protocol):
 
     Example::
 
-        class CeleryGroupDispatcher:
+        class ThreadPerTaskDispatcher:
             def run_all(self, tasks: Sequence[Callable[[], None]]) -> None:
-                group(celery_wrap(t) for t in tasks).apply_async().get()
+                errors: list[Exception] = []
+
+                def run(task: Callable[[], None]) -> None:
+                    try:
+                        task()
+                    except Exception as exc:
+                        errors.append(exc)
+
+                threads = [
+                    threading.Thread(target=contextvars.copy_context().run, args=(run, task))
+                    for task in tasks
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                if errors:
+                    raise errors[0]
     """
 
     def run_all(self, tasks: Sequence[Callable[[], None]]) -> None:
@@ -61,8 +71,8 @@ class ThreadDispatcher:
     """Parallel dispatcher backed by :class:`~concurrent.futures.ThreadPoolExecutor`.
 
     Suitable for I/O-bound workloads and Polars steps (Polars releases the GIL
-    during Rust operations).  For CPU-bound pure-Python steps prefer
-    ``ProcessDispatcher`` or a Celery-based dispatcher.
+    during Rust operations).  CPU-bound pure-Python steps hold the GIL, so
+    their threads do not run at the same time.
 
     All tasks run to completion before any exception is re-raised — the
     observer receives error events for each failed task individually.
