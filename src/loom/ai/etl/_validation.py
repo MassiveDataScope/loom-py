@@ -11,7 +11,6 @@ from loom.ai.compiler import AgentPlan
 from loom.ai.errors import AgentCompilationError
 from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import metadata_clashes
-from loom.ai.etl._ledger import worst_case
 from loom.ai.registry import engine_prices_model
 from loom.etl.runtime.contracts import AgentIssue, AgentIssueKind
 
@@ -75,7 +74,7 @@ def _output_issue(plan: AgentPlan, output_type: type[Any]) -> AgentIssue | None:
 
 
 def _ceiling_issue(plan: AgentPlan, max_usd: Decimal) -> AgentIssue | None:
-    worst = worst_case(plan)
+    worst = plan.policies.max_usd
     if worst is None:
         return _issue(AgentIssueKind.BUDGET_UNENFORCEABLE, _uncapped(plan))
     if worst > max_usd:

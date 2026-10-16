@@ -20,7 +20,7 @@ from loom.ai.config import AiConfig
 from loom.ai.etl._batch import Batch
 from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame, no_answers, prompt_rows, require_free_keys
-from loom.ai.etl._ledger import SpendLedger, worst_case
+from loom.ai.etl._ledger import SpendLedger
 from loom.ai.etl._validation import validation_issues
 from loom.ai.registry import resolve_engine_provider
 from loom.ai.runtime import AgentRuntime
@@ -159,9 +159,13 @@ def _only_plan(plans: tuple[AgentPlan, ...], name: str) -> AgentPlan:
 
 
 def _reservation(plan: AgentPlan, max_usd: Decimal | None) -> Decimal:
-    worst = worst_case(plan)
-    if worst is not None:
-        return worst
+    """Reserve ``policies.max_usd`` per run.
+
+    A run exceeds it by at most the cost of its last response, when all
+    responses are priced.
+    """
+    if plan.policies.max_usd is not None:
+        return plan.policies.max_usd
     if max_usd is not None:
         raise ValueError(
             f"agent {plan.name!r} has a step budget but no 'policies.max_usd' to reserve per run"

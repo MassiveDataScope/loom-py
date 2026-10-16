@@ -4,18 +4,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from loom.ai.compiler import AgentPlan
-
-
-def worst_case(plan: AgentPlan) -> Decimal | None:
-    """Return ``policies.max_usd``, ``None`` when the plan declares none.
-
-    The engine checks it after each response against the run's spend over
-    every attempt, so a run whose responses are all priced exceeds it by at
-    most the cost of its last response.
-    """
-    return plan.policies.max_usd
-
 
 class SpendLedger:
     """Reserves the worst case of a call before it starts and settles it after.
