@@ -18,13 +18,15 @@ _CAPABILITY_NAMES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
     {
         "usecase": ("keys",),
         "sql": ("connection",),
-        "mcp": ("server",),
+        "mcp": ("server", "include", "exclude"),
         "skills": ("library", "names"),
         "python": ("factory_ref",),
-        "a2a": ("agent",),
+        "a2a": ("agent", "include", "exclude"),
         "native": ("tool",),
     }
 )
+
+_POLICY_NAMES: Final = ("max_iterations", "max_tool_calls", "max_history_bytes")
 
 
 def plan_fingerprint(plan: AgentPlan) -> str:
@@ -34,16 +36,18 @@ def plan_fingerprint(plan: AgentPlan) -> str:
         plan: Compiled plan.
 
     Returns:
-        Hex digest over the instructions, output schema and check, policies,
-        format version, the kind and name of every capability and the model
-        binding, without the deployment details.
+        Hex digest over the instructions, output schema and check, the
+        policies that bound what the model sees or how long it reasons
+        (``max_iterations``, ``max_tool_calls``, ``max_history_bytes``),
+        format version, the kind, name and tool filters of every capability
+        and the model binding, without the deployment details.
     """
     facts = {
         "spec_version": plan.spec_version,
         "instructions": [[block.text, block.template] for block in plan.instructions],
         "output_schema": plan.output.schema,
         "output_check": _reference(plan.output_check),
-        "policies": plan.policies,
+        "policies": {name: getattr(plan.policies, name) for name in _POLICY_NAMES},
         "capabilities": [_capability(capability) for capability in plan.capabilities],
         "provider": plan.inference.provider,
         "model": plan.inference.model,

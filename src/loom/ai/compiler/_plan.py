@@ -406,21 +406,6 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         source_path: Artifact provenance for error messages, when known.
     """
 
-    @property
-    def fingerprint(self) -> str:
-        """Stable sha256 of everything that decides this agent's answers.
-
-        Covers the instructions as compiled, the output schema, the output
-        check, the policies, the format version, the kind and name of every
-        capability and the bound provider, model, output mode and options.
-        Leaves out the name, description, metadata, provenance, configured
-        price, where a capability is served from (URL, directory,
-        credentials, timeouts) and the binding's region, endpoint,
-        credentials and streaming flag. The output check enters by its import
-        path, so editing the check's body keeps the fingerprint.
-        """
-        return plan_fingerprint(self)
-
     name: str
     description: str
     instructions: tuple[CompiledInstruction, ...]
@@ -436,3 +421,24 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
     conversation: CompiledConversation | None = None
     metadata: Mapping[str, str]
     source_path: str | None = None
+
+    @property
+    def fingerprint(self) -> str:
+        """Stable sha256 of the declared facts that decide this agent's answers.
+
+        Covers the instructions as compiled, the output schema, the output
+        check, the policies ``max_iterations``, ``max_tool_calls`` and
+        ``max_history_bytes``, the format version, the kind, name and tool
+        filters of every capability and the bound provider, model, output
+        mode and options. It covers what the plan declares, not the content
+        of the skills, tools or use cases it names: editing a skill's text or
+        a tool's code keeps the fingerprint. Leaves out the name,
+        description, metadata, provenance, configured price, the other
+        policies (``retries``, the timeouts, ``max_usd``,
+        ``on_unpriced_spend`` and the token and request caps), where a
+        capability is served from (URL, directory, credentials, timeouts) and
+        the binding's region, endpoint, credentials and streaming flag. The
+        output check enters by its import path, so editing the check's body
+        keeps the fingerprint.
+        """
+        return plan_fingerprint(self)

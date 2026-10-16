@@ -1313,17 +1313,23 @@ the other spend caps above) to bound what a run may cost the provider.
 
 ## The agent's version — `AgentPlan.fingerprint`
 
-Every compiled plan carries a stable sha256 of what decides its answers: the
-instructions as compiled (text and template engine), the output schema, the
-output check, the policies, `spec_version`, the kind and name of every
-capability (the use case keys, the SQL connection, the MCP server, the skill
-library and its skill names, the Python factory, the A2A agent, the native
-tool) and the bound provider, model, `output_mode` and `options`. The name,
-description, metadata, artifact path, configured price, where a capability is
-served from (URL, directory, credentials, timeouts, tool filters) and the
+Every compiled plan carries a stable sha256 of the declared facts that decide
+its answers: the instructions as compiled (text and template engine), the
+output schema, the output check, the policies that bound what the model sees
+or how long it reasons (`max_iterations`, `max_tool_calls`,
+`max_history_bytes`), `spec_version`, the kind and name of every capability
+(the use case keys, the SQL connection, the MCP server and its tool filters,
+the skill library and its skill names, the Python factory, the A2A agent and
+its skill filters, the native tool) and the bound provider, model,
+`output_mode` and `options`. It covers what the artifact declares, not the
+content of the skills, tools or use cases it names: editing a skill's text, a
+tool's code or a use case keeps the version. The name, description, metadata,
+artifact path, configured price, the other policies (`retries`, the timeouts,
+`max_usd`, `on_unpriced_spend` and the token and request caps), where a
+capability is served from (URL, directory, credentials, timeouts) and the
 binding's region, endpoint, credentials and `streaming` flag are left out, so
-moving a deployment keeps the version and changing the prompt, the model or
-the tools does not. ETL steps write it as
+moving a deployment or changing a budget keeps the version and changing the
+prompt, the model or the tools does not. ETL steps write it as
 `agent_version` (see [Agents in ETL steps](../etl/agent-steps.md)).
 
 The output check enters by its import path (`module:qualname`): editing the

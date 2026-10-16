@@ -234,12 +234,16 @@ does not.
 
 `agent.version`, and the `agent_version` column, is the agent's
 [fingerprint](../ai/artifacts.md#the-agents-version--agentplanfingerprint): it
-changes when the instructions, the output schema, the output check, the
-policies, the tools (the kind and name of each capability) or the model
-binding change, and stays when the region, the credentials, the price, the
-budget or where a tool is served from change. Keeping `agent_version` in the
-upsert keys and in the anti-join relabels every row the day the agent changes,
-and leaves the old labels in place for comparison.
+changes when the instructions, the output schema, the output check,
+`max_iterations`, `max_tool_calls`, `max_history_bytes`, the tools (the kind,
+name and tool filters of each capability) or the model binding change, and
+stays when the region, the credentials, the price, the step budget
+(`WithAgent(max_usd=...)`), the other policies (`retries`, the timeouts,
+`max_usd`, `on_unpriced_spend` and the token and request caps) or where a
+tool is served from change. Editing a skill's text or a tool's code does not
+change it either. Keeping `agent_version` in the upsert keys and in the
+anti-join relabels every row the day the agent changes, and leaves the old
+labels in place for comparison.
 
 ## What is checked before anything is spent
 

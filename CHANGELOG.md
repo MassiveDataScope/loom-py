@@ -370,6 +370,14 @@
 
 ### ai
 
+- **ai:** `AgentPlan.fingerprint`, and so the ETL `agent_version` column,
+  changes once for every existing agent. Of the policies it now covers only
+  `max_iterations`, `max_tool_calls` and `max_history_bytes`, so changing
+  `retries`, a timeout, `max_usd`, `on_unpriced_spend`, `max_requests` or a
+  token cap keeps it; and it now covers the `include`/`exclude` filters of
+  `mcp` and `a2a` capabilities, so changing a filter changes it. A step that
+  keeps `agent_version` in its upsert keys relabels every row on its next
+  execution after the upgrade.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with
