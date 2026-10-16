@@ -10,7 +10,8 @@ the last item's keys.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 from sqlalchemy import and_, or_
 
@@ -23,19 +24,22 @@ def compile_cursor_predicate(
     sa_model: type[Any],
     cursor: Cursor,
     sort: tuple[SortSpec, ...],
-    id_column: Any,
+    id_columns: Sequence[Any],
 ) -> Any:
     """Build a WHERE predicate that positions the query after ``cursor``.
 
     The predicate is the row-value comparison expanded as an OR of ANDs,
     which every dialect (including sqlite) accepts:
-    ``k1 > v1 OR (k1 = v1 AND k2 < v2) OR (... AND id > vid)``.
+    ``k1 > v1 OR (k1 = v1 AND k2 < v2) OR (... AND id > vid)``, with one
+    ascending term per primary-key column.
 
     Args:
         sa_model: Root SQLAlchemy mapped model class.
-        cursor: Decoded cursor whose keys match ``sort`` one to one.
+        cursor: Decoded cursor whose keys match ``sort`` one to one and whose
+            tie-breaker holds one value per column of ``id_columns``.
         sort: Sort directives the page is ordered by.
-        id_column: Primary-key column used as the ascending tie-breaker.
+        id_columns: Primary-key columns, in key order, used as the ascending
+            tie-breaker.
 
     Returns:
         SQLAlchemy boolean expression.
@@ -43,9 +47,14 @@ def compile_cursor_predicate(
     Raises:
         FilterPathError: If a sort field cannot be resolved.
     """
-    columns = [resolve_column(sa_model, spec.field) for spec in sort] + [id_column]
-    directions = [spec.direction for spec in sort] + ["ASC"]
-    values = [*cursor.keys, cursor.tie_breaker]
+    ties = (
+        cast(tuple[object, ...], cursor.tie_breaker)
+        if len(id_columns) > 1
+        else (cursor.tie_breaker,)
+    )
+    columns = [resolve_column(sa_model, spec.field) for spec in sort] + list(id_columns)
+    directions = [spec.direction for spec in sort] + ["ASC"] * len(id_columns)
+    values = [*cursor.keys, *ties]
     branches: list[Any] = []
     for index, (column, direction, value) in enumerate(
         zip(columns, directions, values, strict=True)
@@ -59,7 +68,7 @@ def compile_cursor_predicate(
 def extract_next_cursor(
     items: list[Any],
     sort: tuple[SortSpec, ...],
-    id_attribute: str,
+    id_attributes: Sequence[str],
     limit: int,
     backend: str,
 ) -> tuple[list[Any], str | None, bool]:
@@ -70,7 +79,7 @@ def extract_next_cursor(
     Args:
         items: Raw ORM objects fetched (may contain up to ``limit + 1``).
         sort: Sort directives whose fields are read from the last row.
-        id_attribute: Primary-key attribute name on the ORM object.
+        id_attributes: Primary-key attribute names on the row, in key order.
         limit: Requested page size.
         backend: Backend name stamped on the token.
 
@@ -85,7 +94,9 @@ def extract_next_cursor(
         return page_items, None, has_next
     last = page_items[-1]
     keys = [_read_path(last, spec.field) for spec in sort]
-    return page_items, encode_cursor(backend, keys, getattr(last, id_attribute)), has_next
+    ties = tuple(getattr(last, name) for name in id_attributes)
+    tie_breaker = ties[0] if len(ties) == 1 else ties
+    return page_items, encode_cursor(backend, keys, tie_breaker), has_next
 
 
 def _read_path(obj: Any, path: str) -> Any:

@@ -33,11 +33,12 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
 from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
 
+from loom.core.config import ConfigError
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
-from loom.core.model.introspection import get_column_fields, get_id_attribute, get_table_name
+from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
 from loom.core.repository.abc import (
     BulkCreatable,
     Countable,
@@ -164,8 +165,9 @@ class RepositoryMongo(
     the current UTC time. A duplicate key raises
     :class:`~loom.core.errors.Conflict`.
 
-    The repository does not judge the model's key declaration: a model whose
-    key Mongo cannot mint (``autoincrement=True``) is rejected at boot by
+    Beyond refusing a composite key, the repository does not judge the
+    model's key declaration: a model whose key Mongo cannot mint
+    (``autoincrement=True``) is rejected at boot by
     :func:`~loom.core.repository.mongo.ids.validate_id_field`, which the
     backend runs over every discovered model.
 
@@ -182,6 +184,7 @@ class RepositoryMongo(
 
     Raises:
         ValueError: If the model declares no primary key.
+        ConfigError: If the primary key is composite: ``_id`` holds one value.
 
     Example::
 
@@ -202,7 +205,7 @@ class RepositoryMongo(
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
         self._session = session_provider
-        self._id_attr = get_id_attribute(model)
+        self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
         self._naive_datetime_fields = frozenset(
@@ -526,6 +529,16 @@ class RepositoryMongo(
             if isinstance(value, datetime):
                 kwargs[name] = value.replace(tzinfo=None)
         return cast(OutputT, to_struct(self._model, kwargs))
+
+
+def _single_id_attribute(model: type) -> str:
+    key = get_id_attributes(model)
+    if len(key) == 1:
+        return key[0]
+    raise ConfigError(
+        f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
+        "Mongo stores one key value in _id, so declare a single primary key"
+    )
 
 
 def _equality_group(filter_params: FilterParams | None) -> FilterGroup:

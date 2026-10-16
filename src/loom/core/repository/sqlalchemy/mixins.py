@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Generic, cast
 from uuid import UUID
 
 import msgspec
-from sqlalchemy import exists, func, insert, inspect, select
+from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from loom.core.backend.sqlalchemy import get_compiled_core
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     get_column_fields,
-    get_id_attribute,
+    get_id_attributes,
     get_relations,
     get_table_name,
 )
@@ -50,7 +50,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     backend_name: ClassVar[str]
     model: type[Any]
     _sa_model: type[Any] | None = None
-    _id_attr: str | None = None
+    _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None
     _json_column_names: frozenset[str] = frozenset()
     # Pre-computed at init to avoid per-request/per-object reflection.
@@ -72,7 +72,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
                 f"Call compile_model() or compile_all() before creating a repository."
             )
         self._sa_model = sa
-        self._id_attr = get_id_attribute(self.model)
+        self._id_attrs = get_id_attributes(self.model)
         column_fields = get_column_fields(self.model)
         column_field_names = frozenset(column_fields.keys())
         self._column_field_names = column_field_names
@@ -109,10 +109,10 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         return self.model
 
     @property
-    def _effective_id_attribute(self) -> str:
-        if self._id_attr is not None:
-            return self._id_attr
-        return "id"
+    def _effective_id_attributes(self) -> tuple[str, ...]:
+        if self._id_attrs is not None:
+            return self._id_attrs
+        return ("id",)
 
     @property
     def _effective_core_model(self) -> Any:
@@ -129,8 +129,39 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Return normalized entity name for mutation tracking."""
         return get_table_name(self.model)
 
-    def _id_column(self) -> Any:
-        return getattr(self._effective_sa_model, self._effective_id_attribute)
+    def _id_columns(self) -> tuple[Any, ...]:
+        sa_model = self._effective_sa_model
+        return tuple(getattr(sa_model, name) for name in self._effective_id_attributes)
+
+    def _id_values(self, obj_id: Any) -> tuple[Any, ...]:
+        """Return the primary-key values *obj_id* names, one per key column.
+
+        A single-column key takes the value itself; a composite key takes a
+        tuple holding every key value in key order.
+
+        Raises:
+            ValueError: If the key is composite and *obj_id* is not a tuple of
+                one value per key column.
+        """
+        names = self._effective_id_attributes
+        if len(names) == 1:
+            return (obj_id,)
+        if isinstance(obj_id, tuple) and len(obj_id) == len(names):
+            return obj_id
+        raise ValueError(
+            f"{self.model.__name__} has the composite primary key ({', '.join(names)}); "
+            f"pass a tuple of {len(names)} values in that order, not {obj_id!r}"
+        )
+
+    def _id_clause(self, obj_id: Any) -> Any:
+        """Return the WHERE clause matching the row whose primary key is *obj_id*."""
+        pairs = zip(self._id_columns(), self._id_values(obj_id), strict=True)
+        return and_(*(column == value for column, value in pairs))
+
+    def _key_of(self, obj: Any) -> Any:
+        """Return the primary key of *obj* in the form :meth:`_id_values` accepts."""
+        values = tuple(getattr(obj, name, None) for name in self._effective_id_attributes)
+        return values[0] if len(values) == 1 else values
 
     def _serialize_input(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
         if isinstance(data, msgspec.Struct):
@@ -223,7 +254,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     def _mutation_tags(self, obj: Any) -> frozenset[str]:
         table_name = get_table_name(self.model)
-        obj_id = getattr(obj, self._effective_id_attribute, None)
+        obj_id = self._key_of(obj)
         tags: set[str] = {f"{table_name}:list"}
         if obj_id is not None:
             tags.add(f"{table_name}:id:{obj_id}")
@@ -258,13 +289,11 @@ class SQLAlchemyCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
             await scoped_session.flush()
             await scoped_session.refresh(obj)
 
-            id_attr = self._effective_id_attribute
-            obj_id = getattr(obj, id_attr, None)
             record_mutation(
                 MutationEvent(
                     entity=self.entity_name,
                     op="create",
-                    ids=(obj_id,),
+                    ids=(self._key_of(obj),),
                     changed_fields=frozenset(serialized.keys()),
                     tags=self._mutation_tags(obj),
                 )
@@ -357,22 +386,22 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
         self, session: AsyncSession, rows: list[dict[str, Any]]
     ) -> list[Any]:
         sa_model = self._effective_sa_model
-        id_attr = self._effective_id_attribute
         objs = [sa_model(**row) for row in rows]
         session.add_all(objs)
         await session.flush()
-        ids = [getattr(obj, id_attr) for obj in objs]
-        result = await session.execute(select(sa_model).where(self._id_column().in_(ids)))
-        by_id = {getattr(obj, id_attr): obj for obj in result.scalars()}
+        ids = [self._key_of(obj) for obj in objs]
+        columns = self._id_columns()
+        key = columns[0] if len(columns) == 1 else tuple_(*columns)
+        result = await session.execute(select(sa_model).where(key.in_(ids)))
+        by_id = {self._key_of(obj): obj for obj in result.scalars()}
         return [by_id[obj_id] for obj_id in ids]
 
     def _record_bulk_create(self, objs: list[Any], rows: list[dict[str, Any]]) -> None:
-        id_attr = self._effective_id_attribute
         record_mutation(
             MutationEvent(
                 entity=self.entity_name,
                 op="create",
-                ids=tuple(getattr(obj, id_attr, None) for obj in objs),
+                ids=tuple(self._key_of(obj) for obj in objs),
                 changed_fields=frozenset(key for row in rows for key in row),
                 tags=frozenset().union(*(self._mutation_tags(obj) for obj in objs)),
             )
@@ -394,10 +423,19 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         obj_id: IdT,
         profile: str = "default",
     ) -> OutputT | None:
-        """Fetch one entity by id with optional profile-aware loading."""
+        """Fetch one entity by id with optional profile-aware loading.
+
+        A composite primary key is passed as a tuple of every key value, in
+        key order.
+
+        Raises:
+            ValueError: If the key is composite and *obj_id* does not hold
+                every key value.
+        """
+        clause = self._id_clause(obj_id)
         async with self._session_scope() as scoped_session:
             core_model = self._effective_core_model
-            stmt = core_model.select(profile).where(self._id_column() == obj_id).limit(1)
+            stmt = core_model.select(profile).where(clause).limit(1)
             loaded = await core_model.fetch_one(scoped_session, stmt, profile=profile)
             return cast(OutputT | None, loaded)
 
@@ -423,7 +461,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         """Fetch a paginated entity list and total count."""
         async with self._session_scope() as scoped_session:
             core_model = self._effective_core_model
-            stmt = core_model.select(profile).order_by(self._id_column())
+            stmt = core_model.select(profile).order_by(*self._id_columns())
             stmt = self._apply_offset_page_filters(stmt, filter_params)
 
             paged_stmt = stmt.offset(page_params.offset).limit(page_params.limit)
@@ -463,10 +501,9 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         """
         async with self._session_scope() as scoped_session:
             sa_model = self._effective_sa_model
-            id_col = self._id_column()
             compiler = QuerySpecCompiler(
                 sa_model,
-                id_col,
+                self._id_columns(),
                 self.allowed_filter_fields,
                 backend=self.backend_name,
                 model_name=self.model.__qualname__,
@@ -540,14 +577,16 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         return int(result.scalar() or 0)
 
     async def exists(self, obj_id: IdT) -> bool:
-        """Check whether an entity exists by id."""
-        return await self.exists_by(self._effective_id_attribute, obj_id)
+        """Check whether an entity exists by id; a composite key as in :meth:`get_by_id`."""
+        return await self._exists_where(self._id_clause(obj_id))
 
     async def exists_by(self, field: str, value: Any) -> bool:
         """Check whether an entity exists by an arbitrary column field."""
+        return await self._exists_where(self._column_for_field(field) == value)
+
+    async def _exists_where(self, clause: Any) -> bool:
         async with self._session_scope() as scoped_session:
-            stmt = select(exists().where(self._column_for_field(field) == value))
-            result = await scoped_session.execute(stmt)
+            result = await scoped_session.execute(select(exists().where(clause)))
             return bool(result.scalar())
 
     async def count(self) -> int:
@@ -574,26 +613,32 @@ class SQLAlchemyUpdateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
         (e.g. ``updated_at = func.now()``) are included automatically.
 
         Args:
-            obj_id: Primary key of the entity to update.
+            obj_id: Primary key of the entity to update; a tuple of every key
+                value, in key order, when the key is composite.
             data: Partial update payload struct.
 
         Returns:
             The updated entity output struct, or ``None`` if not found.
+
+        Raises:
+            ValueError: If the key is composite and *obj_id* does not hold
+                every key value.
         """
         serialized = self._serialize_input(data)
-        id_attr = self._effective_id_attribute
-        values = {key: val for key, val in serialized.items() if key != id_attr}
+        id_attrs = self._effective_id_attributes
+        values = {key: val for key, val in serialized.items() if key not in id_attrs}
         full_values = {**values, **(self._onupdate_columns or {})}
+        identity = self._id_values(obj_id)
 
         async with self._session_scope() as scoped_session:
             sa_model = self._effective_sa_model
             if not full_values:
-                raw = await scoped_session.get(sa_model, obj_id)
+                raw = await scoped_session.get(sa_model, identity)
                 return cast(OutputT, self._to_output(raw)) if raw is not None else None
 
             stmt = (
                 sa_update(sa_model)
-                .where(getattr(sa_model, id_attr) == obj_id)
+                .where(self._id_clause(obj_id))
                 .values(**full_values)
                 .returning(sa_model)
                 .execution_options(synchronize_session=False)
@@ -618,10 +663,11 @@ class SQLAlchemyDeleteMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
 
     @handle_integrity_errors
     async def delete(self, obj_id: IdT) -> bool:
-        """Delete one entity by id."""
+        """Delete one entity by id; a composite key is a tuple as in :meth:`update`."""
+        identity = self._id_values(obj_id)
         async with self._session_scope() as scoped_session:
             sa_model = self._effective_sa_model
-            obj = await scoped_session.get(sa_model, obj_id)
+            obj = await scoped_session.get(sa_model, identity)
             if obj is None:
                 return False
             tags = self._mutation_tags(obj)

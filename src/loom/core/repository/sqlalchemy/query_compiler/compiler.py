@@ -31,7 +31,9 @@ class QuerySpecCompiler:
 
     Args:
         sa_model: SQLAlchemy mapped model class for the target entity.
-        id_column: Primary-key column attribute used for default ordering.
+        id_column: Primary-key column attribute, or the tuple of a composite
+            key's column attributes in key order; appended to every ordering
+            as the tie-breaker.
         allowed_fields: Permitted filter field names.  Empty frozenset
             allows all fields.
         backend: Backend name stamped on and required from cursor tokens.
@@ -55,7 +57,9 @@ class QuerySpecCompiler:
         model_name: str,
     ) -> None:
         self._sa_model = sa_model
-        self._id_column = id_column
+        self._id_columns: tuple[Any, ...] = (
+            id_column if isinstance(id_column, tuple) else (id_column,)
+        )
         self._allowed_fields = allowed_fields
         self._backend = backend
         self._model_name = model_name
@@ -100,7 +104,7 @@ class QuerySpecCompiler:
             stmt = stmt.where(clause)
 
         order_clauses = compile_order_by(sa_model, query.sort)
-        stmt = stmt.order_by(*order_clauses, self._id_column)
+        stmt = stmt.order_by(*order_clauses, *self._id_columns)
 
         offset = (query.page - 1) * query.limit
         stmt = stmt.offset(offset).limit(query.limit)
@@ -119,8 +123,8 @@ class QuerySpecCompiler:
     def compile_cursor(self, query: QuerySpec, *, base_stmt: Any | None = None) -> Any:
         """Compile the cursor pagination statement (N+1 applied).
 
-        Rows are ordered by every sort key with the primary key appended as
-        the tie-breaker, so the keyset predicate is total.
+        Rows are ordered by every sort key with every primary-key column
+        appended as the tie-breaker, so the keyset predicate is total.
 
         Raises:
             UnsupportedQuery: If ``query.cursor`` is invalid for this backend
@@ -135,13 +139,17 @@ class QuerySpecCompiler:
 
         if query.cursor:
             cursor = decode_cursor(
-                query.cursor, self._backend, self._model_name, key_count=len(query.sort)
+                query.cursor,
+                self._backend,
+                self._model_name,
+                key_count=len(query.sort),
+                id_count=len(self._id_columns),
             )
-            predicate = compile_cursor_predicate(sa_model, cursor, query.sort, self._id_column)
+            predicate = compile_cursor_predicate(sa_model, cursor, query.sort, self._id_columns)
             stmt = stmt.where(predicate)
 
         order_clauses = compile_order_by(sa_model, query.sort)
-        stmt = stmt.order_by(*order_clauses, self._id_column)
+        stmt = stmt.order_by(*order_clauses, *self._id_columns)
         return stmt.limit(query.limit + 1)
 
     def paginate_cursor(
@@ -149,7 +157,11 @@ class QuerySpecCompiler:
     ) -> tuple[list[Any], str | None, bool]:
         """Truncate ``limit + 1`` rows to a page and issue the next token."""
         return extract_next_cursor(
-            items, query.sort, self._id_column.key, query.limit, self._backend
+            items,
+            query.sort,
+            [column.key for column in self._id_columns],
+            query.limit,
+            self._backend,
         )
 
     async def execute(

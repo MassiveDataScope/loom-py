@@ -13,6 +13,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Column,
     Constraint,
     DateTime,
     Float,
@@ -57,6 +58,7 @@ from loom.core.model.introspection import (
     extract_model_from_hint,
     get_column_fields,
     get_id_attribute,
+    get_id_attributes,
     get_projections,
     get_relations,
     get_table_name,
@@ -879,12 +881,44 @@ def _compile_core_model(struct_cls: type, comp: _Compilation) -> None:
     profile_plans = _build_profile_plans(
         profiles, all_columns, id_attr, relations, relation_steps, projections, struct_cls
     )
+    _refuse_composite_key_loads(struct_cls, profile_plans)
 
     core_model = CoreModel(struct_cls, table, id_attr, profile_plans)
     for name, col in zip(column_fields, all_columns, strict=False):
         setattr(core_model, name, col)
 
     comp.core[struct_cls] = core_model
+
+
+def _refuse_composite_key_loads(struct_cls: type, plans: dict[str, CoreProfilePlan]) -> None:
+    """Refuse relations and backend projections on a model with a composite primary key.
+
+    The core loaders match loaded rows to their owner by ``CoreProfilePlan.id_attr``,
+    the first primary-key column, so on a composite key they attach rows to the
+    wrong owner.
+    """
+    key = get_id_attributes(struct_cls)
+    if len(key) == 1:
+        return
+    loads = _fields_loaded_by_key(plans)
+    if loads:
+        raise ValueError(
+            f"{struct_cls.__name__} has the composite primary key ({', '.join(key)}); the "
+            f"backend loads {', '.join(loads)} by its first key column only, so drop "
+            "them from the model and load them by hand"
+        )
+
+
+def _fields_loaded_by_key(plans: dict[str, CoreProfilePlan]) -> list[str]:
+    relations = {step.attr for plan in plans.values() for step in plan.relation_steps}
+    projections = {
+        step.name
+        for plan in plans.values()
+        for level in plan.projection_plan.levels
+        for step in level
+        if not step.prefer_memory
+    }
+    return sorted(relations | projections)
 
 
 def _collect_profiles(
@@ -1167,12 +1201,12 @@ def _compile_many_to_many_step(
     if secondary_table is None:
         return None
     owner_table_name = get_table_name(struct_cls)
-    secondary_owner_fk, secondary_target_fk, target_table_name = _inspect_secondary(
+    secondary_owner_fk, secondary_target_fk, target_ref = _inspect_secondary(
         secondary_table, owner_table_name
     )
-    if secondary_owner_fk is None or secondary_target_fk is None or target_table_name is None:
+    if secondary_owner_fk is None or secondary_target_fk is None or target_ref is None:
         return None
-    target_sa = _find_target_sa_class(target_table_name, comp)
+    target_sa = _find_target_sa_class(target_ref.table.name, comp)
     if target_sa is None:
         return None
     related_struct = getattr(target_sa, "__struct_cls__", None)
@@ -1188,7 +1222,7 @@ def _compile_many_to_many_step(
         related_struct=related_struct,
         owner_pk_col=get_id_attribute(struct_cls),
         fk_col=secondary_owner_fk,
-        pk_col=get_id_attribute(related_struct),
+        pk_col=target_ref.name,
         secondary_table=secondary_table,
         secondary_target_fk=secondary_target_fk,
     )
@@ -1197,18 +1231,19 @@ def _compile_many_to_many_step(
 def _inspect_secondary(
     secondary_table: Any,
     owner_table_name: str,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, Column[Any] | None]:
+    """Return the owner FK column, the target FK column and the target column it references."""
     owner_fk: str | None = None
     target_fk: str | None = None
-    target_table_name: str | None = None
+    target_ref: Column[Any] | None = None
     for col in secondary_table.columns:
         for fk in col.foreign_keys:
             if fk.column.table.name == owner_table_name:
                 owner_fk = col.name
             else:
                 target_fk = col.name
-                target_table_name = fk.column.table.name
-    return owner_fk, target_fk, target_table_name
+                target_ref = fk.column
+    return owner_fk, target_fk, target_ref
 
 
 def _target_cols(related_struct: type, target_table: Any) -> tuple[Any, ...]:

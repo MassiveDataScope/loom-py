@@ -23,10 +23,11 @@ from typing import Any, ClassVar, Generic, cast
 
 import msgspec
 
+from loom.core.config import ConfigError
 from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
-from loom.core.model.introspection import get_column_fields, get_id_attribute, get_table_name
+from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
 from loom.core.repository.abc import (
     Creatable,
     Deletable,
@@ -70,6 +71,9 @@ class RepositoryDynamoDB(
         table_name: Name of the DynamoDB table backing this repository.
         model: The Loom struct model this repository is bound to. Its
             ``primary_key`` field becomes the DynamoDB partition key.
+
+    Raises:
+        ConfigError: If the model's primary key is composite.
     """
 
     backend_name: ClassVar[str] = "dynamodb"
@@ -86,7 +90,7 @@ class RepositoryDynamoDB(
         self._client = client
         self._table_name = table_name
         self._model = model
-        self._id_attr = get_id_attribute(model)
+        self._id_attr = _single_id_attribute(model)
         self._column_fields = frozenset(get_column_fields(model).keys())
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
@@ -258,6 +262,17 @@ class RepositoryDynamoDB(
     def _encode_key(self, obj_id: Any) -> dict[str, Any]:
         """Build the low-level ``Key`` dict for the partition key."""
         return {self._id_attr: self._encode_value(obj_id)}
+
+
+def _single_id_attribute(model: type) -> str:
+    key = get_id_attributes(model)
+    if len(key) == 1:
+        return key[0]
+    raise ConfigError(
+        f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
+        "the repository keys each item by one partition key, so declare a single "
+        "primary key"
+    )
 
 
 def _is_conditional_check_failure(exc: Exception) -> bool:

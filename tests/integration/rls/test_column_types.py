@@ -30,7 +30,7 @@ async def test_bytes_and_inet_values_are_written_and_read_back_by_their_owner_on
     reset_registry()
     compile_all(*devices.MODELS)
     manager = SessionManager(database.write, session_settings=rls_session_settings(application))
-    repository: RepositorySQLAlchemy[devices.Device, int] = RepositorySQLAlchemy(
+    repository: RepositorySQLAlchemy[devices.Device, tuple[int, str]] = RepositorySQLAlchemy(
         session_manager=manager, model=devices.Device
     )
     identity = set_identity(Identity(subject=OWNER))
@@ -41,13 +41,13 @@ async def test_bytes_and_inet_values_are_written_and_read_back_by_their_owner_on
         network = await repository.create(
             devices.RegisterDevice(owner_id=OWNER, fingerprint=b"", address="2001:db8::1/64")
         )
-        read_host = await repository.get_by_id(host.id)
-        read_network = await repository.get_by_id(network.id)
+        read_host = await repository.get_by_id((host.id, OWNER))
+        read_network = await repository.get_by_id((network.id, OWNER))
     finally:
         reset_identity(identity)
     other = set_identity(Identity(subject=OTHER))
     try:
-        hidden = await repository.get_by_id(host.id)
+        hidden = await repository.get_by_id((host.id, OWNER))
     finally:
         reset_identity(other)
         await manager.dispose()

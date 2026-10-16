@@ -27,7 +27,9 @@ from typing import Any, Generic, TypeVar
 
 import msgspec
 
-from loom.core.model.introspection import get_projections
+from loom.core.config import ConfigError
+from loom.core.model import BaseModel
+from loom.core.model.introspection import get_id_attributes, get_projections
 from loom.core.projection.loaders import (
     find_relation_name_for_loader,
     is_projection_descriptor,
@@ -62,6 +64,9 @@ class InMemoryRepository(Generic[T]):
             :meth:`create`.  When provided, the automatic field-mapping is
             bypassed entirely.
 
+    Raises:
+        ConfigError: If ``entity_type`` is a model with a composite primary key.
+
     Example::
 
         repo = InMemoryRepository(Product, id_field="id")
@@ -79,6 +84,7 @@ class InMemoryRepository(Generic[T]):
         id_field: str = "id",
         creator: Callable[[Any, int], T] | None = None,
     ) -> None:
+        _refuse_composite_key(entity_type)
         self._entity_type = entity_type
         self._id_field = id_field
         self._creator = creator
@@ -285,3 +291,18 @@ class InMemoryRepository(Generic[T]):
         data = msgspec.structs.asdict(entity)
         data.update(values)
         return self._entity_type(**data)
+
+
+def _refuse_composite_key(entity_type: type) -> None:
+    if not issubclass(entity_type, BaseModel):
+        return
+    try:
+        key = get_id_attributes(entity_type)
+    except ValueError:  # a model with no key, which this repository accepts
+        return
+    if len(key) > 1:
+        raise ConfigError(
+            f"{entity_type.__qualname__} has the composite primary key ({', '.join(key)}); "
+            "the in-memory repository keys each entity by one id field, so declare a "
+            "single primary key"
+        )

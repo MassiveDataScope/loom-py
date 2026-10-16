@@ -47,6 +47,33 @@ class TestRoundTrip:
         assert set(token) <= set(string.ascii_letters + string.digits + "-_=")
 
 
+class TestCompositeTieBreaker:
+    def test_every_key_value_survives(self) -> None:
+        token = encode_cursor(_BACKEND, ["b"], (7, 3))
+
+        cursor = decode_cursor(token, _BACKEND, _MODEL, id_count=2)
+
+        assert cursor == Cursor(backend=_BACKEND, keys=("b",), tie_breaker=(7, 3))
+
+    def test_single_key_token_keeps_a_scalar_id(self) -> None:
+        token = encode_cursor(_BACKEND, [], 42)
+
+        assert json.loads(base64.urlsafe_b64decode(token))["id"] == 42
+
+    @pytest.mark.parametrize(
+        ("tie_breaker", "id_count"), [(7, 2), ((7,), 1), ((7, 3), 1), ((7, 3, 1), 2)]
+    )
+    def test_key_value_count_must_match_the_primary_key(
+        self, tie_breaker: object, id_count: int
+    ) -> None:
+        token = encode_cursor(_BACKEND, [], tie_breaker)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            decode_cursor(token, _BACKEND, _MODEL, id_count=id_count)
+
+        assert excinfo.value.reason == "cursor token does not match the primary key"
+
+
 class TestRejectedTokens:
     def test_token_from_another_backend_is_unsupported(self) -> None:
         """The reason is fixed: the client-controlled backend name is never echoed."""
