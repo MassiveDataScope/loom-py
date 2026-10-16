@@ -133,10 +133,6 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         sa_model = self._effective_sa_model
         return tuple(getattr(sa_model, name) for name in self._effective_id_attributes)
 
-    def _id_column(self) -> Any:
-        """Return the first primary-key column; the whole key is :meth:`_id_columns`."""
-        return self._id_columns()[0]
-
     def _id_values(self, obj_id: Any) -> tuple[Any, ...]:
         """Return the primary-key values *obj_id* names, one per key column.
 

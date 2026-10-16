@@ -141,15 +141,17 @@ def decode_cursor(
         raise UnsupportedQuery(backend, model, "cursor token was issued by another backend")
     if key_count is not None and len(record.k) != key_count:
         raise UnsupportedQuery(backend, model, "cursor token does not match the sort")
-    carried = len(record.id) if isinstance(record.id, list) else None
+    tie_breaker: object
+    if isinstance(record.id, list):
+        carried: int | None = len(record.id)
+        tie_breaker = tuple(_unwrap(key) for key in record.id)
+    else:
+        carried = None
+        tie_breaker = _unwrap(record.id)
     if carried != (id_count if id_count > 1 else None):
         raise UnsupportedQuery(backend, model, "cursor token does not match the primary key")
     return Cursor(
         backend=record.b,
         keys=tuple(_unwrap(key) for key in record.k),
-        tie_breaker=(
-            tuple(_unwrap(key) for key in record.id)
-            if isinstance(record.id, list)
-            else _unwrap(record.id)
-        ),
+        tie_breaker=tie_breaker,
     )

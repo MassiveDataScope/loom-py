@@ -30,7 +30,7 @@ class _CustomProductRepository(RepositorySQLAlchemy[Product, int]):
         stmt = (
             core_model.select("default")
             .where(self._column_for_field("price") > min_price)
-            .order_by(self._id_column())
+            .order_by(*self._id_columns())
         )
         rows = await core_model.fetch_all(session, stmt, profile="default")
         return [int(item.id) for item in rows]
