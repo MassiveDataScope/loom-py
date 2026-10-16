@@ -29,7 +29,7 @@ import msgspec
 
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel
-from loom.core.model.introspection import get_column_fields, get_projections
+from loom.core.model.introspection import get_id_attributes, get_projections
 from loom.core.projection.loaders import (
     find_relation_name_for_loader,
     is_projection_descriptor,
@@ -296,10 +296,10 @@ class InMemoryRepository(Generic[T]):
 def _refuse_composite_key(entity_type: type) -> None:
     if not issubclass(entity_type, BaseModel):
         return
-    # Not get_id_attributes: it raises for a model with no key, which this
-    # repository accepts.
-    columns = get_column_fields(entity_type)
-    key = tuple(name for name, info in columns.items() if info.field.primary_key)
+    try:
+        key = get_id_attributes(entity_type)
+    except ValueError:  # a model with no key, which this repository accepts
+        return
     if len(key) > 1:
         raise ConfigError(
             f"{entity_type.__qualname__} has the composite primary key ({', '.join(key)}); "

@@ -61,7 +61,8 @@ class CoreRelationStep:
 
     * ``MANY_TO_MANY``:
       ``fk_col`` = owner FK column in the secondary table.
-      ``pk_col`` = PK column on the *target* table.
+      ``pk_col`` = target column the secondary table's FK references (a key
+      or unique column).
       ``secondary_table`` / ``secondary_target_fk`` required.
     """
 
