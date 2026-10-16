@@ -56,8 +56,8 @@ def current_flow_run_id() -> uuid.UUID | None:
 class PrefectLogBridgeHandler(logging.Handler):
     """logging.Handler that ships records to the Prefect logs API.
 
-    Records carry the active ``task_run_id`` from the ContextVar if one
-    is bound; otherwise they fall back to the installed ``flow_run_id``.
+    Records carry the installed ``flow_run_id`` and, inside a step, the
+    active ``task_run_id`` from the ContextVar too.
     A daemon worker drains the queue and retries with exponential
     backoff up to ``_MAX_ATTEMPTS`` before incrementing ``dropped_logs``.
     """
@@ -120,11 +120,10 @@ class PrefectLogBridgeHandler(logging.Handler):
             "level": record.levelno,
             "message": record.getMessage(),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC),
+            "flow_run_id": flow_run_id,
         }
         if task_run_id is not None:
             payload["task_run_id"] = task_run_id
-        else:
-            payload["flow_run_id"] = flow_run_id
         return payload
 
     def _drain_loop(self) -> None:

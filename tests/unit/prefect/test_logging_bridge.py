@@ -2,8 +2,8 @@
 
 Verifies:
 - The handler emits ``LogCreate``-compatible payloads tagged with the
-  active ``task_run_id`` (ContextVar) when one is bound.
-- Falls back to ``flow_run_id`` when no TaskRun is bound.
+  active ``flow_run_id`` and, inside a step, its ``task_run_id`` too, so a
+  reader that scopes logs by flow run also gets the steps' lines.
 - Records emitted with neither binding are silently dropped.
 - ``install_log_bridge`` / ``uninstall_log_bridge`` are idempotent.
 """
@@ -36,18 +36,21 @@ def _make_record(message: str = "hello") -> logging.LogRecord:
     )
 
 
-def test_emit_with_task_run_id_carries_task_run_id() -> None:
+def test_emit_in_a_step_carries_its_task_run_and_its_flow_run() -> None:
     handler = PrefectLogBridgeHandler()
+    flow_id = uuid.uuid4()
     task_id = uuid.uuid4()
+    token = _current_flow_run_id.set(flow_id)
     try:
         with bind_task_run(task_id):
             payload = handler._record_to_payload(_make_record("step log"))
     finally:
+        _current_flow_run_id.reset(token)
         handler.close()
 
     assert payload is not None
     assert payload["task_run_id"] == task_id
-    assert "flow_run_id" not in payload
+    assert payload["flow_run_id"] == flow_id
     assert payload["message"] == "step log"
     assert payload["level"] == logging.INFO
 
@@ -106,6 +109,32 @@ def test_install_log_bridge_is_idempotent() -> None:
 
     # After uninstall, no PrefectLogBridgeHandler on the root logger.
     assert not any(isinstance(h, PrefectLogBridgeHandler) for h in logging.getLogger().handlers)
+
+
+def test_a_parallel_step_carries_the_flow_run_of_its_flow_body() -> None:
+    from loom.etl.executor._dispatcher import ThreadDispatcher
+
+    handler = PrefectLogBridgeHandler()
+    flow_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    payloads: list[dict[str, object] | None] = []
+
+    def step() -> None:
+        # A step of a parallel group runs in a pool thread.
+        with bind_task_run(task_id):
+            payloads.append(handler._record_to_payload(_make_record("parallel step log")))
+
+    token = _current_flow_run_id.set(flow_id)
+    try:
+        ThreadDispatcher().run_all([step])
+    finally:
+        _current_flow_run_id.reset(token)
+        handler.close()
+
+    (payload,) = payloads
+    assert payload is not None
+    assert payload["task_run_id"] == task_id
+    assert payload["flow_run_id"] == flow_id
 
 
 def test_install_log_bridge_none_flow_id_is_a_noop() -> None:
