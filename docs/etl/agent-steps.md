@@ -174,7 +174,7 @@ and upserts into the same table:
 | `datetime` | `Datetime("us", "UTC")`; a naive value is read as UTC. `Datetime("us")` when the field requires naive values (`Meta(tz=False)`) |
 | `Decimal` | `Decimal(38, 9)`, keeping 9 decimal places |
 | `list[T]`, `set[T]`, `tuple[T, ...]` | `List` of the type of `T` |
-| a nested struct | `Struct` of its fields' types |
+| a nested struct or pydantic model | `Struct` of its fields' types |
 | `T \| None` | the type of `T` |
 | anything else (`dict`, a union of several types, ...) | `String` holding the value's JSON |
 

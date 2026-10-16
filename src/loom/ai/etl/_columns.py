@@ -13,7 +13,7 @@ import msgspec
 import msgspec.inspect as mi
 import polars as pl
 
-from loom.core.model import loom_type
+from loom.core.model import is_pydantic_model, loom_type
 
 DECIMAL_DTYPE: Final = pl.Decimal(38, 9)
 
@@ -43,8 +43,8 @@ def output_columns(output_type: type[Any]) -> dict[str, Column]:
     ``Boolean``; ``date`` ``Date``; ``datetime`` a UTC ``Datetime`` (naive when
     the field requires naive values, a naive value otherwise read as UTC);
     ``Decimal`` ``Decimal(38, 9)``; lists and sets ``List``; nested structs
-    ``Struct``; an optional field the type of its value. Any other shape is
-    ``String`` holding the JSON of the value.
+    and pydantic models ``Struct``; an optional field the type of its value.
+    Any other shape is ``String`` holding the JSON of the value.
 
     Args:
         output_type: A strict ``msgspec.Struct`` or ``pydantic.BaseModel``.
@@ -58,9 +58,13 @@ def output_columns(output_type: type[Any]) -> dict[str, Column]:
 def _fields(output_type: type[Any]) -> Iterable[tuple[str, Any]]:
     if loom_type(output_type).library == "msgspec":
         return [(f.encode_name, f.type) for f in msgspec.structs.fields(output_type)]
+    return _model_fields(output_type)
+
+
+def _model_fields(model: type[Any]) -> list[tuple[str, Any]]:
     return [
         (info.serialization_alias or info.alias or name, info.annotation)
-        for name, info in output_type.model_fields.items()
+        for name, info in model.model_fields.items()
     ]
 
 
@@ -77,6 +81,8 @@ def _column(info: mi.Type) -> Column:
         return _list(_column(info.item_type))
     if isinstance(info, mi.StructType | mi.DataclassType | mi.TypedDictType):
         return _struct({f.encode_name: _column(f.type) for f in info.fields})
+    if isinstance(info, mi.CustomType) and is_pydantic_model(info.cls):
+        return _struct({name: _column(mi.type_info(a)) for name, a in _model_fields(info.cls)})
     if isinstance(info, mi.DateTimeType):
         return Column(pl.Datetime("us", None if info.tz is False else "UTC"), _datetime)
     return _SCALARS.get(type(info), _JSON)

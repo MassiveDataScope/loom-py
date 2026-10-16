@@ -57,6 +57,20 @@ class PydanticReply(pydantic.BaseModel):
     count: int | None = pydantic.Field(default=None, alias="howMany")
 
 
+class PydanticOffer(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    amount: Decimal
+    currency_code: str = pydantic.Field(alias="currencyCode")
+
+
+class PydanticQuote(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    best: PydanticOffer | None
+    others: list[PydanticOffer]
+
+
 class Clashing(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     answer: str
     agent_status: str

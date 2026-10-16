@@ -378,6 +378,10 @@
   `mcp` and `a2a` capabilities, so changing a filter changes it. A step that
   keeps `agent_version` in its upsert keys relabels every row on its next
   execution after the upgrade.
+- **ai:** in `PolarsAgentRunner.map`, a field of a pydantic output whose type
+  is another pydantic model is now a `Struct` column of that model's fields,
+  named by alias, as the docs already said, instead of a `String` holding its
+  JSON. A Delta table written before must change that column's type.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with

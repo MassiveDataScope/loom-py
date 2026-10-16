@@ -13,7 +13,16 @@ from loom.ai.abc import AgentUsage
 from loom.ai.etl._batch import RowOutcome
 from loom.ai.etl._columns import output_columns
 from loom.ai.etl._frames import answers_frame
-from tests.unit.ai.etl._types import Mood, Offer, Priority, PydanticReply, Rich
+from loom.core.model import loom_type
+from tests.unit.ai.etl._types import (
+    Mood,
+    Offer,
+    Priority,
+    PydanticOffer,
+    PydanticQuote,
+    PydanticReply,
+    Rich,
+)
 
 _RICH_SCHEMA = {
     "label": pl.String(),
@@ -127,3 +136,27 @@ def test_a_pydantic_output_names_its_columns_by_alias() -> None:
         pl.Date(),
         pl.Int64(),
     ]
+
+
+_PYDANTIC_OFFER = pl.Struct({"amount": pl.Decimal(38, 9), "currencyCode": pl.String()})
+
+
+def test_a_nested_pydantic_model_is_a_struct_of_its_fields() -> None:
+    columns = output_columns(PydanticQuote)
+
+    assert {name: column.dtype for name, column in columns.items()} == {
+        "best": _PYDANTIC_OFFER,
+        "others": pl.List(_PYDANTIC_OFFER),
+    }
+
+
+def test_a_nested_pydantic_answer_is_read_back_field_by_field() -> None:
+    offer = PydanticOffer(amount=Decimal("1400"), currencyCode="EUR")
+    answer = loom_type(PydanticQuote).to_builtins(PydanticQuote(best=offer, others=[offer]))
+    keys = pl.DataFrame({"id": [0]}, schema={"id": pl.Int64()})
+    outcome = RowOutcome(output=answer, error=None, usage=None)
+
+    row = answers_frame(keys, (outcome,), output_columns(PydanticQuote), "v1").row(0, named=True)
+
+    assert row["best"] == {"amount": Decimal("1400"), "currencyCode": "EUR"}
+    assert row["others"] == [{"amount": Decimal("1400"), "currencyCode": "EUR"}]
