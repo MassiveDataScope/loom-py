@@ -156,12 +156,14 @@
   assembles an unentered `AgentRuntime` from an `ai:` section: engine,
   artifacts under `root`, compilation. `create_app` now builds its runtime
   through it. `AgentRuntime.plans` exposes the compiled plans.
-- **ai:** `AgentPlan.fingerprint`, a stable sha256 of what decides an
-  agent's answers: compiled instructions, output schema, output check (by
-  import path), policies, `spec_version`, the kind and name of every
-  capability and the bound provider, model, `output_mode` and `options`; not
-  the name, metadata, price, where a capability is served from, region,
-  endpoint, credentials or `streaming`.
+- **ai:** `AgentPlan.fingerprint`, a stable sha256 of the declared facts
+  that decide an agent's answers: `spec_version`, compiled instructions,
+  output schema, output check (by import path), the kind and declared facts
+  of every capability (including the `include`/`exclude` filters of `mcp`
+  and `a2a`) and the bound provider, model, `output_mode` and `options`; not
+  the policies, the content of the skills, tools or use cases a capability
+  names, the name, metadata, price, where a capability is served from,
+  region, endpoint, credentials or `streaming`.
 - **ai:** `loom.ai.etl.PolarsAgentRunner` runs an agent over a Polars frame
   for ETL steps (see `etl`): a runtime of its own per call that also sees the
   caller's context variables, concurrency that waits instead of refusing, one
@@ -374,12 +376,13 @@
 ### ai
 
 - **ai:** `AgentPlan.fingerprint`, and so the ETL `agent_version` column,
-  changes once for every existing agent. Of the policies it now covers only
-  `max_iterations`, `max_tool_calls` and `max_history_bytes`, so changing
-  `retries`, a timeout, `max_usd`, `on_unpriced_spend`, `max_requests` or a
-  token cap keeps it; and it now covers the `include`/`exclude` filters of
-  `mcp` and `a2a` capabilities, so changing a filter changes it. A step that
-  keeps `agent_version` in its upsert keys relabels every row on its next
+  changes once for every existing agent. It no longer covers any policy, so
+  changing `retries`, a timeout, `max_iterations`, `max_tool_calls`,
+  `max_requests`, a token cap, `max_usd`, `on_unpriced_spend` or
+  `max_history_bytes` keeps it; and it now covers the `include`/`exclude`
+  filters of `mcp` and `a2a` capabilities, so changing a filter changes it.
+  A step that keeps `agent_version` in its upsert keys and its anti-join
+  re-runs, and pays for, every row of the anti-join window on its next
   execution after the upgrade.
 - **ai:** in `PolarsAgentRunner.map`, a field of a pydantic output whose type
   is another pydantic model is now a `Struct` column of that model's fields,

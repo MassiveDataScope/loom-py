@@ -89,7 +89,7 @@ class TestStability:
 
     def test_the_digest_is_pinned_across_processes(self) -> None:
         assert (
-            _BASE.fingerprint == "9800c2158e00805a261c29448650fb595b9385eaedcccfb2cd68d10e5f5cd4ba"
+            _BASE.fingerprint == "dd47e083e4eb352c9b90d261e5af7408d3b4c163cef71bdda16eef917029ac90"
         )
 
     def test_option_order_does_not_change_it(self) -> None:
@@ -111,9 +111,6 @@ _SENSITIVE: dict[str, AgentPlan] = {
     ),
     "output check": msgspec.structs.replace(_BASE, output_check=reject_nothing),
     "spec version": msgspec.structs.replace(_BASE, spec_version=2),
-    "max_iterations": _policies(max_iterations=3),
-    "max_tool_calls": _policies(max_tool_calls=3),
-    "max_history_bytes": _policies(max_history_bytes=1024),
     "provider": _target(provider="anthropic"),
     "model": _target(model="eu.anthropic.claude-sonnet-5-5"),
     "output mode": _target(output_mode="native"),
@@ -150,7 +147,9 @@ _SENSITIVE: dict[str, AgentPlan] = {
         "a2a agent",
     ],
 )
-def test_capabilities_are_told_apart_by_kind_and_name(first: AgentPlan, second: AgentPlan) -> None:
+def test_capabilities_are_told_apart_by_their_declared_facts(
+    first: AgentPlan, second: AgentPlan
+) -> None:
     assert first.fingerprint != second.fingerprint
 
 
@@ -205,6 +204,9 @@ _INSENSITIVE: dict[str, AgentPlan] = {
     "max_input_tokens_per_request": _policies(max_input_tokens_per_request=2000),
     "tool_timeout_ms": _policies(tool_timeout_ms=1000),
     "run_timeout_ms": _policies(run_timeout_ms=9000),
+    "max_iterations": _policies(max_iterations=3),
+    "max_tool_calls": _policies(max_tool_calls=3),
+    "max_history_bytes": _policies(max_history_bytes=1024),
 }
 
 
@@ -217,5 +219,5 @@ def test_where_a_capability_is_served_from_leaves_it_unchanged() -> None:
 
 
 @pytest.mark.parametrize("changed", sorted(_INSENSITIVE))
-def test_a_deployment_detail_leaves_it_unchanged(changed: str) -> None:
+def test_a_deployment_detail_or_a_policy_leaves_it_unchanged(changed: str) -> None:
     assert _INSENSITIVE[changed].fingerprint == _BASE.fingerprint

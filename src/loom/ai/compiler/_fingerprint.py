@@ -26,28 +26,27 @@ _CAPABILITY_NAMES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
     }
 )
 
-_POLICY_NAMES: Final = ("max_iterations", "max_tool_calls", "max_history_bytes")
-
 
 def plan_fingerprint(plan: AgentPlan) -> str:
-    """Return the sha256 of what decides *plan*'s answers.
+    """Return the sha256 of the declared facts that decide *plan*'s answers.
 
     Args:
         plan: Compiled plan.
 
     Returns:
-        Hex digest over the instructions, output schema and check, the
-        policies that bound what the model sees or how long it reasons
-        (``max_iterations``, ``max_tool_calls``, ``max_history_bytes``),
-        format version, the kind, name and tool filters of every capability
-        and the model binding, without the deployment details.
+        Hex digest over the format version, the compiled instructions (text
+        and template), the output schema, the output check's import path,
+        every capability's kind and declared facts (``usecase`` keys, ``sql``
+        connection, ``mcp`` server, ``skills`` library and names, ``python``
+        factory reference, ``a2a`` agent, ``native`` tool, and the
+        ``include``/``exclude`` filters of ``mcp`` and ``a2a``) and the bound
+        provider, model, output mode and options. No policy enters it.
     """
     facts = {
         "spec_version": plan.spec_version,
         "instructions": [[block.text, block.template] for block in plan.instructions],
         "output_schema": plan.output.schema,
         "output_check": _reference(plan.output_check),
-        "policies": {name: getattr(plan.policies, name) for name in _POLICY_NAMES},
         "capabilities": [_capability(capability) for capability in plan.capabilities],
         "provider": plan.inference.provider,
         "model": plan.inference.model,
