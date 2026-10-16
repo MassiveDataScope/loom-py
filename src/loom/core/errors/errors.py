@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from loom.core.errors.codes import ErrorCode
@@ -107,8 +107,8 @@ class Forbidden(DomainError):
     leave them out where the refusal must not become an oracle for the policy.
 
     Raises:
-        ValueError: If ``reason`` is empty, ``missing`` is a single string, or an item
-            of ``missing`` is not a non-empty string.
+        ValueError: If ``reason`` is not a non-blank string, ``missing`` is a single
+            ``str`` or ``bytes``, or an item of ``missing`` is not a non-blank string.
     """
 
     def __init__(
@@ -116,15 +116,17 @@ class Forbidden(DomainError):
         message: str = "Forbidden",
         *,
         reason: str | None = None,
-        missing: Sequence[str] = (),
+        missing: Iterable[str] = (),
     ) -> None:
         if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-            raise ValueError("Forbidden.reason must be a non-empty string or None")
+            raise ValueError("Forbidden.reason must be a non-blank string or None")
         if isinstance(missing, (str, bytes)):
-            raise ValueError("Forbidden.missing takes a sequence of permissions, not one string")
+            raise ValueError(
+                "Forbidden.missing takes an iterable of permissions, not one str or bytes"
+            )
         permissions = tuple(missing)
         if any(not isinstance(item, str) or not item.strip() for item in permissions):
-            raise ValueError("Forbidden.missing items must be non-empty strings")
+            raise ValueError("Forbidden.missing items must be non-blank strings")
         super().__init__(message, code=ErrorCode.FORBIDDEN)
         self.reason = reason
         self.missing: tuple[str, ...] = permissions

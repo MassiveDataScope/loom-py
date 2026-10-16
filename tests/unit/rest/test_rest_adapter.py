@@ -130,9 +130,9 @@ class TestHttpErrorMapper:
         assert exc.status_code == 403
 
     def test_a_plain_forbidden_body_has_no_reason_or_missing(self) -> None:
-        """Bodies of existing refusals do not change."""
+        """A refusal without reason or missing answers only code, message and trace_id."""
         detail = _detail(self._mapper().to_http(Forbidden()))
-        assert "reason" not in detail and "missing" not in detail
+        assert set(detail) == {"code", "message", "trace_id"}
 
     def test_forbidden_carries_its_reason_and_missing_permissions(self) -> None:
         exc = self._mapper().to_http(
@@ -145,6 +145,16 @@ class TestHttpErrorMapper:
             "mfa_required",
             ["grants.manage"],
         )
+
+    def test_a_forbidden_with_only_a_reason_has_no_missing(self) -> None:
+        detail = _detail(self._mapper().to_http(Forbidden("x", reason="mfa_required")))
+        assert detail["reason"] == "mfa_required"
+        assert "missing" not in detail
+
+    def test_a_forbidden_with_only_missing_has_no_reason(self) -> None:
+        detail = _detail(self._mapper().to_http(Forbidden("x", missing=["a.b"])))
+        assert detail["missing"] == ["a.b"]
+        assert "reason" not in detail
 
     def test_unauthenticated_maps_to_401(self) -> None:
         exc = self._mapper().to_http(Unauthenticated())
