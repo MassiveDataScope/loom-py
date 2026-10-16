@@ -20,6 +20,7 @@ from deltalake import CommitProperties, WriterProperties
 
 from loom.core.model import LoomFrozenStruct
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
+from loom.etl.storage._uri import CLOUD_SCHEMES
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
 """Dotted paths of the ``storage:`` collections merged by key across ``includes``."""
@@ -645,9 +646,8 @@ def _resolve_polars_catalog_key(
 
 
 def _is_cloud_uri(path: str) -> bool:
-    cloud_schemes = frozenset({"s3", "gs", "gcs", "abfss", "abfs", "az", "r2"})
     parsed = urlparse(path.strip())
-    if parsed.scheme.lower() not in cloud_schemes:
+    if parsed.scheme.lower() not in CLOUD_SCHEMES:
         return False
     # Cloud roots must include authority/bucket/container to avoid accepting
     # incomplete URIs like "s3://".

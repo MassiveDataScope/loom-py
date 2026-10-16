@@ -15,13 +15,13 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
-from loom.etl.checkpoint._cleaners import _is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.storage._config import (
     STORAGE_KEYED_COLLECTIONS,
     StorageConfig,
     normalise_storage_section,
 )
+from loom.etl.storage._uri import is_cloud_path
 
 
 def _load_yaml(
@@ -96,7 +96,7 @@ def config_dir(path: str) -> Path:
         The absolute directory holding a local file, or the working directory
         for a cloud URI, which has no local directory of its own.
     """
-    if _is_cloud_path(path):
+    if is_cloud_path(path):
         return Path.cwd().resolve()
     return Path(path).resolve().parent
 

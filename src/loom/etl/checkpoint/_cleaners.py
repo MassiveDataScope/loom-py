@@ -17,17 +17,6 @@ class CheckpointCleanupError(RuntimeError):
     """Raised when a checkpoint tree cannot be deleted."""
 
 
-_CLOUD_SCHEMES = frozenset({"s3", "gs", "gcs", "abfss", "abfs", "az", "r2"})
-
-
-def _is_cloud_path(path: str) -> bool:
-    """Return ``True`` when *path* uses a supported cloud URI scheme."""
-    if "://" not in path:
-        return False
-    scheme, _ = path.split("://", 1)
-    return scheme.lower() in _CLOUD_SCHEMES
-
-
 @runtime_checkable
 class TempCleaner(Protocol):
     """Protocol for deleting checkpoint trees."""
