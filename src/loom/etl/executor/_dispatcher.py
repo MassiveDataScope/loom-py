@@ -28,12 +28,12 @@ from typing import Protocol, runtime_checkable
 class ParallelDispatcher(Protocol):
     """Protocol for executing a group of independent tasks in parallel.
 
-    Each task should run in a copy of the caller's context, so a step keeps
-    the run's context variables (its flow run, its trace parent).
-
     All tasks in a group are independent — the executor guarantees no
     data dependency between them.  Implementations must:
 
+    * Run each task in a copy of the caller's context, so a step keeps the
+      run's context variables (its flow run) and OpenTelemetry context (its
+      trace parent).
     * Execute all tasks (not short-circuit on first failure).
     * Re-raise the first exception encountered after all tasks complete.
 
@@ -86,7 +86,6 @@ class ThreadDispatcher:
             return
         workers = self._max_workers or len(tasks)
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            # Each task runs in a copy of the caller's context, as asyncio.to_thread does.
             futures = [pool.submit(contextvars.copy_context().run, task) for task in tasks]
             first_exc: Exception | None = None
             for future in futures:
