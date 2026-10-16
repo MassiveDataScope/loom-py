@@ -1,4 +1,4 @@
-"""Unit tests for JSON column decoding in PolarsSourceReader (_apply_json_decode)."""
+"""Unit tests for JSON column decoding with decode_json_columns."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import polars as pl
 import pytest
 
-from loom.etl.backends.polars._reader import _apply_json_decode
+from loom.etl.backends.polars import decode_json_columns
 from loom.etl.declarative.source import JsonColumnSpec
 from loom.etl.schema._schema import ListType, LoomDtype, StructField, StructType
 
@@ -30,9 +30,9 @@ def _json_str(obj: object) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_no_columns_returns_same_frame() -> None:
+def test_decode_json_columns_no_columns_returns_same_frame() -> None:
     frame = _frame({"id": 1, "payload": '{"x": 1}'})
-    result = _apply_json_decode(frame, ())
+    result = decode_json_columns(frame, ())
     assert result is frame
 
 
@@ -41,7 +41,7 @@ def test_apply_json_decode_no_columns_returns_same_frame() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_simple_struct() -> None:
+def test_decode_json_columns_simple_struct() -> None:
     struct_type = StructType(
         fields=(
             StructField("order_id", LoomDtype.INT64),
@@ -55,7 +55,7 @@ def test_apply_json_decode_simple_struct() -> None:
         {"id": 2, "payload": _json_str({"order_id": 20, "amount": 49.5})},
     ]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc,)).collect()
+    result = decode_json_columns(frame, (jc,)).collect()
 
     assert result["payload"].dtype == pl.Struct(
         [pl.Field("order_id", pl.Int64), pl.Field("amount", pl.Float64)]
@@ -70,7 +70,7 @@ def test_apply_json_decode_simple_struct() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_list_of_primitives() -> None:
+def test_decode_json_columns_list_of_primitives() -> None:
     jc = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
 
     rows = [
@@ -78,7 +78,7 @@ def test_apply_json_decode_list_of_primitives() -> None:
         {"id": 2, "tags": _json_str(["x"])},
     ]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc,)).collect()
+    result = decode_json_columns(frame, (jc,)).collect()
 
     assert result["tags"].dtype == pl.List(pl.String)
     assert result["tags"][0].to_list() == ["a", "b"]
@@ -89,7 +89,7 @@ def test_apply_json_decode_list_of_primitives() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_list_of_structs() -> None:
+def test_decode_json_columns_list_of_structs() -> None:
     inner = StructType(
         fields=(
             StructField("kind", LoomDtype.UTF8),
@@ -102,7 +102,7 @@ def test_apply_json_decode_list_of_structs() -> None:
         {"id": 1, "events": _json_str([{"kind": "click", "count": 3}])},
     ]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc,)).collect()
+    result = decode_json_columns(frame, (jc,)).collect()
 
     assert result["events"].dtype == pl.List(
         pl.Struct([pl.Field("kind", pl.String), pl.Field("count", pl.Int64)])
@@ -117,7 +117,7 @@ def test_apply_json_decode_list_of_structs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_multiple_columns() -> None:
+def test_decode_json_columns_multiple_columns() -> None:
     jc_payload = JsonColumnSpec(
         column="payload",
         loom_type=StructType(fields=(StructField("x", LoomDtype.INT64),)),
@@ -126,7 +126,7 @@ def test_apply_json_decode_multiple_columns() -> None:
 
     rows = [{"payload": '{"x": 5}', "tags": '["a","b"]'}]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc_payload, jc_tags)).collect()
+    result = decode_json_columns(frame, (jc_payload, jc_tags)).collect()
 
     assert result["payload"][0]["x"] == 5
     assert result["tags"][0].to_list() == ["a", "b"]
@@ -137,14 +137,14 @@ def test_apply_json_decode_multiple_columns() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_preserves_non_json_columns() -> None:
+def test_decode_json_columns_preserves_non_json_columns() -> None:
     jc = JsonColumnSpec(
         column="meta",
         loom_type=StructType(fields=(StructField("k", LoomDtype.UTF8),)),
     )
     rows = [{"id": 42, "name": "alice", "meta": '{"k": "v"}'}]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc,)).collect()
+    result = decode_json_columns(frame, (jc,)).collect()
 
     assert result["id"][0] == 42
     assert result["name"][0] == "alice"
@@ -156,7 +156,7 @@ def test_apply_json_decode_preserves_non_json_columns() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_nested_struct() -> None:
+def test_decode_json_columns_nested_struct() -> None:
     inner_struct = StructType(
         fields=(
             StructField("lat", LoomDtype.FLOAT64),
@@ -173,7 +173,7 @@ def test_apply_json_decode_nested_struct() -> None:
 
     rows = [{"loc": _json_str({"name": "HQ", "point": {"lat": 40.7, "lon": -74.0}})}]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc,)).collect()
+    result = decode_json_columns(frame, (jc,)).collect()
 
     loc = result["loc"][0]
     assert loc["name"] == "HQ"
@@ -186,27 +186,26 @@ def test_apply_json_decode_nested_struct() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_apply_json_decode_null_json_value() -> None:
+def test_decode_json_columns_null_json_value() -> None:
     jc = JsonColumnSpec(
         column="payload",
         loom_type=StructType(fields=(StructField("x", LoomDtype.INT64),)),
     )
     rows = [{"payload": "null"}, {"payload": '{"x": 1}'}]
     frame = pl.DataFrame(rows).lazy()
-    result = _apply_json_decode(frame, (jc,)).collect()
+    result = decode_json_columns(frame, (jc,)).collect()
 
     assert result["payload"][0] is None or result["payload"][0]["x"] is None
     assert result["payload"][1]["x"] == 1
 
 
 # ---------------------------------------------------------------------------
-# Polymorphic JSON normalization — T1-T9 fail on the unmodified _apply_json_decode.
-# T10 is a regression guard: must pass before and after the fix.
+# Polymorphic JSON normalization
 # ---------------------------------------------------------------------------
 
 
 class TestPolymorphicJsonNormalization:
-    """Verify that _apply_json_decode tolerates polymorphic JSON fields in the same batch."""
+    """Verify that decode_json_columns tolerates polymorphic JSON fields in the same batch."""
 
     def test_t1_string_field_with_json_object_coerces_to_string(self) -> None:
         jc = JsonColumnSpec(column="origin", loom_type=LoomDtype.UTF8)
@@ -214,7 +213,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "origin": '"web"'},
             {"id": 2, "origin": '{"source": "web", "medium": "referral"}'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["origin"][0] == "web"
         assert json.loads(result["origin"][1]) == {"source": "web", "medium": "referral"}
@@ -225,7 +224,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "tag": '"featured"'},
             {"id": 2, "tag": '["sale", "new"]'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["tag"][0] == "featured"
         assert json.loads(result["tag"][1]) == ["sale", "new"]
@@ -237,7 +236,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "profile": '{"user_id": 1}'},
             {"id": 2, "profile": "[1, 2, 3]"},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["profile"][0]["user_id"] == 1
         assert result["profile"][1] is None or result["profile"][1]["user_id"] is None
@@ -257,7 +256,7 @@ class TestPolymorphicJsonNormalization:
                 "event": '{"name": "pageview", "meta": {"page": "/home", "section": "hero"}}',
             },
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["event"][0]["name"] == "click"
         assert result["event"][0]["meta"] == "button_1"
@@ -291,7 +290,7 @@ class TestPolymorphicJsonNormalization:
                 ),
             },
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["record"][0]["context"]["label"] == "login"
         assert result["record"][0]["context"]["value"] == "success"
@@ -307,7 +306,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "tags": '["python", "data"]'},
             {"id": 2, "tags": '"single_tag"'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["tags"][0].to_list() == ["python", "data"]
         assert result["tags"][1] is None
@@ -324,7 +323,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "attrs": '[{"key": "color", "val": "blue"}]'},
             {"id": 2, "attrs": '[{"key": "config", "val": {"theme": "dark", "lang": "en"}}]'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["attrs"][0].to_list()[0]["val"] == "blue"
         assert json.loads(result["attrs"][1].to_list()[0]["val"]) == {"theme": "dark", "lang": "en"}
@@ -336,7 +335,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 2, "status": '"active"'},
             {"id": 3, "status": '{"state": "pending", "since": "2024-01-01"}'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["status"][0] is None
         assert result["status"][1] == "active"
@@ -349,7 +348,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "origin": '"web"', "tags": '["a"]'},
             {"id": 2, "origin": '{"source": "email", "campaign": "q4"}', "tags": '["b", "c"]'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc_origin, jc_tags)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc_origin, jc_tags)).collect()
 
         assert result["origin"][0] == "web"
         assert json.loads(result["origin"][1]) == {"source": "email", "campaign": "q4"}
@@ -369,7 +368,7 @@ class TestPolymorphicJsonNormalization:
             {"id": 1, "product": '{"product_id": 10, "name": "Widget", "price": 9.99}'},
             {"id": 2, "product": '{"product_id": 20, "name": "Gadget", "price": 49.0}'},
         ]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["product"][0]["product_id"] == 10
         assert result["product"][0]["name"] == "Widget"
@@ -391,7 +390,7 @@ class TestNullColumnTypeSafety:
         struct_type = StructType(fields=(StructField("user_id", LoomDtype.INT64),))
         jc = JsonColumnSpec(column="payload", loom_type=struct_type)
         frame = pl.DataFrame({"payload": pl.Series([None, None], dtype=pl.String)}).lazy()
-        result = _apply_json_decode(frame, (jc,)).collect()
+        result = decode_json_columns(frame, (jc,)).collect()
 
         assert result["payload"].dtype == pl.Struct([pl.Field("user_id", pl.Int64)])
         assert result["payload"][0] is None
@@ -402,28 +401,28 @@ class TestNullColumnTypeSafety:
         jc = JsonColumnSpec(column="data", loom_type=struct_type)
         # Null dtype — simulates optional_col()/pl.lit(None) columns from pipelines
         frame = pl.DataFrame({"data": pl.Series([None, None], dtype=pl.Null)}).lazy()
-        result = _apply_json_decode(frame, (jc,)).collect()
+        result = decode_json_columns(frame, (jc,)).collect()
 
         assert result["data"].dtype == pl.Struct([pl.Field("amount", pl.Float64)])
 
     def test_all_null_string_column_list_has_declared_dtype(self) -> None:
         jc = JsonColumnSpec(column="tags", loom_type=ListType(inner=LoomDtype.UTF8))
         frame = pl.DataFrame({"tags": pl.Series([None, None], dtype=pl.String)}).lazy()
-        result = _apply_json_decode(frame, (jc,)).collect()
+        result = decode_json_columns(frame, (jc,)).collect()
 
         assert result["tags"].dtype == pl.List(pl.String)
 
     def test_null_dtype_column_primitive_has_declared_dtype(self) -> None:
         jc = JsonColumnSpec(column="label", loom_type=LoomDtype.UTF8)
         frame = pl.DataFrame({"label": pl.Series([None], dtype=pl.Null)}).lazy()
-        result = _apply_json_decode(frame, (jc,)).collect()
+        result = decode_json_columns(frame, (jc,)).collect()
 
         assert result["label"].dtype == pl.String
 
     def test_mixed_null_and_valid_rows_declared_dtype_preserved(self) -> None:
         jc = JsonColumnSpec(column="payload", loom_type=LoomDtype.UTF8)
         rows = [{"payload": None}, {"payload": '"active"'}, {"payload": None}]
-        result = _apply_json_decode(pl.DataFrame(rows).lazy(), (jc,)).collect()
+        result = decode_json_columns(pl.DataFrame(rows).lazy(), (jc,)).collect()
 
         assert result["payload"].dtype == pl.String
         assert result["payload"][0] is None

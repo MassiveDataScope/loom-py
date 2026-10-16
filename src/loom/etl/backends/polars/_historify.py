@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import Any
 
 import polars as pl
 
 from loom.etl.backends._historify._common import prev_period_value
+from loom.etl.backends.polars._frame import FrameT
 from loom.etl.declarative.target._history import (
     DeletePolicy,
     HistorifyDateCollisionError,
@@ -14,8 +15,6 @@ from loom.etl.declarative.target._history import (
     HistorifySpec,
     HistoryDateType,
 )
-
-_FrameT = TypeVar("_FrameT", pl.DataFrame, pl.LazyFrame)
 
 
 def _history_boundary_dtype(spec: HistorifySpec) -> type[pl.Date] | pl.Datetime:
@@ -174,11 +173,11 @@ class PolarsHistorifyBackend:
 
     @staticmethod
     def _collapse_same_track_runs(
-        frame: _FrameT,
+        frame: FrameT,
         spec: HistorifySpec,
         entity_key: list[str],
         eff_col: str,
-    ) -> _FrameT:
+    ) -> FrameT:
         """Collapse consecutive same-``track`` events per entity into one run.
 
         valid_from anchors to the first event of the run (``eff_col`` min),
