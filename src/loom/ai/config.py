@@ -435,7 +435,6 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
 def _warn_unused_prices(
     prices: Mapping[str, ModelPrice], models: Mapping[str, InferenceTarget]
 ) -> None:
-    """Announce every ``ai.prices`` key that no ``ai.models`` binding names."""
     bound = {target.model for target in models.values()}
     for model in sorted(prices.keys() - bound):
         _logger.warning(
