@@ -485,6 +485,25 @@ report = MaintenanceRunner.from_config(config).run(NightlyMaintenance)
 report.raise_if_errors()
 ```
 
+`vacuum()` deletes, by default, the files the Delta log records as removed and
+older than the retention. `vacuum(full=True)` also deletes the files under the
+table directory that the log does not reference at all, such as the output of
+an aborted write or files whose remove entries the log no longer holds after
+`delta.logRetentionDuration`; it lists the whole table directory on each run.
+The config-driven block takes the same flag as `maintenance.vacuum.full`:
+
+```yaml
+maintenance:
+  schemas: [raw]
+  vacuum:
+    retention_hours: 168
+    dry_run: false
+    full: true
+```
+
+Run it once with `dry_run: true` first: the result lists the files a full
+vacuum would delete.
+
 ### Custom operations
 
 An operation is any class implementing `OpSpec`: a `name` class variable, which

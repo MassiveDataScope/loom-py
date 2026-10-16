@@ -171,7 +171,11 @@ class MaintenanceRunner:
             return MaintenanceReport()
 
         vacuum_spec = (
-            VacuumSpec(retention_hours=mc.vacuum.retention_hours, dry_run=mc.vacuum.dry_run)
+            VacuumSpec(
+                retention_hours=mc.vacuum.retention_hours,
+                dry_run=mc.vacuum.dry_run,
+                full=mc.vacuum.full,
+            )
             if mc.vacuum
             else None
         )
