@@ -461,6 +461,18 @@
   unchanged; `InvalidStageError(include=...)` still works, emits a
   `DeprecationWarning` and is removed in loom 3.0. The error survives pickle
   with its `unknown` names, so it crosses process boundaries intact.
+- **etl:** `ThreadDispatcher` runs each task in a copy of the caller's
+  context, as `asyncio.to_thread` does, so a step of a parallel group sees
+  the `ContextVar` values of the run that dispatched it (the Prefect flow run
+  among them) and its OpenTelemetry context. A parallel group's step spans
+  therefore nest under their process span instead of starting a trace of
+  their own. `ParallelDispatcher` lists running each task in a copy of the
+  caller's context among the requirements on an implementation.
+- **etl:** `WithAgent(max_usd=...)` takes only a `Decimal`: a `float`, `int`
+  or `str` budget raises `TypeError`, where a `float` or `int` was accepted.
+  `NaN`, `sNaN` and `Infinity` raise `ValueError`, like zero and a negative
+  amount; `NaN` and `sNaN` used to raise `decimal.InvalidOperation` and
+  `Infinity` was accepted.
 
 ## 🐛 Fixes
 
@@ -491,6 +503,25 @@
 
 ### etl
 
+- **etl:** `replace(allow_empty=False)` on Spark writes the rows it checked.
+  The writer ran `DataFrame.isEmpty()` and then let the write compute the
+  frame again, so a source that changed in between, or a nondeterministic
+  plan, could still replace the table with no rows. The frame is now
+  computed once with `localCheckpoint(eager=True)`, and the check and the
+  write both read that result. Those rows are kept in executor storage, not
+  in reliable storage: losing an executor before the write ends fails the
+  write instead of recomputing the frame. The write policy's `_is_empty` hook becomes
+  `_pin_rows`, which returns the frame to write along with whether it is
+  empty.
+- **etl:** documentation states what the writers do. `replace(streaming=...)`
+  and `ReplaceSpec.streaming` claimed a streaming Arrow write on Polars; no
+  backend reads the flag for a full replace, and the collect engine follows
+  the step's `streaming` attribute. `vacuum(full=True)` warns, in the guide
+  and in `VacuumSpec`, `MaintainTable.vacuum` and `MaintenanceVacuumConfig`,
+  that it deletes every unreferenced file under the table directory older
+  than the retention, whoever wrote it. The pipelines page states that
+  `replace_where` with an empty frame deletes the rows matching its
+  predicate.
 - **etl:** `upsert` and `update` on the Polars backend write with the route's
   `writer` and `commit` settings. The delta-rs MERGE received neither, so the
   Parquet files it rewrote came out with delta-rs defaults (SNAPPY, row groups
@@ -573,6 +604,27 @@
   `SERVICE_UNAVAILABLE`, which `HttpErrorMapper` maps to `503`. Any other
   exception from the authenticator, and the `401` refusal, are unchanged.
 
+### prefect
+
+- **prefect:** every log line the bridge sends carries the run's
+  `flow_run_id`, and a step's line its `task_run_id` as well. A step's lines
+  went out with `task_run_id` only, so a reader scoping a run's logs by flow
+  run, such as Prefect's flow run view, missed every step line; a step of a
+  parallel group now keeps the flow run too, through `ThreadDispatcher`'s
+  context copy. A line emitted inside a step with no flow run bound omits
+  `flow_run_id` instead of sending `null`.
+- **prefect:** `deploy_flow` refuses a flow built from a YAML declaration
+  with a `TypeError` naming `discover_and_deploy_etls(config=...)`, which
+  deploys it, instead of the entrypoint module's `ConfigError`. When the flow
+  module's `__getattr__` raises anything but `AttributeError` while the flow
+  is looked up, `deploy_flow` raises its documented `ValueError`, chained to
+  that exception.
+- **prefect:** `discover_and_deploy_etls(flows_package=...)` checks that each
+  flow's module exposes it under its attribute name, as `deploy_flow` does,
+  so it no longer registers a deployment whose entrypoint the worker cannot
+  import. Every flow's work pool and exposure are checked before the first
+  deployment is registered.
+
 ## ♻️ Refactor
 
 ### etl
@@ -591,6 +643,15 @@
   spec type than the protocol it is dispatched through; it now accepts the
   protocol's type and refuses a spec of another kind with a `TypeError`,
   which the registry's dispatch by kind already made unreachable.
+- **etl:** `PolarsSourceReader` decodes JSON columns through
+  `decode_json_columns`; the private `_apply_json_decode` staticmethod and
+  module function of `loom.etl.backends.polars._reader` are removed.
+- **etl:** the private `_map_pipeline_nodes` and `_map_process_nodes` share
+  one regrouping rule, and a node that is neither a plan nor a parallel group
+  raises `TypeError` instead of being dropped.
+- **etl:** the private `_is_cloud_path` of `loom.etl.checkpoint._cleaners`
+  moves to `loom.etl.storage._uri.is_cloud_path`, and the Polars backend
+  defines its frame type variable once.
 
 # 🚀 Release 2.1.2 ([#238](https://github.com/the-reacher-data/loom-py/pull/238))
 
