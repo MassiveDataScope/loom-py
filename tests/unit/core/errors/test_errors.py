@@ -126,6 +126,15 @@ class TestForbidden:
         assert error.missing == ("grants.manage", "users.manage")
         assert error.code == ErrorCode.FORBIDDEN
 
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"reason": ""}, {"missing": "grants.manage"}, {"missing": ["ok", ""]}, {"missing": [1]}],
+        ids=["empty-reason", "string-as-missing", "empty-permission", "not-a-string"],
+    )
+    def test_a_malformed_reason_or_missing_is_refused(self, kwargs: dict[str, object]) -> None:
+        with pytest.raises(ValueError):
+            Forbidden("no", **kwargs)  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # SystemError — must NOT be catchable as DomainError
