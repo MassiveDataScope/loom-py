@@ -70,6 +70,20 @@ def test_emit_falls_back_to_flow_run_id_when_no_task_bound() -> None:
     assert "task_run_id" not in payload
 
 
+def test_emit_in_a_step_without_a_flow_run_carries_only_its_task_run() -> None:
+    handler = PrefectLogBridgeHandler()
+    task_id = uuid.uuid4()
+    try:
+        with bind_task_run(task_id):
+            payload = handler._record_to_payload(_make_record("step log"))
+    finally:
+        handler.close()
+
+    assert payload is not None
+    assert payload["task_run_id"] == task_id
+    assert "flow_run_id" not in payload
+
+
 def test_emit_returns_none_when_neither_binding_is_active() -> None:
     handler = PrefectLogBridgeHandler()
     try:
