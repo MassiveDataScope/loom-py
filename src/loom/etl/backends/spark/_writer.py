@@ -192,7 +192,8 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             if isinstance(frame, DataFrame):
                 # unpersist() does not free a local checkpoint's blocks: they
                 # belong to the RDD under the checkpointed frame's logical plan.
-                frame._jdf.queryExecution().logical().rdd().unpersist(False)
+                java_frame: Any = frame._jdf
+                java_frame.queryExecution().logical().rdd().unpersist(False)
             else:
                 frame.unpersist()
         except Exception:
