@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from sqlalchemy import event
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, ServerDefault
 from loom.core.repository.mutation import MutationEvent
@@ -17,6 +16,7 @@ from loom.core.repository.sqlalchemy.transactional import (
     reset_active_mutations,
     set_active_mutations,
 )
+from tests.unit.core.conftest import SessionManagerFactory
 
 _token_counter = itertools.count(1)
 
@@ -45,22 +45,8 @@ class _CreateItem(Command, frozen=True):
 
 
 @pytest.fixture
-async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Item)
-    manager = SessionManager(
-        "sqlite+aiosqlite:///:memory:",
-        pool_size=None,
-        max_overflow=None,
-        pool_timeout=None,
-        pool_recycle=None,
-        connect_args={},
-    )
-    compiled = get_compiled(_Item)
-    assert compiled is not None
-    async with manager.engine.begin() as connection:
-        await connection.run_sync(compiled.metadata.create_all)
-    yield manager
-    await manager.dispose()
+async def session_manager(sqlite_session_manager: SessionManagerFactory) -> SessionManager:
+    return await sqlite_session_manager(_Item)
 
 
 @pytest.fixture

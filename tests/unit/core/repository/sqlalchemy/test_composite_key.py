@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 
 import pytest
 
@@ -24,6 +24,7 @@ from loom.core.repository.sqlalchemy.transactional import (
     reset_active_mutations,
     set_active_mutations,
 )
+from tests.unit.core.conftest import SessionManagerFactory
 
 _Key = tuple[int, int]
 
@@ -52,22 +53,8 @@ _SEED = [(7, 1, 2), (7, 2, 1), (7, 3, 2), (7, 4, 1), (7, 5, 2), (8, 1, 1), (8, 2
 
 
 @pytest.fixture
-async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Entry)
-    manager = SessionManager(
-        "sqlite+aiosqlite:///:memory:",
-        pool_size=None,
-        max_overflow=None,
-        pool_timeout=None,
-        pool_recycle=None,
-        connect_args={},
-    )
-    compiled = get_compiled(_Entry)
-    assert compiled is not None
-    async with manager.engine.begin() as connection:
-        await connection.run_sync(compiled.metadata.create_all)
-    yield manager
-    await manager.dispose()
+async def session_manager(sqlite_session_manager: SessionManagerFactory) -> SessionManager:
+    return await sqlite_session_manager(_Entry)
 
 
 @pytest.fixture

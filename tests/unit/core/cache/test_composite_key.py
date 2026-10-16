@@ -12,7 +12,6 @@ from typing import Any, NamedTuple
 import pytest
 from sqlalchemy import event
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.cache import (
     CacheConfig,
     CachedRepository,
@@ -26,6 +25,7 @@ from loom.core.repository import PageParams, PageResult
 from loom.core.repository.abc import CursorResult, PaginationMode, QuerySpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from tests.unit.core.conftest import SessionManagerFactory
 
 from ._doubles import CountingCacheBackend
 
@@ -85,22 +85,8 @@ _READS = pytest.mark.parametrize(
 
 
 @pytest.fixture
-async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Entry)
-    manager = SessionManager(
-        "sqlite+aiosqlite:///:memory:",
-        pool_size=None,
-        max_overflow=None,
-        pool_timeout=None,
-        pool_recycle=None,
-        connect_args={},
-    )
-    compiled = get_compiled(_Entry)
-    assert compiled is not None
-    async with manager.engine.begin() as connection:
-        await connection.run_sync(compiled.metadata.create_all)
-    yield manager
-    await manager.dispose()
+async def session_manager(sqlite_session_manager: SessionManagerFactory) -> SessionManager:
+    return await sqlite_session_manager(_Entry)
 
 
 @pytest.fixture
