@@ -714,7 +714,7 @@ class CachedRepository(
         values = tuple(getattr(item, name, None) for name in self._primary_key.attributes)
         if None in values:
             return None
-        return values if len(values) > 1 else values[0]
+        return values[0] if len(values) == 1 else values
 
     async def _create_many(self, data: Sequence[msgspec.Struct]) -> tuple[OutputT, ...]:
         if not data:

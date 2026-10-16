@@ -95,7 +95,7 @@ def extract_next_cursor(
     last = page_items[-1]
     keys = [_read_path(last, spec.field) for spec in sort]
     ties = tuple(getattr(last, name) for name in id_attributes)
-    tie_breaker = ties if len(ties) > 1 else ties[0]
+    tie_breaker = ties[0] if len(ties) == 1 else ties
     return page_items, encode_cursor(backend, keys, tie_breaker), has_next
 
 

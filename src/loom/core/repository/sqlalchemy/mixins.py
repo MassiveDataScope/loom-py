@@ -161,7 +161,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     def _key_of(self, obj: Any) -> Any:
         """Return the primary key of *obj* in the form :meth:`_id_values` accepts."""
         values = tuple(getattr(obj, name, None) for name in self._effective_id_attributes)
-        return values if len(values) > 1 else values[0]
+        return values[0] if len(values) == 1 else values
 
     def _serialize_input(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
         if isinstance(data, msgspec.Struct):

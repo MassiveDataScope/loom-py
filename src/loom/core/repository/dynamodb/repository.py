@@ -266,13 +266,13 @@ class RepositoryDynamoDB(
 
 def _single_id_attribute(model: type) -> str:
     key = get_id_attributes(model)
-    if len(key) > 1:
-        raise ConfigError(
-            f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
-            "the repository keys each item by one partition key, so declare a single "
-            "primary key"
-        )
-    return key[0]
+    if len(key) == 1:
+        return key[0]
+    raise ConfigError(
+        f"{model.__qualname__} has the composite primary key ({', '.join(key)}); "
+        "the repository keys each item by one partition key, so declare a single "
+        "primary key"
+    )
 
 
 def _is_conditional_check_failure(exc: Exception) -> bool:
