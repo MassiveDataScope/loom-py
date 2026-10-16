@@ -30,7 +30,7 @@ from loom.core.model import BoundaryValidationError, LoomType, is_pydantic_model
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import Cardinality
 from loom.core.model.introspection import (
-    get_id_attribute,
+    get_id_attributes,
     get_projections,
     get_relations,
     list_element_type,
@@ -127,37 +127,42 @@ class _DependencySpec:
 class _PrimaryKey(NamedTuple):
     """Primary key of the cached model as the wrapper reads it.
 
+    A single-column key is its value; a composite key is the tuple of every
+    key value in declaration order, the form the SQLAlchemy repository's
+    ``get_by_id`` takes.
+
     Attributes:
-        attribute: Name of the primary-key attribute; ``id`` when the wrapped
-            repository declares no model or the model declares no primary key.
-        python_type: Type of the key, or ``None`` when it is unresolvable or
-            not a plain class (``int | None``, for instance).
+        attributes: Names of the primary-key attributes in declaration order;
+            ``("id",)`` when the wrapped repository declares no model or the
+            model declares no primary key.
+        python_types: Type of each key attribute, ``None`` where it is
+            unresolvable or not a plain class (``int | None``, for instance).
     """
 
-    attribute: str
-    python_type: type | None
+    attributes: tuple[str, ...]
+    python_types: tuple[type | None, ...]
 
 
-_FALLBACK_PRIMARY_KEY = _PrimaryKey(attribute="id", python_type=None)
+_FALLBACK_PRIMARY_KEY = _PrimaryKey(attributes=("id",), python_types=(None,))
 
 
 def _resolve_primary_key(repository: Repository[Any, Any, Any, Any]) -> _PrimaryKey:
     """Resolve the primary key of the wrapped repository's model.
 
     Falls back to the attribute ``id`` with no type for a repository without a
-    model or whose model declares no primary key; the type alone is ``None``
-    when the key's annotation is not a plain class.  The cached index is then
-    used as it was decoded.
+    model or whose model declares no primary key; the type of one attribute
+    alone is ``None`` when its annotation is not a plain class.
     """
     model = getattr(repository, "model", None)
     if model is None:
         return _FALLBACK_PRIMARY_KEY
     try:
-        attribute = get_id_attribute(model)
+        attributes = get_id_attributes(model)
     except (TypeError, ValueError):
         return _FALLBACK_PRIMARY_KEY
-    hint = resolve_type_hints(model).get(attribute)
-    return _PrimaryKey(attribute, hint if isinstance(hint, type) else None)
+    hints = resolve_type_hints(model)
+    types = tuple(hints.get(name) for name in attributes)
+    return _PrimaryKey(attributes, tuple(t if isinstance(t, type) else None for t in types))
 
 
 class CachedRepository(
@@ -174,9 +179,11 @@ class CachedRepository(
     single ``<primary key> IN (...)`` query, so the wrapped repository should
     support :attr:`~loom.core.repository.abc.query.FilterOp.IN` on the primary
     key; a repository whose ``allowed_filter_fields`` excludes the primary key
-    is detected and served with per-id reads instead.  The key is read by the
-    attribute name the model declares (``id`` when there is no model or the
-    model declares no primary key).
+    is detected and served with per-id reads instead, and so is a model with a
+    composite primary key, which a filter on one field cannot match.  The key
+    is read by the attribute names the model declares (``id`` when there is no
+    model or the model declares no primary key); a composite key is the tuple
+    of its values in declaration order.
 
     Concurrent misses of the same key on the entity read and on a
     ``@cache_query`` read are coalesced inside the process: the first caller
@@ -699,12 +706,15 @@ class CachedRepository(
         return max(1, round(ttl + self._rng.uniform(-spread, spread)))
 
     def _extract_entity_id(self, item: Any) -> object | None:
-        """Read the primary key of *item* by the attribute the model declares.
+        """Read the primary key of *item* by the attributes the model declares.
 
-        The same attribute names the refill filter, which queries the missing
-        entities with ``FilterSpec(field=<primary key>, ...)``.
+        Returns the value of a single-column key and the tuple of every value
+        of a composite one, or ``None`` when a key value is missing.
         """
-        return getattr(item, self._primary_key.attribute, None)
+        values = tuple(getattr(item, name, None) for name in self._primary_key.attributes)
+        if None in values:
+            return None
+        return values if len(values) > 1 else values[0]
 
     async def _create_many(self, data: Sequence[msgspec.Struct]) -> tuple[OutputT, ...]:
         if not data:
@@ -842,11 +852,12 @@ class CachedRepository(
         """Return the primary key a ``scope="entity"`` read is keyed by, or raise.
 
         The key must be the first positional argument (a keyword does not
-        count) and must not be ``None``.  When the model's primary-key type
-        resolved to a plain class, the argument must be of that exact type:
-        a ``datetime`` for a ``date`` key or a ``bool`` for an ``int`` key
+        count) and must not be ``None``; a composite key must be a tuple of
+        one value per key attribute.  Where a key attribute's type resolved
+        to a plain class, its value must be of that exact type: a
+        ``datetime`` for a ``date`` key or a ``bool`` for an ``int`` key
         would render a tag no mutation event ever bumps, so both are
-        rejected even though ``isinstance`` would accept them.  A key
+        rejected even though ``isinstance`` would accept them.  An attribute
         declared ``int | None`` resolves no class and gets no type check.
         Only this entry point is guarded: ``get_by_id``, ``update`` and
         ``delete`` are typed ``IdT`` and stay unchecked.
@@ -859,11 +870,18 @@ class CachedRepository(
                 f"{method_name}: @cache_query(scope='entity') needs the primary key"
                 " as first positional argument"
             )
-        expected = self._primary_key.python_type
-        if expected is not None and type(args[0]) is not expected:
+        types = self._primary_key.python_types
+        composite = len(types) > 1
+        values = args[0] if composite and isinstance(args[0], tuple) else (args[0],)
+        if len(values) != len(types) or any(
+            expected is not None and type(value) is not expected
+            for value, expected in zip(values, types, strict=True)
+        ):
+            names = ", ".join("Any" if t is None else t.__name__ for t in types)
             raise TypeError(
                 f"{method_name}: @cache_query(scope='entity') received a"
-                f" {type(args[0]).__name__} as primary key, expected {expected.__name__}"
+                f" {type(args[0]).__name__} as primary key,"
+                f" expected {f'tuple[{names}]' if composite else names}"
             )
         return args[0]
 
@@ -930,10 +948,12 @@ class CachedRepository(
         A repository may restrict the filterable fields (``allowed_filter_fields``).
         When the primary-key attribute is not among them the batched refill would
         be rejected, so the wrapper degrades to per-id reads rather than failing
-        the page; the repository's declared policy is left untouched.
+        the page; the repository's declared policy is left untouched.  A
+        composite key is always read per id, since a filter names one field.
         """
+        attributes = self._primary_key.attributes
         allowed = getattr(self._repository, "allowed_filter_fields", None)
-        return not allowed or self._primary_key.attribute in allowed
+        return len(attributes) == 1 and (not allowed or attributes[0] in allowed)
 
     async def _fetch_missing_one_by_one(
         self,
@@ -966,7 +986,9 @@ class CachedRepository(
     def _id_in_query(self, ids: Sequence[IdT]) -> QuerySpec:
         return QuerySpec(
             filters=FilterGroup(
-                filters=(FilterSpec(field=self._primary_key.attribute, op=FilterOp.IN, value=ids),)
+                filters=(
+                    FilterSpec(field=self._primary_key.attributes[0], op=FilterOp.IN, value=ids),
+                )
             ),
             limit=len(ids),
         )
@@ -1029,16 +1051,21 @@ class CachedRepository(
         """Restore the ids of a cached index to the model's primary-key type.
 
         The index round-trips through msgpack, which renders a ``datetime``, a
-        ``date`` or a ``UUID`` as a string, while the repository binds the
-        declared type: SQLAlchemy returns no rows for a ``datetime`` column
-        filtered with strings.  Converting here keeps every later use of the id
-        — cache key, filter value, identity match — in the declared type.
+        ``date`` or a ``UUID`` as a string and a tuple as a list, while the
+        repository binds the declared type: SQLAlchemy returns no rows for a
+        ``datetime`` column filtered with strings, and the SQLAlchemy
+        repository takes a composite key only as a tuple.  Converting here
+        keeps every later use of the id — cache key, filter value, identity
+        match — in the declared type.
 
         Returns:
             The converted ids, or ``None`` when they do not fit the current
             primary-key type, which makes the index unusable.
         """
-        id_type = self._primary_key.python_type
+        types = self._primary_key.python_types
+        id_type: Any = types[0]
+        if len(types) > 1:
+            id_type = tuple.__class_getitem__(tuple(Any if t is None else t for t in types))
         if id_type is None:
             return cast(list[IdT], raw_ids)
         try:

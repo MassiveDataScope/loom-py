@@ -380,8 +380,10 @@
   tuple of every key value in declaration order (`repo.get_by_id((account_id,
   entry_id))`) and raise `ValueError` for anything else, a scalar included,
   instead of matching the first key column. A `Load` step and a cached
-  repository pass the id unchanged, so a scalar id raises there too. A cursor token
-  issued for such a model before this release is refused with
+  repository's `get_by_id`, `update` and `delete` pass the id unchanged, so a
+  scalar id raises there too; a cached `@cache_query(scope="entity")` read
+  takes the tuple as its first argument and raises `TypeError` for anything
+  else. A cursor token issued for such a model before this release is refused with
   `UnsupportedQuery`, `400 unsupported_query`; clients restart from the first
   page. `decode_cursor` takes `id_count`, the number of key columns, and
   `get_id_attributes` returns every key column name.
@@ -586,13 +588,19 @@
 ### core
 
 - **core:** cursor pagination and the by-id operations of the SQLAlchemy
-  repository use the full primary key of a model whose key is composite, as
-  every `RowScoped` model's is. They used only the first key column: a cursor
-  walk ordered and compared on it alone and stopped after the first page, and
-  `get_by_id`, `exists`, `update` and `delete` matched that column only. The
-  cursor now orders and compares on every key column after the sort keys and
-  carries every key value in the token; offset pages and `list_paginated`
-  order by every key column too. Tokens of single-column keys are unchanged.
+  repository use the full primary key of a model whose key is composite, such
+  as a `RowScoped` model keyed by its boundary column and its own id. They
+  used only the first key column: a cursor walk ordered and compared on it
+  alone and stopped after the first page, and `get_by_id`, `exists`, `update`
+  and `delete` matched that column only. The cursor now orders and compares on
+  every key column after the sort keys and carries every key value in the
+  token; offset pages and `list_paginated` order by every key column too.
+  Tokens of single-column keys are unchanged. A cached repository over such a
+  model keyed its entries by the first key column too, so a warm
+  `list_paginated` or first cursor page served the rows sharing a first key
+  value as copies of one of them, and reloading an evicted entry raised
+  `ValueError`; it now caches and reloads every row by its full key, one
+  `get_by_id` per missing row.
 
 - **core:** the RLS guard refuses, in the same statement, a drop outside the
   hatch that breaks its invariants. `DROP POLICY` or `DROP TRIGGER
