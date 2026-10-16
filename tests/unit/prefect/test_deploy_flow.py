@@ -216,6 +216,32 @@ def test_refuses_a_flow_built_from_a_yaml_declaration(
     from_source.assert_not_called()
 
 
+def test_reads_the_module_imported_through_a_symlinked_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    source = real_dir / "daily_orders.py"
+    source.write_text("raise RuntimeError('imported a second time')\n", encoding="utf-8")
+    linked_dir = tmp_path / "linked"
+    linked_dir.symlink_to(real_dir, target_is_directory=True)
+    flow = etl_flow(
+        name="daily-orders",
+        pipeline=_Pipeline,
+        params_type=_Params,
+        config_path=_config(tmp_path),
+        source_file=str(source),
+    )
+    module = ModuleType("linked_flows.daily_orders")
+    module.__file__ = str(linked_dir / "daily_orders.py")
+    module.daily_orders = flow  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    _, deploy = _stub_prefect(flow)
+
+    assert deploy_flow(flow, env="prod") == "deployment-id"
+    deploy.assert_called_once()
+
+
 def test_refuses_a_flow_whose_source_file_does_not_exist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

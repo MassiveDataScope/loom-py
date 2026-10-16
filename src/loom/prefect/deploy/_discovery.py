@@ -58,9 +58,10 @@ def discover_and_deploy_etls(
     Raises:
         ValueError: When both or neither of ``flows_package`` and ``config``
             are given, when ``flows_package`` is not a package, or when one of
-            its flows has no work pool for ``env`` or is not exposed under its
-            attribute name, as :func:`deploy_flow` checks; raised before any
-            deployment is registered.
+            its flows has no work pool for ``env``, has a source file that
+            cannot be imported or is not exposed under its attribute name, as
+            :func:`deploy_flow` checks; raised before any deployment is
+            registered.
         ConfigError: When a declaration in ``config`` is invalid or sets
             ``LOOM_ETL_CONFIG`` under ``job_variables.env``; raised before
             any deployment is registered.
@@ -143,17 +144,20 @@ def _check_exposed(meta: ETLFlowMeta) -> None:
     """Refuse a flow the worker cannot import from ``meta.source_file``."""
     attribute = flow_attribute_name(meta.name)
     module = _source_module(meta.source_file)
-    not_exposed = ValueError(
-        f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
-        f"{attribute!r}; the worker imports the flow from that attribute."
-    )
     try:
         exposed = getattr(module, attribute, None)
     except Exception as exc:
-        raise not_exposed from exc
+        raise _not_exposed(meta, attribute) from exc
     exposed_meta = getattr(exposed, LOOM_ETL_META_ATTR, None)
     if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
-        raise not_exposed
+        raise _not_exposed(meta, attribute)
+
+
+def _not_exposed(meta: ETLFlowMeta, attribute: str) -> ValueError:
+    return ValueError(
+        f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
+        f"{attribute!r}; the worker imports the flow from that attribute."
+    )
 
 
 def _source_module(source_file: str) -> ModuleType:
@@ -171,12 +175,15 @@ def _source_module(source_file: str) -> ModuleType:
 
 
 def _loaded_module_name(source_file: str) -> str | None:
-    """Return the ``sys.modules`` key of the module loaded from ``source_file``."""
+    """Return the ``sys.modules`` key of the module loaded from ``source_file``.
+
+    Paths are compared after resolving symlinks, so a module imported through
+    a symlinked directory matches the file it resolves to.
+    """
+    source = os.path.realpath(source_file)
     for name, module in list(sys.modules.items()):
         module_file = getattr(module, "__file__", None)
-        if module_file is not None and os.path.realpath(module_file) == os.path.realpath(
-            source_file
-        ):
+        if module_file is not None and os.path.realpath(module_file) == source:
             return name
     return None
 
