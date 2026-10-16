@@ -386,15 +386,29 @@
   execution after the upgrade.
 - **ai:** in `PolarsAgentRunner.map`, a field of a pydantic output whose type
   is another pydantic model is now a `Struct` column of that model's fields,
-  named by alias, as the docs already said, instead of a `String` holding its
-  JSON. A Delta table written before must change that column's type.
+  named by alias, instead of a `String` holding its JSON. A Delta table
+  written before must change that column's type.
 - **ai:** in `PolarsAgentRunner.map`, a `String` column holding a value's JSON
   now holds the JSON of a string too: `"5"` is written `"\"5\""` and `5` is
-  written `5`, where both were `5`.
+  written `5`, where both were `5`. This covers every field without a column
+  type of its own whose answer is a string, such as a union with `str`, a
+  `UUID`, a `time` or a `timedelta` (`"P1D"` is written `"\"P1D\""`). Rows
+  written before hold the raw string and rows written after hold its JSON
+  encoding. A cell alone does not always tell them apart (an old `5` may have
+  been the string `"5"`), but `agent_version` does: every agent's fingerprint
+  changes with this release, so the old rows carry the old version. For a
+  field whose answer is always a string (a `UUID`, a `time`, a `timedelta`),
+  rewrite each old cell as the JSON encoding of its text; for a union with
+  `str`, re-run the old rows.
 - **ai:** the `agent_cost_usd` column `PolarsAgentRunner.map` writes is
   `Decimal(38, 12)` instead of `Float64`, carrying `AgentUsage.cost` without a
-  float conversion. A Delta table written before must change that column's
-  type.
+  float conversion, rounded half to even to 12 decimal places. Writing into a
+  Delta table created before does not fail: an append, upsert or replace with
+  `SchemaMode.STRICT` or `EVOLVE` casts the column back to the table's
+  `Float64`. To keep the decimal, rewrite the table once with the column cast
+  to `pl.Decimal(38, 12)` and `schema=SchemaMode.OVERWRITE` (delta-rs
+  `schema_mode="overwrite"`); the costs already stored keep the precision of
+  the float they were written as.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with
@@ -567,9 +581,8 @@
   per row up front; the order of the output rows is unchanged.
 - **ai:** `PolarsAgentRunner.validate` reports an output with a field no
   column can hold (a union of two models, for instance) as
-  `OUTPUT_MISMATCH` instead of raising its `TypeError`, checks the output
-  before building the engine provider and builds it only when a budget is
-  declared.
+  `OUTPUT_MISMATCH` instead of raising its `TypeError`, and checks the output
+  columns before asking whether the model is priced.
 - **ai:** an agent output type that contains itself, directly
   (`children: list[Node]`) or through another type, no longer makes
   `PolarsAgentRunner.validate` and `map` fail with `RecursionError`: the
