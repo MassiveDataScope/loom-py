@@ -15,6 +15,8 @@ from loom.etl.maintenance._ops import CompactSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance.backends._delta_rs import DeltaRsMaintainer
 from loom.etl.storage._locator import TableLocation
 
+_RETENTION_HOURS = 168
+
 
 @pytest.fixture
 def delta_table_uri(tmp_path: object) -> str:
@@ -30,6 +32,14 @@ def delta_location(delta_table_uri: str) -> TableLocation:
     return TableLocation(uri=delta_table_uri)
 
 
+def _orphan_older_than_retention(table_uri: str) -> Path:
+    orphan = Path(table_uri) / "part-00000-orphan-from-aborted-write.parquet"
+    pl.DataFrame({"id": [99]}).write_parquet(orphan)
+    aged = time.time() - (_RETENTION_HOURS + 24) * 3600
+    os.utime(orphan, (aged, aged))
+    return orphan
+
+
 class TestDeltaRsMaintainerVacuum:
     def test_vacuum_dry_run_returns_file_list(
         self, delta_table_uri: str, delta_location: TableLocation
@@ -42,26 +52,12 @@ class TestDeltaRsMaintainerVacuum:
     def test_vacuum_dry_run_true_does_not_delete(
         self, delta_table_uri: str, delta_location: TableLocation
     ) -> None:
-        import os
-
         maintainer = DeltaRsMaintainer()
         spec = VacuumSpec(dry_run=True)
         before = set(os.listdir(delta_table_uri))
         maintainer.vacuum(delta_table_uri, spec, delta_location)
         after = set(os.listdir(delta_table_uri))
         assert before == after
-
-
-_RETENTION_HOURS = 168
-
-
-def _orphan_older_than_retention(table_uri: str) -> Path:
-    """Drop a Parquet file the Delta log never referenced, aged past the retention."""
-    orphan = Path(table_uri) / "part-00000-orphan-from-aborted-write.parquet"
-    pl.DataFrame({"id": [99]}).write_parquet(orphan)
-    aged = time.time() - (_RETENTION_HOURS + 24) * 3600
-    os.utime(orphan, (aged, aged))
-    return orphan
 
 
 class TestDeltaRsMaintainerVacuumOrphans:

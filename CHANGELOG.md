@@ -246,15 +246,11 @@
 
 ### etl
 
-- **etl:** `vacuum(full=True)` deletes the files the Delta log does not
-  reference. The default vacuum deletes only the files the log records as
-  removed, so the output of an aborted write, or a file whose remove entry the
-  log dropped after `delta.logRetentionDuration`, stayed in storage for good.
-  `VacuumSpec.full`, `MaintainTable.vacuum(..., full=)`,
-  `MaintainSchema.vacuum(..., full=)` and `maintenance.vacuum.full`
-  (`MaintenanceVacuumConfig.full`) pass it to `DeltaTable.vacuum(full=...)`;
-  it applies the same retention and `dry_run`, and lists the whole table
-  directory on each run. It defaults to `False`, the previous behaviour.
+- **etl:** `vacuum(full=True)` (`MaintainTable`, `MaintainSchema`,
+  `maintenance.vacuum.full`) also deletes files the Delta log does not
+  reference, such as the output of an aborted write, older than the retention
+  and honouring `dry_run`. It lists the whole table directory on each run.
+  Defaults to `False`.
 - **etl:** a step may receive values from the runner's config without reading
   the environment or taking them as params. `FromConfig("respondio.api_token")`
   (a `str`) or `FromConfig("respondio", RespondioSettings)` (a type
@@ -496,9 +492,7 @@
   `CommitProperties` as `append`, `replace`, `replace_partitions` and
   `replace_where`. delta-rs MERGE takes no target file size: its files follow
   the table property `delta.targetFileSize`, not the route's
-  `target_file_size`. Tables already written by a MERGE keep their files until
-  they are rewritten (a later MERGE that touches them, or a compaction that
-  picks them up).
+  `target_file_size`. Existing files keep their old settings until rewritten.
 - **etl:** historify collapses lazy runs without a `PerformanceWarning`.
 - **etl:** `IntoHistory(..., mode="snapshot")` no longer reopens a row on
   every run when a tracked column is null. Classification joined existing

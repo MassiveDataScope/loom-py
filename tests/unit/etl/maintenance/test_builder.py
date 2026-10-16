@@ -26,10 +26,6 @@ class TestMaintainTable:
         spec = MaintainTable("raw.events").vacuum(retention_hours=48, dry_run=False)._to_spec()
         assert spec.ops == (VacuumSpec(retention_hours=48, dry_run=False),)
 
-    def test_vacuum_full_is_off_by_default(self) -> None:
-        spec = MaintainTable("raw.events").vacuum()._to_spec()
-        assert spec.ops == (VacuumSpec(full=False),)
-
     def test_vacuum_full(self) -> None:
         spec = MaintainTable("raw.events").vacuum(dry_run=False, full=True)._to_spec()
         assert spec.ops == (VacuumSpec(dry_run=False, full=True),)

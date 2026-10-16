@@ -31,11 +31,8 @@ class VacuumSpec:
             property (default 168 hours / 7 days).
         dry_run: When ``True`` (the default), lists eligible files without
             deleting them.  Set ``dry_run=False`` explicitly in production.
-        full: When ``True``, also deletes files under the table directory
-            that the Delta log does not reference (aborted writes, files whose
-            remove entries the log no longer holds), provided they are older
-            than the retention.  It lists the whole table directory, which
-            costs one storage listing per run.  ``False`` (the default)
+        full: When ``True``, also deletes files the Delta log does not
+            reference, older than the retention.  ``False`` (the default)
             deletes only the files the log records as removed.
     """
 
