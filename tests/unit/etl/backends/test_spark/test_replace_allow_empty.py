@@ -13,7 +13,6 @@ from pyspark.sql.types import BooleanType
 
 from loom.etl import EmptyReplaceError, IntoTable
 from loom.etl.backends.spark import SparkTargetWriter
-from loom.etl.backends.spark import _writer as spark_writer_module
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.storage._config import MissingTablePolicy
@@ -248,14 +247,18 @@ def test_the_checked_rows_are_released_after_creating_a_missing_table(
 _RELEASE_FAILED = "release failed"
 
 
-@pytest.fixture
-def failing_release(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make freeing the pinned blocks raise, as a lost Spark context would."""
+class _Unreleasable:
+    """A pinned frame whose blocks cannot be freed, as with a lost Spark context."""
 
-    def fail(frame: DataFrame) -> None:
+    def unpersist(self) -> None:
         raise RuntimeError(_RELEASE_FAILED)
 
-    monkeypatch.setattr(spark_writer_module, "_free_pinned_blocks", fail)
+
+@pytest.fixture
+def failing_release(spark_writer: SparkTargetWriter, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make freeing the pinned blocks raise inside ``_release_pinned``."""
+    release = spark_writer._release_pinned
+    monkeypatch.setattr(spark_writer, "_release_pinned", lambda frame: release(_Unreleasable()))
 
 
 def _release_warned(caplog: pytest.LogCaptureFixture) -> bool:
@@ -334,7 +337,7 @@ def test_a_failed_release_does_not_hide_a_failed_row_check(
     def fail(frame: DataFrame) -> bool:
         raise ValueError("row check failed")
 
-    monkeypatch.setattr(spark_writer_module, "_has_no_rows", fail)
+    monkeypatch.setattr(DataFrame, "isEmpty", fail)
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
 
     with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="row check failed"):
