@@ -520,8 +520,11 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         return None
 
     @abstractmethod
-    def _is_empty(self, frame: WriteFrameT) -> bool:
-        """Whether the materialised *frame* has no rows.
+    def _pin_rows(self, frame: WriteFrameT) -> tuple[WriteFrameT, bool]:
+        """Return *frame* computed once, and whether it has no rows.
+
+        The write uses the returned frame, so it writes the rows that were
+        counted.
 
         Raises:
             ValueError: When the backend cannot count the rows of *frame*
@@ -538,6 +541,9 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
     ) -> WriteFrameT:
         """Materialise *frame*, warning when the write carries no rows.
 
+        When *allow_empty* is ``False`` the returned frame is the one whose
+        rows were counted.
+
         Raises:
             EmptyReplaceError: When *allow_empty* is ``False`` and the
                 materialised frame has no rows.
@@ -545,12 +551,14 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 cannot count the rows of the materialised frame.
         """
         materialized = self._materialize_for_write(frame, streaming)
-        if not allow_empty:
-            if self._is_empty(materialized):
-                raise EmptyReplaceError(target.logical_ref.ref)
-        elif self._row_count_if_cheap(materialized) == 0:
-            _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
-        return materialized
+        if allow_empty:
+            if self._row_count_if_cheap(materialized) == 0:
+                _log.warning("write_produced_no_rows", target=target.logical_ref.ref)
+            return materialized
+        pinned, empty = self._pin_rows(materialized)
+        if empty:
+            raise EmptyReplaceError(target.logical_ref.ref)
+        return pinned
 
     @abstractmethod
     def _materialize_for_write(self, frame: InputFrameT, streaming: bool) -> WriteFrameT:

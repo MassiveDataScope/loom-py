@@ -317,14 +317,16 @@ when the frame has no rows, before it creates or writes anything, and the
 step fails with the table as it was. Only `replace()` takes the option; any
 other write mode refuses it with a `TypeError` when the step is declared.
 
-The check reads the frame the write already has to produce. On Polars the
-lazy frame is collected once, as for any replace, and the check is the row
-count of that result: no second collect. On Spark it is `DataFrame.isEmpty()`,
-one job that stops at the first row; the write then computes the frame again,
-so an expensive upstream plan is evaluated partly twice. When that plan is
-costly, return `frame.cache()` (or `persist()`) from the step so the check and
-the write share one computation. The option does not apply to a streaming
-Spark DataFrame, on which `isEmpty()` is not available.
+The check and the write use the same rows. On Polars the lazy frame is
+collected once, as for any replace, and the check is the row count of that
+result: no second collect. On Spark the writer computes the frame once with
+`DataFrame.localCheckpoint(eager=True)`, which keeps its rows on the
+executors, checks that result with `isEmpty()` and writes it, so a source that
+changes between the check and the write cannot empty the table. Those rows
+live in the executors' block storage (memory, spilling to local disk), not in
+reliable storage: an executor lost before the write ends fails the write
+instead of recomputing the frame. The option does not apply to a streaming
+Spark DataFrame, whose rows cannot be counted before the write.
 
 On Polars, a frame with a `Null`-typed column fails with `SchemaError` before
 the empty check, because that column type is a defect of the step that breaks

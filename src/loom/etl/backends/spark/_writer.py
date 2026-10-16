@@ -143,8 +143,12 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         _ = streaming
         return frame
 
-    def _is_empty(self, frame: DataFrame) -> bool:
-        """Whether *frame* has no rows; runs one Spark job that stops at the first row.
+    def _pin_rows(self, frame: DataFrame) -> tuple[DataFrame, bool]:
+        """Return *frame* local-checkpointed, and whether it has no rows.
+
+        ``localCheckpoint(eager=True)`` computes *frame* once and keeps its
+        rows on the executors; the check and the write both read those rows,
+        so the write cannot compute a different result than the one counted.
 
         Raises:
             ValueError: When *frame* is a streaming DataFrame, whose rows
@@ -156,7 +160,8 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
                 "but the frame to write is a streaming DataFrame. Read the source as a "
                 "batch DataFrame or declare replace() without allow_empty=False."
             )
-        return bool(frame.isEmpty())
+        pinned = frame.localCheckpoint(eager=True)
+        return pinned, bool(pinned.isEmpty())
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""

@@ -9,8 +9,10 @@ from __future__ import annotations
 class EmptyReplaceError(ValueError):
     """Raised when a ``replace(allow_empty=False)`` target receives no rows.
 
-    The table is left as it was: the check runs after the frame is
-    materialised and before anything is written or created.
+    The table is left as it was: the check runs before anything is written
+    or created, on the rows the write would use. The Polars backend counts
+    the collected frame; the Spark backend computes the frame once with
+    ``localCheckpoint`` and both counts and writes that result.
 
     Args:
         table_ref: Logical reference of the target table.

@@ -7,11 +7,15 @@ from pathlib import Path
 
 import pytest
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import BooleanType
 
 from loom.etl import EmptyReplaceError, IntoTable
 from loom.etl.backends.spark import SparkTargetWriter
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.declarative.target import SchemaMode
 from loom.etl.storage._config import MissingTablePolicy
+from loom.etl.storage.routing import ResolvedTarget
 
 from .conftest import spark_table_path
 
@@ -47,6 +51,38 @@ def test_rows_replace_the_table_as_usual(
     spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
 
     spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert _rows(spark, path) == [(3, "c")]
+
+
+def _rows_while(spark: SparkSession, flag: Path) -> DataFrame:
+    """A frame holding ``(3, "c")`` when computed while *flag* exists, and no row after."""
+    flag_exists = F.udf(flag.exists, BooleanType()).asNondeterministic()
+    return spark.createDataFrame([(3, "c")], _SCHEMA).where(flag_exists())
+
+
+def test_the_write_uses_the_rows_the_check_counted(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    flag = tmp_path / "source-has-rows"
+    flag.touch()
+    replace = spark_writer._replace
+
+    def empty_the_source_then_replace(
+        frame: DataFrame, target: ResolvedTarget, *, schema_mode: SchemaMode
+    ) -> None:
+        flag.unlink()
+        replace(frame, target, schema_mode=schema_mode)
+
+    monkeypatch.setattr(spark_writer, "_replace", empty_the_source_then_replace)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    spark_writer.write(_rows_while(spark, flag), spec, None)
 
     assert _rows(spark, path) == [(3, "c")]
 
