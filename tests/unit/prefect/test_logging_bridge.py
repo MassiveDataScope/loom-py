@@ -111,27 +111,27 @@ def test_install_log_bridge_is_idempotent() -> None:
     assert not any(isinstance(h, PrefectLogBridgeHandler) for h in logging.getLogger().handlers)
 
 
-def test_a_step_in_a_worker_thread_carries_the_installed_flow_run() -> None:
-    from concurrent.futures import ThreadPoolExecutor
+def test_a_parallel_step_carries_the_flow_run_of_its_flow_body() -> None:
+    from loom.etl.executor._dispatcher import ThreadDispatcher
 
+    handler = PrefectLogBridgeHandler()
     flow_id = uuid.uuid4()
     task_id = uuid.uuid4()
-    install_log_bridge(flow_id)
+    payloads: list[dict[str, object] | None] = []
+
+    def step() -> None:
+        # A step of a parallel group runs in a pool thread.
+        with bind_task_run(task_id):
+            payloads.append(handler._record_to_payload(_make_record("parallel step log")))
+
+    token = _current_flow_run_id.set(flow_id)
     try:
-        (handler,) = [
-            h for h in logging.getLogger().handlers if isinstance(h, PrefectLogBridgeHandler)
-        ]
-
-        def step() -> dict[str, object] | None:
-            # A parallel step: a pool thread, which does not inherit the flow body's context.
-            with bind_task_run(task_id):
-                return handler._record_to_payload(_make_record("parallel step log"))
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            payload = pool.submit(step).result()
+        ThreadDispatcher().run_all([step])
     finally:
-        uninstall_log_bridge()
+        _current_flow_run_id.reset(token)
+        handler.close()
 
+    (payload,) = payloads
     assert payload is not None
     assert payload["task_run_id"] == task_id
     assert payload["flow_run_id"] == flow_id

@@ -18,6 +18,7 @@ Swap implementations to move from local threads to distributed workers::
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol, runtime_checkable
@@ -82,7 +83,8 @@ class ThreadDispatcher:
             return
         workers = self._max_workers or len(tasks)
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(task) for task in tasks]
+            # Each task runs in a copy of the caller's context, as asyncio.to_thread does.
+            futures = [pool.submit(contextvars.copy_context().run, task) for task in tasks]
             first_exc: Exception | None = None
             for future in futures:
                 try:
