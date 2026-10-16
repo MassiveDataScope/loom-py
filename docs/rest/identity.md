@@ -36,6 +36,17 @@ Two accessors fail closed instead of returning `None`:
 The distinction is deliberate: a 401 tells the caller that credentials would help, a
 403 tells them they would not.
 
+A refusal that knows its cause can say it. `Forbidden(message, reason=..., missing=...)`
+answers the same 403 with two more keys, each only when given:
+
+```json
+{"detail": {"code": "forbidden", "message": "Granting this needs a recent MFA sign-in",
+            "reason": "mfa_required", "missing": ["grants.manage"], "trace_id": "abc-123"}}
+```
+
+Both keys are public. Leave them out where the response must not become an oracle for
+the policy, as role-guarded routes do.
+
 ```{warning}
 `repr(identity)` prints attribute **names** but never their values — they are personal
 data and must not reach a log through a stray f-string.

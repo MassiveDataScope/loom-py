@@ -97,10 +97,37 @@ class Forbidden(DomainError):
 
     Args:
         message: Description of the access restriction.
+        reason: Optional machine-readable cause a client can act on, such as
+            ``"mfa_required"``. ``None`` when the refusal has no specific cause.
+        missing: The permissions the caller lacks, in the order given; empty when
+            the authorizer does not tell them.
+
+    Both are keyword-only and public: the REST adapter puts them in the 403 body.
+    Never put token claims, tenant data or anything the caller may not learn in them;
+    leave them out where the refusal must not become an oracle for the policy.
+
+    Raises:
+        ValueError: If ``reason`` is empty, ``missing`` is a single string, or an item
+            of ``missing`` is not a non-empty string.
     """
 
-    def __init__(self, message: str = "Forbidden") -> None:
+    def __init__(
+        self,
+        message: str = "Forbidden",
+        *,
+        reason: str | None = None,
+        missing: Sequence[str] = (),
+    ) -> None:
+        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
+            raise ValueError("Forbidden.reason must be a non-empty string or None")
+        if isinstance(missing, (str, bytes)):
+            raise ValueError("Forbidden.missing takes a sequence of permissions, not one string")
+        permissions = tuple(missing)
+        if any(not isinstance(item, str) or not item.strip() for item in permissions):
+            raise ValueError("Forbidden.missing items must be non-empty strings")
         super().__init__(message, code=ErrorCode.FORBIDDEN)
+        self.reason = reason
+        self.missing: tuple[str, ...] = permissions
 
 
 class Conflict(DomainError):

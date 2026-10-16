@@ -112,6 +112,48 @@ class TestForbidden:
     def test_custom_message(self) -> None:
         assert Forbidden("You cannot update other users").message == "You cannot update other users"
 
+    def test_no_reason_and_nothing_missing_by_default(self) -> None:
+        error = Forbidden()
+        assert (error.reason, error.missing) == (None, ())
+
+    def test_a_reason_and_the_missing_permissions_travel_with_the_refusal(self) -> None:
+        error = Forbidden(
+            "Granting this needs a recent MFA sign-in",
+            reason="mfa_required",
+            missing=["grants.manage", "users.manage"],
+        )
+        assert error.reason == "mfa_required"
+        assert error.missing == ("grants.manage", "users.manage")
+        assert error.code == ErrorCode.FORBIDDEN
+
+    def test_missing_given_as_an_iterator_is_kept(self) -> None:
+        assert Forbidden("no", missing=iter(["grants.manage"])).missing == ("grants.manage",)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"reason": ""},
+            {"reason": "  "},
+            {"reason": 5},
+            {"missing": "grants.manage"},
+            {"missing": b"ab"},
+            {"missing": ["ok", ""]},
+            {"missing": [1]},
+        ],
+        ids=[
+            "empty-reason",
+            "blank-reason",
+            "reason-not-a-string",
+            "string-as-missing",
+            "bytes-as-missing",
+            "empty-permission",
+            "not-a-string",
+        ],
+    )
+    def test_a_malformed_reason_or_missing_is_refused(self, kwargs: dict[str, object]) -> None:
+        with pytest.raises(ValueError):
+            Forbidden("no", **kwargs)  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # SystemError — must NOT be catchable as DomainError

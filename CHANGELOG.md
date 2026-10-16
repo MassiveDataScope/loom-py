@@ -179,6 +179,13 @@
 
 ### rest
 
+- **rest:** a `403` can say why and what is missing. `Forbidden` takes two
+  optional keyword arguments, `reason` (a machine-readable cause such as
+  `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a
+  tuple); `HttpErrorMapper` adds `reason` and `missing` to the body only when the
+  refusal carries them, so existing 403 bodies do not change. Both are public:
+  never put token claims or tenant data in them. An empty `reason`, a single
+  string as `missing` or an empty permission raise `ValueError`.
 - **rest:** a single `RuleViolation(field, message)` now answers its `field`.
   `HttpErrorMapper` dropped it, so two `rule_violation` 422s could only be
   told apart by their message text. The body adds `field` (`ErrorField.FIELD`,
