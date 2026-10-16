@@ -395,6 +395,14 @@
   another owner's row and a one-to-many relation grouped children by that
   column; load them by hand until they are matched by the full key.
 
+- **core:** the `RepositoryMongo`, `RepositoryDynamoDB` and
+  `loom.testing.InMemoryRepository` constructors raise `ConfigError` for a
+  model with a composite primary key, naming the model and its key. Each
+  keys an item by one field (Mongo's `_id` and the DynamoDB partition key by
+  the first key column, the in-memory store by its `id_field`), so a second
+  row sharing that field's value raised `Conflict` on Mongo and DynamoDB and
+  replaced the first row in memory.
+
 - **core:** the miss path of a cached `@cache_query`/`@cache_call` read,
   `McpHandle.call` and `CacheGateway.get_value`/`multi_get_values` now raise
   `BoundaryValidationError` — a `ValueError` — on a stale or malformed cached
@@ -608,6 +616,12 @@
   `list_paginated` or first cursor page served the rows sharing a first key
   value as copies of one of them; it now caches and reloads every row by its
   full key, one `get_by_id` per missing row.
+
+- **core:** a `MANY_TO_MANY` relation joins the target table on the column
+  the secondary table's foreign key references. It joined on the target
+  model's first key column, so a target with a composite key, or whose link
+  references a unique non-key column, loaded the rows whose first key column
+  held the linked value instead of the linked rows.
 
 - **core:** the RLS guard refuses, in the same statement, a drop outside the
   hatch that breaks its invariants. `DROP POLICY` or `DROP TRIGGER
