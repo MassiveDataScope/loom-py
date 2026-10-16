@@ -379,6 +379,11 @@ target = IntoTable("staging.orders").replace_where(
 )
 ```
 
+An empty frame deletes the rows matching the predicate and writes none, on
+Polars and on Spark: a run whose source comes back empty for the window
+removes that window from the table. `allow_empty=False` is a `replace()`
+option only; `replace_where` takes no such guard.
+
 ### upsert
 
 MERGE on key columns. Inserts new rows and updates existing ones.

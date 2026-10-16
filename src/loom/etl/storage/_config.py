@@ -307,9 +307,11 @@ class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True):
             (default 168 h / 7 days).
         dry_run: When ``True`` (default), lists files without deleting.
             Set ``dry_run=False`` explicitly for production runs.
-        full: When ``True``, also deletes files the Delta log does not
-            reference, older than the retention.  ``False`` (default) deletes
-            only the files the log records as removed.
+        full: When ``True``, also deletes every file under the table
+            directory that the Delta log does not reference and that is
+            older than the retention, whoever wrote it; only names starting
+            with an underscore are kept.  ``False`` (default) deletes only
+            the files the log records as removed.
     """
 
     retention_hours: int | None = None

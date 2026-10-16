@@ -499,6 +499,19 @@ def test_writer_replace_where_overwrites_matching_rows(tmp_path: Path) -> None:
     assert result.filter(pl.col("year") == 2023)["v"].to_list() == [10]
 
 
+def test_writer_replace_where_with_an_empty_frame_deletes_the_matching_rows(
+    tmp_path: Path,
+) -> None:
+    _seed(tmp_path, "staging.yearly", pl.DataFrame({"year": [2023, 2024], "v": [10, 20]}))
+    writer = PolarsTargetWriter(tmp_path)
+    empty = pl.DataFrame(schema={"year": pl.Int64, "v": pl.Int64})
+    spec = IntoTable("staging.yearly").replace_where(col("year") == p.run_date.year)._to_spec()
+
+    writer.write(empty.lazy(), spec, _DateParams(run_date=date(2024, 1, 1)))
+
+    assert _read_table(tmp_path, "staging.yearly").rows() == [(2023, 10)]
+
+
 def test_writer_replace_where_creates_the_table_when_it_is_absent(tmp_path: Path) -> None:
     writer = PolarsTargetWriter(tmp_path)
     new_data = pl.DataFrame({"year": [2024], "v": [99]})

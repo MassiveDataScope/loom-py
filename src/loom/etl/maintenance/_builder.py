@@ -83,8 +83,10 @@ class MaintainTable:
                 (default 168 h / 7 days).
             dry_run: When ``True`` (default), lists files without deleting.
                 Set ``dry_run=False`` explicitly for production runs.
-            full: When ``True``, also deletes files the Delta log does not
-                reference.  See :class:`~loom.etl.maintenance.VacuumSpec`.
+            full: When ``True``, also deletes every file under the table
+                directory that the Delta log does not reference and that is
+                older than the retention, whoever wrote it.  See
+                :class:`~loom.etl.maintenance.VacuumSpec`.
         """
         self._ops.append(VacuumSpec(retention_hours=retention_hours, dry_run=dry_run, full=full))
         return self

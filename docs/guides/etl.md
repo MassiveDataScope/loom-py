@@ -488,6 +488,14 @@ older than the retention. `vacuum(full=True)` also deletes the files under the
 table directory that the log does not reference at all, such as the output of
 an aborted write or files whose remove entries the log no longer holds after
 `delta.logRetentionDuration`; it lists the whole table directory on each run.
+
+```{warning}
+`vacuum(full=True)` deletes every file under the table directory that the
+Delta log does not reference and that is older than the retention, whoever
+wrote it: data another tool or table keeps under that directory is deleted
+too. Only names starting with an underscore are kept. Keep nothing but the
+table's own files under a table directory you vacuum with `full=True`.
+```
 The config-driven block takes the same flag as `maintenance.vacuum.full`:
 
 ```yaml
