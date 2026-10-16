@@ -120,11 +120,10 @@ class PrefectLogBridgeHandler(logging.Handler):
             "level": record.levelno,
             "message": record.getMessage(),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC),
+            "flow_run_id": flow_run_id,
         }
         if task_run_id is not None:
             payload["task_run_id"] = task_run_id
-        else:
-            payload["flow_run_id"] = flow_run_id
         return payload
 
     def _drain_loop(self) -> None:
