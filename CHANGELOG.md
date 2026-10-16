@@ -388,6 +388,13 @@
   page. `decode_cursor` takes `id_count`, the number of key columns, and
   `get_id_attributes` returns every key column name.
 
+- **core:** `compile_all` raises `ValueError` for a model with a composite
+  primary key that declares a relation or a projection whose loader runs
+  `load_many`, naming the model, its key and those fields. The backend loads
+  them by the first key column only, so a many-to-one relation attached
+  another owner's row and a one-to-many relation grouped children by that
+  column; load them by hand until they are matched by the full key.
+
 - **core:** the miss path of a cached `@cache_query`/`@cache_call` read,
   `McpHandle.call` and `CacheGateway.get_value`/`multi_get_values` now raise
   `BoundaryValidationError` — a `ValueError` — on a stale or malformed cached
@@ -591,16 +598,16 @@
   repository use the full primary key of a model whose key is composite, such
   as a `RowScoped` model keyed by its boundary column and its own id. They
   used only the first key column: a cursor walk ordered and compared on it
-  alone and stopped after the first page, and `get_by_id`, `exists`, `update`
-  and `delete` matched that column only. The cursor now orders and compares on
+  alone and skipped the rows sharing that column's value with the last row of
+  each page, and `get_by_id`, `exists`, `update` and `delete` matched that
+  column only. The cursor now orders and compares on
   every key column after the sort keys and carries every key value in the
   token; offset pages and `list_paginated` order by every key column too.
   Tokens of single-column keys are unchanged. A cached repository over such a
   model keyed its entries by the first key column too, so a warm
   `list_paginated` or first cursor page served the rows sharing a first key
-  value as copies of one of them, and reloading an evicted entry raised
-  `ValueError`; it now caches and reloads every row by its full key, one
-  `get_by_id` per missing row.
+  value as copies of one of them; it now caches and reloads every row by its
+  full key, one `get_by_id` per missing row.
 
 - **core:** the RLS guard refuses, in the same statement, a drop outside the
   hatch that breaks its invariants. `DROP POLICY` or `DROP TRIGGER
