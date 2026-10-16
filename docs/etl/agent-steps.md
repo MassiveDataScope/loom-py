@@ -153,7 +153,7 @@ One row per input row, in the input order, failures included:
 | `agent_status` | `ok` or `error` |
 | `agent_error` | null, a run error code (`PROVIDER_UNAVAILABLE`, `OUTPUT_SCHEMA_VIOLATION`, ...), `BUDGET_EXHAUSTED`, `PROMPT_MISSING`, `OUTPUT_UNREPRESENTABLE` or `UNEXPECTED_ERROR` |
 | `agent_input_tokens`, `agent_output_tokens`, `agent_cache_read_tokens`, `agent_cache_write_tokens` | what the run consumed, `0` when nothing was sent |
-| `agent_cost_usd` | what the run cost in USD, as `Decimal(38, 12)` rounded to 12 decimal places, null when it could not be priced |
+| `agent_cost_usd` | what the run cost in USD, as `Decimal(38, 12)` rounded half to even to 12 decimal places, null when it could not be priced |
 
 `prompt` is a Polars expression or a column name; a null prompt is not sent.
 A key named like a column `map` writes is refused with a `ValueError` before

@@ -208,3 +208,25 @@ def test_the_cost_is_written_without_rounding_through_a_float() -> None:
     frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
 
     assert frame["agent_cost_usd"][0] == cost
+
+
+@pytest.mark.parametrize(
+    ("cost", "written"),
+    [
+        (Decimal("0.0000000000001234"), Decimal("0")),
+        (Decimal("0.0000000000009"), Decimal("0.000000000001")),
+        (Decimal("0.0000000000015"), Decimal("0.000000000002")),
+        (Decimal("0.0000000000025"), Decimal("0.000000000002")),
+        (Decimal("1.2345678901234567"), Decimal("1.234567890123")),
+    ],
+    ids=["below scale", "rounds up", "half to even up", "half to even down", "past scale"],
+)
+def test_a_cost_past_twelve_decimal_places_is_rounded_half_to_even(
+    cost: Decimal, written: Decimal
+) -> None:
+    usage = AgentUsage(input_tokens=1, output_tokens=1, requests=1, duration_ms=1, cost=cost)
+
+    frame = _frame(RowOutcome(output=msgspec.to_builtins(_ANSWER), error=None, usage=usage))
+
+    assert frame["agent_status"][0] == "ok"
+    assert frame["agent_cost_usd"][0] == written
