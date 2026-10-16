@@ -898,8 +898,10 @@ def _refuse_composite_key_loads(struct_cls: type, plans: dict[str, CoreProfilePl
     wrong owner.
     """
     key = get_id_attributes(struct_cls)
+    if len(key) == 1:
+        return
     loads = _fields_loaded_by_key(plans)
-    if len(key) > 1 and loads:
+    if loads:
         raise ValueError(
             f"{struct_cls.__name__} has the composite primary key ({', '.join(key)}); the "
             f"backend loads {', '.join(loads)} by its first key column only, so drop "
