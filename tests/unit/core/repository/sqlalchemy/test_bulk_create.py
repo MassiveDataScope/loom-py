@@ -45,8 +45,8 @@ class _CreateItem(Command, frozen=True):
 
 
 @pytest.fixture
-async def session_manager(sqlite_session_manager: SessionManagerFactory) -> SessionManager:
-    return await sqlite_session_manager(_Item)
+async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionManager:
+    return await sqlite_manager_for(_Item)
 
 
 @pytest.fixture

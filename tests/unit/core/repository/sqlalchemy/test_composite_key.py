@@ -53,8 +53,8 @@ _SEED = [(7, 1, 2), (7, 2, 1), (7, 3, 2), (7, 4, 1), (7, 5, 2), (8, 1, 1), (8, 2
 
 
 @pytest.fixture
-async def session_manager(sqlite_session_manager: SessionManagerFactory) -> SessionManager:
-    return await sqlite_session_manager(_Entry)
+async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionManager:
+    return await sqlite_manager_for(_Entry)
 
 
 @pytest.fixture
