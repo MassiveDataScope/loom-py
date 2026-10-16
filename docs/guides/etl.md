@@ -285,6 +285,10 @@ target = IntoTable("events.orders").upsert(
 `partition_cols` is optional but strongly recommended — without it every MERGE
 forces a full table scan.
 
+On the Polars backend MERGE writes with the route's `writer` and `commit`
+settings. delta-rs MERGE takes no target file size: rewritten files follow
+`delta.targetFileSize`, not the route's `target_file_size`.
+
 ### update
 
 Matched-only MERGE. Rows whose keys match are updated; source rows without a
@@ -478,6 +482,25 @@ class NightlyMaintenance(MaintenanceStep[None]):
 report = MaintenanceRunner.from_config(config).run(NightlyMaintenance)
 report.raise_if_errors()
 ```
+
+`vacuum()` deletes, by default, the files the Delta log records as removed and
+older than the retention. `vacuum(full=True)` also deletes the files under the
+table directory that the log does not reference at all, such as the output of
+an aborted write or files whose remove entries the log no longer holds after
+`delta.logRetentionDuration`; it lists the whole table directory on each run.
+The config-driven block takes the same flag as `maintenance.vacuum.full`:
+
+```yaml
+maintenance:
+  schemas: [raw]
+  vacuum:
+    retention_hours: 168
+    dry_run: false
+    full: true
+```
+
+Run it once with `dry_run: true` first: the result lists the files a full
+vacuum would delete.
 
 ### Custom operations
 

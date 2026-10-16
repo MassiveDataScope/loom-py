@@ -26,6 +26,10 @@ class TestMaintainTable:
         spec = MaintainTable("raw.events").vacuum(retention_hours=48, dry_run=False)._to_spec()
         assert spec.ops == (VacuumSpec(retention_hours=48, dry_run=False),)
 
+    def test_vacuum_full(self) -> None:
+        spec = MaintainTable("raw.events").vacuum(dry_run=False, full=True)._to_spec()
+        assert spec.ops == (VacuumSpec(dry_run=False, full=True),)
+
     def test_compact_default(self) -> None:
         spec = MaintainTable("raw.events").compact()._to_spec()
         assert spec.ops == (CompactSpec(target_size=None),)
@@ -117,6 +121,14 @@ class TestMaintainSchema:
             VacuumSpec(retention_hours=72, dry_run=False),
             CompactSpec(),
         )
+
+    def test_expand_propagates_full_vacuum(self) -> None:
+        config = StorageConfig(
+            defaults=StorageDefaults(table_path=TablePathConfig(uri="/lake/")),
+            tables=(TableRoute(name="raw.events", path=TablePathConfig(uri="/lake/raw/events")),),
+        )
+        specs = MaintainSchema("raw").vacuum(dry_run=False, full=True)._expand(config)
+        assert specs[0].ops == (VacuumSpec(dry_run=False, full=True),)
 
     def test_compact_and_z_order_mutually_exclusive(self) -> None:
         config = StorageConfig(

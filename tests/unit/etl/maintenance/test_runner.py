@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import msgspec
 import pytest
 
 from loom.etl.maintenance._builder import MaintainSchema, MaintainTable
+from loom.etl.maintenance._ops import VacuumSpec
 from loom.etl.maintenance._runner import MaintenanceError, MaintenanceReport, MaintenanceRunner
 from loom.etl.maintenance._step import MaintenanceStep
 from loom.etl.storage._config import (
+    MaintenanceConfig,
+    MaintenanceVacuumConfig,
     StorageConfig,
 )
 from tests.unit.etl.maintenance.conftest import StubMaintainer
@@ -210,6 +214,22 @@ class TestRunFromConfig:
         assert len(stub.vacuum_calls) == 2
         assert len(stub.compact_calls) == 2
         assert not report.has_errors
+
+    def test_vacuum_config_full_reaches_the_maintainer(
+        self, maintenance_config: StorageConfig
+    ) -> None:
+        config = msgspec.structs.replace(
+            maintenance_config,
+            maintenance=MaintenanceConfig(
+                schemas=("raw",),
+                vacuum=MaintenanceVacuumConfig(retention_hours=168, dry_run=False, full=True),
+            ),
+        )
+        stub = StubMaintainer()
+        MaintenanceRunner(stub, config.to_path_locator(), config).run_from_config()
+
+        specs = {call["spec"] for call in stub.vacuum_calls}
+        assert specs == {VacuumSpec(retention_hours=168, dry_run=False, full=True)}
 
     def test_empty_maintenance_config_returns_empty_report(
         self, simple_config: StorageConfig

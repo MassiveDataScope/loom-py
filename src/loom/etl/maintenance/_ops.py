@@ -31,11 +31,15 @@ class VacuumSpec:
             property (default 168 hours / 7 days).
         dry_run: When ``True`` (the default), lists eligible files without
             deleting them.  Set ``dry_run=False`` explicitly in production.
+        full: When ``True``, also deletes files the Delta log does not
+            reference, older than the retention.  ``False`` (the default)
+            deletes only the files the log records as removed.
     """
 
     name: ClassVar[str] = "vacuum"
     retention_hours: int | None = None
     dry_run: bool = True
+    full: bool = False
 
     def execute(
         self,

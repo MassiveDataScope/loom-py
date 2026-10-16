@@ -40,9 +40,10 @@ class DeltaRsMaintainer:
         deleted = dt.vacuum(
             retention_hours=spec.retention_hours,
             dry_run=spec.dry_run,
+            full=spec.full,
             commit_properties=commit,
         )
-        _log.info("vacuum", uri=uri, dry_run=spec.dry_run, files=len(deleted))
+        _log.info("vacuum", uri=uri, dry_run=spec.dry_run, full=spec.full, files=len(deleted))
         return VacuumResult(files_deleted=deleted)
 
     def compact(
