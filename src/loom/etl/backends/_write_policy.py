@@ -217,7 +217,8 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         Returns:
             The prepared write when the table already exists and the caller
             must still issue its mode-specific write, or ``None`` when the
-            table was absent and has just been created from *frame*.
+            table was absent and has just been created from *frame*. A caller
+            passing ``allow_empty=False`` must ``_release_pinned(prepared.frame)``.
         """
         existing = self._physical_schema(target)
         if existing is None:
