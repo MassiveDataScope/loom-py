@@ -604,9 +604,9 @@
 - **ai:** `PolarsAgentRunner.map` runs at most `ai.max_concurrent_runs`
   worker tasks, which take the rows in order, instead of creating one task
   per row up front; the order of the output rows is unchanged. A run
-  cancelled while the batch was not raises a `RuntimeError` naming the rows
-  left without an outcome, where the run's `asyncio.CancelledError` reached
-  the caller.
+  cancelled while the batch was not raises a `RuntimeError` naming how many
+  rows were left without an outcome and the first of them, where the run's
+  `asyncio.CancelledError` reached the caller.
 - **ai:** `PolarsAgentRunner.validate` reports an output with a field no
   column can hold (a union of two models, for instance) as
   `OUTPUT_MISMATCH` instead of raising its `TypeError`, and checks the output

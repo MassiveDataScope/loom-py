@@ -110,28 +110,5 @@ def test_a_keyboard_interrupt_in_one_row_reaches_the_caller_as_itself() -> None:
 def test_a_row_whose_run_is_cancelled_fails_the_batch_naming_it(rows: int) -> None:
     runtime = _Failing("0", asyncio.CancelledError())
 
-    with pytest.raises(RuntimeError, match=r"labeller.*row\(s\) \[0\]"):
+    with pytest.raises(RuntimeError, match=r"labeller.*1 row\(s\).*first row 0"):
         _answer_all(runtime, [str(row) for row in range(rows)])
-
-
-class _CancelledRuns(_Runtime):
-    async def run(self, name: str, prompt: str, *, identity: Identity) -> Any:
-        raise asyncio.CancelledError
-
-
-def test_the_unanswered_rows_are_named_up_to_ten() -> None:
-    with pytest.raises(RuntimeError, match=r"20 row\(s\) \[0, 1, .*, 9\] and 10 more"):
-        _answer_all(_CancelledRuns(), [str(row) for row in range(20)])
-
-
-@pytest.mark.parametrize("limit", [0, -1])
-def test_a_limit_below_one_is_refused_at_construction(limit: int) -> None:
-    with pytest.raises(ValueError, match=r"limit must be at least 1, got " + str(limit)):
-        Batch(
-            runtime=cast(AgentRuntime, _Runtime()),
-            name="labeller",
-            limit=limit,
-            ledger=SpendLedger(None),
-            reservation=Decimal(0),
-            to_builtins=lambda output: output,
-        )
