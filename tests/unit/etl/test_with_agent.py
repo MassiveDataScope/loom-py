@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -130,10 +131,33 @@ class TestDeclaration:
         with pytest.raises(ValueError, match="max_usd"):
             WithAgent("seller_reply", output=Reply, max_usd=budget)
 
-    @pytest.mark.parametrize("budget", [2.0, 2, "2"])
-    def test_rejects_a_budget_that_is_not_a_decimal(self, budget: object) -> None:
+    @pytest.mark.parametrize("budget", [-1, 0, -0.5, 0.0, float("nan"), float("inf")])
+    def test_rejects_a_number_that_is_not_a_finite_positive_amount(self, budget: float) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(ValueError, match="max_usd"):
+                WithAgent("seller_reply", output=Reply, max_usd=budget)
+
+    @pytest.mark.parametrize("budget", ["2", True, [2]])
+    def test_rejects_a_budget_that_is_not_a_number(self, budget: object) -> None:
         with pytest.raises(TypeError, match="max_usd"):
             WithAgent("seller_reply", output=Reply, max_usd=budget)  # type: ignore[arg-type]
+
+    def test_an_int_budget_becomes_the_same_decimal_without_warning(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            agent = WithAgent("seller_reply", output=Reply, max_usd=2)
+
+        assert isinstance(agent.max_usd, Decimal)
+        assert agent.max_usd == Decimal(2)
+
+    def test_a_float_budget_warns_and_becomes_the_decimal_it_prints_as(self) -> None:
+        with pytest.warns(DeprecationWarning, match=r"max_usd.*loom 3\.0") as caught:
+            agent = WithAgent("seller_reply", output=Reply, max_usd=0.1)
+
+        assert isinstance(agent.max_usd, Decimal)
+        assert agent.max_usd == Decimal("0.1")
+        assert caught[0].filename == __file__
 
     def test_is_not_a_frame_source(self) -> None:
         assert set(LabelStep._agents) == {"labeller"}
