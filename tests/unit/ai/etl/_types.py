@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import uuid
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, TypedDict
 
 import msgspec
 import pydantic
@@ -126,3 +127,43 @@ class Plain(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     at: time
     wait: timedelta
     blob: bytes
+
+
+class Leaf(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    value: int
+
+
+@dataclasses.dataclass(frozen=True)
+class LeafRecord:
+    value: int
+
+
+class LeafDict(TypedDict):
+    value: int
+
+
+class Siblings(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    first: Leaf
+    second: Leaf
+    first_record: LeafRecord
+    second_record: LeafRecord
+    first_dict: LeafDict
+    second_dict: LeafDict
+
+
+class Left(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    leaf: Leaf
+    record: LeafRecord
+    item: LeafDict
+
+
+@dataclasses.dataclass(frozen=True)
+class Right:
+    leaf: Leaf
+    record: LeafRecord
+    item: LeafDict
+
+
+class Diamond(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    left: Left
+    right: Right

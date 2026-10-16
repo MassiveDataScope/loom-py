@@ -76,7 +76,7 @@ def _model_fields(model: type[Any]) -> list[tuple[str, Any]]:
     ]
 
 
-def _column(info: mi.Type, path: frozenset[type[Any]] = frozenset()) -> Column:
+def _column(info: mi.Type, path: frozenset[type[Any]]) -> Column:
     if isinstance(info, mi.Metadata):
         return _column(info.type, path)
     if isinstance(info, mi.UnionType):

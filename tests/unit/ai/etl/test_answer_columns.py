@@ -17,6 +17,7 @@ from loom.ai.etl._frames import answers_frame
 from loom.core.model import loom_type
 from tests.unit.ai.etl._types import (
     Coded,
+    Diamond,
     Mood,
     Node,
     Offer,
@@ -29,6 +30,7 @@ from tests.unit.ai.etl._types import (
     PydanticReply,
     PydanticTree,
     Rich,
+    Siblings,
 )
 
 _RICH_SCHEMA = {
@@ -253,3 +255,24 @@ def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text() -> None:
         "P1DT5S",
         "AGhp",
     )
+
+
+_LEAF = pl.Struct({"value": pl.Int64()})
+
+
+def test_a_type_in_two_sibling_fields_is_a_struct_in_both() -> None:
+    columns = output_columns(Siblings)
+
+    assert {name: column.dtype for name, column in columns.items()} == dict.fromkeys(
+        ("first", "second", "first_record", "second_record", "first_dict", "second_dict"), _LEAF
+    )
+
+
+def test_a_type_reached_by_two_paths_is_a_struct_on_both() -> None:
+    columns = output_columns(Diamond)
+
+    side = pl.Struct({"leaf": _LEAF, "record": _LEAF, "item": _LEAF})
+    assert {name: column.dtype for name, column in columns.items()} == {
+        "left": side,
+        "right": side,
+    }
