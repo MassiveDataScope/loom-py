@@ -293,7 +293,7 @@ jobs:
 
       - name: Compute candidate prerelease version
         id: version
-        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@1260b7861a6e5013daf36396fb4782c41e5a1c28 # v1.10.0
+        uses: MassiveDataScope/loom-actions/actions/release/versioning-branch-semantic@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
         with:
           branch: ${{ github.head_ref }}
           prerelease: "true"
