@@ -229,12 +229,16 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             materialized = self._materialize_checked(
                 frame, target, streaming, allow_empty=allow_empty
             )
-            self._create(
-                materialized,
-                target,
-                schema_mode=schema_mode,
-                partition_cols=create_partition_cols,
-            )
+            try:
+                self._create(
+                    materialized,
+                    target,
+                    schema_mode=schema_mode,
+                    partition_cols=create_partition_cols,
+                )
+            finally:
+                if not allow_empty:
+                    self._release_pinned(materialized)
             return None
         if require_physical_partitions is not None:
             self._require_physical_partitions(target, require_physical_partitions)
@@ -276,7 +280,11 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         )
         if prepared is None:
             return
-        self._replace(prepared.frame, target, schema_mode=spec.schema_mode)
+        try:
+            self._replace(prepared.frame, target, schema_mode=spec.schema_mode)
+        finally:
+            if not spec.allow_empty:
+                self._release_pinned(prepared.frame)
 
     def _do_replace_partitions(
         self,
@@ -531,6 +539,14 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
                 before the write, such as a Spark streaming DataFrame.
         """
 
+    def _release_pinned(self, frame: WriteFrameT) -> None:
+        """Free what :meth:`_pin_rows` kept for *frame*, once nothing reads it.
+
+        Called after the write, whether it succeeded or failed, and before
+        :class:`EmptyReplaceError` is raised. Holds nothing by default.
+        """
+        _ = frame
+
     def _materialize_checked(
         self,
         frame: InputFrameT,
@@ -557,6 +573,7 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             return materialized
         pinned, empty = self._pin_rows(materialized)
         if empty:
+            self._release_pinned(pinned)
             raise EmptyReplaceError(target.logical_ref.ref)
         return pinned
 

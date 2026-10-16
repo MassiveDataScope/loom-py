@@ -101,11 +101,10 @@ class TestBackendsThatCannotCountCheaply:
         ("loom.etl.backends.spark", "SparkTargetWriter"),
     ],
 )
-def test_every_concrete_writer_defines_its_emptiness_check(module: str, writer: str) -> None:
+def test_every_concrete_writer_implements_the_abstract_hooks(module: str, writer: str) -> None:
     if module.endswith("spark"):
         require_pyspark()
     writer_type = getattr(importlib.import_module(module), writer)
 
     assert issubclass(writer_type, _WritePolicy)
-    assert "_pin_rows" in vars(writer_type)
     assert not getattr(writer_type, "__abstractmethods__", frozenset())

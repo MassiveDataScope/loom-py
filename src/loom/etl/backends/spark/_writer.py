@@ -12,6 +12,7 @@ from pyspark.errors.exceptions.base import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 from pyspark.sql.column import Column
+from pyspark.storagelevel import StorageLevel
 
 from loom.etl.backends._format_registry import resolve_format_handler, write_options_or_default
 from loom.etl.backends._historify._transform import scd2_transform
@@ -144,11 +145,16 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         return frame
 
     def _pin_rows(self, frame: DataFrame) -> tuple[DataFrame, bool]:
-        """Return *frame* local-checkpointed, and whether it has no rows.
+        """Return *frame* computed once and kept, and whether it has no rows.
 
-        ``localCheckpoint(eager=True)`` computes *frame* once and keeps its
-        rows on the executors; the check and the write both read those rows,
-        so the write cannot compute a different result than the one counted.
+        A classic DataFrame is computed with ``localCheckpoint(eager=True)``:
+        the check and the write both read the rows kept on the executors, and
+        losing an executor before the write ends fails the write instead of
+        recomputing the frame. A DataFrame without ``localCheckpoint()``,
+        such as a pyspark 3.5 Spark Connect DataFrame, is persisted with
+        ``MEMORY_AND_DISK`` and counted; the write reads the cached rows, but
+        Spark recomputes a cached block it loses, so that write may read rows
+        other than the ones counted.
 
         Raises:
             ValueError: When *frame* is a streaming DataFrame, whose rows
@@ -160,8 +166,27 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
                 "but the frame to write is a streaming DataFrame. Read the source as a "
                 "batch DataFrame or declare replace() without allow_empty=False."
             )
-        pinned = frame.localCheckpoint(eager=True)
-        return pinned, bool(pinned.isEmpty())
+        if _checkpoints_locally(frame):
+            pinned = frame.localCheckpoint(eager=True)
+        else:
+            pinned = frame.persist(StorageLevel.MEMORY_AND_DISK)
+        try:
+            return pinned, _has_no_rows(pinned)
+        except BaseException:
+            self._release_pinned(pinned)
+            raise
+
+    def _release_pinned(self, frame: DataFrame) -> None:
+        """Free the blocks :meth:`_pin_rows` kept for *frame*.
+
+        ``DataFrame.unpersist()`` does not free the blocks of a local
+        checkpoint: they belong to the RDD under the checkpointed frame's
+        logical plan, which is unpersisted instead.
+        """
+        if _checkpoints_locally(frame):
+            frame._jdf.queryExecution().logical().rdd().unpersist(False)
+        else:
+            frame.unpersist()
 
     def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
         """Convert predicate to SQL."""
@@ -452,6 +477,26 @@ __all__ = ["SparkTargetWriter", "_collect_partition_combos"]
 # ========================================================================
 # File writers — one per format Spark can write
 # ========================================================================
+
+
+def _checkpoints_locally(frame: object) -> bool:
+    """Whether *frame* supports ``localCheckpoint()``.
+
+    A pyspark 3.5 Spark Connect DataFrame is not a :class:`pyspark.sql.DataFrame`
+    and raises ``NOT_IMPLEMENTED`` on ``localCheckpoint()``.
+    """
+    return isinstance(frame, DataFrame)
+
+
+def _has_no_rows(pinned: DataFrame) -> bool:
+    """Whether the pinned frame has no rows.
+
+    A persisted frame is counted, which computes and caches every partition
+    for the write; ``isEmpty()`` would stop at the first row.
+    """
+    if _checkpoints_locally(pinned):
+        return bool(pinned.isEmpty())
+    return int(pinned.count()) == 0
 
 
 def _write_delta_file(frame: DataFrame, spec: FileSpec) -> None:

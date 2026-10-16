@@ -23,6 +23,12 @@ _REF = TableRef("silver.dim_dealer")
 _SCHEMA = "id BIGINT, name STRING"
 
 
+def _persisted_rdds(spark: SparkSession) -> set[int]:
+    """Ids of the RDDs whose blocks the Spark context currently keeps."""
+    persistent = spark.sparkContext._jsc.getPersistentRDDs()
+    return {int(rdd_id) for rdd_id in persistent.keySet().toArray()}
+
+
 def _rows(spark: SparkSession, path: Path) -> list[tuple[int, str]]:
     frame = spark.read.format("delta").load(str(path)).orderBy("id")
     return [(row.id, row.name) for row in frame.collect()]
@@ -134,3 +140,104 @@ def test_a_streaming_frame_is_refused_before_a_missing_table_is_created(
         writer.write(stream, spec, None)
 
     assert not spark_table_path(spark_root, _REF).exists()
+
+
+class _PinnedRdds:
+    """Ids of the RDDs ``_pin_rows`` checkpointed, each checked to be kept when pinned."""
+
+    def __init__(self, spark: SparkSession, writer: SparkTargetWriter) -> None:
+        self._spark = spark
+        self._pin_rows = writer._pin_rows
+        self.ids: list[int] = []
+
+    def __call__(self, frame: DataFrame) -> tuple[DataFrame, bool]:
+        pinned, empty = self._pin_rows(frame)
+        rdd_id = int(pinned._jdf.queryExecution().logical().rdd().id())
+        assert rdd_id in _persisted_rdds(self._spark)
+        self.ids.append(rdd_id)
+        return pinned, empty
+
+    def still_kept(self) -> set[int]:
+        return set(self.ids) & _persisted_rdds(self._spark)
+
+
+def _spy_pins(
+    spark: SparkSession, writer: SparkTargetWriter, monkeypatch: pytest.MonkeyPatch
+) -> _PinnedRdds:
+    pins = _PinnedRdds(spark, writer)
+    monkeypatch.setattr(writer, "_pin_rows", pins)
+    return pins
+
+
+def test_the_checked_rows_are_released_after_the_write(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    pins = _spy_pins(spark, spark_writer, monkeypatch)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert len(pins.ids) == 1
+    assert pins.still_kept() == set()
+    assert _rows(spark, path) == [(3, "c")]
+
+
+def test_the_checked_rows_are_released_when_the_frame_is_empty(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    pins = _spy_pins(spark, spark_writer, monkeypatch)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with pytest.raises(EmptyReplaceError):
+        spark_writer.write(spark.createDataFrame([], _SCHEMA), spec, None)
+
+    assert len(pins.ids) == 1
+    assert pins.still_kept() == set()
+
+
+def test_the_checked_rows_are_released_when_the_write_fails(
+    spark: SparkSession,
+    spark_writer: SparkTargetWriter,
+    seed_spark_table: Callable[[str | TableRef, DataFrame], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_spark_table(_REF, spark.createDataFrame([(1, "a")], _SCHEMA))
+    pins = _spy_pins(spark, spark_writer, monkeypatch)
+
+    def fail(frame: DataFrame, target: ResolvedTarget, *, schema_mode: SchemaMode) -> None:
+        raise RuntimeError("write failed")
+
+    monkeypatch.setattr(spark_writer, "_replace", fail)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        spark_writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert len(pins.ids) == 1
+    assert pins.still_kept() == set()
+
+
+def test_the_checked_rows_are_released_after_creating_a_missing_table(
+    spark: SparkSession,
+    spark_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = SparkTargetWriter(
+        spark, str(spark_root), missing_table_policy=MissingTablePolicy.CREATE
+    )
+    pins = _spy_pins(spark, writer, monkeypatch)
+    spec = IntoTable(_REF).replace(allow_empty=False)._to_spec()
+
+    writer.write(spark.createDataFrame([(3, "c")], _SCHEMA), spec, None)
+
+    assert len(pins.ids) == 1
+    assert pins.still_kept() == set()
+    assert _rows(spark, spark_table_path(spark_root, _REF)) == [(3, "c")]
