@@ -389,9 +389,11 @@
   named by alias, instead of a `String` holding its JSON. Writing it into a
   Delta table created before fails with `SchemaError` naming the column (see
   the `etl` entry on casts between text and nested types). To keep writing to
-  that table, rewrite it once with the column decoded,
-  `pl.col(name).str.json_decode(<the Struct type>)`, and
-  `schema=SchemaMode.OVERWRITE` (delta-rs `schema_mode="overwrite"`).
+  that table, rewrite it once with the column decoded through the model,
+  `pl.Series(name, [None if c is None else Model.model_validate_json(c).model_dump(by_alias=True) for c in frame[name]], dtype=<the Struct type>)`,
+  and `schema=SchemaMode.OVERWRITE` (delta-rs `schema_mode="overwrite"`).
+  `pl.col(name).str.json_decode(<the Struct type>)` fails with
+  `ComputeError` when the model has a `date` field (Polars 1.39.3).
 - **ai:** in `PolarsAgentRunner.map`, a `String` column holding a value's JSON
   now holds the JSON of a string too: `"5"` is written `"\"5\""` and `5` is
   written `5`, where both were `5`. This covers a field typed as a union of
@@ -509,10 +511,14 @@
   `EVOLVE`, a frame column that is a `Struct` or `List` where the Delta table
   has `String`, or `String` where the table has a `Struct` or `List`, at any
   depth of a `Struct` or `List`, with `SchemaError` naming the column and
-  both types; nothing is written. Before, a `Struct` was cast to its Polars
-  display text (`{1.000000000}`) and a `String` to a `List` wrapped or
-  nulled each value, both written without an error; a `List` to `String` and
-  a `String` to `Struct` failed inside Polars. To change the column's type,
+  both types; nothing is written. The check is by dtype, so an all-null
+  `String` column written into a `List` column is refused too. Before, a
+  `Struct` was cast to its Polars display text (`{1.0}` for a `Float64`
+  field) and a `String` to a `List` wrapped or nulled each value, both
+  written without an error; a `List` to `String` and a `String` to `Struct`
+  failed inside Polars. The Spark writer does not refuse these casts: it
+  writes a `Struct` or `List` into a `String` column as text (`{1.0}`,
+  `[1]`). To change the column's type,
   rewrite the table once with the column converted and
   `schema=SchemaMode.OVERWRITE` (delta-rs `schema_mode="overwrite"`).
 - **etl:** `InvalidStageError` names what it reports: its message reads
