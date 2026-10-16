@@ -22,7 +22,7 @@ from loom.etl.declarative.target import IntoTable, SchemaMode
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import AppendSpec, ReplacePartitionsSpec, ReplaceSpec
 from loom.etl.lineage._records import WriteContext
-from loom.etl.schema._schema import ColumnSchema, LoomDtype
+from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaError
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from loom.etl.storage._locator import MappingLocator, TableLocation
 
@@ -181,6 +181,22 @@ def test_writer_reads_latest_schema_between_consecutive_writes(tmp_path: Path) -
     assert result.columns == ["id", "amount"]
     assert result["id"].to_list() == [2, 3]
     assert result["amount"].to_list() == [20.0, 30.0]
+
+
+@pytest.mark.parametrize("mode", [SchemaMode.STRICT, SchemaMode.EVOLVE])
+def test_writer_refuses_a_struct_into_a_string_column_and_leaves_the_table(
+    tmp_path: Path, mode: SchemaMode
+) -> None:
+    _seed(tmp_path, "staging.answers", pl.DataFrame({"id": [0], "offer": ['{"amount":1}']}))
+    frame = pl.DataFrame({"id": [1], "offer": [{"amount": 1.0}]}).lazy()
+    spec = AppendSpec(table_ref=TableRef("staging.answers"), schema_mode=mode)
+
+    with pytest.raises(SchemaError, match=r"'offer'"):
+        PolarsTargetWriter(tmp_path).write(frame, spec, None)
+
+    assert _read_table(tmp_path, "staging.answers").to_dicts() == [
+        {"id": 0, "offer": '{"amount":1}'}
+    ]
 
 
 def test_reader_reads_csv_file(tmp_path: Path) -> None:

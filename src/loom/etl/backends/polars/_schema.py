@@ -45,8 +45,10 @@ def apply_schema_polars(
     mode: SchemaMode,
 ) -> pl.LazyFrame:
     from loom.etl.backends._schema_aligner import SchemaAlignmentPolicy
-    from loom.etl.backends.polars._schema_aligner import PolarsSchemaAligner
+    from loom.etl.backends.polars._schema_aligner import PolarsSchemaAligner, refuse_lossy_casts
 
+    if mode is not SchemaMode.OVERWRITE and schema is not None:
+        refuse_lossy_casts(frame.collect_schema(), schema)
     policy = SchemaAlignmentPolicy(PolarsSchemaAligner())
     return policy.align(frame, schema, mode)
 
