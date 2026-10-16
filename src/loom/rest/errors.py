@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 from fastapi import HTTPException
 
 from loom.core.engine.post_commit import PostCommitError
-from loom.core.errors import LoomError, NotFound, RuleViolation, RuleViolations
+from loom.core.errors import Forbidden, LoomError, NotFound, RuleViolation, RuleViolations
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
@@ -41,6 +41,8 @@ class ErrorField(StrEnum):
     VIOLATIONS = "violations"
     FIELD = "field"
     COMMITTED = "committed"
+    REASON = "reason"
+    MISSING = "missing"
 
 
 class HttpErrorMapper:
@@ -52,6 +54,8 @@ class HttpErrorMapper:
     per error type:
 
     - :class:`~loom.core.errors.NotFound` → ``entity``, ``id``
+    - :class:`~loom.core.errors.Forbidden` → ``reason`` and ``missing``, each only
+      when the refusal carries it
     - :class:`~loom.core.errors.RuleViolation` → ``field``
     - :class:`~loom.core.errors.RuleViolations` → ``violations``
     - :class:`~loom.core.model.BoundaryValidationError` → ``violations``
@@ -108,6 +112,12 @@ class HttpErrorMapper:
         if isinstance(error, NotFound):
             detail[ErrorField.ENTITY] = error.entity
             detail[ErrorField.ID] = error.id
+
+        if isinstance(error, Forbidden):
+            if error.reason is not None:
+                detail[ErrorField.REASON] = error.reason
+            if error.missing:
+                detail[ErrorField.MISSING] = list(error.missing)
 
         if isinstance(error, RuleViolation):
             detail[ErrorField.FIELD] = error.field

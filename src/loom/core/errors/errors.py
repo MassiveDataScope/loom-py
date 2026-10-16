@@ -97,10 +97,22 @@ class Forbidden(DomainError):
 
     Args:
         message: Description of the access restriction.
+        reason: Optional machine-readable cause a client can act on, such as
+            ``"mfa_required"``. ``None`` when the refusal has no specific cause.
+        missing: The permissions the caller lacks, in the order given; empty when
+            the authorizer does not tell them.
     """
 
-    def __init__(self, message: str = "Forbidden") -> None:
+    def __init__(
+        self,
+        message: str = "Forbidden",
+        *,
+        reason: str | None = None,
+        missing: Sequence[str] = (),
+    ) -> None:
         super().__init__(message, code=ErrorCode.FORBIDDEN)
+        self.reason = reason
+        self.missing: tuple[str, ...] = tuple(missing)
 
 
 class Conflict(DomainError):

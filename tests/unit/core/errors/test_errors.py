@@ -112,6 +112,20 @@ class TestForbidden:
     def test_custom_message(self) -> None:
         assert Forbidden("You cannot update other users").message == "You cannot update other users"
 
+    def test_no_reason_and_nothing_missing_by_default(self) -> None:
+        error = Forbidden()
+        assert (error.reason, error.missing) == (None, ())
+
+    def test_a_reason_and_the_missing_permissions_travel_with_the_refusal(self) -> None:
+        error = Forbidden(
+            "Granting this needs a recent MFA sign-in",
+            reason="mfa_required",
+            missing=["grants.manage", "users.manage"],
+        )
+        assert error.reason == "mfa_required"
+        assert error.missing == ("grants.manage", "users.manage")
+        assert error.code == ErrorCode.FORBIDDEN
+
 
 # ---------------------------------------------------------------------------
 # SystemError — must NOT be catchable as DomainError
