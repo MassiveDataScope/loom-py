@@ -26,8 +26,9 @@ class ModelPrice(LoomFrozenStruct, frozen=True, kw_only=True):
             ``None`` bills it at ``input``.
         cache_write: Rate of an input token written to the provider's cache;
             ``None`` bills it at ``input``.
-        source: Where the rates were taken from, for the audit trail.
-        as_of: When the rates were read from ``source``.
+        source: Not read by loom; records where the rates were taken from.
+        as_of: Not read by loom; records when the rates were taken from
+            ``source``.
 
     Raises:
         ValueError: When a rate is negative; a ``msgspec`` decode reports it

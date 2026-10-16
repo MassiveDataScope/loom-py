@@ -8,11 +8,11 @@ from loom.ai.compiler import AgentPlan
 
 
 def worst_case(plan: AgentPlan) -> Decimal | None:
-    """Return the reservation of one run of *plan*, ``None`` when nothing caps it.
+    """Return ``policies.max_usd``, ``None`` when the plan declares none.
 
-    ``policies.max_usd``, which the engine checks against the run's spend over
-    every attempt after each response: a run may only exceed it by the cost of
-    its last response.
+    The engine checks it after each response against the run's spend over
+    every attempt, so a run whose responses are all priced exceeds it by at
+    most the cost of its last response.
     """
     return plan.policies.max_usd
 

@@ -1171,9 +1171,12 @@ ai:
       output: 0.55
       cache_read: 0.011    # optional; billed as input when absent
       cache_write: 0.1375  # optional; billed as input when absent
-      source: AWS Pricing API eu-west-1   # optional, for the audit trail
+      source: AWS Pricing API eu-west-1   # optional
       as_of: 2026-10-09                   # optional
 ```
+
+`source` and `as_of` are not read by loom; they record where the rates were
+taken from.
 
 The compiler carries the bound model's price on the plan (`AgentPlan.price`),
 and the engine prices every response with it as the model returns it, before
@@ -1209,7 +1212,7 @@ serve` to mean what it says under a strict interpreter must exempt those
 classes explicitly, narrower than blanket `-W error`, for example
 `-W error -W default::pydantic_ai.exceptions.CostNotFoundWarning -W
 default::pydantic_ai.exceptions.CostCalculationFailedWarning -W
-default::pydantic_ai.exceptions.UsageExtractionFailedWarning`.
+default::pydantic_ai.exceptions.UsageExtractionFailedWarning` (pydantic-ai 2.52+).
 
 The start-up probe is fed the identifiers the *built* pydantic-ai model
 reports — its `model_name` and its provider's `name` — never loom's own
