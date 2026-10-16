@@ -9,6 +9,8 @@ not a frame source: no reader is involved and it never becomes a
 
 from __future__ import annotations
 
+import numbers
+import operator
 import warnings
 from decimal import Decimal
 from typing import Any
@@ -24,15 +26,16 @@ class WithAgent:
         output: Type every answer decodes into; must be the artifact's own
             ``type_ref`` output.
         max_usd: Budget of one execution of the step, in USD, as a
-            :class:`~decimal.Decimal` or an ``int``, which is converted
-            exactly. A ``float`` is deprecated until loom 3.0: it emits a
+            :class:`~decimal.Decimal` or an integral number (an ``int`` or
+            another :class:`numbers.Integral`, such as ``numpy.int64``),
+            which is converted exactly. A ``float`` is deprecated until loom 3.0: it emits a
             :class:`DeprecationWarning` and is converted through its
             ``str()``, so ``0.1`` becomes ``Decimal("0.1")``. ``None`` spends
             without a ceiling beyond each run's own ``policies.max_usd``.
 
     Raises:
         TypeError: When *max_usd* is not ``None``, a :class:`~decimal.Decimal`,
-            an ``int`` or a ``float``; a ``bool`` is refused.
+            an integral number or a ``float``; a ``bool`` is refused.
         ValueError: When *name* is empty or *max_usd* is not a finite
             amount greater than zero.
 
@@ -94,8 +97,8 @@ def _as_decimal(max_usd: object) -> Decimal:
         return max_usd
     if isinstance(max_usd, bool):
         raise TypeError("WithAgent max_usd must be a Decimal or an int, got bool")
-    if isinstance(max_usd, int):
-        return Decimal(max_usd)
+    if isinstance(max_usd, numbers.Integral):
+        return Decimal(operator.index(max_usd))
     if isinstance(max_usd, float):
         warnings.warn(
             "WithAgent(max_usd=<float>) is deprecated and will be removed in loom 3.0; "

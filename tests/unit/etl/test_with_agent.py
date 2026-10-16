@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numbers
 import subprocess
 import sys
 import warnings
@@ -100,6 +101,19 @@ class _FakeAgents:
         return "labelled"
 
 
+class _Int64:
+    """An integral number that is not an ``int``, as ``numpy.int64`` is."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __index__(self) -> int:
+        return self._value
+
+
+numbers.Integral.register(_Int64)
+
+
 def _compile_error(step: type[Any], agents: _FakeAgents | None) -> ETLCompilationError:
     compiler = ETLCompiler(config_context=ConfigContext.from_dict({}), agents=agents)
     with pytest.raises(ETLCompilationError) as exc_info:
@@ -150,6 +164,14 @@ class TestDeclaration:
 
         assert isinstance(agent.max_usd, Decimal)
         assert agent.max_usd == Decimal(2)
+
+    def test_an_integral_that_is_not_an_int_becomes_the_same_decimal(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            agent = WithAgent("seller_reply", output=Reply, max_usd=_Int64(3))  # type: ignore[arg-type]
+
+        assert isinstance(agent.max_usd, Decimal)
+        assert agent.max_usd == Decimal(3)
 
     def test_a_float_budget_warns_and_becomes_the_decimal_it_prints_as(self) -> None:
         with pytest.warns(DeprecationWarning, match=r"max_usd.*loom 3\.0") as caught:
