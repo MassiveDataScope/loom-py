@@ -118,15 +118,16 @@ class Forbidden(DomainError):
         reason: str | None = None,
         missing: Sequence[str] = (),
     ) -> None:
-        if reason is not None and not reason:
+        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
             raise ValueError("Forbidden.reason must be a non-empty string or None")
-        if isinstance(missing, str):
+        if isinstance(missing, (str, bytes)):
             raise ValueError("Forbidden.missing takes a sequence of permissions, not one string")
-        if any(not isinstance(item, str) or not item for item in missing):
+        permissions = tuple(missing)
+        if any(not isinstance(item, str) or not item.strip() for item in permissions):
             raise ValueError("Forbidden.missing items must be non-empty strings")
         super().__init__(message, code=ErrorCode.FORBIDDEN)
         self.reason = reason
-        self.missing: tuple[str, ...] = tuple(missing)
+        self.missing: tuple[str, ...] = permissions
 
 
 class Conflict(DomainError):

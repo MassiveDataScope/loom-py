@@ -126,10 +126,29 @@ class TestForbidden:
         assert error.missing == ("grants.manage", "users.manage")
         assert error.code == ErrorCode.FORBIDDEN
 
+    def test_missing_given_as_an_iterator_is_kept(self) -> None:
+        assert Forbidden("no", missing=iter(["grants.manage"])).missing == ("grants.manage",)
+
     @pytest.mark.parametrize(
         "kwargs",
-        [{"reason": ""}, {"missing": "grants.manage"}, {"missing": ["ok", ""]}, {"missing": [1]}],
-        ids=["empty-reason", "string-as-missing", "empty-permission", "not-a-string"],
+        [
+            {"reason": ""},
+            {"reason": "  "},
+            {"reason": 5},
+            {"missing": "grants.manage"},
+            {"missing": b"ab"},
+            {"missing": ["ok", ""]},
+            {"missing": [1]},
+        ],
+        ids=[
+            "empty-reason",
+            "blank-reason",
+            "reason-not-a-string",
+            "string-as-missing",
+            "bytes-as-missing",
+            "empty-permission",
+            "not-a-string",
+        ],
     )
     def test_a_malformed_reason_or_missing_is_refused(self, kwargs: dict[str, object]) -> None:
         with pytest.raises(ValueError):
