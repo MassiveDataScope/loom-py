@@ -10,6 +10,7 @@ from typing import Any
 
 from loom.core.logger import get_logger
 from loom.prefect.notify._event import NotifyEvent
+from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
 
 _log = get_logger(__name__)
 
@@ -47,8 +48,10 @@ class SlackNotifier:
         self._http_post = http_post or _default_http_post
 
     def notify(self, event: NotifyEvent) -> None:
-        """Post *event* to Slack when filters match. Errors are swallowed."""
-        if not self._should_post(event.state):
+        """Post *event* to Slack when filters match."""
+        if not should_notify(
+            event.state, on_failure=self._on_failure, on_completion=self._on_completion
+        ):
             return
         payload = self._render(event)
         try:
@@ -62,28 +65,13 @@ class SlackNotifier:
                 exc_info=True,
             )
 
-    def _should_post(self, state: str) -> bool:
-        if self._on_failure and state in {"Failed", "Crashed"}:
-            return True
-        return bool(self._on_completion and state == "Completed")
-
     def _render(self, event: NotifyEvent) -> dict[str, Any]:
-        icon = ":x:" if event.state in {"Failed", "Crashed"} else ":white_check_mark:"
-
+        icon = ":x:" if event.state in FAILURE_STATES else ":white_check_mark:"
         header = f"{icon} *{event.flow_name}* → `{event.state}`"
+        meta = "  ".join(f"{label}: `{value}`" for label, value in run_details(event))
 
-        meta_parts = [f"run: `{event.flow_run_name}`"]
-        if event.env:
-            meta_parts.append(f"env: `{event.env}`")
-        if event.correlation_id:
-            meta_parts.append(f"correlation: `{event.correlation_id}`")
-        if event.duration_seconds is not None:
-            meta_parts.append(f"duration: `{_fmt_duration(event.duration_seconds)}`")
-
-        lines = [header, "  ".join(meta_parts)]
+        lines = [header, meta]
         if event.message:
-            # Use code block only for raw exception text (contains newlines or
-            # stack traces); structured summaries are rendered as plain text.
             if "\n" in event.message or "Traceback" in event.message:
                 lines.append(f"```{event.message}```")
             else:
@@ -95,18 +83,6 @@ class SlackNotifier:
         if self._channel:
             payload["channel"] = self._channel
         return payload
-
-
-def _fmt_duration(seconds: float) -> str:
-    """Format seconds as a human-readable duration string."""
-    s = int(seconds)
-    if s < 60:
-        return f"{s}s"
-    m, s = divmod(s, 60)
-    if m < 60:
-        return f"{m}m {s:02d}s"
-    h, m = divmod(m, 60)
-    return f"{h}h {m:02d}m {s:02d}s"
 
 
 def _default_http_post(url: str, *, json: dict[str, Any], timeout: float) -> None:
