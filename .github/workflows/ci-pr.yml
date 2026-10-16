@@ -330,7 +330,7 @@ jobs:
       - name: Generate changelog preview
         id: changelog
         continue-on-error: true
-        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@1260b7861a6e5013daf36396fb4782c41e5a1c28 # v1.10.0
+        uses: MassiveDataScope/loom-actions/actions/release/changelog-conventional-commit@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
         with:
           mode: "pr"
           branch: ${{ github.event.pull_request.head.sha }}
