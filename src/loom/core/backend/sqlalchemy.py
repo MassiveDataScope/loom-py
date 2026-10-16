@@ -13,6 +13,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Column,
     Constraint,
     DateTime,
     Float,
@@ -1198,12 +1199,12 @@ def _compile_many_to_many_step(
     if secondary_table is None:
         return None
     owner_table_name = get_table_name(struct_cls)
-    secondary_owner_fk, secondary_target_fk, target_table_name = _inspect_secondary(
+    secondary_owner_fk, secondary_target_fk, target_ref = _inspect_secondary(
         secondary_table, owner_table_name
     )
-    if secondary_owner_fk is None or secondary_target_fk is None or target_table_name is None:
+    if secondary_owner_fk is None or secondary_target_fk is None or target_ref is None:
         return None
-    target_sa = _find_target_sa_class(target_table_name, comp)
+    target_sa = _find_target_sa_class(target_ref.table.name, comp)
     if target_sa is None:
         return None
     related_struct = getattr(target_sa, "__struct_cls__", None)
@@ -1219,7 +1220,7 @@ def _compile_many_to_many_step(
         related_struct=related_struct,
         owner_pk_col=get_id_attribute(struct_cls),
         fk_col=secondary_owner_fk,
-        pk_col=get_id_attribute(related_struct),
+        pk_col=target_ref.name,
         secondary_table=secondary_table,
         secondary_target_fk=secondary_target_fk,
     )
@@ -1228,18 +1229,19 @@ def _compile_many_to_many_step(
 def _inspect_secondary(
     secondary_table: Any,
     owner_table_name: str,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, Column[Any] | None]:
+    """Return the owner FK column, the target FK column and the target column it references."""
     owner_fk: str | None = None
     target_fk: str | None = None
-    target_table_name: str | None = None
+    target_ref: Column[Any] | None = None
     for col in secondary_table.columns:
         for fk in col.foreign_keys:
             if fk.column.table.name == owner_table_name:
                 owner_fk = col.name
             else:
                 target_fk = col.name
-                target_table_name = fk.column.table.name
-    return owner_fk, target_fk, target_table_name
+                target_ref = fk.column
+    return owner_fk, target_fk, target_ref
 
 
 def _target_cols(related_struct: type, target_table: Any) -> tuple[Any, ...]:
