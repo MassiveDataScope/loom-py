@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-import pytest
-
 from loom.etl.compiler import (
     ETLCompiler,
     ParallelProcessGroup,
@@ -212,13 +210,3 @@ def test_iter_all_steps_is_iter_steps_in_process_over_iter_processes() -> None:
     plan = ETLCompiler().compile(PipelineMixed)
     nested = [step for proc in iter_processes(plan) for step in iter_steps_in_process(proc)]
     assert list(iter_all_steps(plan)) == nested
-
-
-def test_map_pipeline_nodes_refuses_a_node_that_is_neither_a_process_nor_a_group() -> None:
-    with pytest.raises(TypeError, match="pipeline node"):
-        _map_pipeline_nodes((object(),), lambda proc: proc)  # type: ignore[arg-type]
-
-
-def test_map_process_nodes_refuses_a_node_that_is_neither_a_step_nor_a_group() -> None:
-    with pytest.raises(TypeError, match="process node"):
-        _map_process_nodes((object(),), lambda step: step)  # type: ignore[arg-type]

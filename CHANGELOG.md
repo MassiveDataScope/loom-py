@@ -675,9 +675,6 @@
 - **etl:** `PolarsSourceReader` decodes JSON columns through
   `decode_json_columns`; the private `_apply_json_decode` staticmethod and
   module function of `loom.etl.backends.polars._reader` are removed.
-- **etl:** the private `_map_pipeline_nodes` and `_map_process_nodes` share
-  one regrouping rule, and a node that is neither a plan nor a parallel group
-  raises `TypeError` instead of being dropped.
 - **etl:** the private `_is_cloud_path` of `loom.etl.checkpoint._cleaners`
   moves, with the same scheme set, to `loom.etl.storage._uri.is_cloud_path`,
   and the Polars backend defines its frame type variable once.
