@@ -410,8 +410,10 @@
   the float they were written as.
 - **ai:** an `ai:` section with `max_concurrent_runs` below 1 fails to load
   with `MAX_CONCURRENT_RUNS_INVALID`, naming the key and the minimum. Before,
-  it loaded; `0` refused every run with `TOO_MANY_RUNS` and a negative value
-  failed when the runtime was built.
+  it loaded; with `0` the runtime refused every run with `TOO_MANY_RUNS` and
+  `PolarsAgentRunner.map` on a frame with a prompt waited on a semaphore of
+  zero slots and did not return, and a negative value failed when the runtime
+  was built.
 - **ai:** `load_specs`, and so `ai.specs`, refuses a glob that leaves the
   root it resolves against — a `..` segment, an absolute pattern or a match
   that resolves outside the root through a symlink — with
@@ -583,7 +585,8 @@
   worker tasks, which take the rows in order, instead of creating one task
   per row up front; the order of the output rows is unchanged. A run
   cancelled while the batch was not raises a `RuntimeError` naming the rows
-  left without an outcome, instead of a `KeyError`.
+  left without an outcome, where the run's `asyncio.CancelledError` reached
+  the caller.
 - **ai:** `PolarsAgentRunner.validate` reports an output with a field no
   column can hold (a union of two models, for instance) as
   `OUTPUT_MISMATCH` instead of raising its `TypeError`, and checks the output
