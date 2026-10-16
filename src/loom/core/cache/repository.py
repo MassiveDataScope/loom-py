@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial, wraps
+from types import GenericAlias
 from typing import Any, Generic, NamedTuple, TypeVar, cast
 
 import msgspec
@@ -1065,7 +1066,7 @@ class CachedRepository(
         types = self._primary_key.python_types
         id_type: Any = types[0]
         if len(types) > 1:
-            id_type = tuple.__class_getitem__(tuple(Any if t is None else t for t in types))
+            id_type = GenericAlias(tuple, tuple(Any if t is None else t for t in types))
         if id_type is None:
             return cast(list[IdT], raw_ids)
         try:

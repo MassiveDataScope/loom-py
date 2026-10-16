@@ -18,5 +18,6 @@ class _Line(BaseModel):
 
 
 def test_a_composite_primary_key_is_refused() -> None:
+    collection = FakeCollection()
     with pytest.raises(ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"):
-        RepositoryMongo(_Line, FakeCollection())
+        RepositoryMongo(_Line, collection)

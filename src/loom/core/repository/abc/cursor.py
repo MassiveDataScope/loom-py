@@ -101,11 +101,11 @@ def encode_cursor(backend: str, keys: Sequence[object], tie_breaker: object) -> 
     Raises:
         TypeError: If a key has a type the token format cannot carry.
     """
-    tie: _Key | list[_Key] = (
-        [_wrap(value) for value in tie_breaker]
-        if isinstance(tie_breaker, tuple)
-        else _wrap(tie_breaker)
-    )
+    tie: _Key | list[_Key]
+    if isinstance(tie_breaker, tuple):
+        tie = [_wrap(value) for value in tie_breaker]
+    else:
+        tie = _wrap(tie_breaker)
     token = _Token(b=backend, k=[_wrap(key) for key in keys], id=tie)
     return base64.urlsafe_b64encode(msgspec.json.encode(token)).decode()
 
