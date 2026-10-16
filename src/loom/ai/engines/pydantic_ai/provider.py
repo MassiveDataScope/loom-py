@@ -34,11 +34,15 @@ from loom.ai.engines.pydantic_ai._instructions import (
     build_instructions,
     ensure_templating_available,
 )
-from loom.ai.engines.pydantic_ai._limits import usage_limits, warn_if_model_not_priceable
+from loom.ai.engines.pydantic_ai._limits import (
+    PricedModel,
+    is_priceable,
+    usage_limits,
+    warn_if_model_not_priceable,
+)
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._models import ModelResolver, resolve_model
 from loom.ai.engines.pydantic_ai._native import supported_native_tools
-from loom.ai.engines.pydantic_ai._pricing import PricedModel, is_priceable
 from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_type
 from loom.ai.errors import AgentCompilationError, streaming_required_by_capability
 from loom.ai.inference import InferenceTarget

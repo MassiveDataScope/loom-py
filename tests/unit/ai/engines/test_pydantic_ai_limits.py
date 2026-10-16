@@ -27,7 +27,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import _pricing
+from loom.ai.engines.pydantic_ai import _limits
 from loom.ai.engines.pydantic_ai._limits import usage_limits, warn_if_model_not_priceable
 from loom.ai.engines.pydantic_ai._models import ModelResolver
 from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
@@ -189,7 +189,7 @@ class TestPricingProbe:
         def _raise_value_error(*args: object, **kwargs: object) -> object:
             raise ValueError("usage data genai-prices cannot price")
 
-        monkeypatch.setattr(_pricing, "calc_price", _raise_value_error)
+        monkeypatch.setattr(_limits, "calc_price", _raise_value_error)
 
         with caplog.at_level(logging.WARNING, logger=_LIMITS_LOGGER):
             warn_if_model_not_priceable(
