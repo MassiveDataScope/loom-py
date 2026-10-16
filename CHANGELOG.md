@@ -559,6 +559,14 @@
 
 ### ai
 
+- **ai:** `PolarsAgentRunner.map` runs at most `ai.max_concurrent_runs`
+  worker tasks, which take the rows in order, instead of creating one task
+  per row up front; the order of the output rows is unchanged.
+- **ai:** `PolarsAgentRunner.validate` reports an output with a field no
+  column can hold (a union of two models, for instance) as
+  `OUTPUT_MISMATCH` instead of raising its `TypeError`, checks the output
+  before building the engine provider and builds it only when a budget is
+  declared.
 - **ai:** a configured `ai.prices` rate prices runs again with pydantic-ai
   2.54. That release records a response's usage before the
   `after_model_request` hook loom priced it in, so every run reported
