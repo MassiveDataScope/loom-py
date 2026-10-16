@@ -32,26 +32,12 @@ class ParallelDispatcher(Protocol):
 
     Example::
 
-        class ThreadPerTaskDispatcher:
+        class PoolDispatcher:
             def run_all(self, tasks: Sequence[Callable[[], None]]) -> None:
-                errors: list[Exception] = []
-
-                def run(task: Callable[[], None]) -> None:
-                    try:
-                        task()
-                    except Exception as exc:
-                        errors.append(exc)
-
-                threads = [
-                    threading.Thread(target=contextvars.copy_context().run, args=(run, task))
-                    for task in tasks
-                ]
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join()
-                if errors:
-                    raise errors[0]
+                with ThreadPoolExecutor() as pool:
+                    futures = [pool.submit(contextvars.copy_context().run, t) for t in tasks]
+                for future in futures:
+                    future.result()
     """
 
     def run_all(self, tasks: Sequence[Callable[[], None]]) -> None:
