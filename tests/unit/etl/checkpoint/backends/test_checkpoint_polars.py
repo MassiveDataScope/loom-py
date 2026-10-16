@@ -92,6 +92,32 @@ def test_probe_does_not_pass_encryption_to_scan(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.parametrize(
+    ("base", "memory_map"),
+    [
+        ("s3://bucket/tmp", False),
+        ("r2://bucket/tmp", False),
+        ("S3://bucket/tmp", False),
+        ("abfss://container@account/tmp", False),
+        ("/local/tmp", True),
+    ],
+)
+def test_probe_memory_maps_only_a_local_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, base: str, memory_map: bool
+) -> None:
+    mock_fs = MagicMock()
+    mock_fs.exists.return_value = True
+    monkeypatch.setattr(fsspec_core, "url_to_fs", lambda *_a, **_k: (mock_fs, "/bucket/tmp"))
+    scanned: dict[str, object] = {}
+    monkeypatch.setattr(
+        pl, "scan_ipc", lambda _path, **kwargs: scanned.update(kwargs) or MagicMock()
+    )
+
+    _PolarsCheckpointBackend(storage_options={}).probe("orders", base)
+
+    assert scanned["memory_map"] is memory_map
+
+
+@pytest.mark.parametrize(
     ("declared", "object_store_value", "botocore_value"),
     [("false", "false", False), ("yes", "true", True)],
 )

@@ -15,7 +15,6 @@ from loom.etl.checkpoint._options import CheckpointOptions, checkpoint_options
 
 _log = logging.getLogger(__name__)
 _WRITING = ".writing"
-_CLOUD_SCHEMES = ("s3://", "gs://", "gcs://", "abfss://", "abfs://", "az://")
 
 
 def _is_polars_lazy_frame(value: Any) -> TypeGuard[pl.LazyFrame]:
@@ -37,7 +36,11 @@ class _PolarsCheckpointBackend:
         if scan_path is None:
             _log.info("checkpoint READ MISS name=%s base=%s", name, base)
             return None
-        kwargs: dict[str, Any] = {"memory_map": not base.startswith(_CLOUD_SCHEMES)}
+        # Imported here: loom.etl.storage imports loom.etl.declarative through
+        # loom.etl.runtime, and loom.etl.declarative imports this module.
+        from loom.etl.storage._uri import is_cloud_path
+
+        kwargs: dict[str, Any] = {"memory_map": not is_cloud_path(base)}
         # The read declares no encryption: decryption is server-side.
         read_opts = self._options.object_store_read
         if read_opts:
