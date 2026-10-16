@@ -6,7 +6,7 @@ import importlib
 import os
 import pkgutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -144,20 +144,17 @@ def _check_exposed(meta: ETLFlowMeta) -> None:
     """Refuse a flow the worker cannot import from ``meta.source_file``."""
     attribute = flow_attribute_name(meta.name)
     module = _source_module(meta.source_file)
-    try:
-        exposed = getattr(module, attribute, None)
-    except Exception as exc:
-        raise _not_exposed(meta, attribute) from exc
-    exposed_meta = getattr(exposed, LOOM_ETL_META_ATTR, None)
-    if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
-        raise _not_exposed(meta, attribute)
-
-
-def _not_exposed(meta: ETLFlowMeta, attribute: str) -> ValueError:
-    return ValueError(
+    message = (
         f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
         f"{attribute!r}; the worker imports the flow from that attribute."
     )
+    try:
+        exposed = getattr(module, attribute, None)
+    except Exception as exc:
+        raise ValueError(message) from exc
+    exposed_meta = getattr(exposed, LOOM_ETL_META_ATTR, None)
+    if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
+        raise ValueError(message)
 
 
 def _source_module(source_file: str) -> ModuleType:
@@ -203,7 +200,9 @@ def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:
     ]
 
 
-def _package_flows(flows_package: str, pkg_path: Any) -> Iterator[tuple[Any, ETLFlowMeta]]:
+def _package_flows(
+    flows_package: str, pkg_path: Iterable[str]
+) -> Iterator[tuple[Any, ETLFlowMeta]]:
     """Yield each loom flow, with its metadata, of the modules of ``flows_package``."""
     for module_info in pkgutil.iter_modules(pkg_path):
         module = importlib.import_module(f"{flows_package}.{module_info.name}")
