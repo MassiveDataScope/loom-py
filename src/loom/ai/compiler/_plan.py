@@ -406,22 +406,6 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         source_path: Artifact provenance for error messages, when known.
     """
 
-    name: str
-    description: str
-    instructions: tuple[CompiledInstruction, ...]
-    state: StateShape | None = None
-    spec_version: int
-    inference: InferenceTarget
-    price: ModelPrice | None = None
-    output: CompiledOutput
-    output_check: OutputCheck | None = None
-    capabilities: tuple[CompiledCapability, ...] = ()
-    policies: PolicySpec
-    on_output: CompiledOutputHook | None = None
-    conversation: CompiledConversation | None = None
-    metadata: Mapping[str, str]
-    source_path: str | None = None
-
     @property
     def fingerprint(self) -> str:
         """Stable sha256 of the declared facts that decide this agent's answers.
@@ -444,3 +428,19 @@ class AgentPlan(LoomFrozenStruct, frozen=True, kw_only=True):
         keeps the fingerprint.
         """
         return plan_fingerprint(self)
+
+    name: str
+    description: str
+    instructions: tuple[CompiledInstruction, ...]
+    state: StateShape | None = None
+    spec_version: int
+    inference: InferenceTarget
+    price: ModelPrice | None = None
+    output: CompiledOutput
+    output_check: OutputCheck | None = None
+    capabilities: tuple[CompiledCapability, ...] = ()
+    policies: PolicySpec
+    on_output: CompiledOutputHook | None = None
+    conversation: CompiledConversation | None = None
+    metadata: Mapping[str, str]
+    source_path: str | None = None
