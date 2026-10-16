@@ -6,18 +6,24 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import pytest
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from loom.ai import AiConfig, InferenceTarget, ModelPrice
+from loom.ai.abc import AgentEngineProvider
+from loom.ai.compiler import CompiledOutput
 from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
 from loom.ai.etl import PolarsAgentRunner
 from loom.ai.etl import _runner as _runner_module
+from loom.ai.etl._validation import validation_issues
 from loom.ai.runtime import AgentRuntime
+from loom.core.model import loom_type
 from loom.etl.runtime import AgentIssueKind
-from tests.unit.ai.etl._types import Clashing, Other, Reply
+from tests.helpers.pydantic_ai_engine import make_plan
+from tests.unit.ai.etl._types import Clashing, Other, PydanticDecision, Reply
 
 _TYPED = """\
 spec_version: 1
@@ -115,6 +121,27 @@ class TestOutputMismatch:
 
     def test_a_json_schema_output_cannot_serve_a_typed_step(self, tmp_path: Path) -> None:
         assert _kinds(_runner(tmp_path), "untyped") == [AgentIssueKind.OUTPUT_MISMATCH]
+
+
+def _no_engine() -> AgentEngineProvider:
+    raise AssertionError("the engine provider is built only to price a budget")
+
+
+class TestOutputWithoutColumns:
+    def test_an_output_no_column_can_hold_is_an_output_mismatch(self) -> None:
+        output = CompiledOutput(schema={}, loom_type=loom_type(PydanticDecision))
+        plan = msgspec.structs.replace(make_plan(), output=output)
+
+        issues = validation_issues(
+            "contract",
+            PydanticDecision,
+            max_usd=None,
+            compile_plans=lambda: (plan,),
+            engine_provider=_no_engine,
+        )
+
+        assert [issue.kind for issue in issues] == [AgentIssueKind.OUTPUT_MISMATCH]
+        assert "PydanticDecision" in issues[0].message
 
 
 _CAP = ", max_usd: 0.01"

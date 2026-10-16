@@ -31,7 +31,8 @@ def validation_issues(
         output_type: Type the step expects every answer to decode into.
         max_usd: Budget of one execution of the step, when declared.
         compile_plans: Compiles the artifacts declaring *name*.
-        engine_provider: Builds the engine provider asked whether it prices the model.
+        engine_provider: Builds the engine provider asked whether it prices the
+            model; called only when a budget is declared.
 
     Returns:
         The issues found, empty when the agent can serve the step.
@@ -40,7 +41,7 @@ def validation_issues(
         plans = compile_plans()
         if not plans:
             return (_issue(AgentIssueKind.NOT_FOUND, f"no agent artifact declares {name!r}"),)
-        return _plan_issues(plans[0], output_type, max_usd, engine_provider())
+        return _plan_issues(plans[0], output_type, max_usd, engine_provider)
     except AgentCompilationError as error:
         return (_issue(AgentIssueKind.COMPILATION_FAILED, _describe(error)),)
 
@@ -49,18 +50,28 @@ def _plan_issues(
     plan: AgentPlan,
     output_type: type[Any],
     max_usd: Decimal | None,
-    provider: AgentEngineProvider,
+    engine_provider: Callable[[], AgentEngineProvider],
 ) -> tuple[AgentIssue, ...]:
     issues: list[AgentIssue] = []
-    if plan.output.loom_type.type is not output_type:
-        issues.append(_issue(AgentIssueKind.OUTPUT_MISMATCH, _mismatch(plan, output_type)))
-    elif clashes := metadata_clashes(output_columns(output_type)):
-        issues.append(_issue(AgentIssueKind.COLUMN_COLLISION, _collision(plan, clashes)))
-    if _budgeted(plan, max_usd) and not _priced(plan, provider):
+    if (output := _output_issue(plan, output_type)) is not None:
+        issues.append(output)
+    if _budgeted(plan, max_usd) and not _priced(plan, engine_provider()):
         issues.append(_issue(AgentIssueKind.UNPRICED_BUDGET, _unpriced(plan)))
     if max_usd is not None and (ceiling := _ceiling_issue(plan, max_usd)) is not None:
         issues.append(ceiling)
     return tuple(issues)
+
+
+def _output_issue(plan: AgentPlan, output_type: type[Any]) -> AgentIssue | None:
+    if plan.output.loom_type.type is not output_type:
+        return _issue(AgentIssueKind.OUTPUT_MISMATCH, _mismatch(plan, output_type))
+    try:
+        columns = output_columns(output_type)
+    except TypeError as error:
+        return _issue(AgentIssueKind.OUTPUT_MISMATCH, _no_columns(plan, output_type, error))
+    if clashes := metadata_clashes(columns):
+        return _issue(AgentIssueKind.COLUMN_COLLISION, _collision(plan, clashes))
+    return None
 
 
 def _ceiling_issue(plan: AgentPlan, max_usd: Decimal) -> AgentIssue | None:
@@ -92,6 +103,13 @@ def _mismatch(plan: AgentPlan, output_type: type[Any]) -> str:
     return (
         f"agent {plan.name!r} does not answer {output_type.__qualname__}; its artifact must "
         f"declare 'output: {{kind: type_ref}}' naming that type"
+    )
+
+
+def _no_columns(plan: AgentPlan, output_type: type[Any], error: TypeError) -> str:
+    return (
+        f"agent {plan.name!r} answers {output_type.__qualname__}, which has a field no "
+        f"column can hold: {error}"
     )
 
 

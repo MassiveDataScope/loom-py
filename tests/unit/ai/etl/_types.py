@@ -71,6 +71,18 @@ class PydanticQuote(pydantic.BaseModel):
     others: list[PydanticOffer]
 
 
+class PydanticRefund(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    reason: str
+
+
+class PydanticDecision(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    action: PydanticOffer | PydanticRefund
+
+
 class Clashing(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     answer: str
     agent_status: str
