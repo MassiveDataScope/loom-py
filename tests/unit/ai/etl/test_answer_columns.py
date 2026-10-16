@@ -26,6 +26,7 @@ from tests.unit.ai.etl._types import (
     PydanticBranch,
     PydanticNode,
     PydanticOffer,
+    PydanticPlain,
     PydanticQuote,
     PydanticReply,
     PydanticTree,
@@ -236,13 +237,21 @@ def test_a_cost_past_twelve_decimal_places_is_rounded_half_to_even(
     assert frame["agent_cost_usd"][0] == written
 
 
-def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text() -> None:
-    answer = Plain(
+@pytest.mark.parametrize(
+    ("output_type", "blob"),
+    [(Plain, "AGhp"), (PydanticPlain, "\x00hi")],
+    ids=["msgspec, bytes as base64", "pydantic, bytes as utf8 by ser_json_bytes"],
+)
+def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text(
+    output_type: type[Plain] | type[PydanticPlain], blob: str
+) -> None:
+    answer = output_type(
         id=uuid.UUID(int=1), at=time(1, 2, 3), wait=timedelta(days=1, seconds=5), blob=b"\x00hi"
     )
     keys = pl.DataFrame({"id_": [0]}, schema={"id_": pl.Int64()})
-    outcome = RowOutcome(output=msgspec.to_builtins(answer), error=None, usage=None)
-    columns = output_columns(Plain)
+    output = loom_type(output_type).to_builtins(answer)
+    outcome = RowOutcome(output=output, error=None, usage=None)
+    columns = output_columns(output_type)
 
     row = answers_frame(keys, (outcome,), columns, "v1").row(0, named=True)
 
@@ -253,7 +262,7 @@ def test_a_uuid_time_timedelta_or_bytes_is_its_plain_text() -> None:
         "00000000-0000-0000-0000-000000000001",
         "01:02:03",
         "P1DT5S",
-        "AGhp",
+        blob,
     )
 
 

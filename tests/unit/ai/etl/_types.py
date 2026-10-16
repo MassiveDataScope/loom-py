@@ -129,6 +129,15 @@ class Plain(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     blob: bytes
 
 
+class PydanticPlain(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    at: time
+    wait: timedelta
+    blob: bytes
+
+
 class Leaf(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     value: int
 
