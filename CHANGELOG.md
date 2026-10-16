@@ -396,6 +396,9 @@
 
 ### rest
 
+- **rest:** with an `ai:` section, `create_app` compiles the `Mcp()` bindings of
+  use cases before the agent artifacts, so when both are wrong the `Mcp()`
+  error is the one reported first.
 - **rest:** a JSON object body that fails `Command` validation now answers
   `422 boundary_validation` with a `violations` list (`{field, message}`
   pairs, `field` being the wire name the client sent, the same shape

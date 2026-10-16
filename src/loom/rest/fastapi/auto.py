@@ -629,8 +629,8 @@ class _AiWiring:
         config: Parsed ``ai:`` section, or ``None`` when absent.
         runtime: Agent runtime entered by the app lifespan alongside the SQL
             registry, or ``None`` when no section is configured.
-        plans: Compiled agent plans, kept so the application can describe
-            itself without reaching into the runtime.
+        plans: Compiled agent plans, the runtime's own; empty when there is no
+            runtime.
     """
 
     config: AiConfig | None
@@ -654,13 +654,12 @@ def _effective_agent_specs(
         config_specs: Glob patterns from ``ai.specs``.
         manifest_specs: Glob patterns from the manifest ``AGENTS`` attribute.
         has_declaring_use_case: Whether at least one compiled use case
-            declares an ``Mcp()`` marker (owner decision D1). When ``True``,
-            an empty artifact set is tolerated instead of aborting: a
-            deployment whose only AI usage is ``Mcp()`` no longer has to ship
-            a filler agent artifact it never runs. It still declares
-            ``ai.engine`` and installs the extra — ``_resolve_ai`` resolves
-            the provider unconditionally, and that is where the MCP client
-            factory comes from — this only sheds the filler *artifact*.
+            declares an ``Mcp()`` marker. When ``True``, an empty artifact set
+            is tolerated instead of aborting: a deployment whose only AI usage
+            is ``Mcp()`` need not ship a filler agent artifact it never runs.
+            It still declares ``ai.engine`` and installs the extra:
+            ``build_agent_runtime`` resolves the engine, and the MCP client
+            factory comes from it.
 
     Raises:
         AgentCompilationError: When both sources declare artifacts, or when

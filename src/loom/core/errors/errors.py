@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from loom.core.errors.codes import ErrorCode
@@ -107,8 +107,9 @@ class Forbidden(DomainError):
     leave them out where the refusal must not become an oracle for the policy.
 
     Raises:
-        ValueError: If ``reason`` is empty, ``missing`` is a single string, or an item
-            of ``missing`` is not a non-empty string.
+        ValueError: If ``reason`` is not a non-blank string, ``missing`` is a single
+            ``str`` or ``bytes``, or an item of ``missing`` is not a non-blank string.
+            A malformed refusal is a programming error, so it fails where it is built.
     """
 
     def __init__(
@@ -116,7 +117,7 @@ class Forbidden(DomainError):
         message: str = "Forbidden",
         *,
         reason: str | None = None,
-        missing: Sequence[str] = (),
+        missing: Iterable[str] = (),
     ) -> None:
         if reason is not None and (not isinstance(reason, str) or not reason.strip()):
             raise ValueError("Forbidden.reason must be a non-empty string or None")
