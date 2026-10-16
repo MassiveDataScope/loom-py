@@ -496,6 +496,7 @@ wrote it: data another tool or table keeps under that directory is deleted
 too. Only names starting with an underscore are kept. Keep nothing but the
 table's own files under a table directory you vacuum with `full=True`.
 ```
+
 The config-driven block takes the same flag as `maintenance.vacuum.full`:
 
 ```yaml
@@ -980,8 +981,12 @@ come from one of two sources, and exactly one must be given (both or neither is
 a `ValueError`):
 
 - `flows_package=`: a dotted Python package with one module per ETL, each
-  calling `etl_flow(...)` at import time. This is the existing path and its
-  behaviour is unchanged.
+  calling `etl_flow(...)` at import time. Every flow found goes through the
+  checks of [`deploy_flow`](#deploying-one-flow) before the first deployment
+  is registered: a work pool for `env`, and a source file that can be
+  imported and exposes the flow under its attribute name. When one flow
+  fails them, `discover_and_deploy_etls` raises `ValueError` and registers
+  nothing.
 - `config=`: YAML declarations, with no Python module per ETL. `config` is a
   local path, a cloud URI (`s3://`, `gs://`, …) or a glob on either:
 
@@ -1021,7 +1026,9 @@ deployment_id = deploy_flow(
 
 With no `work_pool` in the call nor in `environments.<env>` of the YAML,
 `deploy_flow` raises `ValueError`. Any object not built by a loom factory is
-a `TypeError`.
+a `TypeError`, and so is a flow built from a YAML declaration, as
+[`config=`](#deploying-etls-to-prefect) builds them: the `TypeError` names
+`discover_and_deploy_etls(config=...)`, which deploys it.
 
 The entrypoint is `<source_file>:<attribute>`, relative to the `working_dir`
 job variable (`/app/src` by default), where `attribute` is the flow name with

@@ -333,11 +333,14 @@
   exported from `loom.etl`, carrying `table_ref`) before it creates or writes
   anything, so a dimension rebuilt from a read that came back empty keeps its
   rows and the step fails. Polars checks the row count of the frame the
-  replace already collects, at no extra cost; Spark runs `isEmpty()`, one
-  job that stops at the first row, before the write recomputes the frame. On
-  Polars a `Null`-typed column still fails first, with `SchemaError`. On
-  Spark a streaming DataFrame, whose rows cannot be counted before the
-  write, raises `ValueError` and the table is left as it was.
+  replace already collects, at no extra cost. Spark computes the frame once
+  with `localCheckpoint(eager=True)`, checks that result with `isEmpty()`,
+  writes it and then frees its blocks, as described under Fixes; a Spark
+  Connect DataFrame, which has no `localCheckpoint()` in pyspark 3.5, is
+  persisted, counted, written and unpersisted instead. On Polars a
+  `Null`-typed column still fails first, with `SchemaError`. On Spark a
+  streaming DataFrame, whose rows cannot be counted before the write, raises
+  `ValueError` and the table is left as it was.
   The default, `allow_empty=True`, keeps today's behaviour, and `ReplaceSpec`
   gains the `allow_empty` field.
 - **etl:** `MaintenanceSpec`, `VacuumSpec`, `CompactSpec` and `ZOrderSpec` are
@@ -446,6 +449,12 @@
 - **prefect:** the private `_deploy_single(flow, meta, work_pool, env)` of
   `loom.prefect.deploy._discovery` now takes `(flow, meta, plan)`; callers
   migrate to the public `deploy_flow(flow, env=..., work_pool=...)`.
+- **prefect:** `discover_and_deploy_etls(flows_package=...)` checks every
+  flow of the package before it registers the first deployment. A flow its
+  module exposes under another attribute name, or whose source file cannot
+  be imported, raises `ValueError` and no deployment of the package is
+  registered, where that flow's deployment used to be registered with an
+  entrypoint the worker cannot import, alongside the others.
 
 ### etl
 
@@ -468,11 +477,14 @@
   therefore nest under their process span instead of starting a trace of
   their own. `ParallelDispatcher` lists running each task in a copy of the
   caller's context among the requirements on an implementation.
-- **etl:** `WithAgent(max_usd=...)` takes only a `Decimal`: a `float`, `int`
-  or `str` budget raises `TypeError`, where a `float` or `int` was accepted.
-  `NaN`, `sNaN` and `Infinity` raise `ValueError`, like zero and a negative
-  amount; `NaN` and `sNaN` used to raise `decimal.InvalidOperation` and
-  `Infinity` was accepted.
+- **etl:** `WithAgent(max_usd=...)` keeps the budget as a `Decimal`. An
+  `int` is converted exactly. A `float` emits a `DeprecationWarning`, is
+  converted through its `str()` (`0.1` becomes `Decimal("0.1")`) and is
+  removed in loom 3.0. A `bool`, accepted before, and any other type, such as
+  `str`, raise `TypeError`. `NaN`, `sNaN` and `Infinity`, as a `Decimal` or a
+  `float`, raise `ValueError`, like zero and a negative amount; a `Decimal`
+  `NaN` or `sNaN` used to raise `decimal.InvalidOperation`, and `Infinity` and
+  a `float` `nan` were accepted.
 
 ## 🐛 Fixes
 
@@ -510,9 +522,21 @@
   computed once with `localCheckpoint(eager=True)`, and the check and the
   write both read that result. Those rows are kept in executor storage, not
   in reliable storage: losing an executor before the write ends fails the
-  write instead of recomputing the frame. The write policy's `_is_empty` hook becomes
-  `_pin_rows`, which returns the frame to write along with whether it is
-  empty.
+  write instead of recomputing the frame. Once the write ends, whether it
+  succeeded or failed, and when the check refuses the frame, the writer
+  unpersists the checkpointed RDD, so its blocks do not stay on the executors
+  for the rest of the session. A Spark Connect DataFrame has no
+  `localCheckpoint()` in pyspark 3.5: it is persisted with `MEMORY_AND_DISK`,
+  counted, written and unpersisted. That is weaker: Spark recomputes a cached
+  block it loses, so the write may read rows other than the ones counted. The
+  write policy's `_is_empty` hook becomes `_pin_rows`, which returns the
+  frame to write along with whether it is empty, and gains
+  `_release_pinned`, which frees what `_pin_rows` kept.
+- **etl:** the Polars checkpoint store memory-maps only a local checkpoint.
+  It recognised cloud URIs by a lower-case prefix list without `r2://`, so a
+  checkpoint under `r2://` or an upper-case scheme such as `S3://` was read
+  with `memory_map=True`; it now uses the scheme set of
+  `loom.etl.storage._uri`, compared case-insensitively.
 - **etl:** documentation states what the writers do. `replace(streaming=...)`
   and `ReplaceSpec.streaming` claimed a streaming Arrow write on Polars; no
   backend reads the flag for a full replace, and the collect engine follows
@@ -650,8 +674,8 @@
   one regrouping rule, and a node that is neither a plan nor a parallel group
   raises `TypeError` instead of being dropped.
 - **etl:** the private `_is_cloud_path` of `loom.etl.checkpoint._cleaners`
-  moves to `loom.etl.storage._uri.is_cloud_path`, and the Polars backend
-  defines its frame type variable once.
+  moves, with the same scheme set, to `loom.etl.storage._uri.is_cloud_path`,
+  and the Polars backend defines its frame type variable once.
 
 # 🚀 Release 2.1.2 ([#238](https://github.com/the-reacher-data/loom-py/pull/238))
 
