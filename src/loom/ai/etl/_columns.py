@@ -150,18 +150,19 @@ def _json(value: Any) -> str:
 
 
 _JSON: Final = Column(pl.String(), _json)
+_TEXT: Final = Column(pl.String(), _same)
 
 _SCALARS: Final[Mapping[type[mi.Type], Column]] = MappingProxyType(
     {
-        mi.StrType: Column(pl.String(), _same),
+        mi.StrType: _TEXT,
         mi.IntType: Column(pl.Int64(), _same),
         mi.FloatType: Column(pl.Float64(), float),
         mi.BoolType: Column(pl.Boolean(), _same),
         mi.DateType: Column(pl.Date(), date.fromisoformat),
         mi.DecimalType: Column(DECIMAL_DTYPE, _decimal),
-        mi.UUIDType: Column(pl.String(), _same),
-        mi.TimeType: Column(pl.String(), _same),
-        mi.TimeDeltaType: Column(pl.String(), _same),
-        mi.BytesType: Column(pl.String(), _same),
+        mi.UUIDType: _TEXT,
+        mi.TimeType: _TEXT,
+        mi.TimeDeltaType: _TEXT,
+        mi.BytesType: _TEXT,
     }
 )
