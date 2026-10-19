@@ -97,6 +97,34 @@ Open point: how auto-CRUD reaches the request's scope binding without `rest`
 depending on the SQLAlchemy RLS package. Proposal: move the binding resolver,
 which depends only on `core.identity`, into `loom.core`.
 
+### Performance
+
+Composite keys must keep the loading cost loom has today:
+
+- No lazy loading. ORM relationships stay `lazy="noload"`
+  (`core/backend/sqlalchemy.py`, `_relationship_kwargs`); reading a relation
+  attribute never issues a query.
+- One batched query per relation step for a whole page, whatever the number of
+  rows: `WHERE (fk_1, fk_2) IN ((…), (…))` replaces `WHERE fk IN (…)`. A page of
+  N rows with K relation steps costs 1 + K statements, never 1 + N × K.
+- Relations load only for the profile that declares them (`profiles=("detail",)`);
+  the default list profile loads none.
+- The bound parameters of one IN list are page size × key width. With the
+  maximum page size of 1000 and a two-column key that is 2000 parameters,
+  below Postgres's limit of 65535 per statement. A wider key or a larger
+  maximum page size needs chunking.
+- The foreign-key columns of a composite relation need a composite index in
+  the same column order, or the row-value IN scans the child table. To be
+  verified: whether loom creates that index for the composite foreign keys it
+  generates.
+- To be verified: the relation batches of one read run with `asyncio.gather` on
+  the same `AsyncSession` (`core_model.py`, the call to `_fetch_relation_batch`).
+  SQLAlchemy does not support concurrent use of one `AsyncSession`; this applies
+  to single keys today and must be checked before adding composite loads.
+
+Every relation test counts the statements it issues (1 + K) and runs on
+Postgres with `EXPLAIN` showing an index scan for the row-value IN.
+
 ## Standards
 
 No ISO standard governs REST route design. Each rule cites the standard that
