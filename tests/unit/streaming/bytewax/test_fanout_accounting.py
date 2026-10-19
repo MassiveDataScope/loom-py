@@ -32,6 +32,7 @@ from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E
 from loom.streaming.bytewax.handlers import _shared  # noqa: E402
 from loom.streaming.bytewax.handlers import routing as _routing  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
+from loom.streaming.compiler import StreamingErrorCode  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import Order, Result  # noqa: E402
@@ -297,8 +298,12 @@ class TestSinkTrackingContract:
         tracker, _ = _tracker()
         sink = _UserSink()
 
-        with pytest.raises(RuntimeConfigurationError, match="bind_commit_tracker"):
+        with pytest.raises(RuntimeConfigurationError, match="bind_commit_tracker") as exc_info:
             _adapter._bind_commit_tracker_object(sink, tracker)
+
+        issue = exc_info.value.issues[0]
+        assert issue.code is StreamingErrorCode.SINK_CANNOT_TRACK_COMMITS
+        assert (issue.component, issue.field) == ("_UserSink", "streaming.delivery")
 
     def test_untrackable_sink_is_fine_under_at_most_once(self) -> None:
         class _UserSink:
