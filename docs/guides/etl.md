@@ -1059,10 +1059,12 @@ deployment_ids = discover_and_deploy_etls(
 
 `env` and the keys of `environments` are loom environments: `production`,
 `staging`, `development` or `test`; any other value fails. Each deployment
-records its environment as the flow's `env` parameter, so its runs resolve to
-it: the runner takes its logger defaults from it and, in production and
-staging, runs the [deploy checks](../getting-started/environments.md). A run
-started without `env` resolves `LOOM_ENV`, else production.
+records its environment as the flow's `env` parameter. A run takes its
+environment from the worker's `LOOM_ENV` (else production), and `env` only
+confirms it: a run whose `env` differs fails before any step, so set
+`LOOM_ENV` on each worker to the environment of its deployments. The runner
+takes its logger defaults from that environment and, in production and
+staging, runs the [deploy checks](../getting-started/environments.md).
 
 Globs follow the rules of [`includes`](#composing-files-with-includes): only
 regular `.yaml` / `.yml` files match, sorted by resolved path, and a pattern

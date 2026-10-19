@@ -116,7 +116,8 @@ def _parsed(name: str, key: str, value: str) -> Any:
         layer = OmegaConf.from_dotlist([f"{key}={value}"])
         written = OmegaConf.to_container(layer, resolve=False)
     except (OmegaConfBaseException, yaml.YAMLError):
-        # From None: the parser's exception, if chained, would quote the value.
+        # From None: chained, the parser's exception would print with the
+        # traceback, and its message may quote the value.
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
     if any(_INTERPOLATION in text for text in _strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
@@ -131,7 +132,8 @@ def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
     try:
         return OmegaConf.merge(config, layer)
     except OmegaConfBaseException:
-        # From None: the merge error, if chained, would quote the value.
+        # From None: chained, the merge error would print with the traceback,
+        # and its message may quote the value.
         raise ConfigError(f"{name} does not merge into {key!r}") from None
 
 

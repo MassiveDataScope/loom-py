@@ -40,7 +40,7 @@ startup.
 variables: the selector, the `LOOM__*` overrides and every other `LOOM_*`
 variable (`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
 `LOOM_SPOOL_DIR`, the Spark test ones), which the rest of loom reads through
-`loom_variable`.
+`loom_variable` and sets for a block through `scoped_loom_variable`.
 
 - `Environment(StrEnum)`: `production`, `staging`, `development`, `test`.
   `is_deployed` is true for production and staging.
@@ -68,8 +68,11 @@ variable (`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
   environment fails loudly.
 - `tests/unit/test_environment_containment.py` fails when any other module
   names `LOOM_ENV`, `ENVIRONMENT`, a similar variable, a `LOOM_*` variable or
-  the `LOOM__` prefix, or reads through `os.environ`/`os.getenv` a name the
-  environment module defines;
+  the `LOOM__` prefix, or touches the process environment with a name the
+  environment module defines: `os.environ`/`os.getenv` reads, an aliased
+  import or module attribute, an f-string `LOOM_` key, a loop or
+  comprehension over `os.environ` filtered by a loom name, or
+  `name in os.environ`, each with a self-test;
   `tests/unit/test_domain_containment.py` fails when any other module of loom
   names an environment (`prod`, `production`, `staging`, `dev`,
   `development`), with one exemption keyed by file and literal for a literal
@@ -108,34 +111,42 @@ Within any file, its own values win over its `includes`.
   `config_source_paths` layers the same way.
 - Migrations: Alembic has no application entry point, so the locator still
   needs `LOOM_CONFIG` or an explicit path; either may name the same config
-  directory, layered by `LOOM_ENV` like the application.
+  directory, layered by `LOOM_ENV` like the application. `app.code_path` is
+  put on `sys.path` by one function, `loom.core.locator.add_code_path`, for
+  `create_app`, the CLI and the locator alike: relative to the first file's
+  directory, once, and only when the directory exists.
 - `loom.core.config.overrides.load_application_config` is the one function
   every application load goes through: REST and Celery `create_app`,
   `bootstrap_worker`, `loom check --deploy`, `ETLRunner.from_yaml` (and so
   the Prefect flows), `StreamingRunner.from_yaml`, the migration locator and
-  `load_kafka_settings`. The per-flow YAML applies the same overrides
-  (`apply_overrides`). `ConfigContext.from_yaml` is the raw loader and
-  applies none. `create_kernel` loads no configuration, so it takes only
-  `environment=`.
+  `load_kafka_settings`. A per-flow Prefect YAML defines a flow, not the
+  process's application configuration, and is read without overrides.
+  `ConfigContext.from_yaml` is the raw loader and applies none.
+  `create_kernel` loads no configuration, so it takes only `environment=`.
 - `LOOM__*` variables are built on OmegaConf: they become a dotlist
   (`OmegaConf.from_dotlist`) merged as the last layer. A double underscore
   separates levels, as in ASP.NET Core and pydantic-settings. Each level
-  matches the declared key case-insensitively, walking the configuration as
-  written so no placeholder is resolved; an undeclared level is added in
-  lower case. The first level must name a section the configuration declares
-  or loom reads (`ConfigKey`, plus the per-flow YAML sections the Prefect
-  package registers with `register_config_sections`); anything else is a
-  startup error naming the variable. Deeper typos are refused by the section
+  is letters, digits and underscores, and matches the declared key
+  case-insensitively, walking the configuration as written so no placeholder
+  is resolved; an undeclared level is added in lower case. The first level
+  must name a section the configuration declares or `ConfigKey` lists;
+  anything else is a startup error naming the variable. Two variables for the
+  same key, or for a key and one of its parents, are refused naming both, and
+  the merge follows the resolved keys. Deeper typos are refused by the section
   structs that forbid unknown fields, which are those with a single reader:
   `app.rest` and below, the `observability` sub-sections, `sql`, `celery`,
-  `jobs`, `storage`, `kafka`, the bytewax runtime, `dynamodb` and the flow
-  config. `app`, `database`, `persistence` and the top of `observability` are
+  `jobs`, every `storage` struct, `kafka`, the bytewax runtime, `dynamodb`
+  and the flow config. `app`, `database`, `persistence` and the top of `observability` are
   decoded in part by several readers and accept keys another reader owns;
   `ai` keeps its own validation.
-- The `checks` section cannot be overridden: silencing and check modules are
-  declared only in the versioned files, where they are reviewed. Values are
-  literals: a value holding `${` is refused, and so is a variable reaching
-  inside an interpolated key. Values parse as a YAML 1.1 dotlist (`5`,
+- `checks` and `app.rest.auth` cannot be overridden, by their own variable
+  or by a parent one whose value reaches them (case-insensitively): silences,
+  check modules and the authentication mechanism are declared only in the
+  versioned files, where they are reviewed. The `checks` section is also read
+  as written, and a placeholder anywhere in it is a `ConfigError`. Values are
+  literals: each value is parsed first and any string in it holding `${` is
+  refused, so a quoted, `\x24`-escaped or nested placeholder cannot slip
+  through; a variable reaching inside an interpolated key is refused too. Values parse as a YAML 1.1 dotlist (`5`,
   `false`, `no`, `[a, b]`, `{a: 1}`, empty is null, ` #` starts a comment)
   and the msgspec structs validate them; a list is replaced whole. An error
   names the variable, never the value, and is raised without the parser's
@@ -195,7 +206,9 @@ falling back to defaults.
   application registers under its own (`billing.gateway.E001`). A duplicate or
   malformed id is refused at registration.
 - `enforce_deploy_checks(config, environment, skip=...)` runs only when the
-  environment is deployed, on the final merged configuration. `skip` takes ids
+  environment is deployed, on the final merged configuration; otherwise it
+  logs one WARNING that the checks were skipped, naming the environment and
+  `LOOM_ENV`. `skip` takes ids
   or areas a process knows not to apply: processes serving no HTTP (the
   worker, the ETL and streaming runners, the maintenance flow) skip
   `REST_CHECKS` (`loom.rest`). Runners run them before building any backend
@@ -222,7 +235,7 @@ configuration name a mechanism supplied in code:
 
 | Id | Finding |
 |---|---|
-| `loom.rest.E001` | Neither `app.rest.auth.jwt` nor `app.rest.auth.custom: true` is set: the API authenticates nobody. |
+| `loom.rest.E001` | Neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set: the API authenticates nobody. A placeholder `jwt` fails, since it may resolve to null. |
 | `loom.rest.W001` | `app.rest.docs_url`, `redoc_url` or `openapi_url` is not `null`: the schema is published. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer. |
 
@@ -230,7 +243,8 @@ configuration name a mechanism supplied in code:
 `authenticator`. `create_app` refuses an `authenticator` without it, `custom:
 true` without an `authenticator`, and `custom: true` beside `jwt`. The CLI and
 `create_app` therefore read the same answer, and nobody has to silence
-`loom.rest.E001` to pass CI.
+`loom.rest.E001` to pass CI. A `celery` section that fails validation stops
+`create_app`; only an absent one falls back to the in-process job service.
 
 The checks read keys as written (`ConfigContext.raw`) and resolve no
 placeholder, so they run in CI without the application's secrets; a value
@@ -247,7 +261,8 @@ the `LOOM__*` variables of the shell apply (those of a deployed task do not,
 which is why security settings belong in the files). A configuration does
 not say which process it is for (a REST app may declare `celery`, a worker
 may share `app.rest`), so the CLI does not guess: `--skip loom.rest` checks a
-worker, ETL or streaming configuration as those processes do at startup.
+worker, ETL or streaming configuration as those processes do at startup,
+and the command prints the areas it skipped.
 `app.code_path` joins the import path as `create_app` adds it, so
 `checks.modules` import. It loads loom's own checks, the REST ones only when
 FastAPI is installed.
@@ -271,13 +286,26 @@ default, `ephemeral`, `unsigned`). Its check is not part of this decision.
 After this branch merges, that branch registers `loom.cursors.E001` with
 `@deploy_check` in a module its package already imports, and adds the package
 to `_load_check_packages` in `loom.cli.check` so `loom check --deploy` sees
-it. This branch's test fixture that builds a REST app from its own YAML
-already declares `persistence.cursors.signing: ephemeral` and silences
-`loom.cursors.E001`, and the environments guide's overlay examples will need
-the same cursor setting.
-Because the checks run on the merged configuration,
-`LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` in production will fail
-startup once that check exists.
+it. The development fixture in `tests/unit/rest/test_deploy_checks.py` that
+builds a REST app from its own YAML already sets
+`persistence.cursors.signing: ephemeral`. Once `loom.cursors.E001` exists,
+these tests run the checks in a deployed environment and will meet it:
+
+- `tests/unit/rest/test_deploy_checks.py`: every `create_app` call with
+  `environment="production"` or `"staging"` (the E001, silencing,
+  application-check-module and authenticator tests), and the test that leaves
+  `LOOM_ENV` unset so the app starts as production;
+- `tests/unit/cli/test_check_deploy.py`: every `loom check --deploy` run on
+  a configuration without the cursor setting, `--env production` ones
+  included, since the command runs every check whatever the environment and
+  only `--skip` leaves an area out.
+
+They need the cursor setting in their configurations, or the id under
+`checks.silenced`. The guide's overlay examples need the same setting. A
+cursor signing key in any example is read from a variable named like
+`CURSOR_KEY_...`, never `LOOM_*`: `LOOM_` names belong to
+`loom.core.environment`, and `LOOM__` ones are configuration overrides,
+which secrets do not go through.
 
 ## Consequences
 

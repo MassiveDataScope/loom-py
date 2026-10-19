@@ -14,8 +14,9 @@ environment on its own.
 The environment comes from, in order:
 
 1. the `environment=` argument of the entry point: REST and Celery
-   `create_app`, `bootstrap_worker`, `ETLRunner`, `StreamingRunner`, or the
-   `env` parameter of a Prefect flow;
+   `create_app`, `bootstrap_worker`, `ETLRunner`, `StreamingRunner` (a
+   Prefect flow's `env` parameter is not a selector: it only confirms the
+   worker's `LOOM_ENV`, see below);
 2. the `LOOM_ENV` variable;
 3. `production`, when neither is given.
 
@@ -176,21 +177,26 @@ LOOM__SQL__CONNECTIONS__ANALYTICS__POOL_SIZE=20   # sql.connections.analytics.po
 LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.example]'
 ```
 
-- Each level matches the key the configuration declares at that place,
-  whatever its case. A level the configuration does not declare is added in
-  lower case; the section types that refuse unknown keys (`app.rest`, the
-  `observability` sub-sections, `sql`, `celery`, `storage`, `kafka` and most
-  other loom sections) then refuse a typo.
+- A level is letters, digits and underscores; a `.` or `[` in a level stops
+  startup. Each level matches the key the configuration declares at that
+  place, whatever its case. A level the configuration does not declare is
+  added in lower case; the section types that refuse unknown keys
+  (`app.rest`, the `observability` sub-sections, `sql`, `celery`, `jobs`,
+  `storage`, `kafka`, the bytewax runtime, `dynamodb`) then refuse a typo.
   The keys of `app`, `database`, `persistence` and the top of
   `observability`, which several readers share, are not checked.
 - The first level must name a section the configuration declares or loom
   knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
-  the variable.
-- The `checks` section cannot be overridden: silencing a check or changing
-  the check modules is declared only in the files, where it is reviewed.
-- Values are literals. A value holding `${` is refused, so an override
-  cannot reach another variable or a secret, and so is a variable reaching
-  inside a key whose value is an interpolation.
+  the variable. Two variables for the same key, or for a key and one of its
+  parents, stop startup naming both.
+- `checks` and `app.rest.auth` cannot be overridden, by their own variable or
+  by a parent one whose value reaches them: deploy-check silences, check
+  modules and the authentication mechanism are declared only in the files.
+- Values are literals. The value is parsed first and any string in it
+  holding `${` is refused, however it is written (quoted, escaped as `\x24`,
+  inside a list or a mapping), so an override cannot reach another variable
+  or a secret. A variable reaching inside a key whose value is an
+  interpolation is refused too.
 - Values parse as an OmegaConf dotlist (YAML 1.1), then the section types
   validate them:
   `5` is an integer, `false` a boolean, `[a, b]` a list and `{read: 5, write: 10}`
@@ -198,7 +204,8 @@ LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.examp
   YAML 1.1 rules apply: `yes`, `no`, `on` and `off` are booleans, `1.10`
   becomes `1.1`, `0755` is octal, an empty value is null, ` #` starts a
   comment and `a: b` is a mapping. Quote a value to keep it a string:
-  `LOOM__APP__VERSION='"1.10"'`.
+  `LOOM__APP__REST__VERSION='"1.10"'` sets the API version published in the
+  OpenAPI document to the string `1.10`.
 - At startup one WARNING line names the keys that came from variables. Their
   values are never logged.
 
@@ -207,9 +214,13 @@ without changing the application, such as the log level, pool sizes and
 timeouts, the OpenTelemetry endpoint, CORS origins or the public URL.
 
 What does not: secrets, and the structure of the application (discovery,
-routes, authentication mechanism). Structure belongs in the files, where it is
-reviewed. Do not pass secrets through `LOOM__*`: the override line names
-every key it sets.
+routes, authentication mechanism), which belongs in the reviewed files. Do
+not pass secrets through `LOOM__*`: the override line names every key it
+sets.
+
+The overrides apply to an application's configuration only. A per-flow
+Prefect YAML defines a flow, not the process's configuration, and is read
+without them.
 
 ### Secrets
 
