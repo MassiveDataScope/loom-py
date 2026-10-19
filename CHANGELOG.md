@@ -187,7 +187,11 @@
 - **rest:** a use case says it created. `loom.core.use_case.Created[T]` wraps
   the result of a use case declared `T | Created[T]`; the REST route answers
   `Created(v)` with `201` and body `v`, and any other result with the route's
-  `status_code` as before. OpenAPI documents both statuses with the same
+  `status_code` as before. `Created(v, location="/items/1")` also sends
+  `Location` (RFC 9110 §15.3.2), and OpenAPI declares that header on the
+  `201`; a location that is empty, not printable ASCII or holds a space
+  raises `ValueError`. `LoomRestAdapter.handle` answers a `Created` the same
+  way instead of returning the wrapper. OpenAPI documents both statuses with the same
   schema. Compilation refuses a `Created` that wraps a type other than another
   member of the result, appears twice or is not parameterised, and a
   `Created` on a route whose `status_code` is already `201`. Every other

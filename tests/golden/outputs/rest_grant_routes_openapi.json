@@ -128,7 +128,16 @@
               }
             }
           },
-          "description": "Created"
+          "description": "Created",
+          "headers": {
+            "Location": {
+              "description": "URI of the created resource, when the use case gives one.",
+              "schema": {
+                "format": "uri-reference",
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }

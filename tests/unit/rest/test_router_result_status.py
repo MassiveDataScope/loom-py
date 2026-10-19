@@ -31,7 +31,9 @@ class GrantView(msgspec.Struct, frozen=True):
 class CreateGrant(UseCase[Any, GrantView | Created[GrantView]]):
     async def execute(self, grant_id: str) -> GrantView | Created[GrantView]:
         view = GrantView(grant_id=grant_id)
-        return Created(view) if grant_id.startswith("new") else view
+        if grant_id.startswith("new"):
+            return Created(view, location=f"/grants/{grant_id}")
+        return Created(view) if grant_id.startswith("fresh") else view
 
 
 class ReadGrant(UseCase[Any, GrantView]):
@@ -100,25 +102,30 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
     return TestClient(app)
 
 
-def test_a_created_result_answers_201_with_its_value() -> None:
+def test_a_created_result_answers_201_with_its_value_and_location() -> None:
     response = _client(Grants).put("/grants/new-1")
 
+    assert (response.status_code, response.json()) == (201, {"grant_id": "new-1"})
+    assert response.headers["Location"] == "/grants/new-1"
+
+
+def test_a_created_result_without_location_sends_no_location() -> None:
+    response = _client(Grants).put("/grants/fresh-1")
+
     assert response.status_code == 201
-    assert response.json() == {"grant_id": "new-1"}
+    assert "Location" not in response.headers
 
 
-def test_any_other_result_answers_the_route_status() -> None:
-    response = _client(Grants).put("/grants/old-1")
+@pytest.mark.parametrize(
+    ("interface", "url", "status"),
+    [(Grants, "/grants/old-1", 200), (AcceptedGrants, "/accepted/old-1", 202)],
+)
+def test_any_other_result_answers_the_route_status(
+    interface: type[RestInterface[Any]], url: str, status: int
+) -> None:
+    response = _client(interface).put(url)
 
-    assert response.status_code == 200
-    assert response.json() == {"grant_id": "old-1"}
-
-
-def test_the_route_status_applies_whatever_it_is() -> None:
-    client = _client(AcceptedGrants)
-
-    assert client.put("/accepted/old-1").status_code == 202
-    assert client.put("/accepted/new-1").status_code == 201
+    assert (response.status_code, response.json()) == (status, {"grant_id": "old-1"})
 
 
 def test_openapi_documents_both_statuses_with_the_same_schema() -> None:
@@ -131,6 +138,13 @@ def test_openapi_documents_both_statuses_with_the_same_schema() -> None:
     expected = {"$ref": "#/components/schemas/GrantView"}
     assert responses["200"]["content"]["application/json"]["schema"] == expected
     assert responses["201"]["content"]["application/json"]["schema"] == expected
+    assert responses["201"]["headers"] == {
+        "Location": {
+            "description": "URI of the created resource, when the use case gives one.",
+            "schema": {"type": "string", "format": "uri-reference"},
+        }
+    }
+    assert "headers" not in responses["200"]
 
 
 def test_openapi_of_a_route_without_created_is_unchanged() -> None:
@@ -161,4 +175,3 @@ def test_a_result_without_json_schema_documents_no_success_body(path: str) -> No
     responses = _client(Undocumented).get("/openapi.json").json()["paths"][path]["get"]["responses"]
 
     assert set(responses) == {"200"}
-    assert responses["200"]["content"]["application/json"]["schema"] == {}

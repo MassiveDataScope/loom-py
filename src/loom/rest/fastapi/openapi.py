@@ -22,9 +22,16 @@ from loom.core.model import pydantic_type
 from loom.core.model.json_schema import DEFS, DEFS_PREFIX, REF
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.rest.compiler import CompiledRoute, QueryField
-from loom.rest.constants import LIMIT_DEFAULT, QueryParam
+from loom.rest.constants import LIMIT_DEFAULT, LOCATION_HEADER, QueryParam
 
 JsonSchema = dict[str, Any]
+
+_LOCATION_HEADER_SCHEMA: JsonSchema = {
+    LOCATION_HEADER: {
+        "description": "URI of the created resource, when the use case gives one.",
+        "schema": {"type": "string", "format": "uri-reference"},
+    }
+}
 
 _PARAM_IN_QUERY = "query"
 _PARAM_NAME = "name"
@@ -132,7 +139,7 @@ def build_success_responses(
     if compiled_route.created_type is not None:
         created = _response_entry(compiled_route.created_type, component_registry)
         if created is not None:
-            responses[HTTPStatus.CREATED.value] = created
+            responses[HTTPStatus.CREATED.value] = {**created, "headers": _LOCATION_HEADER_SCHEMA}
     return responses
 
 

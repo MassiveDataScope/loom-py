@@ -35,7 +35,6 @@ import types
 import typing
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from http import HTTPStatus
 from typing import Any
 
 import msgspec
@@ -72,7 +71,7 @@ from loom.rest.fastapi.openapi import (
     build_request_body_schema,
     build_success_responses,
 )
-from loom.rest.fastapi.response import MsgspecJSONResponse
+from loom.rest.fastapi.response import MsgspecJSONResponse, created_response
 
 _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
@@ -523,7 +522,7 @@ async def _execute_route(
             identity=identity,
         )
     if isinstance(result, Created):
-        result, status_code = result.value, HTTPStatus.CREATED.value
+        return created_response(result)
     return MsgspecJSONResponse(content=result, status_code=status_code)
 
 

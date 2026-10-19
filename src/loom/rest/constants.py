@@ -36,5 +36,11 @@ LIMIT_DEFAULT = 50
 WWW_AUTHENTICATE_HEADER = "WWW-Authenticate"
 """Header carrying the authentication challenge of a ``401`` response."""
 
+RETRY_AFTER_HEADER = "Retry-After"
+"""Header carrying the delay, in seconds, a ``429`` asks the caller to wait."""
+
+LOCATION_HEADER = "Location"
+"""Header carrying the URI of the resource a ``201`` created."""
+
 BEARER_CHALLENGE: Mapping[str, str] = MappingProxyType({WWW_AUTHENTICATE_HEADER: "Bearer"})
 """The single challenge the framework issues, shared by every 401 producer."""

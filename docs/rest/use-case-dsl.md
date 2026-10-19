@@ -769,14 +769,33 @@ from loom.core.use_case import Created, Input
 class CreateGrant(UseCase[Grant, GrantView | Created[GrantView]]):
     async def execute(self, cmd: CreateGrantCommand = Input()) -> GrantView | Created[GrantView]:
         view, changed = await self._grants.grant(cmd)
-        return Created(view) if changed else view
+        return Created(view, location=f"/grants/{view.grant_id}") if changed else view
 ```
 
 The route answers `Created(view)` with `201` and `view` as the body, and a
-plain `view` with its `status_code`. OpenAPI documents both statuses with the
-`GrantView` schema. `Created` must wrap one of the other members of the result;
-anything else fails at compile time. Callers other than REST receive the
-`Created` wrapper and read `.value`.
+plain `view` with its `status_code`. With `location`, the `201` also carries a
+`Location` header; a location that is empty, not printable ASCII or holds a
+space raises `ValueError`. OpenAPI documents both statuses with the
+`GrantView` schema and declares `Location` on the `201`. `Created` must wrap
+one of the other members of the result, and a route whose `status_code` is
+already `201` cannot return it; either fails at startup. `LoomRestAdapter`
+answers a `Created` the same way; other callers receive the wrapper and read
+`.value`.
+
+### `429` when the caller spent its budget
+
+loom ships no rate limiter. A use case that refuses a caller for exceeding a
+budget raises `RateLimited` from `loom.core.errors`:
+
+```python
+from loom.core.errors import RateLimited
+
+raise RateLimited(retry_after=1.5)
+```
+
+The route answers `429` with code `rate_limited`, the standard error body and
+`Retry-After: 2`: the delay is kept in whole seconds, rounded up and at least
+`1`. A non-finite `retry_after` raises `ValueError`.
 
 ---
 

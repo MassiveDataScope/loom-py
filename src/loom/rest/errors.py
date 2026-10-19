@@ -21,7 +21,7 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
-from loom.rest.constants import BEARER_CHALLENGE, WWW_AUTHENTICATE_HEADER
+from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
 
 class ErrorField(StrEnum):
@@ -161,7 +161,7 @@ def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
     if status is HTTPStatus.UNAUTHORIZED:
         return dict(BEARER_CHALLENGE)
     if isinstance(error, RateLimited):
-        return {"Retry-After": str(error.retry_after)}
+        return {RETRY_AFTER_HEADER: str(error.retry_after)}
     return None
 
 

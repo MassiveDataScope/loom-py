@@ -133,7 +133,7 @@ class CreateGrant(UseCase[Any, GrantView | Created[GrantView]]):
     ) -> GrantView | Created[GrantView]:
         self._budget.spend()
         view, created = self._store.grant(command.membership_id, command.role_code)
-        return Created(view) if created else view
+        return Created(view, location=f"/v1/grants/{view.grant_id}") if created else view
 
 
 class RevokeGrant(UseCase[Any, GrantView]):
@@ -218,6 +218,7 @@ def test_a_new_grant_answers_201_and_a_repeated_one_200() -> None:
 
     assert (created.status_code, repeated.status_code) == (201, 200)
     assert created.json() == repeated.json()
+    assert created.headers["Location"] == f"/v1/grants/{created.json()['grantId']}"
 
 
 def test_a_revoke_answers_200_with_the_revoked_grant() -> None:
