@@ -216,3 +216,13 @@ def test_a_secret_placeholder_in_the_logger_config_does_not_break_the_check(
 
     assert result.exit_code == 0, result.output
     assert "loom.logger.W001" in result.output
+
+
+@pytest.mark.parametrize("code_path", ["${oc.env:CODE_DIR}", 5, ["src"]])
+def test_a_code_path_that_is_not_a_literal_path_fails(tmp_path: Path, code_path: object) -> None:
+    config = _write(tmp_path / "app.yaml", {"app": {**_SAFE_APP, "code_path": code_path}})
+
+    result = runner.invoke(app, ["check", "--deploy", str(config)])
+
+    assert result.exit_code == 1
+    assert "app.code_path" in result.output

@@ -76,7 +76,12 @@ def _load_check_packages() -> None:
 
 def _add_code_path(context: ConfigContext, config_dir: Path) -> None:
     raw = context.raw("app.code_path", DEFAULT_CODE_PATH)
-    add_code_path(raw if isinstance(raw, str) else DEFAULT_CODE_PATH, config_dir)
+    if not isinstance(raw, str) or "${" in raw:
+        raise ConfigError(
+            "app.code_path must be a literal path for loom check: a placeholder or a "
+            "non-string value cannot name the directory its check modules import from"
+        )
+    add_code_path(raw, config_dir)
 
 
 def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ...]:

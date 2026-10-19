@@ -240,5 +240,5 @@ def test_a_placeholder_in_the_checks_section_is_a_config_error(checks: dict[str,
 
     registry = _registry()
 
-    with pytest.raises(ConfigError, match="checks"):
+    with pytest.raises(ConfigError, match="the checks section holds a placeholder"):
         run_deploy_checks(config, registry=registry)
