@@ -14,38 +14,17 @@ from typing import Any
 import msgspec
 
 from loom.core.config import is_cloud_uri, load_config
-from loom.core.config.overrides import apply_overrides, register_config_sections
-from loom.core.environment import Environment, override_variables, parse_environment
+from loom.core.environment import Environment, parse_environment
 from loom.prefect._meta import FlowTrigger
 
 _ENV_INTERPOLATION = re.compile(r"\$\{oc\.[^}]*\}")
-
-# The top-level sections loom reads from a per-flow YAML. A flow process loads
-# its storage configuration with the same LOOM__ variables, so they are known
-# sections there too.
-FLOW_SECTIONS = (
-    "etl",
-    "etls",
-    "pipeline",
-    "params_type",
-    "storage_config_path",
-    "correlation_field",
-    "schedule",
-    "params",
-    "tags",
-    "environments",
-    "retry",
-    "notifications",
-    "trigger",
-)
-register_config_sections(*FLOW_SECTIONS)
 
 
 def read_yaml(config_path: str) -> dict[str, Any]:
     """Load a per-flow YAML via ``loom.core.config.load_config``.
 
-    The ``LOOM__*`` variables merge last, as for an application's
-    configuration (see :mod:`loom.core.config.overrides`).
+    A per-flow YAML defines a flow, not the process's application
+    configuration, so the ``LOOM__*`` overrides do not apply to it.
     ``${oc.*}`` interpolations are resolved against the host env at load
     time; loom placeholders (``${now}``, ``${today-1d}``, …) are kept
     verbatim so :func:`resolve_placeholder` resolves them at flow-run
@@ -58,7 +37,7 @@ def read_yaml(config_path: str) -> dict[str, Any]:
     from omegaconf import DictConfig, OmegaConf  # noqa: PLC0415
 
     _ensure_mapping_top_level(config_path)
-    merged = apply_overrides(load_config(config_path, keyed=("etls",)), override_variables())
+    merged = load_config(config_path, keyed=("etls",))
     if not isinstance(merged, DictConfig):
         raise ValueError(f"{config_path}: top-level YAML must be a mapping")
     container = OmegaConf.to_container(merged, resolve=False)

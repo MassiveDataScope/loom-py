@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from loom.core.config import ConfigError
-from loom.core.config.overrides import load_application_config
 from loom.prefect._flow_yaml import read_yaml
 
 
@@ -143,21 +142,10 @@ def test_read_yaml_duplicate_key_raises_config_error_naming_the_file(tmp_path: P
         read_yaml(str(path))
 
 
-def test_a_loom_override_reaches_the_flow_yaml(
+def test_loom_overrides_do_not_touch_a_flow_definition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = _write(tmp_path, "flow.yaml", "params:\n  source: web\ntags: [a]\n")
     monkeypatch.setenv("LOOM__PARAMS__SOURCE", "batch")
 
-    assert read_yaml(str(path))["params"] == {"source": "batch"}
-
-
-def test_the_flow_sections_are_known_to_the_application_loader(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    storage = _write(tmp_path, "storage.yaml", "storage: {}\n")
-    monkeypatch.setenv("LOOM__NOTIFICATIONS__ON_FAILURE", "true")
-
-    context = load_application_config(str(storage))
-
-    assert context.has("notifications.on_failure")
+    assert read_yaml(str(path))["params"] == {"source": "web"}

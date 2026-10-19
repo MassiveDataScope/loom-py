@@ -10,6 +10,7 @@ dotlist. One line names the overridden keys, never their values.
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from pathlib import Path
 from typing import Any
@@ -20,11 +21,7 @@ from omegaconf import OmegaConf
 
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.config.overrides import (
-    apply_overrides,
-    load_application_config,
-    register_config_sections,
-)
+from loom.core.config.overrides import load_application_config
 
 _LOGGER = "loom.core.config.overrides"
 
@@ -157,21 +154,63 @@ def test_a_value_that_does_not_parse_is_an_error_naming_the_variable_not_the_val
     assert "unclosed-secret" not in str(caught.value)
 
 
+@pytest.fixture
+def checks_and_auth_file(tmp_path: Path) -> str:
+    """A configuration that declares checks and app.rest.auth, so only the guard can refuse."""
+    document = {
+        "app": {"name": "x", "rest": {"auth": {"custom": True}}},
+        "checks": {"silenced": ["loom.rest.W001"], "modules": []},
+    }
+    path = tmp_path / "base.yaml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return str(path)
+
+
 @pytest.mark.parametrize(
-    "variable",
-    ["LOOM__CHECKS__SILENCED", "LOOM__CHECKS__MODULES", "LOOM__checks__silenced"],
+    ("variable", "value"),
+    [
+        ("LOOM__CHECKS__SILENCED", "[loom.rest.E001]"),
+        ("LOOM__checks__modules", "[]"),
+        ("LOOM__APP__REST__AUTH__CUSTOM", "false"),
+        ("LOOM__app__Rest__Auth__JWT", "null"),
+        ("LOOM__APP__REST", "{auth: {custom: false}}"),
+        ("LOOM__APP", "{rest: {Auth: {custom: false}}}"),
+    ],
 )
-def test_the_checks_section_cannot_be_overridden(
-    config_file: str, monkeypatch: pytest.MonkeyPatch, variable: str
+def test_reviewed_settings_cannot_be_overridden(
+    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
-    monkeypatch.setenv(variable, "[loom.rest.E001]")
+    monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ConfigError, match="checks"):
-        _load(config_file)
+    with pytest.raises(ConfigError, match="reviewed"):
+        _load(checks_and_auth_file)
 
 
-@pytest.mark.parametrize("value", ["${oc.env:HOME}", "${secrets:/db/url}", "pre-${x}-post"])
-def test_an_interpolation_in_a_value_is_refused(
+def test_a_parent_override_away_from_the_reviewed_settings_applies(
+    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM__APP__REST", "{title: Live}")
+
+    context = _load(checks_and_auth_file)
+
+    assert (_value(context, "app.rest.title"), _value(context, "app.rest.auth.custom")) == (
+        "Live",
+        True,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "${oc.env:HOME}",
+        "pre-${x}-post",
+        '"${oc.env:DATABASE_URL}"',
+        '"\\x24{oc.env:DATABASE_URL}"',
+        "[a, '${oc.env:HOME}']",
+        '{outer: {inner: "\\x24{secrets:/db}"}}',
+    ],
+)
+def test_an_interpolation_in_a_value_is_refused_however_it_is_written(
     config_file: str, monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
     monkeypatch.setenv("LOOM__APP__NAME", value)
@@ -191,8 +230,8 @@ def test_no_traceback_of_a_parse_error_carries_the_value(
     assert "unclosed-secret" not in "".join(traceback.format_exception(caught.value))
 
 
-@pytest.mark.parametrize("section", ["LOGGER", "METRICS"])
-def test_sections_loom_does_not_read_are_unknown(
+@pytest.mark.parametrize("section", ["LOGGER", "METRICS", "PARAMS"])
+def test_sections_no_application_loader_reads_are_unknown(
     config_file: str, monkeypatch: pytest.MonkeyPatch, section: str
 ) -> None:
     monkeypatch.setenv(f"LOOM__{section}__LEVEL", "DEBUG")
@@ -201,37 +240,47 @@ def test_sections_loom_does_not_read_are_unknown(
         _load(config_file)
 
 
-def test_a_registered_section_is_known(config_file: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    register_config_sections("overrides_test_section")
-    monkeypatch.setenv("LOOM__OVERRIDES_TEST_SECTION__KEY", "x")
+@pytest.mark.parametrize("variable", ["LOOM__APP__NA.ME", "LOOM__APP__NAME[0]", "LOOM__APP__NA-ME"])
+def test_a_level_outside_letters_digits_and_underscore_is_refused(
+    config_file: str, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv(variable, "x")
 
-    assert _value(_load(config_file), "overrides_test_section.key") == "x"
+    with pytest.raises(ConfigError, match=re.escape(variable)):
+        _load(config_file)
+
+
+@pytest.mark.parametrize(
+    "variables",
+    [
+        {"LOOM__APP__NAME": "a", "LOOM__app__name": "b"},
+        {"LOOM__APP": "{name: a}", "LOOM__APP__NAME": "b"},
+    ],
+)
+def test_two_variables_for_one_key_or_a_key_and_its_parent_are_refused(
+    config_file: str, monkeypatch: pytest.MonkeyPatch, variables: dict[str, str]
+) -> None:
+    for name, value in variables.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigError) as caught:
+        _load(config_file)
+
+    assert all(name in str(caught.value) for name in variables)
 
 
 def test_reaching_inside_an_interpolated_key_is_refused_without_resolving_it(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
     OmegaConf.register_new_resolver("overrides_probe", lambda key: calls.append(key) or {})
     path = tmp_path / "base.yaml"
     path.write_text("database: ${overrides_probe:db}\napp: {name: x}\n", encoding="utf-8")
-    config = OmegaConf.load(path)
-    variables = {"LOOM__DATABASE__POOL_PRE_PING": "false"}
+    monkeypatch.setenv("LOOM__DATABASE__POOL_PRE_PING", "false")
     try:
         with pytest.raises(ConfigError, match="LOOM__DATABASE__POOL_PRE_PING"):
-            apply_overrides(config, variables)
+            load_application_config(str(path))
     finally:
         OmegaConf.clear_resolver("overrides_probe")
 
     assert calls == []
-
-
-def test_a_child_variable_wins_over_its_parent(
-    config_file: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("LOOM__APP", "{name: parent, workers: 1}")
-    monkeypatch.setenv("LOOM__APP__NAME", "child")
-
-    context = _load(config_file)
-
-    assert (_value(context, "app.name"), _value(context, "app.workers")) == ("child", 1)
