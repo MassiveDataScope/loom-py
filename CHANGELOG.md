@@ -840,6 +840,19 @@
 
 ### ai
 
+- **ai:** compile issues come from the code catalogue (ADR 0003, part B). The
+  89 issue factory functions of `loom.ai.errors` (`spec_malformed`,
+  `engine_not_found`, `mcp_server_unreachable` and the rest) are removed,
+  without aliases. Each `AgentErrorCode` member carries the template of its
+  message, component and field, and callers build the issue with
+  `AgentErrorCode.X.issue(...)` and keyword arguments only, for example
+  `AgentErrorCode.ENGINE_NOT_FOUND.issue(component="openai-agents",
+  available=["pydantic-ai"])`. A missing or unknown argument raises a
+  `TypeError` naming the code. `AgentCompilationIssue` is now
+  `CompileIssue[AgentErrorCode]` from `loom.core.errors.codes`, with the same
+  fields. The streaming compiler's private factories go the same way
+  (`StreamingErrorCode.X.issue(...)`). Messages keep their text; a list that
+  is empty renders `none`.
 - **ai:** `PolarsAgentRunner.map` runs at most `ai.max_concurrent_runs`
   worker tasks, which take the rows in order, instead of creating one task
   per row up front; the order of the output rows is unchanged. A run
