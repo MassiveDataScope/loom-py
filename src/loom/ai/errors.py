@@ -101,6 +101,7 @@ class AgentErrorCode(StrEnum):
     NATIVE_TOOL_DUPLICATE = "NATIVE_TOOL_DUPLICATE"
     CAPABILITY_EMPTY = "CAPABILITY_EMPTY"
     USECASE_KEY_UNKNOWN = "USECASE_KEY_UNKNOWN"
+    USECASE_DECLARES_QUERY = "USECASE_DECLARES_QUERY"
     SQL_CONNECTION_UNKNOWN = "SQL_CONNECTION_UNKNOWN"
     SQL_CONNECTION_NOT_READONLY = "SQL_CONNECTION_NOT_READONLY"
     SQL_CONFIG_MISSING = "SQL_CONFIG_MISSING"
@@ -643,6 +644,19 @@ def usecase_key_unknown(component: str, key: str) -> AgentCompilationIssue:
     return AgentCompilationIssue(
         code=AgentErrorCode.USECASE_KEY_UNKNOWN,
         message=f"{component}: use-case key '{key}' is not registered",
+        component=component,
+        field="capabilities.keys",
+    )
+
+
+def usecase_declares_query(component: str, key: str) -> AgentCompilationIssue:
+    """A granted use case takes a ``Query()`` parameter, which a tool call cannot bind."""
+    return AgentCompilationIssue(
+        code=AgentErrorCode.USECASE_DECLARES_QUERY,
+        message=(
+            f"{component}: use case '{key}' declares a Query() parameter, which an agent "
+            "tool call cannot bind; grant a use case without one"
+        ),
         component=component,
         field="capabilities.keys",
     )

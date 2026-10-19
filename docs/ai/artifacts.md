@@ -847,7 +847,9 @@ reach anything the human who invoked it could not reach directly. Remote kinds
 ```
 
 Explicitly listed use-case keys, resolved against the registry at compile time.
-An unknown key fails compilation with `USECASE_KEY_UNKNOWN`.
+An unknown key fails compilation with `USECASE_KEY_UNKNOWN`, and a use case
+whose `execute` takes a `Query()` parameter with `USECASE_DECLARES_QUERY`: a
+tool call cannot bind a declared query.
 
 **This is the right kind for your own tools.** See
 [the rule](mcp.md#the-rule-your-own-tools-are-a-usecase-grant) on the MCP page.

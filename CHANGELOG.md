@@ -210,6 +210,8 @@
   (`QueryBinding`), `CompiledRoute.query_fields` (`QueryField`) and
   `LoomType.from_query` are new; `build_query_parameters_schema` takes an
   optional `component_registry`. `QuerySpec` routes are unchanged.
+  An agent granted a use case that takes `Query()` fails to compile with
+  `USECASE_DECLARES_QUERY`.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a

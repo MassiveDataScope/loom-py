@@ -34,6 +34,7 @@ from loom.ai.compiler._plan import (
     CompiledSqlCapability,
     CompiledUsecaseCapability,
 )
+from loom.ai.compiler.phases._feedable import declares_query
 from loom.ai.config import A2AAgentConfig, AiConfig, McpServerConfig
 from loom.ai.declarative import (
     A2ACapability,
@@ -68,6 +69,7 @@ from loom.ai.errors import (
     sql_connection_roles_unbound,
     sql_connection_unknown,
     sql_result_bound_missing,
+    usecase_declares_query,
     usecase_key_unknown,
 )
 from loom.ai.inference import InferenceTarget
@@ -227,9 +229,13 @@ def _compile_usecase(capability: UsecaseCapability, context: _Context) -> _Handl
     use_cases: list[type[Compilable]] = []
     for key in capability.keys:
         try:
-            use_cases.append(context.registry.resolve(key))
+            use_case = context.registry.resolve(key)
         except KeyError:
             issues.append(usecase_key_unknown(context.component, key))
+            continue
+        if declares_query(use_case):
+            issues.append(usecase_declares_query(context.component, key))
+        use_cases.append(use_case)
     if issues:
         return None, issues
     return CompiledUsecaseCapability(keys=capability.keys, use_cases=tuple(use_cases)), []
