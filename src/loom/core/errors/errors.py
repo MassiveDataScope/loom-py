@@ -153,6 +153,9 @@ class RateLimited(DomainError):
     Args:
         retry_after: Seconds the caller should wait. Kept as whole seconds,
             rounded up and at least ``1``.
+
+    Raises:
+        ValueError: ``retry_after`` is not finite.
         message: Human-readable description of the refusal.
 
     Example::
@@ -161,6 +164,8 @@ class RateLimited(DomainError):
     """
 
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
+        if not math.isfinite(retry_after):
+            raise ValueError(f"RateLimited.retry_after must be finite, got {retry_after!r}")
         super().__init__(message, code=ErrorCode.RATE_LIMITED)
         self.retry_after = max(1, math.ceil(retry_after))
 

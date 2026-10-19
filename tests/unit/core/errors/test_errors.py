@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
@@ -274,6 +275,11 @@ class TestRateLimited:
     @pytest.mark.parametrize(("seconds", "expected"), [(0.2, 1), (1.5, 2), (2, 2), (0, 1), (-3, 1)])
     def test_retry_after_is_whole_seconds_rounded_up(self, seconds: float, expected: int) -> None:
         assert RateLimited(seconds).retry_after == expected
+
+    @pytest.mark.parametrize("seconds", [math.nan, math.inf, -math.inf])
+    def test_a_non_finite_delay_is_refused(self, seconds: float) -> None:
+        with pytest.raises(ValueError, match="retry_after"):
+            RateLimited(seconds)
 
     def test_has_a_default_message(self) -> None:
         assert RateLimited(1).message == "Too many requests."
