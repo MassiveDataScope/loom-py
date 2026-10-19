@@ -12,32 +12,15 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from ipaddress import ip_address
 from types import MappingProxyType
+from typing import Final
 from urllib.parse import SplitResult, urlsplit
 
 from msgspec import field
 
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentCompilationIssue,
-    a2a_base_url_invalid,
-    a2a_expose_empty,
-    a2a_url_invalid,
-    endpoint_auth_missing,
-    inference_target_incomplete,
-    max_agent_depth_invalid,
-    max_concurrent_runs_invalid,
-    mcp_auth_conflict,
-    mcp_auth_strategy_unknown,
-    mcp_credentials_inline,
-    mcp_transport_invalid,
-    mcp_url_invalid,
-    output_mode_unknown,
-    policy_out_of_range,
-    remote_clients_unknown,
-)
+from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.ai.remote_auth import is_strategy_registered, registered_strategy_names
@@ -81,6 +64,7 @@ _AUTH_KIND_KEY = "kind"
 # not open aborts start-up (``required``) or is dropped with a warning
 # (``optional``).
 _REMOTE_CLIENTS_MODES: tuple[str, ...] = ("required", "optional")
+_TRANSPORT_FIELD: Final = "transport"
 
 # Bounds of a single remote call, mirroring ``policies.tool_timeout_ms``.
 _TIMEOUT_MS_MIN = 1
@@ -202,14 +186,24 @@ def _validate_model_binding(role: str, target: InferenceTarget) -> list[AgentCom
     required = _REQUIRED_SETTINGS_BY_PROVIDER.get(target.provider, ())
     for setting in required:
         if not getattr(target, setting):
-            issues.append(inference_target_incomplete(role, setting))
+            issues.append(
+                AgentErrorCode.INFERENCE_TARGET_INCOMPLETE.issue(role=role, setting=setting)
+            )
     if target.output_mode is not None and target.output_mode not in OUTPUT_MODES:
-        issues.append(output_mode_unknown(role, target.output_mode, OUTPUT_MODES))
+        issues.append(
+            AgentErrorCode.OUTPUT_MODE_UNKNOWN.issue(
+                role=role, value=target.output_mode, valid=OUTPUT_MODES
+            )
+        )
     ref = target.credentials_ref
     if ref is not None and not _is_credentials_reference(ref):
         # The rejected value is deliberately absent from the issue: the error
         # message must not leak the very secret it rejects.
-        issues.append(mcp_credentials_inline(f"model role '{role}'", "credentials_ref"))
+        issues.append(
+            AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(
+                component=f"model role '{role}'", field="credentials_ref"
+            )
+        )
     return issues
 
 
@@ -317,7 +311,7 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
 
     def __post_init__(self) -> None:
         if not self.expose:
-            raise AgentCompilationError([a2a_expose_empty()])
+            raise AgentCompilationError([AgentErrorCode.A2A_EXPOSE_EMPTY.issue()])
         # base_url is published verbatim in the capability card, which is the
         # one unauthenticated surface of the pillar: an http:// address would
         # advertise a plaintext channel to every discovering client, and
@@ -328,7 +322,13 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         if fault is None:
             _warn_plaintext_loopback("ai.a2a.base_url", self.base_url)
         if fault is not None:
-            raise AgentCompilationError([a2a_base_url_invalid(_redact_url(self.base_url), fault)])
+            raise AgentCompilationError(
+                [
+                    AgentErrorCode.A2A_BASE_URL_INVALID.issue(
+                        url=_redact_url(self.base_url), reason=fault
+                    )
+                ]
+            )
 
 
 class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -420,13 +420,20 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         issues.extend(_validate_a2a_agents(self.a2a_agents))
         for name, endpoint in self.endpoints.items():
             if not endpoint.auth.strip():
-                issues.append(endpoint_auth_missing(name))
+                issues.append(AgentErrorCode.ENDPOINT_AUTH_MISSING.issue(component=name))
         if self.remote_clients not in _REMOTE_CLIENTS_MODES:
-            issues.append(remote_clients_unknown(self.remote_clients, _REMOTE_CLIENTS_MODES))
+            accepted = [f"'{mode}'" for mode in _REMOTE_CLIENTS_MODES]
+            issues.append(
+                AgentErrorCode.REMOTE_CLIENTS_UNKNOWN.issue(
+                    value=self.remote_clients, valid=accepted
+                )
+            )
         if self.max_agent_depth < 1:
-            issues.append(max_agent_depth_invalid(self.max_agent_depth))
+            issues.append(AgentErrorCode.MAX_AGENT_DEPTH_INVALID.issue(value=self.max_agent_depth))
         if self.max_concurrent_runs < 1:
-            issues.append(max_concurrent_runs_invalid(self.max_concurrent_runs))
+            issues.append(
+                AgentErrorCode.MAX_CONCURRENT_RUNS_INVALID.issue(value=self.max_concurrent_runs)
+            )
         if issues:
             raise AgentCompilationError(issues)
         _warn_unused_prices(self.prices, self.models)
@@ -442,16 +449,18 @@ def _warn_unused_prices(
         )
 
 
-_UrlIssue = Callable[[str, str, str], AgentCompilationIssue]
+def _validate_remote_url(
+    component: str, url: str, invalid: AgentErrorCode
+) -> list[AgentCompilationIssue]:
+    """Collect the fault of one remote URL, redacted so it cannot leak a secret.
 
-
-def _validate_remote_url(component: str, url: str, build: _UrlIssue) -> list[AgentCompilationIssue]:
-    """Collect the fault of one remote URL, redacted so it cannot leak a secret."""
+    The *invalid* code takes ``component, url, reason``.
+    """
     fault = _url_fault(url)
     if fault is None:
         _warn_plaintext_loopback(component, url)
         return []
-    return [build(component, _redact_url(url), fault)]
+    return [invalid.issue(component=component, url=_redact_url(url), reason=fault)]
 
 
 def _validate_headers_ref(component: str, headers_ref: str | None) -> list[AgentCompilationIssue]:
@@ -459,7 +468,7 @@ def _validate_headers_ref(component: str, headers_ref: str | None) -> list[Agent
         return []
     # The rejected value is deliberately absent: the message must not leak the
     # very secret it rejects.
-    return [mcp_credentials_inline(component, "headers_ref")]
+    return [AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(component=component, field="headers_ref")]
 
 
 def _validate_auth(
@@ -478,17 +487,21 @@ def _validate_auth(
     if auth is None:
         return []
     if headers_ref is not None:
-        return [mcp_auth_conflict(component)]
+        return [AgentErrorCode.MCP_AUTH_CONFLICT.issue(component=component)]
     issues = [
         # The rejected value is deliberately absent from the issue, as for
         # ``headers_ref``: the message must not leak what it rejects.
-        mcp_credentials_inline(component, f"auth.{key}")
+        AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(component=component, field=f"auth.{key}")
         for key, value in auth.items()
         if key != _AUTH_KIND_KEY and not _is_credentials_reference(value)
     ]
     kind = auth.get(_AUTH_KIND_KEY, "")
     if not is_strategy_registered(kind):
-        issues.append(mcp_auth_strategy_unknown(component, kind, registered_strategy_names()))
+        issues.append(
+            AgentErrorCode.MCP_AUTH_STRATEGY_UNKNOWN.issue(
+                component=component, kind=kind, available=registered_strategy_names()
+            )
+        )
     return issues
 
 
@@ -497,8 +510,10 @@ def _validate_mcp_transport(component: str, server: McpServerConfig) -> list[Age
     if server.transport not in _MCP_TRANSPORTS:
         accepted = ", ".join(_MCP_TRANSPORTS)
         return [
-            mcp_transport_invalid(
-                component, f"transport '{server.transport}' is not supported; accepted: {accepted}"
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason=f"transport '{server.transport}' is not supported; accepted: {accepted}",
             )
         ]
     if server.transport == "stdio":
@@ -510,7 +525,13 @@ def _validate_http_server(component: str, server: McpServerConfig) -> list[Agent
     """Collect the coherence, URL and credential issues of a ``transport: http`` server."""
     issues: list[AgentCompilationIssue] = []
     if server.url is None:
-        issues.append(mcp_transport_invalid(component, "transport 'http' requires 'url'"))
+        issues.append(
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="transport 'http' requires 'url'",
+            )
+        )
     declared = (
         ("command", server.command is not None),
         ("args", bool(server.args)),
@@ -519,10 +540,14 @@ def _validate_http_server(component: str, server: McpServerConfig) -> list[Agent
     stdio_only = ", ".join(f"'{name}'" for name, present in declared if present)
     if stdio_only:
         issues.append(
-            mcp_transport_invalid(component, f"{stdio_only} do not apply to transport 'http'")
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason=f"{stdio_only} do not apply to transport 'http'",
+            )
         )
     if server.url is not None:
-        issues.extend(_validate_remote_url(component, server.url, mcp_url_invalid))
+        issues.extend(_validate_remote_url(component, server.url, AgentErrorCode.MCP_URL_INVALID))
     issues.extend(_validate_headers_ref(component, server.headers_ref))
     issues.extend(_validate_auth(component, server.headers_ref, server.auth))
     return issues
@@ -533,12 +558,26 @@ def _validate_stdio_server(component: str, server: McpServerConfig) -> list[Agen
     issues: list[AgentCompilationIssue] = []
     if not server.command:
         issues.append(
-            mcp_transport_invalid(component, "transport 'stdio' requires a non-empty 'command'")
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="transport 'stdio' requires a non-empty 'command'",
+            )
         )
     if server.url is not None:
-        issues.append(mcp_transport_invalid(component, "'url' only applies to transport 'http'"))
+        issues.append(
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="'url' only applies to transport 'http'",
+            )
+        )
     if server.headers_ref is not None or server.auth is not None:
-        issues.append(mcp_transport_invalid(component, _STDIO_CREDENTIALS_REASON))
+        issues.append(
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component, field=_TRANSPORT_FIELD, reason=_STDIO_CREDENTIALS_REASON
+            )
+        )
     issues.extend(_validate_mcp_env(component, server.env))
     return issues
 
@@ -551,16 +590,20 @@ def _validate_mcp_env(component: str, env: Mapping[str, str] | None) -> list[Age
     for name, value in env.items():
         if _ENV_NAME_PATTERN.fullmatch(name) is None:
             issues.append(
-                mcp_transport_invalid(
-                    component,
-                    f"'{name}' is not a valid environment variable name",
+                AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                    component=component,
                     field=f"env.{name}",
+                    reason=f"'{name}' is not a valid environment variable name",
                 )
             )
         if not _has_reference_shape(value):
             # The rejected value is deliberately absent: a broken interpolation
             # may still contain part of the secret it failed to resolve.
-            issues.append(mcp_credentials_inline(component, f"env.{name}"))
+            issues.append(
+                AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(
+                    component=component, field=f"env.{name}"
+                )
+            )
     return issues
 
 
@@ -574,12 +617,12 @@ def _validate_mcp_servers(
         issues.extend(_validate_mcp_transport(component, server))
         if not _TIMEOUT_MS_MIN <= server.timeout_ms <= _TIMEOUT_MS_MAX:
             issues.append(
-                policy_out_of_range(
-                    component,
-                    "timeout_ms",
-                    server.timeout_ms,
-                    _TIMEOUT_MS_MIN,
-                    _TIMEOUT_MS_MAX,
+                AgentErrorCode.POLICY_OUT_OF_RANGE.issue(
+                    component=component,
+                    policy="timeout_ms",
+                    value=server.timeout_ms,
+                    minimum=_TIMEOUT_MS_MIN,
+                    maximum=_TIMEOUT_MS_MAX,
                 )
             )
     return issues
@@ -592,7 +635,7 @@ def _validate_a2a_agents(
     issues: list[AgentCompilationIssue] = []
     for name, agent in agents.items():
         component = f"ai.a2a_agents.{name}"
-        issues.extend(_validate_remote_url(component, agent.url, a2a_url_invalid))
+        issues.extend(_validate_remote_url(component, agent.url, AgentErrorCode.A2A_URL_INVALID))
         issues.extend(_validate_headers_ref(component, agent.headers_ref))
         issues.extend(_validate_auth(component, agent.headers_ref, agent.auth))
     return issues

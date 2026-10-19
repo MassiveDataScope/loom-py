@@ -74,14 +74,7 @@ from loom.ai.engines.pydantic_ai._schemas import (
     tool_name,
     usecase_schema,
 )
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentRunError,
-    AgentRunErrorCode,
-    python_factory_failed,
-    python_factory_not_callable,
-    python_remote_not_granted,
-)
+from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
@@ -334,7 +327,11 @@ class _PythonToolsetContext:
         session = self.remotes.get(server)
         if session is None:
             raise AgentCompilationError(
-                [python_remote_not_granted(self.agent, self.factory_ref, server)]
+                [
+                    AgentErrorCode.PYTHON_REMOTE_NOT_GRANTED.issue(
+                        component=self.agent, factory=self.factory_ref, server=server
+                    )
+                ]
             )
         return session
 
@@ -373,7 +370,11 @@ def _python_toolset(
     toolset = _call_factory(capability, context)
     if not isinstance(toolset, AbstractToolset):
         raise AgentCompilationError(
-            [python_factory_not_callable(context.agent, capability.factory_ref)]
+            [
+                AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE.issue(
+                    component=context.agent, factory=capability.factory_ref
+                )
+            ]
         )
     return guarded_toolset(toolset, context, "python", authenticated_caller)
 
@@ -393,7 +394,13 @@ def _call_factory(capability: CompiledPythonCapability, context: BuildContext) -
         raise
     except Exception as exc:
         raise AgentCompilationError(
-            [python_factory_failed(context.agent, capability.factory_ref, type(exc).__name__)]
+            [
+                AgentErrorCode.PYTHON_FACTORY_FAILED.issue(
+                    component=context.agent,
+                    factory=capability.factory_ref,
+                    error=type(exc).__name__,
+                )
+            ]
         ) from exc
 
 

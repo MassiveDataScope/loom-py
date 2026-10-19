@@ -5,11 +5,11 @@ Internal module — consumed only by :mod:`loom.etl.compiler._compiler`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final
 
-from loom.etl.compiler._errors import ETLCompilationError
+from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
     PipelinePlan,
     ProcessPlan,
@@ -19,19 +19,18 @@ from loom.etl.compiler._plan import (
 )
 from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssueKind
 
-_ERRORS: Final[Mapping[AgentIssueKind, Callable[[type, str, str], ETLCompilationError]]] = (
-    MappingProxyType(
-        {
-            AgentIssueKind.NOT_FOUND: ETLCompilationError.agent_not_found,
-            AgentIssueKind.COMPILATION_FAILED: ETLCompilationError.agent_compilation_failed,
-            AgentIssueKind.OUTPUT_MISMATCH: ETLCompilationError.agent_output_mismatch,
-            AgentIssueKind.UNPRICED_BUDGET: ETLCompilationError.agent_unpriced_budget,
-            AgentIssueKind.BUDGET_UNENFORCEABLE: ETLCompilationError.agent_budget_unenforceable,
-            AgentIssueKind.UNSUPPORTED_ENGINE: ETLCompilationError.agent_unsupported_engine,
-            AgentIssueKind.COLUMN_COLLISION: ETLCompilationError.agent_column_collision,
-        }
-    )
+_CODES: Final[Mapping[AgentIssueKind, ETLErrorCode]] = MappingProxyType(
+    {
+        AgentIssueKind.NOT_FOUND: ETLErrorCode.AGENT_NOT_FOUND,
+        AgentIssueKind.COMPILATION_FAILED: ETLErrorCode.AGENT_COMPILATION_FAILED,
+        AgentIssueKind.OUTPUT_MISMATCH: ETLErrorCode.AGENT_OUTPUT_MISMATCH,
+        AgentIssueKind.UNPRICED_BUDGET: ETLErrorCode.AGENT_UNPRICED_BUDGET,
+        AgentIssueKind.BUDGET_UNENFORCEABLE: ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE,
+        AgentIssueKind.UNSUPPORTED_ENGINE: ETLErrorCode.AGENT_UNSUPPORTED_ENGINE,
+        AgentIssueKind.COLUMN_COLLISION: ETLErrorCode.AGENT_COLUMN_COLLISION,
+    }
 )
+"""Code of each agent issue kind; every one takes ``component, alias, reason``."""
 
 
 def validate_step_agents(plan: StepPlan, runner: AgentBatchRunner | None) -> None:
@@ -47,11 +46,18 @@ def validate_step_agents(plan: StepPlan, runner: AgentBatchRunner | None) -> Non
     """
     for binding in plan.agent_bindings:
         if runner is None:
-            raise ETLCompilationError.agent_runner_not_configured(plan.step_type, binding.alias)
+            raise ETLCompilationError.from_issue(
+                ETLErrorCode.AGENT_RUNNER_NOT_CONFIGURED.issue(
+                    component=plan.step_type, alias=binding.alias
+                )
+            )
         issues = runner.validate(binding.name, binding.output_type, max_usd=binding.max_usd)
         if issues:
             first = issues[0]
-            raise _ERRORS[first.kind](plan.step_type, binding.alias, first.message)
+            issue = _CODES[first.kind].issue(
+                component=plan.step_type, alias=binding.alias, reason=first.message
+            )
+            raise ETLCompilationError.from_issue(issue)
 
 
 def validate_process_agents(plan: ProcessPlan, runner: AgentBatchRunner | None) -> None:

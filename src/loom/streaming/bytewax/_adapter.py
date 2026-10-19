@@ -33,7 +33,7 @@ from loom.streaming.bytewax.handlers.dispatcher import (
     _wire_process,
 )
 from loom.streaming.compiler import CompiledPlan
-from loom.streaming.compiler._errors import sink_cannot_track_commits
+from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import CompiledMultiSource, CompiledSingleSource
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._message import Message
@@ -214,7 +214,8 @@ def _bind_commit_tracker_object(
     if item is None or commit_tracker is None:
         return
     if not isinstance(item, _SupportsCommitBind):
-        raise RuntimeConfigurationError([sink_cannot_track_commits(type(item).__name__)])
+        issue = StreamingErrorCode.SINK_CANNOT_TRACK_COMMITS.issue(component=type(item).__name__)
+        raise RuntimeConfigurationError([issue])
     item.bind_commit_tracker(commit_tracker)
 
 

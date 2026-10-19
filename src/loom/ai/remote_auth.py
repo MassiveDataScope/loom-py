@@ -81,11 +81,7 @@ from typing import TYPE_CHECKING, Any, Final, cast, get_type_hints
 
 import msgspec
 
-from loom.ai.errors import (
-    AgentCompilationError,
-    mcp_auth_strategy_invalid,
-    mcp_headers_ref_invalid,
-)
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.plugins.entrypoints import (
     DuplicateEntryPointError,
     EntryPointNotFoundError,
@@ -190,7 +186,9 @@ def headers_from_ref(component: str, headers_ref: str | None) -> dict[str, str]:
         return {}
     name, separator, value = headers_ref.partition(_HEADER_SEPARATOR)
     if not separator or not name or not value:
-        raise AgentCompilationError([mcp_headers_ref_invalid(component)])
+        raise AgentCompilationError(
+            [AgentErrorCode.MCP_HEADERS_REF_INVALID.issue(component=component)]
+        )
     return {name: value}
 
 
@@ -264,9 +262,9 @@ def shared_a2a_auth(agent: str, auth: CompiledRemoteAuth | None) -> AuthObject |
         # module exists to prevent.
         raise AgentCompilationError(
             [
-                mcp_auth_strategy_invalid(
-                    auth.kind,
-                    "it delegates to the MCP client's own flow, which the A2A transport "
+                AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                    kind=auth.kind,
+                    reason="it delegates to the MCP client's own flow, which the A2A transport "
                     "cannot run; an A2A agent needs an httpx.Auth or a callable",
                 )
             ]
@@ -420,13 +418,21 @@ def _build(auth: CompiledRemoteAuth) -> ClientAuth:
         settings = _coerce_settings(strategy, dict(auth.settings))
     except msgspec.ValidationError as exc:
         raise AgentCompilationError(
-            [mcp_auth_strategy_invalid(auth.kind, f"a setting has the wrong type: {exc}")]
+            [
+                AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                    kind=auth.kind, reason=f"a setting has the wrong type: {exc}"
+                )
+            ]
         ) from exc
     try:
         built = strategy(**settings)
     except TypeError as exc:
         raise AgentCompilationError(
-            [mcp_auth_strategy_invalid(auth.kind, f"it rejected its settings: {exc}")]
+            [
+                AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                    kind=auth.kind, reason=f"it rejected its settings: {exc}"
+                )
+            ]
         ) from exc
     return _checked(auth.kind, built)
 
@@ -441,14 +447,19 @@ def _load_strategy(kind: str) -> Any:
         # between decode and start-up.
         available = ", ".join(exc.available) if exc.available else "none"
         raise AgentCompilationError(
-            [mcp_auth_strategy_invalid(kind, f"it is not registered; registered: {available}")]
+            [
+                AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                    kind=kind, reason=f"it is not registered; registered: {available}"
+                )
+            ]
         ) from exc
     except DuplicateEntryPointError as exc:
         raise AgentCompilationError(
             [
-                mcp_auth_strategy_invalid(
-                    kind,
-                    f"it is provided by more than one distribution: {', '.join(exc.distributions)}",
+                AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                    kind=kind,
+                    reason="it is provided by more than one distribution: "
+                    f"{', '.join(exc.distributions)}",
                 )
             ]
         ) from exc
@@ -475,8 +486,8 @@ def _checked(kind: str, built: object) -> ClientAuth:
         return cast("ClientAuth", built)
     raise AgentCompilationError(
         [
-            mcp_auth_strategy_invalid(
-                kind, "it returned no httpx.Auth, no callable and no client sentinel"
+            AgentErrorCode.MCP_AUTH_STRATEGY_INVALID.issue(
+                kind=kind, reason="it returned no httpx.Auth, no callable and no client sentinel"
             )
         ]
     )

@@ -8,11 +8,7 @@ from typing import Any, Literal, get_args, get_origin
 
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
-from loom.streaming.compiler._errors import (
-    error_envelope_unparameterized,
-    payload_type_invalid,
-    storage_sink_unsupported,
-)
+from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,
     CompiledMongoCDCSource,
@@ -151,13 +147,11 @@ def _build_dispatch_table(payloads: tuple[type[Any], ...]) -> DispatchTable:
         if isinstance(t, type) and issubclass(t, DecodeError):
             wire[t.loom_message_type()] = t
             continue
-        origin = get_origin(t)
-        if origin is ErrorEnvelope:
-            args = get_args(t)
-            if not args:
-                raise CompilationError([error_envelope_unparameterized(t)])
-            inner_type = args[0]
-            key = _require_message_type(inner_type)
+        if t is ErrorEnvelope:
+            issue = StreamingErrorCode.ERROR_ENVELOPE_UNPARAMETERIZED.issue(payload=repr(t))
+            raise CompilationError([issue])
+        if get_origin(t) is ErrorEnvelope:
+            key = _require_message_type(get_args(t)[0])
             error[key] = t
         else:
             key = _require_message_type(t)
@@ -169,7 +163,8 @@ def _require_message_type(t: type[Any]) -> str:
     try:
         return str(t.loom_message_type())
     except AttributeError:
-        raise CompilationError([payload_type_invalid(t)]) from None
+        issue = StreamingErrorCode.PAYLOAD_TYPE_INVALID.issue(payload=repr(t))
+        raise CompilationError([issue]) from None
 
 
 def _build_nodes(flow: StreamFlow[Any, Any]) -> list[CompiledNode]:
@@ -278,4 +273,6 @@ def _build_storage_sink(node: IntoSink[Any], ctx: ConfigContext) -> CompiledStor
                 config=ch_resolved.sink,
                 database_config=None,
             )
-    raise CompilationError([storage_sink_unsupported(node)])
+    raise CompilationError(
+        [StreamingErrorCode.STORAGE_SINK_UNSUPPORTED.issue(component=type(node).__name__)]
+    )

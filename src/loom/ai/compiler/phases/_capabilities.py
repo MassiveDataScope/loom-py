@@ -46,31 +46,7 @@ from loom.ai.declarative import (
     SqlCapability,
     UsecaseCapability,
 )
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentCompilationIssue,
-    a2a_agent_unknown,
-    anonymous_with_data_capability,
-    capability_empty,
-    capability_kind_unsupported,
-    mcp_server_unknown,
-    native_tool_duplicate,
-    native_tool_unsupported,
-    python_factory_not_callable,
-    python_factory_params_rejected,
-    python_factory_unresolvable,
-    skills_library_escapes,
-    skills_library_invalid,
-    skills_name_collision,
-    skills_root_missing,
-    sql_config_missing,
-    sql_connection_not_readonly,
-    sql_connection_roles_unbound,
-    sql_connection_unknown,
-    sql_result_bound_missing,
-    usecase_declares_query,
-    usecase_key_unknown,
-)
+from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.engine.compilable import Compilable
 from loom.core.sql.config import SqlConfig, roles_need_identity_binding
@@ -171,10 +147,16 @@ def compile_capabilities(
     for capability in spec.capabilities:
         kind = str(capability.__struct_config__.tag)
         if kind not in supported_kinds:
-            issues.append(capability_kind_unsupported(component, kind, config.engine))
+            issues.append(
+                AgentErrorCode.CAPABILITY_KIND_UNSUPPORTED.issue(
+                    component=component, kind=kind, engine=config.engine
+                )
+            )
             continue
         if context.anonymous and kind in _DATA_OR_REMOTE_KINDS:
-            issues.append(anonymous_with_data_capability(component, kind))
+            issues.append(
+                AgentErrorCode.ANONYMOUS_WITH_DATA_CAPABILITY.issue(component=component, kind=kind)
+            )
         item, item_issues = _HANDLERS[type(capability)](capability, context)
         issues.extend(item_issues)
         if item is not None:
@@ -195,7 +177,11 @@ def _native_duplicate_issues(
         if not isinstance(capability, CompiledNativeCapability):
             continue
         if capability.tool in seen:
-            issues.append(native_tool_duplicate(component, capability.tool))
+            issues.append(
+                AgentErrorCode.NATIVE_TOOL_DUPLICATE.issue(
+                    component=component, tool=capability.tool
+                )
+            )
             continue
         seen.add(capability.tool)
     return issues
@@ -214,7 +200,14 @@ def _skill_collision_issues(
         for name in capability.names:
             first = owner.setdefault(name, capability.library)
             if first != capability.library:
-                issues.append(skills_name_collision(component, name, first, capability.library))
+                issues.append(
+                    AgentErrorCode.SKILLS_NAME_COLLISION.issue(
+                        component=component,
+                        skill=name,
+                        first_library=first,
+                        second_library=capability.library,
+                    )
+                )
     return issues
 
 
@@ -230,11 +223,15 @@ def _compile_usecase(capability: UsecaseCapability, context: _Context) -> _Handl
         try:
             use_case = context.registry.resolve(key)
         except KeyError:
-            issues.append(usecase_key_unknown(context.component, key))
+            issues.append(
+                AgentErrorCode.USECASE_KEY_UNKNOWN.issue(component=context.component, key=key)
+            )
             continue
         execution = getattr(use_case, "__execution_plan__", None)
         if execution is not None and execution.query_binding is not None:
-            issues.append(usecase_declares_query(context.component, key))
+            issues.append(
+                AgentErrorCode.USECASE_DECLARES_QUERY.issue(component=context.component, key=key)
+            )
         use_cases.append(use_case)
     if issues:
         return None, issues
@@ -243,20 +240,36 @@ def _compile_usecase(capability: UsecaseCapability, context: _Context) -> _Handl
 
 def _compile_sql(capability: SqlCapability, context: _Context) -> _HandlerResult:
     if context.sql is None:
-        return None, [sql_config_missing(context.component)]
+        return None, [AgentErrorCode.SQL_CONFIG_MISSING.issue(component=context.component)]
     connection = context.sql.connections.get(capability.connection)
     if connection is None:
-        return None, [sql_connection_unknown(context.component, capability.connection)]
+        return None, [
+            AgentErrorCode.SQL_CONNECTION_UNKNOWN.issue(
+                component=context.component, connection=capability.connection
+            )
+        ]
     issues: list[AgentCompilationIssue] = []
     if not connection.readonly:
-        issues.append(sql_connection_not_readonly(context.component, capability.connection))
+        issues.append(
+            AgentErrorCode.SQL_CONNECTION_NOT_READONLY.issue(
+                component=context.component, connection=capability.connection
+            )
+        )
     binds_roles = not context.anonymous
     if roles_need_identity_binding(connection.allowed_roles, mechanism_binds_roles=binds_roles):
-        issues.append(sql_connection_roles_unbound(context.component, capability.connection))
+        issues.append(
+            AgentErrorCode.SQL_CONNECTION_ROLES_UNBOUND.issue(
+                component=context.component, connection=capability.connection
+            )
+        )
     # Defensive: the v1 struct already makes absent or non-positive bounds
     # unrepresentable, but a spec built through another path must not pass.
     if capability.max_rows < 1 or capability.max_result_bytes < 1:
-        issues.append(sql_result_bound_missing(context.component, capability.connection))
+        issues.append(
+            AgentErrorCode.SQL_RESULT_BOUND_MISSING.issue(
+                component=context.component, connection=capability.connection
+            )
+        )
     if issues:
         return None, issues
     return (
@@ -294,12 +307,14 @@ def compile_mcp_capability(
 
     Returns:
         The compiled capability, or ``None`` with one
-        :func:`~loom.ai.errors.mcp_server_unknown` issue when ``server_name``
-        is not in ``servers``.
+        :attr:`~loom.ai.errors.AgentErrorCode.MCP_SERVER_UNKNOWN` issue when
+        ``server_name`` is not in ``servers``.
     """
     server = servers.get(server_name)
     if server is None:
-        return None, [mcp_server_unknown(component, server_name)]
+        return None, [
+            AgentErrorCode.MCP_SERVER_UNKNOWN.issue(component=component, server=server_name)
+        ]
     return (
         CompiledMcpCapability(
             server=server_name,
@@ -347,7 +362,11 @@ def _compile_auth(auth: Mapping[str, str] | None) -> CompiledRemoteAuth | None:
 def _compile_a2a(capability: A2ACapability, context: _Context) -> _HandlerResult:
     agent = context.a2a_agents.get(capability.agent)
     if agent is None:
-        return None, [a2a_agent_unknown(context.component, capability.agent)]
+        return None, [
+            AgentErrorCode.A2A_AGENT_UNKNOWN.issue(
+                component=context.component, agent=capability.agent
+            )
+        ]
     return (
         CompiledA2ACapability(
             agent=capability.agent,
@@ -366,22 +385,34 @@ def _library_base(library: str, context: _Context) -> _ResolveResult:
     if library.startswith(_LOCAL_LIBRARY_PREFIX):
         if context.source_path is None:
             reason = "a './' library needs a known artifact path"
-            return None, [skills_library_invalid(context.component, library, reason)]
+            return None, [
+                AgentErrorCode.SKILLS_LIBRARY_INVALID.issue(
+                    component=context.component, library=library, reason=reason
+                )
+            ]
         return Path(context.source_path).parent, []
     if context.skills_root is None:
-        return None, [skills_root_missing(context.component)]
+        return None, [AgentErrorCode.SKILLS_ROOT_MISSING.issue(component=context.component)]
     return Path(context.skills_root), []
 
 
 def _resolve_library(library: str, context: _Context) -> _ResolveResult:
     if escapes(library.removeprefix(_LOCAL_LIBRARY_PREFIX)):
-        return None, [skills_library_escapes(context.component, library)]
+        return None, [
+            AgentErrorCode.SKILLS_LIBRARY_ESCAPES.issue(
+                component=context.component, library=library
+            )
+        ]
     base, issues = _library_base(library, context)
     if base is None:
         return None, issues
     resolved = base / library.removeprefix(_LOCAL_LIBRARY_PREFIX)
     if not is_within(resolved, base):
-        return None, [skills_library_escapes(context.component, library)]
+        return None, [
+            AgentErrorCode.SKILLS_LIBRARY_ESCAPES.issue(
+                component=context.component, library=library
+            )
+        ]
     return resolved.resolve(), []
 
 
@@ -413,14 +444,20 @@ def _compile_skills(capability: SkillsCapability, context: _Context) -> _Handler
         return None, issues
     discovered, reason = _discover_skills(directory)
     if reason is not None:
-        return None, [skills_library_invalid(context.component, library, reason)]
+        return None, [
+            AgentErrorCode.SKILLS_LIBRARY_INVALID.issue(
+                component=context.component, library=library, reason=reason
+            )
+        ]
     selected = select_names(
         discovered,
         include=capability.include,
         exclude=capability.exclude,
     )
     if not selected:
-        return None, [capability_empty(context.component, "skills")]
+        return None, [
+            AgentErrorCode.CAPABILITY_EMPTY.issue(component=context.component, kind="skills")
+        ]
     return (
         CompiledSkillsCapability(library=library, directory=str(directory), names=selected),
         [],
@@ -431,9 +468,17 @@ def _compile_python(capability: PythonCapability, context: _Context) -> _Handler
     try:
         factory = import_symbol(capability.factory)
     except (ImportError, AttributeError, ValueError) as exc:
-        return None, [python_factory_unresolvable(context.component, capability.factory, str(exc))]
+        return None, [
+            AgentErrorCode.PYTHON_FACTORY_UNRESOLVABLE.issue(
+                component=context.component, factory=capability.factory, reason=str(exc)
+            )
+        ]
     if not callable(factory):
-        return None, [python_factory_not_callable(context.component, capability.factory)]
+        return None, [
+            AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE.issue(
+                component=context.component, factory=capability.factory
+            )
+        ]
     issue = _rejected_params(factory, capability.params, context.component, capability.factory)
     if issue is not None:
         return None, [issue]
@@ -460,11 +505,13 @@ def _rejected_params(
     try:
         signature.bind_partial(_FIRST_POSITIONAL)
     except TypeError:
-        return python_factory_not_callable(component, ref)
+        return AgentErrorCode.PYTHON_FACTORY_NOT_CALLABLE.issue(component=component, factory=ref)
     try:
         signature.bind(_FIRST_POSITIONAL, **params)
     except TypeError as exc:
-        return python_factory_params_rejected(component, ref, str(exc))
+        return AgentErrorCode.PYTHON_FACTORY_PARAMS_REJECTED.issue(
+            component=component, factory=ref, reason=str(exc)
+        )
     return None
 
 
@@ -477,15 +524,19 @@ def _compile_native(capability: NativeCapability, context: _Context) -> _Handler
     if context.inference is None:
         return None, []
     if context.native_tools is None:
-        return None, [capability_kind_unsupported(context.component, "native", context.engine)]
+        return None, [
+            AgentErrorCode.CAPABILITY_KIND_UNSUPPORTED.issue(
+                component=context.component, kind="native", engine=context.engine
+            )
+        ]
     try:
         supported = context.native_tools(context.inference)
     except AgentCompilationError as exc:
         return None, list(exc.issues)
     if capability.tool not in supported:
         return None, [
-            native_tool_unsupported(
-                context.component,
+            AgentErrorCode.NATIVE_TOOL_UNSUPPORTED.issue(
+                component=context.component,
                 tool=capability.tool,
                 role=context.model_role,
                 provider=context.inference.provider,

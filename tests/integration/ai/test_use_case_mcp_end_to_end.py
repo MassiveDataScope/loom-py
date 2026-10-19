@@ -302,9 +302,9 @@ class TestAnIncludeMatchingNothingAbortsThroughTheRealPath:
             await runtime.__aenter__()
 
         codes = {issue.code for issue in failure.value.issues}
-        assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in codes
+        assert AgentErrorCode.USECASE_TOOL_FILTER_MATCHES_NOTHING in codes
         # The other start-up abort must not fire here, and this is the only
-        # file that can tell: `mcp_server_unknown` has one producer,
+        # file that can tell: `MCP_SERVER_UNKNOWN` has one producer,
         # `compile_mcp_capability`, which only this path reaches. Asserted
         # anywhere that hand-builds the grant, it could never fail.
         assert AgentErrorCode.MCP_SERVER_UNKNOWN not in codes

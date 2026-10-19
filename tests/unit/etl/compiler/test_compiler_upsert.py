@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from loom.etl import ETLParams, ETLStep, IntoTable
-from loom.etl.compiler import ETLCompilationError, ETLCompiler
+from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 
 
 class _Params(ETLParams):  # type: ignore[misc]
@@ -117,18 +117,25 @@ class TestCompileUpsertSpecs:
         assert assertion(spec)
 
     @pytest.mark.parametrize(
-        "step_type,error",
+        "step_type,error,code",
         [
-            (_EmptyKeys, "requires at least one key"),
-            (_ExcludeAndInclude, "mutually exclusive"),
-            (_ExcludeOverlapsKeys, "overlaps with upsert keys"),
+            (_EmptyKeys, "requires at least one key", ETLErrorCode.UPSERT_NO_KEYS),
+            (
+                _ExcludeAndInclude,
+                "mutually exclusive",
+                ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT,
+            ),
+            (_ExcludeOverlapsKeys, "overlaps with upsert keys", ETLErrorCode.UPSERT_KEY_IN_EXCLUDE),
         ],
     )
     def test_invalid_specs_raise(
         self,
         step_type: type[ETLStep[_Params]],
         error: str,
+        code: ETLErrorCode,
     ) -> None:
         compiler = _compiler()
-        with pytest.raises(ETLCompilationError, match=error):
+        with pytest.raises(ETLCompilationError, match=error) as exc_info:
             compiler.compile_step(step_type)
+
+        assert exc_info.value.code is code

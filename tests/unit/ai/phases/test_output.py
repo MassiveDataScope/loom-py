@@ -45,6 +45,21 @@ def test_reports_type_ref_unresolvable_when_module_does_not_import(
     )
 
 
+def test_reports_output_check_unresolvable_when_the_check_does_not_import(
+    spec_factory: Callable[..., AgentSpecV1],
+    single_issue_for: Callable[..., AgentCompilationIssue],
+) -> None:
+    spec = spec_factory(output_check="no_such_pkg_zz.checks:verdict")
+    issue = single_issue_for(spec)
+    assert (issue.code, issue.field) == (
+        AgentErrorCode.OUTPUT_CHECK_UNRESOLVABLE,
+        "output_check",
+    )
+    assert issue.message.endswith(
+        ": output check 'no_such_pkg_zz.checks:verdict' cannot be imported"
+    )
+
+
 @pytest.mark.parametrize(
     "ref",
     [

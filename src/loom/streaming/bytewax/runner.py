@@ -41,7 +41,7 @@ from loom.streaming.compiler import (
     compile_flow,
     walk_process_nodes,
 )
-from loom.streaming.compiler._errors import delivery_keyed_multiprocess
+from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.nodes._shape import CollectBatch
@@ -461,7 +461,10 @@ def _guard_keyed_multiprocess(
         return
     for node in walk_process_nodes(compiled.node for compiled in plan.nodes):
         if isinstance(node, CollectBatch):
-            raise RuntimeConfigurationError([delivery_keyed_multiprocess(type(node).__name__)])
+            issue = StreamingErrorCode.DELIVERY_KEYED_MULTIPROCESS.issue(
+                component=type(node).__name__
+            )
+            raise RuntimeConfigurationError([issue])
 
 
 def _create_bridge(plan: CompiledPlan, runtime: BytewaxRuntimeConfig) -> AsyncBridge | None:
