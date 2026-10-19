@@ -21,6 +21,7 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.app import _register_openapi_components
+from loom.rest.fastapi.openapi import build_success_response_schema
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
@@ -191,3 +192,19 @@ def test_a_pydantic_result_is_one_component_shared_by_both_statuses() -> None:
     assert document["components"]["schemas"]["ModelGrantView"]["properties"] == {
         "grant_id": {"title": "Grant Id", "type": "string"}
     }
+
+
+def test_the_route_status_entry_alone_keeps_local_definitions() -> None:
+    compiler = UseCaseCompiler()
+    for route in Grants.routes:
+        compiler.compile(route.use_case)
+    route = next(
+        route
+        for route in RestInterfaceCompiler(compiler).compile(Grants)
+        if route.route.use_case is CreateGrant
+    )
+
+    schema = build_success_response_schema(route)
+
+    assert schema is not None
+    assert schema["content"]["application/json"]["schema"]["$ref"] == "#/$defs/GrantView"
