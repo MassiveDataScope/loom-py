@@ -5,6 +5,10 @@ any domain word, default column name, default session key, default database
 user name or environment label inside the packages this feature adds, inside
 the static guard SQL and the document the bootstrap binds for a synthetic
 configuration, and inside the session-settings module the mechanism builds on.
+
+loom is a general library: no consumer's vocabulary may appear in its
+sources, docs or tests either. The last tests scan them for the first
+consumer's names.
 """
 
 from __future__ import annotations
@@ -16,7 +20,8 @@ from pathlib import Path
 
 import pytest
 
-_SRC = Path(__file__).resolve().parents[2] / "src" / "loom"
+_ROOT = Path(__file__).resolve().parents[2]
+_SRC = _ROOT / "src" / "loom"
 
 _FILES = (
     "core/model/privilege.py",
@@ -185,3 +190,50 @@ def test_the_bound_bootstrap_document_contains_only_injected_names() -> None:
         assert injected in text
     for injected in ("grp_r", "grp_w", "v_struct", "v_data"):
         assert injected in text
+
+
+_CONSUMER_VOCABULARY = re.compile(
+    r"periplo|\bGrantView\b|\bListGrants\b|\bCreateGrant|\bRevokeGrant|\bGrantQuery"
+    r"|\bGrantState|\bTenantRole|\baccess_grant\b|/v1/grants|\bmembership_?id\b"
+    r"|\bChangeBudget\b|\bHEADER_PARAMETERS\b|\bROUTE_ERRORS\b|s2-design|\bT9\b"
+    r"|composition/openapi",
+    re.IGNORECASE,
+)
+_PROVENANCE_FILE = (
+    "docs/architecture/adr/0002-rest-result-status-rate-limit-and-declared-queries.md"
+)
+_PROVENANCE_LINE = "- First consumer: periplo-cloud"
+_SCANNED_SUFFIXES = frozenset({".md", ".rst", ".py", ".json", ".yaml", ".yml", ".toml", ".sql"})
+
+
+def _scanned_files() -> Iterator[Path]:
+    for top in ("src", "docs", "tests"):
+        for path in (_ROOT / top).rglob("*"):
+            if path.suffix in _SCANNED_SUFFIXES and path.is_file():
+                yield path
+
+
+def _consumer_vocabulary_hits(path: Path) -> list[str]:
+    is_provenance = path.relative_to(_ROOT).as_posix() == _PROVENANCE_FILE
+    text = path.read_text(encoding="utf-8")
+    return [
+        line
+        for line in _offending_lines(text, _CONSUMER_VOCABULARY)
+        if not (is_provenance and line == _PROVENANCE_LINE)
+    ]
+
+
+def test_sources_docs_and_tests_carry_no_consumer_vocabulary() -> None:
+    this_file = Path(__file__).resolve()
+    offenders = {
+        path.relative_to(_ROOT).as_posix(): hits
+        for path in _scanned_files()
+        if path.resolve() != this_file and (hits := _consumer_vocabulary_hits(path))
+    }
+
+    assert offenders == {}
+
+
+def test_the_allowed_provenance_line_appears_exactly_once() -> None:
+    lines = (_ROOT / _PROVENANCE_FILE).read_text(encoding="utf-8").splitlines()
+    assert [line.strip() for line in lines].count(_PROVENANCE_LINE) == 1

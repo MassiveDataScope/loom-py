@@ -1,14 +1,14 @@
 {
   "operations": {
-    "DELETE /v1/grants/{grant_id}": {
+    "DELETE /v1/orders/{order_id}": {
       "parameters": [
         {
           "in": "path",
-          "name": "grant_id",
+          "name": "order_id",
           "required": true,
           "schema": {
             "format": "uuid",
-            "title": "Grant Id",
+            "title": "Order Id",
             "type": "string"
           }
         }
@@ -19,7 +19,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GrantView"
+                "$ref": "#/components/schemas/OrderView"
               }
             }
           },
@@ -27,11 +27,11 @@
         }
       }
     },
-    "GET /v1/grants": {
+    "GET /v1/orders": {
       "parameters": [
         {
           "in": "query",
-          "name": "membershipId",
+          "name": "customerId",
           "required": false,
           "schema": {
             "format": "uuid",
@@ -40,18 +40,18 @@
         },
         {
           "in": "query",
-          "name": "roleCode",
+          "name": "channel",
           "required": false,
           "schema": {
-            "$ref": "#/components/schemas/TenantRoleCode"
+            "$ref": "#/components/schemas/OrderChannel"
           }
         },
         {
           "in": "query",
-          "name": "state",
+          "name": "status",
           "required": false,
           "schema": {
-            "$ref": "#/components/schemas/GrantStateCode"
+            "$ref": "#/components/schemas/OrderStatus"
           }
         },
         {
@@ -89,7 +89,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GrantPage"
+                "$ref": "#/components/schemas/OrderPage"
               }
             }
           },
@@ -97,13 +97,13 @@
         }
       }
     },
-    "POST /v1/grants": {
+    "POST /v1/orders": {
       "parameters": [],
       "requestBody": {
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/CreateGrantCommandRequest"
+              "$ref": "#/components/schemas/CreateOrderCommandRequest"
             }
           }
         },
@@ -114,7 +114,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GrantView"
+                "$ref": "#/components/schemas/OrderView"
               }
             }
           },
@@ -124,7 +124,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GrantView"
+                "$ref": "#/components/schemas/OrderView"
               }
             }
           },
@@ -143,28 +143,35 @@
     }
   },
   "schemas": {
-    "CreateGrantCommandRequest": {
+    "CreateOrderCommandRequest": {
       "properties": {
-        "membershipId": {
+        "channel": {
+          "$ref": "#/components/schemas/OrderChannel"
+        },
+        "customerId": {
           "format": "uuid",
           "type": "string"
-        },
-        "roleCode": {
-          "$ref": "#/components/schemas/TenantRoleCode"
         }
       },
       "required": [
-        "membershipId",
-        "roleCode"
+        "customerId",
+        "channel"
       ],
-      "title": "CreateGrantCommandRequest",
+      "title": "CreateOrderCommandRequest",
       "type": "object"
     },
-    "GrantPage": {
+    "OrderChannel": {
+      "enum": [
+        "store",
+        "web"
+      ],
+      "title": "OrderChannel"
+    },
+    "OrderPage": {
       "properties": {
         "items": {
           "items": {
-            "$ref": "#/components/schemas/GrantView"
+            "$ref": "#/components/schemas/OrderView"
           },
           "type": "array"
         },
@@ -183,49 +190,42 @@
       "required": [
         "items"
       ],
-      "title": "GrantPage",
+      "title": "OrderPage",
       "type": "object"
     },
-    "GrantStateCode": {
+    "OrderStatus": {
       "enum": [
-        "expired",
-        "live",
-        "revoked"
+        "cancelled",
+        "open",
+        "shipped"
       ],
-      "title": "GrantStateCode"
+      "title": "OrderStatus"
     },
-    "GrantView": {
+    "OrderView": {
       "properties": {
-        "grantId": {
+        "channel": {
+          "$ref": "#/components/schemas/OrderChannel"
+        },
+        "customerId": {
           "format": "uuid",
           "type": "string"
         },
-        "membershipId": {
+        "orderId": {
           "format": "uuid",
           "type": "string"
         },
-        "roleCode": {
-          "$ref": "#/components/schemas/TenantRoleCode"
-        },
-        "state": {
-          "$ref": "#/components/schemas/GrantStateCode"
+        "status": {
+          "$ref": "#/components/schemas/OrderStatus"
         }
       },
       "required": [
-        "grantId",
-        "membershipId",
-        "roleCode",
-        "state"
+        "orderId",
+        "customerId",
+        "channel",
+        "status"
       ],
-      "title": "GrantView",
+      "title": "OrderView",
       "type": "object"
-    },
-    "TenantRoleCode": {
-      "enum": [
-        "admin",
-        "member"
-      ],
-      "title": "TenantRoleCode"
     }
   }
 }
