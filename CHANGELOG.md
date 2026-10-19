@@ -459,6 +459,25 @@
 
 ### core
 
+- **core:** with no `LOOM_ENV` and no `environment=`, an application starts
+  as `production` and runs the deploy checks; an API without authentication
+  now fails at startup with `loom.rest.E001` until it configures
+  `app.rest.auth.jwt`, passes an `authenticator`, sets
+  `LOOM_ENV=development`, or lists the id under `checks.silenced`. An unknown
+  `LOOM_ENV` is a startup error.
+- **core:** the logger's default changed from development to production: with
+  no explicit `renderer`/`colors`, logs render as JSON without colours unless
+  the process resolved `development` or `test`. `create_app` and
+  `bootstrap_worker` pass the environment they resolved; the ETL runner, the
+  streaming runner and the Prefect maintenance flow pass none and so log JSON
+  unless `observability.log.config.renderer` says otherwise.
+- **core:** the logger's own environment is removed:
+  `loom.core.logger.Environment`, `LoggerConfig.environment` and
+  `LogConfig.environment` are gone, and `configure_logging(config,
+  environment=...)` and `configure_logging_from_values(environment=...)` take
+  `loom.core.environment.Environment`, `PRODUCTION` by default. A leftover
+  `environment:` key under `observability.log.config` is ignored.
+  `ObservabilityRuntime.from_config` takes `environment=` as well.
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number
   grammar and must be finite, an integer its integer subset within
@@ -625,6 +644,9 @@
 
 ### prefect
 
+- **prefect:** `FlowCtx.environment` is removed; nothing read it. The flow
+  parameter `env` still names the deployment target whose
+  `environments.<env>` block applies, and notifications still report it.
 - **prefect:** a placeholder counts from the run's scheduled start instead of
   the wall clock. `${today-1d}`, `${yesterday}` and `${now±N}` counted from
   `datetime.now()` inside the flow, so a queued run that started after
@@ -759,6 +781,28 @@
 
 ### core
 
+- **core:** one environment selector and deploy checks (ADR 0005). loom had
+  two unconnected notions of environment (the logger's `dev`/`prod`, where an
+  unknown value meant `dev`, and `FlowCtx.environment`) and nothing checked a
+  deployed configuration. `loom.core.environment` now holds
+  `Environment` (`production`, `staging`, `development`, `test`) and
+  `resolve_environment`: the explicit argument, else `LOOM_ENV`, else
+  `production`; an unknown or empty value raises `ConfigError`. REST
+  `create_app`, Celery `create_app` and `bootstrap_worker` take
+  `environment=` and `config_dir=`, which loads `base.yaml` then
+  `<environment>.yaml` when present; explicit file lists keep working, one
+  form or the other. `create_kernel(environment=...)` registers the
+  environment in the container, so a use case can inject `Environment`.
+  `loom.core.checks` adds deploy checks with stable ids
+  (`@deploy_check("<area>.<E|W><nnn>")`), run at startup in production and
+  staging: `E` fails startup with `DeployCheckError`, `W` logs a warning, and
+  `checks.silenced: [ids]` silences by id with a startup warning naming them.
+  Initial checks: `loom.rest.E001` (no `app.rest.auth.jwt`; an
+  `authenticator` passed in code satisfies it), `loom.rest.W001` (docs, redoc
+  or OpenAPI URL not `null`), `loom.logger.W001` (`console` renderer). A
+  worker skips the `loom.rest` checks. `loom check --deploy [--env X]
+  <config>` runs them in CI without starting the application.
+  `ConfigContext.declares(key)` tells an explicit `null` from an absent key.
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become
