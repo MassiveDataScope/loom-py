@@ -202,18 +202,18 @@ async def execute(self, query: GrantQuery = Query(), caller: Identity = Caller()
   The result is then validated strictly: msgspec `convert(..., strict=True)`,
   pydantic `validate_json(..., strict=True)`. So `5.0` or `1e2` for an
   integer, `1` for a boolean, `null` for any field and a Unix timestamp for a
-  date-time are 422. It raises `BoundaryValidationError` like the other entry
-  points, and keeps every conversion call inside `_loom_type.py`.
+  date-time are refused. It raises `BoundaryValidationError` like the other
+  entry points, and keeps every conversion call inside `_loom_type.py`.
 
 Request handling, in order:
 
 1. A key that is neither a declared wire name nor `profile` (when the route
    exposes it) → 400 `unsupported_query`. An unexposed `profile` is unknown.
 2. A key given twice, `profile` included → 400 `unsupported_query`.
-3. `from_query` → 422 `boundary_validation` with `violations` on a bad value
+3. `from_query` → 400 `query_validation` with `violations` on a bad value
    (wrong type, out of range, unknown enum value, missing time zone).
-4. Only then `profile` is resolved, and the use case is built; a 400 or 422
-   never constructs it.
+4. Only then `profile` is resolved, and the use case is built; a refused
+   query never constructs it.
 5. The typed struct is passed to `execute`.
 
 The accepted names and the decoder are resolved once per route at startup and
@@ -331,8 +331,8 @@ All use loom's body (`_errors.py:62-83`, `auth/middleware.py:204-227`).
             "message": "The request has a query parameter this route does not accept.",
             "trace_id": "…"}}
 
-422 (bad value)
-{"detail": {"code": "boundary_validation", "message": "Expected `int` <= 200 - at `$.limit`",
+400 (bad value)
+{"detail": {"code": "query_validation", "message": "Expected `int` <= 200 - at `$.limit`",
             "trace_id": "…", "violations": [{"field": "limit", "message": "Expected `int` <= 200"}]}}
 ```
 
@@ -428,8 +428,8 @@ or a new `test_router_result_status.py` and `test_router_declared_query.py`):
    with `trace_id`.
 4. Declared query: valid values reach `execute` typed; unknown key → 400
    `unsupported_query` without the key in the message; repeated key → 400;
-   `limit=500`, `state=x`, a bad UUID, a date-time without offset → 422
-   `boundary_validation` with the field; defaults apply when absent.
+   `limit=500`, `state=x`, a bad UUID, a date-time without offset → 400
+   `query_validation` with the field; defaults apply when absent.
 5. OpenAPI of a declared query: exactly the declared parameters, wire names,
    `minimum`/`maximum`, enum `$ref` in `components.schemas`, no `page`,
    `pagination`, `sort` or `direction`.
@@ -492,8 +492,9 @@ Accepted with the recommendations above and these decisions:
 3. The `Query()` marker works over a strict `msgspec.Struct` or a strict
    pydantic model. loom publishes exactly the declared parameters and
    validates them. An unknown or repeated parameter answers 400
-   `unsupported_query` (open question 3); an invalid value answers 422
-   `boundary_validation`, as body and path parameters do (open question 2).
+   `unsupported_query` (open question 3); an invalid value answered 422
+   `boundary_validation`, as body and path parameters do (open question 2),
+   until the standards check below changed it to 400 `query_validation`.
    List fields are refused at application start. `LoomType` gains
    `from_query`. Routes using `QuerySpec` are unchanged. The marker keeps the
    name `Query()` (open question 4).
@@ -502,6 +503,28 @@ Accepted with the recommendations above and these decisions:
    and filter errors answering 500, the `QuerySpec` OpenAPI `maximum: 1000`
    (open question 7), and the enum value quoted by msgspec (open question 5).
    Open questions 6 and 8 stay as written.
+
+### Standards check: a bad query value is 400
+
+RFC 9110 §15.5.21 defines 422 Unprocessable Content as the server
+understanding the content type of the request *content* and its syntax but
+being unable to process the contained instructions. The query string is part
+of the target URI (RFC 9110 §7.1, RFC 3986 §3.4), not content, so 422 does
+not fit it. A malformed request target is a client error with no more
+specific status: 400 Bad Request (RFC 9110 §15.5.1). 422 stays for bodies,
+and path parameters keep FastAPI's 422.
+
+- `ErrorCode.QUERY_VALIDATION = "query_validation"` maps to 400 in
+  `HttpErrorMapper`, with the same body and `violations` as
+  `boundary_validation`.
+- Shape: `BoundaryValidationError` takes a keyword-only `code`, default
+  `boundary_validation`. `from_query` keeps raising the default; the REST
+  router re-raises a failure of `from_query` with `code=query_validation`.
+  One error type keeps the mapper's single `violations` branch for both
+  codes; core still names only where a value came from, never an HTTP
+  status, and the transport decides which code its query failures carry.
+  A separate subclass was not needed: it would duplicate the constructor to
+  change one field.
 
 ### Review round
 

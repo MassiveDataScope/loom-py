@@ -66,7 +66,9 @@ class HttpErrorMapper:
     - :class:`~loom.core.errors.RuleViolation` → ``field``
     - :class:`~loom.core.errors.RuleViolations` → ``violations``
     - :class:`~loom.core.model.BoundaryValidationError` → ``violations``
-      (``422``; a schema failure, distinct from a rule failure)
+      (``422``; a schema failure, distinct from a rule failure; ``400`` under
+      ``query_validation``, since RFC 9110 §15.5.21 defines ``422`` over
+      request content and a query string is not content)
     - :class:`~loom.core.errors.RateLimited` → ``429`` with a ``Retry-After``
       header carrying its whole seconds
     - :class:`~loom.core.engine.post_commit.PostCommitError` → ``committed``
@@ -92,6 +94,7 @@ class HttpErrorMapper:
         ErrorCode.RULE_VIOLATIONS: HTTPStatus.UNPROCESSABLE_ENTITY,
         ErrorCode.RULE_VIOLATION: HTTPStatus.UNPROCESSABLE_ENTITY,
         ErrorCode.BOUNDARY_VALIDATION: HTTPStatus.UNPROCESSABLE_ENTITY,
+        ErrorCode.QUERY_VALIDATION: HTTPStatus.BAD_REQUEST,
         ErrorCode.UNSUPPORTED_FORMAT: HTTPStatus.BAD_REQUEST,
         ErrorCode.UNSUPPORTED_QUERY: HTTPStatus.BAD_REQUEST,
         ErrorCode.RATE_LIMITED: HTTPStatus.TOO_MANY_REQUESTS,

@@ -249,13 +249,13 @@ def test_an_unknown_list_parameter_answers_400_unsupported_query() -> None:
     )
 
 
-def test_a_list_limit_above_200_answers_422_boundary_validation() -> None:
+def test_a_list_limit_above_200_answers_400_query_validation() -> None:
     response = _client().get("/v1/grants", params={"limit": "201"})
 
     detail = response.json()["detail"]
     assert (response.status_code, detail["code"], detail["violations"][0]["field"]) == (
-        422,
-        "boundary_validation",
+        400,
+        "query_validation",
         "limit",
     )
 

@@ -31,6 +31,7 @@ class ErrorCode(StrEnum):
     RULE_VIOLATION = "rule_violation"
     RULE_VIOLATIONS = "rule_violations"
     BOUNDARY_VALIDATION = "boundary_validation"
+    QUERY_VALIDATION = "query_validation"
     UNSUPPORTED_FORMAT = "unsupported_format"
     UNSUPPORTED_QUERY = "unsupported_query"
     RATE_LIMITED = "rate_limited"

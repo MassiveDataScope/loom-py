@@ -206,7 +206,9 @@
   `execute` parameter typed with a strict `msgspec.Struct` or pydantic model
   of scalar fields; the REST route accepts exactly its wire names (plus `profile`
   where the route exposes it), answers an unknown or repeated parameter,
-  `profile` included, with `400 unsupported_query` before the use case is built and a bad value with `422 boundary_validation`, and
+  `profile` included, with `400 unsupported_query` before the use case is built and a bad value with
+  `400 query_validation` (`ErrorCode.QUERY_VALIDATION`, the body and `violations`
+  of `boundary_validation`; `422` stays for bodies), and
   OpenAPI publishes one parameter per field with its constraints, enums in
   `components.schemas`. List, object and multi-type fields, a field named like
   a path parameter or `profile`, a `QuerySpec` next to it and a second

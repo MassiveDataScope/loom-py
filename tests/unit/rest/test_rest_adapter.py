@@ -271,6 +271,21 @@ class TestHttpErrorMapper:
         exc = self._mapper().to_http(LoomError("slow down", code="rate_limited"))
         assert (exc.status_code, exc.headers) == (429, None)
 
+    def test_query_validation_maps_to_400_with_its_violations(self) -> None:
+        error = BoundaryValidationError(
+            "Expected `int` <= 200 - at `$.limit`",
+            (("limit", "Expected `int` <= 200"),),
+            code=ErrorCode.QUERY_VALIDATION,
+        )
+
+        exc = self._mapper().to_http(error)
+
+        assert (exc.status_code, _detail(exc)["code"], _detail(exc)["violations"]) == (
+            400,
+            "query_validation",
+            [{"field": "limit", "message": "Expected `int` <= 200"}],
+        )
+
     def test_unknown_code_defaults_to_500(self) -> None:
         class _CustomError(LoomError):
             pass

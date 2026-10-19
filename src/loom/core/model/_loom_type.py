@@ -113,10 +113,18 @@ class BoundaryValidationError(LoomError, ValueError):
         message: One-line description of the failure.
         violations: ``(field, message)`` pairs, one per failed field. Empty
             when the caller has no per-field breakdown to offer.
+        code: ``boundary_validation`` by default; ``query_validation`` when
+            the values came from a query string.
     """
 
-    def __init__(self, message: str, violations: tuple[tuple[str, str], ...] = ()) -> None:
-        super().__init__(message, code=ErrorCode.BOUNDARY_VALIDATION)
+    def __init__(
+        self,
+        message: str,
+        violations: tuple[tuple[str, str], ...] = (),
+        *,
+        code: str = ErrorCode.BOUNDARY_VALIDATION,
+    ) -> None:
+        super().__init__(message, code=code)
         self.violations = violations
 
 

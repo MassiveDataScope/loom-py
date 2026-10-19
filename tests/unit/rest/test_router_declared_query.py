@@ -188,13 +188,13 @@ def test_an_exposed_profile_is_accepted_next_to_the_declared_parameters(
         ("changed_since=2026-09-15T10:00:00", "changed_since"),
     ],
 )
-def test_a_bad_value_is_a_boundary_validation_error(
+def test_a_bad_value_is_a_query_validation_error(
     client: TestClient, query: str, field: str
 ) -> None:
     response = client.get(f"/grants?{query}")
 
     detail = response.json()["detail"]
-    assert (response.status_code, detail["code"]) == (422, "boundary_validation")
+    assert (response.status_code, detail["code"]) == (400, "query_validation")
     assert [violation["field"] for violation in detail["violations"]] == [field]
 
 
@@ -246,7 +246,7 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
     operation = client.get("/openapi.json").json()["paths"]["/grants/from-model"]["get"]
 
     assert (accepted.status_code, accepted.json()) == (200, ["revoked", 3])
-    assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "boundary_validation")
+    assert (refused.status_code, refused.json()["detail"]["code"]) == (400, "query_validation")
     assert (unknown.status_code, unknown.json()["detail"]["code"]) == (400, "unsupported_query")
     assert all("title" not in parameter["schema"] for parameter in operation["parameters"])
     assert [parameter["name"] for parameter in operation["parameters"]] == [
@@ -274,8 +274,8 @@ def test_a_value_not_spelled_exactly_is_refused(client: TestClient, path: str, q
     response = client.get(f"{path}?{query}")
 
     assert (response.status_code, response.json()["detail"]["code"]) == (
-        422,
-        "boundary_validation",
+        400,
+        "query_validation",
     )
 
 
@@ -311,5 +311,5 @@ def test_a_refused_query_does_not_build_the_use_case(
 ) -> None:
     response = client.get(f"/grants?{query}")
 
-    assert response.status_code in (400, 422)
+    assert response.status_code == 400
     assert factory.built == []

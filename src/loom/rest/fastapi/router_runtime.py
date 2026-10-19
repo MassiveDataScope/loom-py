@@ -7,7 +7,7 @@ Generates async handler functions at startup, one per
    Starlette's routing layer from the URL).
 2. Decodes the query string: a ``Query()`` parameter accepts exactly its
    declared names (``400 unsupported_query`` for an unknown or repeated one,
-   ``422 boundary_validation`` for a bad value), then ``profile`` and a
+   ``400 query_validation`` for a bad value), then ``profile`` and a
    ``QuerySpec``.
 3. Reads the raw request body and decodes it with ``msgspec.json.decode``
    when bytes are present.
@@ -48,7 +48,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
-from loom.core.model import LoomType, loom_type
+from loom.core.model import BoundaryValidationError, LoomType, loom_type
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -380,14 +380,20 @@ class _DeclaredQuery:
 
         Raises:
             LoomError: ``unsupported_query`` for an unknown or repeated key.
-            BoundaryValidationError: A value does not satisfy its field.
+            BoundaryValidationError: ``query_validation`` when a value does
+                not satisfy its field.
         """
         keys = [key for key, _ in query_params.multi_items()]
         if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
             raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
-        return self.decoder.from_query(
-            {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
-        )
+        try:
+            return self.decoder.from_query(
+                {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
+            )
+        except BoundaryValidationError as exc:
+            raise BoundaryValidationError(
+                exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True)

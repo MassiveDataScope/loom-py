@@ -188,7 +188,7 @@ this order:
 | Request | Answer |
 |---------|--------|
 | A parameter the type does not declare, or one given twice | `400 unsupported_query` |
-| A value the field refuses (wrong type, out of range, unknown enum value, a date-time without offset) | `422 boundary_validation` with `violations` |
+| A value the field refuses (wrong type, out of range, unknown enum value, a date-time without offset) | `400 query_validation` with `violations`; a query string is not request content, so `422` stays for bodies |
 | Otherwise | `execute` receives the typed value; absent fields take their defaults |
 
 Values are checked strictly, with either library. An integer, number or
