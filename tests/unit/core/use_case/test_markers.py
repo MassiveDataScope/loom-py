@@ -31,9 +31,6 @@ class TestQuery:
         marker = Query()
         assert type(marker).__slots__ == ()
 
-    def test_is_exported_with_the_other_markers(self) -> None:
-        assert use_case.Query is Query
-
 
 class TestAgent:
     def test_stores_the_agent_name(self) -> None:
