@@ -369,21 +369,21 @@ class _DeclaredQuery:
     decoder: LoomType
 
     def decode(self, query_params: QueryParams) -> Any:
-        """Build the typed query, refusing a key the route does not declare or repeats.
+        """Build the typed query, refusing a key the route does not accept or repeats.
 
-        ``profile`` is left to :func:`_resolve_profile`.
+        ``profile`` is accepted only where the route exposes it, and its value
+        is left to :func:`_resolve_profile`.
 
         Raises:
             LoomError: ``unsupported_query`` for an unknown or repeated key.
             BoundaryValidationError: A value does not satisfy its field.
         """
-        items = [
-            (key, value) for key, value in query_params.multi_items() if key != QueryParam.PROFILE
-        ]
-        keys = [key for key, _ in items]
+        keys = [key for key, _ in query_params.multi_items()]
         if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
             raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
-        return self.decoder.from_query(dict(items))
+        return self.decoder.from_query(
+            {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,9 +408,12 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     query_binding = plan.query_binding if plan is not None else None
     declared_query = None
     if query_binding is not None:
+        accepted = {field.name for field in compiled_route.query_fields}
+        if compiled_route.effective_expose_profile:
+            accepted.add(QueryParam.PROFILE)
         declared_query = _DeclaredQuery(
             param_name=query_binding.name,
-            accepted=frozenset(field.name for field in compiled_route.query_fields),
+            accepted=frozenset(accepted),
             decoder=loom_type(query_binding.query_type),
         )
     return _RouteRuntime(
@@ -449,6 +452,10 @@ def _build_execution_params(
 ) -> dict[str, Any]:
     compiled_route = runtime.compiled_route
     params: dict[str, Any] = {name: path_kwargs[name] for name in runtime.path_params}
+    if runtime.declared_query is not None:
+        params[runtime.declared_query.param_name] = runtime.declared_query.decode(
+            request.query_params
+        )
     selected_profile = _resolve_profile(request, compiled_route)
     if runtime.accepts_profile_param:
         params["profile"] = selected_profile
@@ -458,10 +465,6 @@ def _build_execution_params(
             default_pagination_mode=compiled_route.effective_pagination_mode,
             allow_pagination_override=compiled_route.effective_allow_pagination_override,
             max_limit=compiled_route.effective_max_limit,
-        )
-    if runtime.declared_query is not None:
-        params[runtime.declared_query.param_name] = runtime.declared_query.decode(
-            request.query_params
         )
     return params
 
@@ -500,10 +503,12 @@ async def _execute_route(
         _authorize_route(
             identity, compiled_route.effective_requires_roles, compiled_route.full_path
         )
+        params = _build_execution_params(request, path_kwargs, runtime)
+        payload = await _decode_payload(request, runtime.has_input_binding)
         result = await executor.execute(
             factory.build(runtime.use_case_type),
-            params=_build_execution_params(request, path_kwargs, runtime),
-            payload=await _decode_payload(request, runtime.has_input_binding),
+            params=params,
+            payload=payload,
             read_only=compiled_route.read_only,
             identity=identity,
         )

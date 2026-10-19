@@ -90,10 +90,24 @@ class Grants(RestInterface[Any]):
     )
 
 
+class _RecordingFactory(UseCaseFactory):
+    def __init__(self) -> None:
+        super().__init__(LoomContainer())
+        self.built: list[type[Any]] = []
+
+    def build(self, use_case_type: type[Any]) -> Any:
+        self.built.append(use_case_type)
+        return super().build(use_case_type)
+
+
 @pytest.fixture
-def client() -> TestClient:
+def factory() -> _RecordingFactory:
+    return _RecordingFactory()
+
+
+@pytest.fixture
+def client(factory: _RecordingFactory) -> TestClient:
     compiler = UseCaseCompiler()
-    factory = UseCaseFactory(LoomContainer())
     for route in Grants.routes:
         compiler.compile(route.use_case)
         factory.register(route.use_case)
@@ -274,3 +288,27 @@ def test_exact_values_are_accepted(client: TestClient, path: str, since: str) ->
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "url", ["/grants?profile=detail", "/grants/by-profile?profile=detail&profile=default"]
+)
+def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
+    client: TestClient, url: str
+) -> None:
+    response = client.get(url)
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (
+        400,
+        "unsupported_query",
+    )
+
+
+@pytest.mark.parametrize("query", ["page=2", "limit=500"])
+def test_a_refused_query_does_not_build_the_use_case(
+    client: TestClient, factory: _RecordingFactory, query: str
+) -> None:
+    response = client.get(f"/grants?{query}")
+
+    assert response.status_code in (400, 422)
+    assert factory.built == []
