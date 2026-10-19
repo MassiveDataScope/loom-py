@@ -22,7 +22,7 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.overrides import load_application_config
-from loom.core.environment import Environment, resolve_environment
+from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
@@ -208,22 +208,24 @@ class StreamingRunner:
         observability_runtime: ObservabilityRuntime | None = None,
         environment: Environment | str | None = None,
     ) -> StreamingRunner:
-        """Load config from YAML and build a runner.
+        """Load config from YAML or a config directory and build a runner.
 
         Args:
             flow: Flow to compile.
-            path: Local path or cloud URI of the YAML config file.
+            path: Local path or cloud URI of the YAML config file, or a local
+                config directory: ``base.yaml`` then ``<environment>.yaml``.
             resolvers: Resolvers for ``${name:key}`` placeholders, registered
                 before the built-in ``secrets`` and ``ssm`` defaults.  A
                 resolver named like a default replaces it.
             observability_runtime: Optional runtime override.
             environment: Environment of the run; overrides ``LOOM_ENV``.
         """
+        resolved_environment = resolve_environment(environment)
         return cls.from_context(
             flow,
-            config=_load_yaml(path, resolvers),
+            config=_load_yaml(path, resolvers, resolved_environment),
             observability_runtime=observability_runtime,
-            environment=environment,
+            environment=resolved_environment,
         )
 
     @classmethod
@@ -329,8 +331,8 @@ class StreamingRunner:
                 or ``config_path``, the runner is reconfigured before execution.
             config: Optional config context. Used together with ``flow`` to
                 reconfigure the runner.
-            config_path: Optional path to a YAML config file. Loaded and used
-                like ``config`` when provided.
+            config_path: Optional path to a YAML config file or a config
+                directory. Loaded and used like ``config`` when provided.
             error_sinks: Optional explicit error sinks. When provided, these
                 take precedence over registry-resolved sinks.
             runtime: Optional runtime override. When omitted, uses the runner's
@@ -352,10 +354,11 @@ class StreamingRunner:
                 "resolvers apply only with config_path, not config: "
                 "config is already resolved, so resolvers would never be applied"
             )
+        resolved_environment = resolve_environment(environment)
         if config_path is not None:
-            config = _load_yaml(str(config_path), resolvers)
+            config = _load_yaml(str(config_path), resolvers, resolved_environment)
         if flow is not None and config is not None:
-            self._configure_from(flow, config, environment)
+            self._configure_from(flow, config, resolved_environment)
         if config is not None:
             bindings = self._sink_registry.resolve(config)
             self._resolved_error_sinks = {
@@ -399,9 +402,13 @@ class StreamingRunner:
             self._shutdown = None
 
 
-def _load_yaml(path: str, resolvers: Sequence[ConfigResolver]) -> ConfigContext:
-    """Load *path* with *resolvers* ahead of the built-in ``secrets``/``ssm`` defaults."""
-    return load_application_config(path, resolvers=with_default_resolvers(resolvers))
+def _load_yaml(
+    path: str, resolvers: Sequence[ConfigResolver], environment: Environment
+) -> ConfigContext:
+    """Load *path*, a file or a config directory, with *resolvers* ahead of the defaults."""
+    return load_application_config(
+        *config_source_paths(path, environment), resolvers=with_default_resolvers(resolvers)
+    )
 
 
 def _runtime_kwargs(runtime: BytewaxRuntimeConfig) -> dict[str, Any]:

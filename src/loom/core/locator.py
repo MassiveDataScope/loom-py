@@ -25,7 +25,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
-from loom.core.environment import CONFIG_VARIABLE, loom_variable
+from loom.core.environment import CONFIG_VARIABLE, config_source_paths, loom_variable
 from loom.core.model.scoped import ScopedTable
 from loom.core.schema_names import SchemaNames
 
@@ -137,6 +137,11 @@ _ENGINES: dict[str, Callable[[_Discovery], DiscoveryResult]] = {
 def load_application(config_path: str | None = None) -> Application:
     """Load, discover and compile the application described by ``config_path``.
 
+    ``config_path``, else ``LOOM_CONFIG``, is a file or a config directory:
+    a directory loads ``base.yaml`` then the overlay of the environment
+    ``LOOM_ENV`` selects, as the application factories do, and the
+    ``LOOM__*`` variables merge last.
+
     Raises:
         ConfigError: When the path is missing, a required key is absent or a
             value has the wrong shape; the message names the key.
@@ -151,10 +156,11 @@ def load_application(config_path: str | None = None) -> Application:
     )
 
     path = _resolve_path(config_path)
-    context = load_application_config(path)
+    paths = config_source_paths(path, None)
+    context = load_application_config(*paths)
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
-    _ensure_on_path(app.code_path, Path(path).resolve().parent)
+    _ensure_on_path(app.code_path, Path(paths[0]).resolve().parent)
     models = _discover(app.discovery).models
     metadata = MetaData(
         naming_convention=configured_naming_convention(database.schema.naming_convention)

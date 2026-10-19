@@ -76,9 +76,9 @@ storage:
 
 
 def _captured_config(build: Any) -> StorageConfig:
-    with patch.object(ETLRunner, "from_config") as from_config:
+    with patch.object(ETLRunner, "_assemble") as assemble:
         build()
-    config = from_config.call_args.args[0]
+    config = assemble.call_args.args[0]
     assert isinstance(config, StorageConfig)
     return config
 

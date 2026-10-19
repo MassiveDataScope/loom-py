@@ -123,3 +123,18 @@ def test_an_override_variable_reaches_the_runtime(
     runner = StreamingRunner.from_yaml(bytewax_stream_flow, str(path), environment="development")
 
     assert runner._runtime.workers_per_process == 3
+
+
+def test_a_config_directory_layers_the_overlay_of_the_environment(
+    bytewax_stream_flow: StreamFlow[Order, Result], tmp_path: Path
+) -> None:
+    base = {"kafka": _KAFKA, "streaming": {"runtime": {"workers_per_process": 1}}}
+    (tmp_path / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
+    overlay = {"streaming": {"runtime": {"workers_per_process": 4}}}
+    (tmp_path / "development.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
+
+    runner = StreamingRunner.from_yaml(
+        bytewax_stream_flow, str(tmp_path), environment="development"
+    )
+
+    assert runner._runtime.workers_per_process == 4

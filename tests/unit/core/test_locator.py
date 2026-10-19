@@ -264,3 +264,17 @@ def test_a_naming_convention_for_an_unknown_kind_names_the_key(tmp_path: Path) -
 
     with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
         load_application(config_path)
+
+
+def test_a_config_directory_layers_the_overlay_of_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _config(PLAIN_MODULE, mode="create_all")
+    _write(tmp_path, "base.yaml", base)
+    _write(tmp_path, "staging.yaml", {"database": {"url": "postgresql+asyncpg://u:p@stage/db"}})
+    monkeypatch.setenv("LOOM_ENV", "staging")
+    monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
+
+    application = load_application()
+
+    assert application.database.url == "postgresql+asyncpg://u:p@stage/db"
