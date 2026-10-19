@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+_ABSENT = object()
+
 
 class ConfigContext:
     """Runtime config accessor backed by a resolved DictConfig.
@@ -130,6 +132,22 @@ class ConfigContext:
         from omegaconf import OmegaConf
 
         return OmegaConf.select(self._config, _key_str(key), default=None) is not None
+
+    def declares(self, key: str | ConfigKey) -> bool:
+        """Return ``True`` if the dot-separated *key* is written in the config, even as null.
+
+        Unlike :meth:`has`, an explicit ``null`` counts: it tells a setting
+        switched off apart from one left to its default.
+
+        Args:
+            key: Dot-separated path (e.g. ``"app.rest.docs_url"``).
+
+        Returns:
+            ``True`` when the key is present, whatever its value.
+        """
+        from omegaconf import OmegaConf
+
+        return OmegaConf.select(self._config, _key_str(key), default=_ABSENT) is not _ABSENT
 
     def section_optional(self, key: str | ConfigKey, target: type[T]) -> T | None:
         """Extract *key* as *target* when present, otherwise return ``None``.

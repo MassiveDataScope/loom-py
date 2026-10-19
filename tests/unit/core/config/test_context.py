@@ -113,3 +113,21 @@ class TestConfigContextCustomBinder:
         strict_ctx = ConfigContext(cfg, binder=StructBinder(strict=True))
         with pytest.raises(ConfigError):
             strict_ctx.bind(_Worker, path="worker")
+
+
+class TestConfigContextDeclares:
+    @pytest.mark.parametrize(
+        ("key", "declared", "has"),
+        [
+            ("rest.docs_url", True, False),
+            ("rest.title", True, True),
+            ("rest.redoc_url", False, False),
+            ("absent.section", False, False),
+        ],
+    )
+    def test_an_explicit_null_is_declared_but_not_held(
+        self, key: str, declared: bool, has: bool
+    ) -> None:
+        ctx = ConfigContext.from_dict({"rest": {"docs_url": None, "title": "API"}})
+
+        assert (ctx.declares(key), ctx.has(key)) == (declared, has)
