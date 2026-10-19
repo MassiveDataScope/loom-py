@@ -229,7 +229,8 @@ def test_the_published_limit_schema_matches_what_the_router_applies(
         client.get(f"{_LIST_PATH}?limit=100000000").json()["limit"],
         client.get(_LIST_PATH).json()["limit"],
     )
-    assert (schema["maximum"], schema["default"]) == expected
+    published = (schema["maximum"], schema["default"])
+    assert published == expected
     assert applied == expected
 
 
