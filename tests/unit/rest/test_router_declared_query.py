@@ -313,3 +313,11 @@ def test_a_refused_query_does_not_build_the_use_case(
 
     assert response.status_code == 400
     assert factory.built == []
+
+
+@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
+def test_a_bad_enum_value_is_not_echoed(client: TestClient, path: str) -> None:
+    response = client.get(path, params={"state": "secret-input-value"})
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (400, "query_validation")
+    assert "secret-input-value" not in response.text
