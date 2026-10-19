@@ -4,11 +4,16 @@ Meant for CI: it loads the configuration the application would load, runs
 every deploy check whatever the environment, prints each finding with its id
 and hint, and exits ``1`` when an error remains. No placeholder is resolved
 unless a check reads it, so secrets need not be reachable.
+
+``app.code_path`` (``src`` by default, relative to the first file) joins the
+import path as ``create_app`` adds it, so the modules of ``checks.modules``
+import here as they do at startup.
 """
 
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -18,6 +23,9 @@ from loom.core.checks import DeployReport, run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment, environment_config_paths, resolve_environment
+
+# create_app's default for app.code_path.
+_DEFAULT_CODE_PATH = "src"
 
 # The packages registering loom's checks, each with the dependency it needs.
 # Imported by the command, not at module top: without the 'rest' extra the
@@ -46,7 +54,9 @@ def check(
     _load_check_packages()
     try:
         environment = resolve_environment(env)
-        context = ConfigContext.from_yaml(*_config_paths(config, environment))
+        paths = _config_paths(config, environment)
+        context = ConfigContext.from_yaml(*paths)
+        _add_code_path(context, Path(paths[0]))
         report = run_deploy_checks(context)
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
@@ -69,6 +79,15 @@ def _installed(module: str) -> bool:
     except ModuleNotFoundError:
         return False
     return True
+
+
+def _add_code_path(context: ConfigContext, first_file: Path) -> None:
+    code_path = Path(context.section_or_default("app.code_path", str, _DEFAULT_CODE_PATH))
+    if not code_path.is_absolute():
+        code_path = first_file.resolve().parent / code_path
+    entry = str(code_path.resolve())
+    if code_path.is_dir() and entry not in sys.path:
+        sys.path.insert(0, entry)
 
 
 def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ...]:

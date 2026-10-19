@@ -168,3 +168,31 @@ def test_without_the_rest_extra_the_rest_checks_do_not_apply(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
     assert "loom.logger.W001" in result.stdout
     assert "loom.rest" not in result.stdout
+
+
+_APP_CHECK_SOURCE = """\
+from loom.core.checks import Finding, deploy_check
+
+
+@deploy_check("clidemo.billing.E001")
+def _sandbox(config):
+    if not config.has("billing.sandbox"):
+        return None
+    return Finding(message="billing uses the sandbox", hint="unset billing.sandbox")
+"""
+
+
+def test_the_application_check_modules_run_from_its_code_path(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "clidemo_checks.py").write_text(_APP_CHECK_SOURCE)
+    document = {
+        "app": _SAFE_APP,
+        "billing": {"sandbox": True},
+        "checks": {"modules": ["clidemo_checks"]},
+    }
+    config = _write(tmp_path / "app.yaml", document)
+
+    result = _run_cli("check", "--deploy", str(config))
+
+    assert result.returncode == 1, result.stderr
+    assert "clidemo.billing.E001" in result.stdout
