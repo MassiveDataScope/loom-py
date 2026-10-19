@@ -6,6 +6,7 @@ keeping runtime execution transport-agnostic.
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from types import NoneType, UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
@@ -18,11 +19,19 @@ from loom.core.command.introspection import (
 )
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
-from loom.core.repository.abc.query import PaginationMode, QuerySpec
-from loom.rest.compiler import CompiledRoute
-from loom.rest.constants import LIMIT_DEFAULT, QueryParam
+from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF
+from loom.core.repository.abc.query import PaginationMode
+from loom.rest.compiler import CompiledRoute, QueryField, names_query_spec
+from loom.rest.constants import LIMIT_DEFAULT, LOCATION_HEADER, QueryParam
 
 JsonSchema = dict[str, Any]
+
+_LOCATION_HEADER_SCHEMA: JsonSchema = {
+    LOCATION_HEADER: {
+        "description": "URI of the created resource, when the use case gives one.",
+        "schema": {"type": "string", "format": "uri-reference"},
+    }
+}
 
 _PARAM_IN_QUERY = "query"
 _PARAM_NAME = "name"
@@ -51,9 +60,6 @@ QUERY_SPEC_PARAMETER_NAMES: tuple[str, ...] = (
     QueryParam.DIRECTION,
 )
 
-_SCHEMA_DEFS_KEY = "$defs"
-_SCHEMA_REF_KEY = "$ref"
-_LOCAL_DEFS_REF_PREFIX = "#/$defs/"
 _COMPONENT_REF_PREFIX = "#/components/schemas/"
 
 
@@ -107,21 +113,52 @@ def build_success_response_schema(
         OpenAPI response schema fragment, or ``None`` when the return type
         cannot be resolved to a JSON Schema.
     """
-    response_schema = _use_case_response_schema(compiled_route.route.use_case, component_registry)
-    if response_schema is None:
-        return None
-
-    return {
-        "content": {
-            "application/json": {
-                "schema": response_schema,
-            }
-        }
-    }
+    return _response_entry(compiled_route.result_type, component_registry)
 
 
-def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSchema]:
-    """Return OpenAPI query parameters inferred from the use-case contract."""
+def build_success_responses(
+    compiled_route: CompiledRoute,
+    component_registry: dict[str, JsonSchema] | None = None,
+) -> dict[int | str, JsonSchema]:
+    """Return the OpenAPI success responses of the route, keyed by status.
+
+    Args:
+        compiled_route: Fully resolved route from ``RestInterfaceCompiler``.
+        component_registry: Optional mutable dict that accumulates shared
+            component schemas.
+
+    Returns:
+        The route's ``status_code`` entry, plus a ``201`` entry when the use
+        case may return ``Created``; a status whose type has no JSON Schema
+        is left out.
+    """
+    responses: dict[int | str, JsonSchema] = {}
+    success = build_success_response_schema(compiled_route, component_registry)
+    if success is not None:
+        responses[compiled_route.route.status_code] = success
+    if compiled_route.created_type is not None:
+        created = _response_entry(compiled_route.created_type, component_registry)
+        if created is not None:
+            responses[HTTPStatus.CREATED.value] = {**created, "headers": _LOCATION_HEADER_SCHEMA}
+    return responses
+
+
+def build_query_parameters_schema(
+    compiled_route: CompiledRoute,
+    component_registry: dict[str, JsonSchema] | None = None,
+) -> list[JsonSchema]:
+    """Return OpenAPI query parameters inferred from the use-case contract.
+
+    Args:
+        compiled_route: Fully resolved route from ``RestInterfaceCompiler``.
+        component_registry: Optional mutable dict that accumulates shared
+            component schemas, such as the enums of a declared query.
+
+    Returns:
+        The ``QuerySpec`` parameters or the declared ``Query()`` fields,
+        followed by ``profile`` when the route exposes it and ``execute``
+        takes a ``profile`` parameter.
+    """
     use_case_type = compiled_route.route.use_case
     hints = get_type_hints(use_case_type.execute)
     params: list[JsonSchema] = []
@@ -133,7 +170,12 @@ def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSch
             )
         )
 
-    if _has_profile_parameter(hints) and compiled_route.effective_expose_profile:
+    params.extend(
+        _declared_query_parameter(field, component_registry)
+        for field in compiled_route.query_fields
+    )
+
+    if has_profile_parameter(hints) and compiled_route.effective_expose_profile:
         profile_param: JsonSchema = {
             _PARAM_NAME: QUERY_PARAM_PROFILE,
             _PARAM_IN: _PARAM_IN_QUERY,
@@ -149,6 +191,22 @@ def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSch
     return params
 
 
+def _declared_query_parameter(
+    field: QueryField, component_registry: dict[str, JsonSchema] | None
+) -> JsonSchema:
+    schema = {key: value for key, value in field.schema.items() if key != "title"}
+    description = schema.pop(_PARAM_DESCRIPTION, None)
+    parameter: JsonSchema = {
+        _PARAM_NAME: field.name,
+        _PARAM_IN: _PARAM_IN_QUERY,
+        _PARAM_REQUIRED: field.required,
+        _PARAM_SCHEMA: _with_component_refs(schema, component_registry),
+    }
+    if description is not None:
+        parameter[_PARAM_DESCRIPTION] = description
+    return parameter
+
+
 def _get_execution_plan(compiled_route: CompiledRoute) -> ExecutionPlan | None:
     plan = getattr(compiled_route.route.use_case, "__execution_plan__", None)
     if isinstance(plan, ExecutionPlan):
@@ -156,19 +214,13 @@ def _get_execution_plan(compiled_route: CompiledRoute) -> ExecutionPlan | None:
     return None
 
 
-def _has_profile_parameter(type_hints: dict[str, Any]) -> bool:
+def has_profile_parameter(type_hints: dict[str, Any]) -> bool:
+    """Whether ``execute`` declares an annotated ``profile`` parameter."""
     return "profile" in type_hints
 
 
 def _has_query_spec_parameter(type_hints: dict[str, Any]) -> bool:
-    for annotation in type_hints.values():
-        if annotation is QuerySpec:
-            return True
-        origin = get_origin(annotation)
-        args = get_args(annotation)
-        if origin in (UnionType, Union) and QuerySpec in args:
-            return True
-    return False
+    return any(names_query_spec(annotation) for annotation in type_hints.values())
 
 
 def _query_spec_openapi_parameters(
@@ -233,16 +285,16 @@ def _query_spec_openapi_parameters(
     ]
 
 
-def _use_case_response_schema(
-    use_case_type: type[Any],
-    component_registry: dict[str, JsonSchema] | None = None,
+def _response_entry(
+    result_type: Any,
+    component_registry: dict[str, JsonSchema] | None,
 ) -> JsonSchema | None:
-    hints = get_type_hints(use_case_type.execute)
-    return_type = hints.get("return")
-    if return_type is None or return_type is Any:
+    if result_type is Any:
         return None
-
-    return _safe_schema(return_type, component_registry)
+    response_schema = _safe_schema(result_type, component_registry)
+    if response_schema is None:
+        return None
+    return {"content": {"application/json": {"schema": response_schema}}}
 
 
 def _command_request_schema(
@@ -316,10 +368,10 @@ def _rewrite_to_component_refs(node: Any) -> Any:
         return node
     result: dict[str, Any] = {}
     for k, v in node.items():
-        if k == _SCHEMA_DEFS_KEY:
+        if k == DEFS:
             continue
-        if k == _SCHEMA_REF_KEY and isinstance(v, str) and v.startswith(_LOCAL_DEFS_REF_PREFIX):
-            result[k] = _COMPONENT_REF_PREFIX + v.removeprefix(_LOCAL_DEFS_REF_PREFIX)
+        if k == REF and isinstance(v, str) and v.startswith(DEFS_PREFIX):
+            result[k] = _COMPONENT_REF_PREFIX + v.removeprefix(DEFS_PREFIX)
         else:
             result[k] = _rewrite_to_component_refs(v)
     return result
@@ -344,11 +396,16 @@ def _safe_schema(
     raw = _safe_msgspec_schema(annotation) or _safe_pydantic_schema(annotation)
     if raw is None:
         return None
+    return _with_component_refs(raw, component_registry)
 
+
+def _with_component_refs(
+    raw: JsonSchema, component_registry: dict[str, JsonSchema] | None
+) -> JsonSchema:
     if component_registry is None:
         return raw
 
-    defs = raw.get(_SCHEMA_DEFS_KEY)
+    defs = raw.get(DEFS)
     if isinstance(defs, dict):
         for name, def_schema in defs.items():
             component_registry[name] = _rewrite_to_component_refs(def_schema)

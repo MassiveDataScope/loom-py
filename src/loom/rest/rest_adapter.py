@@ -9,8 +9,10 @@ import msgspec
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import LoomError
 from loom.core.transport.adapter import AdapterRequest
+from loom.core.use_case.outcome import Created
 from loom.core.use_case.use_case import UseCase
 from loom.rest.errors import HttpErrorMapper
+from loom.rest.fastapi.response import created_response
 
 
 class LoomRestAdapter:
@@ -56,7 +58,10 @@ class LoomRestAdapter:
         """Execute the UseCase and return a serializable result.
 
         Converts ``msgspec.Struct`` results to plain dicts/lists via
-        ``msgspec.to_builtins``. Non-struct results are returned as-is.
+        ``msgspec.to_builtins``. For a :class:`~loom.core.use_case.Created`
+        result it returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`:
+        ``201``, the value as the body, and ``Location`` when it gives one.
+        Other results are returned as-is.
 
         Args:
             use_case: Constructed UseCase instance.
@@ -64,7 +69,8 @@ class LoomRestAdapter:
                 pre-resolved dependencies.
 
         Returns:
-            Serializable result (plain Python primitives for Struct results).
+            Serializable result (plain Python primitives for Struct results),
+            or a ``MsgspecJSONResponse`` for a ``Created`` result.
 
         Raises:
             HTTPException: When the UseCase raises a ``LoomError``.
@@ -79,6 +85,8 @@ class LoomRestAdapter:
         except LoomError as exc:
             raise self._error_mapper.to_http(exc) from exc
 
+        if isinstance(result, Created):
+            return created_response(result)
         if isinstance(result, msgspec.Struct):
             return msgspec.to_builtins(result)
         return result

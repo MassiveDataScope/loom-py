@@ -41,6 +41,24 @@ class InputBinding:
 
 
 @dataclass(frozen=True)
+class QueryBinding:
+    """The declared query parameter marked with ``Query()``.
+
+    The parameter is also an ordinary :class:`ParamBinding`: the executor
+    receives the typed value under ``name``. This binding tells a transport
+    which type declares the query it must accept and decode.
+
+    Args:
+        name: Parameter name as declared in the signature.
+        query_type: The strict ``msgspec.Struct`` or pydantic model declaring
+            the query.
+    """
+
+    name: str
+    query_type: type[Any]
+
+
+@dataclass(frozen=True)
 class CallerBinding:
     """The caller-identity parameter marked with ``Caller()``.
 
@@ -205,6 +223,8 @@ class ExecutionPlan:
             empty when the use case declares none.
         mcp_bindings: ``Mcp()`` marker bindings, in declaration order; empty
             when the use case declares none.
+        query_binding: ``Query()`` binding, or ``None`` when the use case
+            declares no ``Query()`` parameter.
         load_steps: Entity prefetch steps, in declaration order.
         exists_steps: Boolean existence checks, in declaration order.
         compute_steps: Compute transformations, in declaration order.
@@ -247,3 +267,4 @@ class ExecutionPlan:
     caller_binding: CallerBinding | None = None
     agent_bindings: tuple[AgentBinding, ...] = ()
     mcp_bindings: tuple[McpBinding, ...] = ()
+    query_binding: QueryBinding | None = None

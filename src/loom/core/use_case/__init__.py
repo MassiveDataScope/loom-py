@@ -9,7 +9,9 @@ from loom.core.use_case.markers import (
     LoadById,
     Mcp,
     OnMissing,
+    Query,
 )
+from loom.core.use_case.outcome import Created
 from loom.core.use_case.rule import Rule, RuleFn, RuleViolation, RuleViolations
 from loom.core.use_case.use_case import UseCase
 
@@ -19,6 +21,7 @@ __all__ = [
     "Exists",
     "Compute",
     "ComputeFn",
+    "Created",
     "F",
     "FieldRef",
     "Input",
@@ -27,6 +30,7 @@ __all__ = [
     "Mcp",
     "OnMissing",
     "PredicateOp",
+    "Query",
     "Rule",
     "RuleFn",
     "RuleViolation",

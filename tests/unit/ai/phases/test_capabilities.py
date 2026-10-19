@@ -57,6 +57,10 @@ from loom.ai.declarative import (
     UsecaseCapability,
 )
 from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.use_case import Query
+from loom.core.use_case.registry import UseCaseRegistry
+from loom.core.use_case.use_case import UseCase
 
 from ..conftest import SKILLS_ROOT_DIR, STDIO_MCP_SERVER
 
@@ -100,6 +104,35 @@ def test_reports_usecase_key_unknown_when_key_is_not_registered(
         AgentErrorCode.USECASE_KEY_UNKNOWN,
         "capabilities.keys",
     )
+
+
+class _ListQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    limit: int = 50
+
+
+class _ListItems(UseCase[Any, int]):
+    async def execute(self, query: _ListQuery = Query()) -> int:
+        return query.limit
+
+
+def test_reports_usecase_declares_query_when_the_granted_use_case_takes_query(
+    spec_factory: Callable[..., AgentSpecV1],
+    single_issue_for: Callable[..., AgentCompilationIssue],
+) -> None:
+    UseCaseCompiler().compile(_ListItems)
+    registry = UseCaseRegistry(
+        _by_name={"items.list": _ListItems}, _by_type={_ListItems: "items.list"}
+    )
+    spec = spec_factory(capabilities=(UsecaseCapability(keys=("items.list",)),))
+
+    issue = single_issue_for(spec, registry=registry)
+
+    assert (issue.code, issue.field) == (
+        AgentErrorCode.USECASE_DECLARES_QUERY,
+        "capabilities.keys",
+    )
+    assert "items.list" in issue.message
+    assert "Query()" in issue.message
 
 
 class TestSql:

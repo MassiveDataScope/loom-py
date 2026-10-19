@@ -19,6 +19,7 @@ class untyped: this module never names ``pydantic.BaseModel``, and loom's own
 from __future__ import annotations
 
 import functools
+import math
 import re
 import sys
 import typing
@@ -29,6 +30,7 @@ import msgspec
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import LoomError
+from loom.core.model._json_schema import DEFS, definition, without_null
 
 _LAX_TYPE_REASON = (
     "the type must reject unknown fields: forbid_unknown_fields=True or "
@@ -79,6 +81,22 @@ class LoomType(Protocol):
         """
         ...
 
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        """Validate query-string values strictly and build the typed value.
+
+        Every value arrives as text. A number field takes the JSON number
+        grammar (no ``+``, no leading zero, no bare ``.``) and a finite value;
+        an integer field takes the integer subset of it, within
+        ``[-2**63, 2**64)``; a boolean field takes ``true`` or ``false``.
+        Every other field validates the text strictly, so ``"null"`` is not
+        ``None``, and a date or time field refuses a number instead of reading
+        it as a timestamp.
+
+        Raises:
+            BoundaryValidationError: ``params`` does not satisfy the type.
+        """
+        ...
+
 
 class BoundaryValidationError(LoomError, ValueError):
     """A boundary value failed validation.
@@ -98,10 +116,18 @@ class BoundaryValidationError(LoomError, ValueError):
         message: One-line description of the failure.
         violations: ``(field, message)`` pairs, one per failed field. Empty
             when the caller has no per-field breakdown to offer.
+        code: Defaults to ``boundary_validation``; a transport may re-raise
+            under its own code.
     """
 
-    def __init__(self, message: str, violations: tuple[tuple[str, str], ...] = ()) -> None:
-        super().__init__(message, code=ErrorCode.BOUNDARY_VALIDATION)
+    def __init__(
+        self,
+        message: str,
+        violations: tuple[tuple[str, str], ...] = (),
+        *,
+        code: str = ErrorCode.BOUNDARY_VALIDATION,
+    ) -> None:
+        super().__init__(message, code=code)
         self.violations = violations
 
 
@@ -303,11 +329,18 @@ class _MsgspecType:
     def to_builtins(self, obj: Any, /) -> Any:
         return msgspec.to_builtins(obj)
 
+    @functools.cached_property
+    def _coercers(self) -> Mapping[str, Callable[[str], Any]]:
+        return _query_coercers(self.schema())
+
     def from_builtins(self, payload: Any, /) -> Any:
         try:
             return msgspec.convert(payload, self.type)
         except msgspec.ValidationError as exc:
             raise _msgspec_error(exc) from exc
+
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        return self.from_builtins(_coerce_query(params, self._coercers))
 
 
 class _PydanticType:
@@ -342,6 +375,85 @@ class _PydanticType:
             violations = _pydantic_violations(exc)
             message = "; ".join(f"{field}: {msg}" for field, msg in violations)
             raise BoundaryValidationError(message, violations) from exc
+
+    @functools.cached_property
+    def _coercers(self) -> Mapping[str, Callable[[str], Any]]:
+        return _query_coercers(self.schema())
+
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        return self.decode_json(msgspec.json.encode(_coerce_query(params, self._coercers)))
+
+
+_INTEGER = re.compile(r"-?(?:0|[1-9]\d*)", re.ASCII)
+_NUMBER = re.compile(_INTEGER.pattern + r"(?:\.\d+)?(?:[eE][+-]?\d+)?", re.ASCII)
+_LOOSE_NUMBER = re.compile(r"[+-]?[\d.]+(?:[eE][+-]?\d+)?", re.ASCII)
+_INT_RANGE = range(-(2**63), 2**64)
+_INT_MAX_LENGTH = len(str(-(2**63)))
+_BOOLEANS = {"true": True, "false": False}
+_TEMPORAL_FORMATS = frozenset({"date-time", "date", "time"})
+_NOT_RFC3339 = "Expected an RFC 3339 value, got a number"
+
+
+def _to_int(text: str) -> Any:
+    if len(text) > _INT_MAX_LENGTH or not _INTEGER.fullmatch(text):
+        return text
+    number = int(text)
+    return number if number in _INT_RANGE else text
+
+
+def _to_float(text: str) -> Any:
+    number = float(text) if _NUMBER.fullmatch(text) else math.nan
+    return number if math.isfinite(number) else text
+
+
+def _to_bool(text: str) -> Any:
+    return _BOOLEANS.get(text, text)
+
+
+def _refuse_number(text: str) -> str:
+    if _LOOSE_NUMBER.fullmatch(text):
+        raise ValueError(_NOT_RFC3339)
+    return text
+
+
+_COERCERS: dict[str, Callable[[str], Any]] = {
+    "integer": _to_int,
+    "number": _to_float,
+    "boolean": _to_bool,
+}
+
+
+def _query_coercers(schema: Mapping[str, Any]) -> dict[str, Callable[[str], Any]]:
+    definitions = schema.get(DEFS, {})
+    root = definition(schema, definitions)
+    coercers: dict[str, Callable[[str], Any]] = {}
+    for name, prop in root.get("properties", {}).items():
+        coerce = _coercer(definition(without_null(prop), definitions))
+        if coerce is not None:
+            coercers[name] = coerce
+    return coercers
+
+
+def _coercer(target: Mapping[str, Any]) -> Callable[[str], Any] | None:
+    if target.get("format") in _TEMPORAL_FORMATS:
+        return _refuse_number
+    values = target.get("enum") or ()
+    if values and all(type(value) is int for value in values):
+        return _to_int
+    return _COERCERS.get(target.get("type", ""))
+
+
+def _coerce_query(
+    params: Mapping[str, str], coercers: Mapping[str, Callable[[str], Any]]
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for name, text in params.items():
+        coerce = coercers.get(name)
+        try:
+            payload[name] = text if coerce is None else coerce(text)
+        except ValueError as exc:
+            raise BoundaryValidationError(f"{exc} - at `$.{name}`", ((name, str(exc)),)) from exc
+    return payload
 
 
 _PYDANTIC_ECHOING_REASONS = {
