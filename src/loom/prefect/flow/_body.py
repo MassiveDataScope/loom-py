@@ -72,7 +72,10 @@ def build_flow_body(
             uninstall_log_bridge()
 
     def _run(flow_run_id: UUID | None, kwargs: dict[str, Any]) -> None:
-        env = kwargs.pop("env", "prod")
+        # "env" names the deployment target the flow was deployed for (its
+        # work pool); notifications read it from the flow parameters, so the
+        # context does not carry it.
+        kwargs.pop("env", None)
         explicit_correlation = kwargs.pop("correlation_id", None)
         processes = validate_stage_names(kwargs.pop("processes", None), known_processes)
         params_obj = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())
@@ -84,7 +87,6 @@ def build_flow_body(
                 or compute_correlation_id(flow_name, correlation_field, decoded)
             ),
             run_id=f"{flow_name}-{uuid4().hex[:8]}",
-            environment=env,
             processes=processes,
         )
 

@@ -18,7 +18,6 @@ class FlowCtx(msgspec.Struct, frozen=True, kw_only=True):
         run_id: Identifier of this specific execution. Key for loom lineage
             records. Callers provide it so Prefect and loom share the same
             traceability identifier.
-        environment: Execution environment (default ``"prod"``).
         dry_run: When ``True``, steps run without writing to real destinations.
         force: When ``True``, ignores any existing manifest and reruns all steps.
         processes: Names of ``ETLProcess`` subclasses to execute. ``None`` runs
@@ -27,7 +26,6 @@ class FlowCtx(msgspec.Struct, frozen=True, kw_only=True):
 
     correlation_id: str
     run_id: str
-    environment: str = "prod"
     dry_run: bool = False
     force: bool = False
     processes: tuple[str, ...] | None = None
