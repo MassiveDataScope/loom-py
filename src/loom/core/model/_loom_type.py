@@ -116,8 +116,8 @@ class BoundaryValidationError(LoomError, ValueError):
         message: One-line description of the failure.
         violations: ``(field, message)`` pairs, one per failed field. Empty
             when the caller has no per-field breakdown to offer.
-        code: ``boundary_validation`` by default; ``query_validation`` when
-            the values came from a query string.
+        code: Defaults to ``boundary_validation``; a transport may re-raise
+            under its own code.
     """
 
     def __init__(

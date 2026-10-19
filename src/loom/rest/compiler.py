@@ -6,15 +6,20 @@ occurs after compilation.
 
 Compilation steps per interface:
 
-1. Validate structural constraints (prefix, routes non-empty if ``auto=False``).
+1. Validate the interface: a non-empty ``prefix`` without a placeholder and
+   a non-empty ``routes``.
 2. For each :class:`~loom.rest.model.RestRoute`:
-   - Verify ``use_case`` has a compiled :class:`~loom.core.engine.plan.ExecutionPlan`.
-   - Resolve effective pagination mode (route → interface → global).
-   - Resolve effective profile policy (route → interface → global).
-3. Detect and resolve ``(method, path)`` conflicts: custom routes win over
-   duplicates.  Raise :class:`InterfaceCompilationError` on ambiguous conflicts
-   within the same ``routes`` tuple.
-4. Validate ``expose_profile`` requires a non-empty ``allowed_profiles``.
+   - Verify ``method`` and a compiled :class:`~loom.core.engine.plan.ExecutionPlan`.
+   - Resolve the result type and the type a ``Created`` result wraps,
+     refusing a ``Created`` that does not wrap another member of the result
+     or sits on a route whose ``status_code`` is ``201``.
+   - Refuse a ``(method, path)`` pair declared twice in the interface.
+   - Resolve the pagination, profile and role policies
+     (route → interface → global).
+   - Read the fields of a ``Query()`` parameter, refusing a non-scalar field,
+     a name shared with a path parameter or ``profile``, or a ``QuerySpec``
+     parameter next to it.
+   - Refuse ``expose_profile`` without ``allowed_profiles``.
 """
 
 from __future__ import annotations
@@ -263,7 +268,8 @@ class QueryField:
 
 
 def _declared_query_fields(query_type: type[Any]) -> tuple[QueryField, ...]:
-    """
+    """Read the query parameters a ``Query()`` type declares, in declaration order.
+
     Raises:
         ValueError: A field is not a scalar a query parameter can carry.
     """

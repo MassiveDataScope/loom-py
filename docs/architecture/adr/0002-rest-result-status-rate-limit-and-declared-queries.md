@@ -1,9 +1,12 @@
 # ADR 0002: Status chosen by the result, 429 and declared query parameters
 
 - Status: Accepted
-- Issue: none yet
+- Issue: PR #359
 - Applies to: loom-kernel 2.20.2 and later; target release 2.21.0
 - First consumer: periplo-cloud, control plane, task T9 (grant and role routes)
+
+File and line references in Context and Decision are against loom-kernel
+2.20.2.
 
 ## Context
 
@@ -216,11 +219,13 @@ Request handling, in order:
 1. A key that is neither a declared wire name nor `profile` (when the route
    exposes it) → 400 `unsupported_query`. An unexposed `profile` is unknown.
 2. A key given twice, `profile` included → 400 `unsupported_query`.
-3. `from_query` → 400 `query_validation` with `violations` on a bad value
+3. A `profile` the route does not allow → 400 `query_validation` on field
+   `profile`, with a fixed message and without the value.
+4. `from_query` → 400 `query_validation` with `violations` on a bad value
    (wrong type, out of range, unknown enum value, missing time zone).
-4. Only then `profile` is resolved, and the use case is built; a refused
+5. Only then `profile` is resolved, and the use case is built; a refused
    query never constructs it.
-5. The typed struct is passed to `execute`.
+6. The typed struct is passed to `execute`.
 
 The accepted names and the decoder are resolved once per route at startup and
 held in `_RouteRuntime`.
@@ -230,7 +235,8 @@ OpenAPI: one `in: query` parameter per field, built once from
 a default, the `null` branch of an optional field is dropped (absence is the
 `None`), `description` comes from `Meta(description=...)`, and enum
 definitions go to `components.schemas` through the existing
-`_rewrite_to_component_refs`. Nothing else is published for the route.
+`_rewrite_to_component_refs`. Nothing else is published for the route,
+except `profile` where the route exposes it and `execute` takes it.
 
 Routes with a `QuerySpec` parameter, or with neither, behave exactly as today.
 
@@ -342,13 +348,14 @@ All use loom's body (`_errors.py:62-83`, `auth/middleware.py:204-227`).
             "trace_id": "…", "violations": [{"field": "limit", "message": "Expected `int` <= 200"}]}}
 ```
 
-The 400 does not echo the parameter's name: it is caller input, and loom
-already drops input from validation errors (`_errors.py:94-99`).
+The `unsupported_query` 400 does not echo the parameter's name: it is caller
+input, and loom already drops input from validation errors
+(`_errors.py:94-99`).
 
-Finding: msgspec 0.21.1 quotes the value in one message, `Invalid enum value 'x'`
-(checked with a probe), although `_loom_type.py:7-9` says msgspec messages are
-free of the input. It affects JSON bodies today, and would affect enum query
-parameters (open question 5).
+Finding (since fixed, #350): msgspec 0.21.1 quotes the value in one message,
+`Invalid enum value 'x'` (checked with a probe), although `_loom_type.py:7-9`
+said msgspec messages are free of the input. It affected JSON bodies, and
+would have affected enum query parameters (open question 5).
 
 ## Alternatives rejected
 
@@ -389,15 +396,28 @@ parameters (open question 5).
 All three fit 2.21.0, on one branch `feat/rest-result-status-rate-limit-declared-queries`,
 one commit per gap.
 
-- Additive: `Created`, `Query()`, `QueryBinding`, `ExecutionPlan.query_binding`
-  (defaulted), `ErrorCode.RATE_LIMITED`, `RateLimited`, `LoomType.from_query`.
-- No existing route changes behaviour: `Created` and `Query()` are opt-in, and
-  `QuerySpec` routes keep their parameters, filters and clamp.
-- Two observable changes, both acceptable in a minor:
+- Additive: `Created` (with `location`), `Query()`, `QueryBinding`,
+  `ExecutionPlan.query_binding` (defaulted), `QueryField`,
+  `CompiledRoute.query_fields`, `result_type` and `created_type` (defaulted),
+  `build_success_responses`, `ErrorCode.RATE_LIMITED`, `QUERY_VALIDATION` and
+  `INSUFFICIENT_AUTHENTICATION`, `RateLimited`, `InsufficientAuthentication`,
+  `AgentErrorCode.USECASE_DECLARES_QUERY`, `LoomType.from_query`, a
+  keyword-only `code` on `BoundaryValidationError`, and an optional
+  `component_registry` on `build_query_parameters_schema`.
+- `Created` and `Query()` are opt-in, and `QuerySpec` routes keep their
+  parameters, filters and clamp.
+- Six observable changes, all acceptable in a minor:
   - a custom `LoomError` already using code `rate_limited` now answers 429
     instead of 500;
+  - one coded `query_validation` now answers 400, and one coded
+    `insufficient_authentication` 401;
   - `LoomType`, a public `Protocol`, gains a method; its two implementations
-    are private to `_loom_type.py`.
+    are private to `_loom_type.py`;
+  - every route resolves its request parameters and body before building the
+    use case;
+  - `build_success_response_schema` reads `CompiledRoute.result_type`;
+  - `LoomRestAdapter.handle` answers a `Created` with a 201 response instead
+    of returning the wrapper.
 
 ## Tests
 
@@ -415,9 +435,9 @@ Unit:
   `BoundaryValidationError` with the field path.
 - `tests/unit/core/errors/test_errors.py`: `RateLimited` rounds 0.2 s up to 1
   and 1.5 s to 2; code `rate_limited`.
-- `tests/unit/rest/test_http_error_mapper.py` (new): `rate_limited` → 429 with
-  `Retry-After`; 401 still carries only the challenge; an unknown code is
-  still 500.
+- `tests/unit/rest/test_rest_adapter.py` (`TestHttpErrorMapper`, where the
+  mapper tests already live): `rate_limited` → 429 with `Retry-After`; 401
+  still carries only the challenge; an unknown code is still 500.
 - `tests/unit/rest/test_rest_compiler.py`: `Query()` with `QuerySpec`, a field
   named like a path parameter or `profile`, a list or object field: each is an
   `InterfaceCompilationError`; a `Created[X] | Y` with a different `Y` fails.
@@ -467,7 +487,8 @@ is pinned once, in the router unit tests.
    (`RestRoute(rate_limit=Limiter)`, with a `Limiter` protocol keyed by
    identity). It adds a public extension point; worth it only if a second
    consumer or transport-level limiting appears.
-2. **Bad values in a declared query: 422 or 400.** Recommended 422
+2. **Bad values in a declared query: 422 or 400** (superseded by the
+   standards check: 400 `query_validation`). Recommended 422
    `boundary_validation`, as for a JSON body or a path parameter; the
    consumer's § 13 lists 400 only for cursor and filter combinations.
 3. **Repeated scalar parameter.** Recommended 400 `unsupported_query`; list
@@ -475,7 +496,7 @@ is pinned once, in the router unit tests.
 4. **Marker name.** `Query()` matches `Input()`/`Caller()`; it shares its name
    with FastAPI's `Query`, which a use case never imports. Alternative:
    `QueryParams()`.
-5. **Enum value echoed by msgspec.** Recommended: a separate fix in
+5. **Enum value echoed by msgspec** (since fixed, #350). Recommended: a separate fix in
    `_msgspec_violation` that drops the quoted value, with its own test.
 6. **Error responses in OpenAPI.** loom still publishes no error response;
    the consumer keeps `ROUTE_ERRORS`. Publishing them from loom is a separate
@@ -553,6 +574,22 @@ turns into a status and a header.
   present (RFC 9470 §3). The description keeps only the characters RFC 6750
   §3 allows. Every other 401 keeps the plain `Bearer` challenge.
 - Being an `Unauthenticated`, it is caught wherever that is.
+
+### Second review round: `Location` and the number grammar
+
+- `Created(value, location=None)`: when set, the 201 carries `Location`
+  (RFC 9110 §15.3.2), and OpenAPI declares that header on every 201 it
+  documents. `LoomRestAdapter` answers a `Created` the same way. A location
+  must be a non-empty URI reference of printable ASCII without spaces;
+  anything else raises `ValueError`, because a header cannot carry it.
+- Declared numbers follow the JSON number grammar (RFC 8259 §6): `+5`,
+  `007`, `.5`, `5.` and `+1.5` are refused, and an integer must lie in
+  `[-2**63, 2**64)`. Probed before the change: a huge integer gave no 500 on
+  either library; 2**64 was accepted, and 5000 digits answered 400 with
+  CPython's digit-limit message. The range check runs on the text length
+  first, so that message can no longer surface.
+- A `profile` the route does not allow answers 400 `query_validation`.
+- A caller other than REST must pass an instance of the query type.
 
 ### Review round
 

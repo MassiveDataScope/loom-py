@@ -72,6 +72,9 @@ class HttpErrorMapper:
       request content and a query string is not content)
     - :class:`~loom.core.errors.RateLimited` → ``429`` with a ``Retry-After``
       header carrying its whole seconds
+    - :class:`~loom.core.errors.InsufficientAuthentication` → ``401`` with the
+      RFC 9470 step-up challenge (``error="insufficient_user_authentication"``,
+      ``error_description``, and ``max_age`` / ``acr_values`` when given)
     - :class:`~loom.core.engine.post_commit.PostCommitError` → ``committed``
       (``500``; ``true`` when a unit of work committed, so a retry would
       repeat the write, ``false`` when the execution held none)

@@ -156,7 +156,8 @@ def build_query_parameters_schema(
 
     Returns:
         The ``QuerySpec`` parameters or the declared ``Query()`` fields,
-        followed by ``profile`` when the route exposes it.
+        followed by ``profile`` when the route exposes it and ``execute``
+        takes a ``profile`` parameter.
     """
     use_case_type = compiled_route.route.use_case
     hints = get_type_hints(use_case_type.execute)

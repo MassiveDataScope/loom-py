@@ -185,56 +185,56 @@
 ### rest
 
 - **rest:** a use case says it created. `loom.core.use_case.Created[T]` wraps
-  the result of a use case declared `T | Created[T]`; the REST route answers
+  the result of a use case declared `T | Created[T]`. The REST route answers
   `Created(v)` with `201` and body `v`, and any other result with the route's
-  `status_code` as before. `Created(v, location="/items/1")` also sends
-  `Location` (RFC 9110 §15.3.2), and OpenAPI declares that header on the
-  `201`; a location that is empty, not printable ASCII or holds a space
-  raises `ValueError`. `LoomRestAdapter.handle` answers a `Created` the same
-  way instead of returning the wrapper. OpenAPI documents both statuses with the same
-  schema. Compilation refuses a `Created` that wraps a type other than another
-  member of the result, appears twice or is not parameterised, and a
-  `Created` on a route whose `status_code` is already `201`. Every other
-  caller (the invoker, jobs, Celery, `LoomRestAdapter`) receives the wrapper
-  and reads `.value`; the use case imports nothing from HTTP.
+  `status_code` as before; OpenAPI documents both statuses with the same
+  schema. `Created(v, location="/items/1")` also sends `Location` (RFC 9110
+  §15.3.2), which OpenAPI declares on the `201`; a location that is empty,
+  not printable ASCII or holds a space raises `ValueError`.
+  `LoomRestAdapter.handle` answers a `Created` the same way. Compilation
+  refuses a `Created` that wraps a type other than another member of the
+  result, appears twice or is not parameterised, and a `Created` on a route
+  whose `status_code` is already `201`. The invoker, jobs and Celery receive
+  the wrapper and read `.value`; the use case imports nothing from HTTP.
 - **rest:** `429` with `Retry-After`. `ErrorCode.RATE_LIMITED`
   (`"rate_limited"`) and `loom.core.errors.RateLimited(retry_after)`, a
-  `DomainError` holding the delay in whole seconds, rounded up and at least 1;
-  `HttpErrorMapper` answers it with `429`, the standard body and
-  `Retry-After: <seconds>`. loom ships no limiter: the consumer decides who is
-  limited and raises `RateLimited`.
+  `DomainError` holding the delay in whole seconds, rounded up and at least
+  1; a non-finite `retry_after` raises `ValueError`. `HttpErrorMapper`
+  answers it with `429`, the standard body and `Retry-After: <seconds>`.
+  loom ships no limiter: the consumer decides who is limited and raises
+  `RateLimited`.
 - **rest:** declared query parameters. `loom.core.use_case.Query()` marks an
   `execute` parameter typed with a strict `msgspec.Struct` or pydantic model
-  of scalar fields; the REST route accepts exactly its wire names (plus `profile`
-  where the route exposes it), answers an unknown or repeated parameter,
-  `profile` included, with `400 unsupported_query` before the use case is built and a bad value with
-  `400 query_validation` (`ErrorCode.QUERY_VALIDATION`, the body and `violations`
-  of `boundary_validation`; `422` stays for bodies), and
-  OpenAPI publishes one parameter per field with its constraints, enums in
-  `components.schemas`. List, object and multi-type fields, a field named like
-  a path parameter or `profile`, a `QuerySpec` next to it and a second
-  `Query()` are refused at startup. `ExecutionPlan.query_binding`
-  (`QueryBinding`), `CompiledRoute.query_fields` (`QueryField`) and
-  `LoomType.from_query` are new; `build_query_parameters_schema` takes an
-  optional `component_registry`. `QuerySpec` routes are unchanged.
-  A caller other than REST must pass an instance of the query type; a dict
-  or any other value raises `ParameterBindingError` naming the parameter and
-  the type received, never the value.
-  An agent granted a use case that takes `Query()` fails to compile with
-  `USECASE_DECLARES_QUERY`.
-- **rest:** step-up authentication (RFC 9470).
-  `loom.core.errors.InsufficientAuthentication(message, *, max_age=None,
-  acr_values=())`, an `Unauthenticated` with its own code
-  `ErrorCode.INSUFFICIENT_AUTHENTICATION` (`"insufficient_authentication"`),
-  answers `401` with `WWW-Authenticate: Bearer
-  error="insufficient_user_authentication", error_description="…"`, plus
-  `max_age="N"` and `acr_values="…"` when given. In the description each
-  character RFC 6750 §3 does not allow becomes a space, runs of spaces
-  collapse, and an empty result falls back to the default message. A negative
-  or non-int `max_age`, a single string as `acr_values`, or an ACR value that
-  is not a `str`, is empty, or holds anything but visible ASCII other than a
-  double quote or a backslash raise `ValueError`. Every other 401 keeps the
-  plain `Bearer` challenge.
+  whose fields are each a string, integer, number, boolean, enum or
+  `Literal`, optionally `None`. The REST route accepts exactly its wire
+  names, plus `profile` where the route exposes it.
+  - An unknown or repeated parameter, `profile` included, answers
+    `400 unsupported_query`.
+  - A bad value answers `400 query_validation` (`ErrorCode.QUERY_VALIDATION`),
+    with the body and `violations` of `boundary_validation`; `422` stays for
+    bodies. So does a `profile` the route does not allow, on field `profile`,
+    without the value.
+  - Values are spelled strictly: a number follows the JSON number grammar
+    and is finite, an integer its integer subset within `[-2**63, 2**64)`, a
+    boolean is `true` or `false`, `null` is never `None`, and a date or time
+    field refuses a number. A refused query never builds the use case.
+  - OpenAPI publishes one parameter per field, with `required`, its
+    constraints and description and no `title`; enums go to
+    `components.schemas`.
+  - List, object and multi-type fields, a field named like a path parameter
+    or `profile`, a `QuerySpec` next to it and a second `Query()` are refused
+    at startup.
+  - A caller other than REST must pass an instance of the query type; any
+    other value raises `ParameterBindingError` naming the parameter and the
+    type received, never the value.
+  - An agent granted a use case that takes `Query()` fails to compile with
+    `USECASE_DECLARES_QUERY`.
+  - New: `ExecutionPlan.query_binding` (`QueryBinding`),
+    `CompiledRoute.query_fields` (`QueryField`), `CompiledRoute.result_type`
+    and `created_type`, `build_success_responses`, `LoomType.from_query`, and
+    a keyword-only `code` on `BoundaryValidationError` (default
+    `boundary_validation`). `build_query_parameters_schema` takes an optional
+    `component_registry`. `QuerySpec` routes are unchanged.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a
@@ -543,6 +543,15 @@
 
 ### rest
 
+- **rest:** every route now resolves its request parameters and decodes its
+  body before the use case is built, so a request refused at that point
+  never runs the use case's constructor.
+- **rest:** `build_success_response_schema` reads `CompiledRoute.result_type`
+  instead of the use case's annotations; a `CompiledRoute` built by hand
+  without it documents no success body.
+- **rest:** an error whose `code` is `"query_validation"` now answers `400`,
+  and one coded `"insufficient_authentication"` answers `401` with the plain
+  `Bearer` challenge unless it is an `InsufficientAuthentication`.
 - **rest:** an error whose `code` is `"rate_limited"` now answers `429`
   instead of `500`; only a `RateLimited` carries `Retry-After`.
 - **rest:** a `RestInterface` whose `prefix` contains `{` now raises

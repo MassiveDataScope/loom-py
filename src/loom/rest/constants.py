@@ -43,4 +43,4 @@ LOCATION_HEADER = "Location"
 """Header carrying the URI of the resource a ``201`` created."""
 
 BEARER_CHALLENGE: Mapping[str, str] = MappingProxyType({WWW_AUTHENTICATE_HEADER: "Bearer"})
-"""The single challenge the framework issues, shared by every 401 producer."""
+"""The plain challenge of every 401 except a step-up refusal."""

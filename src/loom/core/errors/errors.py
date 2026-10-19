@@ -97,8 +97,7 @@ class InsufficientAuthentication(Unauthenticated):
     """Raised when the caller is authenticated, but not strongly or recently enough.
 
     The caller can fix it by authenticating again under the stated
-    requirements (step-up, RFC 9470). Transport adapters map it to ``401``
-    with a challenge naming those requirements.
+    requirements (step-up, RFC 9470).
 
     Args:
         message: Description of the missing authentication strength.
@@ -209,10 +208,10 @@ class RateLimited(DomainError):
     Args:
         retry_after: Seconds the caller should wait. Kept as whole seconds,
             rounded up and at least ``1``.
+        message: Human-readable description of the refusal.
 
     Raises:
         ValueError: ``retry_after`` is not finite.
-        message: Human-readable description of the refusal.
 
     Example::
 
