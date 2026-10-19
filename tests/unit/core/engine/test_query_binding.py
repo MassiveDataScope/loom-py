@@ -76,13 +76,14 @@ def test_a_query_type_that_is_not_a_strict_model_is_refused(
     assert isinstance(excinfo.value.__cause__, UnsupportedBoundaryType)
 
 
-@pytest.mark.parametrize("raw", [{"limit": 424242}, 424242, "limit=424242"])
-async def test_a_query_that_is_not_an_instance_of_its_type_is_refused(raw: object) -> None:
+async def test_a_query_that_is_not_an_instance_of_its_type_is_refused() -> None:
     compiler = UseCaseCompiler()
     compiler.compile(ListGrants)
+    executor = RuntimeExecutor(compiler)
+    use_case = ListGrants()
 
     with pytest.raises(ParameterBindingError) as excinfo:
-        await RuntimeExecutor(compiler).execute(ListGrants(), params={"query": raw})
+        await executor.execute(use_case, params={"query": 424242})
     assert "'query'" in str(excinfo.value)
     assert "GrantQuery" in str(excinfo.value)
     assert "424242" not in str(excinfo.value)

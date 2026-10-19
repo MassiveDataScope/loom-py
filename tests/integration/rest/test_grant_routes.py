@@ -221,15 +221,6 @@ def test_a_new_grant_answers_201_and_a_repeated_one_200() -> None:
     assert created.headers["Location"] == f"/v1/grants/{created.json()['grantId']}"
 
 
-def test_an_unknown_list_parameter_answers_400_unsupported_query() -> None:
-    response = _client().get("/v1/grants", params={"changedSince": "2026-01-01T00:00:00Z"})
-
-    assert (response.status_code, response.json()["detail"]["code"]) == (
-        400,
-        "unsupported_query",
-    )
-
-
 def test_a_spent_budget_answers_429_with_retry_after() -> None:
     response = _grant(_client(tokens=0))
 

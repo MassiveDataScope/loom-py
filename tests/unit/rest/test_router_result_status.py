@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import RateLimited
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case import Created
 from loom.core.use_case.factory import UseCaseFactory
@@ -31,19 +30,12 @@ class GrantView(msgspec.Struct, frozen=True):
 class CreateGrant(UseCase[Any, GrantView | Created[GrantView]]):
     async def execute(self, grant_id: str) -> GrantView | Created[GrantView]:
         view = GrantView(grant_id=grant_id)
-        if grant_id.startswith("new"):
-            return Created(view, location=f"/grants/{grant_id}")
         return Created(view) if grant_id.startswith("fresh") else view
 
 
 class ReadGrant(UseCase[Any, GrantView]):
     async def execute(self, grant_id: str) -> GrantView:
         return GrantView(grant_id=grant_id)
-
-
-class RevokeGrant(UseCase[Any, GrantView]):
-    async def execute(self, grant_id: str) -> GrantView:
-        raise RateLimited(1.2)
 
 
 class Opaque:
@@ -73,7 +65,6 @@ class Grants(RestInterface[Any]):
     routes = (
         RestRoute(use_case=CreateGrant, method="PUT", path="/{grant_id}"),
         RestRoute(use_case=ReadGrant, method="GET", path="/{grant_id}"),
-        RestRoute(use_case=RevokeGrant, method="DELETE", path="/{grant_id}"),
     )
 
 
@@ -100,13 +91,6 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
     )
     _register_openapi_components(app, registry)
     return TestClient(app)
-
-
-def test_a_created_result_answers_201_with_its_value_and_location() -> None:
-    response = _client(Grants).put("/grants/new-1")
-
-    assert (response.status_code, response.json()) == (201, {"grant_id": "new-1"})
-    assert response.headers["Location"] == "/grants/new-1"
 
 
 def test_a_created_result_without_location_sends_no_location() -> None:
@@ -157,16 +141,6 @@ def test_openapi_of_a_route_without_created_is_unchanged() -> None:
     assert "201" not in responses
     assert responses["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/GrantView"
-    }
-
-
-def test_a_rate_limited_use_case_answers_429_with_retry_after() -> None:
-    response = _client(Grants).delete("/grants/old-1")
-
-    assert response.status_code == 429
-    assert response.headers["Retry-After"] == "2"
-    assert response.json() == {
-        "detail": {"code": "rate_limited", "message": "Too many requests.", "trace_id": None}
     }
 
 

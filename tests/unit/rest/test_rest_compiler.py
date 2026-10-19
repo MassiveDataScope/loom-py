@@ -720,21 +720,25 @@ class TestCreatedResult:
 
         return IFace
 
-    def _compile(self, use_case: type[UseCase[Any, Any]], status_code: int = 200) -> list[Any]:
+    def _prepare(
+        self, use_case: type[UseCase[Any, Any]], status_code: int = 200
+    ) -> tuple[RestInterfaceCompiler, type[RestInterface[Any]]]:
         use_case_compiler = UseCaseCompiler()
         use_case_compiler.compile(use_case)
-        return RestInterfaceCompiler(use_case_compiler).compile(
-            self._interface(use_case, status_code)
-        )
+        return RestInterfaceCompiler(use_case_compiler), self._interface(use_case, status_code)
 
     def test_created_on_a_route_whose_status_is_201_is_refused(self) -> None:
+        compiler, interface = self._prepare(self.CreatesOrReturns, status_code=201)
+
         with pytest.raises(InterfaceCompilationError, match="201"):
-            self._compile(self.CreatesOrReturns, status_code=201)
+            compiler.compile(interface)
 
     @pytest.mark.parametrize("use_case", [WrapsAnotherType, CreatedTwice, OnlyCreated, BareCreated])
     def test_any_other_shape_is_refused(self, use_case: type[UseCase[Any, Any]]) -> None:
+        compiler, interface = self._prepare(use_case)
+
         with pytest.raises(InterfaceCompilationError, match=r"Created\[T\]"):
-            self._compile(use_case)
+            compiler.compile(interface)
 
 
 class ItemQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True, rename="camel"):
@@ -802,17 +806,21 @@ class TestDeclaredQuery:
             return "ok"
 
     @staticmethod
-    def _compile(use_case: type[UseCase[Any, Any]]) -> list[Any]:
+    def _prepare(
+        use_case: type[UseCase[Any, Any]],
+    ) -> tuple[RestInterfaceCompiler, type[RestInterface[Any]]]:
         class IFace(RestInterface[Any]):
             prefix = "/items"
             routes = (RestRoute(use_case=use_case, method="GET", path="/{item_id}/children"),)
 
         use_case_compiler = UseCaseCompiler()
         use_case_compiler.compile(use_case)
-        return RestInterfaceCompiler(use_case_compiler).compile(IFace)
+        return RestInterfaceCompiler(use_case_compiler), IFace
 
     def test_the_route_holds_the_declared_fields(self) -> None:
-        (route,) = self._compile(self.ListItems)
+        compiler, interface = self._prepare(self.ListItems)
+
+        (route,) = compiler.compile(interface)
 
         assert [(f.name, f.required) for f in route.query_fields] == [
             ("ownerId", False),
@@ -834,5 +842,7 @@ class TestDeclaredQuery:
     def test_any_other_declaration_is_refused(
         self, use_case: type[UseCase[Any, Any]], reason: str
     ) -> None:
+        compiler, interface = self._prepare(use_case)
+
         with pytest.raises(InterfaceCompilationError, match=reason):
-            self._compile(use_case)
+            compiler.compile(interface)

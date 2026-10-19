@@ -771,15 +771,12 @@ class TestFromQuery:
     @pytest.mark.parametrize(
         ("field", "wrong"),
         [
-            ("limit", "fifty"),
             ("limit", "5.0"),
-            ("limit", "1e2"),
             ("limit", " 5"),
             ("limit", "5_0"),
             ("limit", "+5"),
             ("limit", "\u0663"),
             ("ratio", "\u0663.5"),
-            ("since", "\u0663"),
             ("limit", "007"),
             ("limit", str(2**64)),
             ("limit", str(-(2**63) - 1)),

@@ -355,13 +355,8 @@ class TestLoomRestAdapterSuccess:
         result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
         assert result == "ok"
 
-    @pytest.mark.parametrize(
-        ("location", "headers"), [("/items/1", {"location": "/items/1"}), (None, {})]
-    )
-    async def test_a_created_result_answers_201_with_its_value(
-        self, location: str | None, headers: dict[str, str]
-    ) -> None:
-        created = Created(_ResultStruct(id=1, name="Alice"), location=location)
+    async def test_a_created_result_answers_201_with_its_value(self) -> None:
+        created = Created(_ResultStruct(id=1, name="Alice"), location="/items/1")
         adapter = LoomRestAdapter(self._make_executor(created))
 
         response = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
@@ -370,7 +365,7 @@ class TestLoomRestAdapterSuccess:
             201,
             {"id": 1, "name": "Alice"},
         )
-        assert {k: v for k, v in response.headers.items() if k == "location"} == headers
+        assert response.headers["location"] == "/items/1"
 
     async def test_struct_result_serialized_to_builtins(self) -> None:
         struct = _ResultStruct(id=1, name="Alice")

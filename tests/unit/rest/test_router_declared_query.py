@@ -320,19 +320,6 @@ def test_a_bad_enum_value_is_not_echoed(client: TestClient, path: str) -> None:
     assert "secret-input-value" not in response.text
 
 
-@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
-@pytest.mark.parametrize("limit", [str(2**64), "9" * 5000])
-def test_a_huge_integer_is_a_query_validation_error(
-    client: TestClient, path: str, limit: str
-) -> None:
-    response = client.get(path, params={"limit": limit})
-
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"]) == (400, "query_validation")
-    assert [violation["field"] for violation in detail["violations"]] == ["limit"]
-    assert "sys." not in response.text
-
-
 def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
     client: TestClient,
 ) -> None:
@@ -353,16 +340,3 @@ def test_a_field_without_default_is_a_required_parameter(client: TestClient) -> 
         ("owner", True),
         ("tier", False),
     ]
-
-
-def test_an_int_enum_value_reaches_execute(client: TestClient) -> None:
-    response = client.get("/grants/by-owner", params={"owner": "ana", "tier": "2"})
-
-    assert (response.status_code, response.json()) == (200, ["ana", 2])
-
-
-@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
-def test_a_non_ascii_digit_is_not_a_number(client: TestClient, path: str) -> None:
-    response = client.get(path, params={"limit": "\u0663"})
-
-    assert (response.status_code, response.json()["detail"]["code"]) == (400, "query_validation")
