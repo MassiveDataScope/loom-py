@@ -74,6 +74,8 @@ _SEED = (
     "INSERT INTO loom_it_pl_watchers VALUES (1, 1, 'ann')",
 )
 
+_PAGE = PageParams(limit=20)
+
 
 class StatementLog:
     def __init__(self) -> None:
@@ -127,7 +129,7 @@ async def test_relation_profile_runs_one_statement_per_relation_one_at_a_time(
     repo = RepositorySQLAlchemy(manager, Ticket)
     log = _log_statements(manager)
 
-    page = await repo.list_paginated(PageParams(limit=20), profile="detail")
+    page = await repo.list_paginated(_PAGE, profile="detail")
 
     first, second = page.items
     assert [c.body for c in first.comments] == ["c1", "c2"]
@@ -146,7 +148,7 @@ async def test_projection_profile_runs_one_statement_per_projection_one_at_a_tim
     repo = RepositorySQLAlchemy(manager, Ticket)
     log = _log_statements(manager)
 
-    page = await repo.list_paginated(PageParams(limit=20), profile="counts")
+    page = await repo.list_paginated(_PAGE, profile="counts")
 
     assert [(t.comment_count, t.has_watchers) for t in page.items] == [(2, True), (1, False)]
     assert len(log.statements) == 1 + 2
@@ -160,9 +162,9 @@ async def test_failing_relation_step_raises_its_error_and_the_engine_stays_usabl
     repo = RepositorySQLAlchemy(manager, Ticket)
 
     with pytest.raises(ProgrammingError, match="body"):
-        await repo.list_paginated(PageParams(limit=20), profile="detail")
+        await repo.list_paginated(_PAGE, profile="detail")
 
-    page = await repo.list_paginated(PageParams(limit=20))
+    page = await repo.list_paginated(_PAGE)
     assert [t.title for t in page.items] == ["t1", "t2"]
 
 
@@ -173,7 +175,7 @@ async def test_failing_projection_step_raises_its_error_and_the_engine_stays_usa
     repo = RepositorySQLAlchemy(manager, Ticket)
 
     with pytest.raises(ProgrammingError, match="ticket_id"):
-        await repo.list_paginated(PageParams(limit=20), profile="counts")
+        await repo.list_paginated(_PAGE, profile="counts")
 
-    page = await repo.list_paginated(PageParams(limit=20))
+    page = await repo.list_paginated(_PAGE)
     assert [t.title for t in page.items] == ["t1", "t2"]
