@@ -908,6 +908,13 @@
   and cause are logged at `WARNING`, never sent. `ErrorCode` gains
   `SERVICE_UNAVAILABLE`, which `HttpErrorMapper` maps to `503`. Any other
   exception from the authenticator, and the `401` refusal, are unchanged.
+- **rest:** the OpenAPI document of a route whose request or response holds a
+  tagged union published `discriminator.mapping` values as `#/$defs/<Name>`,
+  which the document does not contain, while each `$ref` already pointed at
+  `#/components/schemas/<Name>`, so code generators and OpenAPI validators
+  could not resolve them. Mapping values now follow the same rewrite as
+  `$ref` wherever they occur, for msgspec tagged structs and pydantic
+  discriminated unions alike, an optional (`X | Y | None`) union included.
 
 ### prefect
 

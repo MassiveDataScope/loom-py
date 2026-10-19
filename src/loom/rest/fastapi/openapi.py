@@ -61,6 +61,8 @@ QUERY_SPEC_PARAMETER_NAMES: tuple[str, ...] = (
 )
 
 _COMPONENT_REF_PREFIX = "#/components/schemas/"
+_DISCRIMINATOR = "discriminator"
+_MAPPING = "mapping"
 
 
 def build_request_body_schema(
@@ -358,9 +360,10 @@ def _safe_pydantic_schema(annotation: Any) -> JsonSchema | None:
 def _rewrite_to_component_refs(node: Any) -> Any:
     """Rewrite ``#/$defs/X`` references to ``#/components/schemas/X`` recursively.
 
-    Strips ``$defs`` keys and rewrites every ``$ref`` value that points to a
-    local definition so the resulting fragment is valid at the OpenAPI document
-    root where ``#/components/schemas/`` is resolvable.
+    Strips ``$defs`` keys and rewrites every ``$ref`` value and every
+    ``discriminator.mapping`` value that points to a local definition so the
+    resulting fragment is valid at the OpenAPI document root where
+    ``#/components/schemas/`` is resolvable.
     """
     if isinstance(node, list):
         return [_rewrite_to_component_refs(item) for item in node]
@@ -370,11 +373,30 @@ def _rewrite_to_component_refs(node: Any) -> Any:
     for k, v in node.items():
         if k == DEFS:
             continue
-        if k == REF and isinstance(v, str) and v.startswith(DEFS_PREFIX):
-            result[k] = _COMPONENT_REF_PREFIX + v.removeprefix(DEFS_PREFIX)
+        if k == REF and isinstance(v, str):
+            result[k] = _to_component_ref(v)
+        elif k == _DISCRIMINATOR and isinstance(v, dict):
+            result[k] = _rewrite_discriminator(v)
         else:
             result[k] = _rewrite_to_component_refs(v)
     return result
+
+
+def _rewrite_discriminator(discriminator: JsonSchema) -> JsonSchema:
+    rewritten: JsonSchema = _rewrite_to_component_refs(discriminator)
+    mapping = rewritten.get(_MAPPING)
+    if isinstance(mapping, dict):
+        rewritten[_MAPPING] = {
+            tag: _to_component_ref(ref) if isinstance(ref, str) else ref
+            for tag, ref in mapping.items()
+        }
+    return rewritten
+
+
+def _to_component_ref(ref: str) -> str:
+    if ref.startswith(DEFS_PREFIX):
+        return _COMPONENT_REF_PREFIX + ref.removeprefix(DEFS_PREFIX)
+    return ref
 
 
 def _safe_schema(
