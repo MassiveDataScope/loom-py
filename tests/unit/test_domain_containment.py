@@ -7,8 +7,12 @@ the static guard SQL and the document the bootstrap binds for a synthetic
 configuration, and inside the session-settings module the mechanism builds on.
 
 loom is a general library: no consumer's vocabulary may appear in its
-sources, docs or tests either. The last tests scan them for the first
-consumer's names.
+sources, docs or tests either. The consumer-vocabulary tests scan them for
+the first consumer's names.
+
+The environment labels themselves live in exactly one core module,
+``loom.core.environment``, which the environment-label test allows explicitly: every other
+core module receives the resolved environment instead of naming one.
 """
 
 from __future__ import annotations
@@ -237,3 +241,31 @@ def test_sources_docs_and_tests_carry_no_consumer_vocabulary() -> None:
 def test_the_allowed_provenance_line_appears_exactly_once() -> None:
     lines = (_ROOT / _PROVENANCE_FILE).read_text(encoding="utf-8").splitlines()
     assert [line.strip() for line in lines].count(_PROVENANCE_LINE) == 1
+
+
+_ENVIRONMENT_MODULE = "core/environment.py"
+_ENVIRONMENT_LABELS = re.compile(r"^(prod|production|staging|dev|development)$", re.IGNORECASE)
+
+
+def _environment_labels(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text())
+    return [
+        f"{path.relative_to(_SRC)}:{node.lineno}: {node.value!r}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _ENVIRONMENT_LABELS.match(node.value.strip())
+    ]
+
+
+def test_only_the_environment_module_names_an_environment_in_core() -> None:
+    allowed = _SRC / _ENVIRONMENT_MODULE
+    offenders = [
+        hit
+        for path in sorted((_SRC / "core").rglob("*.py"))
+        if path != allowed
+        for hit in _environment_labels(path)
+    ]
+
+    assert _environment_labels(allowed) != []
+    assert offenders == []

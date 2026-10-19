@@ -8,6 +8,7 @@ from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.environment import Environment
 from loom.core.uow.abc import UnitOfWorkFactory
 from loom.core.use_case.use_case import UseCase
 
@@ -56,3 +57,17 @@ def test_create_kernel_uses_provided_uow_factory() -> None:
         uow_factory=uow_factory,
     )
     assert runtime.executor._uow_factory is uow_factory
+
+
+def test_create_kernel_registers_the_environment_it_receives() -> None:
+    runtime = create_kernel(
+        config=_Config(), use_cases=[_NoDepsUseCase], environment=Environment.STAGING
+    )
+
+    assert runtime.container.resolve(Environment) is Environment.STAGING
+
+
+def test_create_kernel_without_an_environment_registers_production() -> None:
+    runtime = create_kernel(config=_Config(), use_cases=[_NoDepsUseCase])
+
+    assert runtime.container.resolve(Environment) is Environment.PRODUCTION
