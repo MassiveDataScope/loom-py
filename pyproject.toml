@@ -46,7 +46,7 @@ sqlalchemy = [
     "alembic>=1.13,<2",
 ]
 clickhouse = [
-    "clickhouse-connect>=0.9.2,<1.0",
+    "clickhouse-connect>=0.9.2,<2.0",
 ]
 dynamodb = [
     "boto3>=1.35",
@@ -255,7 +255,7 @@ dev = [
     "ruff>=0.9.0,<1.0",
     "sqlalchemy>=2.0,<3.0",
     "polars>=1.24,<2.0",
-    "clickhouse-connect>=0.9.2,<1.0",
+    "clickhouse-connect>=0.9.2,<2.0",
     "pyarrow>=14.0",
     "deltalake>=1.6.2,<2.0",
     "fsspec>=2024.2.0",
