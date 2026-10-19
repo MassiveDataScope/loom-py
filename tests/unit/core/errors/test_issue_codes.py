@@ -58,6 +58,12 @@ def test_a_type_renders_as_its_qualified_name() -> None:
     assert issue.component == "_Step"
 
 
+def test_a_generic_alias_renders_as_its_text_not_as_an_iterable() -> None:
+    issue = _Code.LISTED.issue(component="ai", known=list[int])
+
+    assert issue.message == "ai: known values: list[int]"
+
+
 def test_the_field_and_the_component_are_templates_too() -> None:
     issue = _Code.DERIVED.issue(step="LoadOrders", alias="orders")
 

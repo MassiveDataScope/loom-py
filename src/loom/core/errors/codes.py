@@ -127,14 +127,17 @@ class IssueCode(StrEnum):
 
 
 def _render(value: object) -> str:
-    """Render one parameter: a type by name, an iterable joined, ``"none"`` when empty."""
+    """Render one parameter: a type by name, an iterable joined, ``"none"`` when empty.
+
+    A set is ordered by the rendered text of its items. A generic alias such as
+    ``list[int]`` is iterable but renders as its own text.
+    """
     if isinstance(value, str):
         return value
     if isinstance(value, type):
         return value.__qualname__
-    if isinstance(value, Iterable):
-        items = [_render(item) for item in value]
-        if isinstance(value, Set):
-            items.sort()
-        return ", ".join(items) or "none"
+    if isinstance(value, Set):
+        return _render(sorted(value, key=_render))
+    if isinstance(value, Iterable) and not hasattr(value, "__origin__"):
+        return ", ".join(_render(item) for item in value) or "none"
     return str(value)
