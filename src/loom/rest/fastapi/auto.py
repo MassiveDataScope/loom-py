@@ -21,6 +21,7 @@ from starlette.responses import Response
 
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import CacheGateways, cache_module_for
+from loom.core.checks import enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
@@ -42,6 +43,7 @@ from loom.core.discovery._utils import (
 from loom.core.discovery.base import AGENTS_ONLY_HINT, DiscoveryResult
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.identity import Identity
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
@@ -84,6 +86,7 @@ from loom.rest.autocrud import (
     registered_repository_type,
     supported_crud_ops,
 )
+from loom.rest.checks import AUTHENTICATION_CHECK
 from loom.rest.compiler import RouteSources
 from loom.rest.config import (
     DisableRouteConfig,
@@ -305,6 +308,7 @@ def _build_bootstrap(
     metrics: Any | None = None,
     config_interfaces: tuple[type[RestInterface[Any]], ...] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
+    environment: Environment = Environment.PRODUCTION,
 ) -> tuple[KernelRuntime, PersistenceWiring, DiscoveryResult, tuple[type[RestInterface[Any]], ...]]:
     discovered = _discover_components(app_cfg)
     # Captured before folding in config_interfaces: the explicit Python-only
@@ -326,6 +330,7 @@ def _build_bootstrap(
         metrics=metrics,
         user_modules=modules,
         extra_modules=(cache_module_for(ctx),),
+        environment=environment,
     )
     return result, wiring, discovered, python_interfaces
 
@@ -1323,6 +1328,7 @@ def _build_kernel_runtime(
     metrics: Any | None = None,
     user_modules: Sequence[Callable[[LoomContainer], None]] = (),
     extra_modules: Sequence[Callable[[LoomContainer], None]] = (),
+    environment: Environment = Environment.PRODUCTION,
 ) -> KernelRuntime:
     # Same order as the Celery worker bootstrap: caller modules first, then
     # repositories, then the framework's own modules.
@@ -1332,6 +1338,7 @@ def _build_kernel_runtime(
         modules=[*user_modules, wiring.repo_registration_module, *extra_modules],
         uow_factory=wiring.uow_factory,
         metrics=metrics,
+        environment=environment,
     )
 
 
@@ -1478,18 +1485,32 @@ def _section_app_config(ctx: ConfigContext) -> _AppConfig:
 
 def create_app(
     *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
     code_path: str | None = None,
     metrics_registry: CollectorRegistry | None = None,
     authenticator: Authenticator | None = None,
     resolvers: Sequence[ConfigResolver] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> FastAPI:
-    """Create a FastAPI application from one or more YAML config files.
+    """Create a FastAPI application from a config directory or explicit YAML files.
 
-    Config files are merged left-to-right — later files override earlier ones.
-    Each file may also declare a top-level ``includes`` list to pull in
-    additional base files before its own values (resolved by
-    :meth:`loom.core.config.ConfigContext.from_yaml`).
+    The environment is resolved once: *environment* when given, else the
+    ``LOOM_ENV`` variable, else production (see :mod:`loom.core.environment`).
+    It picks the configuration overlay, drives the logger defaults, and is
+    registered in the container for use cases to inject.
+
+    Configuration comes from exactly one of two forms. *config_dir* loads its
+    ``base.yaml``, then ``<environment>.yaml`` when present. Explicit
+    *config_paths* are merged left-to-right as given. Either way later files
+    override earlier ones, and each file's ``includes`` merge before its own
+    values (resolved by :meth:`loom.core.config.ConfigContext.from_yaml`).
+
+    In production and staging the deploy checks run once the logger is
+    configured and before the kernel is built (see :mod:`loom.core.checks`):
+    an error stops startup, a warning is logged, and ``checks.silenced``
+    lists the ids accepted on purpose. An *authenticator* satisfies
+    ``loom.rest.E001``, which reads the configuration only.
 
     ``${secrets:...}`` and ``${ssm:...}`` placeholders resolve through loom's
     built-in AWS resolvers unless *resolvers* supplies one with the same name.
@@ -1517,7 +1538,11 @@ def create_app(
     identity (for JWT, ``app.rest.auth.jwt.roles_claim``).
 
     Args:
-        *config_paths: One or more paths to YAML configuration files.
+        *config_paths: Paths to YAML configuration files, merged left to
+            right. Mutually exclusive with *config_dir*.
+        config_dir: Local directory holding ``base.yaml`` and the
+            per-environment overlays. Mutually exclusive with *config_paths*.
+        environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Optional override for ``app.code_path``.  Resolved relative
             to the first config file when not absolute.
         metrics_registry: Optional Prometheus ``CollectorRegistry`` used for
@@ -1547,8 +1572,16 @@ def create_app(
         Configured :class:`fastapi.FastAPI` application, ready to serve.
 
     Raises:
-        ConfigError: When no config path is given, or when both *authenticator*
-            and ``app.rest.auth.jwt`` are supplied.
+        ConfigError: When neither or both of *config_paths* and *config_dir*
+            are given, when the environment is unknown, or when both
+            *authenticator* and ``app.rest.auth.jwt`` are supplied.
+        DeployCheckError: When a deploy check of level error fails in
+            production or staging.
+
+    Example — config directory, overlay chosen by ``LOOM_ENV``::
+
+        # config/base.yaml, config/development.yaml, config/production.yaml
+        app = create_app(config_dir="config")
 
     Example — single config::
 
@@ -1565,9 +1598,11 @@ def create_app(
 
         app = create_app("config/app.yaml", modules=[clock_module])
 
-    Example — base + environment override::
+    Example — explicit layers, the environment named in code::
 
-        app = create_app("config/base.yaml", "config/production.yaml")
+        app = create_app(
+            "config/base.yaml", "config/production.yaml", environment="production"
+        )
 
     Example — single file using inline includes::
 
@@ -1577,13 +1612,19 @@ def create_app(
         #   - secrets.yaml
         app = create_app("config/app.yaml")
     """
-    if not config_paths:
-        raise ConfigError("create_app requires at least one config file path.")
-
-    ctx = ConfigContext.from_yaml(*config_paths, resolvers=with_default_resolvers(resolvers))
+    resolved_environment = resolve_environment(environment)
+    paths = select_config_paths(config_paths, config_dir, resolved_environment, caller="create_app")
+    ctx = ConfigContext.from_yaml(*paths, resolvers=with_default_resolvers(resolvers))
     app_cfg = _section_app_config(ctx)
     observability_cfg = _load_observability_config(ctx)
-    observability_runtime = ObservabilityRuntime.from_config(observability_cfg)
+    observability_runtime = ObservabilityRuntime.from_config(
+        observability_cfg, environment=resolved_environment
+    )
+    enforce_deploy_checks(
+        ctx,
+        resolved_environment,
+        skip=() if authenticator is None else (AUTHENTICATION_CHECK,),
+    )
     metrics_cfg = observability_cfg.prometheus
 
     auth = _resolve_authentication(
@@ -1593,7 +1634,7 @@ def create_app(
     )
     sql = _resolve_sql(ctx, auth)
 
-    config_file = Path(config_paths[0]).resolve()
+    config_file = Path(paths[0]).resolve()
     effective_code_path = Path(code_path) if code_path is not None else Path(app_cfg.code_path)
     if not effective_code_path.is_absolute():
         effective_code_path = (config_file.parent / effective_code_path).resolve()
@@ -1612,6 +1653,7 @@ def create_app(
         metrics=metrics_adapter,
         config_interfaces=config_interfaces,
         modules=modules,
+        environment=resolved_environment,
     )
     _configure_job_service(ctx, result, observability_runtime)
     _register_sql_collaborators(result.container, sql, observability_runtime)

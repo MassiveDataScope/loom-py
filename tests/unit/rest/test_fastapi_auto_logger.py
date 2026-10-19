@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 
 import loom.rest.fastapi.auto as auto
 from loom.core.config import ConfigContext
+from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.prometheus.middleware import PrometheusMiddleware
@@ -69,9 +70,13 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
 
     def _fake_from_config(
-        cls: type[ObservabilityRuntime], config: ObservabilityConfig
+        cls: type[ObservabilityRuntime],
+        config: ObservabilityConfig,
+        *,
+        environment: Environment,
     ) -> ObservabilityRuntime:
         captured["observability_config"] = config
+        captured["environment"] = environment
         return runtime
 
     def _fake_build_bootstrap(
@@ -80,8 +85,9 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         metrics: Any | None = None,
         config_interfaces: Any = (),
         modules: Any = (),
+        environment: Any = None,
     ) -> tuple[Any, Any, Any, Any]:
-        del app_cfg, ctx, metrics, config_interfaces, modules
+        del app_cfg, ctx, metrics, config_interfaces, modules, environment
         result = SimpleNamespace(
             # create_app now verifies every compiled plan's Agent() markers
             # (spec 014, T202) before it registers the agent resolver, so the
@@ -136,9 +142,10 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(auto, "create_fastapi_app", _fake_create_fastapi_app)
     monkeypatch.setattr(auto, "_ensure_code_path", lambda code_path: None)
 
-    app = create_app("config.yaml")
+    app = create_app("config.yaml", environment="development")
 
     assert captured["observability_config"].log.enabled is False
+    assert captured["environment"] is Environment.DEVELOPMENT
     assert captured["runtime"] is runtime
     classes: list[Any] = [m.cls for m in app.user_middleware]
     assert TraceIdMiddleware in classes
