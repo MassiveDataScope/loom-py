@@ -55,8 +55,10 @@ def test_a_deployed_runner_runs_the_deploy_checks(
     check: FailingCheckModule,
     environment: str,
 ) -> None:
+    config = _config(check)
+
     with pytest.raises(DeployCheckError, match=check.check_id):
-        StreamingRunner.from_dict(bytewax_stream_flow, _config(check), environment=environment)
+        StreamingRunner.from_dict(bytewax_stream_flow, config, environment=environment)
 
 
 def test_the_selector_variable_reaches_the_runner(
@@ -66,8 +68,10 @@ def test_the_selector_variable_reaches_the_runner(
 ) -> None:
     monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
 
+    config = _config(check)
+
     with pytest.raises(DeployCheckError, match=check.check_id):
-        StreamingRunner.from_dict(bytewax_stream_flow, _config(check))
+        StreamingRunner.from_dict(bytewax_stream_flow, config)
 
 
 def test_a_local_runner_runs_no_check(
@@ -92,8 +96,10 @@ def test_run_with_a_config_runs_the_deploy_checks(
     monkeypatch.setattr("loom.streaming.bytewax.runner.cli_main", lambda *_a, **_kw: None)
     config = ConfigContext.from_dict(_config(check))
 
+    runner = StreamingRunner()
+
     with pytest.raises(DeployCheckError, match=check.check_id):
-        StreamingRunner().run(flow=bytewax_stream_flow, config=config, environment="production")
+        runner.run(flow=bytewax_stream_flow, config=config, environment="production")
 
 
 def test_the_logger_takes_the_environment_of_the_runner(

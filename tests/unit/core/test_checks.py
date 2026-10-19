@@ -104,8 +104,10 @@ class TestRunDeployChecks:
     def test_a_silenced_entry_outside_the_id_scheme_is_a_config_error(self) -> None:
         config = _config(checks={"silenced": ["E001"]})
 
+        registry = _registry()
+
         with pytest.raises(ConfigError, match="'E001'"):
-            run_deploy_checks(config, registry=_registry())
+            run_deploy_checks(config, registry=registry)
 
     def test_a_skipped_area_does_not_run(self) -> None:
         report = run_deploy_checks(_config(), registry=_registry(), skip=("loom.sample",))
@@ -141,8 +143,11 @@ class TestEnforceDeployChecks:
     def test_an_error_fails_startup_in_a_deployed_environment(
         self, environment: Environment
     ) -> None:
+        config = _config()
+        registry = _registry()
+
         with pytest.raises(DeployCheckError) as caught:
-            enforce_deploy_checks(_config(), environment, registry=_registry())
+            enforce_deploy_checks(config, environment, registry=registry)
 
         message = str(caught.value)
         assert [r.id for r in caught.value.results] == [_ERROR_ID]
@@ -200,20 +205,26 @@ class TestApplicationCheckModules:
         monkeypatch.syspath_prepend(str(tmp_path))
         config = _config(checks={"modules": ["broken_checks_module"]})
 
+        registry = _registry()
+
         with pytest.raises(ConfigError, match="broken_checks_module"):
-            run_deploy_checks(config, registry=_registry())
+            run_deploy_checks(config, registry=registry)
 
     def test_a_module_that_cannot_be_imported_is_a_config_error(self) -> None:
         config = _config(checks={"modules": ["no_such_package.checks"]})
 
+        registry = _registry()
+
         with pytest.raises(ConfigError, match="no_such_package.checks"):
-            run_deploy_checks(config, registry=_registry())
+            run_deploy_checks(config, registry=registry)
 
     def test_an_unknown_key_under_checks_is_a_config_error(self) -> None:
         config = _config(checks={"silence": [_ERROR_ID]})
 
+        registry = _registry()
+
         with pytest.raises(ConfigError, match="silence"):
-            run_deploy_checks(config, registry=_registry())
+            run_deploy_checks(config, registry=registry)
 
 
 @pytest.mark.parametrize(
@@ -227,5 +238,7 @@ class TestApplicationCheckModules:
 def test_a_placeholder_in_the_checks_section_is_a_config_error(checks: dict[str, Any]) -> None:
     config = _config(checks=checks, shared={"silenced": [_ERROR_ID]})
 
+    registry = _registry()
+
     with pytest.raises(ConfigError, match="checks"):
-        run_deploy_checks(config, registry=_registry())
+        run_deploy_checks(config, registry=registry)

@@ -127,15 +127,13 @@ def test_a_config_directory_without_the_overlay_loads_the_base(
 
 
 def test_the_checks_run_before_the_agent_runner_is_built(
-    tmp_path: Path, check: FailingCheckModule
+    tmp_path: Path, check: FailingCheckModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = _yaml(tmp_path, check)
     make_agent_runner = MagicMock()
+    monkeypatch.setattr("loom.etl.runner.core.make_agent_runner", make_agent_runner)
 
-    with (
-        patch("loom.etl.runner.core.make_agent_runner", make_agent_runner),
-        pytest.raises(DeployCheckError),
-    ):
+    with pytest.raises(DeployCheckError):
         ETLRunner.from_yaml(path, environment="production")
 
     make_agent_runner.assert_not_called()
