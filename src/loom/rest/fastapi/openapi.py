@@ -175,7 +175,7 @@ def build_query_parameters_schema(
         for field in compiled_route.query_fields
     )
 
-    if _has_profile_parameter(hints) and compiled_route.effective_expose_profile:
+    if has_profile_parameter(hints) and compiled_route.effective_expose_profile:
         profile_param: JsonSchema = {
             _PARAM_NAME: QUERY_PARAM_PROFILE,
             _PARAM_IN: _PARAM_IN_QUERY,
@@ -214,7 +214,8 @@ def _get_execution_plan(compiled_route: CompiledRoute) -> ExecutionPlan | None:
     return None
 
 
-def _has_profile_parameter(type_hints: dict[str, Any]) -> bool:
+def has_profile_parameter(type_hints: dict[str, Any]) -> bool:
+    """Whether ``execute`` declares an annotated ``profile`` parameter."""
     return "profile" in type_hints
 
 

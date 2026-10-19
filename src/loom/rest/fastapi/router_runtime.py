@@ -70,6 +70,7 @@ from loom.rest.fastapi.openapi import (
     build_query_parameters_schema,
     build_request_body_schema,
     build_success_responses,
+    has_profile_parameter,
 )
 from loom.rest.fastapi.response import MsgspecJSONResponse, created_response
 
@@ -373,10 +374,10 @@ class _DeclaredQuery:
     def decode(self, query_params: QueryParams) -> Any:
         """Build the typed query, refusing a key the route does not accept or repeats.
 
-        ``profile`` is accepted only where the route exposes it and
-        ``execute`` takes it, which is when OpenAPI publishes it, and only with
-        one of the route's allowed profiles; :func:`_resolve_profile` then
-        selects it.
+        ``profile`` is accepted only under the condition OpenAPI publishes it:
+        the route exposes it and ``execute`` declares an annotated ``profile``
+        parameter, and only with one of the route's allowed profiles;
+        :func:`_resolve_profile` then selects it.
 
         Raises:
             LoomError: ``unsupported_query`` for an unknown or repeated key.
@@ -423,11 +424,13 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     uc_type = compiled_route.route.use_case
     plan = getattr(uc_type, "__execution_plan__", None)
     query_binding = plan.query_binding if plan is not None else None
-    accepts_profile_param = "profile" in inspect.signature(uc_type.execute).parameters
+    accepts_profile_param = QueryParam.PROFILE in inspect.signature(uc_type.execute).parameters
     declared_query = None
     if query_binding is not None:
         accepted = {field.name for field in compiled_route.query_fields}
-        if compiled_route.effective_expose_profile and accepts_profile_param:
+        if compiled_route.effective_expose_profile and has_profile_parameter(
+            typing.get_type_hints(uc_type.execute)
+        ):
             accepted.add(QueryParam.PROFILE)
         declared_query = _DeclaredQuery(
             param_name=query_binding.name,

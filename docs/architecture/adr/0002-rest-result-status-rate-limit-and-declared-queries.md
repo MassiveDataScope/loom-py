@@ -222,9 +222,9 @@ async def execute(self, query: GrantQuery = Query(), caller: Identity = Caller()
 Request handling, in order:
 
 1. A key that is neither a declared wire name nor `profile` (when the route
-   exposes it and `execute` takes a `profile` parameter, the same condition
-   OpenAPI publishes it under) → 400 `unsupported_query`. Any other `profile`
-   is unknown.
+   exposes it and `execute` declares an annotated `profile` parameter, the
+   condition OpenAPI publishes it under, checked by the same predicate) → 400
+   `unsupported_query`. Any other `profile` is unknown.
 2. A key given twice, `profile` included → 400 `unsupported_query`.
 3. A `profile` the route does not allow → 400 `query_validation` on field
    `profile`, with a fixed message and without the value.

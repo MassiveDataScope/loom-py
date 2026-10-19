@@ -90,12 +90,24 @@ class ListGrantsByProfile(UseCase[Any, list[Any]]):
         return [profile, query.limit]
 
 
+class ListGrantsUnannotatedProfile(UseCase[Any, int]):
+    async def execute(self, profile, query: GrantQuery = Query()) -> int:  # type: ignore[no-untyped-def]
+        return query.limit
+
+
 class Grants(RestInterface[Any]):
     prefix = "/grants"
     routes = (
         RestRoute(use_case=ListGrants, method="GET", path=""),
         RestRoute(use_case=ListGrantsFromModel, method="GET", path="/from-model"),
         RestRoute(use_case=ListOwnerGrants, method="GET", path="/by-owner"),
+        RestRoute(
+            use_case=ListGrantsUnannotatedProfile,
+            method="GET",
+            path="/unannotated-profile",
+            expose_profile=True,
+            allowed_profiles=("default", "detail"),
+        ),
         RestRoute(
             use_case=ListGrants,
             method="GET",
@@ -289,6 +301,7 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
         "/grants?profile=detail",
         "/grants/by-profile?profile=detail&profile=default",
         "/grants/exposed-unused?profile=detail",
+        "/grants/unannotated-profile?profile=detail",
     ],
 )
 def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
