@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _SEPARATOR: Final = "__"
-_LEVEL: Final = re.compile(r"[A-Za-z0-9_]+")
+_LEVEL: Final = re.compile(r"\w+", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
 _INTERPOLATION: Final = "${"
 _REVIEWED_PREFIXES: Final = ("checks", "app.rest.auth")
 _REVIEWED_KEYS: Final = frozenset(

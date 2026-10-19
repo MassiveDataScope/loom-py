@@ -306,9 +306,9 @@ class TestAddCodePath:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "src").mkdir()
-        monkeypatch.setattr(sys, "path", list(sys.path))
+        resolved = str((tmp_path / "src").resolve())
+        monkeypatch.syspath_prepend(resolved)
 
         add_code_path("src", tmp_path)
-        add_code_path(str((tmp_path / "src").resolve()), tmp_path)
 
-        assert sys.path.count(str((tmp_path / "src").resolve())) == 1
+        assert sys.path.count(resolved) == 1

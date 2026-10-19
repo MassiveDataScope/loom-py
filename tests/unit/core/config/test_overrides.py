@@ -288,7 +288,10 @@ def test_sections_no_application_loader_reads_are_unknown(
         _load(config_file)
 
 
-@pytest.mark.parametrize("variable", ["LOOM__APP__NA.ME", "LOOM__APP__NAME[0]", "LOOM__APP__NA-ME"])
+@pytest.mark.parametrize(
+    "variable",
+    ["LOOM__APP__NA.ME", "LOOM__APP__NAME[0]", "LOOM__APP__NA-ME", "LOOM__APP__NAMÉ"],
+)
 def test_a_level_outside_letters_digits_and_underscore_is_refused(
     config_file: str, monkeypatch: pytest.MonkeyPatch, variable: str
 ) -> None:
