@@ -48,16 +48,12 @@ def test_params_compat_subclass_passes() -> None:
     validate_params_compat(object, BaseParams, ExtendedParams)
 
 
-def test_params_compat_missing_field_raises() -> None:
+def test_params_compat_missing_field_raises_naming_the_field_and_the_type() -> None:
     with pytest.raises(ETLCompilationError, match="run_date") as exc_info:
         validate_params_compat(object, BaseParams, UnrelatedParams)
 
     assert exc_info.value.code is ETLErrorCode.MISSING_PARAMS_FIELDS
-
-
-def test_params_compat_error_includes_type_name() -> None:
-    with pytest.raises(ETLCompilationError, match="UnrelatedParams"):
-        validate_params_compat(object, BaseParams, UnrelatedParams)
+    assert "UnrelatedParams" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

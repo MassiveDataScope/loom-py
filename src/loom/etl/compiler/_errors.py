@@ -22,9 +22,6 @@ from typing import Final
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
 _ALIAS: Final = "{alias}"
-_TRACK: Final = "track"
-_EFFECTIVE_DATE: Final = "effective_date"
-_DELETE_MARKER: Final = "delete_marker"
 _ALIAS_REASON: Final = Template("{component}.{alias}: {reason}", field=_ALIAS)
 """Issue of a step attribute (a ``FromConfig`` key or a ``WithAgent``) with its reason."""
 
@@ -218,7 +215,7 @@ class ETLErrorCode(IssueCode):
         Template(
             "{component}: IntoHistory 'keys' and 'track' must not overlap. "
             "Conflicting columns: {overlap}",
-            field=_TRACK,
+            field="track",
         ),
     )
     HISTORIFY_EFFECTIVE_DATE_IN_TRACK = (
@@ -227,7 +224,7 @@ class ETLErrorCode(IssueCode):
             "{component}: IntoHistory 'effective_date' column {effective_date!r} cannot "
             "appear in 'track'. The effective_date is a temporal axis, not a dimension "
             "being tracked.",
-            field=_EFFECTIVE_DATE,
+            field="effective_date",
         ),
     )
     HISTORIFY_BOUNDARY_IN_KEYS = (
@@ -241,7 +238,7 @@ class ETLErrorCode(IssueCode):
         "HISTORIFY_BOUNDARY_IN_TRACK",
         Template(
             "{component}: IntoHistory boundary columns {overlap} cannot appear in 'track'.",
-            field=_TRACK,
+            field="track",
         ),
     )
     HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN = (
@@ -249,7 +246,7 @@ class ETLErrorCode(IssueCode):
         Template(
             "{component}: IntoHistory LOG mode requires 'effective_date' to be a column name "
             "(str), not a ParamExpr. In LOG mode each row carries its own timestamp.",
-            field=_EFFECTIVE_DATE,
+            field="effective_date",
         ),
     )
     HISTORIFY_DELETE_MARKER_REQUIRES_LOG = (
@@ -257,7 +254,7 @@ class ETLErrorCode(IssueCode):
         Template(
             "{component}: IntoHistory 'delete_marker' requires LOG mode. "
             "SNAPSHOT deletions are governed by 'delete_policy'.",
-            field=_DELETE_MARKER,
+            field="delete_marker",
         ),
     )
     HISTORIFY_DELETE_MARKER_DECLARED_COLUMN = (
@@ -265,7 +262,7 @@ class ETLErrorCode(IssueCode):
         Template(
             "{component}: IntoHistory 'delete_marker' {marker!r} must not name a key, track, "
             "overwrite, effective_date, boundary or partition_scope column.",
-            field=_DELETE_MARKER,
+            field="delete_marker",
         ),
     )
 

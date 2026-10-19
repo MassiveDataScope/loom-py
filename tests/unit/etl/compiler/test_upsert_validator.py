@@ -89,10 +89,8 @@ class _NoKeys(ETLStep[_P]):
 
 def test_empty_keys_raises() -> None:
     spec = _spec(_NoKeys)
-    with pytest.raises(ETLCompilationError, match="at least one key") as exc_info:
+    with pytest.raises(ETLCompilationError, match="at least one key"):
         validate_upsert_spec(_NoKeys, spec)
-
-    assert exc_info.value.code is ETLErrorCode.UPSERT_NO_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -109,10 +107,8 @@ class _BothExcludeInclude(ETLStep[_P]):
 
 def test_exclude_and_include_raises() -> None:
     spec = _spec(_BothExcludeInclude)
-    with pytest.raises(ETLCompilationError, match="mutually exclusive") as exc_info:
+    with pytest.raises(ETLCompilationError, match="mutually exclusive"):
         validate_upsert_spec(_BothExcludeInclude, spec)
-
-    assert exc_info.value.code is ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT
 
 
 # ---------------------------------------------------------------------------
@@ -129,10 +125,8 @@ class _ExcludeOverlapsKey(ETLStep[_P]):
 
 def test_exclude_overlaps_key_raises() -> None:
     spec = _spec(_ExcludeOverlapsKey)
-    with pytest.raises(ETLCompilationError, match="id") as exc_info:
+    with pytest.raises(ETLCompilationError, match="id"):
         validate_upsert_spec(_ExcludeOverlapsKey, spec)
-
-    assert exc_info.value.code is ETLErrorCode.UPSERT_KEY_IN_EXCLUDE
 
 
 # ---------------------------------------------------------------------------

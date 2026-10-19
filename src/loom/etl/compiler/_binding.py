@@ -43,9 +43,6 @@ def resolve_source_bindings(step_type: type[ETLStep[Any]]) -> tuple[SourceBindin
 
     Returns:
         Tuple of :class:`~loom.etl.compiler._plan.SourceBinding` instances.
-
-    Raises:
-        ETLCompilationError: When the sources declaration is invalid.
     """
     source_form = _to_source_form_key(step_type._source_form)
     match source_form:
@@ -126,14 +123,11 @@ def _bindings_from_inline(step_type: type[ETLStep[Any]]) -> tuple[SourceBinding,
 
 def _bindings_from_grouped(step_type: type[ETLStep[Any]]) -> tuple[SourceBinding, ...]:
     # ETLStep.__init_subclass__ sets the GROUPED form only when ``sources`` is
-    # a Sources or a SourceSet, and both provide ``_to_specs``.
+    # a Sources or a SourceSet, and both provide ``_to_specs``. Replacing
+    # ``sources`` on the class after it is defined fails here with an
+    # AttributeError, not a coded error.
     grouped = cast(_GroupedSourcesLike, step_type.sources)
     return tuple(SourceBinding(alias=spec.alias, spec=spec) for spec in grouped._to_specs())
-
-
-def _normalize_source_form(raw: Any) -> _SourceFormKey:
-    """Backward-compatible alias kept for imports/tests."""
-    return _to_source_form_key(raw)
 
 
 def _to_source_form_key(raw: Any) -> _SourceFormKey:
