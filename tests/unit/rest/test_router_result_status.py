@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -41,6 +42,28 @@ class ReadGrant(UseCase[Any, GrantView]):
 class RevokeGrant(UseCase[Any, GrantView]):
     async def execute(self, grant_id: str) -> GrantView:
         raise RateLimited(1.2)
+
+
+class Opaque:
+    pass
+
+
+class ReturnsAnything(UseCase[Any, Any]):
+    async def execute(self) -> Any:
+        return {}
+
+
+class ReturnsOpaque(UseCase[Any, Any]):
+    async def execute(self) -> Opaque | Created[Opaque]:
+        return Opaque()
+
+
+class Undocumented(RestInterface[Any]):
+    prefix = "/undocumented"
+    routes = (
+        RestRoute(use_case=ReturnsAnything, method="GET", path="/anything"),
+        RestRoute(use_case=ReturnsOpaque, method="GET", path="/opaque"),
+    )
 
 
 class Grants(RestInterface[Any]):
@@ -131,3 +154,11 @@ def test_a_rate_limited_use_case_answers_429_with_retry_after() -> None:
     assert response.json() == {
         "detail": {"code": "rate_limited", "message": "Too many requests.", "trace_id": None}
     }
+
+
+@pytest.mark.parametrize("path", ["/undocumented/anything", "/undocumented/opaque"])
+def test_a_result_without_json_schema_documents_no_success_body(path: str) -> None:
+    responses = _client(Undocumented).get("/openapi.json").json()["paths"][path]["get"]["responses"]
+
+    assert set(responses) == {"200"}
+    assert responses["200"]["content"]["application/json"]["schema"] == {}
