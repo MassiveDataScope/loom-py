@@ -423,6 +423,12 @@ class RestInterfaceCompiler:
             raise InterfaceCompilationError(
                 f"{iface_name}: 'prefix' must be a non-empty string (e.g. '/users')."
             )
+        if "{" in interface.prefix:
+            raise InterfaceCompilationError(
+                f"{iface_name}: 'prefix' {interface.prefix!r} contains a path "
+                "placeholder.  Placeholders in 'prefix' are not bound to the use case; "
+                "put the placeholder in the route 'path' instead."
+            )
         if not interface.routes:
             raise InterfaceCompilationError(
                 f"{iface_name}: 'routes' is empty.  Declare at least one RestRoute to expose."

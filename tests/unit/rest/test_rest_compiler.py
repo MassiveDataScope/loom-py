@@ -254,6 +254,18 @@ class TestErrors:
         with pytest.raises(InterfaceCompilationError, match="prefix"):
             rest_compiler.compile(IFace)
 
+    def test_compile_prefix_placeholder_raises(self, rest_compiler: RestInterfaceCompiler) -> None:
+        class IFace(RestInterface[str]):
+            prefix = "/customers/{customer_id}/tickets"
+            routes = (RestRoute(use_case=GetUserUseCase, method="GET", path="/{user_id}"),)
+
+        with pytest.raises(InterfaceCompilationError) as excinfo:
+            rest_compiler.compile(IFace)
+        message = str(excinfo.value)
+        assert "IFace" in message
+        assert "'/customers/{customer_id}/tickets'" in message
+        assert "path" in message
+
     def test_compile_empty_routes_raises(self, rest_compiler: RestInterfaceCompiler) -> None:
         class IFace(RestInterface[str]):
             prefix = "/users"

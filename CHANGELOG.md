@@ -485,6 +485,10 @@
 
 ### rest
 
+- **rest:** a `RestInterface` whose `prefix` contains `{` now raises
+  `InterfaceCompilationError` at compile time, naming the interface and the
+  prefix; declare the placeholder in the route `path` instead (a catch-all
+  `prefix="/{tenant}"` becomes `prefix="/"` with `path="/{tenant}"`).
 - **rest:** auto-CRUD mounts no `/{id}` route (get, update, delete) for a
   model with a composite primary key, since one path segment cannot carry the
   key; naming one of them in `include` raises `ValueError` when the routes are
@@ -778,6 +782,11 @@
 
 ### rest
 
+- **rest:** a path placeholder in `RestInterface.prefix` was dropped. The route
+  was registered on prefix + path, but path parameters were read from the
+  route `path` only, so the use case never received the prefix parameter (a
+  required one answered `500`) and OpenAPI did not list it. Such a prefix is
+  now refused at compile time.
 - **rest:** an authenticator can report an outage instead of answering `500`.
   An exception raised inside `AuthenticationMiddleware` never reached
   Starlette's exception handlers, so a custom authenticator whose identity
