@@ -922,6 +922,16 @@
   `SERVICE_UNAVAILABLE`, which `HttpErrorMapper` maps to `503`. Any other
   exception from the authenticator, and the `401` refusal, are unchanged.
 
+### streaming
+
+- **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
+  treated it as a plain terminal, so a `Broadcast` followed by another node
+  reported `TERMINAL_NOT_LAST` instead of `BROADCAST_NOT_LAST`, and the nodes
+  of its branches were never shape-checked. A branch with a shape mismatch,
+  such as a record step after `CollectBatch`, now fails compilation with
+  `SHAPE_MISMATCH` scoped under `broadcast branch <n>`; such flows used to
+  compile.
+
 ### prefect
 
 - **prefect:** every log line the bridge sends carries the run's

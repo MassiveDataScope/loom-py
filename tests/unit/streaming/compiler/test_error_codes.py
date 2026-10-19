@@ -233,6 +233,10 @@ def _fork() -> Fork[Order]:
     return Fork.when([ForkRoute(when=msg.payload.order_id == "a", process=Process(_out()))])
 
 
+def _broadcast(*nodes: Any) -> Broadcast[Order]:
+    return Broadcast(BroadcastRoute(process=Process(*nodes), output=_out()))
+
+
 def _router(*nodes: Any) -> Router[Order, Any]:
     return Router.when([Route(when=msg.payload.order_id == "a", process=Process(*nodes))])
 
@@ -345,6 +349,22 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "fork",
         None,
     ),
+    "broadcast followed by a step": (
+        lambda: _flow(_broadcast(FakeStep()), FakeStep()),
+        {},
+        StreamingErrorCode.BROADCAST_NOT_LAST,
+        "broadcast must be the last node in a process",
+        "broadcast",
+        None,
+    ),
+    "broadcast branch issue scoped under its branch": (
+        lambda: _flow(_broadcast(CollectBatch(10, 500), FakeStep())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "broadcast branch 0: shape mismatch: expected record but got batch before FakeStep",
+        "broadcast branch 0 > FakeStep",
+        None,
+    ),
     "scoped process followed by a step": (
         lambda: _flow(With(process=Process(FakeStep(), _out())), FakeStep()),
         {},
@@ -420,9 +440,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "output",
     ),
     "flow output next to a broadcast": (
-        lambda: _flow(
-            Broadcast(BroadcastRoute(process=Process(FakeStep()), output=_out())), output=_out()
-        ),
+        lambda: _flow(_broadcast(FakeStep()), output=_out()),
         {},
         StreamingErrorCode.OUTPUT_WITH_BROADCAST,
         "flow.output cannot be combined with Broadcast: branches must be terminal",

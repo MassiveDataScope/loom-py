@@ -323,13 +323,17 @@ def _validate_shape_node(
     node_list: tuple[object, ...],
     current_shape: StreamShape,
 ) -> tuple[list[CompilationIssue], StreamShape, bool]:
-    """Validate one node inside a process shape sequence."""
+    """Validate one node inside a process shape sequence.
+
+    ``Broadcast`` is checked before the leaf terminals, which include it, so
+    its branches are validated and its own not-last code is reported.
+    """
+    if isinstance(node, Broadcast):
+        return _validate_broadcast_node(node, idx, node_list, current_shape)
     if _is_leaf_terminal(node):
         return _validate_leaf_terminal_node(node, idx, node_list, current_shape)
     if isinstance(node, Fork):
         return _validate_fork_node(node, idx, node_list, current_shape)
-    if isinstance(node, Broadcast):
-        return _validate_broadcast_node(node, idx, node_list, current_shape)
     if _is_scoped_process(node):
         return _validate_scoped_process_node(node, idx, node_list)
     if isinstance(node, Explode):
