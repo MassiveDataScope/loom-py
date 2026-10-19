@@ -282,7 +282,11 @@ def _mcp_client(component: str, capability: CompiledMcpCapability) -> str | Clie
         return _stdio_transport(capability.command, capability)
     reason = f"transport {capability.transport!r} is not served by the pydantic-ai engine"
     raise AgentCompilationError(
-        [AgentErrorCode.MCP_TRANSPORT_INVALID.issue(component=component, reason=reason)]
+        [
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component, field="transport", reason=reason
+            )
+        ]
     )
 
 

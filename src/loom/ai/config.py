@@ -15,9 +15,10 @@ import re
 from collections.abc import Mapping
 from ipaddress import ip_address
 from types import MappingProxyType
+from typing import Final
 from urllib.parse import SplitResult, urlsplit
 
-from msgspec import field, structs
+from msgspec import field
 
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget
@@ -63,6 +64,7 @@ _AUTH_KIND_KEY = "kind"
 # not open aborts start-up (``required``) or is dropped with a warning
 # (``optional``).
 _REMOTE_CLIENTS_MODES: tuple[str, ...] = ("required", "optional")
+_TRANSPORT_FIELD: Final = "transport"
 
 # Bounds of a single remote call, mirroring ``policies.tool_timeout_ms``.
 _TIMEOUT_MS_MIN = 1
@@ -510,6 +512,7 @@ def _validate_mcp_transport(component: str, server: McpServerConfig) -> list[Age
         return [
             AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
                 component=component,
+                field=_TRANSPORT_FIELD,
                 reason=f"transport '{server.transport}' is not supported; accepted: {accepted}",
             )
         ]
@@ -524,7 +527,9 @@ def _validate_http_server(component: str, server: McpServerConfig) -> list[Agent
     if server.url is None:
         issues.append(
             AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
-                component=component, reason="transport 'http' requires 'url'"
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="transport 'http' requires 'url'",
             )
         )
     declared = (
@@ -536,7 +541,9 @@ def _validate_http_server(component: str, server: McpServerConfig) -> list[Agent
     if stdio_only:
         issues.append(
             AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
-                component=component, reason=f"{stdio_only} do not apply to transport 'http'"
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason=f"{stdio_only} do not apply to transport 'http'",
             )
         )
     if server.url is not None:
@@ -552,19 +559,23 @@ def _validate_stdio_server(component: str, server: McpServerConfig) -> list[Agen
     if not server.command:
         issues.append(
             AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
-                component=component, reason="transport 'stdio' requires a non-empty 'command'"
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="transport 'stdio' requires a non-empty 'command'",
             )
         )
     if server.url is not None:
         issues.append(
             AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
-                component=component, reason="'url' only applies to transport 'http'"
+                component=component,
+                field=_TRANSPORT_FIELD,
+                reason="'url' only applies to transport 'http'",
             )
         )
     if server.headers_ref is not None or server.auth is not None:
         issues.append(
             AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
-                component=component, reason=_STDIO_CREDENTIALS_REASON
+                component=component, field=_TRANSPORT_FIELD, reason=_STDIO_CREDENTIALS_REASON
             )
         )
     issues.extend(_validate_mcp_env(component, server.env))
@@ -578,10 +589,13 @@ def _validate_mcp_env(component: str, env: Mapping[str, str] | None) -> list[Age
     issues: list[AgentCompilationIssue] = []
     for name, value in env.items():
         if _ENV_NAME_PATTERN.fullmatch(name) is None:
-            invalid = AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
-                component=component, reason=f"'{name}' is not a valid environment variable name"
+            issues.append(
+                AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                    component=component,
+                    field=f"env.{name}",
+                    reason=f"'{name}' is not a valid environment variable name",
+                )
             )
-            issues.append(structs.replace(invalid, field=f"env.{name}"))
         if not _has_reference_shape(value):
             # The rejected value is deliberately absent: a broken interpolation
             # may still contain part of the secret it failed to resolve.

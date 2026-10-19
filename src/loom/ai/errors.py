@@ -40,13 +40,15 @@ if TYPE_CHECKING:
 
 # Repeated ``field`` values of the issues that report on the same artifact
 # path from more than one code.
+_FIELD_SPEC_VERSION: Final = "spec_version"
+_FIELD_CAPABILITIES: Final = "capabilities"
+_FIELD_FROM_PARAM: Final = "{field}"
 _FIELD_CAPABILITIES_CONNECTION: Final = "capabilities.connection"
 _FIELD_CAPABILITIES_LIBRARY: Final = "capabilities.library"
 _FIELD_CAPABILITIES_FACTORY: Final = "capabilities.factory"
 _FIELD_AI_ENGINE: Final = "ai.engine"
 _FIELD_AI_SPECS: Final = "ai.specs"
 _FIELD_DEPS_TYPE: Final = "deps_type"
-_FIELD_DEPS_SCHEMA: Final = "deps_schema"
 _FIELD_INSTRUCTIONS: Final = "instructions"
 _ON_OUTPUT_USECASE_FIELD: Final = "on_output.usecase"
 _CONVERSATION_USECASE_FIELD: Final = "conversation.usecase"
@@ -65,20 +67,22 @@ class AgentErrorCode(IssueCode):
     SPEC_VERSION_MISSING = (
         "SPEC_VERSION_MISSING",
         Template(
-            "{component}: spec_version is missing; it must be declared first", field="spec_version"
+            "{component}: spec_version is missing; it must be declared first",
+            field=_FIELD_SPEC_VERSION,
         ),
     )
     SPEC_VERSION_UNSUPPORTED = (
         "SPEC_VERSION_UNSUPPORTED",
         Template(
             "{component}: spec_version {found} is not supported; supported versions: {supported}",
-            field="spec_version",
+            field=_FIELD_SPEC_VERSION,
         ),
     )
     SPEC_UNKNOWN_FIELD = (
         "SPEC_UNKNOWN_FIELD",
         Template(
-            "{component}: unknown field '{field}'; unknown fields are rejected", field="{field}"
+            "{component}: unknown field '{field}'; unknown fields are rejected",
+            field=_FIELD_FROM_PARAM,
         ),
     )
     # No field in the template: the decoder sets it on the issue when it knows the path.
@@ -204,7 +208,7 @@ class AgentErrorCode(IssueCode):
         "STATE_SCHEMA_INVALID",
         Template(
             "{component}: state schema is not a valid JSON Schema: {reason}",
-            field=_FIELD_DEPS_SCHEMA,
+            field="deps_schema",
         ),
     )
     STATE_SURFACE_UNSUPPORTED = (
@@ -243,7 +247,7 @@ class AgentErrorCode(IssueCode):
         "CAPABILITY_KIND_UNSUPPORTED",
         Template(
             "{component}: engine '{engine}' does not support capability kind '{kind}'",
-            field="capabilities",
+            field=_FIELD_CAPABILITIES,
         ),
     )
     STREAMING_REQUIRED_BY_CAPABILITY = (
@@ -271,7 +275,7 @@ class AgentErrorCode(IssueCode):
     )
     CAPABILITY_EMPTY = (
         "CAPABILITY_EMPTY",
-        Template("{component}: capability '{kind}' grants no tool", field="capabilities"),
+        Template("{component}: capability '{kind}' grants no tool", field=_FIELD_CAPABILITIES),
     )
     USECASE_KEY_UNKNOWN = (
         "USECASE_KEY_UNKNOWN",
@@ -338,7 +342,7 @@ class AgentErrorCode(IssueCode):
         Template(
             "{component}: '{field}' carries inline credentials; reference them through "
             "deployment configuration instead",
-            field="{field}",
+            field=_FIELD_FROM_PARAM,
         ),
     )
     MCP_HEADERS_REF_INVALID = (
@@ -373,11 +377,10 @@ class AgentErrorCode(IssueCode):
             field="auth.kind",
         ),
     )
-    # The field is the transport, unless a call site blames a nested key such as one
-    # ``env`` name, in which case it sets that key on the issue.
+    # ``field`` is ``transport``, or the nested key to blame, such as one ``env`` name.
     MCP_TRANSPORT_INVALID = (
         "MCP_TRANSPORT_INVALID",
-        Template("{component}: invalid mcp transport: {reason}", field="transport"),
+        Template("{component}: invalid mcp transport: {reason}", field=_FIELD_FROM_PARAM),
     )
     SKILLS_LIBRARY_INVALID = (
         "SKILLS_LIBRARY_INVALID",
@@ -461,7 +464,7 @@ class AgentErrorCode(IssueCode):
         "ANONYMOUS_WITH_DATA_CAPABILITY",
         Template(
             "{component}: agent opts out of authentication while holding the '{kind}' capability",
-            field="capabilities",
+            field=_FIELD_CAPABILITIES,
         ),
     )
 
@@ -566,8 +569,6 @@ class AgentErrorCode(IssueCode):
             field="capabilities.server",
         ),
     )
-    # The use-case ``Mcp()`` include check reuses this code with its own message and a
-    # ``parameters.<name>`` field (``loom.ai.runtime._lifecycle``): one condition, one code.
     TOOL_FILTER_MATCHES_NOTHING = (
         "TOOL_FILTER_MATCHES_NOTHING",
         Template(
@@ -686,6 +687,14 @@ class AgentErrorCode(IssueCode):
     )
 
     # Use-case MCP markers
+    USECASE_TOOL_FILTER_MATCHES_NOTHING = (
+        "USECASE_TOOL_FILTER_MATCHES_NOTHING",
+        Template(
+            "{component}: parameter '{parameter}' declares an include filter for mcp server "
+            "'{server}' that matches no tool",
+            field=_AGENT_MARKER_FIELD_TEMPLATE,
+        ),
+    )
     MCP_MARKER_UNKNOWN = (
         "MCP_MARKER_UNKNOWN",
         Template(
@@ -700,18 +709,13 @@ class AgentErrorCode(IssueCode):
         "SPEC_VERSION_DEPRECATED",
         Template(
             "{component}: spec_version {found} is deprecated; version {latest} is the current one",
-            field="spec_version",
+            field=_FIELD_SPEC_VERSION,
         ),
     )
     UNSPECIFIED = "UNSPECIFIED", Template("{message}", component="")
 
 
 AgentCompilationIssue: TypeAlias = CompileIssue[AgentErrorCode]
-
-
-def from_message(message: str) -> AgentCompilationIssue:
-    """Wrap a bare string as an :data:`AgentErrorCode.UNSPECIFIED` issue."""
-    return AgentErrorCode.UNSPECIFIED.issue(message=message)
 
 
 class AgentCompilationError(Exception):
@@ -725,12 +729,13 @@ class AgentCompilationError(Exception):
 
     Args:
         issues: Issues (or bare message strings) collected by the compiler.
-            Strings are normalised through :func:`from_message`.
+            Strings become :data:`AgentErrorCode.UNSPECIFIED` issues.
     """
 
     def __init__(self, issues: Sequence[AgentCompilationIssue | str]) -> None:
         self.issues: tuple[AgentCompilationIssue, ...] = tuple(
-            from_message(item) if isinstance(item, str) else item for item in issues
+            AgentErrorCode.UNSPECIFIED.issue(message=item) if isinstance(item, str) else item
+            for item in issues
         )
         messages = [issue.message for issue in self.issues]
         super().__init__(

@@ -835,18 +835,11 @@ class AgentRuntime:
             if not select_names(
                 names, include=grant.capability.include, exclude=grant.capability.exclude
             ):
-                # One condition, one code: the agent-artifact check's code, told
-                # apart by its message and its ``parameters.<name>`` field.
                 issues.append(
-                    AgentCompilationIssue(
-                        code=AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING,
-                        message=(
-                            f"{grant.usecase}: parameter '{grant.parameter}' declares an "
-                            f"include filter for mcp server '{grant.capability.server}' that "
-                            "matches no tool"
-                        ),
+                    AgentErrorCode.USECASE_TOOL_FILTER_MATCHES_NOTHING.issue(
                         component=grant.usecase,
-                        field=f"parameters.{grant.parameter}",
+                        parameter=grant.parameter,
+                        server=grant.capability.server,
                     )
                 )
         return issues

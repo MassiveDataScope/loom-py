@@ -171,7 +171,7 @@ class TestServerDeclaredOnlyByAUseCase:
         issue = next(
             issue
             for issue in failure.value.issues
-            if issue.code is AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING
+            if issue.code is AgentErrorCode.USECASE_TOOL_FILTER_MATCHES_NOTHING
         )
         assert (issue.component, issue.field) == (_USECASE, f"parameters.{_PARAMETER}")
         assert _USECASE in issue.message
@@ -364,7 +364,7 @@ class TestEarlyReturnGuards:
         with pytest.raises(AgentCompilationError) as failure:
             await runtime.__aenter__()
 
-        assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
+        assert AgentErrorCode.USECASE_TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
 
 
 class TestUseCaseMcpGrantBeforeEntering:
@@ -420,7 +420,7 @@ class TestToleratedUnreachableServerDoesNotTriggerTheFilter:
     tolerated was never listed, so its ``include`` has nothing to compare
     against: this server's outage is reported by the connection check, not
     by the filter. Without this guard, an ``include`` that would in theory
-    match nothing would raise ``TOOL_FILTER_MATCHES_NOTHING`` on top of a
+    match nothing would raise ``USECASE_TOOL_FILTER_MATCHES_NOTHING`` on top of a
     server already reported unreachable, duplicating the failure with the
     wrong code.
     """
