@@ -76,7 +76,7 @@ class StorageProfile(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     commit: dict[str, Any] = {}
 
 
-class TablePathConfig(LoomFrozenStruct, frozen=True):
+class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Physical Delta path settings for table storage.
 
     Args:
@@ -115,7 +115,7 @@ class TablePathConfig(LoomFrozenStruct, frozen=True):
         )
 
 
-class FilePathConfig(LoomFrozenStruct, frozen=True):
+class FilePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Physical path settings for FILE sources/targets.
 
     Args:
@@ -145,7 +145,7 @@ class StorageDefaults(LoomFrozenStruct, frozen=True):
     table_path: TablePathConfig | None = None
 
 
-class TempConfig(LoomFrozenStruct, frozen=True):
+class TempConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Checkpoint / temporary storage settings."""
 
     root: str = ""
@@ -217,7 +217,7 @@ class FileRoute(LoomFrozenStruct, frozen=True):
         self.path.validate(context=f"{context}.path")
 
 
-class ClickHouseConfig(LoomFrozenStruct, frozen=True):
+class ClickHouseConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Connection settings for ClickHouse targets.
 
     Args:
@@ -228,7 +228,7 @@ class ClickHouseConfig(LoomFrozenStruct, frozen=True):
     url: str = ""
 
 
-class MongoConfig(LoomFrozenStruct, frozen=True):
+class MongoConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Connection settings for MongoDB sources.
 
     Args:
@@ -241,7 +241,7 @@ class MongoConfig(LoomFrozenStruct, frozen=True):
     database: str = ""
 
 
-class DynamoDbConfig(LoomFrozenStruct, frozen=True):
+class DynamoDbConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Connection settings for DynamoDB sources.
 
     Args:
@@ -278,7 +278,7 @@ class CustomColumnDef(LoomFrozenStruct, frozen=True):
     from_param: str | None = None
 
 
-class AuditConfig(LoomFrozenStruct, frozen=True):
+class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Configuration for automatic audit columns injected at write time.
 
     When ``enabled=True`` the writer stamps each written frame with
@@ -299,7 +299,7 @@ class AuditConfig(LoomFrozenStruct, frozen=True):
     custom: tuple[CustomColumnDef, ...] = ()
 
 
-class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True):
+class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Vacuum settings for the config-driven maintenance block.
 
     Args:
@@ -320,7 +320,7 @@ class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True):
     full: bool = False
 
 
-class MaintenanceConfig(LoomFrozenStruct, frozen=True):
+class MaintenanceConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Config-driven Delta table maintenance settings.
 
     Declaring this section in the storage YAML allows :meth:`MaintenanceRunner.run_from_config`
@@ -353,7 +353,7 @@ class MaintenanceConfig(LoomFrozenStruct, frozen=True):
     z_order_by: tuple[str, ...] = ()
 
 
-class StorageConfig(LoomFrozenStruct, frozen=True):
+class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Canonical storage configuration used by ETL runner/factory.
 
     Args:

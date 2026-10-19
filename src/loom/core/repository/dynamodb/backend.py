@@ -24,7 +24,7 @@ _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 _logger = logging.getLogger(__name__)
 
 
-class _DynamoDBConfig(msgspec.Struct, kw_only=True):
+class _DynamoDBConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     region: str
     table: str
     endpoint_url: str | None = None

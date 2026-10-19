@@ -111,7 +111,7 @@ def _require_usable_roles_claim(roles_claim: str) -> None:
         )
 
 
-class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Validated settings for :class:`~loom.rest.auth.JwtAuthMiddleware`.
 
     Binds from the ``app.rest.auth.jwt`` config section.  Validation runs on
@@ -321,7 +321,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         return None
 
 
-class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class JwtIssuerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Validated settings for :class:`~loom.rest.auth.JwtIssuer`.
 
     Separate from :class:`JwtAuthConfig` on purpose, and not a few extra fields

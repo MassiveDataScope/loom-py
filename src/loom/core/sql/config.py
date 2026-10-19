@@ -58,7 +58,7 @@ def roles_need_identity_binding(
     return bool(allowed_roles) and not mechanism_binds_roles
 
 
-class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Opt-in REST endpoint settings for a SQL connection.
 
     Attributes:
@@ -100,7 +100,7 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         return self.auth in _IDENTITY_BOUND_AUTH_MODES
 
 
-class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Named SQL connection with role policy, limits and driver tuning.
 
     Attributes:
@@ -180,7 +180,7 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         )
 
 
-class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Root of the ``sql:`` config section.
 
     Attributes:

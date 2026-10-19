@@ -72,7 +72,7 @@ class _PreparedStreamingRun:
     shutdown: Callable[[], None]
 
 
-class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True):
+class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Recovery settings for the Bytewax runtime.
 
     Args:
@@ -84,7 +84,7 @@ class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True):
     backup_interval_ms: int | None = None
 
 
-class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True):
+class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Runtime settings for executing a Bytewax dataflow.
 
     **Delivery guarantee:** By default Kafka offsets are committed by the

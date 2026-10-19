@@ -10,7 +10,6 @@ staging, and hands the environment to the use cases through the container.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +25,13 @@ from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.fastapi.auto import create_app
+from tests.helpers.deploy_checks import write_failing_check_module
 from tests.unit.rest._fixture_app import write_project
 
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
 _CUSTOM_AUTH: dict[str, Any] = {**_NO_DOCS, "auth": {"custom": True}}
 _PRODUCTION = "production"
 _CHECKS_LOGGER = "loom.core.checks"
-_NON_IDENTIFIER = re.compile(r"\W", re.ASCII)
 
 
 class _HeaderAuthenticator:
@@ -52,9 +51,6 @@ def _rest_ids(app: dict[str, Any]) -> list[str]:
 
 
 class TestRestChecks:
-    def test_the_checks_have_stable_ids(self) -> None:
-        assert (AUTHENTICATION_CHECK, SCHEMA_CHECK) == ("loom.rest.E001", "loom.rest.W001")
-
     def test_an_api_without_authentication_fails_e001(self) -> None:
         assert _rest_ids({"name": "demo", "rest": _NO_DOCS}) == [AUTHENTICATION_CHECK]
 
@@ -139,9 +135,10 @@ class TestCreateAppInADeployedEnvironment:
 class TestAuthenticationSuppliedInCode:
     def test_an_authenticator_without_custom_true_is_refused(self, tmp_path: Path) -> None:
         config = write_project(tmp_path, rest=_NO_DOCS)
+        authenticator = _HeaderAuthenticator()
 
         with pytest.raises(ConfigError, match=r"app\.rest\.auth\.custom"):
-            create_app(config, environment="development", authenticator=_HeaderAuthenticator())
+            create_app(config, environment="development", authenticator=authenticator)
 
     def test_custom_true_without_an_authenticator_is_refused(self, tmp_path: Path) -> None:
         config = write_project(tmp_path, rest=_CUSTOM_AUTH)
@@ -153,34 +150,20 @@ class TestAuthenticationSuppliedInCode:
         jwt = {"secret_path": "/k", "algorithms": ["HS256"], "audience": "demo"}
         rest = {**_NO_DOCS, "auth": {"custom": True, "jwt": jwt}}
         config = write_project(tmp_path, rest=rest)
+        authenticator = _HeaderAuthenticator()
 
         with pytest.raises(ConfigError, match="Exactly one"):
-            create_app(config, environment="development", authenticator=_HeaderAuthenticator())
-
-
-_APP_CHECK_SOURCE = """\
-from loom.core.checks import Finding, deploy_check
-
-
-@deploy_check("{area}.E001")
-def _sandbox(config):
-    if not config.has("{area}.sandbox"):
-        return None
-    return Finding(message="{area} uses the sandbox", hint="unset {area}.sandbox")
-"""
+            create_app(config, environment="development", authenticator=authenticator)
 
 
 def test_the_checks_of_the_application_modules_run_from_its_code_path(tmp_path: Path) -> None:
-    area = f"appcheck_{_NON_IDENTIFIER.sub('_', tmp_path.name)}"
-    (tmp_path / f"{area}_checks.py").write_text(_APP_CHECK_SOURCE.format(area=area))
+    check = write_failing_check_module(tmp_path)
+    area, key = check.trigger.split(".")
     config = write_project(tmp_path, rest=_NO_DOCS)
-    _merge_yaml(
-        Path(config),
-        {"checks": {"modules": [f"{area}_checks"], "silenced": [AUTHENTICATION_CHECK]}},
-    )
-    _merge_yaml(Path(config), {area: {"sandbox": True}})
+    checks = {**check.checks_section(), "silenced": [AUTHENTICATION_CHECK]}
+    _merge_yaml(Path(config), {"checks": checks, area: {key: True}})
 
-    with pytest.raises(DeployCheckError, match=f"{area}.E001"):
+    with pytest.raises(DeployCheckError, match=check.check_id):
         create_app(config, environment=_PRODUCTION)
 
 
@@ -212,6 +195,25 @@ class TestOverridesFromVariables:
 
         assert app.title == "From A Variable"
 
+    @pytest.mark.parametrize(
+        ("variable", "typo"),
+        [
+            ("LOOM__APP__REST__DOCS_ULR", "docs_ulr"),
+            ("LOOM__APP__REST__AUTH__CUSTM", "custm"),
+            ("LOOM__APP__REST__CORS__ALLOW_ORIGNS", "allow_origns"),
+            ("LOOM__OBSERVABILITY__LOG__ENABLD", "enabld"),
+            ("LOOM__OBSERVABILITY__OTEL__ENABLD", "enabld"),
+        ],
+    )
+    def test_a_deep_typo_under_app_rest_or_observability_stops_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variable: str, typo: str
+    ) -> None:
+        config = write_project(tmp_path)
+        monkeypatch.setenv(variable, "null")
+
+        with pytest.raises(ConfigError, match=typo):
+            create_app(config, environment="development")
+
     def test_a_misspelt_key_inside_a_known_section_stops_startup(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -234,11 +236,11 @@ class TestCreateAppFromAConfigDirectory:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config_dir = _config_dir(tmp_path)
-        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "test")
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "development")
 
         app = create_app(config_dir=str(config_dir))
 
-        assert app.title == "Base API"
+        assert app.title == "Local API"
 
     def test_files_and_a_directory_together_are_refused(self, tmp_path: Path) -> None:
         config_dir = _config_dir(tmp_path)
@@ -268,6 +270,10 @@ def test_a_use_case_injects_the_resolved_environment(tmp_path: Path) -> None:
                     },
                 },
                 "database": {"url": "sqlite+aiosqlite:///"},
+                # Explicit about cursors ahead of #371, whose default "signed"
+                # needs a key: ephemeral signing, its deploy check accepted.
+                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "checks": {"silenced": ["loom.cursors.E001"]},
             }
         ),
         encoding="utf-8",

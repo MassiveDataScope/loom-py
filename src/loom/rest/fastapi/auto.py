@@ -131,27 +131,27 @@ _AGENTS_PREFIX: Final[str] = "/agents"
 _AGENTS_CONTRIBUTOR = "loom.ai.describe:describe_agents"
 
 
-class _DiscoveryInterfaces(msgspec.Struct, kw_only=True):
+class _DiscoveryInterfaces(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     modules: list[str] = msgspec.field(default_factory=list)
     warn_recommended: bool = True
 
 
-class _DiscoveryModules(msgspec.Struct, kw_only=True):
+class _DiscoveryModules(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     include: list[str] = msgspec.field(default_factory=list)
 
 
-class _DiscoveryManifest(msgspec.Struct, kw_only=True):
+class _DiscoveryManifest(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     module: str = ""
 
 
-class _DiscoveryConfig(msgspec.Struct, kw_only=True):
+class _DiscoveryConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     mode: str = "interfaces"
     interfaces: _DiscoveryInterfaces = msgspec.field(default_factory=_DiscoveryInterfaces)
     modules: _DiscoveryModules = msgspec.field(default_factory=_DiscoveryModules)
     manifest: _DiscoveryManifest = msgspec.field(default_factory=_DiscoveryManifest)
 
 
-class _RestAuthConfig(msgspec.Struct, kw_only=True):
+class _RestAuthConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     jwt: JwtAuthConfig | None = None
     # True when the composition root passes create_app(authenticator=...):
     # the configuration then says authentication is supplied in code.
@@ -159,7 +159,7 @@ class _RestAuthConfig(msgspec.Struct, kw_only=True):
     exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS
 
 
-class _RestConfig(msgspec.Struct, kw_only=True):
+class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     backend: str = "fastapi"
     title: str = "Loom API"
     version: str = "0.1.0"

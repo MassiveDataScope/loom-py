@@ -27,7 +27,7 @@ _CREDENTIALS_WILDCARD_ERROR = (
 )
 
 
-class CorsConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class CorsConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Validated settings for the CORS middleware.
 
     Binds from the ``app.rest.cors`` config section.  The section is optional:

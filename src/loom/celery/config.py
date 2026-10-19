@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from loom.core.job.job import Job
 
 
-class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Async bridge settings for a Celery worker process.
 
     Attributes:
@@ -59,7 +59,7 @@ class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     shutdown_timeout_ms: int | None = None
 
 
-class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Broker and worker settings for the Celery application.
 
     Attributes:
@@ -109,7 +109,7 @@ class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     runtime: CeleryRuntimeConfig = msgspec.field(default_factory=CeleryRuntimeConfig)
 
 
-class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Per-job routing and execution overrides applied at bootstrap.
 
     Fields set to ``None`` leave the corresponding ClassVar on the

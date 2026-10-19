@@ -15,7 +15,9 @@ from loom.core.routing import DefaultingRouteResolver, LogicalRef
 KafkaConfigValue: TypeAlias = str | int | float | bool
 
 
-class KafkaSecuritySettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class KafkaSecuritySettings(
+    LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
     """Optional Kafka security settings.
 
     Attributes:
@@ -50,7 +52,7 @@ class KafkaSecuritySettings(LoomFrozenStruct, frozen=True, kw_only=True):
         )
 
 
-class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Typed Kafka producer settings.
 
     Attributes:
@@ -85,7 +87,7 @@ class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
         return _merge_extra_config(managed, self.extra)
 
 
-class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Typed Kafka consumer settings.
 
     Attributes:
@@ -179,7 +181,7 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
         return _merge_extra_config(managed, self.extra)
 
 
-class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Typed Kafka settings loaded from a YAML config section.
 
     Args:

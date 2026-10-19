@@ -9,7 +9,7 @@ from loom.core.logger.config import LoggerConfig
 from loom.core.model import LoomFrozenStruct
 
 
-class PrometheusConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class PrometheusConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Prometheus scrape endpoint configuration.
 
     Args:
@@ -28,7 +28,9 @@ class PrometheusConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     bind_address: str = "127.0.0.1"
 
 
-class LogObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class LogObservabilityConfig(
+    LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
     """Structured-log observability backend configuration.
 
     Args:
@@ -42,7 +44,9 @@ class LogObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     config: LoggerConfig | None = None
 
 
-class OtelObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class OtelObservabilityConfig(
+    LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
     """OpenTelemetry traces and logs backend configuration.
 
     Args:
@@ -59,7 +63,9 @@ class OtelObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     config: OtelConfig | None = None
 
 
-class PrometheusObservabilityConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class PrometheusObservabilityConfig(
+    LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
     """Prometheus metrics backend configuration.
 
     Args:
