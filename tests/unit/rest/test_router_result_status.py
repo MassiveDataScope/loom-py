@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
+import pydantic
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -42,6 +43,22 @@ class ReadGrant(UseCase[Any, GrantView]):
 class RevokeGrant(UseCase[Any, GrantView]):
     async def execute(self, grant_id: str) -> GrantView:
         raise RateLimited(1.2)
+
+
+class ModelGrantView(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    grant_id: str
+
+
+class CreateModelGrant(UseCase[Any, ModelGrantView | Created[ModelGrantView]]):
+    async def execute(self, grant_id: str) -> ModelGrantView | Created[ModelGrantView]:
+        return Created(ModelGrantView(grant_id=grant_id))
+
+
+class ModelGrants(RestInterface[Any]):
+    prefix = "/model-grants"
+    routes = (RestRoute(use_case=CreateModelGrant, method="PUT", path="/{grant_id}"),)
 
 
 class Opaque:
@@ -162,3 +179,15 @@ def test_a_result_without_json_schema_documents_no_success_body(path: str) -> No
 
     assert set(responses) == {"200"}
     assert responses["200"]["content"]["application/json"]["schema"] == {}
+
+
+def test_a_pydantic_result_is_one_component_shared_by_both_statuses() -> None:
+    document = _client(ModelGrants).get("/openapi.json").json()
+    responses = document["paths"]["/model-grants/{grant_id}"]["put"]["responses"]
+
+    expected = {"$ref": "#/components/schemas/ModelGrantView"}
+    assert responses["200"]["content"]["application/json"]["schema"] == expected
+    assert responses["201"]["content"]["application/json"]["schema"] == expected
+    assert document["components"]["schemas"]["ModelGrantView"]["properties"] == {
+        "grant_id": {"title": "Grant Id", "type": "string"}
+    }
