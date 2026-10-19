@@ -8,18 +8,26 @@ sets ``observability.log.config.level``.
 
 Each level matches the key the configuration already declares at that place,
 whatever its case; a level the configuration does not declare is added in
-lower case, and the section structs then refuse an unknown field. The first
-level must name a section the configuration declares or loom knows
-(:class:`~loom.core.config.keys.ConfigKey`, ``checks``); anything else is a
-startup error naming the variable, so a typo is never ignored.
+lower case, and a section type that forbids unknown fields refuses it. The
+first level must name a section the configuration declares or loom reads
+(:class:`~loom.core.config.keys.ConfigKey` and the sections a package
+registers with :func:`register_config_sections`); anything else is a startup
+error naming the variable.
 
-Values parse as an OmegaConf dotlist: ``5`` is an int, ``false`` a bool,
-``[a, b]`` a list and ``{a: 1}`` a mapping. A list is replaced whole; its
-items cannot be addressed one by one.
+The ``checks`` section cannot be overridden: silencing a deploy check or
+changing the modules that register checks is declared in the versioned
+files, where it is reviewed.
 
-Secrets never go through these variables: they are logged by key on every
-start. One line, at WARNING since it is written before the logger is
-configured, names the overridden keys; their values are never logged.
+Values are literals. They parse as an OmegaConf dotlist (YAML 1.1): ``5`` is
+an int, ``false``, ``no`` and ``off`` are booleans, ``[a, b]`` is a list,
+``{a: 1}`` a mapping, an empty value is null and `` #`` starts a comment;
+quote a value to keep it a string (``'"1.10"'``). A list is replaced whole;
+its items cannot be addressed one by one. A value holding ``${`` is refused,
+so an override cannot reach another variable or a secret.
+
+Do not pass secrets through these variables: one line, at WARNING since it is
+written before the logger is configured, names every overridden key. Values
+are never logged nor carried in an error.
 """
 
 from __future__ import annotations
@@ -42,7 +50,18 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 _SEPARATOR: Final = "__"
-_KNOWN_SECTIONS: Final = frozenset({str(key).split(".", 1)[0] for key in ConfigKey} | {"checks"})
+_INTERPOLATION: Final = "${"
+_REVIEWED_ONLY: Final = frozenset({"checks"})
+_known_sections: set[str] = {str(key).split(".", 1)[0] for key in ConfigKey}
+
+
+def register_config_sections(*names: str) -> None:
+    """Declare top-level sections a package reads, so ``LOOM__`` may name them.
+
+    Args:
+        *names: Section names, as written in the configuration.
+    """
+    _known_sections.update(names)
 
 
 def load_application_config(
@@ -51,8 +70,6 @@ def load_application_config(
     keyed: Sequence[str] = (),
 ) -> ConfigContext:
     """Load an application's configuration files, then apply the ``LOOM__*`` variables.
-
-    Every loom entry point loads its configuration through this function.
 
     Args:
         *paths: Files merged left to right, as :func:`load_config` merges them.
@@ -64,7 +81,7 @@ def load_application_config(
 
     Raises:
         ConfigError: When a file cannot be loaded, or a ``LOOM__*`` variable
-            names no known section, has an empty level, or does not merge.
+            is refused (see :func:`apply_overrides`).
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
     return ConfigContext(apply_overrides(config, override_variables()))
@@ -73,26 +90,24 @@ def load_application_config(
 def apply_overrides(config: DictConfig, variables: Mapping[str, str]) -> DictConfig:
     """Merge *variables* (``LOOM__*`` name to value) over *config* and log their keys.
 
+    The key path is walked on the configuration as written, so no placeholder
+    is resolved while the overrides are applied.
+
     Raises:
-        ConfigError: When a variable names no known section, has an empty
-            level, or its value does not merge into *config*.
+        ConfigError: When a variable names no known section or the ``checks``
+            section, has an empty level, reaches inside an interpolated key,
+            holds ``${``, or its value does not parse or merge. The error
+            names the variable, never the value.
     """
-    import yaml
     from omegaconf import OmegaConf
-    from omegaconf.errors import OmegaConfBaseException
 
     if not variables:
         return config
-    keys = {name: _dotted_key(config, name) for name in sorted(variables)}
+    written = OmegaConf.to_container(config, resolve=False)
+    keys = {name: _dotted_key(written, name) for name in sorted(variables)}
     merged: Any = config
     for name, key in keys.items():
-        try:
-            layer = OmegaConf.from_dotlist([f"{key}={variables[name]}"])
-            merged = OmegaConf.merge(merged, layer)
-        except (OmegaConfBaseException, yaml.YAMLError) as exc:
-            # The variable is what the operator acts on; the value is not
-            # echoed, as the parser's message would.
-            raise ConfigError(f"{name} does not merge into {key!r}: {type(exc).__name__}") from exc
+        merged = _merge(merged, name, key, variables[name])
     _logger.warning(
         "configuration keys overridden by %s variables: %s",
         OVERRIDE_PREFIX,
@@ -102,40 +117,55 @@ def apply_overrides(config: DictConfig, variables: Mapping[str, str]) -> DictCon
     return result
 
 
-def _dotted_key(config: DictConfig, name: str) -> str:
+def _merge(config: Any, name: str, key: str, value: str) -> Any:
+    import yaml
+    from omegaconf import OmegaConf
+    from omegaconf.errors import OmegaConfBaseException
+
+    if _INTERPOLATION in value:
+        raise ConfigError(f"{name} holds an interpolation; override values are literals")
+    try:
+        return OmegaConf.merge(config, OmegaConf.from_dotlist([f"{key}={value}"]))
+    except (OmegaConfBaseException, yaml.YAMLError):
+        # Raised from None: the parser's message, chained as a cause, quotes the value.
+        raise ConfigError(f"{name} does not parse or merge into {key!r}") from None
+
+
+def _dotted_key(written: Any, name: str) -> str:
     levels = name[len(OVERRIDE_PREFIX) :].split(_SEPARATOR)
     if not all(levels):
         raise ConfigError(f"{name} has an empty level; separate levels with one '__'")
-    node: Any = config
+    node: Any = written
     keys: list[str] = []
     for level in levels:
+        if isinstance(node, str) and _INTERPOLATION in node:
+            raise ConfigError(
+                f"{name} reaches inside {'.'.join(keys)!r}, which is an interpolation; "
+                "override the whole key in the files instead"
+            )
         key = _declared(node, level)
         keys.append(key)
-        node = node.get(key) if _is_mapping(node) and key in node else None
-    if keys[0] not in _KNOWN_SECTIONS and not _declared_in(config, levels[0]):
+        node = node.get(key) if isinstance(node, dict) else None
+    section = keys[0]
+    if section.casefold() in _REVIEWED_ONLY:
         raise ConfigError(
-            f"{name} names no known configuration section {keys[0]!r}; "
+            f"{name} overrides the {section!r} section, which is declared only in the "
+            "configuration files, where it is reviewed"
+        )
+    if section not in _known_sections and not (isinstance(written, dict) and section in written):
+        raise ConfigError(
+            f"{name} names no known configuration section {section!r}; "
             "check the variable for a typo"
         )
     return ".".join(keys)
 
 
 def _declared(node: Any, level: str) -> str:
-    if _is_mapping(node):
+    if isinstance(node, dict):
         for key in node:
             if str(key).casefold() == level.casefold():
                 return str(key)
     return level.lower()
 
 
-def _declared_in(config: DictConfig, level: str) -> bool:
-    return any(str(key).casefold() == level.casefold() for key in config)
-
-
-def _is_mapping(node: Any) -> bool:
-    from omegaconf import DictConfig
-
-    return isinstance(node, DictConfig)
-
-
-__all__ = ["apply_overrides", "load_application_config"]
+__all__ = ["apply_overrides", "load_application_config", "register_config_sections"]

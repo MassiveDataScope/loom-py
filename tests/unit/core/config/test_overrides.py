@@ -10,15 +10,21 @@ dotlist. One line names the overridden keys, never their values.
 from __future__ import annotations
 
 import logging
+import traceback
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+from omegaconf import OmegaConf
 
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.config.overrides import load_application_config
+from loom.core.config.overrides import (
+    apply_overrides,
+    load_application_config,
+    register_config_sections,
+)
 
 _LOGGER = "loom.core.config.overrides"
 
@@ -149,3 +155,83 @@ def test_a_value_that_does_not_parse_is_an_error_naming_the_variable_not_the_val
 
     assert "LOOM__APP__WORKERS" in str(caught.value)
     assert "unclosed-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ["LOOM__CHECKS__SILENCED", "LOOM__CHECKS__MODULES", "LOOM__checks__silenced"],
+)
+def test_the_checks_section_cannot_be_overridden(
+    config_file: str, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv(variable, "[loom.rest.E001]")
+
+    with pytest.raises(ConfigError, match="checks"):
+        _load(config_file)
+
+
+@pytest.mark.parametrize("value", ["${oc.env:HOME}", "${secrets:/db/url}", "pre-${x}-post"])
+def test_an_interpolation_in_a_value_is_refused(
+    config_file: str, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("LOOM__APP__NAME", value)
+
+    with pytest.raises(ConfigError, match="LOOM__APP__NAME"):
+        _load(config_file)
+
+
+def test_no_traceback_of_a_parse_error_carries_the_value(
+    config_file: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM__APP__WORKERS", "[unclosed-secret")
+
+    with pytest.raises(ConfigError) as caught:
+        _load(config_file)
+
+    assert "unclosed-secret" not in "".join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.parametrize("section", ["LOGGER", "METRICS"])
+def test_sections_loom_does_not_read_are_unknown(
+    config_file: str, monkeypatch: pytest.MonkeyPatch, section: str
+) -> None:
+    monkeypatch.setenv(f"LOOM__{section}__LEVEL", "DEBUG")
+
+    with pytest.raises(ConfigError, match=f"LOOM__{section}__LEVEL"):
+        _load(config_file)
+
+
+def test_a_registered_section_is_known(config_file: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    register_config_sections("overrides_test_section")
+    monkeypatch.setenv("LOOM__OVERRIDES_TEST_SECTION__KEY", "x")
+
+    assert _value(_load(config_file), "overrides_test_section.key") == "x"
+
+
+def test_reaching_inside_an_interpolated_key_is_refused_without_resolving_it(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    OmegaConf.register_new_resolver("overrides_probe", lambda key: calls.append(key) or {})
+    path = tmp_path / "base.yaml"
+    path.write_text("database: ${overrides_probe:db}\napp: {name: x}\n", encoding="utf-8")
+    config = OmegaConf.load(path)
+    variables = {"LOOM__DATABASE__POOL_PRE_PING": "false"}
+    try:
+        with pytest.raises(ConfigError, match="LOOM__DATABASE__POOL_PRE_PING"):
+            apply_overrides(config, variables)
+    finally:
+        OmegaConf.clear_resolver("overrides_probe")
+
+    assert calls == []
+
+
+def test_a_child_variable_wins_over_its_parent(
+    config_file: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM__APP", "{name: parent, workers: 1}")
+    monkeypatch.setenv("LOOM__APP__NAME", "child")
+
+    context = _load(config_file)
+
+    assert (_value(context, "app.name"), _value(context, "app.workers")) == ("child", 1)

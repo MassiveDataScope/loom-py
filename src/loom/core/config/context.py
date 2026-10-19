@@ -69,7 +69,9 @@ class ConfigContext:
         """Build a :class:`ConfigContext` from one or more YAML files.
 
         Files are merged left-to-right; later files override earlier ones.
-        Accepts local paths and cloud URIs (``s3://``, ``gs://``, …).
+        Accepts local paths and cloud URIs (``s3://``, ``gs://``, …). The
+        ``LOOM__*`` variables are not applied: an application's configuration
+        loads through :func:`loom.core.config.overrides.load_application_config`.
 
         Args:
             *paths: One or more local paths or cloud URIs.

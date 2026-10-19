@@ -7,7 +7,8 @@ from typing import Literal, TypeAlias
 
 import msgspec
 
-from loom.core.config import ConfigResolver, load_config, section
+from loom.core.config import ConfigResolver
+from loom.core.config.overrides import load_application_config
 from loom.core.model import LoomFrozenStruct
 from loom.core.routing import DefaultingRouteResolver, LogicalRef
 
@@ -278,7 +279,9 @@ def load_kafka_settings(
     section_name: str = "kafka",
     resolvers: Sequence[ConfigResolver] = (),
 ) -> KafkaSettings:
-    """Load Kafka settings from YAML using the shared core config loader.
+    """Load Kafka settings from YAML as an application's configuration.
+
+    The ``LOOM__*`` variables merge last (see :mod:`loom.core.config.overrides`).
 
     Args:
         *config_files: One or more local paths or cloud URIs.
@@ -294,8 +297,9 @@ def load_kafka_settings(
             is missing, or the section fails validation.
     """
 
-    cfg = load_config(*config_files, resolvers=resolvers)
-    return section(cfg, section_name, KafkaSettings)
+    return load_application_config(*config_files, resolvers=resolvers).section(
+        section_name, KafkaSettings
+    )
 
 
 def _merge_extra_config(
