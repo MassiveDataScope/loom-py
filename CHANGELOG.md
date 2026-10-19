@@ -227,6 +227,9 @@
   - A caller other than REST must pass an instance of the query type; any
     other value raises `ParameterBindingError` naming the parameter and the
     type received, never the value.
+  - A `Job` that declares `Query()` fails to compile with a
+    `CompilationError`: a job is dispatched with primitive parameters, so the
+    query struct could never reach it.
   - An agent granted a use case that takes `Query()` fails to compile with
     `USECASE_DECLARES_QUERY`.
   - New: `ExecutionPlan.query_binding` (`QueryBinding`),

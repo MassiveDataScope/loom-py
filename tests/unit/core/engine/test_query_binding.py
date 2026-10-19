@@ -10,6 +10,7 @@ import pytest
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
 from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
 from loom.core.engine.plan import ParamBinding, QueryBinding
+from loom.core.job.job import Job
 from loom.core.model import UnsupportedBoundaryType
 from loom.core.use_case.markers import Query
 from loom.core.use_case.use_case import UseCase
@@ -25,6 +26,11 @@ class LaxQuery(msgspec.Struct, frozen=True):
 
 class ListGrants(UseCase[Any, int]):
     async def execute(self, query: GrantQuery = Query()) -> int:
+        return query.limit
+
+
+class ListGrantsJob(Job[int]):
+    async def execute(self, query: GrantQuery = Query()) -> int:  # type: ignore[override]
         return query.limit
 
 
@@ -80,3 +86,10 @@ async def test_a_query_that_is_not_an_instance_of_its_type_is_refused(raw: objec
     assert "'query'" in str(excinfo.value)
     assert "GrantQuery" in str(excinfo.value)
     assert "424242" not in str(excinfo.value)
+
+
+def test_a_job_that_declares_query_is_refused() -> None:
+    compiler = UseCaseCompiler()
+
+    with pytest.raises(CompilationError, match=r"ListGrantsJob\.execute: a Job cannot"):
+        compiler.compile(ListGrantsJob)

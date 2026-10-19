@@ -21,6 +21,7 @@ from loom.core.engine.plan import (
     QueryBinding,
     RuleStep,
 )
+from loom.core.job.job import Job
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.model import UnsupportedBoundaryType, loom_type
 from loom.core.use_case.markers import (
@@ -305,6 +306,11 @@ class UseCaseCompiler:
         bindings: _SignatureBindings,
     ) -> None:
         where = f"{use_case_type.__qualname__}.execute"
+        if issubclass(use_case_type, Job):
+            raise CompilationError(
+                f"{where}: a Job cannot declare Query(); a job is dispatched with plain "
+                "parameters, so pass the values it needs as parameters instead"
+            )
         if bindings.query_binding is not None:
             raise CompilationError(f"{where}: only one Query() parameter is allowed")
         try:
