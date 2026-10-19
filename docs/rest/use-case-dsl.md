@@ -167,17 +167,17 @@ from typing import Annotated
 import msgspec
 from loom.core.use_case import Query
 
-class GrantQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
+class OrderQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
                  forbid_unknown_fields=True):
-    membership_id: UUID | None = None
-    state: GrantState | None = None
+    customer_id: UUID | None = None
+    status: OrderStatus | None = None
     changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
         default=None, name="changed_since")
     cursor: str | None = None
     limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
 
-class ListGrants(UseCase[Grant, GrantPage]):
-    async def execute(self, query: GrantQuery = Query()) -> GrantPage: ...
+class ListOrders(UseCase[Order, OrderPage]):
+    async def execute(self, query: OrderQuery = Query()) -> OrderPage: ...
 ```
 
 The route accepts exactly the declared wire names, plus `profile` when it
@@ -773,17 +773,17 @@ create or find the resource already there returns `Created` when it created:
 ```python
 from loom.core.use_case import Created, Input
 
-class CreateGrant(UseCase[Grant, GrantView | Created[GrantView]]):
-    async def execute(self, cmd: CreateGrantCommand = Input()) -> GrantView | Created[GrantView]:
-        view, changed = await self._grants.grant(cmd)
-        return Created(view, location=f"/grants/{view.grant_id}") if changed else view
+class CreateOrder(UseCase[Order, OrderView | Created[OrderView]]):
+    async def execute(self, cmd: CreateOrderCommand = Input()) -> OrderView | Created[OrderView]:
+        view, changed = await self._orders.place(cmd)
+        return Created(view, location=f"/orders/{view.order_id}") if changed else view
 ```
 
 The route answers `Created(view)` with `201` and `view` as the body, and a
 plain `view` with its `status_code`. With `location`, the `201` also carries a
 `Location` header. The location, absolute or relative, must be non-empty and
 hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
-`ValueError`. OpenAPI documents both statuses with the `GrantView` schema and
+`ValueError`. OpenAPI documents both statuses with the `OrderView` schema and
 declares `Location` on the `201`. `Created` must wrap one of the other members
 of the result, and a route whose `status_code` is already `201` cannot return
 it; either fails at startup. `LoomRestAdapter` answers a `Created` the same

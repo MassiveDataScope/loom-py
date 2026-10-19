@@ -3,18 +3,17 @@
 - Status: Accepted
 - Issue: PR #359
 - Applies to: loom-kernel 2.20.2 and later; target release 2.21.0
-- First consumer: periplo-cloud, control plane, task T9 (grant and role routes)
+- First consumer: periplo-cloud
 
 File and line references in Context and Decision are against loom-kernel
 2.20.2.
 
 ## Context
 
-periplo-cloud's grant routes need three things loom 2.20.2 cannot express. The
+The first consumer's routes need three things loom 2.20.2 cannot express. The
 owner chose to add them to loom instead of patching around loom in the
-consumer, as the consumer already does for header parameters
-(`composition/openapi.py`, `HEADER_PARAMETERS`, which edits the generated
-OpenAPI after the fact).
+consumer, as the consumer already does for header parameters (it edits the
+generated OpenAPI after the fact).
 
 ### 1. The success status is fixed per route
 
@@ -63,11 +62,10 @@ A use case that refuses a caller for exceeding a budget therefore answers 500.
   and `_dispatch_route` answers any non-`LoomError` with 500
   (`router_runtime.py:489-500`). Read in the code, not run end to end.
 
-The consumer's `GET /v1/grants` needs typed equality filters (`membershipId`,
-`roleCode`, a `state` enum, `changed_since`), cursor-only pagination and
+The consumer's `GET /v1/orders` needs typed equality filters (`customerId`,
+`channel`, a `status` enum, `changed_since`), cursor-only pagination and
 `limit` 1 to 200, published exactly so in OpenAPI and validated, with an
-unknown parameter answered 400 `unsupported_query`
-(s2-design § 11.1, § 11.4, § 13, § 16.6; D48, D51).
+unknown parameter answered 400 `unsupported_query`.
 
 `ErrorCode.UNSUPPORTED_QUERY` already exists and maps to 400
 (`codes.py:35`, `errors.py:87`); today only repositories raise it, through
@@ -110,8 +108,8 @@ class Created(Generic[T]):
   request.
 - OpenAPI: when the return annotation contains `Created[X]`, the operation
   documents `201` with the schema of `X` and `route.status_code` with the
-  schema of the other members. For `GrantView | Created[GrantView]` both
-  responses carry the same `GrantView` schema.
+  schema of the other members. For `OrderView | Created[OrderView]` both
+  responses carry the same `OrderView` schema.
 - The REST compiler refuses a return annotation where `Created` wraps a type
   other than one of the remaining union members, or appears twice: the two
   responses would document different bodies for one resource. It also
@@ -152,10 +150,10 @@ class RateLimited(DomainError):
 
 The consumer's need (per subject, per process, 30 tokens per 60 s with a burst
 of 10, before any lock, 429 without audit, a `WARNING` without the subject) is
-met in periplo-cloud by an application port called first in the use case:
+met in the consumer by an application port called first in the use case:
 
 ```python
-class ChangeBudget(Protocol):          # periplo-cloud, access/application/ports.py
+class OrderBudget(Protocol):           # the consumer's application port
     def spend(self, subject_id: str) -> None:
         """Take one token, or raise loom's RateLimited(retry_after=...)."""
 ```
@@ -180,7 +178,7 @@ If the owner wants refusal before the use case is built, see open question 1.
 A marker in `loom.core.use_case`, bound like `Input()`:
 
 ```python
-async def execute(self, query: GrantQuery = Query(), caller: Identity = Caller()) -> GrantPage: ...
+async def execute(self, query: OrderQuery = Query(), caller: Identity = Caller()) -> OrderPage: ...
 ```
 
 - The annotation must be a strict `msgspec.Struct` (`forbid_unknown_fields=True`)
@@ -258,93 +256,93 @@ query struct could never reach it.
 ## The consumer's three routes
 
 ```python
-class GrantsInterface(RestInterface[Any]):
-    prefix = "/v1/grants"
-    tags = ("access",)
+class OrdersInterface(RestInterface[Any]):
+    prefix = "/v1/orders"
+    tags = ("orders",)
     routes = (
-        RestRoute(use_case=ListGrants, method="GET", path="", summary="Grants"),
-        RestRoute(use_case=CreateGrant, method="POST", path="", summary="Grant a role"),
-        RestRoute(use_case=RevokeGrant, method="DELETE", path="/{grant_id}",
-                  summary="Revoke a grant"),
+        RestRoute(use_case=ListOrders, method="GET", path="", summary="Orders"),
+        RestRoute(use_case=CreateOrder, method="POST", path="", summary="Place an order"),
+        RestRoute(use_case=CancelOrder, method="DELETE", path="/{order_id}",
+                  summary="Cancel an order"),
     )
 ```
 
-`path=""` keeps the full path `/v1/grants` (`compiler.py:388`); `"/"` would
-publish `/v1/grants/`. The path parameter is `{grant_id}`, the `execute`
+`path=""` keeps the full path `/v1/orders` (`compiler.py:388`); `"/"` would
+publish `/v1/orders/`. The path parameter is `{order_id}`, the `execute`
 parameter name.
 
 ```python
-class GrantQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
+class OrderQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
                  forbid_unknown_fields=True):
-    membership_id: UUID | None = None
-    role_code: TenantRoleCode | None = None                 # StrEnum
-    state: GrantStateCode | None = None                     # live | expired | revoked
+    customer_id: UUID | None = None
+    channel: OrderChannel | None = None                     # StrEnum
+    status: OrderStatus | None = None                       # open | shipped | cancelled
     changed_since: Annotated[datetime, Meta(tz=True)] | None = msgspec.field(
         default=None, name="changed_since")
     cursor: str | None = None
     limit: Annotated[int, Meta(ge=1, le=200)] = 50
 
 
-class ListGrants(UseCase[Any, GrantPage]):
-    async def execute(self, query: GrantQuery = Query(),
-                      caller: Identity = Caller()) -> GrantPage:
-        if query.state is not None and query.changed_since is not None:
-            raise UnsupportedQuery("periplo.v1", "access_grant",
-                                   "state cannot be combined with changed_since")
+class ListOrders(UseCase[Any, OrderPage]):
+    async def execute(self, query: OrderQuery = Query(),
+                      caller: Identity = Caller()) -> OrderPage:
+        if query.status is not None and query.changed_since is not None:
+            raise UnsupportedQuery("shop.v1", "order",
+                                   "status cannot be combined with changed_since")
         ...
 
 
-class CreateGrant(UseCase[Any, GrantView | Created[GrantView]]):
-    async def execute(self, command: CreateGrantCommand = Input(),
-                      caller: Identity = Caller()) -> GrantView | Created[GrantView]:
+class CreateOrder(UseCase[Any, OrderView | Created[OrderView]]):
+    async def execute(self, command: CreateOrderCommand = Input(),
+                      caller: Identity = Caller()) -> OrderView | Created[OrderView]:
         self._budget.spend(caller.require_subject())          # RateLimited → 429
         change = ...                                          # today's steps
-        view = GrantView.of(change.grant)
+        view = OrderView.of(change.order)
         return Created(view) if change.changed else view
 
 
-class RevokeGrant(UseCase[Any, GrantView]):
-    async def execute(self, grant_id: UUID, caller: Identity = Caller()) -> GrantView:
+class CancelOrder(UseCase[Any, OrderView]):
+    async def execute(self, order_id: UUID, caller: Identity = Caller()) -> OrderView:
         self._budget.spend(caller.require_subject())
-        ...                                                   # 200 revoked or unchanged
+        ...                                                   # 200 cancelled or unchanged
 ```
 
-The cross-field rule (`state` with `changed_since`) and the cursor bound to
+The cross-field rule (`status` with `changed_since`) and the cursor bound to
 the filters stay in the consumer: they are its contract, not a query shape.
 
 ### OpenAPI produced
 
 ```yaml
-/v1/grants:
+/v1/orders:
   get:
     parameters:
-      - {name: membershipId,  in: query, required: false, schema: {type: string, format: uuid}}
-      - {name: roleCode,      in: query, required: false, schema: {$ref: '#/components/schemas/TenantRoleCode'}}
-      - {name: state,         in: query, required: false, schema: {$ref: '#/components/schemas/GrantStateCode'}}
+      - {name: customerId,    in: query, required: false, schema: {type: string, format: uuid}}
+      - {name: channel,       in: query, required: false, schema: {$ref: '#/components/schemas/OrderChannel'}}
+      - {name: status,        in: query, required: false, schema: {$ref: '#/components/schemas/OrderStatus'}}
       - {name: changed_since, in: query, required: false, schema: {type: string, format: date-time}}
       - {name: cursor,        in: query, required: false, schema: {type: string}}
       - {name: limit,         in: query, required: false, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
     responses:
-      '200': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantPage'}}}}
+      '200': {content: {application/json: {schema: {$ref: '#/components/schemas/OrderPage'}}}}
   post:
-    requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateGrantCommandRequest'}}}}
+    requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateOrderCommandRequest'}}}}
     responses:
-      '200': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantView'}}}}
-      '201': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantView'}}},
+      '200': {content: {application/json: {schema: {$ref: '#/components/schemas/OrderView'}}}}
+      '201': {content: {application/json: {schema: {$ref: '#/components/schemas/OrderView'}}},
               headers: {Location: {schema: {type: string, format: uri-reference}}}}
-/v1/grants/{grant_id}:
+/v1/orders/{order_id}:
   delete:
-    parameters: [{name: grant_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    parameters: [{name: order_id, in: path, required: true, schema: {type: string, format: uuid}}]
     responses:
-      '200': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantView'}}}}
+      '200': {content: {application/json: {schema: {$ref: '#/components/schemas/OrderView'}}}}
 ```
 
 msgspec 0.21.1 publishes a plain `datetime` as `{type: string}` without
 `format`; `Meta(tz=True)` publishes `format: date-time` and refuses a value
 without an offset (checked with a probe). It accepts any offset, not only `Z`.
 
-Error responses stay out of the generated OpenAPI, as today; the consumer's
-`ROUTE_ERRORS` keeps documenting them (open question 6).
+Error responses stay out of the generated OpenAPI, as today; the consumer
+keeps documenting them (open question 6).
 
 ### Error bodies
 
@@ -469,7 +467,7 @@ or a new `test_router_result_status.py` and `test_router_declared_query.py`):
    with `trace_id`.
 4. Declared query: valid values reach `execute` typed; unknown key → 400
    `unsupported_query` without the key in the message; repeated key → 400;
-   `limit=500`, `state=x`, a bad UUID, a date-time without offset → 400
+   `limit=500`, `status=x`, a bad UUID, a date-time without offset → 400
    `query_validation` with the field; defaults apply when absent.
 5. OpenAPI of a declared query: exactly the declared parameters, wire names,
    `minimum`/`maximum`, enum `$ref` in `components.schemas`, no `page`,
@@ -477,7 +475,7 @@ or a new `test_router_result_status.py` and `test_router_declared_query.py`):
 6. Regression: a `QuerySpec` route still publishes its seven parameters, still
    turns unknown keys into filters and still clamps `limit`.
 
-Integration (`tests/integration/rest/test_grant_routes.py`): one app over an
+Integration (`tests/integration/rest/test_order_routes.py`): one app over an
 in-memory store with the three consumer-shaped routes, asserting the OpenAPI
 document against a stored golden, the 201-then-200 create with `Location`,
 an unknown list parameter (400) and a spent budget (429). Every other status
@@ -505,7 +503,7 @@ is pinned once, in the router unit tests.
 2. **Bad values in a declared query: 422 or 400** (superseded by the
    standards check: 400 `query_validation`). Recommended 422
    `boundary_validation`, as for a JSON body or a path parameter; the
-   consumer's § 13 lists 400 only for cursor and filter combinations.
+   consumer's contract lists 400 only for cursor and filter combinations.
 3. **Repeated scalar parameter.** Recommended 400 `unsupported_query`; list
    fields are refused at compile time until a consumer needs them.
 4. **Marker name.** `Query()` matches `Input()`/`Caller()`; it shares its name
@@ -514,7 +512,7 @@ is pinned once, in the router unit tests.
 5. **Enum value echoed by msgspec** (since fixed, #350). Recommended: a separate fix in
    `_msgspec_violation` that drops the quoted value, with its own test.
 6. **Error responses in OpenAPI.** loom still publishes no error response;
-   the consumer keeps `ROUTE_ERRORS`. Publishing them from loom is a separate
+   the consumer keeps documenting them. Publishing them from loom is a separate
    decision.
 7. **`limit` maximum in `QuerySpec` OpenAPI.** `openapi.py:184` publishes 1000
    whatever `RestApiDefaults.max_limit` is. Recommended: a separate `fix:`
@@ -630,7 +628,7 @@ The owner's review changed these points, all reflected above:
 
 ## Consequences
 
-periplo-cloud T9 removes nothing from `composition/openapi.py` for these
+The first consumer removes nothing from its OpenAPI post-processing for these
 routes and adds no query-parameter patch: loom publishes the parameters and
 both success responses. The consumer keeps the bucket, the cross-field rule,
 the cursor binding and the error documentation.
