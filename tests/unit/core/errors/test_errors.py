@@ -10,6 +10,7 @@ from loom.core.errors import (
     Forbidden,
     LoomError,
     NotFound,
+    RateLimited,
     RuleViolation,
     RuleViolations,
     SystemError,
@@ -47,6 +48,7 @@ class TestLoomError:
         (NotFound, DomainError),
         (Forbidden, DomainError),
         (Conflict, DomainError),
+        (RateLimited, DomainError),
         (RuleViolation, DomainError),
         (RuleViolations, DomainError),
     ],
@@ -70,6 +72,7 @@ def test_domain_error_not_system_error() -> None:
         (lambda: NotFound("User", id=1), ErrorCode.NOT_FOUND),
         (lambda: Forbidden(), ErrorCode.FORBIDDEN),
         (lambda: Conflict("x"), ErrorCode.CONFLICT),
+        (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
         (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
         (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
         (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
@@ -265,3 +268,15 @@ class TestExecutorUsesNotFound:
         assert exc_info.value.entity == "_Entity"
         assert exc_info.value.id == 7
         assert exc_info.value.code == ErrorCode.NOT_FOUND
+
+
+class TestRateLimited:
+    @pytest.mark.parametrize(("seconds", "expected"), [(0.2, 1), (1.5, 2), (2, 2), (0, 1), (-3, 1)])
+    def test_retry_after_is_whole_seconds_rounded_up(self, seconds: float, expected: int) -> None:
+        assert RateLimited(seconds).retry_after == expected
+
+    def test_has_a_default_message(self) -> None:
+        assert RateLimited(1).message == "Too many requests."
+
+    def test_code_is_rate_limited(self) -> None:
+        assert ErrorCode.RATE_LIMITED == "rate_limited"

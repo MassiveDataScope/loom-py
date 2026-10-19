@@ -33,6 +33,7 @@ class ErrorCode(StrEnum):
     BOUNDARY_VALIDATION = "boundary_validation"
     UNSUPPORTED_FORMAT = "unsupported_format"
     UNSUPPORTED_QUERY = "unsupported_query"
+    RATE_LIMITED = "rate_limited"
     SYSTEM_ERROR = "system_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
     POST_COMMIT_FAILURE = "post_commit_failure"

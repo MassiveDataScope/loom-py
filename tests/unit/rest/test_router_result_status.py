@@ -11,11 +11,13 @@ from fastapi.testclient import TestClient
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import RateLimited
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.use_case import Created
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import RestInterfaceCompiler
+from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.app import _register_openapi_components
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
@@ -36,11 +38,17 @@ class ReadGrant(UseCase[Any, GrantView]):
         return GrantView(grant_id=grant_id)
 
 
+class RevokeGrant(UseCase[Any, GrantView]):
+    async def execute(self, grant_id: str) -> GrantView:
+        raise RateLimited(1.2)
+
+
 class Grants(RestInterface[Any]):
     prefix = "/grants"
     routes = (
         RestRoute(use_case=CreateGrant, method="PUT", path="/{grant_id}"),
         RestRoute(use_case=ReadGrant, method="GET", path="/{grant_id}"),
+        RestRoute(use_case=RevokeGrant, method="DELETE", path="/{grant_id}"),
     )
 
 
@@ -57,6 +65,7 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
         compiler.compile(use_case)
         factory.register(use_case)
     app = FastAPI()
+    register_error_handlers(app)
     registry = bind_interfaces(
         app,
         RestInterfaceCompiler(compiler).compile(interface),
@@ -111,4 +120,14 @@ def test_openapi_of_a_route_without_created_is_unchanged() -> None:
     assert "201" not in responses
     assert responses["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/GrantView"
+    }
+
+
+def test_a_rate_limited_use_case_answers_429_with_retry_after() -> None:
+    response = _client(Grants).delete("/grants/old-1")
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "2"
+    assert response.json() == {
+        "detail": {"code": "rate_limited", "message": "Too many requests.", "trace_id": None}
     }

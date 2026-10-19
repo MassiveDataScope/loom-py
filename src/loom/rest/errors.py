@@ -9,7 +9,14 @@ from typing import Any, ClassVar
 from fastapi import HTTPException
 
 from loom.core.engine.post_commit import PostCommitError
-from loom.core.errors import Forbidden, LoomError, NotFound, RuleViolation, RuleViolations
+from loom.core.errors import (
+    Forbidden,
+    LoomError,
+    NotFound,
+    RateLimited,
+    RuleViolation,
+    RuleViolations,
+)
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
@@ -60,6 +67,8 @@ class HttpErrorMapper:
     - :class:`~loom.core.errors.RuleViolations` → ``violations``
     - :class:`~loom.core.model.BoundaryValidationError` → ``violations``
       (``422``; a schema failure, distinct from a rule failure)
+    - :class:`~loom.core.errors.RateLimited` → ``429`` with a ``Retry-After``
+      header carrying its whole seconds
     - :class:`~loom.core.engine.post_commit.PostCommitError` → ``committed``
       (``500``; ``true`` when a unit of work committed, so a retry would
       repeat the write, ``false`` when the execution held none)
@@ -85,6 +94,7 @@ class HttpErrorMapper:
         ErrorCode.BOUNDARY_VALIDATION: HTTPStatus.UNPROCESSABLE_ENTITY,
         ErrorCode.UNSUPPORTED_FORMAT: HTTPStatus.BAD_REQUEST,
         ErrorCode.UNSUPPORTED_QUERY: HTTPStatus.BAD_REQUEST,
+        ErrorCode.RATE_LIMITED: HTTPStatus.TOO_MANY_REQUESTS,
         ErrorCode.SYSTEM_ERROR: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.SERVICE_UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
         ErrorCode.POST_COMMIT_FAILURE: HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -100,7 +110,8 @@ class HttpErrorMapper:
             ``HTTPException`` with the appropriate status code and a
             structured detail body keyed by :class:`ErrorField`.  A ``401``
             also carries the ``WWW-Authenticate`` challenge required by
-            RFC 9110 §11.6.1.
+            RFC 9110 §11.6.1, and a :class:`~loom.core.errors.RateLimited`
+            the ``Retry-After`` delay of RFC 9110 §10.2.3.
         """
         status = self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
         detail: dict[str, Any] = {
@@ -136,9 +147,13 @@ class HttpErrorMapper:
         if isinstance(error, PostCommitError):
             detail[ErrorField.COMMITTED] = error.committed
 
-        return HTTPException(status_code=status, detail=detail, headers=_challenge(status))
+        return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
 
 
-def _challenge(status: HTTPStatus) -> dict[str, str] | None:
-    """Return the ``WWW-Authenticate`` header a ``401`` must carry, else ``None``."""
-    return dict(BEARER_CHALLENGE) if status is HTTPStatus.UNAUTHORIZED else None
+def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
+    """Return the ``WWW-Authenticate`` of a ``401`` or the ``Retry-After`` of a rate limit."""
+    if status is HTTPStatus.UNAUTHORIZED:
+        return dict(BEARER_CHALLENGE)
+    if isinstance(error, RateLimited):
+        return {"Retry-After": str(error.retry_after)}
+    return None

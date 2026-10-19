@@ -18,6 +18,7 @@ from loom.core.errors import (
     Forbidden,
     LoomError,
     NotFound,
+    RateLimited,
     RuleViolation,
     RuleViolations,
     Unauthenticated,
@@ -257,6 +258,18 @@ class TestHttpErrorMapper:
         assert detail["violations"] == [
             {"field": "fullName", "message": "Expected `str`, got `int`"}
         ]
+
+    def test_rate_limited_maps_to_429_with_retry_after(self) -> None:
+        exc = self._mapper().to_http(RateLimited(1.2))
+        assert (exc.status_code, _detail(exc)["code"], exc.headers) == (
+            429,
+            ErrorCode.RATE_LIMITED,
+            {"Retry-After": "2"},
+        )
+
+    def test_another_error_coded_rate_limited_maps_to_429_without_retry_after(self) -> None:
+        exc = self._mapper().to_http(LoomError("slow down", code="rate_limited"))
+        assert (exc.status_code, exc.headers) == (429, None)
 
     def test_unknown_code_defaults_to_500(self) -> None:
         class _CustomError(LoomError):

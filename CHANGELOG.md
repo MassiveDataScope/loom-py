@@ -192,6 +192,12 @@
   member of the result, appears twice or is not parameterised. Every other
   caller (the invoker, jobs, Celery, `LoomRestAdapter`) receives the wrapper
   and reads `.value`; the use case imports nothing from HTTP.
+- **rest:** `429` with `Retry-After`. `ErrorCode.RATE_LIMITED`
+  (`"rate_limited"`) and `loom.core.errors.RateLimited(retry_after)`, a
+  `DomainError` holding the delay in whole seconds, rounded up and at least 1;
+  `HttpErrorMapper` answers it with `429`, the standard body and
+  `Retry-After: <seconds>`. loom ships no limiter: the consumer decides who is
+  limited and raises `RateLimited`.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a
@@ -493,6 +499,8 @@
 
 ### rest
 
+- **rest:** an error whose `code` is `"rate_limited"` now answers `429`
+  instead of `500`; only a `RateLimited` carries `Retry-After`.
 - **rest:** a `RestInterface` whose `prefix` contains `{` now raises
   `InterfaceCompilationError` at compile time, naming the interface and the
   prefix; declare the placeholder in the route `path` instead (a catch-all

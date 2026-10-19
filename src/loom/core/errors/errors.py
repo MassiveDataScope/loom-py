@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -141,6 +142,27 @@ class Conflict(DomainError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.CONFLICT)
+
+
+class RateLimited(DomainError):
+    """Raised when the caller spent its budget and must wait before retrying.
+
+    loom ships no limiter: the consumer decides who is limited and how much,
+    and raises this when a caller exceeds it.
+
+    Args:
+        retry_after: Seconds the caller should wait. Kept as whole seconds,
+            rounded up and at least ``1``.
+        message: Human-readable description of the refusal.
+
+    Example::
+
+        raise RateLimited(retry_after=bucket.seconds_until_next_token())
+    """
+
+    def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
+        super().__init__(message, code=ErrorCode.RATE_LIMITED)
+        self.retry_after = max(1, math.ceil(retry_after))
 
 
 class RuleViolation(DomainError):
