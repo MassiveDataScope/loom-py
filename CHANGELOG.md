@@ -931,6 +931,12 @@
   such as a record step after `CollectBatch`, now fails compilation with
   `SHAPE_MISMATCH` scoped under `broadcast branch <n>`; such flows used to
   compile.
+- **streaming:** a bare `ErrorEnvelope` among the `payloads` of
+  `FromMultiTypeTopic` is refused with `ERROR_ENVELOPE_UNPARAMETERIZED`. The
+  check only matched `ErrorEnvelope[X]`, which always has a parameter, so the
+  bare class compiled as a plain payload and its messages never reached the
+  error dispatch. Declare `ErrorEnvelope[OrderEvent]` instead; such flows used
+  to compile.
 
 ### prefect
 

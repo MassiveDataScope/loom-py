@@ -147,15 +147,11 @@ def _build_dispatch_table(payloads: tuple[type[Any], ...]) -> DispatchTable:
         if isinstance(t, type) and issubclass(t, DecodeError):
             wire[t.loom_message_type()] = t
             continue
-        origin = get_origin(t)
-        if origin is ErrorEnvelope:
-            args = get_args(t)
-            if not args:
-                raise CompilationError(
-                    [StreamingErrorCode.ERROR_ENVELOPE_UNPARAMETERIZED.issue(payload=repr(t))]
-                )
-            inner_type = args[0]
-            key = _require_message_type(inner_type)
+        if t is ErrorEnvelope:
+            issue = StreamingErrorCode.ERROR_ENVELOPE_UNPARAMETERIZED.issue(payload=repr(t))
+            raise CompilationError([issue])
+        if get_origin(t) is ErrorEnvelope:
+            key = _require_message_type(get_args(t)[0])
             error[key] = t
         else:
             key = _require_message_type(t)
