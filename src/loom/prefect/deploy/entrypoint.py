@@ -13,8 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from loom.core.config import ConfigError
-from loom.core.environment import loom_variable
-from loom.prefect._meta import LOOM_ETL_CONFIG
+from loom.core.environment import ETL_CONFIG_VARIABLE, loom_variable
 from loom.prefect.deploy._yaml_etls import EtlDeclaration, load_declaration
 from loom.prefect.flow import build_etl_flow
 
@@ -43,13 +42,13 @@ def build_flow(declaration: EtlDeclaration) -> Any:
 def __getattr__(attribute: str) -> Any:
     if attribute.startswith("_"):
         raise AttributeError(attribute)
-    config_uri = loom_variable(LOOM_ETL_CONFIG)
+    config_uri = loom_variable(ETL_CONFIG_VARIABLE)
     if not config_uri:
         raise ConfigError(
-            f"{LOOM_ETL_CONFIG} is not set; it must name the YAML file declaring "
+            f"{ETL_CONFIG_VARIABLE} is not set; it must name the YAML file declaring "
             f"the ETL behind entrypoint attribute {attribute!r}"
         )
     return build_flow(load_declaration(config_uri, attribute))
 
 
-__all__ = ["LOOM_ETL_CONFIG", "build_flow"]
+__all__ = ["build_flow"]

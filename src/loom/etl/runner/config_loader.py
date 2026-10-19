@@ -16,7 +16,7 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.overrides import load_application_config
-from loom.core.environment import Environment, config_source_paths
+from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.etl._uri import is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.storage._config import (
@@ -92,7 +92,7 @@ def _load_context(
             mapping forms.
     """
     return load_application_config(
-        *config_source_paths(path, environment),
+        *config_source_paths(path, resolve_environment(environment)),
         resolvers=with_default_resolvers(resolvers),
         keyed=STORAGE_KEYED_COLLECTIONS,
     )

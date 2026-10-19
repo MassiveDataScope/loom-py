@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.environment import ETL_CONFIG_VARIABLE, Environment
+from loom.core.environment import Environment
 from loom.core.model import LoomFrozenStruct
 
 # Attribute name used to attach discovery metadata to each flow.
@@ -19,9 +19,6 @@ LOOM_ETL_META_ATTR = "__loom_etl_meta__"
 
 # Storage YAML path baked into the worker image, read at flow-run time.
 DEFAULT_STORAGE_CONFIG_PATH = "/app/config.yaml"
-
-# Environment variable naming the YAML file a YAML-declared ETL is rebuilt from.
-LOOM_ETL_CONFIG = ETL_CONFIG_VARIABLE
 
 
 class FlowTrigger(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -82,7 +79,6 @@ class ETLFlowMeta(LoomFrozenStruct, frozen=True, kw_only=True):
 
 __all__ = [
     "DEFAULT_STORAGE_CONFIG_PATH",
-    "LOOM_ETL_CONFIG",
     "LOOM_ETL_META_ATTR",
     "ETLFlowMeta",
     "FlowTrigger",

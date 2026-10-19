@@ -27,6 +27,7 @@ from loom.core.environment import (
     override_variables,
     parse_environment,
     resolve_environment,
+    scoped_loom_variable,
 )
 
 
@@ -192,28 +193,21 @@ class TestConfigSourcePaths:
         path = tmp_path / "etl.yaml"
         path.write_text("storage: {}\n")
 
-        assert config_source_paths(str(path), "production") == (str(path),)
+        assert config_source_paths(str(path), Environment.PRODUCTION) == (str(path),)
 
     def test_a_cloud_uri_is_loaded_alone(self) -> None:
-        assert config_source_paths("s3://bucket/etl.yaml", None) == ("s3://bucket/etl.yaml",)
+        assert config_source_paths("s3://bucket/etl.yaml", Environment.PRODUCTION) == (
+            "s3://bucket/etl.yaml",
+        )
 
     def test_a_directory_layers_the_overlay_of_the_environment(self, tmp_path: Path) -> None:
         (tmp_path / "base.yaml").write_text("a: 1\n")
         (tmp_path / "staging.yaml").write_text("a: 2\n")
 
-        assert config_source_paths(str(tmp_path), "staging") == (
+        assert config_source_paths(str(tmp_path), Environment.STAGING) == (
             str(tmp_path / "base.yaml"),
             str(tmp_path / "staging.yaml"),
         )
-
-    def test_a_directory_resolves_the_environment_when_none_is_given(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "base.yaml").write_text("a: 1\n")
-        (tmp_path / "development.yaml").write_text("a: 2\n")
-        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "development")
-
-        assert config_source_paths(str(tmp_path), None)[-1] == str(tmp_path / "development.yaml")
 
 
 class TestLoomVariable:
@@ -230,3 +224,29 @@ class TestLoomVariable:
     def test_only_loom_variables_are_read(self) -> None:
         with pytest.raises(ValueError, match="HOME"):
             loom_variable("HOME")
+
+
+class TestScopedLoomVariable:
+    def test_the_variable_is_set_inside_and_removed_after(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(CONFIG_VARIABLE, raising=False)
+
+        with scoped_loom_variable(CONFIG_VARIABLE, "/srv/inside"):
+            inside = loom_variable(CONFIG_VARIABLE)
+
+        assert (inside, loom_variable(CONFIG_VARIABLE)) == ("/srv/inside", None)
+
+    def test_a_previous_value_is_restored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(CONFIG_VARIABLE, "/srv/before")
+
+        with scoped_loom_variable(CONFIG_VARIABLE, "/srv/inside"):
+            pass
+
+        assert loom_variable(CONFIG_VARIABLE) == "/srv/before"
+
+    def test_only_loom_variables_are_set(self) -> None:
+        scope = scoped_loom_variable("HOME", "/tmp")
+
+        with pytest.raises(ValueError, match="HOME"):
+            scope.__enter__()

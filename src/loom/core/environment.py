@@ -22,7 +22,8 @@ The environment also picks the configuration overlay of a config directory:
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
@@ -53,10 +54,7 @@ SPARK_IVY_DIR_VARIABLE: Final = "LOOM_SPARK_IVY_DIR"
 SPARK_OFFLINE_VARIABLE: Final = "LOOM_SPARK_OFFLINE"
 """``1`` makes the Spark test session use only cached jars."""
 
-_LOOM_VARIABLE_PREFIX: Final = "LOOM_"
-
-BASE_CONFIG_FILE: Final = "base.yaml"
-"""File of a config directory every environment loads first."""
+_BASE_CONFIG_FILE: Final = "base.yaml"
 
 
 class Environment(StrEnum):
@@ -162,9 +160,34 @@ def loom_variable(name: str) -> str | None:
     Raises:
         ValueError: When *name* is not a ``LOOM_*`` variable.
     """
-    if not name.startswith(_LOOM_VARIABLE_PREFIX):
-        raise ValueError(f"{name!r} is not a loom variable")
+    _require_loom_variable(name)
     return os.environ.get(name)
+
+
+@contextmanager
+def scoped_loom_variable(name: str, value: str) -> Iterator[None]:
+    """Set the ``LOOM_*`` variable *name* to *value* inside the block, then restore it.
+
+    Not thread-safe: the process environment is shared.
+
+    Raises:
+        ValueError: When *name* is not a ``LOOM_*`` variable.
+    """
+    _require_loom_variable(name)
+    previous = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+
+
+def _require_loom_variable(name: str) -> None:
+    if not name.startswith("LOOM_"):
+        raise ValueError(f"{name!r} is not a loom variable")
 
 
 def override_variables() -> dict[str, str]:
@@ -194,28 +217,26 @@ def environment_config_paths(
         ConfigError: When *config_dir* has no ``base.yaml``.
     """
     directory = Path(config_dir)
-    base = directory / BASE_CONFIG_FILE
+    base = directory / _BASE_CONFIG_FILE
     if not base.is_file():
-        raise ConfigError(f"config directory {str(directory)!r} has no {BASE_CONFIG_FILE}")
+        raise ConfigError(f"config directory {str(directory)!r} has no {_BASE_CONFIG_FILE}")
     overlay = directory / f"{environment.value}.yaml"
     return (str(base), str(overlay)) if overlay.is_file() else (str(base),)
 
 
 def config_source_paths(
-    source: str | os.PathLike[str], environment: Environment | str | None
+    source: str | os.PathLike[str], environment: Environment
 ) -> tuple[str, ...]:
     """Return the files a configuration *source* stands for.
 
     A local directory loads through :func:`environment_config_paths` with
-    *environment*, resolved like :func:`resolve_environment` when ``None``;
-    a file or a cloud URI loads alone.
+    *environment*; a file or a cloud URI loads alone.
 
     Raises:
-        ConfigError: When a directory has no ``base.yaml`` or the environment
-            is unknown.
+        ConfigError: When a directory has no ``base.yaml``.
     """
     if Path(source).is_dir():
-        return environment_config_paths(source, resolve_environment(environment))
+        return environment_config_paths(source, environment)
     return (str(source),)
 
 
@@ -248,3 +269,25 @@ def select_config_paths(
     if not config_paths:
         raise ConfigError(f"{caller} requires config files or a config_dir.")
     return tuple(config_paths)
+
+
+__all__ = [
+    "CONFIG_VARIABLE",
+    "ENVIRONMENT_VARIABLE",
+    "ETL_CONFIG_VARIABLE",
+    "OVERRIDE_PREFIX",
+    "SPARK_IVY_DIR_VARIABLE",
+    "SPARK_OFFLINE_VARIABLE",
+    "SPOOL_DIR_VARIABLE",
+    "STORAGE_CONFIG_VARIABLE",
+    "Environment",
+    "config_source_paths",
+    "confirm_environment",
+    "environment_config_paths",
+    "loom_variable",
+    "override_variables",
+    "parse_environment",
+    "resolve_environment",
+    "scoped_loom_variable",
+    "select_config_paths",
+]

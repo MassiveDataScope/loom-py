@@ -7,7 +7,6 @@ import os
 import pkgutil
 import sys
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
@@ -18,8 +17,13 @@ from prefect.events import DeploymentEventTrigger
 from prefect.exceptions import ScriptError
 from prefect.utilities.importtools import load_script_as_module
 
-from loom.core.environment import Environment, resolve_environment
-from loom.prefect._meta import LOOM_ETL_CONFIG, LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
+from loom.core.environment import (
+    ETL_CONFIG_VARIABLE,
+    Environment,
+    resolve_environment,
+    scoped_loom_variable,
+)
+from loom.prefect._meta import LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
 from loom.prefect.deploy import entrypoint
 from loom.prefect.deploy._schedule import build_cron_schedule
 from loom.prefect.deploy._yaml_etls import EtlDeclaration, read_declarations
@@ -241,7 +245,7 @@ def _deploy_declaration(declaration: EtlDeclaration, work_pool: str, env: Enviro
     flow_obj = entrypoint.build_flow(declaration)
     meta = getattr(flow_obj, LOOM_ETL_META_ATTR)
     plan = _with_recorded_env(_plan(meta, work_pool, env), declaration.config_uri)
-    with _exported(LOOM_ETL_CONFIG, declaration.config_uri):
+    with scoped_loom_variable(ETL_CONFIG_VARIABLE, declaration.config_uri):
         sourced = flow_obj.from_source(
             source=plan.working_dir,
             entrypoint=f"{entrypoint.__name__}.{declaration.attribute}",
@@ -252,23 +256,9 @@ def _deploy_declaration(declaration: EtlDeclaration, work_pool: str, env: Enviro
 def _with_recorded_env(plan: _DeploymentPlan, config_uri: str) -> _DeploymentPlan:
     """Record the declaration file under ``job_variables.env`` for the worker."""
     user_env = plan.job_variables.get("env") or {}
-    env = {**user_env, LOOM_ETL_CONFIG: config_uri}
+    env = {**user_env, ETL_CONFIG_VARIABLE: config_uri}
     # ``replace`` copies fields added later; the cast Sonar asks for fails mypy.
     return replace(plan, job_variables={**plan.job_variables, "env": env})
-
-
-@contextmanager
-def _exported(name: str, value: str) -> Iterator[None]:
-    """Set ``name`` in the process environment, restoring the previous state on exit."""
-    previous = os.environ.get(name)
-    os.environ[name] = value
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = previous
 
 
 def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, plan: _DeploymentPlan) -> str:
