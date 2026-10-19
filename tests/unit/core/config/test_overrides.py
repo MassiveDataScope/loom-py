@@ -89,7 +89,7 @@ def test_an_undeclared_key_of_a_known_section_is_added_in_lower_case(
         ("5", 5),
         ("false", False),
         ("[https://a.example, https://b.example]", ["https://a.example", "https://b.example"]),
-        ("{read: 5, write: 10}", {"read": 5, "write": 10}),
+        ("[1, 2]", [1, 2]),
     ],
 )
 def test_values_parse_like_an_omegaconf_dotlist(
@@ -172,12 +172,14 @@ def checks_and_auth_file(tmp_path: Path) -> str:
         ("LOOM__CHECKS__SILENCED", "[loom.rest.E001]"),
         ("LOOM__checks__modules", "[]"),
         ("LOOM__APP__REST__AUTH__CUSTOM", "false"),
-        ("LOOM__app__Rest__Auth__JWT", "null"),
-        ("LOOM__APP__REST", "{auth: {custom: false}}"),
-        ("LOOM__APP", "{rest: {Auth: {custom: false}}}"),
+        ("LOOM__app__Rest__Auth__JWT__AUDIENCE", "other"),
+        ("LOOM__APP__REST__DOCS_URL", "/docs"),
+        ("LOOM__APP__REST__REDOC_URL", "/redoc"),
+        ("LOOM__app__rest__OPENAPI_URL", "/openapi.json"),
+        ("LOOM__OBSERVABILITY__PROMETHEUS__CONFIG__PATH", "/metrics"),
     ],
 )
-def test_reviewed_settings_cannot_be_overridden(
+def test_reviewed_keys_cannot_be_overridden(
     checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
     monkeypatch.setenv(variable, value)
@@ -186,17 +188,64 @@ def test_reviewed_settings_cannot_be_overridden(
         _load(checks_and_auth_file)
 
 
-def test_a_parent_override_away_from_the_reviewed_settings_applies(
-    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("LOOM__APP", "{REST: 0, rest: {auth: {custom: false}}}"),
+        ("LOOM__APP__REST", "{title: Live}"),
+        ("LOOM__APP__WORKERS", "[1, {admin: true}]"),
+    ],
+)
+def test_a_value_that_is_or_holds_a_mapping_is_refused(
+    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
-    monkeypatch.setenv("LOOM__APP__REST", "{title: Live}")
+    monkeypatch.setenv(variable, value)
 
-    context = _load(checks_and_auth_file)
+    with pytest.raises(ConfigError, match=f"{variable}.*leaf"):
+        _load(checks_and_auth_file)
 
-    assert (_value(context, "app.rest.title"), _value(context, "app.rest.auth.custom")) == (
-        "Live",
-        True,
-    )
+
+@pytest.mark.parametrize(("variable", "value"), [("LOOM__APP__REST", ""), ("LOOM__APP", "null")])
+def test_a_structure_the_files_declare_cannot_be_replaced(
+    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ConfigError, match=f"{variable}.*leaf"):
+        _load(checks_and_auth_file)
+
+
+def test_a_mapping_over_an_interpolated_section_is_refused_without_resolving_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    OmegaConf.register_new_resolver("overrides_probe2", lambda key: calls.append(key) or {})
+    path = tmp_path / "base.yaml"
+    path.write_text("database: ${overrides_probe2:db}\napp: {name: x}\n", encoding="utf-8")
+    monkeypatch.setenv("LOOM__DATABASE", "{pool_pre_ping: false}")
+    try:
+        with pytest.raises(ConfigError, match="LOOM__DATABASE"):
+            load_application_config(str(path))
+    finally:
+        OmegaConf.clear_resolver("overrides_probe2")
+
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "value", ["!!int s3cr3t-value", "!!float s3cr3t-value", "!!timestamp 2024-02-30"]
+)
+def test_a_tagged_value_that_fails_to_construct_never_echoes_the_value(
+    config_file: str, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("LOOM__APP__NAME", value)
+
+    with pytest.raises(ConfigError) as caught:
+        _load(config_file)
+
+    secret = value.split(" ", 1)[1]
+    assert secret not in str(caught.value)
+    assert secret not in "".join(traceback.format_exception(caught.value))
 
 
 @pytest.mark.parametrize(
@@ -207,7 +256,6 @@ def test_a_parent_override_away_from_the_reviewed_settings_applies(
         '"${oc.env:DATABASE_URL}"',
         '"\\x24{oc.env:DATABASE_URL}"',
         "[a, '${oc.env:HOME}']",
-        '{outer: {inner: "\\x24{secrets:/db}"}}',
     ],
 )
 def test_an_interpolation_in_a_value_is_refused_however_it_is_written(
@@ -254,7 +302,7 @@ def test_a_level_outside_letters_digits_and_underscore_is_refused(
     "variables",
     [
         {"LOOM__APP__NAME": "a", "LOOM__app__name": "b"},
-        {"LOOM__APP": "{name: a}", "LOOM__APP__NAME": "b"},
+        {"LOOM__APP__EXTRA": "a", "LOOM__APP__EXTRA__INNER": "b"},
     ],
 )
 def test_two_variables_for_one_key_or_a_key_and_its_parent_are_refused(

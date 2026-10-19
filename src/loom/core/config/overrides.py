@@ -15,9 +15,17 @@ the configuration declares or loom reads
 naming the variable. Two variables for the same key, or for a key and one of
 its parents, are refused.
 
-``checks`` and ``app.rest.auth`` cannot be overridden: silencing a deploy
-check, the check modules and the authentication mechanism are declared in the
-versioned files, where they are reviewed.
+An override sets one leaf value. A value that is or holds a mapping is
+refused, and so is a target the files declare as a mapping, whatever the new
+value (null, a scalar or a list): an override cannot replace a structure.
+Lists of scalars are leaves.
+
+Reviewed keys cannot be overridden: everything at or under ``checks`` and
+``app.rest.auth``, and the keys feeding the authentication exclusion list
+(``app.rest.docs_url``, ``redoc_url``, ``openapi_url`` and
+``observability.prometheus.config.path``). Deploy-check silences, check
+modules and the authentication surface are declared in the versioned files,
+where they are reviewed.
 
 Values are literals. They parse as an OmegaConf dotlist (YAML 1.1): ``5`` is
 an int, ``false``, ``no`` and ``off`` are booleans, ``[a, b]`` is a list,
@@ -29,8 +37,8 @@ parsed first and every string in it is checked, so a YAML escape cannot
 smuggle one in.
 
 Do not pass secrets through these variables: one line, at WARNING since it is
-written before the logger is configured, names every overridden key. Values
-are never logged nor carried in an error.
+written before the logger is configured, names every overridden key. This
+module never logs or raises with an override's value.
 """
 
 from __future__ import annotations
@@ -56,7 +64,15 @@ _logger = logging.getLogger(__name__)
 _SEPARATOR: Final = "__"
 _LEVEL: Final = re.compile(r"[A-Za-z0-9_]+")
 _INTERPOLATION: Final = "${"
-_REVIEWED_ONLY: Final = (("checks",), ("app", "rest", "auth"))
+_REVIEWED_PREFIXES: Final = ("checks", "app.rest.auth")
+_REVIEWED_KEYS: Final = frozenset(
+    {
+        "app.rest.docs_url",
+        "app.rest.redoc_url",
+        "app.rest.openapi_url",
+        "observability.prometheus.config.path",
+    }
+)
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
 
 
@@ -92,7 +108,7 @@ def _apply_overrides(config: DictConfig, variables: Mapping[str, str]) -> DictCo
     if not variables:
         return config
     written = OmegaConf.to_container(config, resolve=False)
-    keys = {name: _dotted_key(written, name) for name in variables}
+    keys = {name: _leaf_key(written, name) for name in variables}
     _refuse_collisions(keys)
     merged: Any = config
     for name, key in sorted(keys.items(), key=lambda item: item[1]):
@@ -107,22 +123,30 @@ def _apply_overrides(config: DictConfig, variables: Mapping[str, str]) -> DictCo
 
 
 def _parsed(name: str, key: str, value: str) -> Any:
-    """Parse one override into a dotlist layer, refusing any ``${`` it carries."""
-    import yaml
+    """Parse one override into a dotlist layer holding a single literal leaf."""
     from omegaconf import OmegaConf
-    from omegaconf.errors import OmegaConfBaseException
 
     try:
         layer = OmegaConf.from_dotlist([f"{key}={value}"])
+        leaf = OmegaConf.select(layer, key, throw_on_resolution_failure=False)
         written = OmegaConf.to_container(layer, resolve=False)
-    except (OmegaConfBaseException, yaml.YAMLError):
-        # From None: chained, the parser's exception would print with the
-        # traceback, and its message may quote the value.
+    except Exception:
+        # Any parse failure, a YAML tag that fails to construct included; from
+        # None, since the chained exception's message may quote the value.
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
     if any(_INTERPOLATION in text for text in _strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
-    _refuse_reviewed(name, written)
+    if _holds_mapping(leaf):
+        raise ConfigError(f"{name} is a mapping; an override sets one leaf value")
     return layer
+
+
+def _holds_mapping(node: Any) -> bool:
+    from omegaconf import DictConfig, ListConfig
+
+    if isinstance(node, DictConfig):
+        return True
+    return isinstance(node, ListConfig) and any(_holds_mapping(item) for item in node)
 
 
 def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
@@ -147,29 +171,6 @@ def _strings(node: Any) -> list[str]:
     return []
 
 
-def _refuse_reviewed(name: str, layer: Any) -> None:
-    for reviewed in _REVIEWED_ONLY:
-        if _reaches(layer, reviewed):
-            raise ConfigError(
-                f"{name} overrides {'.'.join(reviewed)!r}, which is declared only in the "
-                "configuration files, where it is reviewed"
-            )
-
-
-def _reaches(node: Any, path: tuple[str, ...]) -> bool:
-    """Whether the parsed layer *node* sets anything at or under *path*, any case."""
-    for part in path:
-        if not isinstance(node, dict):
-            return False
-        node = next((v for k, v in node.items() if str(k).casefold() == part), _ABSENT)
-        if node is _ABSENT:
-            return False
-    return True
-
-
-_ABSENT: Final = object()
-
-
 def _refuse_collisions(keys: Mapping[str, str]) -> None:
     ordered = sorted(keys.items(), key=lambda item: item[1].casefold())
     for (first, key), (second, other) in zip(ordered, ordered[1:], strict=False):
@@ -178,7 +179,7 @@ def _refuse_collisions(keys: Mapping[str, str]) -> None:
             raise ConfigError(f"{first} and {second} set the same key or one inside the other")
 
 
-def _dotted_key(written: Any, name: str) -> str:
+def _leaf_key(written: Any, name: str) -> str:
     levels = name[len(OVERRIDE_PREFIX) :].split(_SEPARATOR)
     if not all(_LEVEL.fullmatch(level) for level in levels):
         raise ConfigError(
@@ -202,7 +203,25 @@ def _dotted_key(written: Any, name: str) -> str:
             f"{name} names no known configuration section {section!r}; "
             "check the variable for a typo"
         )
-    return ".".join(keys)
+    key = ".".join(keys)
+    if isinstance(node, dict):
+        raise ConfigError(
+            f"{name} targets {key!r}, which the files declare as a mapping; an override "
+            "sets one leaf value"
+        )
+    _refuse_reviewed(name, key)
+    return key
+
+
+def _refuse_reviewed(name: str, key: str) -> None:
+    folded = key.casefold()
+    reviewed = folded in _REVIEWED_KEYS or any(
+        folded == prefix or folded.startswith(f"{prefix}.") for prefix in _REVIEWED_PREFIXES
+    )
+    if reviewed:
+        raise ConfigError(
+            f"{name} overrides {key!r}, a reviewed key declared only in the configuration files"
+        )
 
 
 def _declared(node: Any, level: str) -> str:

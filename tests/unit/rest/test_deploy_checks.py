@@ -60,7 +60,22 @@ class TestRestChecks:
 
         assert _rest_ids({"name": "demo", "rest": rest}) == []
 
-    def test_a_jwt_given_by_a_placeholder_fails_e001_even_when_it_resolves_to_null(
+    @pytest.mark.parametrize("shared_jwt", [{"secret_path": "/k"}, None])
+    def test_a_jwt_given_by_a_placeholder_fails_e001_whatever_it_resolves_to(
+        self, tmp_path: Path, shared_jwt: dict[str, str] | None
+    ) -> None:
+        document = {
+            "shared": {"jwt": shared_jwt},
+            "app": {"name": "demo", "rest": {**_NO_DOCS, "auth": {"jwt": "${shared.jwt}"}}},
+        }
+        path = tmp_path / "app.yaml"
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+        report = run_deploy_checks(load_application_config(str(path)))
+
+        assert AUTHENTICATION_CHECK in [r.id for r in report.results]
+
+    def test_the_mapping_a_jwt_placeholder_points_at_cannot_be_nulled_by_an_override(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         document = {
@@ -71,9 +86,8 @@ class TestRestChecks:
         path.write_text(yaml.safe_dump(document), encoding="utf-8")
         monkeypatch.setenv("LOOM__SHARED__JWT", "")
 
-        report = run_deploy_checks(load_application_config(str(path)))
-
-        assert AUTHENTICATION_CHECK in [r.id for r in report.results]
+        with pytest.raises(ConfigError, match="LOOM__SHARED__JWT"):
+            load_application_config(str(path))
 
     def test_authentication_declared_as_custom_passes_e001(self) -> None:
         assert _rest_ids({"name": "demo", "rest": _CUSTOM_AUTH}) == []

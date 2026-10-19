@@ -187,12 +187,12 @@ def test_an_override_variable_is_checked_like_the_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
-    monkeypatch.setenv("LOOM__APP__REST__DOCS_URL", "/docs")
+    monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__RENDERER", "console")
 
     result = runner.invoke(app, ["check", "--deploy", str(config)])
 
     assert result.exit_code == 0, result.output
-    assert "loom.rest.W001" in result.output
+    assert "loom.logger.W001" in result.output
 
 
 def test_skip_leaves_out_an_area_for_a_process_serving_no_http(tmp_path: Path) -> None:
