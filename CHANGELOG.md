@@ -208,7 +208,8 @@
   `execute` parameter typed with a strict `msgspec.Struct` or pydantic model
   whose fields are each a string, integer, number, boolean, enum or
   `Literal`, optionally `None`. The REST route accepts exactly its wire
-  names, plus `profile` where the route exposes it and `execute` takes it.
+  names, plus `profile` where the route exposes it and `execute` declares an
+  annotated `profile` parameter, the condition OpenAPI publishes it under.
   - An unknown or repeated parameter, `profile` included, answers
     `400 unsupported_query`.
   - A bad value answers `400 query_validation` (`ErrorCode.QUERY_VALIDATION`),
@@ -236,10 +237,11 @@
     `USECASE_DECLARES_QUERY`.
   - New: `ExecutionPlan.query_binding` (`QueryBinding`),
     `CompiledRoute.query_fields` (`QueryField`), `CompiledRoute.result_type`
-    and `created_type`, `build_success_responses`, `LoomType.from_query`, and
-    a keyword-only `code` on `BoundaryValidationError` (default
-    `boundary_validation`). `build_query_parameters_schema` takes an optional
-    `component_registry`. `QuerySpec` routes are unchanged.
+    and `created_type`, `build_success_responses`, `LoomType.from_query`,
+    `names_query_spec`, `created_response`, `RETRY_AFTER_HEADER`,
+    `LOCATION_HEADER`, and a keyword-only `code` on `BoundaryValidationError`
+    (default `boundary_validation`). `build_query_parameters_schema` takes an
+    optional `component_registry`. `QuerySpec` routes are unchanged.
 - **rest:** step-up authentication (RFC 9470).
   `loom.core.errors.InsufficientAuthentication(message, *, max_age=None,
   acr_values=())`, an `Unauthenticated` with its own code

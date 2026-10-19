@@ -214,10 +214,12 @@ async def execute(self, query: GrantQuery = Query(), caller: Identity = Caller()
   `.5` included, because pydantic reads those as timestamps even in strict
   mode. Every other value stays text. The result is then validated
   strictly: msgspec `convert(..., strict=True)`, pydantic
-  `validate_json(..., strict=True)`. So `5.0`, `1e2`, `+5`, `007`, `.5`,
-  `5.` or an integer outside the range, `1` for a boolean, `null` for a
-  non-string field and a Unix timestamp for a date-time are refused. It raises `BoundaryValidationError` like the other
-  entry points, and keeps every conversion call inside `_loom_type.py`.
+  `validate_json(..., strict=True)`. So `+5`, `007`, `.5` or `5.` for a
+  number, `5.0`, `1e2` or an integer outside the range for an integer field
+  (a number field takes `1e2`), `1` for a boolean, `null` for a non-string
+  field and a Unix timestamp for a date-time are refused. It raises
+  `BoundaryValidationError` like the other entry points, and keeps every
+  conversion call inside `_loom_type.py`.
 
 Request handling, in order:
 
@@ -243,7 +245,8 @@ a default, the `null` branch of an optional field is dropped (absence is the
 `None`), `description` comes from `Meta(description=...)`, and enum
 definitions go to `components.schemas` through the existing
 `_rewrite_to_component_refs`. Nothing else is published for the route,
-except `profile` where the route exposes it and `execute` takes it.
+except `profile` where the route exposes it and `execute` declares an
+annotated `profile` parameter.
 
 Routes with a `QuerySpec` parameter, or with neither, behave as today, except
 that request parameters are resolved before the use case is built.
@@ -442,7 +445,8 @@ Unit:
   parameter.
 - `tests/unit/core/model/test_loom_type.py`: `from_query` for msgspec and
   pydantic: `"50"` → 50, UUID, enum, `tz=True` date-time with any offset;
-  `5.0`, `1e2`, `1` for a boolean, `null` and a Unix timestamp raise
+  `5.0` or `1e2` for an integer field, `1` for a boolean, `null` and a
+  Unix timestamp raise
   `BoundaryValidationError` with the field path.
 - `tests/unit/core/errors/test_errors.py`: `RateLimited` rounds 0.2 s up to 1
   and 1.5 s to 2; code `rate_limited`.

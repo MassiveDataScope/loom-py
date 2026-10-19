@@ -181,9 +181,9 @@ class ListGrants(UseCase[Grant, GrantPage]):
 ```
 
 The route accepts exactly the declared wire names, plus `profile` when it
-exposes one and `execute` takes it, and OpenAPI publishes one query parameter
-per field with its constraints; named enums go to `components.schemas`. Each request is checked in
-this order:
+exposes one and `execute` declares an annotated `profile` parameter, and
+OpenAPI publishes one query parameter per field with its constraints; named
+enums go to `components.schemas`. Each request is checked in this order:
 
 | Request | Answer |
 |---------|--------|
@@ -206,12 +206,12 @@ only where the type asks for one, with `msgspec.Meta(tz=True)` or pydantic's
 
 The application refuses to start when a field is a list, an object or a union
 of several types, when a field's wire name is `profile` or a path parameter,
-when the use case also takes a `QuerySpec`, or when it declares two
-`Query()`; a type that is not a strict model fails as a `CompilationError`
-naming the use case and the parameter, and so does a `Job` that declares
-`Query()`. A route with a `QuerySpec` parameter keeps its own parameters,
-filters and limit clamp. Callers other than REST pass an instance of the type
-under the parameter's name.
+when the use case also takes a `QuerySpec`, or when it declares two `Query()`;
+a type that is not a strict model fails as a `CompilationError` naming the use
+case and the parameter. A `Job` that declares `Query()` fails as a
+`CompilationError` naming `<Qualname>.execute`. A route with a `QuerySpec`
+parameter keeps its own parameters, filters and limit clamp. Callers other
+than REST pass an instance of the type under the parameter's name.
 
 ---
 
