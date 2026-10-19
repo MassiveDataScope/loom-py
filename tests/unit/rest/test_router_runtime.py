@@ -163,7 +163,8 @@ class CompiledFilterUseCase(UseCase[Any, str]):
     async def execute(self, query: QuerySpec, **kwargs: Any) -> str:
         compile_all(_FilterRow)
         sa_model = get_compiled(_FilterRow)
-        assert sa_model is not None and query.filters is not None
+        assert sa_model is not None
+        assert query.filters is not None
         compiler = QuerySpecCompiler(
             sa_model,
             sa_model.id,
