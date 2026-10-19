@@ -86,7 +86,6 @@ from loom.rest.autocrud import (
     registered_repository_type,
     supported_crud_ops,
 )
-from loom.rest.checks import AUTHENTICATION_CHECK
 from loom.rest.compiler import RouteSources
 from loom.rest.config import (
     DisableRouteConfig,
@@ -153,6 +152,9 @@ class _DiscoveryConfig(msgspec.Struct, kw_only=True):
 
 class _RestAuthConfig(msgspec.Struct, kw_only=True):
     jwt: JwtAuthConfig | None = None
+    # True when the composition root passes create_app(authenticator=...):
+    # the configuration then says authentication is supplied in code.
+    custom: bool = False
     exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS
 
 
@@ -1084,19 +1086,17 @@ def _resolve_authentication(
         documentation_paths: Effective docs/schema/metrics/health paths, used
             as the default exclusion list.
 
+    The configuration names the mechanism, so ``loom check --deploy`` sees
+    what ``create_app`` builds: ``app.rest.auth.jwt`` for the built-in one,
+    ``app.rest.auth.custom: true`` for *authenticator*.
+
     Raises:
-        ConfigError: When both a custom authenticator and the built-in JWT
-            section are supplied — two mechanisms would mean two sources of
-            truth for the caller identity.
+        ConfigError: When ``custom: true`` and ``jwt`` are both declared, or
+            when *authenticator* and ``custom: true`` do not come together.
     """
     auth_cfg = app_cfg.rest.auth
     jwt_cfg = auth_cfg.jwt
-    if authenticator is not None and jwt_cfg is not None:
-        raise ConfigError(
-            "create_app received an 'authenticator' but 'app.rest.auth.jwt' is also "
-            "configured. Exactly one authentication mechanism may be active: drop the "
-            "JWT section, or drop the authenticator argument."
-        )
+    _require_declared_mechanism(auth_cfg, authenticator)
     if authenticator is not None:
         return _AuthWiring(
             authenticator=authenticator,
@@ -1110,6 +1110,28 @@ def _resolve_authentication(
             jwt_config=jwt_cfg,
         )
     return _AuthWiring(authenticator=None, exclude_paths=(), jwt_config=None)
+
+
+def _require_declared_mechanism(
+    auth_cfg: _RestAuthConfig, authenticator: Authenticator | None
+) -> None:
+    """Refuse a mechanism the configuration does not name, or names twice."""
+    if auth_cfg.custom and auth_cfg.jwt is not None:
+        raise ConfigError(
+            "'app.rest.auth.custom: true' and 'app.rest.auth.jwt' are both configured. "
+            "Exactly one authentication mechanism may be active: drop one of them."
+        )
+    if authenticator is not None and not auth_cfg.custom:
+        raise ConfigError(
+            "create_app received an 'authenticator' but 'app.rest.auth.custom' is not "
+            "true. Set 'app.rest.auth.custom: true' so the configuration says "
+            "authentication is supplied in code, and drop any 'app.rest.auth.jwt'."
+        )
+    if auth_cfg.custom and authenticator is None:
+        raise ConfigError(
+            "'app.rest.auth.custom' is true but create_app received no 'authenticator': "
+            "pass create_app(authenticator=...) or drop 'custom: true'."
+        )
 
 
 def _effective_exclusions(
@@ -1507,10 +1529,11 @@ def create_app(
     values (resolved by :meth:`loom.core.config.ConfigContext.from_yaml`).
 
     In production and staging the deploy checks run once the logger is
-    configured and before the kernel is built (see :mod:`loom.core.checks`):
+    configured and the code path is importable, before the kernel is built
+    (see :mod:`loom.core.checks`); ``checks.modules`` names the application
+    modules registering its own checks:
     an error stops startup, a warning is logged, and ``checks.silenced``
-    lists the ids accepted on purpose. An *authenticator* satisfies
-    ``loom.rest.E001``, which reads the configuration only.
+    lists the ids accepted on purpose.
 
     ``${secrets:...}`` and ``${ssm:...}`` placeholders resolve through loom's
     built-in AWS resolvers unless *resolvers* supplies one with the same name.
@@ -1521,8 +1544,9 @@ def create_app(
     ``true``.
 
     Authentication is mechanism-agnostic: configure ``app.rest.auth.jwt`` for
-    the built-in stateless JWT mechanism, or pass *authenticator* for any
-    other.  Exactly one of the two may be active.
+    the built-in stateless JWT mechanism, or set ``app.rest.auth.custom:
+    true`` and pass *authenticator* for any other.  Exactly one of the two
+    may be active, and the configuration always names it.
 
     The optional ``sql:`` section wires the SQL subsystem: its connections
     open inside the app lifespan and two collaborators are registered in the
@@ -1551,8 +1575,8 @@ def create_app(
             avoid ``ValueError: Duplicated timeseries`` when multiple apps with
             ``observability.prometheus.enabled: true`` are created in the same
             process.
-        authenticator: Custom authentication mechanism.  Mutually exclusive
-            with the ``app.rest.auth.jwt`` config section.
+        authenticator: Custom authentication mechanism.  Requires
+            ``app.rest.auth.custom: true`` and excludes ``app.rest.auth.jwt``.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.
@@ -1573,8 +1597,8 @@ def create_app(
 
     Raises:
         ConfigError: When neither or both of *config_paths* and *config_dir*
-            are given, when the environment is unknown, or when both
-            *authenticator* and ``app.rest.auth.jwt`` are supplied.
+            are given, when the environment is unknown, or when *authenticator*
+            and ``app.rest.auth.custom: true`` do not come together.
         DeployCheckError: When a deploy check of level error fails in
             production or staging.
 
@@ -1587,7 +1611,7 @@ def create_app(
 
         app = create_app("config/app.yaml")
 
-    Example — a mechanism of your own::
+    Example — a mechanism of your own (``app.rest.auth.custom: true``)::
 
         app = create_app("config/app.yaml", authenticator=MyMtlsAuthenticator())
 
@@ -1620,11 +1644,6 @@ def create_app(
     observability_runtime = ObservabilityRuntime.from_config(
         observability_cfg, environment=resolved_environment
     )
-    enforce_deploy_checks(
-        ctx,
-        resolved_environment,
-        skip=() if authenticator is None else (AUTHENTICATION_CHECK,),
-    )
     metrics_cfg = observability_cfg.prometheus
 
     auth = _resolve_authentication(
@@ -1639,6 +1658,8 @@ def create_app(
     if not effective_code_path.is_absolute():
         effective_code_path = (config_file.parent / effective_code_path).resolve()
     _ensure_code_path(effective_code_path)
+    # After the code path: checks.modules may name the application's modules.
+    enforce_deploy_checks(ctx, resolved_environment)
 
     metrics_adapter = _build_metrics_adapter(metrics_cfg, metrics_registry)
 

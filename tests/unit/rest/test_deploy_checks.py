@@ -10,6 +10,7 @@ staging, and hands the environment to the use cases through the container.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +29,10 @@ from loom.rest.fastapi.auto import create_app
 from tests.unit.rest._fixture_app import write_project
 
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
+_CUSTOM_AUTH: dict[str, Any] = {**_NO_DOCS, "auth": {"custom": True}}
 _PRODUCTION = "production"
 _CHECKS_LOGGER = "loom.core.checks"
+_NON_IDENTIFIER = re.compile(r"\W", re.ASCII)
 
 
 class _HeaderAuthenticator:
@@ -59,6 +62,14 @@ class TestRestChecks:
         rest = {**_NO_DOCS, "auth": {"jwt": {"secret_path": "${oc.env:UNSET_SECRET}"}}}
 
         assert _rest_ids({"name": "demo", "rest": rest}) == []
+
+    def test_authentication_declared_as_custom_passes_e001(self) -> None:
+        assert _rest_ids({"name": "demo", "rest": _CUSTOM_AUTH}) == []
+
+    def test_custom_set_to_false_still_fails_e001(self) -> None:
+        rest = {**_NO_DOCS, "auth": {"custom": False}}
+
+        assert _rest_ids({"name": "demo", "rest": rest}) == [AUTHENTICATION_CHECK]
 
     def test_the_default_documentation_urls_publish_the_schema(self) -> None:
         rest = {"auth": {"jwt": {"secret_path": "/k"}}}
@@ -93,8 +104,8 @@ class TestCreateAppInADeployedEnvironment:
 
         assert app.title == "Loom API"
 
-    def test_an_authenticator_supplied_in_code_satisfies_e001(self, tmp_path: Path) -> None:
-        config = write_project(tmp_path, rest=_NO_DOCS)
+    def test_an_authenticator_declared_as_custom_starts_in_production(self, tmp_path: Path) -> None:
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH)
 
         app = create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
 
@@ -103,7 +114,7 @@ class TestCreateAppInADeployedEnvironment:
     def test_a_warning_is_logged_and_the_app_starts(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = write_project(tmp_path)
+        config = write_project(tmp_path, rest={"auth": {"custom": True}})
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment="staging", authenticator=_HeaderAuthenticator())
@@ -123,6 +134,54 @@ class TestCreateAppInADeployedEnvironment:
             "silenced" in r.getMessage() and AUTHENTICATION_CHECK in r.getMessage()
             for r in caplog.records
         )
+
+
+class TestAuthenticationSuppliedInCode:
+    def test_an_authenticator_without_custom_true_is_refused(self, tmp_path: Path) -> None:
+        config = write_project(tmp_path, rest=_NO_DOCS)
+
+        with pytest.raises(ConfigError, match=r"app\.rest\.auth\.custom"):
+            create_app(config, environment="development", authenticator=_HeaderAuthenticator())
+
+    def test_custom_true_without_an_authenticator_is_refused(self, tmp_path: Path) -> None:
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH)
+
+        with pytest.raises(ConfigError, match="authenticator"):
+            create_app(config, environment="development")
+
+    def test_custom_true_beside_a_jwt_section_is_refused(self, tmp_path: Path) -> None:
+        jwt = {"secret_path": "/k", "algorithms": ["HS256"], "audience": "demo"}
+        rest = {**_NO_DOCS, "auth": {"custom": True, "jwt": jwt}}
+        config = write_project(tmp_path, rest=rest)
+
+        with pytest.raises(ConfigError, match="Exactly one"):
+            create_app(config, environment="development", authenticator=_HeaderAuthenticator())
+
+
+_APP_CHECK_SOURCE = """\
+from loom.core.checks import Finding, deploy_check
+
+
+@deploy_check("{area}.E001")
+def _sandbox(config):
+    if not config.has("{area}.sandbox"):
+        return None
+    return Finding(message="{area} uses the sandbox", hint="unset {area}.sandbox")
+"""
+
+
+def test_the_checks_of_the_application_modules_run_from_its_code_path(tmp_path: Path) -> None:
+    area = f"appcheck_{_NON_IDENTIFIER.sub('_', tmp_path.name)}"
+    (tmp_path / f"{area}_checks.py").write_text(_APP_CHECK_SOURCE.format(area=area))
+    config = write_project(tmp_path, rest=_NO_DOCS)
+    _merge_yaml(
+        Path(config),
+        {"checks": {"modules": [f"{area}_checks"], "silenced": [AUTHENTICATION_CHECK]}},
+    )
+    _merge_yaml(Path(config), {area: {"sandbox": True}})
+
+    with pytest.raises(DeployCheckError, match=f"{area}.E001"):
+        create_app(config, environment=_PRODUCTION)
 
 
 class TestCreateAppFromAConfigDirectory:

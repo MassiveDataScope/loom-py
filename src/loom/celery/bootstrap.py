@@ -83,7 +83,7 @@ from loom.celery.runner import (
 from loom.core.async_bridge import build_backend_options
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import cache_module_for
-from loom.core.checks import enforce_deploy_checks
+from loom.core.checks import REST_CHECKS, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
@@ -106,7 +106,6 @@ from loom.core.use_case.agent_markers import declaring_agent_bindings
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
 from loom.rest.autocrud import build_auto_routes
-from loom.rest.checks import REST_CHECKS
 
 _logger = logging.getLogger(__name__)
 

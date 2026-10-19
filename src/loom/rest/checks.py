@@ -1,8 +1,9 @@
 """Deploy checks of the REST layer.
 
-``loom.rest.E001``: the API authenticates no caller. The configuration shows
-only the built-in JWT mechanism, so ``create_app`` skips this check when the
-composition root supplies an ``authenticator`` in code.
+``loom.rest.E001``: the API authenticates no caller. The configuration names
+the mechanism: ``app.rest.auth.jwt`` for the built-in one, or
+``app.rest.auth.custom: true`` for an ``authenticator`` the composition root
+passes in code (``create_app`` refuses either without the other).
 
 ``loom.rest.W001``: the API publishes its documentation or OpenAPI schema,
 which maps every route, parameter and field. The three URLs are on by
@@ -16,13 +17,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
-from loom.core.checks import Finding, deploy_check
+from loom.core.checks import REST_CHECKS, Finding, deploy_check
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
-
-REST_CHECKS: Final = "loom.rest"
-"""Area of the REST checks; a process serving no HTTP skips it."""
 
 AUTHENTICATION_CHECK: Final = f"{REST_CHECKS}.E001"
 """Id of the check refusing a deployed API that authenticates no caller."""
@@ -31,19 +29,20 @@ SCHEMA_CHECK: Final = f"{REST_CHECKS}.W001"
 """Id of the check warning that a deployed API publishes its schema."""
 
 _JWT_KEY = "app.rest.auth.jwt"
+_CUSTOM_KEY = "app.rest.auth.custom"
 _SCHEMA_KEYS = ("app.rest.docs_url", "app.rest.redoc_url", "app.rest.openapi_url")
 
 
 @deploy_check(AUTHENTICATION_CHECK)
 def _authentication_configured(config: ConfigContext) -> Finding | None:
-    if config.has(_JWT_KEY):
+    if config.has(_JWT_KEY) or config.section_or_default(_CUSTOM_KEY, bool, False):
         return None
     return Finding(
-        message=f"the API authenticates no caller: {_JWT_KEY} is not configured.",
+        message=f"the API authenticates no caller: neither {_JWT_KEY} nor {_CUSTOM_KEY} is set.",
         hint=(
-            f"configure {_JWT_KEY}, pass create_app(authenticator=...), or list "
-            f"{AUTHENTICATION_CHECK} under checks.silenced when a gateway in front "
-            "authenticates every request."
+            f"configure {_JWT_KEY}, or set '{_CUSTOM_KEY}: true' and pass "
+            f"create_app(authenticator=...); list {AUTHENTICATION_CHECK} under "
+            "checks.silenced only when a gateway in front authenticates every request."
         ),
     )
 
