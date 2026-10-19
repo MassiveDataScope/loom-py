@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 from uuid import UUID, uuid4
 
 import msgspec
 
-from loom.core.environment import Environment, resolve_environment
+from loom.core.environment import (
+    STORAGE_CONFIG_VARIABLE,
+    Environment,
+    loom_variable,
+    resolve_environment,
+)
 from loom.etl.compiler import flatten_step_names
 from loom.etl.compiler._plan import PipelinePlan, iter_processes, iter_steps_in_process
 from loom.etl.pipeline import ETLPipeline
@@ -88,7 +92,7 @@ def build_flow_body(
             processes=processes,
         )
 
-        actual_config_path = os.environ.get("LOOM_STORAGE_CONFIG_PATH") or storage_config_path
+        actual_config_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
 
         manifest = load_or_init_manifest(manifest_store, ctx.correlation_id)
         pending = _resolve_pending(plan, ctx.processes, manifest)

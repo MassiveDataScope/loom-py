@@ -7,11 +7,13 @@ developer who forgot it locally meets the deploy checks, whose failure says to
 set ``LOOM_ENV=development``. An unknown value is a startup error, never a
 silent fallback.
 
-This is the only loom module that reads the process environment for loom:
-the selector and the ``LOOM__SECTION__KEY`` configuration overrides (see
-:mod:`loom.core.config.overrides`). Every other module receives the resolved
-:class:`Environment` through configuration or the container; the entry
-points resolve it once and pass it on.
+This is the only loom module that names or reads loom's process variables:
+the selector, the ``LOOM__SECTION__KEY`` configuration overrides (see
+:mod:`loom.core.config.overrides`) and every other ``LOOM_*`` variable, which
+the rest of loom reads through :func:`loom_variable`. A containment test
+enforces it. Every other module receives the resolved :class:`Environment`
+through configuration or the container; the entry points resolve it once
+and pass it on.
 
 The environment also picks the configuration overlay of a config directory:
 ``base.yaml`` first, then ``<environment>.yaml`` when it exists.
@@ -32,6 +34,26 @@ ENVIRONMENT_VARIABLE: Final = "LOOM_ENV"
 
 OVERRIDE_PREFIX: Final = "LOOM__"
 """Prefix of the variables overriding configuration keys."""
+
+CONFIG_VARIABLE: Final = "LOOM_CONFIG"
+"""Configuration file or directory the migration locator loads."""
+
+STORAGE_CONFIG_VARIABLE: Final = "LOOM_STORAGE_CONFIG_PATH"
+"""Storage configuration file or directory a Prefect flow run loads."""
+
+ETL_CONFIG_VARIABLE: Final = "LOOM_ETL_CONFIG"
+"""ETL declaration file a deployed YAML-declared flow is rebuilt from."""
+
+SPOOL_DIR_VARIABLE: Final = "LOOM_SPOOL_DIR"
+"""Directory the Polars streaming writer spools to."""
+
+SPARK_IVY_DIR_VARIABLE: Final = "LOOM_SPARK_IVY_DIR"
+"""Ivy cache directory of the Spark test session."""
+
+SPARK_OFFLINE_VARIABLE: Final = "LOOM_SPARK_OFFLINE"
+"""``1`` makes the Spark test session use only cached jars."""
+
+_LOOM_VARIABLE_PREFIX: Final = "LOOM_"
 
 BASE_CONFIG_FILE: Final = "base.yaml"
 """File of a config directory every environment loads first."""
@@ -103,6 +125,48 @@ def parse_environment(raw: str, *, source: str) -> Environment:
         ) from None
 
 
+def confirm_environment(declared: str | None, *, source: str) -> Environment:
+    """Resolve the process environment and check that *declared* agrees with it.
+
+    For a value that states which environment something was meant for, such
+    as the ``env`` parameter of a Prefect run: it confirms the environment the
+    process resolved (``LOOM_ENV``, else production) and never selects it.
+
+    Args:
+        declared: Environment *source* states, or ``None`` to state none.
+        source: What declared it, named in the error.
+
+    Returns:
+        The process environment.
+
+    Raises:
+        ConfigError: When *declared* names no environment, or another one
+            than the process environment.
+    """
+    environment = resolve_environment()
+    if declared is None:
+        return environment
+    stated = parse_environment(declared, source=source)
+    if stated is not environment:
+        raise ConfigError(
+            f"{source} is for the {str(stated)!r} environment, but this process runs in "
+            f"{str(environment)!r} ({ENVIRONMENT_VARIABLE}, else production); run it "
+            f"where {ENVIRONMENT_VARIABLE}={stated.value}."
+        )
+    return environment
+
+
+def loom_variable(name: str) -> str | None:
+    """Return the value of the ``LOOM_*`` variable *name*, or ``None`` when unset.
+
+    Raises:
+        ValueError: When *name* is not a ``LOOM_*`` variable.
+    """
+    if not name.startswith(_LOOM_VARIABLE_PREFIX):
+        raise ValueError(f"{name!r} is not a loom variable")
+    return os.environ.get(name)
+
+
 def override_variables() -> dict[str, str]:
     """Return the ``LOOM__*`` variables of the process, by name.
 
@@ -135,6 +199,24 @@ def environment_config_paths(
         raise ConfigError(f"config directory {str(directory)!r} has no {BASE_CONFIG_FILE}")
     overlay = directory / f"{environment.value}.yaml"
     return (str(base), str(overlay)) if overlay.is_file() else (str(base),)
+
+
+def config_source_paths(
+    source: str | os.PathLike[str], environment: Environment | str | None
+) -> tuple[str, ...]:
+    """Return the files a configuration *source* stands for.
+
+    A local directory loads through :func:`environment_config_paths` with
+    *environment*, resolved like :func:`resolve_environment` when ``None``;
+    a file or a cloud URI loads alone.
+
+    Raises:
+        ConfigError: When a directory has no ``base.yaml`` or the environment
+            is unknown.
+    """
+    if Path(source).is_dir():
+        return environment_config_paths(source, resolve_environment(environment))
+    return (str(source),)
 
 
 def select_config_paths(

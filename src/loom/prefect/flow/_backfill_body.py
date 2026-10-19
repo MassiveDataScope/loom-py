@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,7 +12,12 @@ from uuid import uuid4
 
 import msgspec
 
-from loom.core.environment import Environment, resolve_environment
+from loom.core.environment import (
+    STORAGE_CONFIG_VARIABLE,
+    Environment,
+    loom_variable,
+    resolve_environment,
+)
 from loom.etl.pipeline import ETLPipeline
 from loom.etl.runner import ETLRunner
 from loom.prefect._placeholders import resolve_placeholder
@@ -138,7 +142,7 @@ def build_backfill_body(
         window_end = getattr(params, window_end_field)
         windows = _chunk_windows(window_start, window_end, chunk, start_from)
 
-        actual_path = os.environ.get("LOOM_STORAGE_CONFIG_PATH") or storage_config_path
+        actual_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
         run_id_base = f"{flow_name}-{uuid4().hex[:8]}"
         for index, (chunk_start, chunk_end) in enumerate(windows, start=1):
             chunk_params = msgspec.structs.replace(

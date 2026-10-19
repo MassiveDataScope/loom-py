@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import msgspec
 
 from loom.core.checks import REST_CHECKS, enforce_deploy_checks
-from loom.core.environment import resolve_environment
+from loom.core.environment import STORAGE_CONFIG_VARIABLE, loom_variable, resolve_environment
 from loom.core.observability import ObservabilityRuntime, Scope
 from loom.etl.maintenance._runner import MaintenanceRunner
 from loom.etl.maintenance._step import MaintenanceStep
@@ -63,7 +62,7 @@ def maintenance_flow(
             params = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())
             decoded = msgspec.structs.asdict(params)
             record_run_params(decoded)
-            actual_path = os.environ.get("LOOM_STORAGE_CONFIG_PATH") or storage_config_path
+            actual_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
             context = _load_context(actual_path)
             storage_config, observability_config = _parse_sections(context)
             observability = ObservabilityRuntime.from_config(

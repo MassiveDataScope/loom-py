@@ -17,9 +17,13 @@ import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import (
+    CONFIG_VARIABLE,
     ENVIRONMENT_VARIABLE,
     Environment,
+    config_source_paths,
+    confirm_environment,
     environment_config_paths,
+    loom_variable,
     override_variables,
     parse_environment,
     resolve_environment,
@@ -152,3 +156,77 @@ def test_each_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+class TestConfirmEnvironment:
+    """A declared environment confirms the process one; it never selects it."""
+
+    def test_without_a_declaration_the_process_environment_holds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "staging")
+
+        assert confirm_environment(None, source="the run") is Environment.STAGING
+
+    def test_a_matching_declaration_is_confirmed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "staging")
+
+        assert confirm_environment("Staging", source="the run") is Environment.STAGING
+
+    def test_a_declaration_cannot_move_production_to_development(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+
+        with pytest.raises(ConfigError, match="'development'.*'production'"):
+            confirm_environment("development", source="the run")
+
+    @pytest.mark.usefixtures("no_selector")
+    def test_the_default_is_confirmed_like_the_variable(self) -> None:
+        with pytest.raises(ConfigError, match="'staging'.*'production'"):
+            confirm_environment("staging", source="the run")
+
+
+class TestConfigSourcePaths:
+    def test_a_file_is_loaded_alone(self, tmp_path: Path) -> None:
+        path = tmp_path / "etl.yaml"
+        path.write_text("storage: {}\n")
+
+        assert config_source_paths(str(path), "production") == (str(path),)
+
+    def test_a_cloud_uri_is_loaded_alone(self) -> None:
+        assert config_source_paths("s3://bucket/etl.yaml", None) == ("s3://bucket/etl.yaml",)
+
+    def test_a_directory_layers_the_overlay_of_the_environment(self, tmp_path: Path) -> None:
+        (tmp_path / "base.yaml").write_text("a: 1\n")
+        (tmp_path / "staging.yaml").write_text("a: 2\n")
+
+        assert config_source_paths(str(tmp_path), "staging") == (
+            str(tmp_path / "base.yaml"),
+            str(tmp_path / "staging.yaml"),
+        )
+
+    def test_a_directory_resolves_the_environment_when_none_is_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "base.yaml").write_text("a: 1\n")
+        (tmp_path / "development.yaml").write_text("a: 2\n")
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "development")
+
+        assert config_source_paths(str(tmp_path), None)[-1] == str(tmp_path / "development.yaml")
+
+
+class TestLoomVariable:
+    def test_a_loom_variable_is_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(CONFIG_VARIABLE, "/srv/config")
+
+        assert loom_variable(CONFIG_VARIABLE) == "/srv/config"
+
+    def test_an_unset_variable_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(CONFIG_VARIABLE, raising=False)
+
+        assert loom_variable(CONFIG_VARIABLE) is None
+
+    def test_only_loom_variables_are_read(self) -> None:
+        with pytest.raises(ValueError, match="HOME"):
+            loom_variable("HOME")

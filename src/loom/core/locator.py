@@ -10,7 +10,6 @@ section. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 from collections.abc import Callable, Mapping
@@ -26,6 +25,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
+from loom.core.environment import CONFIG_VARIABLE, loom_variable
 from loom.core.model.scoped import ScopedTable
 from loom.core.schema_names import SchemaNames
 
@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
     from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseUser
 
-CONFIG_ENV_VAR = "LOOM_CONFIG"
 SchemaMode = Literal["create_all", "external"]
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
@@ -188,9 +187,9 @@ def _ensure_on_path(code_path: str, config_dir: Path) -> None:
 def _resolve_path(config_path: str | None) -> str:
     if config_path:
         return config_path
-    from_env = os.environ.get(CONFIG_ENV_VAR)
+    from_env = loom_variable(CONFIG_VARIABLE)
     if not from_env:
-        raise ConfigError(f"{CONFIG_ENV_VAR} is not set and no config path was given")
+        raise ConfigError(f"{CONFIG_VARIABLE} is not set and no config path was given")
     return from_env
 
 

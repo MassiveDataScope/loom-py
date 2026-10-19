@@ -10,10 +10,10 @@ ETL for it.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from loom.core.config import ConfigError
+from loom.core.environment import loom_variable
 from loom.prefect._meta import LOOM_ETL_CONFIG
 from loom.prefect.deploy._yaml_etls import EtlDeclaration, load_declaration
 from loom.prefect.flow import build_etl_flow
@@ -43,7 +43,7 @@ def build_flow(declaration: EtlDeclaration) -> Any:
 def __getattr__(attribute: str) -> Any:
     if attribute.startswith("_"):
         raise AttributeError(attribute)
-    config_uri = os.environ.get(LOOM_ETL_CONFIG)
+    config_uri = loom_variable(LOOM_ETL_CONFIG)
     if not config_uri:
         raise ConfigError(
             f"{LOOM_ETL_CONFIG} is not set; it must name the YAML file declaring "
