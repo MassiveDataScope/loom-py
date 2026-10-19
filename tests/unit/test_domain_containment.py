@@ -245,31 +245,32 @@ def test_the_allowed_provenance_line_appears_exactly_once() -> None:
 
 
 _ENVIRONMENT_MODULE = "core/environment.py"
-# A literal that spells an environment label without meaning one, with why.
+# Literals that spell an environment label without meaning one: (file, literal) -> why.
 _NOT_AN_ENVIRONMENT = {
-    "streaming/nodes/_table/common.py": "the 'staging' spool section of a Delta sink",
+    ("streaming/nodes/_table/common.py", "staging"): "the spool section of a Delta sink",
 }
 _ENVIRONMENT_LABELS = re.compile(r"^(prod|production|staging|dev|development)$", re.IGNORECASE)
 
 
 def _environment_labels(path: Path) -> list[str]:
     tree = ast.parse(path.read_text())
+    relative = path.relative_to(_SRC).as_posix()
     return [
-        f"{path.relative_to(_SRC)}:{node.lineno}: {node.value!r}"
+        f"{relative}:{node.lineno}: {node.value!r}"
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
         and _ENVIRONMENT_LABELS.match(node.value.strip())
+        and (relative, node.value.strip()) not in _NOT_AN_ENVIRONMENT
     ]
 
 
 def test_only_the_environment_module_names_an_environment() -> None:
     allowed = _SRC / _ENVIRONMENT_MODULE
-    exempt = {_SRC / rel for rel in _NOT_AN_ENVIRONMENT}
     offenders = [
         hit
         for path in sorted(_SRC.rglob("*.py"))
-        if path != allowed and path not in exempt
+        if path != allowed
         for hit in _environment_labels(path)
     ]
 
