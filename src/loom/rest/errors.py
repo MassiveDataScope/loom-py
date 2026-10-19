@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from loom.core.engine.post_commit import PostCommitError
 from loom.core.errors import (
     Forbidden,
+    InsufficientAuthentication,
     LoomError,
     NotFound,
     RateLimited,
@@ -20,7 +21,7 @@ from loom.core.errors import (
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
-from loom.rest.constants import BEARER_CHALLENGE
+from loom.rest.constants import BEARER_CHALLENGE, WWW_AUTHENTICATE_HEADER
 
 
 class ErrorField(StrEnum):
@@ -89,6 +90,7 @@ class HttpErrorMapper:
     _STATUS: ClassVar[dict[str, HTTPStatus]] = {
         ErrorCode.NOT_FOUND: HTTPStatus.NOT_FOUND,
         ErrorCode.UNAUTHENTICATED: HTTPStatus.UNAUTHORIZED,
+        ErrorCode.INSUFFICIENT_AUTHENTICATION: HTTPStatus.UNAUTHORIZED,
         ErrorCode.FORBIDDEN: HTTPStatus.FORBIDDEN,
         ErrorCode.CONFLICT: HTTPStatus.CONFLICT,
         ErrorCode.RULE_VIOLATIONS: HTTPStatus.UNPROCESSABLE_ENTITY,
@@ -154,8 +156,26 @@ class HttpErrorMapper:
 
 
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
+    if isinstance(error, InsufficientAuthentication):
+        return {WWW_AUTHENTICATE_HEADER: _step_up_challenge(error)}
     if status is HTTPStatus.UNAUTHORIZED:
         return dict(BEARER_CHALLENGE)
     if isinstance(error, RateLimited):
         return {"Retry-After": str(error.retry_after)}
     return None
+
+
+def _step_up_challenge(error: InsufficientAuthentication) -> str:
+    """Build the RFC 9470 §3 challenge; the description keeps only RFC 6750 §3 characters."""
+    description = "".join(
+        char for char in error.message if " " <= char <= "~" and char not in '"\\'
+    )
+    params = [
+        'error="insufficient_user_authentication"',
+        f'error_description="{description}"',
+    ]
+    if error.max_age is not None:
+        params.append(f'max_age="{error.max_age}"')
+    if error.acr_values:
+        params.append(f'acr_values="{" ".join(error.acr_values)}"')
+    return f"{BEARER_CHALLENGE[WWW_AUTHENTICATE_HEADER]} {', '.join(params)}"

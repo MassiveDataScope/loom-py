@@ -526,6 +526,26 @@ and path parameters keep FastAPI's 422.
   A separate subclass was not needed: it would duplicate the constructor to
   change one field.
 
+### Addition: step-up authentication (RFC 9470)
+
+Added after the owner's decision that step-up MFA follows RFC 9470. It
+shares this ADR's shape: a transport-free domain error that the REST mapper
+turns into a status and a header.
+
+- `InsufficientAuthentication(Unauthenticated)` in `loom.core.errors`, with
+  its own code `ErrorCode.INSUFFICIENT_AUTHENTICATION =
+  "insufficient_authentication"`, an optional `max_age: int | None`
+  (seconds) and optional `acr_values: tuple[str, ...]`. It validates what a
+  challenge must be able to carry: `max_age` is a non-negative `int`, and
+  each ACR value is visible ASCII with no whitespace, double quote or
+  backslash.
+- `HttpErrorMapper` answers `401` with
+  `WWW-Authenticate: Bearer error="insufficient_user_authentication",
+  error_description="…"`, plus `max_age="N"` and `acr_values="a b"` when
+  present (RFC 9470 §3). The description keeps only the characters RFC 6750
+  §3 allows. Every other 401 keeps the plain `Bearer` challenge.
+- Being an `Unauthenticated`, it is caught wherever that is.
+
 ### Review round
 
 The owner's review changed these points, all reflected above:

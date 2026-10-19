@@ -93,6 +93,58 @@ class Unauthenticated(DomainError):
         super().__init__(message, code=ErrorCode.UNAUTHENTICATED)
 
 
+class InsufficientAuthentication(Unauthenticated):
+    """Raised when the caller is authenticated, but not strongly or recently enough.
+
+    The caller can fix it by authenticating again under the stated
+    requirements (step-up, RFC 9470). Transport adapters map it to ``401``
+    with a challenge naming those requirements.
+
+    Args:
+        message: Description of the missing authentication strength.
+        max_age: Seconds within which the caller must have authenticated;
+            ``None`` when recency is not the issue.
+        acr_values: Authentication context classes acceptable for a retry,
+            in order of preference; empty when any will do.
+
+    Raises:
+        ValueError: If ``max_age`` is not a non-negative ``int``, ``acr_values``
+            is a single ``str``, or a value is empty or holds whitespace, a
+            double quote or a backslash.
+
+    Example::
+
+        raise InsufficientAuthentication(max_age=300, acr_values=("urn:mfa",))
+    """
+
+    def __init__(
+        self,
+        message: str = "A different authentication level is required",
+        *,
+        max_age: int | None = None,
+        acr_values: Iterable[str] = (),
+    ) -> None:
+        if max_age is not None and (type(max_age) is not int or max_age < 0):
+            raise ValueError("InsufficientAuthentication.max_age must be a non-negative int")
+        if isinstance(acr_values, str):
+            raise ValueError(
+                "InsufficientAuthentication.acr_values takes an iterable of values, not one str"
+            )
+        values = tuple(acr_values)
+        if not all(
+            value and all("!" <= char <= "~" and char not in '"\\' for char in value)
+            for value in values
+        ):
+            raise ValueError(
+                "InsufficientAuthentication.acr_values must be visible ASCII without "
+                "whitespace, double quotes or backslashes"
+            )
+        super().__init__(message)
+        self.code = ErrorCode.INSUFFICIENT_AUTHENTICATION
+        self.max_age = max_age
+        self.acr_values: tuple[str, ...] = values
+
+
 class Forbidden(DomainError):
     """Raised when an action is not permitted for the caller.
 

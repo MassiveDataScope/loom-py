@@ -36,6 +36,18 @@ Two accessors fail closed instead of returning `None`:
 The distinction is deliberate: a 401 tells the caller that credentials would help, a
 403 tells them they would not.
 
+A caller who is authenticated, but not strongly or recently enough, gets a step-up
+challenge (RFC 9470). Raise `InsufficientAuthentication(message, max_age=..., acr_values=...)`
+from `loom.core.errors`; it answers 401 with code `insufficient_authentication` and
+
+```
+WWW-Authenticate: Bearer error="insufficient_user_authentication",
+  error_description="<message>", max_age="300", acr_values="urn:mfa"
+```
+
+`max_age` and `acr_values` appear only when given. The description keeps only the
+characters RFC 6750 §3 allows in it.
+
 A refusal that knows its cause can say it. `Forbidden(message, reason=..., missing=...)`
 answers the same 403 with two more keys, each only when given:
 

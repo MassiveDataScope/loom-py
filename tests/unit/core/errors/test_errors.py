@@ -9,12 +9,14 @@ from loom.core.errors import (
     Conflict,
     DomainError,
     Forbidden,
+    InsufficientAuthentication,
     LoomError,
     NotFound,
     RateLimited,
     RuleViolation,
     RuleViolations,
     SystemError,
+    Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
 
@@ -50,6 +52,7 @@ class TestLoomError:
         (Forbidden, DomainError),
         (Conflict, DomainError),
         (RateLimited, DomainError),
+        (InsufficientAuthentication, Unauthenticated),
         (RuleViolation, DomainError),
         (RuleViolations, DomainError),
     ],
@@ -74,6 +77,7 @@ def test_domain_error_not_system_error() -> None:
         (lambda: Forbidden(), ErrorCode.FORBIDDEN),
         (lambda: Conflict("x"), ErrorCode.CONFLICT),
         (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
+        (lambda: InsufficientAuthentication(), ErrorCode.INSUFFICIENT_AUTHENTICATION),
         (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
         (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
         (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
@@ -283,3 +287,31 @@ class TestRateLimited:
 
     def test_has_a_default_message(self) -> None:
         assert RateLimited(1).message == "Too many requests."
+
+
+class TestInsufficientAuthentication:
+    def test_carries_the_step_up_requirements(self) -> None:
+        error = InsufficientAuthentication(max_age=300, acr_values=["urn:mfa", "phr"])
+
+        assert (error.max_age, error.acr_values) == (300, ("urn:mfa", "phr"))
+
+    def test_requires_nothing_by_default(self) -> None:
+        error = InsufficientAuthentication()
+
+        assert (error.max_age, error.acr_values) == (None, ())
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"max_age": -1},
+            {"max_age": True},
+            {"acr_values": "urn:mfa"},
+            {"acr_values": [""]},
+            {"acr_values": ["urn mfa"]},
+            {"acr_values": ['urn"mfa']},
+        ],
+        ids=["negative-age", "bool-age", "single-str", "blank", "space", "quote"],
+    )
+    def test_refuses_what_a_challenge_cannot_carry(self, kwargs: dict[str, Any]) -> None:
+        with pytest.raises(ValueError, match="InsufficientAuthentication"):
+            InsufficientAuthentication(**kwargs)

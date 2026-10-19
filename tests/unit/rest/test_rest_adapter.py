@@ -16,6 +16,7 @@ from loom.core.engine.post_commit import PostCommitError
 from loom.core.errors import (
     Conflict,
     Forbidden,
+    InsufficientAuthentication,
     LoomError,
     NotFound,
     RateLimited,
@@ -165,6 +166,31 @@ class TestHttpErrorMapper:
         """RFC 9110 §11.6.1: a 401 without a challenge is not a valid response."""
         exc = self._mapper().to_http(Unauthenticated())
         assert exc.headers == {"WWW-Authenticate": "Bearer"}
+
+    def test_insufficient_authentication_challenges_a_step_up(self) -> None:
+        """RFC 9470 §3: the 401 names the error and what the next token must meet."""
+        error = InsufficientAuthentication(
+            "Recent multi-factor authentication required.",
+            max_age=300,
+            acr_values=("urn:mfa", "phr"),
+        )
+
+        exc = self._mapper().to_http(error)
+
+        assert (exc.status_code, _detail(exc)["code"]) == (401, "insufficient_authentication")
+        assert exc.headers == {
+            "WWW-Authenticate": 'Bearer error="insufficient_user_authentication", '
+            'error_description="Recent multi-factor authentication required.", '
+            'max_age="300", acr_values="urn:mfa phr"'
+        }
+
+    def test_a_step_up_without_requirements_names_only_the_error(self) -> None:
+        exc = self._mapper().to_http(InsufficientAuthentication('Say "again"\r\nnow'))
+
+        assert exc.headers == {
+            "WWW-Authenticate": 'Bearer error="insufficient_user_authentication", '
+            'error_description="Say againnow"'
+        }
 
     def test_non_401_errors_carry_no_challenge(self) -> None:
         """Only a 401 challenges the caller; a 403 is final."""
