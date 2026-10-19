@@ -77,8 +77,10 @@ class TestLogDeleteMarkerDtype:
         frame = pl.DataFrame(
             {"wo": ["W1"], "rid": ["R1"], "event_ts": [datetime(2026, 10, 10)], "cost": [1]}
         ).with_columns(pl.lit(None).alias("is_deleted"))
+        backend = PolarsHistorifyBackend()
+        spec = _replacement_spec()
         with pytest.raises(HistorifyDeleteMarkerError, match="dtype Null.*cast it to Boolean"):
-            scd2_transform(PolarsHistorifyBackend(), frame, None, _replacement_spec(), None)
+            scd2_transform(backend, frame, None, spec, None)
 
 
 class TestLogDeleteMarkerZeroWidthVector:

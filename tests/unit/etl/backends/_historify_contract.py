@@ -1580,8 +1580,9 @@ class HistorifyContractTests:
         make_frame: Callable,
     ) -> None:
         frame = make_frame([{"wo": "W1", "rid": "R1", "event_ts": _OCT10, "cost": 100}])
+        spec = _replacement_spec()
         with pytest.raises(HistorifyDeleteMarkerError, match="is_deleted"):
-            writer.write(frame, _replacement_spec(), None)
+            writer.write(frame, spec, None)
 
     def test_log_delete_marker_missing_column_raises_on_later_run(
         self,
@@ -1605,8 +1606,9 @@ class HistorifyContractTests:
                 _replacement("W1", "R1", _OCT12, 100, deleted="Y"),  # type: ignore[arg-type]
             ]
         )
+        spec = _replacement_spec()
         with pytest.raises(HistorifyDeleteMarkerError, match="is_deleted.*cast it to Boolean"):
-            writer.write(frame, _replacement_spec(), None)
+            writer.write(frame, spec, None)
 
     def test_log_delete_marker_tombstone_and_event_at_same_instant_raise(
         self,
@@ -1619,8 +1621,9 @@ class HistorifyContractTests:
                 _replacement("W1", "R1", _OCT10, 100, deleted=True),
             ]
         )
+        spec = _replacement_spec()
         with pytest.raises(HistorifyKeyConflictError, match="effective_date"):
-            writer.write(frame, _replacement_spec(), None)
+            writer.write(frame, spec, None)
 
     def test_log_delete_marker_null_marker_is_regular_event(
         self,
