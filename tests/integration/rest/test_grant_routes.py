@@ -1,10 +1,4 @@
-"""ADR 0002 end to end: the grant routes periplo-cloud declares, over an in-memory store.
-
-``POST /v1/grants`` answers 201 when it creates and 200 when the grant was
-already there, ``DELETE /v1/grants/{grant_id}`` revokes, ``GET /v1/grants``
-takes a declared query, and both writes spend a budget that answers 429.
-The OpenAPI document of the three routes is compared with a stored golden.
-"""
+"""ADR 0002 end to end: the grant routes periplo-cloud declares, over an in-memory store."""
 
 from __future__ import annotations
 
@@ -187,9 +181,7 @@ def _client(tokens: int = 10) -> TestClient:
 
 
 def _grant(client: TestClient, role_code: str = "admin") -> Any:
-    return client.post(
-        "/v1/grants", json={"membership_id": str(_MEMBERSHIP), "role_code": role_code}
-    )
+    return client.post("/v1/grants", json={"membershipId": str(_MEMBERSHIP), "roleCode": role_code})
 
 
 def test_the_openapi_document_matches_the_golden(assert_output_snapshot: Any) -> None:

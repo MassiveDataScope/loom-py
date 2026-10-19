@@ -59,11 +59,9 @@ class _CallerMarker:
 class _QueryMarker:
     """Marks a parameter as the declared query of the execution.
 
-    Carries no configuration — it is a pure marker, like ``_InputMarker``.
-
     Example::
 
-        async def execute(self, query: GrantQuery = Query()) -> GrantPage: ...
+        async def execute(self, query: ListQuery = Query()) -> ItemPage: ...
     """
 
     __slots__ = ()

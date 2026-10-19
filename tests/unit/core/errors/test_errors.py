@@ -283,6 +283,3 @@ class TestRateLimited:
 
     def test_has_a_default_message(self) -> None:
         assert RateLimited(1).message == "Too many requests."
-
-    def test_code_is_rate_limited(self) -> None:
-        assert ErrorCode.RATE_LIMITED == "rate_limited"

@@ -19,6 +19,7 @@ from loom.core.command.introspection import (
 )
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import is_pydantic_model, pydantic_type
+from loom.core.model.json_schema import DEFS, DEFS_PREFIX, REF
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.rest.compiler import CompiledRoute, QueryField
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
@@ -52,9 +53,6 @@ QUERY_SPEC_PARAMETER_NAMES: tuple[str, ...] = (
     QueryParam.DIRECTION,
 )
 
-_SCHEMA_DEFS_KEY = "$defs"
-_SCHEMA_REF_KEY = "$ref"
-_LOCAL_DEFS_REF_PREFIX = "#/$defs/"
 _COMPONENT_REF_PREFIX = "#/components/schemas/"
 
 
@@ -368,10 +366,10 @@ def _rewrite_to_component_refs(node: Any) -> Any:
         return node
     result: dict[str, Any] = {}
     for k, v in node.items():
-        if k == _SCHEMA_DEFS_KEY:
+        if k == DEFS:
             continue
-        if k == _SCHEMA_REF_KEY and isinstance(v, str) and v.startswith(_LOCAL_DEFS_REF_PREFIX):
-            result[k] = _COMPONENT_REF_PREFIX + v.removeprefix(_LOCAL_DEFS_REF_PREFIX)
+        if k == REF and isinstance(v, str) and v.startswith(DEFS_PREFIX):
+            result[k] = _COMPONENT_REF_PREFIX + v.removeprefix(DEFS_PREFIX)
         else:
             result[k] = _rewrite_to_component_refs(v)
     return result
@@ -397,20 +395,19 @@ def _safe_schema(
     if raw is None:
         return None
     schema = _with_component_refs(raw, component_registry)
-    if component_registry is None or not is_pydantic_model(annotation) or _SCHEMA_REF_KEY in schema:
+    if component_registry is None or not is_pydantic_model(annotation) or REF in schema:
         return schema
     component_registry[annotation.__name__] = schema
-    return {_SCHEMA_REF_KEY: _COMPONENT_REF_PREFIX + annotation.__name__}
+    return {REF: _COMPONENT_REF_PREFIX + annotation.__name__}
 
 
 def _with_component_refs(
     raw: JsonSchema, component_registry: dict[str, JsonSchema] | None
 ) -> JsonSchema:
-    """Move the ``$defs`` of *raw* into *component_registry* and point its refs there."""
     if component_registry is None:
         return raw
 
-    defs = raw.get(_SCHEMA_DEFS_KEY)
+    defs = raw.get(DEFS)
     if isinstance(defs, dict):
         for name, def_schema in defs.items():
             component_registry[name] = _rewrite_to_component_refs(def_schema)

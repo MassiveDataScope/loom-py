@@ -10,19 +10,19 @@ T = TypeVar("T")
 
 @dataclass(frozen=True, slots=True)
 class Created(Generic[T]):
-    """The use case created ``value``; a plain result means it was already there.
+    """The use case created ``value``.
 
-    A use case that may create declares ``T | Created[T]``. The REST adapter
-    answers ``Created`` with ``201`` and ``value`` as the body; every other
-    caller receives the wrapper as it is and reads ``value``.
+    Any other result answers the route's own status. A use case that may
+    create declares ``T | Created[T]``; a caller that wants the value reads
+    ``value``.
 
     Args:
         value: The created resource.
 
     Example::
 
-        async def execute(self, command: CreateGrant = Input()) -> GrantView | Created[GrantView]:
-            view, changed = await self._grants.grant(command)
+        async def execute(self, command: CreateItem = Input()) -> ItemView | Created[ItemView]:
+            view, changed = await self._items.ensure(command)
             return Created(view) if changed else view
     """
 

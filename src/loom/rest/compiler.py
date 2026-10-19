@@ -263,17 +263,9 @@ class QueryField:
 
 
 def _declared_query_fields(query_type: type[Any]) -> tuple[QueryField, ...]:
-    """Read the query parameters a strict ``Query()`` type declares.
-
-    Args:
-        query_type: Strict ``msgspec.Struct`` or pydantic model.
-
-    Returns:
-        One field per declared parameter, in declaration order.
-
+    """
     Raises:
-        ValueError: A field is not a string, integer, number, boolean, enum,
-            UUID or date-time, optionally ``None``.
+        ValueError: A field is not a scalar a query parameter can carry.
     """
     document = loom_type(query_type).schema()
     definitions = document.get(DEFS, {})

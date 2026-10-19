@@ -224,7 +224,7 @@ class ExecutionPlan:
         mcp_bindings: ``Mcp()`` marker bindings, in declaration order; empty
             when the use case declares none.
         query_binding: ``Query()`` binding, or ``None`` when the use case
-            declares no declared query.
+            declares no ``Query()`` parameter.
         load_steps: Entity prefetch steps, in declaration order.
         exists_steps: Boolean existence checks, in declaration order.
         compute_steps: Compute transformations, in declaration order.

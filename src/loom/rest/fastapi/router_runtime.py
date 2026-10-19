@@ -5,12 +5,19 @@ Generates async handler functions at startup, one per
 
 1. Extracts path parameters from ``request.path_params`` (populated by
    Starlette's routing layer from the URL).
-2. Reads the raw request body and decodes it with ``msgspec.json.decode``
+2. Decodes the query string: a ``Query()`` parameter accepts exactly its
+   declared names (``400 unsupported_query`` for an unknown or repeated one,
+   ``422 boundary_validation`` for a bad value), then ``profile`` and a
+   ``QuerySpec``.
+3. Reads the raw request body and decodes it with ``msgspec.json.decode``
    when bytes are present.
-3. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
-   :class:`~loom.core.use_case.factory.UseCaseFactory`.
-4. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
-5. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`.
+4. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
+   :class:`~loom.core.use_case.factory.UseCaseFactory`, only once the request
+   parameters are valid.
+5. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
+6. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`: a
+   :class:`~loom.core.use_case.Created` result answers ``201`` with its
+   ``value``, any other result the route's ``status_code``.
 
 Handler ``__signature__`` is manipulated so FastAPI validates and documents
 path parameters correctly in OpenAPI while keeping the implementation generic.
@@ -361,8 +368,6 @@ def _route_docs(compiled_route: CompiledRoute) -> tuple[str | None, str | None]:
 
 @dataclass(frozen=True, slots=True)
 class _DeclaredQuery:
-    """The ``Query()`` parameter of a route: its name, accepted keys and decoder."""
-
     param_name: str
     accepted: frozenset[str]
     decoder: LoomType

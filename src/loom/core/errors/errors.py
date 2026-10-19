@@ -160,7 +160,7 @@ class RateLimited(DomainError):
 
     Example::
 
-        raise RateLimited(retry_after=bucket.seconds_until_next_token())
+        raise RateLimited(retry_after=2.0)
     """
 
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:

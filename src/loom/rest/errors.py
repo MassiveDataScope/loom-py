@@ -151,7 +151,6 @@ class HttpErrorMapper:
 
 
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
-    """Return the ``WWW-Authenticate`` of a ``401`` or the ``Retry-After`` of a rate limit."""
     if status is HTTPStatus.UNAUTHORIZED:
         return dict(BEARER_CHALLENGE)
     if isinstance(error, RateLimited):
