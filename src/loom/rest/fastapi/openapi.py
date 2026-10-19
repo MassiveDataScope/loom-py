@@ -6,6 +6,7 @@ keeping runtime execution transport-agnostic.
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from types import NoneType, UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
@@ -19,7 +20,7 @@ from loom.core.command.introspection import (
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
-from loom.rest.compiler import CompiledRoute, QueryField, split_created
+from loom.rest.compiler import CompiledRoute, QueryField
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 
 JsonSchema = dict[str, Any]
@@ -107,15 +108,14 @@ def build_success_response_schema(
         OpenAPI response schema fragment, or ``None`` when the return type
         cannot be resolved to a JSON Schema.
     """
-    result_type, _ = split_created(compiled_route.route.use_case)
-    return _response_entry(result_type, component_registry)
+    return _response_entry(compiled_route.result_type, component_registry)
 
 
-def build_created_response_schema(
+def build_success_responses(
     compiled_route: CompiledRoute,
     component_registry: dict[str, JsonSchema] | None = None,
-) -> JsonSchema | None:
-    """Return the OpenAPI ``201`` response entry of a route whose use case may create.
+) -> dict[int | str, JsonSchema]:
+    """Return the OpenAPI success responses of the route, keyed by status.
 
     Args:
         compiled_route: Fully resolved route from ``RestInterfaceCompiler``.
@@ -123,14 +123,19 @@ def build_created_response_schema(
             component schemas.
 
     Returns:
-        OpenAPI response fragment for the type ``Created`` wraps, or ``None``
-        when the use case never returns ``Created`` or the type has no JSON
-        Schema.
+        The route's ``status_code`` entry, plus a ``201`` entry when the use
+        case may return ``Created``; a status whose type has no JSON Schema
+        is left out.
     """
-    _, created_type = split_created(compiled_route.route.use_case)
-    if created_type is None:
-        return None
-    return _response_entry(created_type, component_registry)
+    result_types = {compiled_route.route.status_code: compiled_route.result_type}
+    if compiled_route.created_type is not None:
+        result_types[HTTPStatus.CREATED.value] = compiled_route.created_type
+    responses: dict[int | str, JsonSchema] = {}
+    for status, result_type in result_types.items():
+        entry = _response_entry(result_type, component_registry)
+        if entry is not None:
+            responses[status] = entry
+    return responses
 
 
 def build_query_parameters_schema(

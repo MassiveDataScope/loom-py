@@ -27,6 +27,7 @@ import typing
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from http import HTTPStatus
 from typing import Any, NamedTuple
 
 from loom.core.engine.compiler import UseCaseCompiler
@@ -209,7 +210,7 @@ def _execute_hints(use_case_type: type[Any]) -> dict[str, Any]:
         return {}
 
 
-def split_created(use_case_type: type[Any]) -> tuple[Any, Any]:
+def _split_created(use_case_type: type[Any]) -> tuple[Any, Any]:
     """Split the result type of ``execute`` around its ``Created`` member.
 
     Args:
@@ -331,6 +332,10 @@ class CompiledRoute:
             parameter of this route.
         query_fields: Parameters the route's ``Query()`` declares; empty
             when the use case declares none.
+        result_type: Result type of ``execute`` without its ``Created``
+            member, answered with the route's ``status_code``.
+        created_type: Type a ``Created`` result wraps, answered with ``201``;
+            ``None`` when the use case never returns ``Created``.
         read_only: ``True`` for GET routes — instructs the executor to skip
             the ``UnitOfWork`` transaction for this request.
         interface_tags: OpenAPI tags inherited from the parent ``RestInterface``.
@@ -350,6 +355,8 @@ class CompiledRoute:
     effective_requires_roles: tuple[str, ...] = ()
     effective_max_limit: int = 1000
     query_fields: tuple[QueryField, ...] = ()
+    result_type: Any = Any
+    created_type: Any = None
 
 
 class RestInterfaceCompiler:
@@ -489,7 +496,7 @@ class RestInterfaceCompiler:
         compiled: list[CompiledRoute] = []
 
         for route in interface.routes:
-            plan = self._validate_route(iface_name, route)
+            plan, result_type, created_type = self._validate_route(iface_name, route)
 
             key = (route.method.upper(), route.path)
             if key in seen:
@@ -520,6 +527,8 @@ class RestInterfaceCompiler:
                     effective_requires_roles=self._resolve_requires_roles(route, interface),
                     effective_max_limit=self._defaults.max_limit,
                     query_fields=self._resolve_query_fields(iface_name, route, plan),
+                    result_type=result_type,
+                    created_type=created_type,
                 )
             )
 
@@ -550,7 +559,7 @@ class RestInterfaceCompiler:
                 f"{iface_name}: 'routes' is empty.  Declare at least one RestRoute to expose."
             )
 
-    def _validate_route(self, iface_name: str, route: RestRoute) -> ExecutionPlan:
+    def _validate_route(self, iface_name: str, route: RestRoute) -> tuple[ExecutionPlan, Any, Any]:
         if not route.method:
             raise InterfaceCompilationError(
                 f"{iface_name}: RestRoute for {route.use_case.__qualname__!r} is missing 'method'."
@@ -562,8 +571,14 @@ class RestInterfaceCompiler:
                 f"references {route.use_case.__qualname__!r} which has not been "
                 "compiled.  Pass it to bootstrap_app(use_cases=[...]) first."
             )
-        split_created(route.use_case)
-        return plan
+        result_type, created_type = _split_created(route.use_case)
+        if created_type is not None and route.status_code == HTTPStatus.CREATED:
+            raise InterfaceCompilationError(
+                f"{iface_name}: route ({route.method.upper()}, {route.path!r}) has "
+                "status_code 201 and its use case returns Created, which answers 201 "
+                "itself; declare the status of the other result instead."
+            )
+        return plan, result_type, created_type
 
     @staticmethod
     def _resolve_query_fields(

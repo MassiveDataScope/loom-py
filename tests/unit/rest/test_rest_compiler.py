@@ -711,20 +711,35 @@ class TestCreatedResult:
             return "ok"
 
     @staticmethod
-    def _interface(use_case: type[UseCase[Any, Any]]) -> type[RestInterface[Any]]:
+    def _interface(use_case: type[UseCase[Any, Any]], status_code: int) -> type[RestInterface[Any]]:
         class IFace(RestInterface[Any]):
             prefix = "/grants"
-            routes = (RestRoute(use_case=use_case, method="POST", path=""),)
+            routes = (
+                RestRoute(use_case=use_case, method="POST", path="", status_code=status_code),
+            )
 
         return IFace
 
-    def _compile(self, use_case: type[UseCase[Any, Any]]) -> list[Any]:
+    def _compile(self, use_case: type[UseCase[Any, Any]], status_code: int = 200) -> list[Any]:
         use_case_compiler = UseCaseCompiler()
         use_case_compiler.compile(use_case)
-        return RestInterfaceCompiler(use_case_compiler).compile(self._interface(use_case))
+        return RestInterfaceCompiler(use_case_compiler).compile(
+            self._interface(use_case, status_code)
+        )
 
-    def test_created_of_a_member_compiles(self) -> None:
-        assert len(self._compile(self.CreatesOrReturns)) == 1
+    def test_the_route_holds_both_result_types(self) -> None:
+        (route,) = self._compile(self.CreatesOrReturns)
+
+        assert (route.result_type, route.created_type) == (str, str)
+
+    def test_a_route_without_created_holds_no_created_type(self) -> None:
+        (route,) = self._compile(CreateUserUseCase)
+
+        assert (route.result_type, route.created_type) == (str, None)
+
+    def test_created_on_a_route_whose_status_is_201_is_refused(self) -> None:
+        with pytest.raises(InterfaceCompilationError, match="201"):
+            self._compile(self.CreatesOrReturns, status_code=201)
 
     @pytest.mark.parametrize("use_case", [WrapsAnotherType, CreatedTwice, OnlyCreated, BareCreated])
     def test_any_other_shape_is_refused(self, use_case: type[UseCase[Any, Any]]) -> None:

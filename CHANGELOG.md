@@ -189,7 +189,8 @@
   `Created(v)` with `201` and body `v`, and any other result with the route's
   `status_code` as before. OpenAPI documents both statuses with the same
   schema. Compilation refuses a `Created` that wraps a type other than another
-  member of the result, appears twice or is not parameterised. Every other
+  member of the result, appears twice or is not parameterised, and a
+  `Created` on a route whose `status_code` is already `201`. Every other
   caller (the invoker, jobs, Celery, `LoomRestAdapter`) receives the wrapper
   and reads `.value`; the use case imports nothing from HTTP.
 - **rest:** `429` with `Retry-After`. `ErrorCode.RATE_LIMITED`
