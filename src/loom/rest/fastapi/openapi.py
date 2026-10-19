@@ -125,14 +125,14 @@ def build_success_responses(
         case may return ``Created``; a status whose type has no JSON Schema
         is left out.
     """
-    result_types = {compiled_route.route.status_code: compiled_route.result_type}
-    if compiled_route.created_type is not None:
-        result_types[HTTPStatus.CREATED.value] = compiled_route.created_type
     responses: dict[int | str, JsonSchema] = {}
-    for status, result_type in result_types.items():
-        entry = _response_entry(result_type, component_registry)
-        if entry is not None:
-            responses[status] = entry
+    success = build_success_response_schema(compiled_route, component_registry)
+    if success is not None:
+        responses[compiled_route.route.status_code] = success
+    if compiled_route.created_type is not None:
+        created = _response_entry(compiled_route.created_type, component_registry)
+        if created is not None:
+            responses[HTTPStatus.CREATED.value] = created
     return responses
 
 
