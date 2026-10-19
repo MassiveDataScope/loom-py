@@ -102,10 +102,12 @@ issue or error type. They are 157 factories and 1,633 lines in all.
 Each factory has the same shape: a code, an f-string message, a component and
 an optional field. Only 9 factories compute anything:
 
-- eight join a sequence, with `"none"` when it is empty: AI
-  `spec_version_unsupported`, `native_tool_unsupported`,
-  `mcp_auth_strategy_unknown`, `engine_not_found`, `engine_api_mismatch`,
-  `remote_clients_unknown`, `agent_marker_unknown`, `mcp_marker_unknown`;
+- eight join a sequence: AI `spec_version_unsupported`,
+  `native_tool_unsupported`, `mcp_auth_strategy_unknown`, `engine_not_found`,
+  `engine_api_mismatch`, `remote_clients_unknown`, `agent_marker_unknown`,
+  `mcp_marker_unknown`. Five of them write `"none"` when the sequence is
+  empty: `native_tool_unsupported`, `mcp_auth_strategy_unknown`,
+  `engine_not_found`, `agent_marker_unknown` and `mcp_marker_unknown`;
 - one names a type: streaming `explode_without_router`.
 
 The issue types differ as follows:
@@ -316,8 +318,9 @@ Parameter rendering:
 
 - `str` is used as is;
 - a `type` renders as its `__qualname__`;
-- a set is sorted, then joined;
-- any other iterable is joined with `", "`, and is `"none"` when empty;
+- a set is ordered by the rendered text of its items, then joined;
+- any other iterable is joined with `", "`, and is `"none"` when empty; a
+  generic alias such as `list[int]` is not joined, it renders as its text;
 - anything else uses `str()`.
 
 `issue()` compares the parameters it receives with the template's field names
@@ -413,14 +416,21 @@ raise ETLCompilationError.from_issue(
     ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref))
 ```
 
+These examples predate the rule the hotfix applied: where the component is a
+single parameter, that parameter is named `component` (see "Applied" below).
+`UNKNOWN_SOURCE_TABLE.issue(...)` therefore takes `component=step_type`, not
+`step=`, and `ENGINE_NOT_FOUND` takes `component=`, not `name=`.
+
 ### Shared issue type
 
 - `AgentCompilationIssue` and the streaming `CompilationIssue` become aliases of
   `CompileIssue[AgentErrorCode]` and `CompileIssue[StreamingErrorCode]`. They
   have the same fields and defaults.
-- `prefixed` becomes a streaming function `prefixed(issue, prefix)` next to its
-  three callers.
-- The `from_message` helpers keep wrapping bare strings as `UNSPECIFIED`.
+- `prefixed` becomes a streaming function `_prefixed(issue, prefix)` next to
+  its three callers.
+- A bare string handed to `AgentCompilationError` or the streaming
+  `CompilationError` becomes an `UNSPECIFIED` issue. The `from_message`
+  helpers, one caller each, are removed.
 - `ETLCompilationError` keeps its constructor in 2.x and gains one
   `from_issue(issue)` classmethod. In 3.0 the constructor takes the issue
   directly.
@@ -433,15 +443,15 @@ raise ETLCompilationError.from_issue(
 The factories are removed in 2.x, with no alias, deprecation warning or
 metaclass hook: the owner treats them as a defect. Every caller in the
 repository moves to `Code.X.issue(...)` in the same change, and the changelog
-names the removed functions.
+names the removal and gives examples of the removed functions.
 
 ### Trade-offs
 
 - **Type-checked parameters are lost.** Today mypy checks each factory's
   signature. Afterwards a missing or misspelled parameter fails only when the
   issue is built, with a `TypeError` that names the code.
-- **Mitigation.** Every code needs a compile-path test that drives the compiler
-  into the failure and asserts the code. That builds the issue on the real
+- **Mitigation.** Every code needs a compile-path test that drives the compiler,
+  or the validator that raises it, into the failure and asserts the code. That builds the issue on the real
   path, so a wrong parameter fails there. A name search of `tests/` (the code
   as `.NAME`, `"NAME"` or a factory call), excluding the four files that call
   factories directly, finds these gaps:
@@ -468,9 +478,10 @@ names the removed functions.
 
   Each pillar's migration adds the missing compile-path tests in the same pull
   request, or deletes the dead code.
-- **Messages change slightly.** Sets render as `a, b` instead of `['a', 'b']`,
-  types render by `__qualname__`, and an empty list renders as `none`.
-  Message text is not contract, but tests that match on it change.
+- **Messages change slightly.** Superseded by the applied hotfix, which keeps
+  the message text: call sites pass the text a factory used to compute (see
+  "Applied"). Only a sequence that is empty renders `none` where it rendered
+  nothing, and no call site passes one.
 - **Defaults move to callers.** `upsert_no_keys(step, method="upsert")` becomes
   an explicit `method=` at its call sites.
 - **Factories passed as callables** (`_validate_remote_url(..., mcp_url_invalid)`,
@@ -480,24 +491,17 @@ names the removed functions.
 
 | File | Today | After (estimate) | After (applied) |
 |---|---|---|---|
-| `core/errors/codes.py` | 38 | about 95 | 140 |
-| `ai/errors.py` | 1,679 | about 820 | 941 |
-| `streaming/compiler/_errors.py` | 477 | about 220 | 248 |
-| `etl/compiler/_errors.py` | 473 | about 240 | 303 |
-| Total | 2,667 | about 1,375 | 1,632 |
+| `core/errors/codes.py` | 38 | about 95 | 143 |
+| `ai/errors.py` | 1,679 | about 820 | 946 |
+| `streaming/compiler/_errors.py` | 477 | about 220 | 240 |
+| `etl/compiler/_errors.py` | 473 | about 240 | 300 |
+| Total | 2,667 | about 1,375 | 1,629 |
 
 The applied files are longer than the estimate because the formatter writes
 each `NAME = "NAME", Template(...)` that does not fit on one line as a
 parenthesised tuple, about two more lines per member. The "Today" column is
 the evidence commit; at the base of the hotfix, `codes.py` had 41 lines and
 `ai/errors.py` 1,693.
-
-How the estimates were made:
-
-- The factories go: 1,633 lines.
-- Each enum member grows from one line to about three (template and field),
-  for +476 lines on 155 members.
-- Call sites keep about the same line count.
 
 ### Steps for Decision B
 
@@ -516,7 +520,7 @@ What the hotfix did where this ADR left a choice, and what it found:
 
 - `AgentCompilationIssue` and the streaming `CompilationIssue` are type
   aliases of `CompileIssue[...]`. `UNSPECIFIED` carries the template
-  `"{message}"`, so `from_message` builds through `issue()` too.
+  `"{message}"`, so a bare string becomes an issue through `issue()` too.
 - Messages keep their text. Where a factory named a type by `__name__`, the
   call site passes `type(node).__name__`, because `__qualname__` would change
   the text for nested classes. A sequence that is empty renders `none` where
@@ -524,22 +528,34 @@ What the hotfix did where this ADR left a choice, and what it found:
 - Where the component was one parameter, that parameter is `component`, as
   in the default template. Parameters that carry the redaction rule keep
   their names (`server`, `agent`).
-- The use-case `Mcp()` include check shares `TOOL_FILTER_MATCHES_NOTHING`
-  with its own message and field, so it builds its issue directly.
-  `SPEC_MALFORMED` and one
-  `MCP_TRANSPORT_INVALID` site set the field on the issue, because only the
-  call site knows it.
+- The use-case `Mcp()` include check gets its own code,
+  `USECASE_TOOL_FILTER_MATCHES_NOTHING`, with the message and the
+  `parameters.<name>` field it had; `TOOL_FILTER_MATCHES_NOTHING` stays with
+  the agent artifact's filter. No issue is built outside `issue()`.
+- `MCP_TRANSPORT_INVALID` takes its field as a parameter: `transport`, or
+  the nested key to blame, such as one `env` name. `SPEC_MALFORMED` has no
+  field in its template, and the decoder sets the field on the issue when it
+  knows the path; the ADR does not decide how an absent field would render.
 - `OUTPUT_CHECK_UNRESOLVABLE` is not dead: `compile_output_check` has used its
   factory since #233. It now has a compile-path test, as does
   `ENDPOINT_AUTH_MISSING`.
 - A contract test per pillar renders every code from its declared
-  parameters and checks, over the AST of `src/loom`, that every
-  `Code.X.issue(...)` call passes exactly those parameters.
+  parameters and checks, over the AST of `src/loom`, that every literal
+  `Code.X.issue(...)` call passes exactly those parameters. A static check
+  cannot see which code a call on a variable (`code.issue(...)`) receives.
+  Each such call site is therefore listed, with the tests that build its
+  issues on the real path, and the test fails on an unlisted site or a
+  listed test that does not exist.
 - Streaming: two codes could not be raised because their checks were wrong,
   and the hotfix fixes the checks. `Broadcast` was dispatched as a plain
   terminal, so `BROADCAST_NOT_LAST` never fired and broadcast branches were
   never shape-checked. The `ERROR_ENVELOPE_UNPARAMETERIZED` check matched only
-  `ErrorEnvelope[X]`, so a bare `ErrorEnvelope` compiled.
+  `ErrorEnvelope[X]`, so a bare `ErrorEnvelope` compiled. A review also
+  found that `ExpandRoutes` was never validated: its routes were not
+  shape-checked, and a node could follow it. The hotfix checks each route as
+  a record stream and keeps `ExpandRoutes` last (`TERMINAL_NOT_LAST`). A
+  misplaced `Broadcast` in a Router branch now reports `BROADCAST_NOT_LAST`
+  too.
 - ETL: `ETLCompilationError` keeps its constructor and gains `from_issue`.
   Where a message showed a sorted list or a repr (`['a', 'b']`,
   `IntoTemp('x')`), the call site passes the formatted text, so messages keep
@@ -555,9 +571,9 @@ What the hotfix did where this ADR left a choice, and what it found:
   the data of a run, not a compile failure.
 - ETL: `INVALID_SOURCES_TYPE` is removed as dead code. `ETLStep` classifies
   sources as grouped only when they are a `Sources` or a `SourceSet`, so its
-  guard could never fail. Every other code listed above has a compile-path
-  test that asserts the code. Most already drove the failure and matched
-  only its message.
+  guard could never fail. Every other code listed above has a test that
+  drives the compiler, or the validator that raises it, into the failure and
+  asserts the code. Most already did so and matched only the message.
 
 ## Alternatives rejected
 

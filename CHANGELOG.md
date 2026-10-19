@@ -88,6 +88,18 @@
   naming a scalar leaf (`"api.token"`) and convert that value; before, they
   failed on anything but a mapping.
 
+- **core:** compile-issue catalogues as data (ADR 0003, part B).
+  `loom.core.errors.codes` gains `IssueCode`, `Template` and `CompileIssue`.
+  An `IssueCode` member is declared as `NAME = "NAME", Template(text,
+  field=..., component=...)`, and `Code.NAME.issue(**params)` builds its
+  `CompileIssue` (`code`, `message`, `component`, `field`). Each part of the
+  template is a `str.format` template. A sequence parameter is joined with
+  `", "` and renders `none` when empty, a set is ordered by the text of its
+  items, and a type renders as its `__qualname__`. A missing or unknown
+  parameter raises a `TypeError` naming the code. `AgentErrorCode`,
+  `StreamingErrorCode` and `ETLErrorCode` are such catalogues, and
+  `ETLCompilationError.from_issue(issue)` raises the ETL error for an issue.
+
 ### ai
 
 - **ai:** `AiConfig` logs a warning for every key of `ai.prices` that no
@@ -493,6 +505,24 @@
 
 ### ai
 
+- **ai:** compile issues come from the code catalogue, and the 89 issue
+  factory functions of `loom.ai.errors` are removed, without aliases: for
+  example `spec_malformed`, `engine_not_found` and `mcp_server_unreachable`.
+  Build an issue with `AgentErrorCode.X.issue(...)` and keyword arguments,
+  such as `AgentErrorCode.ENGINE_NOT_FOUND.issue(component="openai-agents",
+  available=["pydantic-ai"])`. `loom.ai.errors.from_message` is removed too:
+  `AgentCompilationError` still turns a bare string into an `UNSPECIFIED`
+  issue. Messages keep their text; a list that is empty renders `none`.
+- **ai:** `AgentCompilationIssue` is a type alias of
+  `CompileIssue[AgentErrorCode]` from `loom.core.errors.codes`, not a class.
+  It has the same fields, but `isinstance` against it raises `TypeError`
+  (check `CompileIssue` instead), and it no longer derives from
+  `LoomFrozenStruct`, so `loom_message_type()` is gone.
+- **ai:** an `Mcp()` include filter on a use case that matches no tool aborts
+  start-up with the new code `USECASE_TOOL_FILTER_MATCHES_NOTHING` instead of
+  `TOOL_FILTER_MATCHES_NOTHING`, which is now raised only by an agent
+  artifact's filter. The message and the `parameters.<name>` field are
+  unchanged.
 - **ai:** `AgentPlan.fingerprint`, and so the ETL `agent_version` column,
   changes once for every existing agent. It no longer covers any policy, so
   changing `retries`, a timeout, `max_iterations`, `max_tool_calls`,
@@ -646,6 +676,25 @@
 
 ### etl
 
+- **etl:** compile errors come from the code catalogue, and the 34
+  class-method factories of `ETLCompilationError` are removed, without
+  aliases: for example `upsert_no_keys`, `missing_target` and
+  `unknown_source_table`. Raise
+  `ETLCompilationError.from_issue(ETLErrorCode.X.issue(...))`; the
+  `ETLCompilationError(code, component, message, field)` constructor is
+  unchanged. Messages keep their text.
+- **etl:** each `IntoHistory` compile check has its own code instead of
+  `INVALID_TARGET_TYPE`: `HISTORIFY_KEYS_EMPTY`, `HISTORIFY_KEYS_TRACK_OVERLAP`,
+  `HISTORIFY_EFFECTIVE_DATE_IN_TRACK`, `HISTORIFY_BOUNDARY_IN_KEYS`,
+  `HISTORIFY_BOUNDARY_IN_TRACK`, `HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN`,
+  `HISTORIFY_DELETE_MARKER_REQUIRES_LOG` and
+  `HISTORIFY_DELETE_MARKER_DECLARED_COLUMN`. Messages and fields are unchanged;
+  code that matched `INVALID_TARGET_TYPE` for these checks must match the new
+  codes. `INVALID_TARGET_TYPE` now means only a `target` that is not an
+  `IntoTable`, `IntoFile` or `IntoTemp`.
+- **etl:** `ETLErrorCode.INVALID_SOURCES_TYPE` is removed. No step could raise
+  it: a step's sources are grouped only when `sources` is a `Sources` or a
+  `SourceSet`, and both are valid.
 - **etl:** a `WithAgent` compiled by a runner whose config has no `ai:`
   section fails with the new code `AGENT_RUNNER_NOT_CONFIGURED` instead of
   `AGENT_NOT_FOUND`, which now means only that no artifact declares the name.
@@ -691,6 +740,20 @@
   raise `ValueError`, like zero and a negative amount; a `Decimal` `NaN` or
   `sNaN` used to raise `decimal.InvalidOperation`, and a `Decimal`
   `Infinity`, a `float` `inf` and a `float` `nan` were accepted.
+
+### streaming
+
+- **streaming:** compile issues come from the code catalogue
+  (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
+  factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
+  alias of `CompileIssue[StreamingErrorCode]`, not a class: it has the same
+  fields, but `isinstance` against it raises `TypeError` (check
+  `CompileIssue` instead), `loom_message_type()` is gone, and
+  `CompilationIssue.prefixed()` is removed. Messages keep their text.
+- **streaming:** a `Broadcast` followed by another node reports
+  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level, in a
+  branch and in a Router branch. It used to report `TERMINAL_NOT_LAST` with
+  component `Broadcast`.
 
 ## 🐛 Fixes
 
@@ -761,27 +824,6 @@
 
 ### etl
 
-- **etl:** compile errors come from the code catalogue (ADR 0003, part B). The
-  34 class-method factories of `ETLCompilationError` (`upsert_no_keys`,
-  `missing_target`, `unknown_source_table` and the rest) are removed, without
-  aliases. Each `ETLErrorCode` member carries the template of its message,
-  component and field; the compiler raises
-  `ETLCompilationError.from_issue(ETLErrorCode.X.issue(...))`, and a missing or
-  unknown argument raises a `TypeError` naming the code. The
-  `ETLCompilationError(code, component, message, field)` constructor is
-  unchanged. Messages keep their text.
-- **etl:** each `IntoHistory` compile check has its own code instead of
-  `INVALID_TARGET_TYPE`: `HISTORIFY_KEYS_EMPTY`, `HISTORIFY_KEYS_TRACK_OVERLAP`,
-  `HISTORIFY_EFFECTIVE_DATE_IN_TRACK`, `HISTORIFY_BOUNDARY_IN_KEYS`,
-  `HISTORIFY_BOUNDARY_IN_TRACK`, `HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN`,
-  `HISTORIFY_DELETE_MARKER_REQUIRES_LOG` and
-  `HISTORIFY_DELETE_MARKER_DECLARED_COLUMN`. Messages and fields are unchanged;
-  code that matched `INVALID_TARGET_TYPE` for these checks must match the new
-  codes. `INVALID_TARGET_TYPE` now means only a `target` that is not an
-  `IntoTable`, `IntoFile` or `IntoTemp`.
-- **etl:** `ETLErrorCode.INVALID_SOURCES_TYPE` is removed. No step could raise
-  it: a step's sources are grouped only when `sources` is a `Sources` or a
-  `SourceSet`, and both are valid.
 - **etl:** `replace(allow_empty=False)` on Spark writes the rows it checked.
   The writer ran `DataFrame.isEmpty()` and then let the write compute the
   frame again, so a source that changed in between, or a nondeterministic
@@ -861,19 +903,6 @@
 
 ### ai
 
-- **ai:** compile issues come from the code catalogue (ADR 0003, part B). The
-  89 issue factory functions of `loom.ai.errors` (`spec_malformed`,
-  `engine_not_found`, `mcp_server_unreachable` and the rest) are removed,
-  without aliases. Each `AgentErrorCode` member carries the template of its
-  message, component and field, and callers build the issue with
-  `AgentErrorCode.X.issue(...)` and keyword arguments only, for example
-  `AgentErrorCode.ENGINE_NOT_FOUND.issue(component="openai-agents",
-  available=["pydantic-ai"])`. A missing or unknown argument raises a
-  `TypeError` naming the code. `AgentCompilationIssue` is now
-  `CompileIssue[AgentErrorCode]` from `loom.core.errors.codes`, with the same
-  fields. The streaming compiler's private factories go the same way
-  (`StreamingErrorCode.X.issue(...)`). Messages keep their text; a list that
-  is empty renders `none`.
 - **ai:** `PolarsAgentRunner.map` runs at most `ai.max_concurrent_runs`
   worker tasks, which take the rows in order, instead of creating one task
   per row up front; the order of the output rows is unchanged. A run
@@ -946,18 +975,23 @@
 ### streaming
 
 - **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
-  treated it as a plain terminal, so a `Broadcast` followed by another node
-  reported `TERMINAL_NOT_LAST` instead of `BROADCAST_NOT_LAST`, and the nodes
-  of its branches were never shape-checked. A branch with a shape mismatch,
-  such as a record step after `CollectBatch`, now fails compilation with
-  `SHAPE_MISMATCH` scoped under `broadcast branch <n>`; such flows used to
-  compile.
+  treated it as a plain terminal, so the nodes of its branches were never
+  shape-checked. A branch with a shape mismatch, such as a record step after
+  `CollectBatch`, now fails compilation with `SHAPE_MISMATCH` scoped under
+  `broadcast branch <n>`; such flows used to compile. The code a misplaced
+  `Broadcast` reports is under Behaviour changes.
 - **streaming:** a bare `ErrorEnvelope` among the `payloads` of
   `FromMultiTypeTopic` is refused with `ERROR_ENVELOPE_UNPARAMETERIZED`. The
   check only matched `ErrorEnvelope[X]`, which always has a parameter, so the
   bare class compiled as a plain payload and its messages never reached the
   error dispatch. Declare `ErrorEnvelope[OrderEvent]` instead; such flows used
   to compile.
+- **streaming:** an `ExpandRoutes` is validated. Its routes were never
+  shape-checked and nothing stopped a node from following it, although the
+  node is terminal and hands the expanded payloads, not rows, to whatever
+  follows. Each route is now checked on the record stream it receives, with
+  issues scoped under `expand_routes branch <type>`, and a node after an
+  `ExpandRoutes` fails with `TERMINAL_NOT_LAST`; such flows used to compile.
 
 ### prefect
 
