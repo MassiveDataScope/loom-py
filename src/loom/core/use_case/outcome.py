@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import string
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
-_URI_REFERENCE = re.compile(r"(?:[\w\-.~:/?#\[\]@!$&'()*+,;=]|%[\dA-Fa-f]{2})+", re.ASCII)
+_URI_CHARACTERS = frozenset(string.ascii_letters + string.digits + "-._~:/?#[]@!$&'()*+,;=%")
+_MALFORMED_PERCENT = re.compile(r"%(?![\dA-Fa-f]{2})", re.ASCII)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +41,11 @@ class Created(Generic[T]):
 
     def __post_init__(self) -> None:
         location = self.location
-        if location is not None and not _URI_REFERENCE.fullmatch(location):
+        if location is not None and (
+            _MALFORMED_PERCENT.search(location)
+            or not location
+            or not _URI_CHARACTERS.issuperset(location)
+        ):
             raise ValueError(
                 "Created.location must be non-empty and hold only characters allowed "
                 "in an RFC 3986 URI reference"
