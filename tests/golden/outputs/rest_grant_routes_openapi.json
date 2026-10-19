@@ -1,0 +1,222 @@
+{
+  "operations": {
+    "DELETE /v1/grants/{grant_id}": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "grant_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "title": "Grant Id",
+            "type": "string"
+          }
+        }
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantView"
+              }
+            }
+          },
+          "description": "Successful Response"
+        }
+      }
+    },
+    "GET /v1/grants": {
+      "parameters": [
+        {
+          "in": "query",
+          "name": "membershipId",
+          "required": false,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "roleCode",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/TenantRoleCode"
+          }
+        },
+        {
+          "in": "query",
+          "name": "state",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/GrantStateCode"
+          }
+        },
+        {
+          "in": "query",
+          "name": "changed_since",
+          "required": false,
+          "schema": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantPage"
+              }
+            }
+          },
+          "description": "Successful Response"
+        }
+      }
+    },
+    "POST /v1/grants": {
+      "parameters": [],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CreateGrantCommandRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantView"
+              }
+            }
+          },
+          "description": "Successful Response"
+        },
+        "201": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantView"
+              }
+            }
+          },
+          "description": "Created"
+        }
+      }
+    }
+  },
+  "schemas": {
+    "CreateGrantCommandRequest": {
+      "properties": {
+        "membershipId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "roleCode": {
+          "$ref": "#/components/schemas/TenantRoleCode"
+        }
+      },
+      "required": [
+        "membershipId",
+        "roleCode"
+      ],
+      "title": "CreateGrantCommandRequest",
+      "type": "object"
+    },
+    "GrantPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/components/schemas/GrantView"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "GrantPage",
+      "type": "object"
+    },
+    "GrantStateCode": {
+      "enum": [
+        "expired",
+        "live",
+        "revoked"
+      ],
+      "title": "GrantStateCode"
+    },
+    "GrantView": {
+      "properties": {
+        "grantId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "membershipId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "roleCode": {
+          "$ref": "#/components/schemas/TenantRoleCode"
+        },
+        "state": {
+          "$ref": "#/components/schemas/GrantStateCode"
+        }
+      },
+      "required": [
+        "grantId",
+        "membershipId",
+        "roleCode",
+        "state"
+      ],
+      "title": "GrantView",
+      "type": "object"
+    },
+    "TenantRoleCode": {
+      "enum": [
+        "admin",
+        "member"
+      ],
+      "title": "TenantRoleCode"
+    }
+  }
+}
