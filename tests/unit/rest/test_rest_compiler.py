@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.use_case import Created
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
 from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
@@ -682,3 +683,48 @@ class TestCompileSources:
         with pytest.raises(InterfaceCompilationError) as excinfo:
             rest_compiler.compile_sources(sources)
         assert "disable the Python route" in str(excinfo.value)
+
+
+class TestCreatedResult:
+    """A ``Created`` result must wrap one of the other members of the result union."""
+
+    class CreatesOrReturns(UseCase[Any, str | Created[str]]):
+        async def execute(self) -> str | Created[str]:
+            return "ok"
+
+    class WrapsAnotherType(UseCase[Any, Any]):
+        async def execute(self) -> str | Created[int]:
+            return "ok"
+
+    class CreatedTwice(UseCase[Any, Any]):
+        async def execute(self) -> str | int | Created[str] | Created[int]:
+            return "ok"
+
+    class OnlyCreated(UseCase[Any, Any]):
+        async def execute(self) -> Created[str]:
+            return Created("ok")
+
+    class BareCreated(UseCase[Any, Any]):
+        async def execute(self) -> str | Created:  # type: ignore[type-arg]
+            return "ok"
+
+    @staticmethod
+    def _interface(use_case: type[UseCase[Any, Any]]) -> type[RestInterface[Any]]:
+        class IFace(RestInterface[Any]):
+            prefix = "/grants"
+            routes = (RestRoute(use_case=use_case, method="POST", path=""),)
+
+        return IFace
+
+    def _compile(self, use_case: type[UseCase[Any, Any]]) -> list[Any]:
+        use_case_compiler = UseCaseCompiler()
+        use_case_compiler.compile(use_case)
+        return RestInterfaceCompiler(use_case_compiler).compile(self._interface(use_case))
+
+    def test_created_of_a_member_compiles(self) -> None:
+        assert len(self._compile(self.CreatesOrReturns)) == 1
+
+    @pytest.mark.parametrize("use_case", [WrapsAnotherType, CreatedTwice, OnlyCreated, BareCreated])
+    def test_any_other_shape_is_refused(self, use_case: type[UseCase[Any, Any]]) -> None:
+        with pytest.raises(InterfaceCompilationError, match=r"Created\[T\]"):
+            self._compile(use_case)

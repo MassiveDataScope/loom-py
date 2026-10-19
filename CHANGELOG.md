@@ -184,6 +184,14 @@
 
 ### rest
 
+- **rest:** a use case says it created. `loom.core.use_case.Created[T]` wraps
+  the result of a use case declared `T | Created[T]`; the REST route answers
+  `Created(v)` with `201` and body `v`, and any other result with the route's
+  `status_code` as before. OpenAPI documents both statuses with the same
+  schema. Compilation refuses a `Created` that wraps a type other than another
+  member of the result, appears twice or is not parameterised. Every other
+  caller (the invoker, jobs, Celery, `LoomRestAdapter`) receives the wrapper
+  and reads `.value`; the use case imports nothing from HTTP.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a

@@ -19,7 +19,7 @@ from loom.core.command.introspection import (
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
-from loom.rest.compiler import CompiledRoute
+from loom.rest.compiler import CompiledRoute, split_created
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 
 JsonSchema = dict[str, Any]
@@ -107,17 +107,30 @@ def build_success_response_schema(
         OpenAPI response schema fragment, or ``None`` when the return type
         cannot be resolved to a JSON Schema.
     """
-    response_schema = _use_case_response_schema(compiled_route.route.use_case, component_registry)
-    if response_schema is None:
-        return None
+    result_type, _ = split_created(compiled_route.route.use_case)
+    return _response_entry(result_type, component_registry)
 
-    return {
-        "content": {
-            "application/json": {
-                "schema": response_schema,
-            }
-        }
-    }
+
+def build_created_response_schema(
+    compiled_route: CompiledRoute,
+    component_registry: dict[str, JsonSchema] | None = None,
+) -> JsonSchema | None:
+    """Return the OpenAPI ``201`` response entry of a route whose use case may create.
+
+    Args:
+        compiled_route: Fully resolved route from ``RestInterfaceCompiler``.
+        component_registry: Optional mutable dict that accumulates shared
+            component schemas.
+
+    Returns:
+        OpenAPI response fragment for the type ``Created`` wraps, or ``None``
+        when the use case never returns ``Created`` or the type has no JSON
+        Schema.
+    """
+    _, created_type = split_created(compiled_route.route.use_case)
+    if created_type is None:
+        return None
+    return _response_entry(created_type, component_registry)
 
 
 def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSchema]:
@@ -233,16 +246,16 @@ def _query_spec_openapi_parameters(
     ]
 
 
-def _use_case_response_schema(
-    use_case_type: type[Any],
-    component_registry: dict[str, JsonSchema] | None = None,
+def _response_entry(
+    result_type: Any,
+    component_registry: dict[str, JsonSchema] | None,
 ) -> JsonSchema | None:
-    hints = get_type_hints(use_case_type.execute)
-    return_type = hints.get("return")
-    if return_type is None or return_type is Any:
+    if result_type is Any:
         return None
-
-    return _safe_schema(return_type, component_registry)
+    response_schema = _safe_schema(result_type, component_registry)
+    if response_schema is None:
+        return None
+    return {"content": {"application/json": {"schema": response_schema}}}
 
 
 def _command_request_schema(

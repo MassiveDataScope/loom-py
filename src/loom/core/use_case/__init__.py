@@ -10,6 +10,7 @@ from loom.core.use_case.markers import (
     Mcp,
     OnMissing,
 )
+from loom.core.use_case.outcome import Created
 from loom.core.use_case.rule import Rule, RuleFn, RuleViolation, RuleViolations
 from loom.core.use_case.use_case import UseCase
 
@@ -19,6 +20,7 @@ __all__ = [
     "Exists",
     "Compute",
     "ComputeFn",
+    "Created",
     "F",
     "FieldRef",
     "Input",

@@ -706,6 +706,26 @@ class ProductInterface(RestInterface[Product]):
 
 See [Auto-CRUD guide](autocrud.md) for the full options reference.
 
+### `201` when the use case created
+
+A route answers its `status_code` (`200` by default). A use case that may
+create or find the resource already there returns `Created` when it created:
+
+```python
+from loom.core.use_case import Created, Input
+
+class CreateGrant(UseCase[Grant, GrantView | Created[GrantView]]):
+    async def execute(self, cmd: CreateGrantCommand = Input()) -> GrantView | Created[GrantView]:
+        view, changed = await self._grants.grant(cmd)
+        return Created(view) if changed else view
+```
+
+The route answers `Created(view)` with `201` and `view` as the body, and a
+plain `view` with its `status_code`. OpenAPI documents both statuses with the
+`GrantView` schema. `Created` must wrap one of the other members of the result;
+anything else fails at compile time. Callers other than REST receive the
+`Created` wrapper and read `.value`.
+
 ---
 
 ## Declaring routes in configuration (`app.rest.interfaces`)

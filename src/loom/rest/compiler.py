@@ -19,7 +19,10 @@ Compilation steps per interface:
 
 from __future__ import annotations
 
+import functools
 import inspect
+import operator
+import types
 import typing
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -28,6 +31,7 @@ from typing import Any, NamedTuple
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
+from loom.core.use_case.outcome import Created
 from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
 
 
@@ -191,6 +195,46 @@ class InterfaceCompilationError(Exception):
             "UserRestInterface: duplicate route (GET, /{user_id})"
         )
     """
+
+
+def _execute_hints(use_case_type: type[Any]) -> dict[str, Any]:
+    try:
+        return typing.get_type_hints(use_case_type.execute)
+    except Exception:
+        return {}
+
+
+def split_created(use_case_type: type[Any]) -> tuple[Any, Any]:
+    """Split the result type of ``execute`` around its ``Created`` member.
+
+    Args:
+        use_case_type: Use case whose ``execute`` return annotation is read.
+
+    Returns:
+        The result type without ``Created``, answered with the route's
+        status, and the type ``Created`` wraps, answered with ``201``; that
+        second item is ``None`` when the result names no ``Created``.
+
+    Raises:
+        InterfaceCompilationError: ``Created`` appears more than once, is not
+            parameterised, or wraps a type that is not another member of the
+            result union.
+    """
+    result_type = _execute_hints(use_case_type).get("return", Any)
+    is_union = typing.get_origin(result_type) in (typing.Union, types.UnionType)
+    members = typing.get_args(result_type) if is_union else (result_type,)
+    created = [m for m in members if m is Created or typing.get_origin(m) is Created]
+    if not created:
+        return result_type, None
+    others = tuple(m for m in members if m not in created)
+    wrapped = typing.get_args(created[0])
+    if len(created) > 1 or not wrapped or wrapped[0] not in others:
+        raise InterfaceCompilationError(
+            f"{use_case_type.__qualname__}.execute returns {result_type!r}: a use case "
+            "that may create declares `T | Created[T]`, with one Created wrapping "
+            "one of the other members of the result."
+        )
+    return functools.reduce(operator.or_, others), wrapped[0]
 
 
 @dataclass(frozen=True)
@@ -446,6 +490,7 @@ class RestInterfaceCompiler:
                 f"references {route.use_case.__qualname__!r} which has not been "
                 "compiled.  Pass it to bootstrap_app(use_cases=[...]) first."
             )
+        split_created(route.use_case)
 
     def _resolve_pagination(
         self, route: RestRoute, interface: type[RestInterface[Any]]
@@ -493,12 +538,8 @@ class RestInterfaceCompiler:
         self,
         use_case_type: type[Any],
     ) -> tuple[tuple[str, Any], ...]:
-        execute_fn = use_case_type.execute
-        signature = inspect.signature(execute_fn)
-        try:
-            hints = typing.get_type_hints(execute_fn)
-        except Exception:
-            hints = {}
+        signature = inspect.signature(use_case_type.execute)
+        hints = _execute_hints(use_case_type)
 
         result: list[tuple[str, Any]] = []
         variadic = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)

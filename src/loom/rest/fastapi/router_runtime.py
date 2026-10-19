@@ -28,6 +28,7 @@ import types
 import typing
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 import msgspec
@@ -51,12 +52,14 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.outcome import Created
 from loom.rest._body import BodyTooLarge
 from loom.rest.compiler import CompiledRoute
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
+    build_created_response_schema,
     build_query_parameters_schema,
     build_request_body_schema,
     build_success_response_schema,
@@ -461,6 +464,8 @@ async def _execute_route(
             read_only=compiled_route.read_only,
             identity=identity,
         )
+    if isinstance(result, Created):
+        result, status_code = result.value, HTTPStatus.CREATED.value
     return MsgspecJSONResponse(content=result, status_code=status_code)
 
 
@@ -601,10 +606,13 @@ def bind_interfaces(
         handler = _make_handler(cr, factory, executor, observability_runtime)
         summary, description = _route_docs(cr)
         request_body = build_request_body_schema(cr, component_registry)
+        responses: dict[int | str, dict[str, Any]] = {}
+        created_response = build_created_response_schema(cr, component_registry)
+        if created_response is not None:
+            responses[HTTPStatus.CREATED.value] = created_response
         success_response = build_success_response_schema(cr, component_registry)
-        responses: dict[int | str, dict[str, Any]] | None = None
         if success_response is not None:
-            responses = {cr.route.status_code: success_response}
+            responses[cr.route.status_code] = success_response
 
         openapi_extra: dict[str, Any] | None = None
         query_parameters = build_query_parameters_schema(cr)
@@ -623,7 +631,7 @@ def bind_interfaces(
             description=description,
             status_code=cr.route.status_code,
             tags=list(cr.interface_tags) if cr.interface_tags else [],
-            responses=responses,
+            responses=responses or None,
             openapi_extra=openapi_extra,
         )
 
