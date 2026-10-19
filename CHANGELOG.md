@@ -782,6 +782,11 @@
 
 ### rest
 
+- **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
+  `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
+  while the router clamped `?limit=` to `max_limit`. The schema now publishes
+  `max_limit` as its `maximum` and `min(50, max_limit)` as its `default`, the
+  values the router applies. A larger `?limit=` is still clamped, not refused.
 - **rest:** a path placeholder in `RestInterface.prefix` was dropped. The route
   was registered on prefix + path, but path parameters were read from the
   route `path` only, so the use case never received the prefix parameter (a

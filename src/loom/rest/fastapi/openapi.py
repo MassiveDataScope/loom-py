@@ -20,7 +20,7 @@ from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.rest.compiler import CompiledRoute
-from loom.rest.constants import QueryParam
+from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 
 JsonSchema = dict[str, Any]
 
@@ -127,7 +127,11 @@ def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSch
     params: list[JsonSchema] = []
 
     if _has_query_spec_parameter(hints):
-        params.extend(_query_spec_openapi_parameters(compiled_route.effective_pagination_mode))
+        params.extend(
+            _query_spec_openapi_parameters(
+                compiled_route.effective_pagination_mode, compiled_route.effective_max_limit
+            )
+        )
 
     if _has_profile_parameter(hints) and compiled_route.effective_expose_profile:
         profile_param: JsonSchema = {
@@ -167,7 +171,9 @@ def _has_query_spec_parameter(type_hints: dict[str, Any]) -> bool:
     return False
 
 
-def _query_spec_openapi_parameters(default_mode: PaginationMode) -> list[JsonSchema]:
+def _query_spec_openapi_parameters(
+    default_mode: PaginationMode, max_limit: int
+) -> list[JsonSchema]:
     mode_values = [item.value for item in PaginationMode]
     return [
         {
@@ -181,7 +187,12 @@ def _query_spec_openapi_parameters(default_mode: PaginationMode) -> list[JsonSch
             _PARAM_NAME: QUERY_PARAM_LIMIT,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
-            _PARAM_SCHEMA: {"type": "integer", "minimum": 1, "maximum": 1000, "default": 50},
+            _PARAM_SCHEMA: {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": max_limit,
+                "default": min(LIMIT_DEFAULT, max_limit),
+            },
             _PARAM_DESCRIPTION: "Maximum rows per page.",
         },
         {

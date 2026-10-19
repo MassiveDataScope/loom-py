@@ -30,6 +30,9 @@ class QueryParam(StrEnum):
 
 PROFILE_DEFAULT = "default"
 
+LIMIT_DEFAULT = 50
+"""Rows per page when the request brings no ``?limit=``, capped by the route maximum."""
+
 WWW_AUTHENTICATE_HEADER = "WWW-Authenticate"
 """Header carrying the authentication challenge of a ``401`` response."""
 

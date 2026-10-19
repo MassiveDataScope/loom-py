@@ -213,6 +213,19 @@ def test_a_limit_within_the_maximum_is_honoured() -> None:
     assert response.json()["limit"] == 25
 
 
+@pytest.mark.parametrize("max_limit", [20, 200], ids=["below-default", "above-default"])
+def test_the_published_limit_schema_matches_what_the_router_applies(max_limit: int) -> None:
+    """A client reading the OpenAPI must see the ceiling and default it gets."""
+    client = _items_client(max_limit=max_limit)
+    operation = client.get("/openapi.json").json()["paths"][_LIST_PATH]["get"]
+    schema = next(p["schema"] for p in operation["parameters"] if p["name"] == "limit")
+    applied = (
+        client.get(f"{_LIST_PATH}?limit=100000000").json()["limit"],
+        client.get(_LIST_PATH).json()["limit"],
+    )
+    assert (schema["maximum"], schema["default"]) == applied
+
+
 @pytest.mark.parametrize(
     "query",
     ["limit=abc", "page=abc", "limit=0", "page=0", "page=-3"],

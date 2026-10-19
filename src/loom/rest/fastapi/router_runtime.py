@@ -53,7 +53,7 @@ from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest._body import BodyTooLarge
 from loom.rest.compiler import CompiledRoute
-from loom.rest.constants import QueryParam
+from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
@@ -67,7 +67,6 @@ _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
-_DEFAULT_LIMIT = 50
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
 
 
@@ -298,7 +297,7 @@ def _build_query_spec(
     page = _positive_int(query_params, QueryParam.PAGE, _DEFAULT_PAGE)
     # Clamped rather than refused: a caller asking for more rows than the API
     # serves gets the maximum, but never turns one request into a full scan.
-    limit = min(_positive_int(query_params, QueryParam.LIMIT, _DEFAULT_LIMIT), max_limit)
+    limit = min(_positive_int(query_params, QueryParam.LIMIT, LIMIT_DEFAULT), max_limit)
     cursor = query_params.get(QueryParam.AFTER) or query_params.get(QueryParam.CURSOR)
     pagination = _parse_pagination_mode(
         query_params.get(QueryParam.PAGINATION),
