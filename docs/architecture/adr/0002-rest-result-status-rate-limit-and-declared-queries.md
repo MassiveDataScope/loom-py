@@ -96,8 +96,10 @@ A transport-free wrapper in `loom.core.use_case`:
 # loom/core/use_case/outcome.py
 @dataclass(frozen=True, slots=True)
 class Created(Generic[T]):
-    """The use case created ``value``; without it the result was already there."""
+    """The use case created ``value``."""
+
     value: T
+    location: str | None = None          # an RFC 3986 URI reference, else ValueError
 ```
 
 - A use case that may create returns `T | Created[T]`. "Created" is a fact
@@ -116,8 +118,9 @@ class Created(Generic[T]):
   refuses `Created` on a route whose `status_code` is already 201. The
   result type and the type `Created` wraps are resolved once and held on
   `CompiledRoute` (`result_type`, `created_type`).
-- Other callers (`UseCaseInvoker`, jobs, Celery, `LoomRestAdapter`) receive
-  the wrapper as is; a caller that only wants the value reads `.value`.
+- `LoomRestAdapter` unwraps `Created` the same way (201, the value, and
+  `Location` when given). Only the invoker, jobs and Celery receive the
+  wrapper as is; a caller that only wants the value reads `.value`.
 - The span attribute `status_code` is set before the use case runs
   (`router_runtime.py:446-453`); it keeps recording the declared status.
 
@@ -133,8 +136,10 @@ RATE_LIMITED = "rate_limited"
 class RateLimited(DomainError):
     """The caller spent its budget; it may retry after ``retry_after`` seconds."""
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
-        self.retry_after = max(1, math.ceil(retry_after))   # whole seconds
+        if not math.isfinite(retry_after):
+            raise ValueError(f"RateLimited.retry_after must be finite, got {retry_after!r}")
         super().__init__(message, code=ErrorCode.RATE_LIMITED)
+        self.retry_after = max(1, math.ceil(retry_after))   # whole seconds
 ```
 
 - `HttpErrorMapper._STATUS[ErrorCode.RATE_LIMITED] = HTTPStatus.TOO_MANY_REQUESTS`.
@@ -240,7 +245,12 @@ definitions go to `components.schemas` through the existing
 `_rewrite_to_component_refs`. Nothing else is published for the route,
 except `profile` where the route exposes it and `execute` takes it.
 
-Routes with a `QuerySpec` parameter, or with neither, behave exactly as today.
+Routes with a `QuerySpec` parameter, or with neither, behave as today, except
+that request parameters are resolved before the use case is built.
+
+A `Job` that declares `Query()` is refused at compile time with a
+`CompilationError`: a job is dispatched with primitive parameters, so the
+query struct could never reach it.
 
 ## The consumer's three routes
 
@@ -317,7 +327,8 @@ the filters stay in the consumer: they are its contract, not a query shape.
     requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateGrantCommandRequest'}}}}
     responses:
       '200': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantView'}}}}
-      '201': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantView'}}}}
+      '201': {content: {application/json: {schema: {$ref: '#/components/schemas/GrantView'}}},
+              headers: {Location: {schema: {type: string, format: uri-reference}}}}
 /v1/grants/{grant_id}:
   delete:
     parameters: [{name: grant_id, in: path, required: true, schema: {type: string, format: uuid}}]
@@ -395,8 +406,7 @@ would have affected enum query parameters (open question 5).
 
 ## Semver
 
-All three fit 2.21.0, on one branch `feat/rest-result-status-rate-limit-declared-queries`,
-one commit per gap.
+All three fit 2.21.0, on one branch `feat/rest-result-status-rate-limit-declared-queries`.
 
 - Additive: `Created` (with `location`), `Query()`, `QueryBinding`,
   `ExecutionPlan.query_binding` (defaulted), `QueryField`,
@@ -404,11 +414,12 @@ one commit per gap.
   `build_success_responses`, `ErrorCode.RATE_LIMITED`, `QUERY_VALIDATION` and
   `INSUFFICIENT_AUTHENTICATION`, `RateLimited`, `InsufficientAuthentication`,
   `AgentErrorCode.USECASE_DECLARES_QUERY`, `LoomType.from_query`, a
-  keyword-only `code` on `BoundaryValidationError`, and an optional
+  keyword-only `code` on `BoundaryValidationError`, `names_query_spec`,
+  `created_response`, `RETRY_AFTER_HEADER`, `LOCATION_HEADER`, and an optional
   `component_registry` on `build_query_parameters_schema`.
 - `Created` and `Query()` are opt-in, and `QuerySpec` routes keep their
   parameters, filters and clamp.
-- Six observable changes, all acceptable in a minor:
+- Five observable changes, all acceptable in a minor:
   - a custom `LoomError` already using code `rate_limited` now answers 429
     instead of 500;
   - one coded `query_validation` now answers 400, and one coded
@@ -417,9 +428,7 @@ one commit per gap.
     are private to `_loom_type.py`;
   - every route resolves its request parameters and body before building the
     use case;
-  - `build_success_response_schema` reads `CompiledRoute.result_type`;
-  - `LoomRestAdapter.handle` answers a `Created` with a 201 response instead
-    of returning the wrapper.
+  - `build_success_response_schema` reads `CompiledRoute.result_type`.
 
 ## Tests
 
