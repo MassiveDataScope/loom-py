@@ -217,6 +217,9 @@
   (`QueryBinding`), `CompiledRoute.query_fields` (`QueryField`) and
   `LoomType.from_query` are new; `build_query_parameters_schema` takes an
   optional `component_registry`. `QuerySpec` routes are unchanged.
+  A caller other than REST must pass an instance of the query type; a dict
+  or any other value raises `ParameterBindingError` naming the parameter and
+  the type received, never the value.
   An agent granted a use case that takes `Query()` fails to compile with
   `USECASE_DECLARES_QUERY`.
 - **rest:** step-up authentication (RFC 9470).

@@ -8,7 +8,7 @@ import msgspec
 import pytest
 
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
 from loom.core.engine.plan import ParamBinding, QueryBinding
 from loom.core.model import UnsupportedBoundaryType
 from loom.core.use_case.markers import Query
@@ -78,12 +78,13 @@ def test_a_query_type_that_is_not_a_strict_model_is_refused(
     assert isinstance(excinfo.value.__cause__, UnsupportedBoundaryType)
 
 
-async def test_the_executor_passes_the_query_struct_through() -> None:
+@pytest.mark.parametrize("raw", [{"limit": 424242}, 424242, "limit=424242"])
+async def test_a_query_that_is_not_an_instance_of_its_type_is_refused(raw: object) -> None:
     compiler = UseCaseCompiler()
     compiler.compile(ListGrants)
 
-    result = await RuntimeExecutor(compiler).execute(
-        ListGrants(), params={"query": GrantQuery(limit=7)}
-    )
-
-    assert result == 7
+    with pytest.raises(ParameterBindingError) as excinfo:
+        await RuntimeExecutor(compiler).execute(ListGrants(), params={"query": raw})
+    assert "'query'" in str(excinfo.value)
+    assert "GrantQuery" in str(excinfo.value)
+    assert "424242" not in str(excinfo.value)
