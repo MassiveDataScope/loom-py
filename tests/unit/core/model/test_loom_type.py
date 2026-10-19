@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import enum
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -708,6 +708,8 @@ class StructQuery(msgspec.Struct, forbid_unknown_fields=True):
     colour: Tint | None = None
     ident: UUID | None = None
     since: Annotated[datetime, msgspec.Meta(tz=True)] | None = None
+    day: date | None = None
+    at: time | None = None
 
 
 class ModelQuery(BaseModel):
@@ -720,6 +722,8 @@ class ModelQuery(BaseModel):
     colour: Tint | None = None
     ident: UUID | None = None
     since: pydantic.AwareDatetime | None = None
+    day: date | None = None
+    at: time | None = None
 
 
 _QUERY = {
@@ -795,6 +799,8 @@ class TestFromQuery:
             ("ident", "null"),
             ("since", "2026-09-15T10:00:00"),
             ("since", "1700000000"),
+            ("day", "20260915"),
+            ("at", "1000"),
             ("since", "+1700000000"),
             ("since", "0017"),
             ("since", ".5"),
@@ -810,6 +816,11 @@ class TestFromQuery:
         assert [name for name, _ in excinfo.value.violations] == [field]
         assert excinfo.value.code == "boundary_validation"
         assert "sys." not in excinfo.value.message
+
+    def test_accepts_a_date_and_a_time(self, query: LoomType) -> None:
+        value = query.from_query({"day": "2026-09-15", "at": "10:30:00"})
+
+        assert (value.day, value.at) == (date(2026, 9, 15), time(10, 30))
 
     @pytest.mark.parametrize("limit", [2**64 - 1, -(2**63), 0, -7])
     def test_accepts_an_integer_in_the_64_bit_range(self, query: LoomType, limit: int) -> None:

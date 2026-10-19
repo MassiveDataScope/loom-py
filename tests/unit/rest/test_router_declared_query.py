@@ -302,11 +302,13 @@ def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
     )
 
 
-@pytest.mark.parametrize("query", ["page=2", "limit=500"])
+@pytest.mark.parametrize(
+    "url", ["/grants?page=2", "/grants?limit=500", "/grants/by-profile?profile=unknown"]
+)
 def test_a_refused_query_does_not_build_the_use_case(
-    client: TestClient, factory: _RecordingFactory, query: str
+    client: TestClient, factory: _RecordingFactory, url: str
 ) -> None:
-    response = client.get(f"/grants?{query}")
+    response = client.get(url)
 
     assert response.status_code == 400
     assert factory.built == []
@@ -340,3 +342,11 @@ def test_a_field_without_default_is_a_required_parameter(client: TestClient) -> 
         ("owner", True),
         ("tier", False),
     ]
+
+
+def test_a_missing_required_field_is_a_query_validation_error(client: TestClient) -> None:
+    response = client.get("/grants/by-owner")
+
+    detail = response.json()["detail"]
+    assert (response.status_code, detail["code"]) == (400, "query_validation")
+    assert [violation["field"] for violation in detail["violations"]] == ["owner"]

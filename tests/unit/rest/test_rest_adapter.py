@@ -163,10 +163,15 @@ class TestHttpErrorMapper:
         exc = self._mapper().to_http(Unauthenticated())
         assert exc.status_code == 401
 
-    def test_unauthenticated_carries_the_bearer_challenge(self) -> None:
+    @pytest.mark.parametrize(
+        "error",
+        [Unauthenticated(), LoomError("Step up.", code="insufficient_authentication")],
+        ids=["unauthenticated", "custom-insufficient-authentication"],
+    )
+    def test_a_401_carries_the_plain_bearer_challenge(self, error: LoomError) -> None:
         """RFC 9110 §11.6.1: a 401 without a challenge is not a valid response."""
-        exc = self._mapper().to_http(Unauthenticated())
-        assert exc.headers == {"WWW-Authenticate": "Bearer"}
+        exc = self._mapper().to_http(error)
+        assert (exc.status_code, exc.headers) == (401, {"WWW-Authenticate": "Bearer"})
 
     def test_insufficient_authentication_challenges_a_step_up(self) -> None:
         """RFC 9470 §3: the 401 names the error and what the next token must meet."""
