@@ -19,7 +19,7 @@ from typing import Any, Literal
 import msgspec
 import structlog
 
-from loom.core.environment import Environment
+from loom.core.environment import Environment, resolve_environment
 from loom.core.model import LoomFrozenStruct
 
 
@@ -304,7 +304,7 @@ _DEFAULT_LOG_CONFIG = LogConfig()
 def configure_logging_from_values(
     *,
     name: str = "",
-    environment: Environment = Environment.PRODUCTION,
+    environment: Environment | str | None = None,
     renderer: str | None = None,
     colors: bool | None = None,
     level: str = "INFO",
@@ -320,8 +320,9 @@ def configure_logging_from_values(
 
     Args:
         name: stdlib logger name. ``""`` targets the root logger.
-        environment: Resolved environment; drives the renderer and colour
-            defaults. Production unless the caller passes the one it resolved.
+        environment: Environment of the process; drives the renderer and
+            colour defaults. Resolved like
+            :func:`~loom.core.environment.resolve_environment` when ``None``.
         renderer: Output renderer name (``"json"`` or ``"console"``).
         colors: Enable ANSI colours. ``None`` follows ``environment``.
         level: Minimum log level name.
@@ -349,7 +350,7 @@ def configure_logging_from_values(
 def configure_logging(
     config: LogConfig = _DEFAULT_LOG_CONFIG,
     *,
-    environment: Environment = Environment.PRODUCTION,
+    environment: Environment | str | None = None,
 ) -> None:
     """Configure structlog and stdlib logging from a ``LogConfig``.
 
@@ -358,9 +359,10 @@ def configure_logging(
 
     Args:
         config: Logging configuration.
-        environment: Resolved environment; drives the renderer and colour
-            defaults. Production (JSON, no colours) unless the caller passes
-            the one it resolved.
+        environment: Environment of the process; drives the renderer and
+            colour defaults. Resolved like
+            :func:`~loom.core.environment.resolve_environment` (``LOOM_ENV``,
+            else production) when ``None``.
 
     Raises:
         ValueError: If ``config.level`` is not a recognised log level name.
@@ -369,7 +371,7 @@ def configure_logging(
         >>> configure_logging(LogConfig(level="WARNING"), environment=Environment.STAGING)
     """
     level = _parse_level(config.level)
-    _setup_stdlib(config, level, environment)
+    _setup_stdlib(config, level, resolve_environment(environment))
     _apply_named_levels(config)
 
     if config.fields:

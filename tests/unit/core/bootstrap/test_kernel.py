@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.environment import Environment
+from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.uow.abc import UnitOfWorkFactory
 from loom.core.use_case.use_case import UseCase
 
@@ -67,7 +69,34 @@ def test_create_kernel_registers_the_environment_it_receives() -> None:
     assert runtime.container.resolve(Environment) is Environment.STAGING
 
 
-def test_create_kernel_without_an_environment_registers_production() -> None:
+def test_create_kernel_without_an_environment_resolves_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(ENVIRONMENT_VARIABLE, "development")
+
     runtime = create_kernel(config=_Config(), use_cases=[_NoDepsUseCase])
 
-    assert runtime.container.resolve(Environment) is Environment.PRODUCTION
+    assert runtime.container.resolve(Environment) is Environment.DEVELOPMENT
+
+
+class _Deployment:
+    def __init__(self, environment: Environment) -> None:
+        self.environment = environment
+
+
+def test_a_module_service_resolves_the_environment_at_validation() -> None:
+    def _module(container: LoomContainer) -> None:
+        container.register(
+            _Deployment,
+            lambda: _Deployment(container.resolve(Environment)),
+            scope=Scope.APPLICATION,
+        )
+
+    runtime = create_kernel(
+        config=_Config(),
+        use_cases=[_NoDepsUseCase],
+        modules=[_module],
+        environment=Environment.STAGING,
+    )
+
+    assert runtime.container.resolve(_Deployment).environment is Environment.STAGING

@@ -12,7 +12,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.environment import ENVIRONMENT_VARIABLE, Environment, resolve_environment
+from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger import configure_logging
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
 
@@ -186,4 +186,4 @@ def _configure_loom_logging(_test_environment: None) -> None:
     never touches that frozen stream — and makes the suite exercise the same
     logging path production does.
     """
-    configure_logging(environment=resolve_environment())
+    configure_logging()

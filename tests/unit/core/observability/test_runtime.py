@@ -194,7 +194,7 @@ class TestFromConfig:
 
     @pytest.mark.parametrize(
         ("given", "expected"),
-        [({}, Environment.PRODUCTION), ({"environment": Environment.TEST}, Environment.TEST)],
+        [({}, Environment.TEST), ({"environment": Environment.STAGING}, Environment.STAGING)],
     )
     def test_the_logger_receives_the_environment_of_the_runtime(
         self,

@@ -9,7 +9,7 @@ import structlog
 
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.environment import Environment
+from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.logger.config import LoggerConfig, configure_logging_from_values
 
 
@@ -50,10 +50,27 @@ def logger_name(request: pytest.FixtureRequest) -> Iterator[str]:
         target.removeHandler(handler)
 
 
-def test_without_an_environment_the_logger_renders_json(logger_name: str) -> None:
+@pytest.mark.parametrize(
+    ("selected", "renderer_type"),
+    [
+        (None, structlog.processors.JSONRenderer),
+        ("development", structlog.dev.ConsoleRenderer),
+    ],
+)
+def test_without_an_environment_the_logger_resolves_it(
+    logger_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+    selected: str | None,
+    renderer_type: type,
+) -> None:
+    if selected is None:
+        monkeypatch.delenv(ENVIRONMENT_VARIABLE, raising=False)
+    else:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, selected)
+
     renderer = _root_renderer(logger_name)
 
-    assert isinstance(renderer, structlog.processors.JSONRenderer)
+    assert isinstance(renderer, renderer_type)
 
 
 @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.STAGING])

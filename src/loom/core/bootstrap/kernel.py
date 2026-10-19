@@ -53,7 +53,7 @@ def create_kernel(
     metrics: MetricsAdapter | None = None,
     uow_factory: UnitOfWorkFactory | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
-    environment: Environment = Environment.PRODUCTION,
+    environment: Environment | str | None = None,
 ) -> KernelRuntime:
     """Create a shared kernel runtime for application adapters.
 
@@ -67,10 +67,11 @@ def create_kernel(
         uow_factory: Optional UnitOfWork factory for transactional execution.
         repo_resolver: Optional repository resolver used by marker-based loads.
             Defaults to ``container.resolve_repo``.
-        environment: Environment the application resolved at startup,
-            registered at ``APPLICATION`` scope so a use case can inject
-            :class:`~loom.core.environment.Environment`. Production unless the
-            caller passes the one it resolved.
+        environment: Environment of the application, resolved like
+            :func:`~loom.core.environment.resolve_environment` when ``None``.
+            Registered at ``APPLICATION`` scope before the modules run, so a
+            module's service or a use case can inject
+            :class:`~loom.core.environment.Environment`.
 
     Returns:
         Fully built :class:`KernelRuntime`.
@@ -81,6 +82,7 @@ def create_kernel(
         modules=modules,
         logger=logger,
         metrics=metrics,
+        environment=environment,
     )
     resolver = repo_resolver or base.container.resolve_repo
     executor = RuntimeExecutor(
@@ -99,7 +101,6 @@ def create_kernel(
     base.container.register(RuntimeExecutor, lambda: executor, scope=Scope.APPLICATION)
     base.container.register(UseCaseRegistry, lambda: registry, scope=Scope.APPLICATION)
     base.container.register(ApplicationInvoker, lambda: app, scope=Scope.APPLICATION)
-    base.container.register(Environment, lambda: environment, scope=Scope.APPLICATION)
     base.container.validate()
 
     return KernelRuntime(
