@@ -644,8 +644,10 @@ class TestErrorsDoNotEchoTheInput:
     def test_msgspec_decode_json(self, payload: dict[str, Any], violation: tuple[str, str]) -> None:
         compiled = loom_type(Paint)
 
+        raw = json.dumps(payload)
+
         with pytest.raises(BoundaryValidationError) as excinfo:
-            compiled.decode_json(json.dumps(payload))
+            compiled.decode_json(raw)
 
         assert excinfo.value.violations == (violation,)
         assert str(_SECRET_NUMBER) not in excinfo.value.message
@@ -680,8 +682,10 @@ class TestErrorsDoNotEchoTheInput:
     ) -> None:
         compiled = loom_type(PaintModel)
 
+        raw = json.dumps(payload)
+
         with pytest.raises(BoundaryValidationError) as excinfo:
-            compiled.decode_json(json.dumps(payload))
+            compiled.decode_json(raw)
 
         assert excinfo.value.violations == (violation,)
         assert excinfo.value.message == f"{violation[0]}: {violation[1]}"
