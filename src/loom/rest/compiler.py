@@ -33,6 +33,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import loom_type
+from loom.core.model.json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
@@ -242,9 +243,6 @@ def split_created(use_case_type: type[Any]) -> tuple[Any, Any]:
 
 
 _SCALAR_TYPES = frozenset({"string", "integer", "number", "boolean"})
-_DEFS = "$defs"
-_REF = "$ref"
-_DEFS_PREFIX = "#/$defs/"
 
 
 @dataclass(frozen=True)
@@ -277,8 +275,8 @@ def _declared_query_fields(query_type: type[Any]) -> tuple[QueryField, ...]:
             UUID or date-time, optionally ``None``.
     """
     document = loom_type(query_type).schema()
-    definitions = document.get(_DEFS, {})
-    root = _definition(document, definitions)
+    definitions = document.get(DEFS, {})
+    root = definition(document, definitions)
     required = set(root.get("required", ()))
     return tuple(
         _query_field(name, prop, name in required, definitions)
@@ -289,31 +287,18 @@ def _declared_query_fields(query_type: type[Any]) -> tuple[QueryField, ...]:
 def _query_field(
     name: str, prop: Mapping[str, Any], required: bool, definitions: Mapping[str, Any]
 ) -> QueryField:
-    schema = _without_null(prop)
-    target = _definition(schema, definitions)
+    schema = without_null(prop)
+    target = definition(schema, definitions)
     if "enum" not in target and target.get("type") not in _SCALAR_TYPES:
         raise ValueError(
             f"query field {name!r} must be a string, integer, number, boolean, enum, "
             "UUID or date-time, optionally None."
         )
-    ref = schema.get(_REF)
+    ref = schema.get(REF)
     if ref is not None:
-        ref_name = ref.removeprefix(_DEFS_PREFIX)
-        schema = {**schema, _DEFS: {ref_name: definitions[ref_name]}}
+        ref_name = ref.removeprefix(DEFS_PREFIX)
+        schema = {**schema, DEFS: {ref_name: definitions[ref_name]}}
     return QueryField(name=name, required=required, schema=schema)
-
-
-def _definition(schema: Mapping[str, Any], definitions: Mapping[str, Any]) -> Mapping[str, Any]:
-    ref = schema.get(_REF)
-    return definitions[ref.removeprefix(_DEFS_PREFIX)] if ref is not None else schema
-
-
-def _without_null(prop: Mapping[str, Any]) -> Mapping[str, Any]:
-    options = [option for option in prop.get("anyOf", ()) if option != {"type": "null"}]
-    if len(options) != 1:
-        return prop
-    rest = {k: v for k, v in prop.items() if k != "anyOf" and not (k == "default" and v is None)}
-    return {**options[0], **rest}
 
 
 def _names_query_spec(annotation: Any) -> bool:

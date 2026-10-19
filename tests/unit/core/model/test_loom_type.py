@@ -695,32 +695,46 @@ class Tint(enum.StrEnum):
     RED = "red"
 
 
+class Grade(enum.IntEnum):
+    LOW = 1
+    HIGH = 2
+
+
 class StructQuery(msgspec.Struct, forbid_unknown_fields=True):
-    limit: int
-    ident: UUID
-    colour: Tint
-    since: Annotated[datetime, msgspec.Meta(tz=True)]
+    limit: int = 50
+    ratio: float = 1.0
+    flag: bool = False
+    level: Grade | None = None
+    colour: Tint | None = None
+    ident: UUID | None = None
+    since: Annotated[datetime, msgspec.Meta(tz=True)] | None = None
 
 
 class ModelQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    limit: int
-    ident: UUID
-    colour: Tint
-    since: pydantic.AwareDatetime
+    limit: int = 50
+    ratio: float = 1.0
+    flag: bool = False
+    level: Grade | None = None
+    colour: Tint | None = None
+    ident: UUID | None = None
+    since: pydantic.AwareDatetime | None = None
 
 
 _QUERY = {
     "limit": "50",
-    "ident": "12345678-1234-5678-1234-567812345678",
+    "ratio": "0.5",
+    "flag": "true",
+    "level": "2",
     "colour": "red",
+    "ident": "12345678-1234-5678-1234-567812345678",
     "since": "2026-09-15T10:00:00+02:00",
 }
 
 
 class TestFromQuery:
-    """Query strings become typed values; a bad value names its field."""
+    """Query strings become typed values only when they are exactly what the field declares."""
 
     @pytest.fixture(params=[StructQuery, ModelQuery], ids=["msgspec", "pydantic"])
     def query(self, request: pytest.FixtureRequest) -> LoomType:
@@ -730,20 +744,49 @@ class TestFromQuery:
     def test_converts_every_string(self, query: LoomType) -> None:
         value = query.from_query(_QUERY)
 
-        assert (value.limit, value.ident, value.colour, value.since.utcoffset()) == (
+        assert (
+            value.limit,
+            value.ratio,
+            value.flag,
+            value.level,
+            value.colour,
+            value.ident,
+            value.since.utcoffset(),
+        ) == (
             50,
-            UUID("12345678-1234-5678-1234-567812345678"),
+            0.5,
+            True,
+            Grade.HIGH,
             Tint.RED,
+            UUID("12345678-1234-5678-1234-567812345678"),
             timedelta(hours=2),
         )
+
+    @pytest.mark.parametrize(
+        "since", ["2026-09-15T10:00:00Z", "2026-09-15T10:00:00-03:00", "2026-09-15T10:00:00+05:30"]
+    )
+    def test_accepts_a_date_time_with_any_offset(self, query: LoomType, since: str) -> None:
+        assert query.from_query({"since": since}).since.tzinfo is not None
 
     @pytest.mark.parametrize(
         ("field", "wrong"),
         [
             ("limit", "fifty"),
-            ("ident", "not-a-uuid"),
+            ("limit", "5.0"),
+            ("limit", "1e2"),
+            ("limit", " 5"),
+            ("limit", "5_0"),
+            ("ratio", "nan"),
+            ("ratio", "1e999"),
+            ("flag", "1"),
+            ("flag", "True"),
+            ("level", "3"),
             ("colour", "blue"),
+            ("ident", "not-a-uuid"),
+            ("ident", "null"),
             ("since", "2026-09-15T10:00:00"),
+            ("since", "1700000000"),
+            ("since", "null"),
         ],
     )
     def test_a_bad_value_names_its_field(self, query: LoomType, field: str, wrong: str) -> None:

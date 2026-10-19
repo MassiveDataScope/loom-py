@@ -19,6 +19,7 @@ class untyped: this module never names ``pydantic.BaseModel``, and loom's own
 from __future__ import annotations
 
 import functools
+import math
 import re
 import sys
 import typing
@@ -29,6 +30,7 @@ import msgspec
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import LoomError
+from loom.core.model.json_schema import DEFS, definition, without_null
 
 _LAX_TYPE_REASON = (
     "the type must reject unknown fields: forbid_unknown_fields=True or "
@@ -80,10 +82,12 @@ class LoomType(Protocol):
         ...
 
     def from_query(self, params: Mapping[str, str], /) -> Any:
-        """Validate query-string values and build the typed value.
+        """Validate query-string values strictly and build the typed value.
 
-        Every value arrives as text, so both libraries convert in their lax
-        mode: ``"50"`` becomes ``50`` for an ``int`` field.
+        Every value arrives as text. An integer, number or boolean field takes
+        only its exact JSON spelling (``50``, ``0.5``, ``true``); every other
+        field validates the text strictly, so ``"null"`` is not ``None`` and a
+        date-time must be RFC 3339, never a Unix timestamp.
 
         Raises:
             BoundaryValidationError: ``params`` does not satisfy the type.
@@ -314,17 +318,18 @@ class _MsgspecType:
     def to_builtins(self, obj: Any, /) -> Any:
         return msgspec.to_builtins(obj)
 
+    @functools.cached_property
+    def _query_coercers(self) -> Mapping[str, Callable[[str], Any]]:
+        return _query_coercers(self.schema())
+
     def from_builtins(self, payload: Any, /) -> Any:
-        return self._convert(payload, strict=True)
-
-    def from_query(self, params: Mapping[str, str], /) -> Any:
-        return self._convert(dict(params), strict=False)
-
-    def _convert(self, payload: Any, *, strict: bool) -> Any:
         try:
-            return msgspec.convert(payload, self.type, strict=strict)
+            return msgspec.convert(payload, self.type)
         except msgspec.ValidationError as exc:
             raise _msgspec_error(exc) from exc
+
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        return self.from_builtins(_coerce_query(params, self._query_coercers))
 
 
 class _PydanticType:
@@ -360,8 +365,78 @@ class _PydanticType:
             message = "; ".join(f"{field}: {msg}" for field, msg in violations)
             raise BoundaryValidationError(message, violations) from exc
 
+    @functools.cached_property
+    def _query_coercers(self) -> Mapping[str, Callable[[str], Any]]:
+        return _query_coercers(self.schema())
+
     def from_query(self, params: Mapping[str, str], /) -> Any:
-        return self.from_builtins(dict(params))
+        return self.decode_json(msgspec.json.encode(_coerce_query(params, self._query_coercers)))
+
+
+_INTEGER = re.compile(r"[+-]?[0-9]+")
+_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_BOOLEANS = {"true": True, "false": False}
+_TEMPORAL_FORMATS = frozenset({"date-time", "date", "time"})
+_NOT_RFC3339 = "Expected an RFC 3339 value, got a number"
+
+
+def _to_int(text: str) -> Any:
+    return int(text) if _INTEGER.fullmatch(text) else text
+
+
+def _to_float(text: str) -> Any:
+    number = float(text) if _NUMBER.fullmatch(text) else math.nan
+    return number if math.isfinite(number) else text
+
+
+def _to_bool(text: str) -> Any:
+    return _BOOLEANS.get(text, text)
+
+
+def _refuse_number(text: str) -> str:
+    if _NUMBER.fullmatch(text):
+        raise ValueError(_NOT_RFC3339)
+    return text
+
+
+_COERCERS: dict[str, Callable[[str], Any]] = {
+    "integer": _to_int,
+    "number": _to_float,
+    "boolean": _to_bool,
+}
+
+
+def _query_coercers(schema: Mapping[str, Any]) -> dict[str, Callable[[str], Any]]:
+    definitions = schema.get(DEFS, {})
+    root = definition(schema, definitions)
+    coercers: dict[str, Callable[[str], Any]] = {}
+    for name, prop in root.get("properties", {}).items():
+        coerce = _coercer(definition(without_null(prop), definitions))
+        if coerce is not None:
+            coercers[name] = coerce
+    return coercers
+
+
+def _coercer(target: Mapping[str, Any]) -> Callable[[str], Any] | None:
+    if target.get("format") in _TEMPORAL_FORMATS:
+        return _refuse_number
+    values = target.get("enum") or ()
+    if values and all(type(value) is int for value in values):
+        return _to_int
+    return _COERCERS.get(target.get("type", ""))
+
+
+def _coerce_query(
+    params: Mapping[str, str], coercers: Mapping[str, Callable[[str], Any]]
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for name, text in params.items():
+        coerce = coercers.get(name)
+        try:
+            payload[name] = text if coerce is None else coerce(text)
+        except ValueError as exc:
+            raise BoundaryValidationError(f"{exc} - at `$.{name}`", ((name, str(exc)),)) from exc
+    return payload
 
 
 _PYDANTIC_ECHOING_REASONS = {

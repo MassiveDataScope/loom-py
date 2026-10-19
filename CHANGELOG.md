@@ -402,7 +402,9 @@
 ### core
 
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
-  converts query-string values in the library's lax mode. Both
+  validates query-string values strictly: an integer, number or boolean
+  takes only its exact spelling, `null` is never `None` and a date-time is
+  never a Unix timestamp. Both
   implementations are private to `loom.core.model`; a class of your own
   declared as a `LoomType` must add the method.
 - **core:** on a model with a composite primary key, the SQLAlchemy

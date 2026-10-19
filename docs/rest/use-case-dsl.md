@@ -191,9 +191,12 @@ this order:
 | A value the field refuses (wrong type, out of range, unknown enum value, a date-time without offset) | `422 boundary_validation` with `violations` |
 | Otherwise | `execute` receives the typed value; absent fields take their defaults |
 
-Values are converted in each library's lax mode, since every query value is
-text: `"50"` becomes `50`. msgspec's lax mode also takes `"5.0"` for an
-integer and a number for a date-time, read as a Unix timestamp.
+Values are checked strictly, with either library. An integer, number or
+boolean field takes only its exact spelling: `limit=50`, `ratio=0.5`,
+`flag=true`. `5.0` or `1e2` for an integer and `1` for a boolean are refused.
+Every other field validates the text as it is: `null` is never `None` (leave
+the parameter out instead), and a date-time must be RFC 3339 with an offset,
+never a Unix timestamp.
 
 The application refuses to start when a field is a list, an object or a union
 of several types, when a field's wire name is `profile` or a path parameter,

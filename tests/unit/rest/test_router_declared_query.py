@@ -12,6 +12,7 @@ import pydantic
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic.alias_generators import to_camel
 
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
@@ -44,6 +45,7 @@ class GrantQuery(
     )
     cursor: str | None = None
     limit: Annotated[int, msgspec.Meta(ge=1, le=200, description="Rows per page.")] = 50
+    flag: bool = False
 
 
 class ListGrants(UseCase[Any, GrantQuery]):
@@ -52,10 +54,15 @@ class ListGrants(UseCase[Any, GrantQuery]):
 
 
 class ModelGrantQuery(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = pydantic.ConfigDict(extra="forbid", alias_generator=to_camel)
 
+    membership_id: UUID | None = None
     state: GrantState | None = None
+    changed_since: pydantic.AwareDatetime | None = pydantic.Field(
+        default=None, alias="changed_since"
+    )
     limit: Annotated[int, pydantic.Field(ge=1, le=200)] = 50
+    flag: bool = False
 
 
 class ListGrantsFromModel(UseCase[Any, list[Any]]):
@@ -122,6 +129,7 @@ def test_declared_values_reach_execute_typed(client: TestClient) -> None:
         "changed_since": "2026-09-15T10:00:00+02:00",
         "cursor": "abc",
         "limit": 7,
+        "flag": False,
     }
 
 
@@ -134,6 +142,7 @@ def test_defaults_apply_when_absent(client: TestClient) -> None:
         "changed_since": None,
         "cursor": None,
         "limit": 50,
+        "flag": False,
     }
 
 
@@ -206,6 +215,12 @@ def test_openapi_publishes_exactly_the_declared_parameters(client: TestClient) -
             "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
             "description": "Rows per page.",
         },
+        {
+            "name": "flag",
+            "in": "query",
+            "required": False,
+            "schema": {"type": "boolean", "default": False},
+        },
     ]
     assert document["components"]["schemas"]["GrantState"]["enum"] == ["live", "revoked"]
 
@@ -219,4 +234,43 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
     assert (accepted.status_code, accepted.json()) == (200, ["revoked", 3])
     assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "boundary_validation")
     assert (unknown.status_code, unknown.json()["detail"]["code"]) == (400, "unsupported_query")
-    assert [parameter["name"] for parameter in operation["parameters"]] == ["state", "limit"]
+    assert [parameter["name"] for parameter in operation["parameters"]] == [
+        "membershipId",
+        "state",
+        "changed_since",
+        "limit",
+        "flag",
+    ]
+
+
+@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "limit=5.0",
+        "limit=1e2",
+        "changed_since=1700000000",
+        "changed_since=null",
+        "membershipId=null",
+        "flag=1",
+    ],
+)
+def test_a_value_not_spelled_exactly_is_refused(client: TestClient, path: str, query: str) -> None:
+    response = client.get(f"{path}?{query}")
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (
+        422,
+        "boundary_validation",
+    )
+
+
+@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
+@pytest.mark.parametrize(
+    "since", ["2026-09-15T10:00:00Z", "2026-09-15T10:00:00+05:30", "2026-09-15T10:00:00-03:00"]
+)
+def test_exact_values_are_accepted(client: TestClient, path: str, since: str) -> None:
+    response = client.get(
+        path, params={"limit": "50", "membershipId": _MEMBERSHIP, "changed_since": since}
+    )
+
+    assert response.status_code == 200
