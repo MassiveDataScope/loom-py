@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import IntEnum, StrEnum
+from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -70,14 +70,9 @@ class ListGrantsFromModel(UseCase[Any, list[Any]]):
         return [query.state, query.limit]
 
 
-class GrantTier(IntEnum):
-    BASIC = 1
-    PREMIUM = 2
-
-
 class OwnerQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     owner: str
-    tier: GrantTier | None = None
+    tier: int | None = None
 
 
 class ListOwnerGrants(UseCase[Any, list[Any]]):

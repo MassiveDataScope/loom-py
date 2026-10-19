@@ -159,10 +159,6 @@ class TestHttpErrorMapper:
         assert detail["missing"] == ["a.b"]
         assert "reason" not in detail
 
-    def test_unauthenticated_maps_to_401(self) -> None:
-        exc = self._mapper().to_http(Unauthenticated())
-        assert exc.status_code == 401
-
     @pytest.mark.parametrize(
         "error",
         [Unauthenticated(), LoomError("Step up.", code="insufficient_authentication")],
