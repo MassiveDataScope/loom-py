@@ -19,7 +19,7 @@ from loom.core.command.introspection import (
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
-from loom.rest.compiler import CompiledRoute, split_created
+from loom.rest.compiler import CompiledRoute, QueryField, split_created
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 
 JsonSchema = dict[str, Any]
@@ -133,8 +133,21 @@ def build_created_response_schema(
     return _response_entry(created_type, component_registry)
 
 
-def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSchema]:
-    """Return OpenAPI query parameters inferred from the use-case contract."""
+def build_query_parameters_schema(
+    compiled_route: CompiledRoute,
+    component_registry: dict[str, JsonSchema] | None = None,
+) -> list[JsonSchema]:
+    """Return OpenAPI query parameters inferred from the use-case contract.
+
+    Args:
+        compiled_route: Fully resolved route from ``RestInterfaceCompiler``.
+        component_registry: Optional mutable dict that accumulates shared
+            component schemas, such as the enums of a declared query.
+
+    Returns:
+        The ``QuerySpec`` parameters or the declared ``Query()`` fields,
+        followed by ``profile`` when the route exposes it.
+    """
     use_case_type = compiled_route.route.use_case
     hints = get_type_hints(use_case_type.execute)
     params: list[JsonSchema] = []
@@ -145,6 +158,11 @@ def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSch
                 compiled_route.effective_pagination_mode, compiled_route.effective_max_limit
             )
         )
+
+    params.extend(
+        _declared_query_parameter(field, component_registry)
+        for field in compiled_route.query_fields
+    )
 
     if _has_profile_parameter(hints) and compiled_route.effective_expose_profile:
         profile_param: JsonSchema = {
@@ -160,6 +178,22 @@ def build_query_parameters_schema(compiled_route: CompiledRoute) -> list[JsonSch
         params.append(profile_param)
 
     return params
+
+
+def _declared_query_parameter(
+    field: QueryField, component_registry: dict[str, JsonSchema] | None
+) -> JsonSchema:
+    schema = dict(field.schema)
+    description = schema.pop(_PARAM_DESCRIPTION, None)
+    parameter: JsonSchema = {
+        _PARAM_NAME: field.name,
+        _PARAM_IN: _PARAM_IN_QUERY,
+        _PARAM_REQUIRED: field.required,
+        _PARAM_SCHEMA: _with_component_refs(schema, component_registry),
+    }
+    if description is not None:
+        parameter[_PARAM_DESCRIPTION] = description
+    return parameter
 
 
 def _get_execution_plan(compiled_route: CompiledRoute) -> ExecutionPlan | None:
@@ -357,7 +391,13 @@ def _safe_schema(
     raw = _safe_msgspec_schema(annotation) or _safe_pydantic_schema(annotation)
     if raw is None:
         return None
+    return _with_component_refs(raw, component_registry)
 
+
+def _with_component_refs(
+    raw: JsonSchema, component_registry: dict[str, JsonSchema] | None
+) -> JsonSchema:
+    """Move the ``$defs`` of *raw* into *component_registry* and point its refs there."""
     if component_registry is None:
         return raw
 

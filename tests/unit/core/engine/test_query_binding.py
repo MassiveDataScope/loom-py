@@ -1,0 +1,86 @@
+"""The ``Query()`` marker: one declared, strict query struct per ``execute``."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import msgspec
+import pytest
+
+from loom.core.engine.compiler import CompilationError, UseCaseCompiler
+from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.plan import ParamBinding, QueryBinding
+from loom.core.model import UnsupportedBoundaryType
+from loom.core.use_case.markers import Query
+from loom.core.use_case.use_case import UseCase
+
+
+class GrantQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    limit: int = 50
+
+
+class LaxQuery(msgspec.Struct, frozen=True):
+    limit: int = 50
+
+
+class ListGrants(UseCase[Any, int]):
+    async def execute(self, query: GrantQuery = Query()) -> int:
+        return query.limit
+
+
+class TwoQueries(UseCase[Any, int]):
+    async def execute(self, first: GrantQuery = Query(), second: GrantQuery = Query()) -> int:
+        return first.limit
+
+
+class LaxQueryUseCase(UseCase[Any, int]):
+    async def execute(self, query: LaxQuery = Query()) -> int:
+        return query.limit
+
+
+class DictQueryUseCase(UseCase[Any, int]):
+    async def execute(self, query: dict[str, str] = Query()) -> int:
+        return len(query)
+
+
+def test_query_compiles_to_a_param_binding_and_a_query_binding() -> None:
+    plan = UseCaseCompiler().compile(ListGrants)
+
+    assert plan.param_bindings == (ParamBinding(name="query", annotation=GrantQuery),)
+    assert plan.query_binding == QueryBinding(name="query", query_type=GrantQuery)
+
+
+def test_a_use_case_without_query_has_no_query_binding() -> None:
+    class NoQuery(UseCase[Any, int]):
+        async def execute(self) -> int:
+            return 0
+
+    assert UseCaseCompiler().compile(NoQuery).query_binding is None
+
+
+def test_two_query_parameters_are_refused() -> None:
+    compiler = UseCaseCompiler()
+
+    with pytest.raises(CompilationError, match="only one Query"):
+        compiler.compile(TwoQueries)
+
+
+@pytest.mark.parametrize("use_case", [LaxQueryUseCase, DictQueryUseCase])
+def test_a_query_type_that_is_not_a_strict_model_is_refused(
+    use_case: type[UseCase[Any, int]],
+) -> None:
+    compiler = UseCaseCompiler()
+
+    with pytest.raises(UnsupportedBoundaryType):
+        compiler.compile(use_case)
+
+
+async def test_the_executor_passes_the_query_struct_through() -> None:
+    compiler = UseCaseCompiler()
+    compiler.compile(ListGrants)
+
+    result = await RuntimeExecutor(compiler).execute(
+        ListGrants(), params={"query": GrantQuery(limit=7)}
+    )
+
+    assert result == 7

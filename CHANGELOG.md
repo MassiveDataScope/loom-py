@@ -198,6 +198,18 @@
   `HttpErrorMapper` answers it with `429`, the standard body and
   `Retry-After: <seconds>`. loom ships no limiter: the consumer decides who is
   limited and raises `RateLimited`.
+- **rest:** declared query parameters. `loom.core.use_case.Query()` marks an
+  `execute` parameter typed with a strict `msgspec.Struct` or pydantic model
+  of scalar fields; the REST route accepts exactly its wire names (plus an
+  exposed `profile`), answers an unknown or repeated parameter with `400
+  unsupported_query` and a bad value with `422 boundary_validation`, and
+  OpenAPI publishes one parameter per field with its constraints, enums in
+  `components.schemas`. List, object and multi-type fields, a field named like
+  a path parameter or `profile`, a `QuerySpec` next to it and a second
+  `Query()` are refused at startup. `ExecutionPlan.query_binding`
+  (`QueryBinding`), `CompiledRoute.query_fields` (`QueryField`) and
+  `LoomType.from_query` are new; `build_query_parameters_schema` takes an
+  optional `component_registry`. `QuerySpec` routes are unchanged.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a
@@ -389,6 +401,10 @@
 
 ### core
 
+- **core:** the `LoomType` protocol gains `from_query(params)`, which
+  converts query-string values in the library's lax mode. Both
+  implementations are private to `loom.core.model`; a class of your own
+  declared as a `LoomType` must add the method.
 - **core:** on a model with a composite primary key, the SQLAlchemy
   repository's `get_by_id`, `exists`, `update` and `delete` take the key as a
   tuple of every key value in declaration order (`repo.get_by_id((account_id,

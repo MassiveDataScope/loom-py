@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import msgspec
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.use_case import Created
+from loom.core.repository.abc.query import QuerySpec
+from loom.core.use_case import Created, Query
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
 from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
@@ -727,4 +729,100 @@ class TestCreatedResult:
     @pytest.mark.parametrize("use_case", [WrapsAnotherType, CreatedTwice, OnlyCreated, BareCreated])
     def test_any_other_shape_is_refused(self, use_case: type[UseCase[Any, Any]]) -> None:
         with pytest.raises(InterfaceCompilationError, match=r"Created\[T\]"):
+            self._compile(use_case)
+
+
+class ItemQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True, rename="camel"):
+    owner_id: str | None = None
+    limit: int = 50
+
+
+class ProfileQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    profile: str | None = None
+
+
+class PathClashQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    item_id: str | None = None
+
+
+class ListQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    tags: list[str] = []
+
+
+class Owner(msgspec.Struct, frozen=True):
+    name: str
+
+
+class ObjectQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    owner: Owner | None = None
+
+
+class UnionQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    key: int | str = 0
+
+
+class TestDeclaredQuery:
+    """A ``Query()`` route accepts only scalar fields that no other parameter claims."""
+
+    class ListItems(UseCase[Any, str]):
+        async def execute(self, item_id: str, query: ItemQuery = Query()) -> str:
+            return "ok"
+
+    class WithQuerySpec(UseCase[Any, str]):
+        async def execute(self, spec: QuerySpec, query: ItemQuery = Query()) -> str:
+            return "ok"
+
+    class ProfileField(UseCase[Any, str]):
+        async def execute(self, query: ProfileQuery = Query()) -> str:
+            return "ok"
+
+    class PathField(UseCase[Any, str]):
+        async def execute(self, item_id: str, query: PathClashQuery = Query()) -> str:
+            return "ok"
+
+    class ListField(UseCase[Any, str]):
+        async def execute(self, query: ListQuery = Query()) -> str:
+            return "ok"
+
+    class ObjectField(UseCase[Any, str]):
+        async def execute(self, query: ObjectQuery = Query()) -> str:
+            return "ok"
+
+    class UnionField(UseCase[Any, str]):
+        async def execute(self, query: UnionQuery = Query()) -> str:
+            return "ok"
+
+    @staticmethod
+    def _compile(use_case: type[UseCase[Any, Any]]) -> list[Any]:
+        class IFace(RestInterface[Any]):
+            prefix = "/items"
+            routes = (RestRoute(use_case=use_case, method="GET", path="/{item_id}/children"),)
+
+        use_case_compiler = UseCaseCompiler()
+        use_case_compiler.compile(use_case)
+        return RestInterfaceCompiler(use_case_compiler).compile(IFace)
+
+    def test_the_route_holds_the_declared_fields(self) -> None:
+        (route,) = self._compile(self.ListItems)
+
+        assert [(f.name, f.required) for f in route.query_fields] == [
+            ("ownerId", False),
+            ("limit", False),
+        ]
+
+    @pytest.mark.parametrize(
+        ("use_case", "reason"),
+        [
+            (WithQuerySpec, "QuerySpec"),
+            (ProfileField, "'profile'"),
+            (PathField, "'item_id'"),
+            (ListField, "'tags'"),
+            (ObjectField, "'owner'"),
+            (UnionField, "'key'"),
+        ],
+    )
+    def test_any_other_declaration_is_refused(
+        self, use_case: type[UseCase[Any, Any]], reason: str
+    ) -> None:
+        with pytest.raises(InterfaceCompilationError, match=reason):
             self._compile(use_case)

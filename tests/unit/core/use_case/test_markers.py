@@ -11,6 +11,7 @@ from loom.core.use_case.markers import (
     LoadById,
     Mcp,
     OnMissing,
+    Query,
     SourceKind,
 )
 
@@ -23,6 +24,15 @@ class TestInput:
     def test_has_no_extra_attributes(self) -> None:
         marker = Input()
         assert type(marker).__slots__ == ()
+
+
+class TestQuery:
+    def test_has_no_extra_attributes(self) -> None:
+        marker = Query()
+        assert type(marker).__slots__ == ()
+
+    def test_is_exported_with_the_other_markers(self) -> None:
+        assert use_case.Query is Query
 
 
 class TestAgent:

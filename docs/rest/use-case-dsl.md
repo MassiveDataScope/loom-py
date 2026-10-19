@@ -154,6 +154,54 @@ async def execute(
 | `against` | Entity field to compare against |
 | `on_missing` | `RAISE` → 404 immediately; `NONE` → inject False |
 
+### `Query()` — declared query parameters
+
+`Query()` hands `execute` the query string as a typed value. The annotation is
+the whole contract: a strict `msgspec.Struct` (`forbid_unknown_fields=True`)
+or a strict pydantic model (`extra="forbid"`) whose fields are strings,
+integers, numbers, booleans, enums, UUIDs or date-times, each optionally
+`None`:
+
+```python
+from typing import Annotated
+import msgspec
+from loom.core.use_case import Query
+
+class GrantQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
+                 forbid_unknown_fields=True):
+    membership_id: UUID | None = None
+    state: GrantState | None = None
+    changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
+        default=None, name="changed_since")
+    cursor: str | None = None
+    limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
+
+class ListGrants(UseCase[Grant, GrantPage]):
+    async def execute(self, query: GrantQuery = Query()) -> GrantPage: ...
+```
+
+The route accepts exactly the declared wire names, plus `profile` when it
+exposes one, and OpenAPI publishes one query parameter per field with its
+constraints; enums go to `components.schemas`. Each request is checked in
+this order:
+
+| Request | Answer |
+|---------|--------|
+| A parameter the type does not declare, or one given twice | `400 unsupported_query` |
+| A value the field refuses (wrong type, out of range, unknown enum value, a date-time without offset) | `422 boundary_validation` with `violations` |
+| Otherwise | `execute` receives the typed value; absent fields take their defaults |
+
+Values are converted in each library's lax mode, since every query value is
+text: `"50"` becomes `50`. msgspec's lax mode also takes `"5.0"` for an
+integer and a number for a date-time, read as a Unix timestamp.
+
+The application refuses to start when a field is a list, an object or a union
+of several types, when a field's wire name is `profile` or a path parameter,
+when the use case also takes a `QuerySpec`, or when it declares two
+`Query()`. A route with a `QuerySpec` parameter keeps its own parameters,
+filters and limit clamp. Callers other than REST pass an instance of the
+type under the parameter's name.
+
 ---
 
 ## Agent marker — reaching a named agent

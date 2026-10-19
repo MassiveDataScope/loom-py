@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import enum
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -689,3 +689,66 @@ class TestErrorsDoNotEchoTheInput:
 
         assert excinfo.value.violations == (violation,)
         assert excinfo.value.message == f"{violation[0]}: {violation[1]}"
+
+
+class Tint(enum.StrEnum):
+    RED = "red"
+
+
+class StructQuery(msgspec.Struct, forbid_unknown_fields=True):
+    limit: int
+    ident: UUID
+    colour: Tint
+    since: Annotated[datetime, msgspec.Meta(tz=True)]
+
+
+class ModelQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int
+    ident: UUID
+    colour: Tint
+    since: pydantic.AwareDatetime
+
+
+_QUERY = {
+    "limit": "50",
+    "ident": "12345678-1234-5678-1234-567812345678",
+    "colour": "red",
+    "since": "2026-09-15T10:00:00+02:00",
+}
+
+
+class TestFromQuery:
+    """Query strings become typed values; a bad value names its field."""
+
+    @pytest.fixture(params=[StructQuery, ModelQuery], ids=["msgspec", "pydantic"])
+    def query(self, request: pytest.FixtureRequest) -> LoomType:
+        compiled: LoomType = loom_type(request.param)
+        return compiled
+
+    def test_converts_every_string(self, query: LoomType) -> None:
+        value = query.from_query(_QUERY)
+
+        assert (value.limit, value.ident, value.colour, value.since.utcoffset()) == (
+            50,
+            UUID("12345678-1234-5678-1234-567812345678"),
+            Tint.RED,
+            timedelta(hours=2),
+        )
+
+    @pytest.mark.parametrize(
+        ("field", "wrong"),
+        [
+            ("limit", "fifty"),
+            ("ident", "not-a-uuid"),
+            ("colour", "blue"),
+            ("since", "2026-09-15T10:00:00"),
+        ],
+    )
+    def test_a_bad_value_names_its_field(self, query: LoomType, field: str, wrong: str) -> None:
+        params = {**_QUERY, field: wrong}
+
+        with pytest.raises(BoundaryValidationError) as excinfo:
+            query.from_query(params)
+        assert [name for name, _ in excinfo.value.violations] == [field]

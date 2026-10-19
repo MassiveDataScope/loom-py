@@ -39,7 +39,9 @@ from starlette.responses import Response
 
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
+from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
+from loom.core.model import LoomType, loom_type
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -71,6 +73,7 @@ _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
+_UNSUPPORTED_QUERY_MESSAGE = "The request has a query parameter this route does not accept."
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -358,6 +361,32 @@ def _route_docs(compiled_route: CompiledRoute) -> tuple[str | None, str | None]:
 
 
 @dataclass(frozen=True, slots=True)
+class _DeclaredQuery:
+    """The ``Query()`` parameter of a route: its name, accepted keys and decoder."""
+
+    param_name: str
+    accepted: frozenset[str]
+    decoder: LoomType
+
+    def decode(self, query_params: QueryParams) -> Any:
+        """Build the typed query, refusing a key the route does not declare or repeats.
+
+        ``profile`` is left to :func:`_resolve_profile`.
+
+        Raises:
+            LoomError: ``unsupported_query`` for an unknown or repeated key.
+            BoundaryValidationError: A value does not satisfy its field.
+        """
+        items = [
+            (key, value) for key, value in query_params.multi_items() if key != QueryParam.PROFILE
+        ]
+        keys = [key for key, _ in items]
+        if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
+            raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
+        return self.decoder.from_query(dict(items))
+
+
+@dataclass(frozen=True, slots=True)
 class _RouteRuntime:
     """Per-route facts resolved once at startup and read on every request."""
 
@@ -366,6 +395,7 @@ class _RouteRuntime:
     accepts_profile_param: bool
     query_param_name: str | None
     has_input_binding: bool
+    declared_query: _DeclaredQuery | None
 
     @property
     def use_case_type(self) -> type[Any]:
@@ -375,12 +405,21 @@ class _RouteRuntime:
 def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     uc_type = compiled_route.route.use_case
     plan = getattr(uc_type, "__execution_plan__", None)
+    query_binding = plan.query_binding if plan is not None else None
+    declared_query = None
+    if query_binding is not None:
+        declared_query = _DeclaredQuery(
+            param_name=query_binding.name,
+            accepted=frozenset(field.name for field in compiled_route.query_fields),
+            decoder=loom_type(query_binding.query_type),
+        )
     return _RouteRuntime(
         compiled_route=compiled_route,
         path_params=tuple(_extract_path_params(compiled_route.route.path)),
         accepts_profile_param="profile" in inspect.signature(uc_type.execute).parameters,
         query_param_name=_resolve_query_param_name(uc_type),
         has_input_binding=plan is not None and plan.input_binding is not None,
+        declared_query=declared_query,
     )
 
 
@@ -419,6 +458,10 @@ def _build_execution_params(
             default_pagination_mode=compiled_route.effective_pagination_mode,
             allow_pagination_override=compiled_route.effective_allow_pagination_override,
             max_limit=compiled_route.effective_max_limit,
+        )
+    if runtime.declared_query is not None:
+        params[runtime.declared_query.param_name] = runtime.declared_query.decode(
+            request.query_params
         )
     return params
 
@@ -615,7 +658,7 @@ def bind_interfaces(
             responses[cr.route.status_code] = success_response
 
         openapi_extra: dict[str, Any] | None = None
-        query_parameters = build_query_parameters_schema(cr)
+        query_parameters = build_query_parameters_schema(cr, component_registry)
         if request_body is not None or query_parameters:
             openapi_extra = {}
             if request_body is not None:

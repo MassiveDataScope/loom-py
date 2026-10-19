@@ -333,6 +333,7 @@ extend-immutable-calls = [
     "Load",
     "LoadById",
     "Mcp",
+    "Query",
     "loom.core.use_case.Agent",
     "loom.core.use_case.Caller",
     "loom.core.use_case.Exists",
@@ -340,6 +341,7 @@ extend-immutable-calls = [
     "loom.core.use_case.Load",
     "loom.core.use_case.LoadById",
     "loom.core.use_case.Mcp",
+    "loom.core.use_case.Query",
     "loom.core.use_case.markers.Agent",
     "loom.core.use_case.markers.Caller",
     "loom.core.use_case.markers.Exists",
@@ -347,6 +349,7 @@ extend-immutable-calls = [
     "loom.core.use_case.markers.Load",
     "loom.core.use_case.markers.LoadById",
     "loom.core.use_case.markers.Mcp",
+    "loom.core.use_case.markers.Query",
 ]
 
 [tool.pyright]

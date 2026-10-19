@@ -24,14 +24,18 @@ import inspect
 import operator
 import types
 import typing
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, NamedTuple
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.plan import ExecutionPlan
+from loom.core.model import loom_type
+from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case.outcome import Created
+from loom.rest.constants import QueryParam
 from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
 
 
@@ -237,6 +241,85 @@ def split_created(use_case_type: type[Any]) -> tuple[Any, Any]:
     return functools.reduce(operator.or_, others), wrapped[0]
 
 
+_SCALAR_TYPES = frozenset({"string", "integer", "number", "boolean"})
+_DEFS = "$defs"
+_REF = "$ref"
+_DEFS_PREFIX = "#/$defs/"
+
+
+@dataclass(frozen=True)
+class QueryField:
+    """One query parameter a ``Query()`` route accepts.
+
+    Args:
+        name: Wire name of the parameter.
+        required: ``True`` when the field has no default.
+        schema: JSON Schema of the value without its ``null`` branch. An enum
+            is a ``$ref`` into the ``$defs`` the schema carries.
+    """
+
+    name: str
+    required: bool
+    schema: Mapping[str, Any]
+
+
+def _declared_query_fields(query_type: type[Any]) -> tuple[QueryField, ...]:
+    """Read the query parameters a strict ``Query()`` type declares.
+
+    Args:
+        query_type: Strict ``msgspec.Struct`` or pydantic model.
+
+    Returns:
+        One field per declared parameter, in declaration order.
+
+    Raises:
+        ValueError: A field is not a string, integer, number, boolean, enum,
+            UUID or date-time, optionally ``None``.
+    """
+    document = loom_type(query_type).schema()
+    definitions = document.get(_DEFS, {})
+    root = _definition(document, definitions)
+    required = set(root.get("required", ()))
+    return tuple(
+        _query_field(name, prop, name in required, definitions)
+        for name, prop in root.get("properties", {}).items()
+    )
+
+
+def _query_field(
+    name: str, prop: Mapping[str, Any], required: bool, definitions: Mapping[str, Any]
+) -> QueryField:
+    schema = _without_null(prop)
+    target = _definition(schema, definitions)
+    if "enum" not in target and target.get("type") not in _SCALAR_TYPES:
+        raise ValueError(
+            f"query field {name!r} must be a string, integer, number, boolean, enum, "
+            "UUID or date-time, optionally None."
+        )
+    ref = schema.get(_REF)
+    if ref is not None:
+        ref_name = ref.removeprefix(_DEFS_PREFIX)
+        schema = {**schema, _DEFS: {ref_name: definitions[ref_name]}}
+    return QueryField(name=name, required=required, schema=schema)
+
+
+def _definition(schema: Mapping[str, Any], definitions: Mapping[str, Any]) -> Mapping[str, Any]:
+    ref = schema.get(_REF)
+    return definitions[ref.removeprefix(_DEFS_PREFIX)] if ref is not None else schema
+
+
+def _without_null(prop: Mapping[str, Any]) -> Mapping[str, Any]:
+    options = [option for option in prop.get("anyOf", ()) if option != {"type": "null"}]
+    if len(options) != 1:
+        return prop
+    rest = {k: v for k, v in prop.items() if k != "anyOf" and not (k == "default" and v is None)}
+    return {**options[0], **rest}
+
+
+def _names_query_spec(annotation: Any) -> bool:
+    return annotation is QuerySpec or QuerySpec in typing.get_args(annotation)
+
+
 @dataclass(frozen=True)
 class CompiledRoute:
     """Fully resolved route ready for transport binding.
@@ -261,6 +344,8 @@ class CompiledRoute:
             the route declares no role requirement.
         effective_max_limit: Ceiling applied to the ``?limit=`` query
             parameter of this route.
+        query_fields: Parameters the route's ``Query()`` declares; empty
+            when the use case declares none.
         read_only: ``True`` for GET routes — instructs the executor to skip
             the ``UnitOfWork`` transaction for this request.
         interface_tags: OpenAPI tags inherited from the parent ``RestInterface``.
@@ -279,6 +364,7 @@ class CompiledRoute:
     execute_param_types: tuple[tuple[str, Any], ...] = ()
     effective_requires_roles: tuple[str, ...] = ()
     effective_max_limit: int = 1000
+    query_fields: tuple[QueryField, ...] = ()
 
 
 class RestInterfaceCompiler:
@@ -418,7 +504,7 @@ class RestInterfaceCompiler:
         compiled: list[CompiledRoute] = []
 
         for route in interface.routes:
-            self._validate_route(iface_name, route)
+            plan = self._validate_route(iface_name, route)
 
             key = (route.method.upper(), route.path)
             if key in seen:
@@ -448,6 +534,7 @@ class RestInterfaceCompiler:
                     execute_param_types=self._resolve_execute_param_types(route.use_case),
                     effective_requires_roles=self._resolve_requires_roles(route, interface),
                     effective_max_limit=self._defaults.max_limit,
+                    query_fields=self._resolve_query_fields(iface_name, route, plan),
                 )
             )
 
@@ -478,7 +565,7 @@ class RestInterfaceCompiler:
                 f"{iface_name}: 'routes' is empty.  Declare at least one RestRoute to expose."
             )
 
-    def _validate_route(self, iface_name: str, route: RestRoute) -> None:
+    def _validate_route(self, iface_name: str, route: RestRoute) -> ExecutionPlan:
         if not route.method:
             raise InterfaceCompilationError(
                 f"{iface_name}: RestRoute for {route.use_case.__qualname__!r} is missing 'method'."
@@ -491,6 +578,33 @@ class RestInterfaceCompiler:
                 "compiled.  Pass it to bootstrap_app(use_cases=[...]) first."
             )
         split_created(route.use_case)
+        return plan
+
+    @staticmethod
+    def _resolve_query_fields(
+        iface_name: str, route: RestRoute, plan: ExecutionPlan
+    ) -> tuple[QueryField, ...]:
+        binding = plan.query_binding
+        if binding is None:
+            return ()
+        where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
+        if any(_names_query_spec(pb.annotation) for pb in plan.param_bindings):
+            raise InterfaceCompilationError(
+                f"{where}: Query() cannot be combined with a QuerySpec parameter."
+            )
+        try:
+            fields = _declared_query_fields(binding.query_type)
+        except ValueError as exc:
+            raise InterfaceCompilationError(f"{where}: {exc}") from exc
+        clashes = [
+            f.name for f in fields if f.name == QueryParam.PROFILE or f"{{{f.name}}}" in route.path
+        ]
+        if clashes:
+            raise InterfaceCompilationError(
+                f"{where}: query field {clashes[0]!r} has the name of a path parameter "
+                "or of 'profile'."
+            )
+        return fields
 
     def _resolve_pagination(
         self, route: RestRoute, interface: type[RestInterface[Any]]

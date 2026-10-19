@@ -79,6 +79,17 @@ class LoomType(Protocol):
         """
         ...
 
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        """Validate query-string values and build the typed value.
+
+        Every value arrives as text, so both libraries convert in their lax
+        mode: ``"50"`` becomes ``50`` for an ``int`` field.
+
+        Raises:
+            BoundaryValidationError: ``params`` does not satisfy the type.
+        """
+        ...
+
 
 class BoundaryValidationError(LoomError, ValueError):
     """A boundary value failed validation.
@@ -304,8 +315,14 @@ class _MsgspecType:
         return msgspec.to_builtins(obj)
 
     def from_builtins(self, payload: Any, /) -> Any:
+        return self._convert(payload, strict=True)
+
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        return self._convert(dict(params), strict=False)
+
+    def _convert(self, payload: Any, *, strict: bool) -> Any:
         try:
-            return msgspec.convert(payload, self.type)
+            return msgspec.convert(payload, self.type, strict=strict)
         except msgspec.ValidationError as exc:
             raise _msgspec_error(exc) from exc
 
@@ -342,6 +359,9 @@ class _PydanticType:
             violations = _pydantic_violations(exc)
             message = "; ".join(f"{field}: {msg}" for field, msg in violations)
             raise BoundaryValidationError(message, violations) from exc
+
+    def from_query(self, params: Mapping[str, str], /) -> Any:
+        return self.from_builtins(dict(params))
 
 
 _PYDANTIC_ECHOING_REASONS = {
