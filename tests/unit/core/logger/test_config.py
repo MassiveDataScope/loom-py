@@ -7,8 +7,10 @@ from typing import Any
 import pytest
 import structlog
 
+from loom.core.config import ConfigContext
+from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
-from loom.core.logger.config import configure_logging_from_values
+from loom.core.logger.config import LoggerConfig, configure_logging_from_values
 
 
 def test_configure_logging_from_values_forwards_extra_processors(
@@ -75,3 +77,17 @@ def test_an_explicit_renderer_wins_over_the_environment(logger_name: str) -> Non
     renderer = _root_renderer(logger_name, Environment.PRODUCTION, renderer="console")
 
     assert isinstance(renderer, structlog.dev.ConsoleRenderer)
+
+
+@pytest.mark.parametrize(
+    "logger_config",
+    [
+        {"environment": "dev"},
+        {"handlers": [{"type": "stream", "colours": True}]},
+    ],
+)
+def test_a_key_the_logger_does_not_know_is_a_config_error(logger_config: dict[str, Any]) -> None:
+    config = ConfigContext.from_dict({"logger": logger_config})
+
+    with pytest.raises(ConfigError, match="environment|colours"):
+        config.section("logger", LoggerConfig)

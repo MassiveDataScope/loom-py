@@ -184,6 +184,14 @@ def test_the_checks_of_the_application_modules_run_from_its_code_path(tmp_path: 
         create_app(config, environment=_PRODUCTION)
 
 
+def test_a_removed_logger_key_stops_startup(tmp_path: Path) -> None:
+    observability = {"log": {"config": {"environment": "dev"}}}
+    config = write_project(tmp_path, observability=observability)
+
+    with pytest.raises(ConfigError, match="environment"):
+        create_app(config, environment="development")
+
+
 class TestCreateAppFromAConfigDirectory:
     def test_the_overlay_of_the_environment_overrides_the_base(self, tmp_path: Path) -> None:
         config_dir = _config_dir(tmp_path)

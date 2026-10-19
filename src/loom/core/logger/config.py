@@ -52,7 +52,9 @@ class Renderer(StrEnum):
             raise ValueError(f"Unsupported renderer: {value!r}. Valid values: {valid}") from None
 
 
-class StreamHandlerConfig(LoomFrozenStruct, frozen=True, tag="stream", tag_field="type"):
+class StreamHandlerConfig(
+    LoomFrozenStruct, frozen=True, tag="stream", tag_field="type", forbid_unknown_fields=True
+):
     """Configuration for a stdlib ``StreamHandler``.
 
     Attributes:
@@ -66,7 +68,9 @@ class StreamHandlerConfig(LoomFrozenStruct, frozen=True, tag="stream", tag_field
     renderer: str | None = None
 
 
-class FileHandlerConfig(LoomFrozenStruct, frozen=True, tag="file", tag_field="type"):
+class FileHandlerConfig(
+    LoomFrozenStruct, frozen=True, tag="file", tag_field="type", forbid_unknown_fields=True
+):
     """Configuration for a stdlib ``FileHandler``.
 
     Attributes:
@@ -81,7 +85,11 @@ class FileHandlerConfig(LoomFrozenStruct, frozen=True, tag="file", tag_field="ty
 
 
 class RotatingFileHandlerConfig(
-    LoomFrozenStruct, frozen=True, tag="rotating_file", tag_field="type"
+    LoomFrozenStruct,
+    frozen=True,
+    tag="rotating_file",
+    tag_field="type",
+    forbid_unknown_fields=True,
 ):
     """Configuration for a stdlib ``RotatingFileHandler``.
 
@@ -103,8 +111,11 @@ class RotatingFileHandlerConfig(
 HandlerConfig = StreamHandlerConfig | FileHandlerConfig | RotatingFileHandlerConfig
 
 
-class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """YAML configuration struct for the ``logger:`` section.
+
+    An unknown key is refused, a removed one (``environment``) included, so
+    a stale setting fails loudly instead of being ignored.
 
     Use with :func:`~loom.core.config.loader.section` to parse the
     ``logger:`` block from an OmegaConf config, then pass directly to

@@ -85,3 +85,11 @@ def test_files_and_a_directory_together_are_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="config_dir"):
         bootstrap_worker(config, config_dir=str(tmp_path), jobs=[_SyncJob])
+
+
+def test_a_removed_logger_key_stops_the_worker(tmp_path: Path) -> None:
+    observability = {"log": {"config": {"environment": "dev"}}}
+    config = _write(tmp_path / "worker.yaml", {"celery": _CELERY, "observability": observability})
+
+    with pytest.raises(ConfigError, match="environment"):
+        bootstrap_worker(config, environment="development", jobs=[_SyncJob])

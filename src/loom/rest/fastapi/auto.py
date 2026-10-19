@@ -297,11 +297,14 @@ def _configure_job_service(
 
 
 def _load_observability_config(ctx: ConfigContext) -> ObservabilityConfig:
-    """Load top-level observability config or fall back to defaults."""
-    try:
-        return ctx.section(ConfigKey.OBSERVABILITY, ObservabilityConfig)
-    except ConfigError:
-        return ObservabilityConfig()
+    """Load the top-level observability config; defaults only when it is absent.
+
+    A section that fails validation stops startup: falling back to defaults
+    would silently drop every setting it holds.
+    """
+    return ctx.section_or_default(
+        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+    )
 
 
 def _build_bootstrap(

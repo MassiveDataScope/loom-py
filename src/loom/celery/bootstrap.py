@@ -670,12 +670,15 @@ def _build_observability_runtime(
     ctx: ConfigContext | Mapping[str, Any],
     environment: Environment = Environment.PRODUCTION,
 ) -> ObservabilityRuntime:
-    """Build the shared observability runtime from top-level config."""
+    """Build the shared observability runtime from top-level config.
+
+    Defaults apply only when the section is absent; one that fails validation
+    stops the worker instead of silently dropping its settings.
+    """
     config = _ensure_config_context(ctx)
-    try:
-        observability_cfg = config.section(ConfigKey.OBSERVABILITY, ObservabilityConfig)
-    except ConfigError:
-        observability_cfg = ObservabilityConfig()
+    observability_cfg = config.section_or_default(
+        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+    )
     return ObservabilityRuntime.from_config(observability_cfg, environment=environment)
 
 
