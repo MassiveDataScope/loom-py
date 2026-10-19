@@ -602,6 +602,15 @@
 
 ### core
 
+- **core:** the relation steps and the `load_many` projection steps of a read
+  profile run one after another on the request's session. They ran with
+  `asyncio.gather` on that one session: when one step failed while another was
+  still waiting, on Postgres with asyncpg the caller got `InterfaceError:
+  cannot perform operation: another operation is in progress` instead of the
+  step's error, and the pooled connection was left in a manually started
+  transaction, so the next request on it failed until `engine.dispose()`. The
+  number of statements is unchanged, at most one per step.
+
 - **core:** cursor pagination and the by-id operations of the SQLAlchemy
   repository use the full primary key of a model whose key is composite, such
   as a `RowScoped` model keyed by its boundary column and its own id. They

@@ -21,7 +21,6 @@ The ORM class (``ProductSA``) is kept exclusively for writes and Alembic.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -202,8 +201,9 @@ class CoreModel:
     ) -> list[Any]:
         """Execute ``stmt``, batch-load relations, run projections, return ``list[Struct]``.
 
-        Relations declared in the profile are fetched in parallel via
-        ``asyncio.gather``.  Projection steps run after relation loading.
+        Relations declared in the profile are loaded one after another on
+        ``session``, with at most one statement each.  Projection steps run
+        after relation loading.
 
         Args:
             session: Active async SQLAlchemy session.
@@ -278,10 +278,7 @@ async def _load_relations(
     steps: tuple[CoreRelationStep, ...],
     rows: list[Any],
 ) -> dict[str, dict[Any, Any]]:
-    if not steps:
-        return {}
-    results = await asyncio.gather(*(_fetch_relation_batch(session, step, rows) for step in steps))
-    return {step.attr: data for step, data in zip(steps, results, strict=False)}
+    return {step.attr: await _fetch_relation_batch(session, step, rows) for step in steps}
 
 
 def _make_adapter(

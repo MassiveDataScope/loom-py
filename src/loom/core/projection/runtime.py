@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -231,18 +230,12 @@ async def _execute_backend_steps(
     parent_ids: Sequence[object],
     values_by_index: dict[int, dict[str, Any]],
 ) -> None:
-    if not steps:
-        return
-
-    backend_results = await asyncio.gather(
-        *(step.loader.load_many(backend_context, parent_ids) for step in steps)
-    )
-    for step, rows in zip(steps, backend_results, strict=False):
+    for step in steps:
         _merge_rows(
             values_by_index=values_by_index,
             parent_ids=parent_ids,
             field_name=step.name,
-            rows=rows,
+            rows=await step.loader.load_many(backend_context, parent_ids),
             default=step.projection.default,
         )
 
