@@ -132,6 +132,8 @@ class RestInterface(Generic[T]):
 
     Attributes:
         prefix: URL prefix for all routes in this interface (e.g. ``"/users"``).
+            Must not contain a path placeholder; declare it in the route
+            ``path``.
         tags: OpenAPI tags applied to every route.
         auto: When ``True``, signals intent to use standard CRUD URL conventions.
         include: Whitelist of CRUD operation names to expose when ``auto=True``.

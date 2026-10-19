@@ -48,7 +48,7 @@ def _route_paths(app: FastAPI) -> set[str]:
 
 def test_a_catch_all_route_capturing_an_exclusion_aborts_startup(tmp_path: Path) -> None:
     """``GET /{tenant}`` serves ``/openapi.json``: the exclusion opens a business route."""
-    config_path = write_project(tmp_path, rest=_auth(), prefix="/{tenant}", route_path="")
+    config_path = write_project(tmp_path, rest=_auth(), prefix="/", route_path="/{tenant}")
     with pytest.raises(ConfigError, match="business route"):
         create_app(config_path)
 
@@ -63,7 +63,7 @@ def test_a_prefixed_interface_leaves_the_exclusions_alone(tmp_path: Path) -> Non
 
 def test_an_unauthenticated_app_has_nothing_to_exclude(tmp_path: Path) -> None:
     """Without authentication there is no exclusion list to get wrong."""
-    config_path = write_project(tmp_path, prefix="/{tenant}", route_path="")
+    config_path = write_project(tmp_path, prefix="/", route_path="/{tenant}")
     app = create_app(config_path)
     assert "/{tenant}" in _route_paths(app)
 

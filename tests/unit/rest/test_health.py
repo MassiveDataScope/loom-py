@@ -166,7 +166,7 @@ class TestHealthAuthentication:
 class TestHealthMounting:
     def test_health_answers_before_a_catch_all_interface(self, tmp_path: Path) -> None:
         """``GET /{tenant}`` is registered after the route, so it never captures it."""
-        config_path = write_project(tmp_path, prefix="/{tenant}", route_path="")
+        config_path = write_project(tmp_path, prefix="/", route_path="/{tenant}")
 
         _status, body = _get(create_app(config_path), _HEALTH)
 
@@ -175,7 +175,7 @@ class TestHealthMounting:
     def test_a_catch_all_route_capturing_health_aborts_an_authenticated_startup(
         self, tmp_path: Path
     ) -> None:
-        config_path = write_project(tmp_path, rest=_jwt_rest(), prefix="/{tenant}", route_path="")
+        config_path = write_project(tmp_path, rest=_jwt_rest(), prefix="/", route_path="/{tenant}")
 
         with pytest.raises(ConfigError, match=r"'/health'.*business route"):
             create_app(config_path)
