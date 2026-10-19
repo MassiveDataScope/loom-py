@@ -8,7 +8,7 @@ import yaml
 from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
-from loom.core.locator import Application, load_application
+from loom.core.locator import DEFAULT_CODE_PATH, Application, add_code_path, load_application
 from loom.core.repository.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
@@ -278,3 +278,37 @@ def test_a_config_directory_layers_the_overlay_of_the_environment(
     application = load_application()
 
     assert application.database.url == "postgresql+asyncpg://u:p@stage/db"
+
+
+class TestAddCodePath:
+    def test_a_relative_directory_resolves_against_the_config_and_goes_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        monkeypatch.setattr(sys, "path", list(sys.path))
+
+        resolved = add_code_path(DEFAULT_CODE_PATH, tmp_path)
+
+        assert resolved == (tmp_path / "src").resolve()
+        assert sys.path[0] == str(resolved)
+
+    def test_a_missing_directory_is_not_added(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "path", list(sys.path))
+        before = list(sys.path)
+
+        add_code_path("missing", tmp_path)
+
+        assert sys.path == before
+
+    def test_a_directory_already_on_the_path_is_not_added_twice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        monkeypatch.setattr(sys, "path", list(sys.path))
+
+        add_code_path("src", tmp_path)
+        add_code_path(str((tmp_path / "src").resolve()), tmp_path)
+
+        assert sys.path.count(str((tmp_path / "src").resolve())) == 1

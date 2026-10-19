@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -54,6 +53,7 @@ from loom.core.introspection import (
     describe_app,
 )
 from loom.core.job.service import InlineJobService, JobService
+from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import PersistenceWiring, resolve_backend
@@ -181,7 +181,7 @@ class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
 
 class _AppConfig(msgspec.Struct, kw_only=True):
     name: str
-    code_path: str = "src"
+    code_path: str = DEFAULT_CODE_PATH
     discovery: _DiscoveryConfig = msgspec.field(default_factory=_DiscoveryConfig)
     rest: _RestConfig = msgspec.field(default_factory=_RestConfig)
 
@@ -198,12 +198,6 @@ _DISCOVERY_ENGINES: dict[str, Callable[[_DiscoveryConfig], DiscoveryResult]] = {
     "modules": lambda cfg: ModulesDiscoveryEngine(cfg.modules.include).discover(),
     "manifest": lambda cfg: ManifestDiscoveryEngine(cfg.manifest.module).discover(),
 }
-
-
-def _ensure_code_path(code_path: Path) -> None:
-    path_str = str(code_path.resolve())
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
 
 
 def _build_discovery_result(discovery_cfg: _DiscoveryConfig) -> DiscoveryResult:
@@ -1658,11 +1652,10 @@ def create_app(
     )
     sql = _resolve_sql(ctx, auth)
 
-    config_file = Path(paths[0]).resolve()
-    effective_code_path = Path(code_path) if code_path is not None else Path(app_cfg.code_path)
-    if not effective_code_path.is_absolute():
-        effective_code_path = (config_file.parent / effective_code_path).resolve()
-    _ensure_code_path(effective_code_path)
+    effective_code_path = add_code_path(
+        code_path if code_path is not None else app_cfg.code_path,
+        Path(paths[0]).resolve().parent,
+    )
     # After the code path: checks.modules may name the application's modules.
     enforce_deploy_checks(ctx, resolved_environment)
 

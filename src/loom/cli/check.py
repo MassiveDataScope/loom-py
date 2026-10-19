@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -31,9 +30,7 @@ from loom.core.config import ConfigContext, with_default_resolvers
 from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, resolve_environment, select_config_paths
-
-# create_app's default for app.code_path.
-_DEFAULT_CODE_PATH = "src"
+from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 
 
 def check(
@@ -60,7 +57,7 @@ def check(
         environment = resolve_environment(env)
         paths = _config_paths(config, environment)
         context = load_application_config(*paths, resolvers=with_default_resolvers(()))
-        _add_code_path(context, Path(paths[0]))
+        _add_code_path(context, Path(paths[0]).resolve().parent)
         report = run_deploy_checks(context, skip=tuple(skip or ()))
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
@@ -77,14 +74,9 @@ def _load_check_packages() -> None:
         importlib.import_module("loom.rest")
 
 
-def _add_code_path(context: ConfigContext, first_file: Path) -> None:
-    raw = context.raw("app.code_path", _DEFAULT_CODE_PATH)
-    code_path = Path(raw if isinstance(raw, str) else _DEFAULT_CODE_PATH)
-    if not code_path.is_absolute():
-        code_path = first_file.resolve().parent / code_path
-    entry = str(code_path.resolve())
-    if code_path.is_dir() and entry not in sys.path:
-        sys.path.insert(0, entry)
+def _add_code_path(context: ConfigContext, config_dir: Path) -> None:
+    raw = context.raw("app.code_path", DEFAULT_CODE_PATH)
+    add_code_path(raw if isinstance(raw, str) else DEFAULT_CODE_PATH, config_dir)
 
 
 def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ...]:

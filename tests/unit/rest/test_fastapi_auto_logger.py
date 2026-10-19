@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -135,7 +136,7 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(auto, "_build_bootstrap", _fake_build_bootstrap)
     monkeypatch.setattr(auto, "_configure_job_service", _fake_configure_job_service)
     monkeypatch.setattr(auto, "create_fastapi_app", _fake_create_fastapi_app)
-    monkeypatch.setattr(auto, "_ensure_code_path", lambda code_path: None)
+    monkeypatch.setattr(auto, "add_code_path", lambda code_path, config_dir: Path(code_path))
 
     app = create_app("config.yaml", environment="development")
 
