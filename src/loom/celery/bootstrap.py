@@ -83,6 +83,7 @@ from loom.celery.runner import (
 from loom.core.async_bridge import build_backend_options
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import cache_module_for
+from loom.core.checks import enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
@@ -94,6 +95,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.discovery._utils import collect_from_modules, import_modules
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.metrics import MetricsAdapter
+from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
@@ -104,6 +106,7 @@ from loom.core.use_case.agent_markers import declaring_agent_bindings
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
 from loom.rest.autocrud import build_auto_routes
+from loom.rest.checks import REST_CHECKS
 
 _logger = logging.getLogger(__name__)
 
@@ -666,6 +669,7 @@ def _compile_models(
 
 def _build_observability_runtime(
     ctx: ConfigContext | Mapping[str, Any],
+    environment: Environment = Environment.PRODUCTION,
 ) -> ObservabilityRuntime:
     """Build the shared observability runtime from top-level config."""
     config = _ensure_config_context(ctx)
@@ -673,7 +677,7 @@ def _build_observability_runtime(
         observability_cfg = config.section(ConfigKey.OBSERVABILITY, ObservabilityConfig)
     except ConfigError:
         observability_cfg = ObservabilityConfig()
-    return ObservabilityRuntime.from_config(observability_cfg)
+    return ObservabilityRuntime.from_config(observability_cfg, environment=environment)
 
 
 def _compile_db_layer(
@@ -835,6 +839,8 @@ def _reject_mcp_markers(
 
 def bootstrap_worker(
     *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
@@ -845,9 +851,15 @@ def bootstrap_worker(
 ) -> WorkerBootstrapResult:
     """Bootstrap a Celery worker process and register all Job tasks.
 
-    Loads configuration from ``config_paths``, compiles all ``Job``
-    subclasses, registers Celery tasks, and connects worker lifecycle
-    signals for per-process async bridge management.
+    Resolves the environment once (*environment*, else ``LOOM_ENV``, else
+    production; see :mod:`loom.core.environment`), loads configuration from
+    ``config_dir`` or ``config_paths``, compiles all ``Job`` subclasses,
+    registers Celery tasks, and connects worker lifecycle signals for
+    per-process async bridge management.
+
+    In production and staging the deploy checks run (see
+    :mod:`loom.core.checks`), except the ``loom.rest`` ones: a worker serves
+    no HTTP. The environment is registered in the container.
 
     This function is **independent** of
     :func:`~loom.core.bootstrap.bootstrap.bootstrap_app` — it targets the
@@ -865,9 +877,13 @@ def bootstrap_worker(
     persistence.
 
     Args:
-        *config_paths: One or more paths to YAML configuration files.
-            Files are merged left-to-right.  Later files override earlier
-            ones.
+        *config_paths: Paths to YAML configuration files, merged
+            left-to-right; later files override earlier ones. Mutually
+            exclusive with *config_dir*.
+        config_dir: Local directory holding ``base.yaml`` and the
+            per-environment overlays: ``base.yaml`` loads first, then
+            ``<environment>.yaml`` when present.
+        environment: Environment of the worker; overrides ``LOOM_ENV``.
         jobs: Concrete ``Job`` subclasses to compile/register.  When
             omitted, jobs are discovered from ``app.discovery`` using
             mode ``modules`` or ``manifest``.
@@ -899,8 +915,11 @@ def bootstrap_worker(
         configured Celery application.
 
     Raises:
-        ConfigError: If a required configuration section is missing or
-            fails validation.
+        ConfigError: If neither or both of *config_paths* and *config_dir*
+            are given, the environment is unknown, or a required
+            configuration section is missing or fails validation.
+        DeployCheckError: When a deploy check of level error fails in
+            production or staging.
         RuntimeError: If no ``app.discovery`` config is provided and no
             ``jobs`` are declared, or if discovery finds no ``Job`` classes.
 
@@ -915,10 +934,15 @@ def bootstrap_worker(
         )
         result.celery_app.start()
     """
-    ctx = ConfigContext.from_yaml(*config_paths, resolvers=with_default_resolvers(resolvers))
+    resolved_environment = resolve_environment(environment)
+    paths = select_config_paths(
+        config_paths, config_dir, resolved_environment, caller="bootstrap_worker"
+    )
+    ctx = ConfigContext.from_yaml(*paths, resolvers=with_default_resolvers(resolvers))
     app_cfg = ctx.section_optional(ConfigKey.APP, _WorkerAppConfig) or _WorkerAppConfig()
     celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
-    observability_runtime = _build_observability_runtime(ctx)
+    observability_runtime = _build_observability_runtime(ctx, resolved_environment)
+    enforce_deploy_checks(ctx, resolved_environment, skip=(REST_CHECKS,))
     async_runtime = _build_async_runtime(celery_cfg.runtime)
 
     resolved = _resolve_compilables_and_jobs(ctx, jobs, use_cases)
@@ -951,6 +975,7 @@ def bootstrap_worker(
         modules=runtime_modules,
         metrics=metrics,
         uow_factory=uow_factory,
+        environment=resolved_environment,
     )
     _reject_agent_markers(resolved.compilables, kernel)
     _reject_mcp_markers(resolved.compilables, kernel)
