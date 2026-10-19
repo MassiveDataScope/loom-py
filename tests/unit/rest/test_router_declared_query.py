@@ -347,3 +347,10 @@ def test_an_int_enum_value_reaches_execute(client: TestClient) -> None:
     response = client.get("/grants/by-owner", params={"owner": "ana", "tier": "2"})
 
     assert (response.status_code, response.json()) == (200, ["ana", 2])
+
+
+@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
+def test_a_non_ascii_digit_is_not_a_number(client: TestClient, path: str) -> None:
+    response = client.get(path, params={"limit": "\u0663"})
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (400, "query_validation")
