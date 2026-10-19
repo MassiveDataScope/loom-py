@@ -485,15 +485,27 @@
   top of `observability`, which several readers decode in part, still accept
   keys another reader owns. `create_app` and `bootstrap_worker` no longer fall
   back to the default `observability` section when it fails validation, and
-  `create_app` falls back to the in-process job service only when `celery`
-  is absent, not when it fails validation.
-- **core:** `LOOM__*` overrides: a variable naming no known section, a
-  malformed level, `checks` or `app.rest.auth` (directly or through a parent
-  whose value reaches them), a value holding `${` however it is written, a
-  key inside an interpolated one, or two variables for one key or for a key
-  and its parent stops startup. A placeholder in the `checks` section is a
-  `ConfigError`. A per-flow Prefect YAML is read without overrides. `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by
-  nothing, are removed.
+  `create_app` registers the in-process job service when the `celery`
+  section is absent (with a warning) or the Celery extra is not installed; a
+  `celery` section that fails validation now stops startup instead.
+- **core:** a `LOOM__*` override sets one leaf value. A variable naming no
+  known section, with a malformed level, whose value is or holds a mapping,
+  whose target the files declare as a mapping, naming a reviewed key (at or
+  under `checks` and `app.rest.auth`, or `app.rest.docs_url`, `redoc_url`,
+  `openapi_url` and `observability.prometheus.config.path`), holding `${`
+  however it is written, reaching inside an interpolated key, failing to
+  parse, or colliding with another variable stops startup naming the
+  variable, never the value. A placeholder in the `checks` section is a
+  `ConfigError`. A per-flow Prefect YAML is read without overrides.
+  `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by nothing, are removed.
+- **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
+  sets it in `tests/conftest.py`), or every application it builds starts as
+  production and runs the deploy checks.
+- **core:** the migration locator now resolves `LOOM_ENV` (picking the
+  overlay of a config directory), applies the `LOOM__*` variables and puts
+  `app.code_path` on `sys.path` when the directory exists, as the
+  application does. `loom check --deploy` refuses an `app.code_path` that is
+  not a literal path.
 - **core:** `ETLRunner` and `StreamingRunner` resolve the environment
   (`LOOM_ENV`, else production): without one they log JSON and, built from a
   whole configuration (a file, a directory, or a mapping for

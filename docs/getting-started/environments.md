@@ -189,21 +189,29 @@ LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.examp
   knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
   the variable. Two variables for the same key, or for a key and one of its
   parents, stop startup naming both.
-- `checks` and `app.rest.auth` cannot be overridden, by their own variable or
-  by a parent one whose value reaches them: deploy-check silences, check
-  modules and the authentication mechanism are declared only in the files.
+- An override sets one leaf value. A value that is or holds a mapping
+  (`{a: 1}`, `[1, {a: 2}]`) is refused, and so is a target the files declare
+  as a mapping, whether the new value is null, a scalar or a list: an
+  override cannot replace a structure. A list of scalars is a leaf.
+- Reviewed keys cannot be overridden, whatever their case: everything at or
+  under `checks` and `app.rest.auth`, and `app.rest.docs_url`,
+  `app.rest.redoc_url`, `app.rest.openapi_url` and
+  `observability.prometheus.config.path`, which decide what is served
+  without authentication. They are declared only in the files.
 - Values are literals. The value is parsed first and any string in it
   holding `${` is refused, however it is written (quoted, escaped as `\x24`,
-  inside a list or a mapping), so an override cannot reach another variable
-  or a secret. A variable reaching inside a key whose value is an
-  interpolation is refused too.
+  inside a list), so an override cannot reach another variable or a secret.
+  A variable reaching inside a key whose value is an interpolation is
+  refused too.
 - Values parse as an OmegaConf dotlist (YAML 1.1), then the section types
   validate them:
-  `5` is an integer, `false` a boolean, `[a, b]` a list and `{read: 5, write: 10}`
-  a mapping. A list is replaced whole; its items cannot be set one by one.
-  YAML 1.1 rules apply: `yes`, `no`, `on` and `off` are booleans, `1.10`
-  becomes `1.1`, `0755` is octal, an empty value is null, ` #` starts a
-  comment and `a: b` is a mapping. Quote a value to keep it a string:
+  `5` is an integer, `false` a boolean and `[a, b]` a list. A list is
+  replaced whole; its items cannot be set one by one. YAML 1.1 rules apply:
+  `yes`, `no`, `on` and `off` are booleans, `1.10` becomes `1.1`, `0755` is
+  octal, an empty value is null, ` #` starts a comment and `a: b` is a
+  mapping, and so refused. A value that does not parse, a YAML tag that fails
+  to construct included, stops startup naming the variable, never the
+  value. Quote a value to keep it a string:
   `LOOM__APP__REST__VERSION='"1.10"'` sets the API version published in the
   OpenAPI document to the string `1.10`.
 - At startup one WARNING line names the keys that came from variables. Their
@@ -307,7 +315,7 @@ check fails startup, a `W` check logs a warning.
 
 | Id | What it finds |
 |---|---|
-| `loom.rest.E001` | The API authenticates no caller: neither `app.rest.auth.jwt` nor `app.rest.auth.custom: true` is set. |
+| `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
 

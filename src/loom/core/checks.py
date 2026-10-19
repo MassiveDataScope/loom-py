@@ -209,9 +209,10 @@ def run_deploy_checks(
         The findings and the silenced ids.
 
     Raises:
-        ConfigError: When the ``checks`` section has an unknown key,
-            ``checks.silenced`` holds an entry outside the id scheme, or a
-            module of ``checks.modules`` cannot be imported.
+        ConfigError: When the ``checks`` section holds a placeholder, an
+            unknown key or a value of the wrong type; when ``checks.silenced``
+            holds an entry outside the id scheme; or when a module of
+            ``checks.modules`` fails at import.
     """
     section = _checks_section(config)
     _import_modules(section.modules)
@@ -247,7 +248,10 @@ def enforce_deploy_checks(
 
     Raises:
         DeployCheckError: When a check of level error has a finding.
-        ConfigError: When ``checks.silenced`` holds an entry outside the id scheme.
+        ConfigError: When the ``checks`` section holds a placeholder, an
+            unknown key or a value of the wrong type; when ``checks.silenced``
+            holds an entry outside the id scheme; or when a module of
+            ``checks.modules`` fails at import.
     """
     if not environment.is_deployed:
         _logger.warning(

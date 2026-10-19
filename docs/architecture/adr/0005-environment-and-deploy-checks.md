@@ -68,11 +68,15 @@ variable (`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
   environment fails loudly.
 - `tests/unit/test_environment_containment.py` fails when any other module
   names `LOOM_ENV`, `ENVIRONMENT`, a similar variable, a `LOOM_*` variable or
-  the `LOOM__` prefix, or touches the process environment with a name the
-  environment module defines: `os.environ`/`os.getenv` reads, an aliased
-  import or module attribute, an f-string `LOOM_` key, a loop or
-  comprehension over `os.environ` filtered by a loom name, or
-  `name in os.environ`, each with a self-test;
+  the `LOOM__` prefix as a string literal; when, outside the environment
+  module, any access to `os.environ`, `environ`, `os.getenv` or `getenv` is
+  anything but a read of one variable named by a string literal that does not
+  start with `LOOM_` (closed world: a dynamic key, iteration, `.copy()`,
+  `dict(os.environ)`, a write or membership on a name fails, except in two
+  allowlisted dynamic readers with their reason); and when src, the docs or
+  the README name a `LOOM_*` variable loom does not own. Each failure class
+  of the closed-world rule has one self-test, and one fixture shows the
+  allowed shape;
   `tests/unit/test_domain_containment.py` fails when any other module of loom
   names an environment (`prod`, `production`, `staging`, `dev`,
   `development`), with one exemption keyed by file and literal for a literal
@@ -136,21 +140,30 @@ Within any file, its own values win over its `includes`.
   structs that forbid unknown fields, which are those with a single reader:
   `app.rest` and below, the `observability` sub-sections, `sql`, `celery`,
   `jobs`, every `storage` struct, `kafka`, the bytewax runtime, `dynamodb`
-  and the flow config. `app`, `database`, `persistence` and the top of `observability` are
+  and the flow config. `app`, `database`, `persistence` and the top of
+  `observability` are
   decoded in part by several readers and accept keys another reader owns;
   `ai` keeps its own validation.
-- `checks` and `app.rest.auth` cannot be overridden, by their own variable
-  or by a parent one whose value reaches them (case-insensitively): silences,
-  check modules and the authentication mechanism are declared only in the
-  versioned files, where they are reviewed. The `checks` section is also read
-  as written, and a placeholder anywhere in it is a `ConfigError`. Values are
-  literals: each value is parsed first and any string in it holding `${` is
-  refused, so a quoted, `\x24`-escaped or nested placeholder cannot slip
-  through; a variable reaching inside an interpolated key is refused too. Values parse as a YAML 1.1 dotlist (`5`,
-  `false`, `no`, `[a, b]`, `{a: 1}`, empty is null, ` #` starts a comment)
-  and the msgspec structs validate them; a list is replaced whole. An error
-  names the variable, never the value, and is raised without the parser's
-  exception chained.
+- An override sets one leaf value. A value that is or holds a mapping is
+  refused, and so is a target the files declare as a mapping, whatever the
+  new value (null, a scalar or a list): an override cannot replace a
+  structure. Lists of scalars are leaves. This one rule closes every bypass
+  that wrote a whole mapping or a null over a declared structure.
+- Reviewed keys cannot be overridden, compared case-insensitively: everything
+  at or under `checks` and `app.rest.auth`, and the four keys that feed the
+  authentication exclusion list (`app.rest.docs_url`, `redoc_url`,
+  `openapi_url`, `observability.prometheus.config.path`). They are declared
+  only in the versioned files, where they are reviewed. The `checks` section
+  is also read as written, and a placeholder anywhere in it is a
+  `ConfigError`.
+- Values are literals: each value is parsed first and any string in it
+  holding `${` is refused, so a quoted, `\x24`-escaped or nested placeholder
+  cannot slip through; a variable reaching inside an interpolated key is
+  refused too. Values parse as a YAML 1.1 dotlist (`5`, `false`, `no`,
+  `[a, b]`, empty is null, ` #` starts a comment) and the msgspec structs
+  validate them; a list is replaced whole. Any parse failure, a YAML tag that
+  fails to construct included, becomes a `ConfigError` naming the variable;
+  this module never logs or raises with an override's value.
 - One WARNING line names the keys that came from variables, never their
   values. WARNING because it is written before the logger is configured.
 - What belongs in `LOOM__*`: per-deployment tuning such as log level, pool
@@ -243,8 +256,9 @@ configuration name a mechanism supplied in code:
 `authenticator`. `create_app` refuses an `authenticator` without it, `custom:
 true` without an `authenticator`, and `custom: true` beside `jwt`. The CLI and
 `create_app` therefore read the same answer, and nobody has to silence
-`loom.rest.E001` to pass CI. A `celery` section that fails validation stops
-`create_app`; only an absent one falls back to the in-process job service.
+`loom.rest.E001` to pass CI. `create_app` registers the in-process job service
+when the `celery` section is absent (with a warning) or the Celery extra is
+not installed; a `celery` section that fails validation stops startup.
 
 The checks read keys as written (`ConfigContext.raw`) and resolve no
 placeholder, so they run in CI without the application's secrets; a value
@@ -286,21 +300,27 @@ default, `ephemeral`, `unsigned`). Its check is not part of this decision.
 After this branch merges, that branch registers `loom.cursors.E001` with
 `@deploy_check` in a module its package already imports, and adds the package
 to `_load_check_packages` in `loom.cli.check` so `loom check --deploy` sees
-it. The development fixture in `tests/unit/rest/test_deploy_checks.py` that
-builds a REST app from its own YAML already sets
-`persistence.cursors.signing: ephemeral`. Once `loom.cursors.E001` exists,
-these tests run the checks in a deployed environment and will meet it:
+it. `loom.cursors.E001` applies only when a repository backend is
+configured. The development fixture in `tests/unit/rest/test_deploy_checks.py`
+that builds a REST app from its own YAML already sets
+`persistence.cursors.signing: ephemeral`. The tests that will break are the
+ones that start an application with a repository backend in a deployed
+environment and expect it to start:
 
-- `tests/unit/rest/test_deploy_checks.py`: every `create_app` call with
-  `environment="production"` or `"staging"` (the E001, silencing,
-  application-check-module and authenticator tests), and the test that leaves
-  `LOOM_ENV` unset so the app starts as production;
-- `tests/unit/cli/test_check_deploy.py`: every `loom check --deploy` run on
-  a configuration without the cursor setting, `--env production` ones
-  included, since the command runs every check whatever the environment and
-  only `--skip` leaves an area out.
+- `tests/unit/rest/test_deploy_checks.py`:
+  `test_an_authenticator_declared_as_custom_starts_in_production`,
+  `test_a_warning_is_logged_and_the_app_starts` and
+  `test_a_silenced_error_lets_the_app_start_and_is_logged` (their projects
+  declare a SQLite `database`);
+- `tests/integration/celery_bootstrap/test_bootstrap_worker.py`:
+  `test_bootstrap_worker_uses_top_level_observability_section`, which starts
+  a staging worker with a `database`.
 
-They need the cursor setting in their configurations, or the id under
+The deployed tests that expect a `DeployCheckError` or a `ConfigError` keep
+passing, the error then listing the cursor finding too, and the
+`loom check --deploy` tests declare no repository backend.
+
+The four need the cursor setting in their configurations, or the id under
 `checks.silenced`. The guide's overlay examples need the same setting. A
 cursor signing key in any example is read from a variable named like
 `CURSOR_KEY_...`, never `LOOM_*`: `LOOM_` names belong to
@@ -316,7 +336,13 @@ which secrets do not go through.
 - Flow YAML `environments` keys must be environment names; `prod`, `dev` and
   `local` must be renamed.
 - An unknown key under a single-reader section, a malformed `observability`
-  section, or a `LOOM__` variable naming no known section, the `checks`
-  section, or a `${...}` value stops startup.
+  section, or a `LOOM__` variable that names no known section, sets a
+  mapping, replaces a declared mapping, names a reviewed key or holds `${`
+  stops startup.
+- A consumer's test suite must set `LOOM_ENV=test`, or every application it
+  builds starts as production and runs the deploy checks.
+- The migration locator resolves `LOOM_ENV`, applies the `LOOM__*` variables
+  and puts `app.code_path` on `sys.path` (when the directory exists), as the
+  application does.
 - A Prefect worker must run with `LOOM_ENV` set to the environment of its
   deployments; a run whose `env` differs fails.
