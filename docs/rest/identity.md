@@ -47,7 +47,9 @@ WWW-Authenticate: Bearer error="insufficient_user_authentication",
 
 `max_age` and `acr_values` appear only when given. In the description, each
 character RFC 6750 §3 does not allow becomes a space and runs of spaces collapse;
-an empty result falls back to "A different authentication level is required".
+an empty result falls back to "A different authentication level is required",
+and the result is cut at 256 characters. A non-`str` message, or `acr_values`
+that is not an iterable of `str`, raises `ValueError`.
 
 A refusal that knows its cause can say it. `Forbidden(message, reason=..., missing=...)`
 answers the same 403 with two more keys, each only when given:

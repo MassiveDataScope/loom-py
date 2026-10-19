@@ -190,10 +190,10 @@ class TestHttpErrorMapper:
         [
             ('Say "again"\r\nnow', "Say again now"),
             ("Autenticación reciente", "Autenticaci n reciente"),
-            ("", "A different authentication level is required"),
             ("\r\n", "A different authentication level is required"),
+            ("a" * 300, "a" * 256),
         ],
-        ids=["quotes-crlf", "non-ascii", "empty", "nothing-left"],
+        ids=["quotes-crlf", "non-ascii", "nothing-left", "capped"],
     )
     def test_a_step_up_description_keeps_only_what_the_header_allows(
         self, message: str, description: str

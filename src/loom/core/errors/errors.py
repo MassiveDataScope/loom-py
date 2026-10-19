@@ -97,7 +97,7 @@ class InsufficientAuthentication(Unauthenticated):
     """Raised when the caller is authenticated, but not strongly or recently enough.
 
     The caller can fix it by authenticating again under the stated
-    requirements (step-up, RFC 9470).
+    requirements (step-up).
 
     Args:
         message: Description of the missing authentication strength.
@@ -107,9 +107,10 @@ class InsufficientAuthentication(Unauthenticated):
             in order of preference; empty when any will do.
 
     Raises:
-        ValueError: If ``max_age`` is not a non-negative ``int``, ``acr_values``
-            is a single ``str``, or a value is not a ``str``, is empty, or holds
-            a character outside visible ASCII, a double quote or a backslash.
+        ValueError: If ``message`` is not a ``str``, ``max_age`` is not a
+            non-negative ``int``, ``acr_values`` is a single ``str``, ``bytes``
+            or not iterable, or a value is not a ``str``, is empty, or holds a
+            character outside visible ASCII, a double quote or a backslash.
 
     Example::
 
@@ -125,11 +126,14 @@ class InsufficientAuthentication(Unauthenticated):
         max_age: int | None = None,
         acr_values: Iterable[str] = (),
     ) -> None:
+        if not isinstance(message, str):
+            raise ValueError("InsufficientAuthentication.message must be a str")
         if max_age is not None and (type(max_age) is not int or max_age < 0):
             raise ValueError("InsufficientAuthentication.max_age must be a non-negative int")
-        if isinstance(acr_values, str):
+        if isinstance(acr_values, (str, bytes)) or not isinstance(acr_values, Iterable):
             raise ValueError(
-                "InsufficientAuthentication.acr_values takes an iterable of values, not one str"
+                "InsufficientAuthentication.acr_values takes an iterable of str values, "
+                "not one str, bytes or a non-iterable"
             )
         values = tuple(acr_values)
         if not all(

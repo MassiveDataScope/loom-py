@@ -235,6 +235,20 @@
     a keyword-only `code` on `BoundaryValidationError` (default
     `boundary_validation`). `build_query_parameters_schema` takes an optional
     `component_registry`. `QuerySpec` routes are unchanged.
+- **rest:** step-up authentication (RFC 9470).
+  `loom.core.errors.InsufficientAuthentication(message, *, max_age=None,
+  acr_values=())`, an `Unauthenticated` with its own code
+  `ErrorCode.INSUFFICIENT_AUTHENTICATION` (`"insufficient_authentication"`),
+  answers `401` with `WWW-Authenticate: Bearer
+  error="insufficient_user_authentication", error_description="…"`, plus
+  `max_age="N"` and `acr_values="…"` when given. In the description each
+  character RFC 6750 §3 does not allow becomes a space, runs of spaces
+  collapse, an empty result falls back to the default message, and the text
+  is cut at 256 characters. A non-`str` message, a negative or non-int
+  `max_age`, `acr_values` that is a single `str`, `bytes` or not iterable, or
+  an ACR value that is not a `str`, is empty, or holds anything but visible
+  ASCII other than a double quote or a backslash raise `ValueError`. Every
+  other 401 keeps the plain `Bearer` challenge.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a

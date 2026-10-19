@@ -158,6 +158,9 @@ class HttpErrorMapper:
         return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
 
 
+_DESCRIPTION_MAX_LENGTH = 256
+
+
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
     if isinstance(error, InsufficientAuthentication):
         return {WWW_AUTHENTICATE_HEADER: _step_up_challenge(error)}
@@ -173,12 +176,15 @@ def _step_up_challenge(error: InsufficientAuthentication) -> str:
 
     The description replaces each character RFC 6750 §3 does not allow in it
     with a space and collapses runs of spaces; an empty result falls back to
-    the default message.
+    the default message. It is cut at 256 characters.
     """
     allowed = "".join(
         char if " " <= char <= "~" and char not in '"\\' else " " for char in error.message
     )
-    description = " ".join(allowed.split()) or InsufficientAuthentication.default_message
+    description = (
+        " ".join(allowed.split())[:_DESCRIPTION_MAX_LENGTH].rstrip()
+        or InsufficientAuthentication.default_message
+    )
     params = [
         'error="insufficient_user_authentication"',
         f'error_description="{description}"',
