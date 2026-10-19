@@ -114,7 +114,8 @@ def test_reload_sql_and_compiler_definition_modules_with_basic_usage() -> None:
     class _Step:
         __qualname__ = "ReloadStep"
 
-    err = compiler_errors.ETLCompilationError.missing_target(_Step)
+    issue = compiler_errors.ETLErrorCode.MISSING_TARGET.issue(component=_Step)
+    err = compiler_errors.ETLCompilationError.from_issue(issue)
     assert err.code is compiler_errors.ETLErrorCode.MISSING_TARGET
     assert "ReloadStep" in str(err)
     assert "TargetSpec" in target_variants.__all__

@@ -1,56 +1,273 @@
 """ETL compilation error types.
 
 ``ETLErrorCode``
-    Machine-readable enum of every validation failure the compiler can raise.
+    Machine-readable catalogue of every validation failure the compiler can
+    raise. Each member carries the template of its issue, and
+    ``ETLErrorCode.X.issue(...)`` builds it.
 
 ``ETLCompilationError``
     Structured exception carrying ``code``, ``component``, ``field``, and a
-    human-readable ``message``.  Each error code has a dedicated class-method
-    factory so call-sites stay intention-revealing and free of string formatting.
+    human-readable message. The compiler raises one per failure, built from
+    an issue with :meth:`ETLCompilationError.from_issue`.
+
+Where a message shows a list of names (``['a', 'b']``), the call site passes
+that list already formatted, so the text stays as it was.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import unique
+from typing import Final
+
+from loom.core.errors.codes import CompileIssue, IssueCode, Template
+
+_ALIAS: Final = "{alias}"
+_TRACK: Final = "track"
+_EFFECTIVE_DATE: Final = "effective_date"
+_DELETE_MARKER: Final = "delete_marker"
+_ALIAS_REASON: Final = Template("{component}.{alias}: {reason}", field=_ALIAS)
+"""Issue of a step attribute (a ``FromConfig`` key or a ``WithAgent``) with its reason."""
 
 
-class ETLErrorCode(StrEnum):
-    """Enumeration of all compiler validation failure codes."""
+@unique
+class ETLErrorCode(IssueCode):
+    """Catalogue of every compiler validation failure and the issue it renders."""
 
-    INVALID_PARAMS_TYPE = "INVALID_PARAMS_TYPE"
-    INVALID_PARAMS_NAME = "INVALID_PARAMS_NAME"
-    MISSING_SOURCE_PARAMS = "MISSING_SOURCE_PARAMS"
-    EXTRA_SOURCE_PARAMS = "EXTRA_SOURCE_PARAMS"
-    MISSING_PARAMS_FIELDS = "MISSING_PARAMS_FIELDS"
-    UNKNOWN_SOURCE_TABLE = "UNKNOWN_SOURCE_TABLE"
-    UNKNOWN_TARGET_TABLE = "UNKNOWN_TARGET_TABLE"
-    TEMP_NOT_PRODUCED = "TEMP_NOT_PRODUCED"
-    UPSERT_NO_KEYS = "UPSERT_NO_KEYS"
-    UPSERT_EXCLUDE_INCLUDE_CONFLICT = "UPSERT_EXCLUDE_INCLUDE_CONFLICT"
-    UPSERT_KEY_IN_EXCLUDE = "UPSERT_KEY_IN_EXCLUDE"
-    UPDATE_EMPTY_UPDATE_SET = "UPDATE_EMPTY_UPDATE_SET"
-    MISSING_GENERIC_PARAM = "MISSING_GENERIC_PARAM"
-    MISSING_TARGET = "MISSING_TARGET"
-    INVALID_TARGET_TYPE = "INVALID_TARGET_TYPE"
-    INVALID_SOURCES_TYPE = "INVALID_SOURCES_TYPE"
-    INVALID_PROCESS_ITEM = "INVALID_PROCESS_ITEM"
-    INVALID_STEP_ITEM = "INVALID_STEP_ITEM"
-    DUPLICATE_TEMP_NAME = "DUPLICATE_TEMP_NAME"
-    INVALID_TEMP_APPEND_MIX = "INVALID_TEMP_APPEND_MIX"
-    UNKNOWN_PARAM_FIELD = "UNKNOWN_PARAM_FIELD"
-    UNKNOWN_TEMPLATE_FIELD = "UNKNOWN_TEMPLATE_FIELD"
-    MISSING_CONFIG_PARAMS = "MISSING_CONFIG_PARAMS"
-    CONFIG_ALIAS_CONFLICT = "CONFIG_ALIAS_CONFLICT"
-    UNSUPPORTED_CONFIG_VALUE = "UNSUPPORTED_CONFIG_VALUE"
-    UNRESOLVED_CONFIG_VALUE = "UNRESOLVED_CONFIG_VALUE"
-    AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
-    AGENT_RUNNER_NOT_CONFIGURED = "AGENT_RUNNER_NOT_CONFIGURED"
-    AGENT_COMPILATION_FAILED = "AGENT_COMPILATION_FAILED"
-    AGENT_OUTPUT_MISMATCH = "AGENT_OUTPUT_MISMATCH"
-    AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET"
-    AGENT_BUDGET_UNENFORCEABLE = "AGENT_BUDGET_UNENFORCEABLE"
-    AGENT_UNSUPPORTED_ENGINE = "AGENT_UNSUPPORTED_ENGINE"
-    AGENT_COLUMN_COLLISION = "AGENT_COLUMN_COLLISION"
+    INVALID_PARAMS_TYPE = (
+        "INVALID_PARAMS_TYPE",
+        Template(
+            "{component}.execute: first parameter must be 'params: {expected}'", field="params"
+        ),
+    )
+    INVALID_PARAMS_NAME = (
+        "INVALID_PARAMS_NAME",
+        Template(
+            "{component}.execute: first parameter must be named 'params', got '{got}'",
+            field="{got}",
+        ),
+    )
+    MISSING_SOURCE_PARAMS = (
+        "MISSING_SOURCE_PARAMS",
+        Template(
+            "{component}.execute: source(s) {missing} declared in sources but missing as "
+            "keyword-only parameter(s) after '*'"
+        ),
+    )
+    EXTRA_SOURCE_PARAMS = (
+        "EXTRA_SOURCE_PARAMS",
+        Template(
+            "{component}.execute: parameter(s) {extra} declared after '*' but not found in "
+            "sources or FromConfig values"
+        ),
+    )
+    MISSING_PARAMS_FIELDS = (
+        "MISSING_PARAMS_FIELDS",
+        Template("{component} requires params fields {missing} not present in {context}"),
+    )
+    UNKNOWN_SOURCE_TABLE = (
+        "UNKNOWN_SOURCE_TABLE",
+        Template(
+            "{component}: source '{alias}' references unknown table '{table_ref}'", field=_ALIAS
+        ),
+    )
+    UNKNOWN_TARGET_TABLE = (
+        "UNKNOWN_TARGET_TABLE",
+        Template("{component}: target references unknown table '{table_ref}'"),
+    )
+    TEMP_NOT_PRODUCED = (
+        "TEMP_NOT_PRODUCED",
+        Template(
+            "{component}: source '{alias}' references FromTemp({temp_name!r}) but no prior "
+            "IntoTemp({temp_name!r}) found in the plan",
+            field=_ALIAS,
+        ),
+    )
+    UPSERT_NO_KEYS = (
+        "UPSERT_NO_KEYS",
+        Template(
+            "{component}: {method}() requires at least one key column. "
+            'Pass keys=("col",) to identify rows uniquely.'
+        ),
+    )
+    UPSERT_EXCLUDE_INCLUDE_CONFLICT = (
+        "UPSERT_EXCLUDE_INCLUDE_CONFLICT",
+        Template(
+            "{component}: {method}() exclude= and include= are mutually exclusive. "
+            "Use one or the other, not both."
+        ),
+    )
+    UPSERT_KEY_IN_EXCLUDE = (
+        "UPSERT_KEY_IN_EXCLUDE",
+        Template(
+            "{component}: {method}() exclude={overlap} overlaps with {method} keys — key "
+            "columns are always excluded from UPDATE SET."
+        ),
+    )
+    UPDATE_EMPTY_UPDATE_SET = (
+        "UPDATE_EMPTY_UPDATE_SET",
+        Template(
+            "{component}: update() include={include} is fully covered by keys/partition_cols, "
+            "which are always excluded from UPDATE SET — the MERGE would update no columns "
+            "and the write would be a guaranteed no-op. List at least one non-key, "
+            "non-partition column."
+        ),
+    )
+    MISSING_GENERIC_PARAM = (
+        "MISSING_GENERIC_PARAM",
+        Template("{component}: missing generic parameter — use {kind}[YourParams] not bare {kind}"),
+    )
+    MISSING_TARGET = (
+        "MISSING_TARGET",
+        Template("{component}: 'target' is required but not declared"),
+    )
+    INVALID_TARGET_TYPE = (
+        "INVALID_TARGET_TYPE",
+        Template("{component}: 'target' must be IntoTable(...), IntoFile(...), or IntoTemp(...)"),
+    )
+    INVALID_PROCESS_ITEM = (
+        "INVALID_PROCESS_ITEM",
+        Template("{component}.processes: expected ETLProcess subclass or list thereof, got {item}"),
+    )
+    INVALID_STEP_ITEM = (
+        "INVALID_STEP_ITEM",
+        Template("{component}.steps: expected ETLStep subclass or list thereof, got {item}"),
+    )
+    DUPLICATE_TEMP_NAME = (
+        "DUPLICATE_TEMP_NAME",
+        Template(
+            "{component}: IntoTemp({name!r}) already written by a prior step. Use append=True "
+            "on all writers to enable fan-in, or choose a unique name for each intermediate.",
+            field="{name}",
+        ),
+    )
+    INVALID_TEMP_APPEND_MIX = (
+        "INVALID_TEMP_APPEND_MIX",
+        Template(
+            "{component}: IntoTemp({name!r}) mixes append=True and append=False. All writers "
+            "for the same intermediate must use the same mode.",
+            field="{name}",
+        ),
+    )
+    UNKNOWN_PARAM_FIELD = (
+        "UNKNOWN_PARAM_FIELD",
+        Template(
+            "{component}: params expression references unknown field '{field_name}' on "
+            "{params_type}",
+            field="{field_name}",
+        ),
+    )
+    UNKNOWN_TEMPLATE_FIELD = (
+        "UNKNOWN_TEMPLATE_FIELD",
+        Template(
+            "{component}: file path template {path!r} references unknown field "
+            "'{field_name}' on {params_type}",
+            field="{field_name}",
+        ),
+    )
+    MISSING_CONFIG_PARAMS = (
+        "MISSING_CONFIG_PARAMS",
+        Template(
+            "{component}.execute: {marker} value(s) {missing} declared on the step but "
+            "missing as keyword-only parameter(s) after '*'"
+        ),
+    )
+    CONFIG_ALIAS_CONFLICT = (
+        "CONFIG_ALIAS_CONFLICT",
+        Template(
+            "{component}: {marker} value(s) {aliases} share their name with a source alias "
+            "or the injected 'client'; rename the attribute"
+        ),
+    )
+    UNSUPPORTED_CONFIG_VALUE = (
+        "UNSUPPORTED_CONFIG_VALUE",
+        Template(
+            "{component}: a StepSQL renders SQL and never calls execute(), so it cannot "
+            "receive {marker} values"
+        ),
+    )
+    # ``reason`` must never carry the value: callers pass the message of a
+    # ``loom.etl.runtime.ConfigValueError``.
+    UNRESOLVED_CONFIG_VALUE = "UNRESOLVED_CONFIG_VALUE", _ALIAS_REASON
+    AGENT_NOT_FOUND = "AGENT_NOT_FOUND", _ALIAS_REASON
+    AGENT_RUNNER_NOT_CONFIGURED = (
+        "AGENT_RUNNER_NOT_CONFIGURED",
+        Template(
+            "{component}.{alias}: no agent runner is configured; declare an 'ai:' section "
+            "in the runner config",
+            field=_ALIAS,
+        ),
+    )
+    AGENT_COMPILATION_FAILED = "AGENT_COMPILATION_FAILED", _ALIAS_REASON
+    AGENT_OUTPUT_MISMATCH = "AGENT_OUTPUT_MISMATCH", _ALIAS_REASON
+    AGENT_UNPRICED_BUDGET = "AGENT_UNPRICED_BUDGET", _ALIAS_REASON
+    AGENT_BUDGET_UNENFORCEABLE = "AGENT_BUDGET_UNENFORCEABLE", _ALIAS_REASON
+    AGENT_UNSUPPORTED_ENGINE = "AGENT_UNSUPPORTED_ENGINE", _ALIAS_REASON
+    AGENT_COLUMN_COLLISION = "AGENT_COLUMN_COLLISION", _ALIAS_REASON
+
+    # IntoHistory rules, checked again at compile time for a HistorifySpec
+    # built without the IntoHistory builder.
+    HISTORIFY_KEYS_EMPTY = (
+        "HISTORIFY_KEYS_EMPTY",
+        Template(
+            "{component}: IntoHistory 'keys' must contain at least one column name.",
+            field="keys",
+        ),
+    )
+    HISTORIFY_KEYS_TRACK_OVERLAP = (
+        "HISTORIFY_KEYS_TRACK_OVERLAP",
+        Template(
+            "{component}: IntoHistory 'keys' and 'track' must not overlap. "
+            "Conflicting columns: {overlap}",
+            field=_TRACK,
+        ),
+    )
+    HISTORIFY_EFFECTIVE_DATE_IN_TRACK = (
+        "HISTORIFY_EFFECTIVE_DATE_IN_TRACK",
+        Template(
+            "{component}: IntoHistory 'effective_date' column {effective_date!r} cannot "
+            "appear in 'track'. The effective_date is a temporal axis, not a dimension "
+            "being tracked.",
+            field=_EFFECTIVE_DATE,
+        ),
+    )
+    HISTORIFY_BOUNDARY_IN_KEYS = (
+        "HISTORIFY_BOUNDARY_IN_KEYS",
+        Template(
+            "{component}: IntoHistory boundary columns {overlap} cannot appear in 'keys'.",
+            field="valid_from",
+        ),
+    )
+    HISTORIFY_BOUNDARY_IN_TRACK = (
+        "HISTORIFY_BOUNDARY_IN_TRACK",
+        Template(
+            "{component}: IntoHistory boundary columns {overlap} cannot appear in 'track'.",
+            field=_TRACK,
+        ),
+    )
+    HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN = (
+        "HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN",
+        Template(
+            "{component}: IntoHistory LOG mode requires 'effective_date' to be a column name "
+            "(str), not a ParamExpr. In LOG mode each row carries its own timestamp.",
+            field=_EFFECTIVE_DATE,
+        ),
+    )
+    HISTORIFY_DELETE_MARKER_REQUIRES_LOG = (
+        "HISTORIFY_DELETE_MARKER_REQUIRES_LOG",
+        Template(
+            "{component}: IntoHistory 'delete_marker' requires LOG mode. "
+            "SNAPSHOT deletions are governed by 'delete_policy'.",
+            field=_DELETE_MARKER,
+        ),
+    )
+    HISTORIFY_DELETE_MARKER_DECLARED_COLUMN = (
+        "HISTORIFY_DELETE_MARKER_DECLARED_COLUMN",
+        Template(
+            "{component}: IntoHistory 'delete_marker' {marker!r} must not name a key, track, "
+            "overwrite, effective_date, boundary or partition_scope column.",
+            field=_DELETE_MARKER,
+        ),
+    )
 
 
 class ETLCompilationError(Exception):
@@ -61,12 +278,9 @@ class ETLCompilationError(Exception):
         component: Qualified name of the step or component that failed.
         field:     Optional name of the specific field or parameter involved.
 
-    Use the factory class-methods to construct instances — they own all message
-    formatting so call-sites stay readable.
-
     Example::
 
-        raise ETLCompilationError.upsert_no_keys(MyStep)
+        raise ETLCompilationError.from_issue(ETLErrorCode.MISSING_TARGET.issue(component=MyStep))
     """
 
     def __init__(
@@ -81,393 +295,9 @@ class ETLCompilationError(Exception):
         self.component = component
         self.field = field
 
-    # ------------------------------------------------------------------
-    # Factory methods — one per ETLErrorCode
-    # ------------------------------------------------------------------
-
     @classmethod
-    def invalid_params_type(cls, step: type, expected: type) -> ETLCompilationError:
-        """First execute() parameter has wrong type annotation."""
+    def from_issue(cls, issue: CompileIssue[ETLErrorCode]) -> ETLCompilationError:
+        """Return the error that reports *issue*."""
         return cls(
-            code=ETLErrorCode.INVALID_PARAMS_TYPE,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}.execute: first parameter must be "
-                f"'params: {expected.__name__}'"
-            ),
-            field="params",
-        )
-
-    @classmethod
-    def invalid_params_name(cls, step: type, got: str) -> ETLCompilationError:
-        """First execute() parameter is not named 'params'."""
-        return cls(
-            code=ETLErrorCode.INVALID_PARAMS_NAME,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}.execute: first parameter must be named 'params', got '{got}'"
-            ),
-            field=got,
-        )
-
-    @classmethod
-    def missing_source_params(cls, step: type, missing: frozenset[str]) -> ETLCompilationError:
-        """Sources declared in sources but absent as kw-only execute() parameters."""
-        return cls(
-            code=ETLErrorCode.MISSING_SOURCE_PARAMS,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}.execute: source(s) {sorted(missing)} "
-                "declared in sources but missing as keyword-only parameter(s) after '*'"
-            ),
-        )
-
-    @classmethod
-    def extra_source_params(cls, step: type, extra: frozenset[str]) -> ETLCompilationError:
-        """Kw-only execute() parameters not declared in sources nor as FromConfig."""
-        return cls(
-            code=ETLErrorCode.EXTRA_SOURCE_PARAMS,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}.execute: parameter(s) {sorted(extra)} "
-                "declared after '*' but not found in sources or FromConfig values"
-            ),
-        )
-
-    @classmethod
-    def missing_params_fields(
-        cls, component: type, missing: frozenset[str], context: type
-    ) -> ETLCompilationError:
-        """Component requires params fields that the context params type lacks."""
-        return cls(
-            code=ETLErrorCode.MISSING_PARAMS_FIELDS,
-            component=component.__qualname__,
-            message=(
-                f"{component.__qualname__} requires params fields "
-                f"{sorted(missing)} not present in {context.__name__}"
-            ),
-        )
-
-    @classmethod
-    def unknown_source_table(cls, step: type, alias: str, table_ref: str) -> ETLCompilationError:
-        """Source binding references a table not in the catalog."""
-        return cls(
-            code=ETLErrorCode.UNKNOWN_SOURCE_TABLE,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'"
-            ),
-            field=alias,
-        )
-
-    @classmethod
-    def unknown_target_table(cls, step: type, table_ref: str) -> ETLCompilationError:
-        """Target references a table not in the catalog."""
-        return cls(
-            code=ETLErrorCode.UNKNOWN_TARGET_TABLE,
-            component=step.__qualname__,
-            message=(f"{step.__qualname__}: target references unknown table '{table_ref}'"),
-        )
-
-    @classmethod
-    def temp_not_produced(cls, step: type, alias: str, temp_name: str) -> ETLCompilationError:
-        """FromTemp references a temp name with no prior IntoTemp."""
-        return cls(
-            code=ETLErrorCode.TEMP_NOT_PRODUCED,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: source '{alias}' "
-                f"references FromTemp({temp_name!r}) but no prior "
-                f"IntoTemp({temp_name!r}) found in the plan"
-            ),
-            field=alias,
-        )
-
-    @classmethod
-    def upsert_no_keys(cls, step: type, method: str = "upsert") -> ETLCompilationError:
-        """upsert()/update() declared with no key columns."""
-        return cls(
-            code=ETLErrorCode.UPSERT_NO_KEYS,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: {method}() requires at least one key column. "
-                'Pass keys=("col",) to identify rows uniquely.'
-            ),
-        )
-
-    @classmethod
-    def upsert_exclude_include_conflict(
-        cls, step: type, method: str = "upsert"
-    ) -> ETLCompilationError:
-        """upsert()/update() has both exclude= and include= set."""
-        return cls(
-            code=ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: {method}() exclude= and include= are mutually exclusive. "
-                "Use one or the other, not both."
-            ),
-        )
-
-    @classmethod
-    def upsert_key_in_exclude(
-        cls, step: type, overlap: frozenset[str], method: str = "upsert"
-    ) -> ETLCompilationError:
-        """upsert()/update() exclude= contains columns that are also merge keys."""
-        return cls(
-            code=ETLErrorCode.UPSERT_KEY_IN_EXCLUDE,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: {method}() exclude={sorted(overlap)} overlaps with "
-                f"{method} keys — key columns are always excluded from UPDATE SET."
-            ),
-        )
-
-    @classmethod
-    def update_empty_update_set(cls, step: type, include: tuple[str, ...]) -> ETLCompilationError:
-        """update() include= is fully absorbed by keys and partition columns."""
-        return cls(
-            code=ETLErrorCode.UPDATE_EMPTY_UPDATE_SET,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: update() include={sorted(include)} is fully covered "
-                "by keys/partition_cols, which are always excluded from UPDATE SET — "
-                "the MERGE would update no columns and the write would be a guaranteed "
-                "no-op. List at least one non-key, non-partition column."
-            ),
-        )
-
-    @classmethod
-    def missing_generic_param(cls, cls_type: type, kind: str) -> ETLCompilationError:
-        """ETLStep/ETLProcess/ETLPipeline used without a generic parameter."""
-        return cls(
-            code=ETLErrorCode.MISSING_GENERIC_PARAM,
-            component=cls_type.__qualname__,
-            message=(
-                f"{cls_type.__qualname__}: missing generic parameter — "
-                f"use {kind}[YourParams] not bare {kind}"
-            ),
-        )
-
-    @classmethod
-    def missing_target(cls, step: type) -> ETLCompilationError:
-        """'target' is required but not declared on the step."""
-        return cls(
-            code=ETLErrorCode.MISSING_TARGET,
-            component=step.__qualname__,
-            message=f"{step.__qualname__}: 'target' is required but not declared",
-        )
-
-    @classmethod
-    def invalid_target_type(cls, step: type) -> ETLCompilationError:
-        """'target' is not an IntoTable/IntoFile/IntoTemp instance."""
-        return cls(
-            code=ETLErrorCode.INVALID_TARGET_TYPE,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: 'target' must be "
-                "IntoTable(...), IntoFile(...), or IntoTemp(...)"
-            ),
-        )
-
-    @classmethod
-    def invalid_sources_type(cls, step: type) -> ETLCompilationError:
-        """'sources' is not a Sources(...) or SourceSet instance."""
-        return cls(
-            code=ETLErrorCode.INVALID_SOURCES_TYPE,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: 'sources' must be Sources(...) or a SourceSet instance"
-            ),
-        )
-
-    @classmethod
-    def invalid_process_item(cls, pipeline: type, item: object) -> ETLCompilationError:
-        """An item in pipeline.processes is not an ETLProcess subclass."""
-        return cls(
-            code=ETLErrorCode.INVALID_PROCESS_ITEM,
-            component=pipeline.__qualname__,
-            message=(
-                f"{pipeline.__qualname__}.processes: "
-                f"expected ETLProcess subclass or list thereof, got {item!r}"
-            ),
-        )
-
-    @classmethod
-    def invalid_step_item(cls, process: type, item: object) -> ETLCompilationError:
-        """An item in process.steps is not an ETLStep subclass."""
-        return cls(
-            code=ETLErrorCode.INVALID_STEP_ITEM,
-            component=process.__qualname__,
-            message=(
-                f"{process.__qualname__}.steps: "
-                f"expected ETLStep subclass or list thereof, got {item!r}"
-            ),
-        )
-
-    @classmethod
-    def duplicate_temp_name(cls, step: type, name: str) -> ETLCompilationError:
-        """Two steps write to the same IntoTemp name without append=True."""
-        return cls(
-            code=ETLErrorCode.DUPLICATE_TEMP_NAME,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: IntoTemp({name!r}) already written by a prior step. "
-                "Use append=True on all writers to enable fan-in, "
-                "or choose a unique name for each intermediate."
-            ),
-            field=name,
-        )
-
-    @classmethod
-    def invalid_temp_append_mix(cls, step: type, name: str) -> ETLCompilationError:
-        """A step mixes append=True and append=False on the same IntoTemp name."""
-        return cls(
-            code=ETLErrorCode.INVALID_TEMP_APPEND_MIX,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: IntoTemp({name!r}) mixes append=True and append=False. "
-                "All writers for the same intermediate must use the same mode."
-            ),
-            field=name,
-        )
-
-    @classmethod
-    def unknown_template_field(
-        cls, step: type, field_name: str, path: str, params_type: type
-    ) -> ETLCompilationError:
-        """A file path template references a field not declared on the params type."""
-        return cls(
-            code=ETLErrorCode.UNKNOWN_TEMPLATE_FIELD,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: file path template {path!r} references unknown "
-                f"field '{field_name}' on {params_type.__name__}"
-            ),
-            field=field_name,
-        )
-
-    @classmethod
-    def unknown_param_field(
-        cls, step: type, field_name: str, params_type: type
-    ) -> ETLCompilationError:
-        """A ParamExpr references a field not declared on the params type."""
-        return cls(
-            code=ETLErrorCode.UNKNOWN_PARAM_FIELD,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: params expression references unknown field "
-                f"'{field_name}' on {params_type.__name__}"
-            ),
-            field=field_name,
-        )
-
-    @classmethod
-    def missing_config_params(
-        cls, step: type, missing: frozenset[str], marker: str = "FromConfig"
-    ) -> ETLCompilationError:
-        """FromConfig or WithAgent attributes absent as kw-only execute() parameters."""
-        return cls(
-            code=ETLErrorCode.MISSING_CONFIG_PARAMS,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}.execute: {marker} value(s) {sorted(missing)} "
-                "declared on the step but missing as keyword-only parameter(s) after '*'"
-            ),
-        )
-
-    @classmethod
-    def config_alias_conflict(
-        cls, step: type, aliases: frozenset[str], marker: str = "FromConfig"
-    ) -> ETLCompilationError:
-        """A FromConfig or WithAgent attribute shares its name with a source or the client."""
-        return cls(
-            code=ETLErrorCode.CONFIG_ALIAS_CONFLICT,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: {marker} value(s) {sorted(aliases)} share their "
-                "name with a source alias or the injected 'client'; rename the attribute"
-            ),
-        )
-
-    @classmethod
-    def unsupported_config_value(
-        cls, step: type, marker: str = "FromConfig"
-    ) -> ETLCompilationError:
-        """A StepSQL declares FromConfig or WithAgent values it has no execute() to receive."""
-        return cls(
-            code=ETLErrorCode.UNSUPPORTED_CONFIG_VALUE,
-            component=step.__qualname__,
-            message=(
-                f"{step.__qualname__}: a StepSQL renders SQL and never calls execute(), "
-                f"so it cannot receive {marker} values"
-            ),
-        )
-
-    @classmethod
-    def unresolved_config_value(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """A FromConfig key cannot be supplied from the runner's config.
-
-        *reason* must never carry the value: callers pass the message of a
-        :class:`~loom.etl.runtime.ConfigValueError`.
-        """
-        return cls(
-            code=ETLErrorCode.UNRESOLVED_CONFIG_VALUE,
-            component=step.__qualname__,
-            message=f"{step.__qualname__}.{alias}: {reason}",
-            field=alias,
-        )
-
-    @classmethod
-    def agent_not_found(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """A WithAgent names an agent no configured artifact declares."""
-        return cls._agent(ETLErrorCode.AGENT_NOT_FOUND, step, alias, reason)
-
-    @classmethod
-    def agent_runner_not_configured(cls, step: type, alias: str) -> ETLCompilationError:
-        """A WithAgent is declared on a runner configured without an agent runner."""
-        return cls._agent(
-            ETLErrorCode.AGENT_RUNNER_NOT_CONFIGURED,
-            step,
-            alias,
-            "no agent runner is configured; declare an 'ai:' section in the runner config",
-        )
-
-    @classmethod
-    def agent_compilation_failed(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """The artifact a WithAgent names does not compile; *reason* carries its issues."""
-        return cls._agent(ETLErrorCode.AGENT_COMPILATION_FAILED, step, alias, reason)
-
-    @classmethod
-    def agent_output_mismatch(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """A WithAgent output differs from the ``type_ref`` output of its artifact."""
-        return cls._agent(ETLErrorCode.AGENT_OUTPUT_MISMATCH, step, alias, reason)
-
-    @classmethod
-    def agent_unpriced_budget(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """A budget is declared for an agent whose model has no known price."""
-        return cls._agent(ETLErrorCode.AGENT_UNPRICED_BUDGET, step, alias, reason)
-
-    @classmethod
-    def agent_budget_unenforceable(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """A step budget no worst case of one run can be reserved against."""
-        return cls._agent(ETLErrorCode.AGENT_BUDGET_UNENFORCEABLE, step, alias, reason)
-
-    @classmethod
-    def agent_unsupported_engine(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """A WithAgent declared on a runner whose engine no agent runner serves."""
-        return cls._agent(ETLErrorCode.AGENT_UNSUPPORTED_ENGINE, step, alias, reason)
-
-    @classmethod
-    def agent_column_collision(cls, step: type, alias: str, reason: str) -> ETLCompilationError:
-        """An output field of a WithAgent is named like a run metadata column."""
-        return cls._agent(ETLErrorCode.AGENT_COLUMN_COLLISION, step, alias, reason)
-
-    @classmethod
-    def _agent(cls, code: ETLErrorCode, step: type, alias: str, reason: str) -> ETLCompilationError:
-        return cls(
-            code=code,
-            component=step.__qualname__,
-            message=f"{step.__qualname__}.{alias}: {reason}",
-            field=alias,
+            code=issue.code, component=issue.component, message=issue.message, field=issue.field
         )

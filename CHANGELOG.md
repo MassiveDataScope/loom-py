@@ -761,6 +761,27 @@
 
 ### etl
 
+- **etl:** compile errors come from the code catalogue (ADR 0003, part B). The
+  34 class-method factories of `ETLCompilationError` (`upsert_no_keys`,
+  `missing_target`, `unknown_source_table` and the rest) are removed, without
+  aliases. Each `ETLErrorCode` member carries the template of its message,
+  component and field; the compiler raises
+  `ETLCompilationError.from_issue(ETLErrorCode.X.issue(...))`, and a missing or
+  unknown argument raises a `TypeError` naming the code. The
+  `ETLCompilationError(code, component, message, field)` constructor is
+  unchanged. Messages keep their text.
+- **etl:** each `IntoHistory` compile check has its own code instead of
+  `INVALID_TARGET_TYPE`: `HISTORIFY_KEYS_EMPTY`, `HISTORIFY_KEYS_TRACK_OVERLAP`,
+  `HISTORIFY_EFFECTIVE_DATE_IN_TRACK`, `HISTORIFY_BOUNDARY_IN_KEYS`,
+  `HISTORIFY_BOUNDARY_IN_TRACK`, `HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN`,
+  `HISTORIFY_DELETE_MARKER_REQUIRES_LOG` and
+  `HISTORIFY_DELETE_MARKER_DECLARED_COLUMN`. Messages and fields are unchanged;
+  code that matched `INVALID_TARGET_TYPE` for these checks must match the new
+  codes. `INVALID_TARGET_TYPE` now means only a `target` that is not an
+  `IntoTable`, `IntoFile` or `IntoTemp`.
+- **etl:** `ETLErrorCode.INVALID_SOURCES_TYPE` is removed. No step could raise
+  it: a step's sources are grouped only when `sources` is a `Sources` or a
+  `SourceSet`, and both are valid.
 - **etl:** `replace(allow_empty=False)` on Spark writes the rows it checked.
   The writer ran `DataFrame.isEmpty()` and then let the write compute the
   frame again, so a source that changed in between, or a nondeterministic

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any, Protocol, TypeGuard
 
-from loom.etl.compiler._errors import ETLCompilationError
+from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
     PipelinePlan,
     ProcessPlan,
@@ -108,8 +108,10 @@ def _check_sources(step: StepPlan, catalog: TableDiscovery, will_create: set[str
             and spec.table_ref.ref not in will_create
             and not catalog.exists(spec.table_ref)
         ):
-            raise ETLCompilationError.unknown_source_table(
-                step.step_type, binding.alias, spec.table_ref.ref
+            raise ETLCompilationError.from_issue(
+                ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(
+                    component=step.step_type, alias=binding.alias, table_ref=spec.table_ref.ref
+                )
             )
 
 
@@ -124,7 +126,11 @@ def _check_target(step: StepPlan, catalog: TableDiscovery, will_create: set[str]
         and table_ref.ref not in will_create
         and not catalog.exists(table_ref)
     ):
-        raise ETLCompilationError.unknown_target_table(step.step_type, table_ref.ref)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UNKNOWN_TARGET_TABLE.issue(
+                component=step.step_type, table_ref=table_ref.ref
+            )
+        )
 
 
 def _track_overwrite(step: StepPlan, will_create: set[str]) -> None:
@@ -159,11 +165,15 @@ def _allow(*_: Any) -> None:
 
 
 def _raise_duplicate(step: type, name: str) -> None:
-    raise ETLCompilationError.duplicate_temp_name(step, name)
+    raise ETLCompilationError.from_issue(
+        ETLErrorCode.DUPLICATE_TEMP_NAME.issue(component=step, name=name)
+    )
 
 
 def _raise_mix(step: type, name: str) -> None:
-    raise ETLCompilationError.invalid_temp_append_mix(step, name)
+    raise ETLCompilationError.from_issue(
+        ETLErrorCode.INVALID_TEMP_APPEND_MIX.issue(component=step, name=name)
+    )
 
 
 _CONFLICT: dict[tuple[bool, bool], Callable[[type, str], None]] = {
@@ -222,8 +232,10 @@ def _check_temp_sources(step: StepPlan, seen: dict[str, bool]) -> None:
     for binding in step.source_bindings:
         spec = binding.spec
         if isinstance(spec, TempSourceSpec) and spec.temp_name not in seen:
-            raise ETLCompilationError.temp_not_produced(
-                step.step_type, binding.alias, spec.temp_name
+            raise ETLCompilationError.from_issue(
+                ETLErrorCode.TEMP_NOT_PRODUCED.issue(
+                    component=step.step_type, alias=binding.alias, temp_name=spec.temp_name
+                )
             )
 
 

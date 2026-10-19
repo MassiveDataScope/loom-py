@@ -34,7 +34,7 @@ from loom.etl.compiler._binding import (
     resolve_source_bindings,
     resolve_target_binding,
 )
-from loom.etl.compiler._errors import ETLCompilationError
+from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -211,7 +211,10 @@ class ETLCompiler:
                 )
             )
         if not (isinstance(item, type) and issubclass(item, ETLProcess)):
-            raise ETLCompilationError.invalid_process_item(pipeline_type, item)
+            issue = ETLErrorCode.INVALID_PROCESS_ITEM.issue(
+                component=pipeline_type, item=repr(item)
+            )
+            raise ETLCompilationError.from_issue(issue)
         plan = self._get_or_build_process(item)
         validate_params_compat(item, plan.params_type, pipeline_params_type)
         return plan
@@ -245,7 +248,8 @@ class ETLCompiler:
                 )
             )
         if not (isinstance(item, type) and issubclass(item, ETLStep)):
-            raise ETLCompilationError.invalid_step_item(process_type, item)
+            issue = ETLErrorCode.INVALID_STEP_ITEM.issue(component=process_type, item=repr(item))
+            raise ETLCompilationError.from_issue(issue)
         plan = self._get_or_build_step(item)
         validate_params_compat(item, plan.params_type, process_params_type)
         return plan
@@ -315,7 +319,9 @@ class ETLCompiler:
 def _require_params_type(cls: type[Any], kind: str) -> type[Any]:
     pt = getattr(cls, "_params_type", None)
     if pt is None:
-        raise ETLCompilationError.missing_generic_param(cls, kind)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.MISSING_GENERIC_PARAM.issue(component=cls, kind=kind)
+        )
     return cast(type[Any], pt)
 
 
