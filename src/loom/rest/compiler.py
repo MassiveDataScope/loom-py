@@ -15,8 +15,9 @@ Compilation steps per interface:
      refusing a ``Created`` that does not wrap another member of the result
      or sits on a route whose ``status_code`` is ``201``.
    - Refuse a ``(method, path)`` pair declared twice in the interface.
-   - Resolve the pagination and profile policies (route → interface →
-     global) and the required roles (route → interface).
+   - Resolve the pagination mode, the default and allowed profiles
+     (route → interface → global), and profile exposure and the required
+     roles (route → interface).
    - Read the fields of a ``Query()`` parameter, refusing a non-scalar field,
      a name shared with a path parameter or ``profile``, or a ``QuerySpec``
      parameter next to it.

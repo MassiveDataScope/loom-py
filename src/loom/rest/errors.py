@@ -23,6 +23,8 @@ from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
+_DESCRIPTION_MAX_LENGTH = 256
+
 
 class ErrorField(StrEnum):
     """Keys used in all HTTP error response bodies.
@@ -158,9 +160,6 @@ class HttpErrorMapper:
         return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
 
 
-_DESCRIPTION_MAX_LENGTH = 256
-
-
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
     if isinstance(error, InsufficientAuthentication):
         return {WWW_AUTHENTICATE_HEADER: _step_up_challenge(error)}
@@ -176,7 +175,7 @@ def _step_up_challenge(error: InsufficientAuthentication) -> str:
 
     The description replaces each character RFC 6750 §3 does not allow in it
     with a space and collapses runs of spaces; an empty result falls back to
-    the default message. It is cut at 256 characters.
+    the default message. It is cut at ``_DESCRIPTION_MAX_LENGTH`` characters.
     """
     allowed = "".join(
         char if " " <= char <= "~" and char not in '"\\' else " " for char in error.message
