@@ -193,9 +193,6 @@
   `Created` on a route whose `status_code` is already `201`. Every other
   caller (the invoker, jobs, Celery, `LoomRestAdapter`) receives the wrapper
   and reads `.value`; the use case imports nothing from HTTP.
-  A pydantic result model is published once under `components.schemas` by
-  its class name and referenced from every status that returns it, as a
-  `msgspec.Struct` already was.
 - **rest:** `429` with `Retry-After`. `ErrorCode.RATE_LIMITED`
   (`"rate_limited"`) and `loom.core.errors.RateLimited(retry_after)`, a
   `DomainError` holding the delay in whole seconds, rounded up and at least 1;

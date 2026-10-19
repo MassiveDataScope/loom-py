@@ -350,6 +350,7 @@ parameters (open question 5).
 |---|---|---|
 | 1 | Route-level callable, `RestRoute(status_for=lambda r: …)` | The body would have to carry the flag the callable reads; OpenAPI cannot learn the statuses from a callable, so a second declaration is needed; YAML routes cannot express it |
 | 1 | `Outcome[T](value, status: int)` | An HTTP status inside the use case |
+| 1 | Register a pydantic result model as one component under its class name, so 200 and 201 share it | Changes the OpenAPI of every pydantic route; two models with the same class name overwrite each other; a generic `Page[Item]` yields an invalid component key. 200 and 201 may each inline the schema instead |
 | 1 | A `created: bool` attribute read by convention | Implicit, untyped, leaks into the response body |
 | 1 | Returning a FastAPI `Response` | Breaks the rule that a use case knows no HTTP |
 | 2 | `ErrorCode.TOO_MANY_REQUESTS` | The contract's code is `rate_limited`; loom names codes for meaning |
@@ -560,8 +561,7 @@ The owner's review changed these points, all reflected above:
 - An agent granted a use case that takes `Query()` fails to compile with
   `USECASE_DECLARES_QUERY`: a tool call cannot bind a declared query.
 - `Created` on a route with `status_code` 201 is refused. OpenAPI builds both
-  success entries in one `build_success_responses`. A pydantic result model
-  is one component under its class name, as a `msgspec.Struct` already was.
+  success entries in one `build_success_responses`.
 - `RateLimited` refuses a non-finite `retry_after` with a `ValueError`.
 - Importing every `loom.core` module loads no `loom.rest`, FastAPI or
   Starlette (a containment test).

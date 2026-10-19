@@ -18,7 +18,7 @@ from loom.core.command.introspection import (
     get_patch_fields,
 )
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import is_pydantic_model, pydantic_type
+from loom.core.model import pydantic_type
 from loom.core.model.json_schema import DEFS, DEFS_PREFIX, REF
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.rest.compiler import CompiledRoute, QueryField
@@ -394,11 +394,7 @@ def _safe_schema(
     raw = _safe_msgspec_schema(annotation) or _safe_pydantic_schema(annotation)
     if raw is None:
         return None
-    schema = _with_component_refs(raw, component_registry)
-    if component_registry is None or not is_pydantic_model(annotation) or REF in schema:
-        return schema
-    component_registry[annotation.__name__] = schema
-    return {REF: _COMPONENT_REF_PREFIX + annotation.__name__}
+    return _with_component_refs(raw, component_registry)
 
 
 def _with_component_refs(
