@@ -194,28 +194,32 @@ def test_the_bound_bootstrap_document_contains_only_injected_names() -> None:
 
 _CONSUMER_VOCABULARY = re.compile(
     r"periplo|\bGrantView\b|\bListGrants\b|\bCreateGrant|\bRevokeGrant|\bGrantQuery"
-    r"|\bTenantRoleCode\b|\baccess_grant\b|/v1/grants|\bmembershipId\b",
+    r"|\bGrantState|\bTenantRole|\baccess_grant\b|/v1/grants|\bmembership_?id\b"
+    r"|\bChangeBudget\b|\bHEADER_PARAMETERS\b|\bROUTE_ERRORS\b|s2-design|\bT9\b"
+    r"|composition/openapi",
     re.IGNORECASE,
 )
-_PROVENANCE = {
-    "docs/architecture/adr/0002-rest-result-status-rate-limit-and-declared-queries.md": (
-        "- First consumer: periplo-cloud"
-    ),
-}
+_PROVENANCE_FILE = (
+    "docs/architecture/adr/0002-rest-result-status-rate-limit-and-declared-queries.md"
+)
+_PROVENANCE_LINE = "- First consumer: periplo-cloud"
 _SCANNED_SUFFIXES = frozenset({".md", ".rst", ".py", ".json", ".yaml", ".yml", ".toml", ".sql"})
 
 
 def _scanned_files() -> Iterator[Path]:
     for top in ("src", "docs", "tests"):
-        for path in sorted((_ROOT / top).rglob("*")):
+        for path in (_ROOT / top).rglob("*"):
             if path.suffix in _SCANNED_SUFFIXES and path.is_file():
                 yield path
 
 
 def _consumer_vocabulary_hits(path: Path) -> list[str]:
-    allowed = _PROVENANCE.get(path.relative_to(_ROOT).as_posix())
+    is_provenance = path.relative_to(_ROOT).as_posix() == _PROVENANCE_FILE
+    text = path.read_text(encoding="utf-8")
     return [
-        line for line in _offending_lines(path.read_text(), _CONSUMER_VOCABULARY) if line != allowed
+        line
+        for line in _offending_lines(text, _CONSUMER_VOCABULARY)
+        if not (is_provenance and line == _PROVENANCE_LINE)
     ]
 
 
@@ -231,6 +235,5 @@ def test_sources_docs_and_tests_carry_no_consumer_vocabulary() -> None:
 
 
 def test_the_allowed_provenance_line_appears_exactly_once() -> None:
-    for rel, line in _PROVENANCE.items():
-        lines = [text.strip() for text in (_ROOT / rel).read_text().splitlines()]
-        assert lines.count(line) == 1
+    lines = (_ROOT / _PROVENANCE_FILE).read_text(encoding="utf-8").splitlines()
+    assert [line.strip() for line in lines].count(_PROVENANCE_LINE) == 1

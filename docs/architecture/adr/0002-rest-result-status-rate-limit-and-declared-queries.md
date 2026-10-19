@@ -8,6 +8,9 @@
 File and line references in Context and Decision are against loom-kernel
 2.20.2.
 
+The examples use an illustrative shop-orders domain; the first consumer's
+real routes differ from them only in names.
+
 ## Context
 
 The first consumer's routes need three things loom 2.20.2 cannot express. The
