@@ -9,8 +9,6 @@ from loom.core.errors.codes import ErrorCode
 class FilterPathError(DomainError, ValueError):
     """Raised when a filter references a field path that does not exist.
 
-    Carries the ``unsupported_query`` code, so the REST layer answers ``400``.
-
     Args:
         path: The unresolvable dot-separated field path.
 
@@ -28,8 +26,7 @@ class UnsafeFilterError(DomainError, ValueError):
     """Raised when a filter field is not in the repository's allowed set.
 
     This is a hard rejection — the caller requested filtering on a field
-    that the repository has not explicitly permitted.  Carries the
-    ``unsupported_query`` code, so the REST layer answers ``400``.
+    that the repository has not explicitly permitted.
 
     Args:
         field: The rejected field name.
