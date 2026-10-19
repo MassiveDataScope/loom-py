@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import msgspec
 
+from loom.core.environment import Environment, resolve_environment
 from loom.etl.pipeline import ETLPipeline
 from loom.etl.runner import ETLRunner
 from loom.prefect._placeholders import resolve_placeholder
@@ -128,7 +129,7 @@ def build_backfill_body(
 
     def _run(flow_run_id: uuid.UUID | None, kwargs: dict[str, Any]) -> None:
         anchor = prefect_run_anchor()
-        env = kwargs.pop("env", "prod")
+        environment = resolve_environment(kwargs.pop("env", None))
         start_from = _resolve_start_from(kwargs.pop("start_from", None), anchor)
         params = resolve_run_params(kwargs, params_type, anchor=anchor)
         record_run_params({**msgspec.structs.asdict(params), "start_from": start_from})
@@ -147,7 +148,7 @@ def build_backfill_body(
             _log.info(
                 "backfill %s env=%s chunk %d/%d window=[%s, %s)",
                 flow_name,
-                env,
+                environment,
                 index,
                 len(windows),
                 chunk_start.isoformat(),
@@ -162,12 +163,15 @@ def build_backfill_body(
                 run_id=f"{run_id_base}-{label}",
                 flow_run_id=flow_run_id,
                 manifest_store=manifest_store,
+                environment=environment,
             )
 
         finalize_params = msgspec.structs.replace(
             params, **{window_end_field: _floor_chunk(_now_utc(), chunk)}
         )
-        _log.info("backfill %s env=%s finalize include=%s", flow_name, env, finalize_processes)
+        _log.info(
+            "backfill %s env=%s finalize include=%s", flow_name, environment, finalize_processes
+        )
         _run_slice(
             actual_path,
             pipeline,
@@ -177,6 +181,7 @@ def build_backfill_body(
             run_id=f"{run_id_base}-finalize",
             flow_run_id=flow_run_id,
             manifest_store=manifest_store,
+            environment=environment,
         )
         set_run_summary(_backfill_summary(flow_name, len(windows), chunk, finalize_processes))
 
@@ -193,6 +198,7 @@ def _run_slice(
     run_id: str,
     flow_run_id: uuid.UUID | None,
     manifest_store: ManifestStore | None,
+    environment: Environment,
 ) -> None:
     """Run one backfill slice (a chunk or the finalize pass) as an isolated unit.
 
@@ -201,7 +207,7 @@ def _run_slice(
     """
     manifest = load_or_init_manifest(manifest_store, correlation_id)
     observers = build_observers(flow_run_id, manifest_store, manifest)
-    runner = ETLRunner.from_yaml(config_path, extra_observers=observers)
+    runner = ETLRunner.from_yaml(config_path, extra_observers=observers, environment=environment)
     runner.run(
         pipeline,
         params,

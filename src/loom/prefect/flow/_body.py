@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import msgspec
 
+from loom.core.environment import Environment, resolve_environment
 from loom.etl.compiler import flatten_step_names
 from loom.etl.compiler._plan import PipelinePlan, iter_processes, iter_steps_in_process
 from loom.etl.pipeline import ETLPipeline
@@ -72,10 +73,7 @@ def build_flow_body(
             uninstall_log_bridge()
 
     def _run(flow_run_id: UUID | None, kwargs: dict[str, Any]) -> None:
-        # "env" names the deployment target the flow was deployed for (its
-        # work pool); notifications read it from the flow parameters, so the
-        # context does not carry it.
-        kwargs.pop("env", None)
+        environment = resolve_environment(kwargs.pop("env", None))
         explicit_correlation = kwargs.pop("correlation_id", None)
         processes = validate_stage_names(kwargs.pop("processes", None), known_processes)
         params_obj = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())
@@ -108,6 +106,7 @@ def build_flow_body(
             ctx,
             observers,
             plan,
+            environment=environment,
         )
         set_run_summary(_etl_summary(plan, pending))
         maybe_delete_manifest(manifest_store, ctx.correlation_id)
@@ -133,10 +132,12 @@ def _invoke_runner(
     ctx: FlowCtx,
     observers: list[Any],
     plan: PipelinePlan,
+    *,
+    environment: Environment,
 ) -> None:
     import prefect  # noqa: PLC0415
 
-    runner = ETLRunner.from_yaml(config_path, extra_observers=observers)
+    runner = ETLRunner.from_yaml(config_path, extra_observers=observers, environment=environment)
     pending_set = set(pending)
 
     for proc in iter_processes(plan):

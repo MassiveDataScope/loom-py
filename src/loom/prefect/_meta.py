@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loom.core.environment import Environment
 from loom.core.model import LoomFrozenStruct
 
 # Attribute name used to attach discovery metadata to each flow.
@@ -63,7 +64,7 @@ class ETLFlowMeta(LoomFrozenStruct, frozen=True, kw_only=True):
         schedule: The ``schedule`` block from the YAML, or ``None``.
         raw_params: Default parameter mapping pre-bound at deploy time.
         pool_config: Per-environment work-pool overrides
-            (``environment → {"work_pool", "job_variables"}``).
+            (``Environment → {"work_pool", "job_variables"}``).
         tags: Extra deployment tags from the YAML, appended after ``name``.
         trigger: The ``trigger`` block from the YAML, or ``None``.
     """
@@ -74,7 +75,7 @@ class ETLFlowMeta(LoomFrozenStruct, frozen=True, kw_only=True):
     correlation_field: str | None
     schedule: dict[str, Any] | None
     raw_params: dict[str, Any]
-    pool_config: dict[str, dict[str, Any]]
+    pool_config: dict[Environment, dict[str, Any]]
     tags: tuple[str, ...] = ()
     trigger: FlowTrigger | None = None
 

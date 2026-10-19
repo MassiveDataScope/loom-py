@@ -55,8 +55,11 @@ def synthesise_flow_signature(
 ) -> inspect.Signature:
     """Build the flow signature: user params + ``env`` + factory-specific extras.
 
-    Every loom flow exposes ``env`` (defaulting to ``"prod"``) so the deploy
-    machinery can bind it uniformly; each factory appends its own extras
+    Every loom flow exposes ``env``, an
+    :class:`~loom.core.environment.Environment` value: ``None`` by default,
+    so the run resolves it like any loom process (``LOOM_ENV``, else
+    production), and set by the deployment to the environment it was
+    deployed for; each factory appends its own extras
     (``correlation_id``/``processes`` for ``etl_flow``, ``start_from`` for
     ``backfill_flow``, none for ``maintenance_flow``).
 
@@ -67,7 +70,9 @@ def synthesise_flow_signature(
     Returns:
         The synthesised ``inspect.Signature``.
     """
-    env = inspect.Parameter("env", inspect.Parameter.KEYWORD_ONLY, default="prod", annotation=str)
+    env = inspect.Parameter(
+        "env", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=str | None
+    )
     return inspect.Signature(
         parameters=[*signature_from_params_type(params_type), env, *extra_parameters],
         return_annotation=None,

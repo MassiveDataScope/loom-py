@@ -113,7 +113,7 @@ def invoked(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> list[tuple[An
     monkeypatch.setattr(
         _body,
         "_invoke_runner",
-        lambda _path, _pipeline, params, _pending, ctx, *_rest: calls.append((params, ctx)),
+        lambda _path, _pipeline, params, _pending, ctx, *_rest, **_kw: calls.append((params, ctx)),
     )
     monkeypatch.setattr(_body, "build_observers", lambda *a, **k: [])
     monkeypatch.setattr(_body, "install_log_bridge", lambda *a, **k: events.append("bridge"))
@@ -214,7 +214,7 @@ def test_stored_control_keys_are_recorded_unchanged(
         stored,
         run_date="${yesterday}",
         updated_at_to="2026-09-22T00:00:00Z",
-        env="dev",
+        env="development",
         processes=["_Process"],
     )
     client.update_flow_run.assert_called_once_with(
@@ -222,7 +222,7 @@ def test_stored_control_keys_are_recorded_unchanged(
         parameters={
             "run_date": "2026-09-21",
             "updated_at_to": "2026-09-22T00:00:00Z",
-            "env": "dev",
+            "env": "development",
             "processes": ["_Process"],
         },
     )
@@ -354,7 +354,8 @@ def test_maintenance_run_resolves_against_its_slot_and_records_it(
     runner.run.return_value = MaintenanceReport()
     monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
     monkeypatch.setattr(_maintenance, "uninstall_log_bridge", MagicMock())
-    monkeypatch.setattr(_maintenance, "_load_yaml", lambda path: (MagicMock(), MagicMock()))
+    monkeypatch.setattr(_maintenance, "_load_context", lambda path: MagicMock())
+    monkeypatch.setattr(_maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock()))
     monkeypatch.setattr(_maintenance.ObservabilityRuntime, "from_config", MagicMock())
     monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
     cfg = tmp_path / "maintenance.yaml"

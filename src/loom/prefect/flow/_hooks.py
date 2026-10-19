@@ -6,6 +6,8 @@ import os
 from collections.abc import Iterable
 from typing import Any
 
+from loom.core.config.errors import ConfigError
+from loom.core.environment import resolve_environment
 from loom.core.logger import get_logger
 from loom.prefect._async import run_sync
 from loom.prefect._summary import get_run_summary
@@ -90,10 +92,18 @@ def _correlation_from_params(flow_run: Any) -> str:
     return str(params.get("correlation_id") or "")
 
 
-def _env_from_params(flow_run: Any) -> str | None:
+def _env_from_params(flow_run: Any) -> str:
+    """Name the environment of the run, resolved as the run resolved it.
+
+    A run whose ``env`` names no environment failed on it; its notification
+    reports the value as given instead of failing a second time.
+    """
     params = getattr(flow_run, "parameters", None) or {}
-    env = params.get("env")
-    return str(env) if env else None
+    raw = params.get("env")
+    try:
+        return str(resolve_environment(raw))
+    except ConfigError:
+        return str(raw)
 
 
 def _duration_from_run(flow_run: Any) -> float | None:

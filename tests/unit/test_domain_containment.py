@@ -10,9 +10,10 @@ loom is a general library: no consumer's vocabulary may appear in its
 sources, docs or tests either. The consumer-vocabulary tests scan them for
 the first consumer's names.
 
-The environment labels themselves live in exactly one core module,
-``loom.core.environment``, which the environment-label test allows explicitly: every other
-core module receives the resolved environment instead of naming one.
+The environment labels themselves live in exactly one module,
+``loom.core.environment``, which the environment-label test allows
+explicitly: every other loom module receives the resolved environment
+instead of naming one.
 """
 
 from __future__ import annotations
@@ -244,6 +245,10 @@ def test_the_allowed_provenance_line_appears_exactly_once() -> None:
 
 
 _ENVIRONMENT_MODULE = "core/environment.py"
+# A literal that spells an environment label without meaning one, with why.
+_NOT_AN_ENVIRONMENT = {
+    "streaming/nodes/_table/common.py": "the 'staging' spool section of a Delta sink",
+}
 _ENVIRONMENT_LABELS = re.compile(r"^(prod|production|staging|dev|development)$", re.IGNORECASE)
 
 
@@ -258,12 +263,13 @@ def _environment_labels(path: Path) -> list[str]:
     ]
 
 
-def test_only_the_environment_module_names_an_environment_in_core() -> None:
+def test_only_the_environment_module_names_an_environment() -> None:
     allowed = _SRC / _ENVIRONMENT_MODULE
+    exempt = {_SRC / rel for rel in _NOT_AN_ENVIRONMENT}
     offenders = [
         hit
-        for path in sorted((_SRC / "core").rglob("*.py"))
-        if path != allowed
+        for path in sorted(_SRC.rglob("*.py"))
+        if path != allowed and path not in exempt
         for hit in _environment_labels(path)
     ]
 

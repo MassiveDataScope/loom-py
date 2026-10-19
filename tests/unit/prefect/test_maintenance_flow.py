@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import msgspec
 import pytest
 
+from loom.core.environment import Environment
 from loom.core.observability.event import Scope
 from loom.etl.maintenance._protocol import TableMaintenanceResult
 from loom.etl.maintenance._runner import MaintenanceError, MaintenanceReport
@@ -54,17 +55,16 @@ def test_maintenance_flow_bridges_logs_to_current_flow_run(
     runner.run.side_effect = lambda *args, **kwargs: events.append("run") or MaintenanceReport()
     runtime = MagicMock()
     runtime.span.side_effect = lambda *args, **kwargs: events.append("span") or nullcontext()
-    configure = MagicMock(side_effect=lambda config: events.append("configure") or runtime)
+    configure = MagicMock(side_effect=lambda config, **_kw: events.append("configure") or runtime)
     install = MagicMock(side_effect=lambda flow_id: events.append("install"))
     uninstall = MagicMock(side_effect=lambda: events.append("uninstall"))
 
     monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: flow_run_id)
     monkeypatch.setattr(_maintenance, "install_log_bridge", install)
     monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
+    monkeypatch.setattr(_maintenance, "_load_context", lambda path: events.append("load"))
     monkeypatch.setattr(
-        _maintenance,
-        "_load_yaml",
-        lambda path: events.append("load") or (storage_config, observability_config),
+        _maintenance, "_parse_sections", lambda context: (storage_config, observability_config)
     )
     monkeypatch.setattr(_maintenance.ObservabilityRuntime, "from_config", configure)
     monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
@@ -73,7 +73,7 @@ def test_maintenance_flow_bridges_logs_to_current_flow_run(
     flow.fn(dry_run=True)  # type: ignore[attr-defined]
 
     assert events == ["install", "load", "configure", "span", "run", "uninstall"]
-    configure.assert_called_once_with(observability_config)
+    configure.assert_called_once_with(observability_config, environment=Environment.TEST)
     install.assert_called_once_with(flow_run_id)
     uninstall.assert_called_once_with()
     runtime.span.assert_called_once_with(Scope.MAINTENANCE, "_MaintenanceStep")
@@ -106,7 +106,8 @@ def test_maintenance_flow_uninstalls_log_bridge_after_failure(
     monkeypatch.setattr(_maintenance, "prefect_flow_run_id", uuid.uuid4)
     monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
     monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
-    monkeypatch.setattr(_maintenance, "_load_yaml", lambda path: (MagicMock(), MagicMock()))
+    monkeypatch.setattr(_maintenance, "_load_context", lambda path: MagicMock())
+    monkeypatch.setattr(_maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock()))
     monkeypatch.setattr(
         _maintenance.ObservabilityRuntime,
         "from_config",

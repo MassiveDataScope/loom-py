@@ -63,7 +63,7 @@ _YAML = textwrap.dedent(
     params:
       updated_at_from: ${today-1d}
     environments:
-      prod:
+      production:
         work_pool: loom-fargate
         job_variables:
           image: orders:1.2.3
@@ -111,7 +111,7 @@ def test_registers_the_deployment_described_by_the_flow_yaml(
     _expose(monkeypatch, daily_orders=flow)
     from_source, deploy = _stub_prefect(flow)
 
-    deployment_id = deploy_flow(flow, env="prod", work_pool="unused-pool")
+    deployment_id = deploy_flow(flow, env="production", work_pool="unused-pool")
 
     assert deployment_id == "deployment-id"
     assert from_source.call_args.kwargs == {
@@ -124,7 +124,7 @@ def test_registers_the_deployment_described_by_the_flow_yaml(
     assert kwargs["image"] == "orders:1.2.3"
     assert kwargs["job_variables"] == {"cpu": "1024", "working_dir": "/app/src"}
     assert kwargs["tags"] == ["daily-orders", "mongo"]
-    assert kwargs["parameters"] == {"updated_at_from": "${today-1d}"}
+    assert kwargs["parameters"] == {"updated_at_from": "${today-1d}", "env": "production"}
     assert len(kwargs["schedules"]) == 1
 
 
@@ -135,7 +135,7 @@ def test_falls_back_to_the_given_work_pool_for_an_env_the_yaml_does_not_declare(
     _expose(monkeypatch, daily_orders=flow)
     _, deploy = _stub_prefect(flow)
 
-    deploy_flow_from_deploy(flow, env="dev", work_pool="loom-docker")
+    deploy_flow_from_deploy(flow, env="development", work_pool="loom-docker")
 
     kwargs = deploy.call_args.kwargs
     assert kwargs["work_pool_name"] == "loom-docker"
@@ -150,8 +150,10 @@ def test_refuses_an_env_without_a_work_pool_before_registering(
     _expose(monkeypatch, daily_orders=flow)
     from_source, _ = _stub_prefect(flow)
 
-    with pytest.raises(ValueError, match="no work pool for flow 'daily-orders' in env 'dev'"):
-        deploy_flow(flow, env="dev")
+    with pytest.raises(
+        ValueError, match="no work pool for flow 'daily-orders' in env 'development'"
+    ):
+        deploy_flow(flow, env="development")
 
     from_source.assert_not_called()
 
@@ -161,10 +163,8 @@ def test_takes_env_only_by_keyword(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     _expose(monkeypatch, daily_orders=flow)
     from_source, _ = _stub_prefect(flow)
 
-    with pytest.raises(TypeError, match="env"):
-        deploy_flow(flow)  # type: ignore[call-arg]
     with pytest.raises(TypeError, match="positional"):
-        deploy_flow(flow, "prod")  # type: ignore[misc]
+        deploy_flow(flow, "production")  # type: ignore[misc]
 
     from_source.assert_not_called()
 
@@ -177,7 +177,7 @@ def test_refuses_a_flow_its_module_exposes_under_another_attribute(
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(ValueError, match="'daily-orders' as attribute 'daily_orders'"):
-        deploy_flow(flow, env="prod")
+        deploy_flow(flow, env="production")
 
     from_source.assert_not_called()
 
@@ -193,7 +193,7 @@ def test_refuses_a_flow_whose_module_getattr_fails(
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(ValueError, match="'daily-orders' as attribute 'daily_orders'") as raised:
-        deploy_flow(flow, env="prod")
+        deploy_flow(flow, env="production")
 
     assert isinstance(raised.value.__cause__, RuntimeError)
     from_source.assert_not_called()
@@ -212,7 +212,7 @@ def test_refuses_a_flow_built_from_a_yaml_declaration(
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(TypeError, match=r"discover_and_deploy_etls\(config=\.\.\.\)"):
-        deploy_flow(flow, env="prod")
+        deploy_flow(flow, env="production")
 
     from_source.assert_not_called()
 
@@ -250,7 +250,7 @@ def test_reads_the_module_imported_through_a_symlinked_directory(
     _expose_from(monkeypatch, flow, linked_dir / "daily_orders.py")
     _, deploy = _stub_prefect(flow)
 
-    assert deploy_flow(flow, env="prod") == "deployment-id"
+    assert deploy_flow(flow, env="production") == "deployment-id"
     deploy.assert_called_once()
 
 
@@ -271,7 +271,7 @@ def test_reads_the_imported_module_when_the_metadata_names_it_through_a_symlink(
     _expose_from(monkeypatch, flow, real_dir / "daily_orders.py")
     _, deploy = _stub_prefect(flow)
 
-    assert deploy_flow(flow, env="prod") == "deployment-id"
+    assert deploy_flow(flow, env="production") == "deployment-id"
     deploy.assert_called_once()
 
 
@@ -283,7 +283,7 @@ def test_refuses_a_flow_whose_source_file_does_not_exist(
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(ValueError, match="is not an importable Python file"):
-        deploy_flow(flow, env="prod")
+        deploy_flow(flow, env="production")
 
     from_source.assert_not_called()
 
@@ -353,7 +353,7 @@ def test_deploys_a_flow_its_module_builds_on_demand(
 
     monkeypatch.setattr(sys, "path", list(sys.path))
 
-    deploy_flow(flow, env="prod")
+    deploy_flow(flow, env="production")
 
     assert from_source.call_args.kwargs["entrypoint"] == "on_demand_flows.py:daily_orders"
     assert deploy.call_args.kwargs["name"] == "daily-orders"
@@ -373,7 +373,7 @@ def test_imports_a_flows_file_whose_top_level_imports_a_sibling_module(
     request.addfinalizer(lambda: sys.modules.pop("on_demand_sibling", None))
     from_source, _ = _stub_prefect(flow)
 
-    deploy_flow(flow, env="prod")
+    deploy_flow(flow, env="production")
 
     assert from_source.call_args.kwargs["entrypoint"] == "on_demand_flows.py:daily_orders"
 
@@ -388,7 +388,7 @@ def test_refuses_a_flows_file_whose_top_level_fails(
     from_source, _ = _stub_prefect(flow)
 
     with pytest.raises(ValueError, match="on_demand_missing"):
-        deploy_flow(flow, env="prod")
+        deploy_flow(flow, env="production")
 
     from_source.assert_not_called()
     assert "on_demand_flows" not in sys.modules
@@ -409,7 +409,7 @@ def test_deploys_a_backfill_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     _expose(monkeypatch, daily_orders=flow)
     from_source, deploy = _stub_prefect(flow)
 
-    deploy_flow(flow, env="prod")
+    deploy_flow(flow, env="production")
 
     assert from_source.call_args.kwargs["entrypoint"] == "flows/daily_orders.py:daily_orders"
     assert deploy.call_args.kwargs["work_pool_name"] == "loom-fargate"
@@ -426,7 +426,7 @@ def test_deploys_a_maintenance_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     _expose(monkeypatch, daily_orders=flow)
     from_source, deploy = _stub_prefect(flow)
 
-    deploy_flow(flow, env="prod")
+    deploy_flow(flow, env="production")
 
     assert from_source.call_args.kwargs["entrypoint"] == "flows/daily_orders.py:daily_orders"
     assert deploy.call_args.kwargs["image"] == "orders:1.2.3"
@@ -438,4 +438,4 @@ def test_refuses_a_flow_not_built_by_a_loom_factory() -> None:
         return None
 
     with pytest.raises(TypeError, match="no loom ETL metadata"):
-        deploy_flow(plain, env="prod")
+        deploy_flow(plain, env="production")
