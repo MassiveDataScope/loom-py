@@ -321,3 +321,16 @@ def test_a_bad_enum_value_is_not_echoed(client: TestClient, path: str) -> None:
 
     assert (response.status_code, response.json()["detail"]["code"]) == (400, "query_validation")
     assert "secret-input-value" not in response.text
+
+
+@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
+@pytest.mark.parametrize("limit", [str(2**64), "9" * 5000])
+def test_a_huge_integer_is_a_query_validation_error(
+    client: TestClient, path: str, limit: str
+) -> None:
+    response = client.get(path, params={"limit": limit})
+
+    detail = response.json()["detail"]
+    assert (response.status_code, detail["code"]) == (400, "query_validation")
+    assert [violation["field"] for violation in detail["violations"]] == ["limit"]
+    assert "sys." not in response.text

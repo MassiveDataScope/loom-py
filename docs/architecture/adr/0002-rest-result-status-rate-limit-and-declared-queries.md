@@ -196,13 +196,19 @@ async def execute(self, query: GrantQuery = Query(), caller: Identity = Caller()
   `UseCase.execute` and the parameter.
 - `LoomType` gains `from_query(params: Mapping[str, str]) -> Any`, strict
   (decided in review, replacing lax conversion). The integer, number and
-  boolean fields, read once from the type's JSON Schema, take only their
-  exact spelling: an integer `[+-]?[0-9]+`, a finite JSON number, `true` or
-  `false`. A date-time field refuses a number. Every other value stays text.
-  The result is then validated strictly: msgspec `convert(..., strict=True)`,
-  pydantic `validate_json(..., strict=True)`. So `5.0` or `1e2` for an
-  integer, `1` for a boolean, `null` for any field and a Unix timestamp for a
-  date-time are refused. It raises `BoundaryValidationError` like the other
+  boolean fields, read once from the type's JSON Schema, take the JSON number
+  grammar (RFC 8259 §6): a number matches
+  `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` and is finite, an
+  integer matches `-?(0|[1-9][0-9]*)` and lies in `[-2**63, 2**64)` (the
+  range msgspec handles natively; a longer text is never passed to `int`,
+  so CPython's digit limit cannot surface), and a boolean is `true` or
+  `false`. A date or time field refuses any numeric text, `+5`, `007` and
+  `.5` included, because pydantic reads those as timestamps even in strict
+  mode. Every other value stays text. The result is then validated
+  strictly: msgspec `convert(..., strict=True)`, pydantic
+  `validate_json(..., strict=True)`. So `5.0`, `1e2`, `+5`, `007`, `.5`,
+  `5.` or an integer outside the range, `1` for a boolean, `null` for a
+  non-string field and a Unix timestamp for a date-time are refused. It raises `BoundaryValidationError` like the other
   entry points, and keeps every conversion call inside `_loom_type.py`.
 
 Request handling, in order:

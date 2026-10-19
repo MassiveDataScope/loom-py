@@ -84,10 +84,13 @@ class LoomType(Protocol):
     def from_query(self, params: Mapping[str, str], /) -> Any:
         """Validate query-string values strictly and build the typed value.
 
-        Every value arrives as text. An integer, number or boolean field takes
-        only its exact JSON spelling (``50``, ``0.5``, ``true``); every other
-        field validates the text strictly, so ``"null"`` is not ``None`` and a
-        date-time must be RFC 3339, never a Unix timestamp.
+        Every value arrives as text. A number field takes the JSON number
+        grammar (no ``+``, no leading zero, no bare ``.``) and a finite value;
+        an integer field takes the integer subset of it, within
+        ``[-2**63, 2**64)``; a boolean field takes ``true`` or ``false``.
+        Every other field validates the text strictly, so ``"null"`` is not
+        ``None``, and a date or time field refuses a number instead of reading
+        it as a timestamp.
 
         Raises:
             BoundaryValidationError: ``params`` does not satisfy the type.
@@ -381,15 +384,21 @@ class _PydanticType:
         return self.decode_json(msgspec.json.encode(_coerce_query(params, self._query_coercers)))
 
 
-_INTEGER = re.compile(r"[+-]?[0-9]+")
-_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_INTEGER = re.compile(r"-?(?:0|[1-9][0-9]*)")
+_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+_LOOSE_NUMBER = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_INT_RANGE = range(-(2**63), 2**64)
+_INT_MAX_LENGTH = len(str(-(2**63)))
 _BOOLEANS = {"true": True, "false": False}
 _TEMPORAL_FORMATS = frozenset({"date-time", "date", "time"})
 _NOT_RFC3339 = "Expected an RFC 3339 value, got a number"
 
 
 def _to_int(text: str) -> Any:
-    return int(text) if _INTEGER.fullmatch(text) else text
+    if len(text) > _INT_MAX_LENGTH or not _INTEGER.fullmatch(text):
+        return text
+    number = int(text)
+    return number if number in _INT_RANGE else text
 
 
 def _to_float(text: str) -> Any:
@@ -402,7 +411,7 @@ def _to_bool(text: str) -> Any:
 
 
 def _refuse_number(text: str) -> str:
-    if _NUMBER.fullmatch(text):
+    if _LOOSE_NUMBER.fullmatch(text):
         raise ValueError(_NOT_RFC3339)
     return text
 

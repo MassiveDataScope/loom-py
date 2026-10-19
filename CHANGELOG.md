@@ -421,9 +421,10 @@
 ### core
 
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
-  validates query-string values strictly: an integer, number or boolean
-  takes only its exact spelling, `null` is never `None` and a date-time is
-  never a Unix timestamp. Both
+  validates query-string values strictly. A number takes the JSON number
+  grammar and must be finite, an integer its integer subset within
+  `[-2**63, 2**64)`, a boolean `true` or `false`; `null` is never `None` and
+  a date or time field refuses a number instead of reading a timestamp. Both
   implementations are private to `loom.core.model`; a class of your own
   declared as a `LoomType` must add the method.
 - **core:** on a model with a composite primary key, the SQLAlchemy

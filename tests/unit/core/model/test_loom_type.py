@@ -776,6 +776,15 @@ class TestFromQuery:
             ("limit", "1e2"),
             ("limit", " 5"),
             ("limit", "5_0"),
+            ("limit", "+5"),
+            ("limit", "007"),
+            ("limit", str(2**64)),
+            ("limit", str(-(2**63) - 1)),
+            ("limit", "9" * 5000),
+            ("ratio", ".5"),
+            ("ratio", "5."),
+            ("ratio", "+1.5"),
+            ("ratio", "01.5"),
             ("ratio", "nan"),
             ("ratio", "1e999"),
             ("flag", "1"),
@@ -786,6 +795,10 @@ class TestFromQuery:
             ("ident", "null"),
             ("since", "2026-09-15T10:00:00"),
             ("since", "1700000000"),
+            ("since", "+1700000000"),
+            ("since", "0017"),
+            ("since", ".5"),
+            ("since", "-5"),
             ("since", "null"),
         ],
     )
@@ -795,3 +808,13 @@ class TestFromQuery:
         with pytest.raises(BoundaryValidationError) as excinfo:
             query.from_query(params)
         assert [name for name, _ in excinfo.value.violations] == [field]
+        assert excinfo.value.code == "boundary_validation"
+        assert "sys." not in excinfo.value.message
+
+    @pytest.mark.parametrize("limit", [2**64 - 1, -(2**63), 0, -7])
+    def test_accepts_an_integer_in_the_64_bit_range(self, query: LoomType, limit: int) -> None:
+        assert query.from_query({"limit": str(limit)}).limit == limit
+
+    @pytest.mark.parametrize("ratio", ["0", "-0.5", "1e2", "1.5E-3"])
+    def test_accepts_the_json_number_grammar(self, query: LoomType, ratio: str) -> None:
+        assert query.from_query({"ratio": ratio}).ratio == float(ratio)

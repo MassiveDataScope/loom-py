@@ -191,12 +191,16 @@ this order:
 | A value the field refuses (wrong type, out of range, unknown enum value, a date-time without offset) | `400 query_validation` with `violations`; a query string is not request content, so `422` stays for bodies |
 | Otherwise | `execute` receives the typed value; absent fields take their defaults |
 
-Values are checked strictly, with either library. An integer, number or
-boolean field takes only its exact spelling: `limit=50`, `ratio=0.5`,
-`flag=true`. `5.0` or `1e2` for an integer and `1` for a boolean are refused.
-Every other field validates the text as it is: `null` is never `None` (leave
-the parameter out instead), and a date-time must be RFC 3339 with an offset,
-never a Unix timestamp.
+Values are checked strictly, with either library. A number field takes the
+JSON number grammar: `ratio=0.5`, `ratio=1e2`, but not `+1.5`, `.5`, `5.` or
+`01.5`. An integer field takes the integer part of that grammar within
+`[-2**63, 2**64)`: `limit=50`, but not `5.0`, `1e2`, `+5` or `007`. A boolean
+field takes `true` or `false`, not `1`. Every other field validates the text
+as it is. `null` is `None` for no field: it is the text `"null"` for a `str`
+field and refused for any other, so leave the parameter out instead. A date or
+time field refuses a number rather than reading a timestamp. An offset is
+required only where the type asks for one, with `msgspec.Meta(tz=True)` or
+pydantic's `AwareDatetime`.
 
 The application refuses to start when a field is a list, an object or a union
 of several types, when a field's wire name is `profile` or a path parameter,
