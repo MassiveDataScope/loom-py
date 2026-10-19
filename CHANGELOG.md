@@ -459,37 +459,48 @@
 
 ### core
 
-- **core:** with no `LOOM_ENV` and no `environment=`, an application starts
-  as `production` and runs the deploy checks; an API without authentication
-  now fails at startup with `loom.rest.E001` until it configures
-  `app.rest.auth.jwt`, passes an `authenticator`, sets
-  `LOOM_ENV=development`, or lists the id under `checks.silenced`. An unknown
-  `LOOM_ENV` is a startup error.
+- **core:** with no `LOOM_ENV` and no `environment=`, a process starts as
+  `production` and runs the deploy checks; an API without authentication now
+  fails at startup with `loom.rest.E001` until it configures
+  `app.rest.auth.jwt`, sets `app.rest.auth.custom: true` and passes an
+  `authenticator`, sets `LOOM_ENV=development`, or lists the id under
+  `checks.silenced`. An unknown or empty `LOOM_ENV` is a startup error.
 - **core:** the logger's default changed from development to production: with
   no explicit `renderer`/`colors`, logs render as JSON without colours unless
-  the process resolved `development` or `test`. `create_app` and
-  `bootstrap_worker` pass the environment they resolved; the ETL runner, the
-  streaming runner and the Prefect maintenance flow pass none and so log JSON
-  unless `observability.log.config.renderer` says otherwise.
+  the process resolved `development` or `test`. `create_kernel`,
+  `bootstrap_app`, `ObservabilityRuntime.from_config`, `configure_logging`
+  and `configure_logging_from_values` take `environment=None` and resolve it
+  (`LOOM_ENV`, else production) when none is passed.
 - **core:** the logger's own environment is removed:
   `loom.core.logger.Environment`, `LoggerConfig.environment` and
-  `LogConfig.environment` are gone, and `configure_logging(config,
-  environment=...)` and `configure_logging_from_values(environment=...)` take
-  `loom.core.environment.Environment`, `PRODUCTION` by default. A leftover
-  `environment:` key under `observability.log.config` is ignored.
-  `ObservabilityRuntime.from_config` takes `environment=` as well.
-- **core:** `LoggerConfig` and its handler configs forbid unknown fields, so a
-  leftover `logger.environment` (or any typo) is a `ConfigError`, and
-  `create_app` and `bootstrap_worker` no longer fall back to the default
-  `observability` section when it fails validation. `checks` forbids unknown
-  keys. A `LOOM__*` variable naming no known section stops startup.
+  `LogConfig.environment` are gone, and the logging functions take
+  `loom.core.environment.Environment`.
+- **core:** configuration sections refuse keys they do not declare: the
+  logger and its handlers, `checks`, `app.rest` (with `auth`, `jwt`, `cors`
+  and `discovery`), the `observability` log, otel and prometheus structs and
+  `OtelConfig`, `sql`, `celery` and `jobs`, the ETL `storage` structs and
+  lineage, `kafka`, the bytewax runtime, streaming `mongo`, `dynamodb` and the
+  flow config. A leftover `observability.log.config.environment`, or any
+  typo there, is a `ConfigError`. `app`, `database`, `persistence` and the
+  top of `observability`, which several readers decode in part, still accept
+  keys another reader owns. `create_app` and `bootstrap_worker` no longer fall
+  back to the default `observability` section when it fails validation.
+- **core:** `LOOM__*` overrides: a variable naming no known section, the
+  `checks` section, a value holding `${`, or a key inside an interpolated one
+  stops startup. `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by
+  nothing, are removed.
 - **core:** `ETLRunner` and `StreamingRunner` resolve the environment
   (`LOOM_ENV`, else production): without one they log JSON and, built from a
-  configuration file, run the deploy checks.
+  whole configuration (a file, a directory, or a mapping for
+  `StreamingRunner.from_dict`), run the deploy checks; `ETLRunner.from_dict`
+  and `from_spark` receive no whole configuration and run none.
+- **core:** `loom.core.locator.CONFIG_ENV_VAR` is replaced by
+  `loom.core.environment.CONFIG_VARIABLE`; `LOOM_CONFIG` may name a config
+  directory.
 - **rest:** `create_app(authenticator=...)` requires
-  `app.rest.auth.custom: true`, and `custom: true` requires an
-  `authenticator`; `loom.rest.E001` passes on `custom: true` instead of being
-  skipped when an authenticator is passed.
+  `app.rest.auth.custom: true`, `custom: true` requires an `authenticator`,
+  and `custom: true` beside `app.rest.auth.jwt` is refused; `loom.rest.E001`
+  passes on `custom: true`.
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number
   grammar and must be finite, an integer its integer subset within
@@ -660,12 +671,16 @@
 - **prefect:** the flow parameter `env` and the keys of a flow YAML's
   `environments` block are loom environments (`production`, `staging`,
   `development`, `test`); `prod`, `dev`, `local` or any other key or value is
-  a `ConfigError`. `env` defaults to `None` and resolves like any loom
-  process (`LOOM_ENV`, else production); the run hands it to the runner,
-  which takes its logger defaults from it and runs the deploy checks when
-  deployed, and notifications report the resolved value. `deploy_flow` and
-  `discover_and_deploy_etls` take an optional `env` resolved the same way
-  and record it as the deployment's `env` parameter.
+  a `ConfigError`. A run resolves the worker's environment (`LOOM_ENV`, else
+  production); `env` defaults to `None` and only confirms it, so a run whose
+  `env` differs fails before anything runs. The run hands the environment to
+  the runner, which takes its logger defaults from it and runs the deploy
+  checks when deployed; notifications report it. `deploy_flow` and
+  `discover_and_deploy_etls` take an optional `env` resolved the same way and
+  record it as the deployment's `env` parameter, so a deployment run on a
+  worker in another environment fails.
+- **prefect:** the per-flow YAML applies the `LOOM__*` overrides, and the
+  storage configuration of a flow run may be a config directory.
 - **prefect:** a placeholder counts from the run's scheduled start instead of
   the wall clock. `${today-1d}`, `${yesterday}` and `${now±N}` counted from
   `datetime.now()` inside the flow, so a queued run that started after
@@ -816,26 +831,30 @@
   (`@deploy_check("<area>.<E|W><nnn>")`), run at startup in production and
   staging: `E` fails startup with `DeployCheckError`, `W` logs a warning, and
   `checks.silenced: [ids]` silences by id with a startup warning naming them.
-  Initial checks: `loom.rest.E001` (no `app.rest.auth.jwt`; an
-  `authenticator` passed in code satisfies it), `loom.rest.W001` (docs, redoc
-  or OpenAPI URL not `null`), `loom.logger.W001` (`console` renderer). A
-  worker skips the `loom.rest` checks. `loom check --deploy [--env X]
-  <config>` runs them in CI without starting the application.
-  `ConfigContext.declares(key)` tells an explicit `null` from an absent key.
+  Initial checks: `loom.rest.E001` (neither `app.rest.auth.jwt` nor
+  `app.rest.auth.custom: true`), `loom.rest.W001` (docs, redoc or OpenAPI
+  URL not `null`), `loom.logger.W001` (`console` renderer); they read keys as
+  written (`ConfigContext.raw`) and resolve no placeholder. Processes serving
+  no HTTP skip the `loom.rest` checks. `loom check --deploy [--env X]
+  [--skip AREA] <config>` runs them in CI without starting the application.
 - **core:** one place tells every loom process its environment and
   configuration (ADR 0005). `LOOM__SECTION__KEY` variables override any
   configuration key as the last layer (code defaults < `base.yaml` <
   `<LOOM_ENV>.yaml` < `LOOM__*`), merged as an OmegaConf dotlist; levels
   match declared keys case-insensitively, a first level naming no known
-  section is a `ConfigError` naming the variable, and one WARNING line names
-  the overridden keys without their values.
+  section is a `ConfigError` naming the variable, values are literals (no
+  `${`), the `checks` section is declared only in the files, and one WARNING
+  line names the overridden keys without their values.
   `loom.core.config.overrides.load_application_config` is the one loader
   behind REST and Celery `create_app`, `bootstrap_worker`,
-  `loom check --deploy`, `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`
-  and the migration locator, so deploy checks see the final configuration.
-  `ETLRunner` and `StreamingRunner` take `environment=`, take their logger
-  defaults from it and run the deploy checks when deployed, like the Prefect
-  flows through them. `checks.modules` lists the modules registering an
+  `loom check --deploy`, `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`,
+  the migration locator and `load_kafka_settings`; the per-flow YAML applies
+  them too. Deploy checks see the final configuration. `ETLRunner`,
+  `StreamingRunner` and the migration locator accept a config directory as
+  the factories do. They take `environment=`, take their logger defaults from
+  it and run the deploy checks when deployed, like the Prefect flows through
+  them; a Prefect run's `env` only confirms the worker's environment.
+  Only `loom.core.environment` names or reads `LOOM_*` variables. `checks.modules` lists the modules registering an
   application's own checks, imported before every run, at startup and in
   `loom check --deploy` (which puts `app.code_path` on the import path as
   `create_app` does). `app.rest.auth.custom: true` declares an authenticator

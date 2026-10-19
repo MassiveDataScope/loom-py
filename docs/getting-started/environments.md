@@ -40,8 +40,8 @@ class DescribeDeployment(UseCase[Deployment, str]):
         self._environment = environment
 ```
 
-No other loom module reads `LOOM_ENV` or the `LOOM__*` variables; an
-architecture test enforces it.
+Only `loom.core.environment` names or reads `LOOM_ENV`, the `LOOM__*`
+variables or any other `LOOM_*` variable; an architecture test enforces it.
 
 ### Prefect flows
 
@@ -50,8 +50,13 @@ The `env` parameter of every loom flow and the keys of a flow YAML's
 `development` or `test`. Any other key or value fails. `deploy_flow` and
 `discover_and_deploy_etls` resolve `env` like the factories (default:
 `LOOM_ENV`, else production), pick `environments.<env>`, and record the
-environment as the deployment's `env` parameter, so each run resolves to it.
-A run started without `env` resolves `LOOM_ENV`, else production.
+environment as the deployment's `env` parameter.
+
+A run takes its environment from the worker (`LOOM_ENV`, else production);
+`env` only confirms it. A run whose `env` differs fails before anything runs,
+so a deployment run on a worker of another environment fails loudly, and a
+custom run cannot turn a production worker into a development one. Set
+`LOOM_ENV` on each worker to the environment of its deployments.
 
 ## Configuration sources
 
@@ -63,8 +68,10 @@ From lowest to highest precedence:
 4. the `LOOM__SECTION__KEY` variables.
 
 Within any file, its own values win over the files it `includes`. Every entry
-point loads its configuration this way, and the deploy checks run on the
-final, merged result.
+point loads its configuration this way (the REST and Celery factories, the
+worker, `ETLRunner`, `StreamingRunner`, the Prefect flows, the migration
+locator and `loom check --deploy`), and the deploy checks run on the final,
+merged result.
 
 ### Files per environment
 
@@ -76,7 +83,7 @@ config/
   development.yaml   # local overrides
   test.yaml          # test-suite overrides
   production.yaml    # deployed overrides
-.env                 # LOOM_ENV=development, for local runs
+.env                 # LOOM_ENV=development, for local runs (see below)
 ```
 
 ```python
@@ -89,7 +96,13 @@ app = create_app(config_dir="config")
 it exists. An environment without an overlay runs on the base alone; a
 directory without `base.yaml` is a startup error. The Celery
 `create_app(config_dir=...)` and `bootstrap_worker(config_dir=...)` do the
-same.
+same, and so do `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`, the
+storage configuration of a Prefect flow run (`LOOM_STORAGE_CONFIG_PATH`) and
+the migration locator (`LOOM_CONFIG`) when given a directory instead of a
+file.
+
+loom does not read `.env`: your runner does, for example
+`uv run --env-file .env ...` or `env_file:` in docker compose.
 
 Explicit files remain the other form, for layouts that do not fit a
 directory:
@@ -165,13 +178,27 @@ LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.examp
 
 - Each level matches the key the configuration declares at that place,
   whatever its case. A level the configuration does not declare is added in
-  lower case, and a section type that refuses unknown keys then refuses it.
+  lower case; the section types that refuse unknown keys (`app.rest`, the
+  `observability` sub-sections, `sql`, `celery`, `storage`, `kafka` and most
+  other loom sections) then refuse a typo.
+  The keys of `app`, `database`, `persistence` and the top of
+  `observability`, which several readers share, are not checked.
 - The first level must name a section the configuration declares or loom
   knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
   the variable.
-- Values parse as an OmegaConf dotlist, then the section types validate them:
+- The `checks` section cannot be overridden: silencing a check or changing
+  the check modules is declared only in the files, where it is reviewed.
+- Values are literals. A value holding `${` is refused, so an override
+  cannot reach another variable or a secret, and so is a variable reaching
+  inside a key whose value is an interpolation.
+- Values parse as an OmegaConf dotlist (YAML 1.1), then the section types
+  validate them:
   `5` is an integer, `false` a boolean, `[a, b]` a list and `{read: 5, write: 10}`
   a mapping. A list is replaced whole; its items cannot be set one by one.
+  YAML 1.1 rules apply: `yes`, `no`, `on` and `off` are booleans, `1.10`
+  becomes `1.1`, `0755` is octal, an empty value is null, ` #` starts a
+  comment and `a: b` is a mapping. Quote a value to keep it a string:
+  `LOOM__APP__VERSION='"1.10"'`.
 - At startup one WARNING line names the keys that came from variables. Their
   values are never logged.
 
@@ -181,8 +208,8 @@ timeouts, the OpenTelemetry endpoint, CORS origins or the public URL.
 
 What does not: secrets, and the structure of the application (discovery,
 routes, authentication mechanism). Structure belongs in the files, where it is
-reviewed. Secrets never go through `LOOM__*`, so they never appear in the
-override line.
+reviewed. Do not pass secrets through `LOOM__*`: the override line names
+every key it sets.
 
 ### Secrets
 
@@ -260,7 +287,8 @@ The logger's renderer and colours follow the environment unless
 ## Deploy checks
 
 In `production` and `staging`, every entry point runs the deploy checks on
-its final configuration before it builds anything, in the spirit of Django's
+its final configuration before the application or the runner is built, in
+the spirit of Django's
 `manage.py check --deploy`: REST and Celery `create_app`, `bootstrap_worker`,
 `ETLRunner` and `StreamingRunner` built from a configuration, and the Prefect
 flows through them. Each check has a stable id `<area>.<E|W><nnn>`: an `E`
@@ -273,8 +301,10 @@ check fails startup, a `W` check logs a warning.
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
 
 Processes that serve no HTTP (the worker and the runners) skip the
-`loom.rest` checks. An `ETLRunner` built without a configuration file
-(`from_dict`, `from_spark`) has nothing to check and runs none.
+`loom.rest` checks. A runner built from a whole configuration (a file, a
+directory, or the mapping `StreamingRunner.from_dict` takes) runs them;
+`ETLRunner.from_dict` and `from_spark`, which receive only the storage and
+observability sections, run none.
 
 ### Authentication supplied in code
 
@@ -341,8 +371,10 @@ checks:
 ```
 
 Every run of the checks imports `checks.modules` first, at startup and in
-`loom check --deploy` alike. An unknown key under `checks`, or a module that
-cannot be imported, is a configuration error.
+`loom check --deploy` alike. `create_app` and the CLI put `app.code_path` on
+the import path first; the worker and the runners import from the process's
+own path, as they do their discovery modules. An unknown key under `checks`,
+or a module that cannot be imported, is a configuration error.
 
 ### Running the checks in CI
 
@@ -356,7 +388,13 @@ loom check --deploy config/base.yaml config/production.yaml
 ```
 
 `--env` picks the overlay of a directory and defaults to `LOOM_ENV`. The
-`LOOM__*` variables of the shell apply as at startup. `app.code_path` (`src`
+`LOOM__*` variables of the shell apply as at startup; those of the deployed
+task do not, so keep security settings in the files. The command cannot tell
+which process a configuration is for, so it runs every check: pass
+`--skip loom.rest` (repeatable, any id or area) for a worker, ETL or
+streaming configuration, as those processes skip the REST checks at startup.
+The configuration loads with loom's default resolvers, and the checks read
+keys as written, so a `${secrets:...}` value no check reads needs no access. `app.code_path` (`src`
 by default, relative to the first file) joins the import path as `create_app`
 adds it, so `checks.modules` import here as well. The checks read
 configuration keys only, so no secret needs to be reachable. The command
