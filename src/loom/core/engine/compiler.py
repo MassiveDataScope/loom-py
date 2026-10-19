@@ -22,7 +22,7 @@ from loom.core.engine.plan import (
     RuleStep,
 )
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.model import loom_type
+from loom.core.model import UnsupportedBoundaryType, loom_type
 from loom.core.use_case.markers import (
     LookupKind,
     SourceKind,
@@ -304,18 +304,16 @@ class UseCaseCompiler:
         annotation: Any,
         bindings: _SignatureBindings,
     ) -> None:
-        """Record the ``Query()`` parameter, refusing a type that is not a strict model.
-
-        Raises:
-            CompilationError: A second ``Query()`` parameter.
-            UnsupportedBoundaryType: The annotation is not a strict
-                ``msgspec.Struct`` or pydantic model.
-        """
+        where = f"{use_case_type.__qualname__}.execute"
         if bindings.query_binding is not None:
+            raise CompilationError(f"{where}: only one Query() parameter is allowed")
+        try:
+            loom_type(annotation)
+        except UnsupportedBoundaryType as exc:
             raise CompilationError(
-                f"{use_case_type.__qualname__}.execute: only one Query() parameter is allowed"
-            )
-        loom_type(annotation)
+                f"{where}: Query() parameter '{name}' must be a strict msgspec.Struct or "
+                f"pydantic model: {exc.message}"
+            ) from exc
         bindings.query_binding = QueryBinding(name=name, query_type=annotation)
         bindings.param_bindings.append(ParamBinding(name=name, annotation=annotation))
         self._logger.info(f"[BOOT]  - Detected Query: {annotation.__name__} -> {name}")

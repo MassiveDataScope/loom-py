@@ -71,8 +71,11 @@ def test_a_query_type_that_is_not_a_strict_model_is_refused(
 ) -> None:
     compiler = UseCaseCompiler()
 
-    with pytest.raises(UnsupportedBoundaryType):
+    with pytest.raises(CompilationError) as excinfo:
         compiler.compile(use_case)
+    assert f"{use_case.__qualname__}.execute" in str(excinfo.value)
+    assert "'query'" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, UnsupportedBoundaryType)
 
 
 async def test_the_executor_passes_the_query_struct_through() -> None:

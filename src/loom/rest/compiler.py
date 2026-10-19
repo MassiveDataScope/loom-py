@@ -292,8 +292,8 @@ def _query_field(
     target = definition(schema, definitions)
     if "enum" not in target and target.get("type") not in _SCALAR_TYPES:
         raise ValueError(
-            f"query field {name!r} must be a string, integer, number, boolean, enum, "
-            "UUID or date-time, optionally None."
+            f"query field {name!r} must be a string (UUID, date-time and other string "
+            "formats included), integer, number, boolean, enum or Literal, optionally None."
         )
     ref = schema.get(REF)
     if ref is not None:
@@ -303,7 +303,8 @@ def _query_field(
 
 
 def _names_query_spec(annotation: Any) -> bool:
-    return annotation is QuerySpec or QuerySpec in typing.get_args(annotation)
+    is_union = typing.get_origin(annotation) in (typing.Union, types.UnionType)
+    return annotation is QuerySpec or (is_union and QuerySpec in typing.get_args(annotation))
 
 
 @dataclass(frozen=True)

@@ -158,9 +158,9 @@ async def execute(
 
 `Query()` hands `execute` the query string as a typed value. The annotation is
 the whole contract: a strict `msgspec.Struct` (`forbid_unknown_fields=True`)
-or a strict pydantic model (`extra="forbid"`) whose fields are strings,
-integers, numbers, booleans, enums, UUIDs or date-times, each optionally
-`None`:
+or a strict pydantic model (`extra="forbid"`) whose fields are each a string
+(UUID, date-time and other string formats included), integer, number,
+boolean, enum or `Literal`, optionally `None`:
 
 ```python
 from typing import Annotated
@@ -201,7 +201,8 @@ never a Unix timestamp.
 The application refuses to start when a field is a list, an object or a union
 of several types, when a field's wire name is `profile` or a path parameter,
 when the use case also takes a `QuerySpec`, or when it declares two
-`Query()`. A route with a `QuerySpec` parameter keeps its own parameters,
+`Query()`; a type that is not a strict model fails as a `CompilationError`
+naming the use case and the parameter. A route with a `QuerySpec` parameter keeps its own parameters,
 filters and limit clamp. Callers other than REST pass an instance of the
 type under the parameter's name.
 

@@ -248,6 +248,7 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
     assert (accepted.status_code, accepted.json()) == (200, ["revoked", 3])
     assert (refused.status_code, refused.json()["detail"]["code"]) == (422, "boundary_validation")
     assert (unknown.status_code, unknown.json()["detail"]["code"]) == (400, "unsupported_query")
+    assert all("title" not in parameter["schema"] for parameter in operation["parameters"])
     assert [parameter["name"] for parameter in operation["parameters"]] == [
         "membershipId",
         "state",

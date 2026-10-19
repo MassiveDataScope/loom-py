@@ -787,6 +787,14 @@ class TestDeclaredQuery:
         async def execute(self, spec: QuerySpec, query: ItemQuery = Query()) -> str:
             return "ok"
 
+    class WithOptionalQuerySpec(UseCase[Any, str]):
+        async def execute(self, spec: QuerySpec | None, query: ItemQuery = Query()) -> str:
+            return "ok"
+
+    class WithQuerySpecList(UseCase[Any, str]):
+        async def execute(self, specs: list[QuerySpec], query: ItemQuery = Query()) -> str:
+            return "ok"
+
     class ProfileField(UseCase[Any, str]):
         async def execute(self, query: ProfileQuery = Query()) -> str:
             return "ok"
@@ -817,6 +825,9 @@ class TestDeclaredQuery:
         use_case_compiler.compile(use_case)
         return RestInterfaceCompiler(use_case_compiler).compile(IFace)
 
+    def test_a_parameter_that_only_contains_query_spec_is_not_a_query_spec(self) -> None:
+        assert len(self._compile(self.WithQuerySpecList)) == 1
+
     def test_the_route_holds_the_declared_fields(self) -> None:
         (route,) = self._compile(self.ListItems)
 
@@ -829,6 +840,7 @@ class TestDeclaredQuery:
         ("use_case", "reason"),
         [
             (WithQuerySpec, "QuerySpec"),
+            (WithOptionalQuerySpec, "QuerySpec"),
             (ProfileField, "'profile'"),
             (PathField, "'item_id'"),
             (ListField, "'tags'"),

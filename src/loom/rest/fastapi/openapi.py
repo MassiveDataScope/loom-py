@@ -188,7 +188,7 @@ def build_query_parameters_schema(
 def _declared_query_parameter(
     field: QueryField, component_registry: dict[str, JsonSchema] | None
 ) -> JsonSchema:
-    schema = dict(field.schema)
+    schema = {key: value for key, value in field.schema.items() if key != "title"}
     description = schema.pop(_PARAM_DESCRIPTION, None)
     parameter: JsonSchema = {
         _PARAM_NAME: field.name,

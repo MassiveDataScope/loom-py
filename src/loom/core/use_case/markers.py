@@ -246,23 +246,23 @@ def Query() -> Any:
     """Factory returning the runtime marker for the declared query parameter.
 
     The parameter's annotation is the whole query contract: a strict
-    ``msgspec.Struct`` or strict pydantic model whose fields are scalars
-    (string, integer, number, boolean, enum, UUID or date-time, each
-    optionally ``None``). The REST adapter accepts exactly those fields as
-    query parameters, publishes them in OpenAPI and hands ``execute`` the
-    typed value; other callers pass an instance under the parameter's name.
+    ``msgspec.Struct`` or strict pydantic model whose fields are each a
+    string (UUID, date-time and other string formats included), integer,
+    number, boolean, enum or ``Literal``, optionally ``None``. A transport
+    builds the typed value from its request; any other caller passes an
+    instance under the parameter's name.
 
     Returned value is intentionally typed as ``Any`` to avoid ``mypy``
     default-argument incompatibility in signatures like:
-    ``query: GrantQuery = Query()``.
+    ``query: ListQuery = Query()``.
 
     Example::
 
-        class GrantQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+        class ListQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
             cursor: str | None = None
             limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
 
-        async def execute(self, query: GrantQuery = Query()) -> GrantPage: ...
+        async def execute(self, query: ListQuery = Query()) -> ItemPage: ...
     """
     return _QueryMarker()
 
