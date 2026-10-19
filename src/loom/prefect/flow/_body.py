@@ -10,8 +10,8 @@ import msgspec
 from loom.core.environment import (
     STORAGE_CONFIG_VARIABLE,
     Environment,
+    confirm_environment,
     loom_variable,
-    resolve_environment,
 )
 from loom.etl.compiler import flatten_step_names
 from loom.etl.compiler._plan import PipelinePlan, iter_processes, iter_steps_in_process
@@ -27,6 +27,7 @@ from loom.prefect.flow._runtime import (
     load_or_init_manifest,
     maybe_delete_manifest,
 )
+from loom.prefect.flow._signature import ENV_SOURCE
 from loom.prefect.flow._stages import known_process_names, validate_stage_names
 from loom.prefect.manifest import ManifestStore, RunManifest, completed_steps
 from loom.prefect.observer._logging_bridge import (
@@ -77,7 +78,7 @@ def build_flow_body(
             uninstall_log_bridge()
 
     def _run(flow_run_id: UUID | None, kwargs: dict[str, Any]) -> None:
-        environment = resolve_environment(kwargs.pop("env", None))
+        environment = confirm_environment(kwargs.pop("env", None), source=ENV_SOURCE)
         explicit_correlation = kwargs.pop("correlation_id", None)
         processes = validate_stage_names(kwargs.pop("processes", None), known_processes)
         params_obj = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())

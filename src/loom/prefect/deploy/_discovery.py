@@ -38,10 +38,11 @@ def discover_and_deploy_etls(
     ETLs come either from ``flows_package`` (one module per ETL calling
     ``etl_flow``) or from ``config`` (YAML declarations rebuilt at run time
     through :mod:`loom.prefect.deploy.entrypoint`). Each deployment targets
-    ``work_pool`` (an ECS-typed pool in prod, a docker-typed pool in local
-    dev) and carries the per-ETL ``job_variables`` from the YAML's
+    ``work_pool`` (an ECS-typed pool in production, a docker-typed pool in
+    development) and carries the per-ETL ``job_variables`` from the YAML's
     ``environments.<env>`` block. Each deployment records the environment
-    as its ``env`` parameter, so its runs resolve to it.
+    as its ``env`` parameter; a run confirms it against the worker's
+    ``LOOM_ENV`` and fails on a worker in another environment.
 
     The ``config`` path exports ``LOOM_ETL_CONFIG`` in the process
     environment around each ``from_source`` call, so it is not thread-safe.
@@ -49,8 +50,8 @@ def discover_and_deploy_etls(
     Args:
         flows_package: Dotted package containing one module per ETL.
         config: Local path, cloud URI or glob of ETL declaration files.
-        work_pool: Prefect work pool name. Default matches the prod ECS
-            pool; override with ``loom-docker`` for local dev.
+        work_pool: Prefect work pool name. Default matches the production
+            ECS pool; override with ``loom-docker`` for development.
         env: Environment to deploy for: picks ``environments.<env>`` from
             each ETL's YAML. ``None`` resolves it like any loom process
             (``LOOM_ENV``, else production).

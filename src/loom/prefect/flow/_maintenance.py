@@ -7,7 +7,7 @@ from typing import Any
 import msgspec
 
 from loom.core.checks import REST_CHECKS, enforce_deploy_checks
-from loom.core.environment import STORAGE_CONFIG_VARIABLE, loom_variable, resolve_environment
+from loom.core.environment import STORAGE_CONFIG_VARIABLE, confirm_environment, loom_variable
 from loom.core.observability import ObservabilityRuntime, Scope
 from loom.etl.maintenance._runner import MaintenanceRunner
 from loom.etl.maintenance._step import MaintenanceStep
@@ -16,7 +16,7 @@ from loom.prefect._summary import set_run_summary
 from loom.prefect.flow._assemble import assemble_flow, load_flow_settings
 from loom.prefect.flow._common import prefect_flow_run_id, prefect_run_anchor
 from loom.prefect.flow._params import record_run_params, resolve_run_params
-from loom.prefect.flow._signature import synthesise_flow_signature
+from loom.prefect.flow._signature import ENV_SOURCE, synthesise_flow_signature
 from loom.prefect.observer._logging_bridge import install_log_bridge, uninstall_log_bridge
 
 
@@ -58,12 +58,12 @@ def maintenance_flow(
     def _flow_body(**kwargs: Any) -> None:
         install_log_bridge(prefect_flow_run_id())
         try:
-            environment = resolve_environment(kwargs.pop("env", None))
+            environment = confirm_environment(kwargs.pop("env", None), source=ENV_SOURCE)
             params = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())
             decoded = msgspec.structs.asdict(params)
             record_run_params(decoded)
             actual_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
-            context = _load_context(actual_path)
+            context = _load_context(actual_path, environment=environment)
             storage_config, observability_config = _parse_sections(context)
             observability = ObservabilityRuntime.from_config(
                 observability_config, environment=environment

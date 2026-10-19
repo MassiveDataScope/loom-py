@@ -15,8 +15,8 @@ import msgspec
 from loom.core.environment import (
     STORAGE_CONFIG_VARIABLE,
     Environment,
+    confirm_environment,
     loom_variable,
-    resolve_environment,
 )
 from loom.etl.pipeline import ETLPipeline
 from loom.etl.runner import ETLRunner
@@ -29,7 +29,7 @@ from loom.prefect.flow._runtime import (
     load_or_init_manifest,
     maybe_delete_manifest,
 )
-from loom.prefect.flow._signature import coerce_to_utc
+from loom.prefect.flow._signature import ENV_SOURCE, coerce_to_utc
 from loom.prefect.manifest import ManifestStore
 from loom.prefect.observer._logging_bridge import install_log_bridge, uninstall_log_bridge
 
@@ -133,7 +133,7 @@ def build_backfill_body(
 
     def _run(flow_run_id: uuid.UUID | None, kwargs: dict[str, Any]) -> None:
         anchor = prefect_run_anchor()
-        environment = resolve_environment(kwargs.pop("env", None))
+        environment = confirm_environment(kwargs.pop("env", None), source=ENV_SOURCE)
         start_from = _resolve_start_from(kwargs.pop("start_from", None), anchor)
         params = resolve_run_params(kwargs, params_type, anchor=anchor)
         record_run_params({**msgspec.structs.asdict(params), "start_from": start_from})

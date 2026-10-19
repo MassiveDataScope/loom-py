@@ -1,8 +1,9 @@
 """Prefect flows take their environment from the central resolver.
 
 The flow parameter ``env`` and the keys of a flow YAML's ``environments``
-block are :class:`~loom.core.environment.Environment` values. A run resolves
-``env`` (else ``LOOM_ENV``, else production) and hands it to the runner; a
+block are :class:`~loom.core.environment.Environment` values. A run resolves the
+process environment (``LOOM_ENV``, else production); its ``env`` parameter
+only confirms it, so a run cannot move a worker to another environment. A
 deployment records the environment it was deployed for; an unknown value or
 key fails.
 """
@@ -104,12 +105,13 @@ class TestFlowParameter:
 
         assert signature.parameters["env"].default is None
 
-    def test_the_notified_environment_is_the_resolved_one(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("declared", [{}, {"env": "development"}])
+    def test_the_notified_environment_is_the_process_one(
+        self, monkeypatch: pytest.MonkeyPatch, declared: dict[str, str]
     ) -> None:
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, "staging")
 
-        assert _env_from_params(MagicMock(parameters={})) == "staging"
+        assert _env_from_params(MagicMock(parameters=declared)) == "staging"
 
 
 class TestEnvironmentsBlock:
@@ -153,11 +155,24 @@ class TestRuns:
         return recorder
 
     def test_an_etl_run_hands_its_environment_to_the_runner(
-        self, tmp_path: Path, from_yaml: MagicMock
+        self, tmp_path: Path, from_yaml: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "staging")
+
         _etl(tmp_path).fn(env="staging", **_WINDOW)
 
         assert from_yaml.call_args.kwargs["environment"] is Environment.STAGING
+
+    def test_a_run_parameter_cannot_move_the_process_to_another_environment(
+        self, tmp_path: Path, from_yaml: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+        flow = _etl(tmp_path)
+
+        with pytest.raises(ConfigError, match="'development'.*'production'"):
+            flow.fn(env="development", **_WINDOW)
+
+        from_yaml.assert_not_called()
 
     def test_without_env_the_run_takes_the_selector_variable(
         self, tmp_path: Path, from_yaml: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -175,7 +190,7 @@ class TestRuns:
             flow.fn(env="prod", **_WINDOW)
 
     def test_a_backfill_slice_hands_its_environment_to_the_runner(
-        self, tmp_path: Path, from_yaml: MagicMock
+        self, tmp_path: Path, from_yaml: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         flow = backfill_flow(
             name="env-backfill",
@@ -190,28 +205,29 @@ class TestRuns:
             chunk="day",
         )
 
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+
         flow.fn(env="production", **_WINDOW)
 
         environments = {call.kwargs["environment"] for call in from_yaml.call_args_list}
         assert environments == {Environment.PRODUCTION}
 
-    def test_a_deployed_maintenance_run_runs_the_deploy_checks(
+    def test_a_deployed_maintenance_run_checks_its_layered_storage_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         check = write_failing_check_module(tmp_path)
         monkeypatch.syspath_prepend(str(check.directory))
         area, key = check.trigger.split(".")
-        storage = tmp_path / "storage.yaml"
-        storage.write_text(
-            yaml.safe_dump(
-                {
-                    "storage": {"defaults": {"table_path": {"uri": str(tmp_path / "lake")}}},
-                    "checks": check.checks_section(),
-                    area: {key: True},
-                }
-            ),
-            encoding="utf-8",
-        )
+        storage = tmp_path / "storage"
+        storage.mkdir()
+        base = {
+            "storage": {"defaults": {"table_path": {"uri": str(tmp_path / "lake")}}},
+            "checks": check.checks_section(),
+        }
+        (storage / "base.yaml").write_text(yaml.safe_dump(base), encoding="utf-8")
+        overlay = {area: {key: True}}
+        (storage / "production.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
         monkeypatch.setattr(_maintenance, "install_log_bridge", lambda *a, **k: None)
         monkeypatch.setattr(_maintenance, "uninstall_log_bridge", lambda *a, **k: None)
         monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: None)
@@ -230,7 +246,7 @@ class TestRuns:
 
 class TestDeployments:
     @staticmethod
-    def _deploy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> MagicMock:
+    def _exposed_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, MagicMock]:
         flow = _etl(tmp_path)
         module = ModuleType("flows.env_orders")
         module.__file__ = _SOURCE_FILE
@@ -239,8 +255,12 @@ class TestDeployments:
         sourced = MagicMock()
         sourced.deploy = MagicMock(return_value="deployment-id")
         flow.from_source = MagicMock(return_value=sourced)
+        return flow, sourced.deploy
+
+    def _deploy(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> MagicMock:
+        flow, deploy = self._exposed_flow(tmp_path, monkeypatch)
         deploy_flow(flow, **kwargs)
-        return sourced.deploy
+        return deploy
 
     def test_without_env_the_selector_variable_picks_the_pool(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -261,5 +281,7 @@ class TestDeployments:
     def test_an_unknown_env_fails_the_deployment(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        flow, _ = self._exposed_flow(tmp_path, monkeypatch)
+
         with pytest.raises(ConfigError, match="'dev'"):
-            self._deploy(tmp_path, monkeypatch, env="dev")
+            deploy_flow(flow, env="dev")

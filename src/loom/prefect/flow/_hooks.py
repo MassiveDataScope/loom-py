@@ -93,17 +93,17 @@ def _correlation_from_params(flow_run: Any) -> str:
 
 
 def _env_from_params(flow_run: Any) -> str:
-    """Name the environment of the run, resolved as the run resolved it.
+    """Name the environment the run ran in: the process one.
 
-    A run whose ``env`` names no environment failed on it; its notification
-    reports the value as given instead of failing a second time.
+    The run's ``env`` parameter only confirms it. When the process selector
+    is itself invalid, the run failed on it, and the notification reports the
+    parameter as given instead of failing a second time.
     """
-    params = getattr(flow_run, "parameters", None) or {}
-    raw = params.get("env")
     try:
-        return str(resolve_environment(raw))
+        return str(resolve_environment())
     except ConfigError:
-        return str(raw)
+        params = getattr(flow_run, "parameters", None) or {}
+        return str(params.get("env"))
 
 
 def _duration_from_run(flow_run: Any) -> float | None:

@@ -62,7 +62,7 @@ def test_maintenance_flow_bridges_logs_to_current_flow_run(
     monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: flow_run_id)
     monkeypatch.setattr(_maintenance, "install_log_bridge", install)
     monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
-    monkeypatch.setattr(_maintenance, "_load_context", lambda path: events.append("load"))
+    monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: events.append("load"))
     monkeypatch.setattr(
         _maintenance, "_parse_sections", lambda context: (storage_config, observability_config)
     )
@@ -106,7 +106,7 @@ def test_maintenance_flow_uninstalls_log_bridge_after_failure(
     monkeypatch.setattr(_maintenance, "prefect_flow_run_id", uuid.uuid4)
     monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
     monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
-    monkeypatch.setattr(_maintenance, "_load_context", lambda path: MagicMock())
+    monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
     monkeypatch.setattr(_maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock()))
     monkeypatch.setattr(
         _maintenance.ObservabilityRuntime,

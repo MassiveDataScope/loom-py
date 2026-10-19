@@ -16,9 +16,12 @@ import inspect
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time
 from types import UnionType
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Final, Union, get_args, get_origin, get_type_hints
 
 import msgspec
+
+ENV_SOURCE: Final = "the run's env parameter"
+"""How a run's ``env`` parameter is named when it disagrees with the process."""
 
 
 def signature_from_params_type(
