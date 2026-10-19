@@ -30,7 +30,7 @@ import msgspec
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import LoomError
-from loom.core.model.json_schema import DEFS, definition, without_null
+from loom.core.model._json_schema import DEFS, definition, without_null
 
 _LAX_TYPE_REASON = (
     "the type must reject unknown fields: forbid_unknown_fields=True or "
@@ -330,7 +330,7 @@ class _MsgspecType:
         return msgspec.to_builtins(obj)
 
     @functools.cached_property
-    def _query_coercers(self) -> Mapping[str, Callable[[str], Any]]:
+    def _coercers(self) -> Mapping[str, Callable[[str], Any]]:
         return _query_coercers(self.schema())
 
     def from_builtins(self, payload: Any, /) -> Any:
@@ -340,7 +340,7 @@ class _MsgspecType:
             raise _msgspec_error(exc) from exc
 
     def from_query(self, params: Mapping[str, str], /) -> Any:
-        return self.from_builtins(_coerce_query(params, self._query_coercers))
+        return self.from_builtins(_coerce_query(params, self._coercers))
 
 
 class _PydanticType:
@@ -377,11 +377,11 @@ class _PydanticType:
             raise BoundaryValidationError(message, violations) from exc
 
     @functools.cached_property
-    def _query_coercers(self) -> Mapping[str, Callable[[str], Any]]:
+    def _coercers(self) -> Mapping[str, Callable[[str], Any]]:
         return _query_coercers(self.schema())
 
     def from_query(self, params: Mapping[str, str], /) -> Any:
-        return self.decode_json(msgspec.json.encode(_coerce_query(params, self._query_coercers)))
+        return self.decode_json(msgspec.json.encode(_coerce_query(params, self._coercers)))
 
 
 _INTEGER = re.compile(r"-?(?:0|[1-9][0-9]*)")

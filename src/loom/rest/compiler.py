@@ -34,7 +34,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import loom_type
-from loom.core.model.json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
+from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
@@ -289,12 +289,12 @@ def _query_field(
         )
     ref = schema.get(REF)
     if ref is not None:
-        ref_name = ref.removeprefix(DEFS_PREFIX)
-        schema = {**schema, DEFS: {ref_name: definitions[ref_name]}}
+        schema = {**schema, DEFS: {ref.removeprefix(DEFS_PREFIX): target}}
     return QueryField(name=name, required=required, schema=schema)
 
 
-def _names_query_spec(annotation: Any) -> bool:
+def names_query_spec(annotation: Any) -> bool:
+    """Whether *annotation* is ``QuerySpec`` or a union holding it."""
     is_union = typing.get_origin(annotation) in (typing.Union, types.UnionType)
     return annotation is QuerySpec or (is_union and QuerySpec in typing.get_args(annotation))
 
@@ -581,7 +581,7 @@ class RestInterfaceCompiler:
         if binding is None:
             return ()
         where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
-        if any(_names_query_spec(pb.annotation) for pb in plan.param_bindings):
+        if any(names_query_spec(pb.annotation) for pb in plan.param_bindings):
             raise InterfaceCompilationError(
                 f"{where}: Query() cannot be combined with a QuerySpec parameter."
             )

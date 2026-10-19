@@ -71,12 +71,6 @@ def feedable_input(
     return frozenset(declared), None
 
 
-def declares_query(use_case: type[Compilable]) -> bool:
-    """Whether the compiled use case takes a ``Query()`` parameter, which no run can bind."""
-    execution = getattr(use_case, "__execution_plan__", None)
-    return execution is not None and execution.query_binding is not None
-
-
 def _binding_reason(execution: ExecutionPlan) -> str | None:
     """Reason the execution plan's bindings cannot be fed from a run, if any."""
     if execution.param_bindings:

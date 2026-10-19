@@ -34,7 +34,6 @@ from loom.ai.compiler._plan import (
     CompiledSqlCapability,
     CompiledUsecaseCapability,
 )
-from loom.ai.compiler.phases._feedable import declares_query
 from loom.ai.config import A2AAgentConfig, AiConfig, McpServerConfig
 from loom.ai.declarative import (
     A2ACapability,
@@ -233,7 +232,8 @@ def _compile_usecase(capability: UsecaseCapability, context: _Context) -> _Handl
         except KeyError:
             issues.append(usecase_key_unknown(context.component, key))
             continue
-        if declares_query(use_case):
+        execution = getattr(use_case, "__execution_plan__", None)
+        if execution is not None and execution.query_binding is not None:
             issues.append(usecase_declares_query(context.component, key))
         use_cases.append(use_case)
     if issues:

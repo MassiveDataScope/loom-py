@@ -559,7 +559,7 @@ The owner's review changed these points, all reflected above:
 - Declared queries decode strictly, not in lax mode. The integer, number and
   boolean fields are read from the JSON Schema, not from the Python
   annotations, because pydantic's `AwareDatetime` is not a `date` subclass.
-  The schema helpers live once in `loom.core.model.json_schema`, shared by
+  The schema helpers live once in `loom.core.model._json_schema` (internal), shared by
   `_loom_type.py`, the REST compiler and `openapi.py`.
 - `profile` on a `Query()` route is accepted only when exposed, and refused
   when repeated. Request parameters are resolved before the use case is

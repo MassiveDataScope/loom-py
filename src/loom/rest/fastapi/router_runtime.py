@@ -62,7 +62,7 @@ from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.outcome import Created
 from loom.rest._body import BodyTooLarge
-from loom.rest.compiler import CompiledRoute
+from loom.rest.compiler import CompiledRoute, names_query_spec
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi.openapi import (
@@ -341,12 +341,7 @@ def _resolve_query_param_name(uc_type: type[Any]) -> str | None:
     for name, param in execute_sig.parameters.items():
         if name == "self":
             continue
-        annotation = hints.get(name, param.annotation)
-        origin = typing.get_origin(annotation)
-        args = typing.get_args(annotation)
-        if annotation is QuerySpec:
-            return name
-        if origin in {typing.Union, types.UnionType} and QuerySpec in args:
+        if names_query_spec(hints.get(name, param.annotation)):
             return name
     return None
 

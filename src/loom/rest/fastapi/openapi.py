@@ -19,9 +19,9 @@ from loom.core.command.introspection import (
 )
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
-from loom.core.model.json_schema import DEFS, DEFS_PREFIX, REF
-from loom.core.repository.abc.query import PaginationMode, QuerySpec
-from loom.rest.compiler import CompiledRoute, QueryField
+from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF
+from loom.core.repository.abc.query import PaginationMode
+from loom.rest.compiler import CompiledRoute, QueryField, names_query_spec
 from loom.rest.constants import LIMIT_DEFAULT, LOCATION_HEADER, QueryParam
 
 JsonSchema = dict[str, Any]
@@ -218,14 +218,7 @@ def _has_profile_parameter(type_hints: dict[str, Any]) -> bool:
 
 
 def _has_query_spec_parameter(type_hints: dict[str, Any]) -> bool:
-    for annotation in type_hints.values():
-        if annotation is QuerySpec:
-            return True
-        origin = get_origin(annotation)
-        args = get_args(annotation)
-        if origin in (UnionType, Union) and QuerySpec in args:
-            return True
-    return False
+    return any(names_query_spec(annotation) for annotation in type_hints.values())
 
 
 def _query_spec_openapi_parameters(
