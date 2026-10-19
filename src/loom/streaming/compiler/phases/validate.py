@@ -338,6 +338,8 @@ def _validate_shape_node(
         return _validate_scoped_process_node(node, idx, node_list)
     if isinstance(node, Explode):
         return _validate_explode_node(node, idx, node_list, current_shape)
+    if isinstance(node, ExpandRoutes):
+        return _validate_expand_routes_node(node, idx, node_list)
     if isinstance(node, Router):
         router_errors, next_shape = _validate_router_shapes(node, current_shape)
         return router_errors, next_shape, False
@@ -414,6 +416,26 @@ def _prefixed(issue: CompilationIssue, prefix: str) -> CompilationIssue:
     return msgspec.structs.replace(issue, message=f"{prefix}: {issue.message}", component=component)
 
 
+def _validate_expand_routes_node(
+    node: ExpandRoutes[Any],
+    idx: int,
+    node_list: tuple[object, ...],
+) -> tuple[list[CompilationIssue], StreamShape, bool]:
+    """Shape-check every route on the rows it receives, and keep ExpandRoutes last.
+
+    Each route receives one message per expanded row, so it starts as a record
+    stream. ExpandRoutes is terminal: the dispatcher hands the expanded
+    payloads, not rows, to any node that follows it.
+    """
+    errors: list[CompilationIssue] = []
+    for label, nodes in _labelled_branch_nodes(node):
+        branch_errors, _ = _validate_shape_sequence(nodes, StreamShape.RECORD)
+        errors.extend(_prefixed(issue, f"expand_routes branch {label}") for issue in branch_errors)
+    not_last = StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
+    errors.extend(_must_be_last_errors(idx, node_list, not_last))
+    return errors, StreamShape.NONE, True
+
+
 def _validate_fork_shapes(
     fork: Fork[StreamPayload],
     initial_shape: StreamShape,
@@ -462,7 +484,11 @@ def _validate_router_branch_shape_sequence(
                 )
             )
         if _is_leaf_terminal(node) and idx != len(node_list) - 1:
-            errors.append(StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__))
+            errors.append(
+                StreamingErrorCode.BROADCAST_NOT_LAST.issue()
+                if isinstance(node, Broadcast)
+                else StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
+            )
             break
         current_shape = _node_output_shape(node, current_shape)
 
@@ -509,7 +535,11 @@ def _labelled_branch_nodes(node: object) -> Iterable[tuple[str, tuple[object, ..
 
 
 def _is_leaf_terminal(node: object) -> bool:
-    """Return True for nodes that are themselves terminal with no children to recurse into."""
+    """Return True for nodes that end a process.
+
+    ``Broadcast`` has branches, but they need not reach an output; the shape
+    validators check ``Broadcast`` before this, to validate those branches.
+    """
     return isinstance(node, (IntoTopic, Drain, IntoSink, Broadcast))
 
 

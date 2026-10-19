@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
-from loom.streaming.compiler._errors import CompilationIssue, from_message
+from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.kafka._config import ConsumerSettings, ProducerSettings
 from loom.streaming.kafka._wire import DispatchTable
@@ -127,7 +127,8 @@ class CompilationError(Exception):
 
     def __init__(self, issues: Sequence[CompilationIssue | str]) -> None:
         self.issues: tuple[CompilationIssue, ...] = tuple(
-            from_message(item) if isinstance(item, str) else item for item in issues
+            StreamingErrorCode.UNSPECIFIED.issue(message=item) if isinstance(item, str) else item
+            for item in issues
         )
         messages = [issue.message for issue in self.issues]
         super().__init__(f"Compilation failed with {len(messages)} error(s): {'; '.join(messages)}")

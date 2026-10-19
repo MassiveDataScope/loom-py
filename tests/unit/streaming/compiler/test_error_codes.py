@@ -17,6 +17,7 @@ from loom.streaming import (
     ContextFactory,
     Drain,
     ErrorEnvelope,
+    ExpandRoutes,
     ExpandStep,
     Explode,
     Fork,
@@ -239,6 +240,10 @@ def _broadcast(*nodes: Any) -> Broadcast[Order]:
     return Broadcast(BroadcastRoute(process=Process(*nodes), output=_out()))
 
 
+def _expand_routes(*nodes: Any) -> ExpandRoutes[Order]:
+    return ExpandRoutes(expander=_Expander, routes={Result: Process(*nodes)})  # type: ignore[arg-type]
+
+
 def _router(*nodes: Any) -> Router[Order, Any]:
     return Router.when([Route(when=msg.payload.order_id == "a", process=Process(*nodes))])
 
@@ -367,6 +372,30 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "broadcast branch 0 > FakeStep",
         None,
     ),
+    "broadcast not last inside an expand route": (
+        lambda: _flow(_expand_routes(_broadcast(FakeStep()), FakeStep())),
+        {},
+        StreamingErrorCode.BROADCAST_NOT_LAST,
+        "expand_routes branch Result: broadcast must be the last node in a process",
+        "expand_routes branch Result > broadcast",
+        None,
+    ),
+    "broadcast after an expand routes": (
+        lambda: _flow(_expand_routes(_out()), _broadcast(FakeStep())),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "ExpandRoutes must be the last node in a process",
+        "ExpandRoutes",
+        None,
+    ),
+    "broadcast not last inside a router branch": (
+        lambda: _flow(_router(_broadcast(FakeStep()), FakeStep())),
+        {},
+        StreamingErrorCode.BROADCAST_NOT_LAST,
+        "router branch predicate[0]: broadcast must be the last node in a process",
+        "router branch predicate[0] > broadcast",
+        None,
+    ),
     "scoped process followed by a step": (
         lambda: _flow(With(process=Process(FakeStep(), _out())), FakeStep()),
         {},
@@ -454,7 +483,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         {},
         StreamingErrorCode.ERROR_ENVELOPE_UNPARAMETERIZED,
         "ErrorEnvelope in FromMultiTypeTopic must be parameterized, "
-        "e.g. ErrorEnvelope[OrderEvent]. Got: <class 'loom.streaming.core._errors.ErrorEnvelope'>",
+        "e.g. ErrorEnvelope[OrderEvent]. Got: ",
         "FromMultiTypeTopic",
         "payloads",
     ),

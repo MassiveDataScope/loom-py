@@ -22,11 +22,7 @@ from typing import Final, TypeAlias
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
 _FORK: Final = "fork"
-_FLOW_OUTPUT: Final = "flow.output"
 _OUTPUT: Final = "output"
-_ROUTER_BRANCH: Final = "router branch {label}"
-_MULTI_TYPE_TOPIC: Final = "FromMultiTypeTopic"
-_PAYLOADS: Final = "payloads"
 
 
 @unique
@@ -106,7 +102,8 @@ class StreamingErrorCode(IssueCode):
     ROUTER_BRANCH_UNSAFE_NODE = (
         "ROUTER_BRANCH_UNSAFE_NODE",
         Template(
-            "router branch {label}: node {node} is not router-branch safe", component=_ROUTER_BRANCH
+            "router branch {label}: node {node} is not router-branch safe",
+            component="router branch {label}",
         ),
     )
     ROUTER_BRANCH_FANOUT_UNSUPPORTED = (
@@ -114,7 +111,7 @@ class StreamingErrorCode(IssueCode):
         Template(
             "router branch {label}: {node} is not supported in Router branches — Router is "
             "1-to-1; use Fork for fan-out.",
-            component=_ROUTER_BRANCH,
+            component="router branch {label}",
         ),
     )
     ROUTER_BRANCH_SHAPE_DIVERGENCE = (
@@ -125,7 +122,7 @@ class StreamingErrorCode(IssueCode):
         "OUTPUT_WITH_FORK",
         Template(
             "flow.output cannot be combined with Fork: branches must be terminal",
-            component=_FLOW_OUTPUT,
+            component="flow.output",
             field=_OUTPUT,
         ),
     )
@@ -133,7 +130,7 @@ class StreamingErrorCode(IssueCode):
         "OUTPUT_WITH_BROADCAST",
         Template(
             "flow.output cannot be combined with Broadcast: branches must be terminal",
-            component=_FLOW_OUTPUT,
+            component="flow.output",
             field=_OUTPUT,
         ),
     )
@@ -174,8 +171,8 @@ class StreamingErrorCode(IssueCode):
         Template(
             "ErrorEnvelope in FromMultiTypeTopic must be parameterized, "
             "e.g. ErrorEnvelope[OrderEvent]. Got: {payload}",
-            component=_MULTI_TYPE_TOPIC,
-            field=_PAYLOADS,
+            component="FromMultiTypeTopic",
+            field="payloads",
         ),
     )
     STORAGE_SINK_UNSUPPORTED = (
@@ -187,8 +184,8 @@ class StreamingErrorCode(IssueCode):
         Template(
             "FromMultiTypeTopic payload {payload} does not define loom_message_type(); "
             "payloads must be Loom struct types",
-            component=_MULTI_TYPE_TOPIC,
-            field=_PAYLOADS,
+            component="FromMultiTypeTopic",
+            field="payloads",
         ),
     )
 
@@ -241,8 +238,3 @@ class StreamingErrorCode(IssueCode):
 
 
 CompilationIssue: TypeAlias = CompileIssue[StreamingErrorCode]
-
-
-def from_message(message: str) -> CompilationIssue:
-    """Wrap a bare string as an :data:`StreamingErrorCode.UNSPECIFIED` issue."""
-    return StreamingErrorCode.UNSPECIFIED.issue(message=message)
