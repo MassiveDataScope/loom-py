@@ -1,8 +1,7 @@
 # ADR 0003: Error placement, codes and mapping
 
-- Status: Decision A Proposed. Decision B Accepted, and applied to the AI and
-  streaming pillars by a hotfix, without shims (owner decision); ETL follows
-  in a second hotfix.
+- Status: Decision A Proposed. Decision B Accepted, and applied to the AI,
+  streaming and ETL pillars by one hotfix, without shims (owner decision).
 - Issues: #351, #352, #353, #354, #355, #356, #357; 3.0 items in #358
 - Applies to: loom-kernel 2.21.0 and later. ADR 0002 and
   `InsufficientAuthentication` land first, in 2.21.0.
@@ -276,9 +275,9 @@ Visible changes:
 
 ## Decision B: the compile-issue catalogue as data
 
-Status: Accepted. Applied to AI and streaming by the compile-issue hotfix; ETL
-follows in a second hotfix. The issue factories are removed, with no shim: the
-owner treats them as a defect, and callers move to `Code.X.issue(...)`.
+Status: Accepted. Applied to AI, streaming and ETL by the compile-issue
+hotfix. The issue factories are removed, with no shim: the owner treats them
+as a defect, and callers move to `Code.X.issue(...)`.
 
 A compile issue is data: a code, a message template, a component and a field.
 The catalogue states this once per code, and one constructor builds the issue.
@@ -426,8 +425,8 @@ raise ETLCompilationError.from_issue(
   `from_issue(issue)` classmethod. In 3.0 the constructor takes the issue
   directly.
 - Six ETL raises in `etl/compiler/_validators_step.py:462-543` share
-  `INVALID_TARGET_TYPE` with six different messages. They keep building the
-  error directly until they get their own codes (open question 4).
+  `INVALID_TARGET_TYPE` with six different messages, eight after #368. Each
+  gets its own code (open question 4, decided).
 
 ### No shims
 
@@ -479,13 +478,19 @@ names the removed functions.
 
 ### Line estimates
 
-| File | Today | After |
-|---|---|---|
-| `core/errors/codes.py` | 38 | about 95 |
-| `ai/errors.py` | 1,679 | about 820 |
-| `streaming/compiler/_errors.py` | 477 | about 220 |
-| `etl/compiler/_errors.py` | 473 | about 240 |
-| Total | 2,667 | about 1,375 |
+| File | Today | After (estimate) | After (applied) |
+|---|---|---|---|
+| `core/errors/codes.py` | 38 | about 95 | 140 |
+| `ai/errors.py` | 1,679 | about 820 | 941 |
+| `streaming/compiler/_errors.py` | 477 | about 220 | 248 |
+| `etl/compiler/_errors.py` | 473 | about 240 | 303 |
+| Total | 2,667 | about 1,375 | 1,632 |
+
+The applied files are longer than the estimate because the formatter writes
+each `NAME = "NAME", Template(...)` that does not fit on one line as a
+parenthesised tuple, about two more lines per member. The "Today" column is
+the evidence commit; at the base of the hotfix, `codes.py` had 41 lines and
+`ai/errors.py` 1,693.
 
 How the estimates were made:
 
@@ -505,7 +510,7 @@ These steps are independent of Decision A and of each other, and all are 2.x.
 
 Each pillar's pull request adds the missing compile-path tests listed above.
 
-### Applied: AI and streaming
+### Applied: AI, streaming and ETL
 
 What the hotfix did where this ADR left a choice, and what it found:
 
@@ -520,8 +525,8 @@ What the hotfix did where this ADR left a choice, and what it found:
   in the default template. Parameters that carry the redaction rule keep
   their names (`server`, `agent`).
 - The use-case `Mcp()` include check shares `TOOL_FILTER_MATCHES_NOTHING`
-  with its own message and field, so it builds its issue directly, as the six
-  ETL `INVALID_TARGET_TYPE` raises do. `SPEC_MALFORMED` and one
+  with its own message and field, so it builds its issue directly.
+  `SPEC_MALFORMED` and one
   `MCP_TRANSPORT_INVALID` site set the field on the issue, because only the
   call site knows it.
 - `OUTPUT_CHECK_UNRESOLVABLE` is not dead: `compile_output_check` has used its
@@ -530,6 +535,29 @@ What the hotfix did where this ADR left a choice, and what it found:
 - A contract test per pillar renders every code from its declared
   parameters and checks, over the AST of `src/loom`, that every
   `Code.X.issue(...)` call passes exactly those parameters.
+- Streaming: two codes could not be raised because their checks were wrong,
+  and the hotfix fixes the checks. `Broadcast` was dispatched as a plain
+  terminal, so `BROADCAST_NOT_LAST` never fired and broadcast branches were
+  never shape-checked. The `ERROR_ENVELOPE_UNPARAMETERIZED` check matched only
+  `ErrorEnvelope[X]`, so a bare `ErrorEnvelope` compiled.
+- ETL: `ETLCompilationError` keeps its constructor and gains `from_issue`.
+  Where a message showed a sorted list or a repr (`['a', 'b']`,
+  `IntoTemp('x')`), the call site passes the formatted text, so messages keep
+  their text.
+- ETL: the historify checks get their own codes (open question 4). Since
+  #368 there are eight: `HISTORIFY_KEYS_EMPTY`,
+  `HISTORIFY_KEYS_TRACK_OVERLAP`, `HISTORIFY_EFFECTIVE_DATE_IN_TRACK`,
+  `HISTORIFY_BOUNDARY_IN_KEYS`, `HISTORIFY_BOUNDARY_IN_TRACK`,
+  `HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN`,
+  `HISTORIFY_DELETE_MARKER_REQUIRES_LOG` and
+  `HISTORIFY_DELETE_MARKER_DECLARED_COLUMN`. The run-time historify errors in
+  `declarative/target/_history/_errors.py` stay where they are: they report
+  the data of a run, not a compile failure.
+- ETL: `INVALID_SOURCES_TYPE` is removed as dead code. `ETLStep` classifies
+  sources as grouped only when they are a `Sources` or a `SourceSet`, so its
+  guard could never fail. Every other code listed above has a compile-path
+  test that asserts the code. Most already drove the failure and matched
+  only its message.
 
 ## Alternatives rejected
 
@@ -589,8 +617,5 @@ What the hotfix did where this ADR left a choice, and what it found:
    3.12 unchanged.
 3. **Factory shims.** Decided by the owner: no shims. The factories are
    dropped in a 2.x hotfix.
-4. **The six ETL historify checks sharing `INVALID_TARGET_TYPE`.**
-   Recommended: give each its own code in 2.x. Adding codes is additive, but
-   anyone matching `INVALID_TARGET_TYPE` for these checks would see new codes.
-   If that is unacceptable, hold it for 3.0 and keep the direct construction
-   until then.
+4. **The ETL historify checks sharing `INVALID_TARGET_TYPE`.** Decided: each
+   gets its own code in the 2.x hotfix.
