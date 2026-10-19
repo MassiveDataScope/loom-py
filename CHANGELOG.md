@@ -546,6 +546,47 @@
   or `RuleViolation` it returns no longer fails the rule. Migrate
   `Rule.check(F(Order).total, via=lambda v: v <= 0, message="total must be > 0")`
   to `Rule.check(F(Order).total, via=lambda v: "total must be > 0" if v <= 0 else None)`.
+- **core:** cursor signing keys are required (ADR 0004). An application whose
+  persistence backend serves repositories (`sqlalchemy`, `mongo`), and a
+  Celery worker that registers repositories, read `persistence.cursors` at
+  startup and fail with a `ConfigError` without a key:
+
+  ```yaml
+  persistence:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: LOOM_CURSOR_KEY_2026_10}   # or {path: /run/secrets/...}
+  ```
+
+  Keys are read from a file or an environment variable, never written in the
+  configuration, and must be at least 32 bytes; older key ids stay in `keys`
+  to verify the tokens they signed during a rotation.
+  The default is `signed` in every environment; `signing: ephemeral` (a
+  random per-process key, for `development.yaml`) and `signing: unsigned`
+  (for `test.yaml`) are explicit opt-outs, and both log a WARNING at
+  startup. Tokens issued before this release are refused: clients restart
+  from the first page.
+- **core:** the unsigned module functions `encode_cursor` and
+  `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
+  `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
+  verifies tokens: `encode(cursor, *, model, query, scope)` and
+  `decode(token, *, backend, model, query, scope, id_count=1)`, where
+  `scope` is required and `""` binds a token to no tenant. The backends
+  register the codec they build in DI, so a service paginating by hand
+  resolves it with `container.resolve(CursorCodec)`. A decoded datetime key
+  is always aware.
+- **core:** `RepositorySQLAlchemy`, `RepositoryMongo`, `QuerySpecCompiler`
+  (with a required `scope` too), `SQLAlchemyDefaultRepositoryBuilder`,
+  `MongoDefaultRepositoryBuilder`, `build_sqlalchemy_repository_registration_module`,
+  `build_mongo_repository_registration_module` and
+  `loom.testing.build_repository_harness` take a required keyword-only
+  `cursor_codec`. A custom repository `builder` passes
+  `context.container.resolve(CursorCodec)`. `extract_next_cursor` returns the
+  next `Cursor` position instead of a token, and `SessionManager` gains
+  `current_settings()`. SQLAlchemy repositories bind cursors to the caller's
+  `loom.scope.*` session values.
+
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number
   grammar and must be finite, an integer its integer subset within
@@ -945,6 +986,21 @@
   both): an `Enum` member is bound as its value, a JSON column's value is
   reduced to builtins. A plain `Enum` member as the value of a filter on a
   string column failed to bind.
+- **core:** pagination cursors are signed and decoded strictly (ADR 0004).
+  A cursor token was base64url JSON with no integrity, and a datetime key
+  decoded without a time zone, so a client could forge a position and a
+  consumer comparing it with aware datetimes raised `TypeError` (a 500). A
+  token is now `base64url(payload).base64url(tag)`, the tag an HMAC-SHA256
+  over a domain-separated input bound to the model, the normalised filters,
+  the sort and the caller's scope, verified with `hmac.compare_digest` before
+  the payload is parsed. A malformed, unsigned, forged or rebound token, a
+  key signed by an unknown key id, a datetime key without a time zone, a key
+  of an unknown type, the wrong number of keys or the wrong backend is
+  `UnsupportedQuery` (`400 unsupported_query`), and the message never echoes
+  the token. A naive datetime key, such as a `DateTime(tz=False)` column, is
+  issued as UTC with an explicit offset and compared as naive UTC against
+  that column, on SQLite and Postgres alike.
+
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become

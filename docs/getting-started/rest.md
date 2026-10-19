@@ -56,6 +56,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
@@ -337,6 +341,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
@@ -401,6 +409,14 @@ recipe for a model that runs unchanged on every backend are described in
 persistence:
   backend: none
 ```
+
+A backend that serves repositories (`sqlalchemy`, `mongo`) signs its
+pagination cursors and fails at startup without a signing key, in every
+environment. The samples on this page are development configurations and opt
+out with `persistence.cursors.signing: ephemeral`, which logs a WARNING;
+`production.yaml` configures keys instead. Keys, rotation and the opt-outs are
+described in
+[Cursor tokens](../rest/persistence-backends.md#cursor-tokens).
 
 `none` is for an application whose only content is agents (see
 [An application that is only agents](../ai/overview.md#an-application-that-is-only-agents)).

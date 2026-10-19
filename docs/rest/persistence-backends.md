@@ -183,29 +183,105 @@ Use cases of routes the gate pruned are dropped before that check.
 ## Cursor tokens
 
 Keyset pagination has one token contract for every backend
-(`loom.core.repository.abc.cursor`): the base64url form of a msgspec record
-carrying the issuing backend's name, the sort key values of the last row on the
-page and the primary key as tie-breaker. Backends issue and consume it through
-`encode_cursor(backend, keys, tie_breaker)` and
-`decode_cursor(token, backend, model, key_count=len(sort))`, which rejects a
-token whose key count differs from the sort; each repository class names
-itself with a `backend_name` class variable. A composite primary key is carried
-whole: the tie-breaker is the tuple of its values in key order, and
-`decode_cursor(..., id_count=2)` rejects a token carrying another number of
-key values.
+(`loom.core.repository.abc.cursor`, decided in ADR 0004,
+`docs/architecture/adr/0004-signed-cursors.md`). A token carries the
+issuing backend's name, the sort key values of the last row on the page and the
+primary key as tie-breaker, and it is signed with HMAC-SHA256:
 
-```python
-from loom.core.repository.abc.cursor import decode_cursor, encode_cursor
-
-token = encode_cursor("sqlalchemy", keys=[created_at, 1042], tie_breaker=1042)
-cursor = decode_cursor(token, "sqlalchemy", "billing.Invoice", key_count=2)
-cursor.keys, cursor.tie_breaker   # (created_at, 1042), 1042
+```text
+base64url(payload) "." base64url(version || len(key_id) || key_id || mac)
 ```
 
-A token that does not decode, or that another backend issued, is
-`UnsupportedQuery` — `400 unsupported_query` on the wire. Tokens issued by the
-SQLAlchemy backend before this contract share that fate: clients must treat
-them as opaque and restart from the first page.
+The signature also covers what the token is bound to, which never travels in
+it: the model, the normalised filters (datetimes compared as UTC instants, the
+order of the conditions ignored), the sort and the caller's scope. A token
+replayed with other filters, another sort, for another model or in another
+tenant does not verify. The SQLAlchemy repositories bind the scope to the
+row-level-security scope values of the caller (see
+[Postgres row-level security](postgres-rls.md)); without them, and on Mongo,
+the scope is `""`, which binds the token to no tenant on purpose.
+
+Every backend issues and verifies tokens through one `CursorCodec`, built at
+startup from the `persistence.cursors` section and registered in DI. The code
+default is `signed` in every environment; each opt-out is written in the file
+of the environment that needs it:
+
+```yaml
+# production.yaml
+persistence:
+  cursors:
+    current_key_id: "2026-10"          # signs new tokens
+    keys:                              # every key that still verifies
+      "2026-10": {env: LOOM_CURSOR_KEY_2026_10}
+      "2026-07": {env: LOOM_CURSOR_KEY_2026_07}
+```
+
+```yaml
+# development.yaml
+persistence:
+  cursors:
+    signing: ephemeral
+```
+
+```yaml
+# test.yaml
+persistence:
+  cursors:
+    signing: unsigned
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `signing` | `signed` | `signed`, `ephemeral` or `unsigned` |
+| `current_key_id` | — | Key id that signs new tokens; must be one of `keys` |
+| `keys` | `{}` | Key id → exactly one source, `path` (a file, such as a mounted secret) or `env` (an environment variable). The key is the UTF-8 text found there, surrounding whitespace removed, at least 32 bytes; `openssl rand -base64 48` produces one. Key ids match `[A-Za-z0-9._-]{1,64}` |
+
+Key material never appears in the configuration, so a dump of it cannot leak
+a key, and a configuration error names the key id, never the key or its path.
+To rotate, add the new key, make it `current_key_id`, and drop the old id once
+the tokens it signed no longer matter: tokens are short-lived page pointers,
+so one deployment cycle is usually enough.
+
+Without a key, startup fails in every environment with a `ConfigError` naming
+the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
+
+- `signing: ephemeral` signs with a random key generated per process. Tokens
+  do not survive a restart and another instance refuses them. For
+  `development.yaml`.
+- `signing: unsigned` signs nothing, so a token can be read and written by
+  hand. For `test.yaml` and debugging only.
+
+Production uses `signed`. Decoding is strict in every mode: a token that is not
+unpadded base64url, a payload that is not the token record, a datetime key
+without a time zone, a key of an unknown type, a token of another backend, or
+one whose key count differs from the sort or the primary key is refused. Every
+refusal is `UnsupportedQuery` — `400 unsupported_query` on the wire — and its
+message never echoes the token. A naive datetime key, such as a
+`DateTime(tz=False)` column, is issued as UTC with an explicit offset and
+compared as naive UTC again against that column.
+
+A service paginating by hand resolves the same codec and binds its own scope:
+
+```python
+from loom.core.repository.abc import Cursor, CursorCodec, PaginationMode, QuerySpec, SortSpec
+
+codec = container.resolve(CursorCodec)
+query = QuerySpec(sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR)
+token = codec.encode(
+    Cursor(backend="grants", keys=(updated_at,), tie_breaker=grant_id),
+    model="access.Grant",
+    query=query,
+    scope=tenant_id,
+)
+position = codec.decode(token, backend="grants", model="access.Grant", query=query, scope=tenant_id)
+position.keys, position.tie_breaker   # (updated_at, grant_id); datetimes always aware
+```
+
+A composite primary key is carried whole: the tie-breaker is the tuple of its
+values in key order, and `decode(..., id_count=2)` refuses a token carrying
+another number of key values. Tokens issued before signed cursors share the
+fate of any invalid token: clients must treat tokens as opaque and restart from
+the first page.
 
 ## Health
 
