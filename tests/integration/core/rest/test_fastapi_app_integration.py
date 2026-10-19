@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import prometheus_client
@@ -221,3 +223,70 @@ def test_fake_repo_list_refuses_a_sort_on_an_undeclared_field_alike(
     assert detail["code"] == "unsupported_query"
     assert detail["message"] == f"Sorting on field {sort!r} is not allowed by this route."
     assert "nextCursor" not in response.text
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _flip_last_byte(segment: str) -> str:
+    raw = bytearray(_unb64(segment))
+    raw[-1] ^= 0x01
+    return _b64(bytes(raw))
+
+
+def _forged(payload: dict[str, object]) -> str:
+    return _b64(json.dumps(payload).encode())
+
+
+_CURSOR_PAGE = "/products/?pagination=cursor&limit=1&sort=id&direction=ASC"
+
+
+def _malformed_cursors(issued: str) -> dict[str, str]:
+    payload, tag = issued.split(".")
+    naive = {"b": "sqlalchemy", "k": [{"type": "datetime", "v": "2026-09-06T12:30:00"}], "id": 1}
+    unknown_tag = {"b": "sqlalchemy", "k": [{"type": "money", "v": "1"}], "id": 1}
+    return {
+        "alphabet": "not base64!",
+        "json": f"{_b64(b'{not json')}.{tag}",
+        "unsigned": payload,
+        "tampered-payload": f"{_flip_last_byte(payload)}.{tag}",
+        "tampered-tag": f"{payload}.{_flip_last_byte(tag)}",
+        "naive-datetime": f"{_forged(naive)}.{tag}",
+        "wrong-tag": f"{_forged(unknown_tag)}.{tag}",
+        "wrong-backend": f"{_forged({'b': 'mongo', 'k': [1], 'id': 1})}.{tag}",
+        "wrong-key-count": f"{_forged({'b': 'sqlalchemy', 'k': [1, 2, 3], 'id': 1})}.{tag}",
+        "other-filters": issued,
+    }
+
+
+def test_a_malformed_cursor_answers_400_without_echoing_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'c.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name in ("a", "b", "c"):
+            assert client.post("/products/", json={"name": name, "price": 20.0}).status_code == 201
+        issued = client.get(_CURSOR_PAGE).json()["nextCursor"]
+
+        answers = {
+            case: client.get(
+                f"{_CURSOR_PAGE}&after={token}"
+                + ("&price__eq=20" if case == "other-filters" else "")
+            )
+            for case, token in _malformed_cursors(issued).items()
+        }
+
+    statuses = {case: response.status_code for case, response in answers.items()}
+    assert statuses == dict.fromkeys(answers, 400)
+    for case, response in answers.items():
+        detail = response.json()["detail"]
+        assert detail["code"] == "unsupported_query", case
+        assert _malformed_cursors(issued)[case] not in response.text, case

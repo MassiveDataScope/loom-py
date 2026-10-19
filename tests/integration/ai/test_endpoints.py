@@ -1693,6 +1693,7 @@ def test_does_not_import_loom_ai_when_the_config_has_no_ai_section(tmp_path: Pat
             },
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     config_path = tmp_path / "app.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")

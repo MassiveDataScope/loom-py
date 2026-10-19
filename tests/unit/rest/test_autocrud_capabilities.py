@@ -7,7 +7,7 @@ the backend's default repository type.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -117,9 +117,15 @@ class TestSupportedOpsFollowTheRegisteredRepository:
         assert tuple(crud_op_of(route.use_case) for route in routes) == (CrudOp.CREATE, CrudOp.GET)
 
 
-def _ctx(**sections: object) -> ConfigContext:
+def _ctx(persistence: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
+    cursors = {"cursors": {"signing": "ephemeral"}}
     return ConfigContext.from_dict(
-        {"app": {"name": "demo"}, "database": {"url": "sqlite+aiosqlite:///"}, **sections}
+        {
+            "app": {"name": "demo"},
+            "database": {"url": "sqlite+aiosqlite:///"},
+            "persistence": {**cursors, **(persistence or {})},
+            **sections,
+        }
     )
 
 

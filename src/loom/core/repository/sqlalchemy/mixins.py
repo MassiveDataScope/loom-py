@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, ClassVar, Generic, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
 import msgspec
 from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
@@ -19,6 +19,7 @@ from loom.core.model.introspection import (
     get_table_name,
 )
 from loom.core.repository.abc import (
+    CursorCodec,
     CursorResult,
     FilterParams,
     IdT,
@@ -32,8 +33,12 @@ from loom.core.repository.abc import (
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
+from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
 from loom.core.repository.sqlalchemy.transactional import record_mutation
 from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+
+if TYPE_CHECKING:
+    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 _SENTINEL = object()
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
@@ -44,6 +49,8 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     backend_name: ClassVar[str]
     model: type[Any]
+    session_manager: SessionManager
+    cursor_codec: CursorCodec
     _sa_model: type[Any] | None = None
     _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None
@@ -500,6 +507,8 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 self.allowed_filter_fields,
                 backend=self.backend_name,
                 model_name=self.model.__qualname__,
+                cursor_codec=self.cursor_codec,
+                scope=self._cursor_scope(),
             )
             core_model = self._effective_core_model
 
@@ -519,6 +528,12 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 compiler=compiler,
                 core_model=core_model,
             )
+
+    def _cursor_scope(self) -> str:
+        """The row-level-security scope values cursors are bound to; ``""`` when unscoped."""
+        settings = self.session_manager.current_settings()
+        scoped = sorted(item for item in settings.items() if item[0].startswith(SCOPE_PREFIX))
+        return msgspec.json.encode(scoped).decode() if scoped else ""
 
     async def _list_with_query_cursor(
         self,

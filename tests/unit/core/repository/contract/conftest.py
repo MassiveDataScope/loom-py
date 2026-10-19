@@ -22,7 +22,7 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime, String
-from loom.core.repository.abc import FilterGroup, FilterOp, FilterSpec, SortSpec
+from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWork
 from loom.core.repository.mongo.repository import RepositoryMongo
@@ -209,7 +209,9 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[Order, 
     try:
         async with manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
-        yield RepositorySQLAlchemy(session_manager=manager, model=Order)
+        yield RepositorySQLAlchemy(
+            session_manager=manager, model=Order, cursor_codec=CursorCodec(signing="ephemeral")
+        )
     finally:
         await manager.dispose()
 
@@ -225,7 +227,7 @@ async def _mongo_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
     # ``Order.id`` is autoincrement, which the mongo backend refuses at boot;
     # the repository itself only maps the key, and the seed ids are explicit.
     collection = FakeMongoClient().collection(_TABLE)
-    yield RepositoryMongo(Order, collection)
+    yield RepositoryMongo(Order, collection, cursor_codec=CursorCodec(signing="ephemeral"))
 
 
 def _sqlalchemy_case() -> BackendCase:

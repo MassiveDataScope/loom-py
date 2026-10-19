@@ -1,21 +1,22 @@
 """Keyset predicate compilation and next-cursor extraction for SQLAlchemy.
 
-Tokens follow :mod:`loom.core.repository.abc.cursor`: every sort key plus
+Positions follow :mod:`loom.core.repository.abc.cursor`: every sort key plus
 the primary key as the final tie-breaker.
 
 The N+1 trick:  fetch ``limit + 1`` rows.  If the result set has exactly
-``limit + 1`` items, a next page exists — truncate to ``limit`` and encode
-the last item's keys.
+``limit + 1`` items, a next page exists — truncate to ``limit`` and take the
+last item's keys as the next position.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import and_, or_
 
-from loom.core.repository.abc.cursor import Cursor, encode_cursor
+from loom.core.repository.abc.cursor import Cursor
 from loom.core.repository.abc.query import SortSpec
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
 
@@ -31,7 +32,8 @@ def compile_cursor_predicate(
     The predicate is the row-value comparison expanded as an OR of ANDs,
     which every dialect (including sqlite) accepts:
     ``k1 > v1 OR (k1 = v1 AND k2 < v2) OR (... AND id > vid)``, with one
-    ascending term per primary-key column.
+    ascending term per primary-key column. A cursor datetime is always aware;
+    against a ``timezone=False`` column it is compared as naive UTC.
 
     Args:
         sa_model: Root SQLAlchemy mapped model class.
@@ -54,7 +56,10 @@ def compile_cursor_predicate(
     )
     columns = [resolve_column(sa_model, spec.field) for spec in sort] + list(id_columns)
     directions = [spec.direction for spec in sort] + ["ASC"] * len(id_columns)
-    values = [*cursor.keys, *ties]
+    values = [
+        _column_value(column, value)
+        for column, value in zip(columns, [*cursor.keys, *ties], strict=True)
+    ]
     branches: list[Any] = []
     for index, (column, direction, value) in enumerate(
         zip(columns, directions, values, strict=True)
@@ -71,8 +76,8 @@ def extract_next_cursor(
     id_attributes: Sequence[str],
     limit: int,
     backend: str,
-) -> tuple[list[Any], str | None, bool]:
-    """Apply the N+1 trick to detect the next page and build its cursor.
+) -> tuple[list[Any], Cursor | None, bool]:
+    """Apply the N+1 trick to detect the next page and take its position.
 
     Call this after fetching ``limit + 1`` rows.
 
@@ -81,12 +86,12 @@ def extract_next_cursor(
         sort: Sort directives whose fields are read from the last row.
         id_attributes: Primary-key attribute names on the row, in key order.
         limit: Requested page size.
-        backend: Backend name stamped on the token.
+        backend: Backend name stamped on the position.
 
     Returns:
-        Tuple of ``(page_items, next_cursor_token, has_next)``.
+        Tuple of ``(page_items, next_position, has_next)``.
         ``page_items`` is truncated to ``limit``.
-        ``next_cursor_token`` is ``None`` on the last page.
+        ``next_position`` is ``None`` on the last page.
     """
     has_next = len(items) > limit
     page_items = items[:limit]
@@ -96,7 +101,14 @@ def extract_next_cursor(
     keys = [_read_path(last, spec.field) for spec in sort]
     ties = tuple(getattr(last, name) for name in id_attributes)
     tie_breaker = ties[0] if len(ties) == 1 else ties
-    return page_items, encode_cursor(backend, keys, tie_breaker), has_next
+    return page_items, Cursor(backend=backend, keys=tuple(keys), tie_breaker=tie_breaker), has_next
+
+
+def _column_value(column: Any, value: object) -> object:
+    """``value`` as ``column`` stores it: naive UTC for a ``timezone=False`` datetime column."""
+    if isinstance(value, datetime) and getattr(column.type, "timezone", True) is False:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
 
 
 def _read_path(obj: Any, path: str) -> Any:

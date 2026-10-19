@@ -8,7 +8,16 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
-from loom.core.repository.abc import Creatable, Readable
+from loom.core.repository.abc import (
+    Creatable,
+    CursorCodec,
+    CursorResult,
+    Listable,
+    PaginationMode,
+    QuerySpec,
+    Readable,
+    SortSpec,
+)
 from loom.core.repository.mongo.ids import IdPolicy, ObjectIdPolicy, Uuid4IdPolicy
 from loom.core.repository.mongo.registry import (
     MongoDatabase,
@@ -40,6 +49,7 @@ def _container(
         collections=collections or {},
         id_policy=id_policy or Uuid4IdPolicy(),
         session_provider=active_session,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
     module(container)
     return container
@@ -95,6 +105,7 @@ def test_builder_rejects_non_persistible_types() -> None:
         collections={},
         id_policy=Uuid4IdPolicy(),
         session_provider=active_session,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     class NotAModel:
@@ -104,3 +115,20 @@ def test_builder_rejects_non_persistible_types() -> None:
 
     with pytest.raises(RuntimeError, match="NotAModel"):
         builder(context)
+
+
+@pytest.mark.asyncio
+async def test_the_registered_codec_verifies_the_cursors_repositories_issue() -> None:
+    container = _container(FakeMongoClient())
+    for slug in ("a", "b", "c"):
+        await container.resolve(Creatable[Article]).create(ArticleCreate(slug=slug, title=slug))
+    query = QuerySpec(sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
+    page = await container.resolve(Listable[Article]).list_with_query(query)
+    assert isinstance(page, CursorResult)
+    assert page.next_cursor is not None
+
+    position = container.resolve(CursorCodec).decode(
+        page.next_cursor, backend="mongo", model="Article", query=query, scope=""
+    )
+
+    assert position.keys == ("b",)

@@ -9,13 +9,14 @@ from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository import PageParams
 from loom.core.repository.abc import (
+    Cursor,
+    CursorCodec,
     CursorResult,
     PaginationMode,
     QuerySpec,
     SortSpec,
     UnsupportedQuery,
 )
-from loom.core.repository.abc.cursor import encode_cursor
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -27,6 +28,7 @@ from loom.core.repository.sqlalchemy.transactional import (
 from tests.unit.core.conftest import SessionManagerFactory
 
 _Key = tuple[int, int]
+_CODEC = CursorCodec(signing="ephemeral")
 
 
 class _Entry(BaseModel):
@@ -60,7 +62,9 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
 @pytest.fixture
 async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Entry, _Key]:
     repo: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Entry
+        session_manager=session_manager,
+        model=_Entry,
+        cursor_codec=_CODEC,
     )
     await repo.create_many(
         [_CreateEntry(account_id=account, id=ident, rank=rank) for account, ident, rank in _SEED]
@@ -110,9 +114,14 @@ class TestCursorPagination:
     async def test_token_with_a_single_key_value_is_rejected(
         self, repository: RepositorySQLAlchemy[_Entry, _Key]
     ) -> None:
-        query = QuerySpec(
-            pagination=PaginationMode.CURSOR, limit=2, cursor=encode_cursor("sqlalchemy", [], 7)
+        first_page = QuerySpec(pagination=PaginationMode.CURSOR, limit=2)
+        token = _CODEC.encode(
+            Cursor(backend="sqlalchemy", keys=(), tie_breaker=7),
+            model="_Entry",
+            query=first_page,
+            scope="",
         )
+        query = QuerySpec(pagination=PaginationMode.CURSOR, limit=2, cursor=token)
 
         with pytest.raises(UnsupportedQuery) as excinfo:
             await repository.list_with_query(query)
@@ -129,6 +138,8 @@ class TestCursorPagination:
             frozenset(),
             backend="sqlalchemy",
             model_name="_Entry",
+            cursor_codec=_CODEC,
+            scope="",
         )
 
         sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))
@@ -189,7 +200,9 @@ async def test_create_many_reselects_rows_by_every_key_column(
 ) -> None:
     monkeypatch.setattr(session_manager.engine.dialect, "insert_returning", False)
     repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Entry
+        session_manager=session_manager,
+        model=_Entry,
+        cursor_codec=_CODEC,
     )
 
     created = await repository.create_many(
@@ -201,7 +214,9 @@ async def test_create_many_reselects_rows_by_every_key_column(
 
 async def test_list_paginated_orders_by_every_key_column(session_manager: SessionManager) -> None:
     repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Entry
+        session_manager=session_manager,
+        model=_Entry,
+        cursor_codec=_CODEC,
     )
     keys = [(7, 3), (7, 1), (7, 2)]
     await repository.create_many(
@@ -217,7 +232,9 @@ async def test_create_records_the_full_key_in_ids_and_tags(
     session_manager: SessionManager, mutations: list[MutationEvent]
 ) -> None:
     repository: RepositorySQLAlchemy[_Entry, _Key] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Entry
+        session_manager=session_manager,
+        model=_Entry,
+        cursor_codec=_CODEC,
     )
 
     await repository.create(_CreateEntry(account_id=8, id=4, rank=1))

@@ -13,6 +13,7 @@ from loom.core.repository import (
 from loom.core.repository import (
     build_repository_registration_module as build_main_repository_module,
 )
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.registry import (
     RepositoryRegistration,
     RepositoryToken,
@@ -36,17 +37,19 @@ __all__ = [
 class SQLAlchemyDefaultRepositoryBuilder:
     """Default repository builder for SQLAlchemy-backed models.
 
-    A frozen dataclass that receives a ``SessionManager`` at construction
-    time — injected by the SQLAlchemy DI module.  The bootstrap and any
-    other infrastructure layer must not construct this class directly;
-    register it via the DI module so that the ``SessionManager`` singleton
-    is shared across all repositories.
+    A frozen dataclass that receives a ``SessionManager`` and a
+    ``CursorCodec`` at construction time — injected by the SQLAlchemy DI
+    module.  The bootstrap and any other infrastructure layer must not
+    construct this class directly; register it via the DI module so that
+    both singletons are shared across all repositories.
 
     Args:
         session_manager: Shared SQLAlchemy session manager.
+        cursor_codec: Shared codec that issues and verifies cursor tokens.
     """
 
     session_manager: SessionManager
+    cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> Any:
         if not issubclass(context.model, BaseModel):
@@ -57,6 +60,7 @@ class SQLAlchemyDefaultRepositoryBuilder:
         return RepositorySQLAlchemy(
             session_manager=self.session_manager,
             model=context.model,
+            cursor_codec=self.cursor_codec,
         )
 
 
@@ -64,13 +68,17 @@ def build_sqlalchemy_repository_registration_module(
     session_manager: SessionManager,
     models: Sequence[type[BaseModel]],
     *,
+    cursor_codec: CursorCodec,
     logical_models: Sequence[type[Any]] = (),
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers model repositories and their capability bindings.
 
-    The module self-declares its infrastructure dependencies: it registers both
-    ``SessionManager`` and ``DefaultRepositoryBuilder`` in the container so that
-    the bootstrap does not need to know about SQLAlchemy internals.
+    The module self-declares its infrastructure dependencies: it registers
+    ``SessionManager``, ``CursorCodec`` and ``DefaultRepositoryBuilder`` in the
+    container so that the bootstrap does not need to know about SQLAlchemy
+    internals, and a service paginating by hand resolves the codec the
+    repositories sign with. A custom ``builder`` builds its repository with
+    that codec too: resolve ``CursorCodec`` from ``context.container``.
 
     To swap the default builder, register your own ``DefaultRepositoryBuilder``
     in the container *before* loading this module — the module will not
@@ -97,6 +105,7 @@ def build_sqlalchemy_repository_registration_module(
             return repository_type(
                 session_manager=session_manager,
                 model=context.model,
+                cursor_codec=cursor_codec,
             )
         return repository_type()
 
@@ -110,11 +119,14 @@ def build_sqlalchemy_repository_registration_module(
     def _register_with_session(container: LoomContainer) -> None:
         if not container.is_registered(SessionManager):
             container.register_instance(SessionManager, session_manager)
+        if not container.is_registered(CursorCodec):
+            container.register_instance(CursorCodec, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(
                 DefaultRepositoryBuilder,
                 SQLAlchemyDefaultRepositoryBuilder(
                     session_manager=container.resolve(SessionManager),
+                    cursor_codec=container.resolve(CursorCodec),
                 ),
             )
         register(container)

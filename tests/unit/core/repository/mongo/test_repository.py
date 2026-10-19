@@ -16,6 +16,8 @@ from loom.core.errors import Conflict
 from loom.core.model import BaseModel, ColumnField, DateTime, TimestampedModel
 from loom.core.model.enums import ServerDefault
 from loom.core.repository.abc import (
+    Cursor,
+    CursorCodec,
     CursorResult,
     FilterGroup,
     FilterOp,
@@ -27,7 +29,6 @@ from loom.core.repository.abc import (
     QuerySpec,
     SortSpec,
     UnsupportedQuery,
-    encode_cursor,
 )
 from loom.core.repository.mongo import repository as repository_module
 from loom.core.repository.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy
@@ -37,6 +38,8 @@ from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article
 
 pytestmark = pytest.mark.asyncio
+
+_CODEC = CursorCodec(signing="ephemeral")
 
 
 class ArticleCreate(BaseModel):
@@ -151,13 +154,13 @@ def collection() -> FakeCollection:
 
 
 def _articles(collection: FakeCollection) -> RepositoryMongo[Article, str]:
-    return RepositoryMongo(Article, collection)
+    return RepositoryMongo(Article, collection, cursor_codec=_CODEC)
 
 
 def _notes(
     collection: FakeCollection, policy: Uuid4IdPolicy | ObjectIdPolicy | None = None
 ) -> RepositoryMongo[Note, str]:
-    return RepositoryMongo(Note, collection, id_policy=policy)
+    return RepositoryMongo(Note, collection, id_policy=policy, cursor_codec=_CODEC)
 
 
 async def _seed(repo: RepositoryMongo[Article, str], rows: list[tuple[str, int]]) -> None:
@@ -236,7 +239,7 @@ class TestStorageForm:
             "_utc_now",
             lambda: datetime(2026, 1, 1, 0, 0, 0, 999_999, tzinfo=UTC),
         )
-        repo: RepositoryMongo[Event, str] = RepositoryMongo(Event, collection)
+        repo: RepositoryMongo[Event, str] = RepositoryMongo(Event, collection, cursor_codec=_CODEC)
 
         created = await repo.create(
             EventCreate(at=datetime(2026, 1, 3, 12, 0, 0, 123_456, tzinfo=UTC))
@@ -267,7 +270,9 @@ class TestStorageForm:
     async def test_string_stored_types_round_trip_and_filter(
         self, collection: FakeCollection
     ) -> None:
-        repo: RepositoryMongo[Invoice, UUID] = RepositoryMongo(Invoice, collection)
+        repo: RepositoryMongo[Invoice, UUID] = RepositoryMongo(
+            Invoice, collection, cursor_codec=_CODEC
+        )
         ident = UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")
         created = await repo.create(
             InvoiceCreate(id=ident, amount=Decimal("19.90"), issued_on=date(2026, 1, 3))
@@ -327,7 +332,9 @@ class TestIdGeneration:
     ) -> None:
         clock = iter([datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)])
         monkeypatch.setattr(repository_module, "_utc_now", lambda: next(clock))
-        repo: RepositoryMongo[Stamped, str] = RepositoryMongo(Stamped, collection)
+        repo: RepositoryMongo[Stamped, str] = RepositoryMongo(
+            Stamped, collection, cursor_codec=_CODEC
+        )
         created = await repo.create(NoteCreate(body="first"))
 
         updated = await repo.update(created.id, StampedUpdate(body="second"))
@@ -342,7 +349,9 @@ class TestIdGeneration:
         self, collection: FakeCollection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(repository_module, "_utc_now", lambda: datetime(2026, 1, 2, tzinfo=UTC))
-        repo: RepositoryMongo[Audited, str] = RepositoryMongo(Audited, collection)
+        repo: RepositoryMongo[Audited, str] = RepositoryMongo(
+            Audited, collection, cursor_codec=_CODEC
+        )
         created = await repo.create(NoteCreate(body="first"))
         assert created.touched_at is None
 
@@ -374,7 +383,9 @@ class TestIdGeneration:
         self, collection: FakeCollection
     ) -> None:
         """The boot-time gate, not the repository, judges ``autoincrement``."""
-        repo: RepositoryMongo[Counter, int] = RepositoryMongo(Counter, collection)
+        repo: RepositoryMongo[Counter, int] = RepositoryMongo(
+            Counter, collection, cursor_codec=_CODEC
+        )
 
         created = await repo.create(CounterCreate(id=7, value=1))
 
@@ -419,7 +430,7 @@ class TestConflicts:
         collection = RecordingCollection()
         session = FakeMongoClient().start_session()
         provider = cast(SessionProvider, lambda: session)
-        repo = RepositoryMongo(Article, collection, session_provider=provider)
+        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
         payload = [ArticleCreate(slug="a", title="A"), ArticleCreate(slug="a", title="A")]
 
         with pytest.raises(Conflict):
@@ -537,6 +548,9 @@ class TestCursorPagination:
             cursor=cursor,
         )
 
+    def _token(self, position: Cursor) -> str:
+        return _CODEC.encode(position, model="Article", query=self._query(), scope="")
+
     async def test_walk_through_duplicate_sort_values(self, collection: FakeCollection) -> None:
         repo = _articles(collection)
         # Insertion order deliberately disagrees with key order among equal views.
@@ -643,7 +657,7 @@ class TestCursorPagination:
         assert second.has_next is False
 
     async def test_foreign_token_is_unsupported(self, collection: FakeCollection) -> None:
-        token = encode_cursor("sqlalchemy", [3], "a")
+        token = self._token(Cursor(backend="sqlalchemy", keys=(3,), tie_breaker="a"))
         repo = _articles(collection)
         query = self._query(token)
 
@@ -658,7 +672,7 @@ class TestCursorPagination:
             await repo.list_with_query(query)
 
     async def test_key_count_mismatch_is_unsupported(self, collection: FakeCollection) -> None:
-        token = encode_cursor("mongo", [3, "x"], "a")
+        token = self._token(Cursor(backend="mongo", keys=(3, "x"), tie_breaker="a"))
         repo = _articles(collection)
         query = self._query(token)
 
@@ -681,7 +695,9 @@ class TestSessions:
         # The repository only forwards the session to the driver; the fake
         # session stands in for pymongo's nominal AsyncClientSession.
         provider = cast(SessionProvider, lambda: session)
-        repo = RepositoryMongo(Article, RecordingCollection(), session_provider=provider)
+        repo = RepositoryMongo(
+            Article, RecordingCollection(), session_provider=provider, cursor_codec=_CODEC
+        )
 
         await repo.get_by_id("x")
 

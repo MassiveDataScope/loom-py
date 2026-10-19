@@ -144,7 +144,7 @@ class SessionManager:
 
         self._log = get_logger(__name__).bind(module="session_manager")
         self._engine = create_async_engine(url, **engine_config)
-        self._has_session_settings = session_settings is not None
+        self._session_settings = session_settings
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -169,7 +169,13 @@ class SessionManager:
     @property
     def has_session_settings(self) -> bool:
         """Whether every transaction of this manager starts with the product's settings."""
-        return self._has_session_settings
+        return self._session_settings is not None
+
+    def current_settings(self) -> Mapping[str, str]:
+        """The settings a transaction opened now would start with; empty without a provider."""
+        if self._session_settings is None:
+            return {}
+        return self._session_settings() or {}
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

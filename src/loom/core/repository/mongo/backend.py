@@ -19,6 +19,7 @@ from pymongo import AsyncMongoClient
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
     ObjectIdPolicy,
@@ -49,9 +50,10 @@ class _MongoConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
 class MongoBackend:
     """Backend for ``persistence.backend: mongo``.
 
-    Reads the ``persistence.mongo`` section, opens one async client shared by
-    the unit of work and every repository, binds each model to a collection
-    of the configured database and closes the client at shutdown.
+    Reads the ``persistence.mongo`` and ``persistence.cursors`` sections,
+    opens one async client shared by the unit of work and every repository,
+    binds each model to a collection of the configured database and closes
+    the client at shutdown.
     """
 
     name: ClassVar[str] = "mongo"
@@ -67,7 +69,8 @@ class MongoBackend:
             The Mongo wiring.
 
         Raises:
-            ConfigError: When the ``persistence.mongo`` section is missing.
+            ConfigError: When the ``persistence.mongo`` section is missing, or
+                ``persistence.cursors`` cannot build a cursor codec.
         """
         mongo_cfg = ctx.section_optional(_SECTION, _MongoConfig)
         if mongo_cfg is None:
@@ -75,6 +78,7 @@ class MongoBackend:
                 f"persistence.backend is {self.name!r} but the {_SECTION!r} "
                 "section (uri, database) is missing."
             )
+        cursor_codec = CursorCodec.from_context(ctx)
         client = _build_mongo_client(mongo_cfg)
         return PersistenceWiring(
             uow_factory=_unit_of_work_factory(client, mongo_cfg),
@@ -84,6 +88,7 @@ class MongoBackend:
                 collections=mongo_cfg.collections,
                 id_policy=_ID_POLICIES[mongo_cfg.id](),
                 session_provider=active_session,
+                cursor_codec=cursor_codec,
             ),
             default_repository_type=RepositoryMongo,
             lifespan_init=lambda: _lifespan(client),

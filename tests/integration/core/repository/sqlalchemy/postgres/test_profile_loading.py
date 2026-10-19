@@ -11,6 +11,7 @@ from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_regist
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
 from loom.core.projection.loaders import CountLoader, ExistsLoader
 from loom.core.repository import PageParams
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -126,7 +127,7 @@ async def _execute(manager: SessionManager, statement: str) -> None:
 async def test_relation_profile_runs_one_statement_per_relation_one_at_a_time(
     manager: SessionManager,
 ) -> None:
-    repo = RepositorySQLAlchemy(manager, Ticket)
+    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
     log = _log_statements(manager)
 
     page = await repo.list_paginated(_PAGE, profile="detail")
@@ -145,7 +146,7 @@ async def test_relation_profile_runs_one_statement_per_relation_one_at_a_time(
 async def test_projection_profile_runs_one_statement_per_projection_one_at_a_time(
     manager: SessionManager,
 ) -> None:
-    repo = RepositorySQLAlchemy(manager, Ticket)
+    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
     log = _log_statements(manager)
 
     page = await repo.list_paginated(_PAGE, profile="counts")
@@ -159,7 +160,7 @@ async def test_failing_relation_step_raises_its_error_and_the_engine_stays_usabl
     manager: SessionManager,
 ) -> None:
     await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN body TO gone")
-    repo = RepositorySQLAlchemy(manager, Ticket)
+    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
 
     with pytest.raises(ProgrammingError, match="body"):
         await repo.list_paginated(_PAGE, profile="detail")
@@ -172,7 +173,7 @@ async def test_failing_projection_step_raises_its_error_and_the_engine_stays_usa
     manager: SessionManager,
 ) -> None:
     await _execute(manager, "ALTER TABLE loom_it_pl_comments RENAME COLUMN ticket_id TO gone")
-    repo = RepositorySQLAlchemy(manager, Ticket)
+    repo = RepositorySQLAlchemy(manager, Ticket, cursor_codec=CursorCodec(signing="ephemeral"))
 
     with pytest.raises(ProgrammingError, match="ticket_id"):
         await repo.list_paginated(_PAGE, profile="counts")

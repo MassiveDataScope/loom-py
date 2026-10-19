@@ -30,7 +30,8 @@ from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc.query import PaginationMode, QuerySpec
+from loom.core.repository.abc import CursorCodec
+from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.field_ref import F
@@ -178,6 +179,8 @@ class CompiledFilterUseCase(UseCase[_FilterRow, str]):
             self.allowed_fields,
             backend="sqlalchemy",
             model_name="_FilterRow",
+            cursor_codec=CursorCodec(signing="ephemeral"),
+            scope="",
         )
         return str(compiler.compile_filter(query.filters))
 

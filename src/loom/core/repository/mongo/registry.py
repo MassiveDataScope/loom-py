@@ -23,6 +23,7 @@ from loom.core.repository import (
 from loom.core.repository import (
     build_repository_registration_module as build_main_repository_module,
 )
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import IdPolicy
 from loom.core.repository.mongo.repository import (
     MongoCollection,
@@ -56,19 +57,22 @@ class MongoDefaultRepositoryBuilder:
     """Default repository builder for Mongo-backed models.
 
     Register it via the DI module rather than constructing it directly so
-    every repository shares the database, id policy and session provider.
+    every repository shares the database, id policy, session provider and
+    cursor codec.
 
     Args:
         database: Shared database the collections are taken from.
         collections: Per-model collection overrides keyed by class name.
         id_policy: Strategy minting and converting primary keys.
         session_provider: Returns the active client session, or ``None``.
+        cursor_codec: Shared codec that issues and verifies cursor tokens.
     """
 
     database: MongoDatabase
     collections: Mapping[str, str]
     id_policy: IdPolicy
     session_provider: SessionProvider
+    cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> Any:
         if not issubclass(context.model, BaseModel):
@@ -85,6 +89,7 @@ class MongoDefaultRepositoryBuilder:
             self.database[collection_name(model, self.collections)],
             id_policy=self.id_policy,
             session_provider=self.session_provider,
+            cursor_codec=self.cursor_codec,
         )
 
 
@@ -95,13 +100,17 @@ def build_mongo_repository_registration_module(
     collections: Mapping[str, str],
     id_policy: IdPolicy,
     session_provider: SessionProvider,
+    cursor_codec: CursorCodec,
     logical_models: Sequence[type[Any]] = (),
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers Mongo repositories and capability bindings.
 
     The module registers a ``DefaultRepositoryBuilder`` bound to the shared
     database unless one is already registered, so a deployment may swap the
-    builder by registering its own before loading the module.
+    builder by registering its own before loading the module. It registers
+    ``cursor_codec`` as ``CursorCodec`` too, unless one is already
+    registered, so a custom builder or a service paginating by hand
+    resolves the codec the repositories sign with.
 
     Args:
         database: Shared database the collections are taken from.
@@ -109,6 +118,7 @@ def build_mongo_repository_registration_module(
         collections: Per-model collection overrides keyed by class name.
         id_policy: Strategy minting and converting primary keys.
         session_provider: Returns the active client session, or ``None``.
+        cursor_codec: Codec that issues and verifies cursor tokens.
         logical_models: Extra models with explicit ``repository_for`` registrations.
     """
     builder = MongoDefaultRepositoryBuilder(
@@ -116,6 +126,7 @@ def build_mongo_repository_registration_module(
         collections=collections,
         id_policy=id_policy,
         session_provider=session_provider,
+        cursor_codec=cursor_codec,
     )
 
     def _registered_builder(
@@ -142,6 +153,8 @@ def build_mongo_repository_registration_module(
     )
 
     def _register_with_database(container: LoomContainer) -> None:
+        if not container.is_registered(CursorCodec):
+            container.register_instance(CursorCodec, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(DefaultRepositoryBuilder, builder)
         register(container)

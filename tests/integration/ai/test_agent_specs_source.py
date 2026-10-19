@@ -164,6 +164,7 @@ def _write_project(
             "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if with_ai_section:
         ai_section: dict[str, Any] = {

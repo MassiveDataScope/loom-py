@@ -8,7 +8,7 @@ and the bootstrap steps around them.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -62,11 +62,13 @@ class PersistenceNoneRecord(BaseModel):
     name: str = ColumnField(length=50)
 
 
-def _ctx(**sections: object) -> ConfigContext:
+def _ctx(persistence: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
+    cursors = {"cursors": {"signing": "ephemeral"}}
     return ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
             "database": {"url": "sqlite+aiosqlite:///"},
+            "persistence": {**cursors, **(persistence or {})},
             **sections,
         }
     )

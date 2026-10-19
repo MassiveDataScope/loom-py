@@ -104,6 +104,7 @@ def _write_project(tmp_path: Path) -> str:
             },
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
         "ai": {
             "engine": "pydantic-ai",
             "specs": ["ai/agents/*/agent.yaml"],

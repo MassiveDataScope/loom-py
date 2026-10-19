@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.repository.abc.cursor import decode_cursor
+from loom.core.repository.abc.cursor import CursorCodec
 from loom.core.repository.abc.query import (
     FilterGroup,
     PaginationMode,
@@ -37,12 +37,22 @@ class QuerySpecCompiler:
         allowed_fields: Permitted filter field names.  Empty frozenset
             allows all fields.
         backend: Backend name stamped on and required from cursor tokens.
-        model_name: Qualified model name reported in query errors.
+        model_name: Qualified model name reported in query errors and bound
+            into cursor tokens.
+        cursor_codec: Codec that issues and verifies cursor tokens.
+        scope: Caller scope cursor tokens are bound to; ``""`` deliberately
+            binds them to no scope.
 
     Example::
 
         compiler = QuerySpecCompiler(
-            ProductSA, ProductSA.id, frozenset(), backend="sqlalchemy", model_name="Product"
+            ProductSA,
+            ProductSA.id,
+            frozenset(),
+            backend="sqlalchemy",
+            model_name="Product",
+            cursor_codec=codec,
+            scope="",
         )
         result = await compiler.execute(session, query, profile_options)
     """
@@ -55,6 +65,8 @@ class QuerySpecCompiler:
         *,
         backend: str,
         model_name: str,
+        cursor_codec: CursorCodec,
+        scope: str,
     ) -> None:
         self._sa_model = sa_model
         self._id_columns: tuple[Any, ...] = (
@@ -63,6 +75,8 @@ class QuerySpecCompiler:
         self._allowed_fields = allowed_fields
         self._backend = backend
         self._model_name = model_name
+        self._cursor_codec = cursor_codec
+        self._scope = scope
 
     def compile_filter(self, group: FilterGroup) -> Any:
         """Compile a filter group into a SQLAlchemy boolean clause.
@@ -127,8 +141,9 @@ class QuerySpecCompiler:
         appended as the tie-breaker, so the keyset predicate is total.
 
         Raises:
-            UnsupportedQuery: If ``query.cursor`` is invalid for this backend
-                or does not match ``query.sort``.
+            UnsupportedQuery: If ``query.cursor`` is malformed or forged, was
+                issued for another binding or backend, or does not match
+                ``query.sort`` or the primary key.
         """
         sa_model = self._sa_model
         stmt = base_stmt if base_stmt is not None else select(sa_model)
@@ -138,11 +153,12 @@ class QuerySpecCompiler:
             stmt = stmt.where(clause)
 
         if query.cursor:
-            cursor = decode_cursor(
+            cursor = self._cursor_codec.decode(
                 query.cursor,
-                self._backend,
-                self._model_name,
-                key_count=len(query.sort),
+                backend=self._backend,
+                model=self._model_name,
+                query=query,
+                scope=self._scope,
                 id_count=len(self._id_columns),
             )
             predicate = compile_cursor_predicate(sa_model, cursor, query.sort, self._id_columns)
@@ -156,13 +172,19 @@ class QuerySpecCompiler:
         self, items: list[Any], query: QuerySpec
     ) -> tuple[list[Any], str | None, bool]:
         """Truncate ``limit + 1`` rows to a page and issue the next token."""
-        return extract_next_cursor(
+        page_items, position, has_next = extract_next_cursor(
             items,
             query.sort,
             [column.key for column in self._id_columns],
             query.limit,
             self._backend,
         )
+        if position is None:
+            return page_items, None, has_next
+        token = self._cursor_codec.encode(
+            position, model=self._model_name, query=query, scope=self._scope
+        )
+        return page_items, token, has_next
 
     async def execute(
         self,

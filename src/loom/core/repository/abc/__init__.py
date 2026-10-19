@@ -1,4 +1,4 @@
-from loom.core.repository.abc.cursor import Cursor, decode_cursor, encode_cursor
+from loom.core.repository.abc.cursor import Cursor, CursorCodec, CursorConfig, CursorKeySource
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import (
     CursorResult,
@@ -38,6 +38,9 @@ from loom.core.repository.abc.session_scope import SupportsCallerScopedSession
 __all__ = [
     "CreateT",
     "Cursor",
+    "CursorCodec",
+    "CursorConfig",
+    "CursorKeySource",
     "CursorResult",
     "FilterGroup",
     "FilterOp",
@@ -66,6 +69,4 @@ __all__ = [
     "UnsupportedQuery",
     "UpdateT",
     "build_page_result",
-    "decode_cursor",
-    "encode_cursor",
 ]

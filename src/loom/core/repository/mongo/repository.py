@@ -44,6 +44,7 @@ from loom.core.repository.abc import (
     Countable,
     Creatable,
     Cursor,
+    CursorCodec,
     CursorResult,
     Deletable,
     FilterGroup,
@@ -61,8 +62,6 @@ from loom.core.repository.abc import (
     SortSpec,
     Updatable,
     build_page_result,
-    decode_cursor,
-    encode_cursor,
 )
 from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
@@ -181,6 +180,10 @@ class RepositoryMongo(
         session_provider: Returns the active client session, or ``None``;
             every driver call runs in the session it returns. Defaults to
             no session.
+        cursor_codec: Codec that issues and verifies cursor tokens; the
+            backend builds one from ``persistence.cursors`` and shares it.
+            Mongo has no row-level-security scope, so cursors are bound to
+            no scope (``""``) beyond the model, filters and sort.
 
     Raises:
         ValueError: If the model declares no primary key.
@@ -188,7 +191,7 @@ class RepositoryMongo(
 
     Example::
 
-        repository = RepositoryMongo(Article, database["articles"])
+        repository = RepositoryMongo(Article, database["articles"], cursor_codec=codec)
         article = await repository.create(ArticleCreate(slug="hello", title="Hi"))
     """
 
@@ -200,8 +203,11 @@ class RepositoryMongo(
         collection: MongoCollection,
         id_policy: IdPolicy | None = None,
         session_provider: SessionProvider = _no_session,
+        *,
+        cursor_codec: CursorCodec,
     ) -> None:
         self._model = model
+        self._cursor_codec = cursor_codec
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
         self._session = session_provider
@@ -422,7 +428,7 @@ class RepositoryMongo(
     async def _list_cursor(self, query: QuerySpec) -> CursorResult[OutputT]:
         mongo_filter = self._query_filter(query)
         if query.cursor is not None:
-            cursor = self._decode(query.cursor, query.sort)
+            cursor = self._decode(query.cursor, query)
             keyset = self._compiler.compile_cursor_filter(query.sort, cursor)
             mongo_filter = {"$and": [mongo_filter, keyset]} if mongo_filter else keyset
         documents = await (
@@ -433,7 +439,7 @@ class RepositoryMongo(
         )
         has_next = len(documents) > query.limit
         page = documents[: query.limit]
-        next_cursor = self._encode(page[-1], query.sort) if has_next else None
+        next_cursor = self._encode(page[-1], query) if has_next else None
         return CursorResult(
             items=tuple(self._to_output(document) for document in page),
             next_cursor=next_cursor,
@@ -456,14 +462,18 @@ class RepositoryMongo(
             return pairs
         return [*pairs, _ID_ASCENDING]
 
-    def _decode(self, token: str, sort: tuple[SortSpec, ...]) -> Cursor:
-        """Decode the token and put its keys in storage form."""
-        cursor = decode_cursor(
-            token, self.backend_name, self._model.__qualname__, key_count=len(sort)
+    def _decode(self, token: str, query: QuerySpec) -> Cursor:
+        """Verify and decode the token and put its keys in storage form."""
+        cursor = self._cursor_codec.decode(
+            token,
+            backend=self.backend_name,
+            model=self._model.__qualname__,
+            query=query,
+            scope="",
         )
         keys = tuple(
             self._compiler.storage_value(spec.field, key)
-            for spec, key in zip(sort, cursor.keys, strict=True)
+            for spec, key in zip(query.sort, cursor.keys, strict=True)
         )
         return Cursor(
             backend=cursor.backend,
@@ -471,10 +481,16 @@ class RepositoryMongo(
             tie_breaker=self._compiler.storage_value(self._id_attr, cursor.tie_breaker),
         )
 
-    def _encode(self, document: Document, sort: tuple[SortSpec, ...]) -> str:
+    def _encode(self, document: Document, query: QuerySpec) -> str:
         """Issue the token for the page after ``document``; ``_id`` keys use the model form."""
-        keys = [self._model_value(document, spec.field) for spec in sort]
-        return encode_cursor(self.backend_name, keys, self._ids.from_storage(document[_ID]))
+        position = Cursor(
+            backend=self.backend_name,
+            keys=tuple(self._model_value(document, spec.field) for spec in query.sort),
+            tie_breaker=self._ids.from_storage(document[_ID]),
+        )
+        return self._cursor_codec.encode(
+            position, model=self._model.__qualname__, query=query, scope=""
+        )
 
     def _model_value(self, document: Document, field: str) -> object:
         if field == self._id_attr:

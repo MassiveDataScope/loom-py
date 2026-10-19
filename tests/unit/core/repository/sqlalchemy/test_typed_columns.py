@@ -16,6 +16,7 @@ from loom.core.command import Command
 from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -142,7 +143,9 @@ class TestJsonColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Doc, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Doc
+            session_manager=session_manager,
+            model=_Doc,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
         created = await repo.create(_CreateDoc(stamped_at=_STAMP, meta=_META))
@@ -159,7 +162,9 @@ class TestRelatedStructs:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Ticket, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Ticket
+            session_manager=session_manager,
+            model=_Ticket,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         ticket_sa = get_compiled(_Ticket)
         customer_sa = get_compiled(_Customer)
@@ -176,13 +181,19 @@ class TestRelatedStructs:
         self, session_manager: SessionManager
     ) -> None:
         tickets: RepositorySQLAlchemy[_Ticket, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Ticket
+            session_manager=session_manager,
+            model=_Ticket,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         customers: RepositorySQLAlchemy[_Customer, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Customer
+            session_manager=session_manager,
+            model=_Customer,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         tags: RepositorySQLAlchemy[_Tag, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Tag
+            session_manager=session_manager,
+            model=_Tag,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         customer = await customers.create(_CreateCustomer(full_name="Ann"))
         ticket = await tickets.create(_CreateTicket(customer_id=customer.id))

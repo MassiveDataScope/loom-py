@@ -22,6 +22,7 @@ from loom.core.bootstrap.bootstrap import bootstrap_app
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -79,6 +80,7 @@ def _make_register_repos(
     repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
         session_manager=session_manager,
         model=AutoProduct,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     def _provider() -> RepositorySQLAlchemy[Any, int]:
@@ -155,6 +157,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
                 session_manager,
                 (),
                 logical_models=(TaskView,),
+                cursor_codec=CursorCodec(signing="ephemeral"),
             )
         ],
     )

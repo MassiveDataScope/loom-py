@@ -7,6 +7,7 @@ from typing import Any
 import msgspec
 
 from loom.core.repository import get_repository_registration
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.registry import RepositoryBuildContext
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -59,6 +60,7 @@ class RepositoryIntegrationHarness:
 def build_repository_harness(
     *,
     session_manager: SessionManager,
+    cursor_codec: CursorCodec,
     models: Mapping[str, type[Any]],
     repositories: Mapping[str, Any] | None = None,
     load_order: tuple[str, ...] = (),
@@ -67,6 +69,8 @@ def build_repository_harness(
 
     Args:
         session_manager: Shared SQLAlchemy session manager.
+        cursor_codec: Codec the default repositories issue and verify cursors
+            with; ``CursorCodec(signing="ephemeral")`` suits most tests.
         models: Mapping ``entity_key -> model class``.
         repositories: Optional mapping ``entity_key -> repository instance``.
         load_order: Optional seed load order.
@@ -89,7 +93,9 @@ def build_repository_harness(
                     if registration is not None
                     else RepositorySQLAlchemy
                 )
-                repository = repository_type(session_manager=session_manager, model=model)
+                repository = repository_type(
+                    session_manager=session_manager, model=model, cursor_codec=cursor_codec
+                )
         entities[entity_name] = EntityHarness(repository=repository)
 
     return RepositoryIntegrationHarness(

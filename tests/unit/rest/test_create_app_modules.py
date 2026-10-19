@@ -87,6 +87,7 @@ def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str
             },
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     config_file = tmp_path / "app.yaml"
     config_file.write_text(yaml.safe_dump(config), encoding="utf-8")
