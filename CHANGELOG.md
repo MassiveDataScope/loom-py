@@ -207,19 +207,20 @@
   `execute` parameter typed with a strict `msgspec.Struct` or pydantic model
   whose fields are each a string, integer, number, boolean, enum or
   `Literal`, optionally `None`. The REST route accepts exactly its wire
-  names, plus `profile` where the route exposes it.
+  names, plus `profile` where the route exposes it and `execute` takes it.
   - An unknown or repeated parameter, `profile` included, answers
     `400 unsupported_query`.
   - A bad value answers `400 query_validation` (`ErrorCode.QUERY_VALIDATION`),
     with the body and `violations` of `boundary_validation`; `422` stays for
-    bodies. So does a `profile` the route does not allow, on field `profile`,
-    without the value.
+    bodies. A `profile` the route does not allow answers the same 400, on
+    field `profile` and without the value.
   - Values are spelled strictly: a number follows the JSON number grammar
-    and is finite, an integer its integer subset within `[-2**63, 2**64)`, a
-    boolean is `true` or `false`, `null` is never `None`, and a date or time
-    field refuses a number. A refused query never builds the use case.
+    and is finite, an integer its integer subset within `[-2**63, 2**64)`
+    (an `IntEnum` or an int `Literal` is coerced the same way), a boolean is
+    `true` or `false`, `null` is never `None`, and a date or time field
+    refuses a number. A refused query never builds the use case.
   - OpenAPI publishes one parameter per field, with `required`, its
-    constraints and description and no `title`; enums go to
+    constraints and description and no `title`; named enums go to
     `components.schemas`.
   - List, object and multi-type fields, a field named like a path parameter
     or `profile`, a `QuerySpec` next to it and a second `Query()` are refused

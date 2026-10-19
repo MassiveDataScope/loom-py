@@ -181,8 +181,8 @@ class ListGrants(UseCase[Grant, GrantPage]):
 ```
 
 The route accepts exactly the declared wire names, plus `profile` when it
-exposes one, and OpenAPI publishes one query parameter per field with its
-constraints; enums go to `components.schemas`. Each request is checked in
+exposes one and `execute` takes it, and OpenAPI publishes one query parameter
+per field with its constraints; named enums go to `components.schemas`. Each request is checked in
 this order:
 
 | Request | Answer |
@@ -195,21 +195,23 @@ this order:
 Values are checked strictly, with either library. A number field takes the
 JSON number grammar: `ratio=0.5`, `ratio=1e2`, but not `+1.5`, `.5`, `5.` or
 `01.5`. An integer field takes the integer part of that grammar within
-`[-2**63, 2**64)`: `limit=50`, but not `5.0`, `1e2`, `+5` or `007`. A boolean
-field takes `true` or `false`, not `1`. Every other field validates the text
-as it is. `null` is `None` for no field: it is the text `"null"` for a `str`
-field and refused for any other, so leave the parameter out instead. A date or
-time field refuses a number rather than reading a timestamp. An offset is
-required only where the type asks for one, with `msgspec.Meta(tz=True)` or
-pydantic's `AwareDatetime`.
+`[-2**63, 2**64)`: `limit=50`, but not `5.0`, `1e2`, `+5` or `007`; an
+`IntEnum` or an int `Literal` field is read the same way. A boolean field
+takes `true` or `false`, not `1`. Every other field validates the text as it
+is. `null` is `None` for no field: it is the text `"null"` for a `str` field
+and refused for any other, so leave the parameter out instead. A date or time
+field refuses a number rather than reading a timestamp. An offset is required
+only where the type asks for one, with `msgspec.Meta(tz=True)` or pydantic's
+`AwareDatetime`.
 
 The application refuses to start when a field is a list, an object or a union
 of several types, when a field's wire name is `profile` or a path parameter,
 when the use case also takes a `QuerySpec`, or when it declares two
 `Query()`; a type that is not a strict model fails as a `CompilationError`
-naming the use case and the parameter. A route with a `QuerySpec` parameter keeps its own parameters,
-filters and limit clamp. Callers other than REST pass an instance of the
-type under the parameter's name.
+naming the use case and the parameter, and so does a `Job` that declares
+`Query()`. A route with a `QuerySpec` parameter keeps its own parameters,
+filters and limit clamp. Callers other than REST pass an instance of the type
+under the parameter's name.
 
 ---
 
