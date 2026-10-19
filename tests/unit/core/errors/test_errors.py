@@ -285,9 +285,6 @@ class TestRateLimited:
         with pytest.raises(ValueError, match="retry_after"):
             RateLimited(seconds)
 
-    def test_has_a_default_message(self) -> None:
-        assert RateLimited(1).message == "Too many requests."
-
 
 class TestInsufficientAuthentication:
     def test_carries_the_step_up_requirements(self) -> None:

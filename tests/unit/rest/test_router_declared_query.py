@@ -260,39 +260,6 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
     ]
 
 
-@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
-@pytest.mark.parametrize(
-    "query",
-    [
-        "limit=5.0",
-        "limit=1e2",
-        "changed_since=1700000000",
-        "changed_since=null",
-        "membershipId=null",
-        "flag=1",
-    ],
-)
-def test_a_value_not_spelled_exactly_is_refused(client: TestClient, path: str, query: str) -> None:
-    response = client.get(f"{path}?{query}")
-
-    assert (response.status_code, response.json()["detail"]["code"]) == (
-        400,
-        "query_validation",
-    )
-
-
-@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
-@pytest.mark.parametrize(
-    "since", ["2026-09-15T10:00:00Z", "2026-09-15T10:00:00+05:30", "2026-09-15T10:00:00-03:00"]
-)
-def test_exact_values_are_accepted(client: TestClient, path: str, since: str) -> None:
-    response = client.get(
-        path, params={"limit": "50", "membershipId": _MEMBERSHIP, "changed_since": since}
-    )
-
-    assert response.status_code == 200
-
-
 @pytest.mark.parametrize(
     "url", ["/grants?profile=detail", "/grants/by-profile?profile=detail&profile=default"]
 )

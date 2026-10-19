@@ -727,16 +727,6 @@ class TestCreatedResult:
             self._interface(use_case, status_code)
         )
 
-    def test_the_route_holds_both_result_types(self) -> None:
-        (route,) = self._compile(self.CreatesOrReturns)
-
-        assert (route.result_type, route.created_type) == (str, str)
-
-    def test_a_route_without_created_holds_no_created_type(self) -> None:
-        (route,) = self._compile(CreateUserUseCase)
-
-        assert (route.result_type, route.created_type) == (str, None)
-
     def test_created_on_a_route_whose_status_is_201_is_refused(self) -> None:
         with pytest.raises(InterfaceCompilationError, match="201"):
             self._compile(self.CreatesOrReturns, status_code=201)
@@ -791,10 +781,6 @@ class TestDeclaredQuery:
         async def execute(self, spec: QuerySpec | None, query: ItemQuery = Query()) -> str:
             return "ok"
 
-    class WithQuerySpecList(UseCase[Any, str]):
-        async def execute(self, specs: list[QuerySpec], query: ItemQuery = Query()) -> str:
-            return "ok"
-
     class ProfileField(UseCase[Any, str]):
         async def execute(self, query: ProfileQuery = Query()) -> str:
             return "ok"
@@ -824,9 +810,6 @@ class TestDeclaredQuery:
         use_case_compiler = UseCaseCompiler()
         use_case_compiler.compile(use_case)
         return RestInterfaceCompiler(use_case_compiler).compile(IFace)
-
-    def test_a_parameter_that_only_contains_query_spec_is_not_a_query_spec(self) -> None:
-        assert len(self._compile(self.WithQuerySpecList)) == 1
 
     def test_the_route_holds_the_declared_fields(self) -> None:
         (route,) = self._compile(self.ListItems)

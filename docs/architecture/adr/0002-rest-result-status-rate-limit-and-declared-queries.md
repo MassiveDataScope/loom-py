@@ -442,9 +442,11 @@ or a new `test_router_result_status.py` and `test_router_declared_query.py`):
 6. Regression: a `QuerySpec` route still publishes its seven parameters, still
    turns unknown keys into filters and still clamps `limit`.
 
-Integration (`tests/integration/rest/`): one app over the in-memory backend
-with the three consumer-shaped routes, asserting the OpenAPI document
-against a stored golden and one request per status and error above.
+Integration (`tests/integration/rest/test_grant_routes.py`): one app over an
+in-memory store with the three consumer-shaped routes, asserting the OpenAPI
+document against a stored golden, the 201-then-200 create with `Location`,
+an unknown list parameter (400) and a spent budget (429). Every other status
+is pinned once, in the router unit tests.
 
 ## Performance
 

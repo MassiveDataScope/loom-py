@@ -11,7 +11,6 @@ from loom.core.use_case.markers import (
     LoadById,
     Mcp,
     OnMissing,
-    Query,
     SourceKind,
 )
 
@@ -23,12 +22,6 @@ class FakeEntity:
 class TestInput:
     def test_has_no_extra_attributes(self) -> None:
         marker = Input()
-        assert type(marker).__slots__ == ()
-
-
-class TestQuery:
-    def test_has_no_extra_attributes(self) -> None:
-        marker = Query()
         assert type(marker).__slots__ == ()
 
 

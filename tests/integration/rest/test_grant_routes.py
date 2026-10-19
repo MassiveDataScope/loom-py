@@ -221,43 +221,12 @@ def test_a_new_grant_answers_201_and_a_repeated_one_200() -> None:
     assert created.headers["Location"] == f"/v1/grants/{created.json()['grantId']}"
 
 
-def test_a_revoke_answers_200_with_the_revoked_grant() -> None:
-    client = _client()
-    grant_id = _grant(client).json()["grantId"]
-
-    response = client.delete(f"/v1/grants/{grant_id}")
-
-    assert (response.status_code, response.json()["state"]) == (200, "revoked")
-
-
-def test_the_list_applies_the_declared_filters() -> None:
-    client = _client()
-    _grant(client, "admin")
-    _grant(client, "member")
-
-    response = client.get("/v1/grants", params={"roleCode": "member", "limit": "10"})
-
-    assert response.status_code == 200
-    assert [item["roleCode"] for item in response.json()["items"]] == ["member"]
-
-
 def test_an_unknown_list_parameter_answers_400_unsupported_query() -> None:
     response = _client().get("/v1/grants", params={"changedSince": "2026-01-01T00:00:00Z"})
 
     assert (response.status_code, response.json()["detail"]["code"]) == (
         400,
         "unsupported_query",
-    )
-
-
-def test_a_list_limit_above_200_answers_400_query_validation() -> None:
-    response = _client().get("/v1/grants", params={"limit": "201"})
-
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"], detail["violations"][0]["field"]) == (
-        400,
-        "query_validation",
-        "limit",
     )
 
 

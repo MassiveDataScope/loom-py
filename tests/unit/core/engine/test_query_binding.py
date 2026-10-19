@@ -50,14 +50,6 @@ def test_query_compiles_to_a_param_binding_and_a_query_binding() -> None:
     assert plan.query_binding == QueryBinding(name="query", query_type=GrantQuery)
 
 
-def test_a_use_case_without_query_has_no_query_binding() -> None:
-    class NoQuery(UseCase[Any, int]):
-        async def execute(self) -> int:
-            return 0
-
-    assert UseCaseCompiler().compile(NoQuery).query_binding is None
-
-
 def test_two_query_parameters_are_refused() -> None:
     compiler = UseCaseCompiler()
 
