@@ -48,7 +48,8 @@ class FailingCheckModule:
 
 def write_failing_check_module(tmp_path: Path) -> FailingCheckModule:
     """Write the module into *tmp_path* and describe it."""
-    area = f"apptest_{_NON_IDENTIFIER.sub('_', tmp_path.name)}".lower()
+    unique = f"{tmp_path.parent.name}_{tmp_path.name}"
+    area = f"apptest_{_NON_IDENTIFIER.sub('_', unique)}".lower()
     module = f"{area}_checks"
     check = FailingCheckModule(
         module=module,
@@ -56,6 +57,7 @@ def write_failing_check_module(tmp_path: Path) -> FailingCheckModule:
         trigger=f"{area}.unsafe",
         directory=tmp_path,
     )
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / f"{module}.py").write_text(
         _SOURCE.format(check_id=check.check_id, trigger=check.trigger), encoding="utf-8"
     )

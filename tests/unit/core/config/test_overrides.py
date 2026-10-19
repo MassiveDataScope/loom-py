@@ -75,7 +75,7 @@ def test_a_level_matches_the_declared_key_whatever_its_case(
     context = _load(config_file)
 
     assert _value(context, "app.restTitle") == "Live"
-    assert not context.declares("app.resttitle")
+    assert context.raw("app.resttitle") is None
 
 
 def test_an_undeclared_key_of_a_known_section_is_added_in_lower_case(

@@ -2,8 +2,14 @@
 
 Meant for CI: it loads the configuration the application would load, runs
 every deploy check whatever the environment, prints each finding with its id
-and hint, and exits ``1`` when an error remains. No placeholder is resolved
-unless a check reads it, so secrets need not be reachable.
+and hint, and exits ``1`` when an error remains. loom's checks read keys as
+written and resolve no placeholder; the configuration loads with loom's
+default resolvers, so a ``${secrets:...}`` value no check reads is left alone.
+
+The command cannot tell which kind of process a configuration is for: a REST
+application may declare ``celery`` for its job service and a worker may share
+``app.rest``. ``--skip loom.rest`` (repeatable, any id or area) leaves out
+what the process does not run, as the worker and the runners do at startup.
 
 ``app.code_path`` (``src`` by default, relative to the first file) joins the
 import path as ``create_app`` adds it, so the modules of ``checks.modules``
@@ -13,6 +19,7 @@ import here as they do at startup.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -20,21 +27,13 @@ from typing import Annotated
 import typer
 
 from loom.core.checks import DeployReport, run_deploy_checks
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, with_default_resolvers
 from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
-from loom.core.environment import Environment, environment_config_paths, resolve_environment
+from loom.core.environment import Environment, resolve_environment, select_config_paths
 
 # create_app's default for app.code_path.
 _DEFAULT_CODE_PATH = "src"
-
-# The packages registering loom's checks, each with the dependency it needs.
-# Imported by the command, not at module top: without the 'rest' extra the
-# application serves no HTTP, so the REST checks do not apply.
-_CHECK_PACKAGES: tuple[tuple[str, str | None], ...] = (
-    ("loom.core.logger", None),
-    ("loom.rest", "fastapi"),
-)
 
 
 def check(
@@ -47,6 +46,10 @@ def check(
         str | None,
         typer.Option("--env", help="Environment picking the overlay; defaults to LOOM_ENV."),
     ] = None,
+    skip: Annotated[
+        list[str] | None,
+        typer.Option("--skip", help="A check id or area to leave out, e.g. loom.rest; repeatable."),
+    ] = None,
 ) -> None:
     """Run the deploy checks against the configuration, for CI."""
     if not deploy:
@@ -56,9 +59,9 @@ def check(
     try:
         environment = resolve_environment(env)
         paths = _config_paths(config, environment)
-        context = load_application_config(*paths)
+        context = load_application_config(*paths, resolvers=with_default_resolvers(()))
         _add_code_path(context, Path(paths[0]))
-        report = run_deploy_checks(context)
+        report = run_deploy_checks(context, skip=tuple(skip or ()))
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -68,22 +71,15 @@ def check(
 
 
 def _load_check_packages() -> None:
-    """Import the packages registering loom's deploy checks, when installed."""
-    for package, dependency in _CHECK_PACKAGES:
-        if dependency is None or _installed(dependency):
-            importlib.import_module(package)
-
-
-def _installed(module: str) -> bool:
-    try:
-        importlib.import_module(module)
-    except ModuleNotFoundError:
-        return False
-    return True
+    """Import the packages registering loom's checks; the REST ones need the rest extra."""
+    importlib.import_module("loom.core.logger")
+    if importlib.util.find_spec("fastapi") is not None:
+        importlib.import_module("loom.rest")
 
 
 def _add_code_path(context: ConfigContext, first_file: Path) -> None:
-    code_path = Path(context.section_or_default("app.code_path", str, _DEFAULT_CODE_PATH))
+    raw = context.raw("app.code_path", _DEFAULT_CODE_PATH)
+    code_path = Path(raw if isinstance(raw, str) else _DEFAULT_CODE_PATH)
     if not code_path.is_absolute():
         code_path = first_file.resolve().parent / code_path
     entry = str(code_path.resolve())
@@ -92,14 +88,11 @@ def _add_code_path(context: ConfigContext, first_file: Path) -> None:
 
 
 def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ...]:
-    if len(config) == 1 and config[0].is_dir():
-        return environment_config_paths(config[0], environment)
-    directories = [str(path) for path in config if path.is_dir()]
-    if directories:
-        raise ConfigError(
-            f"pass one config directory or YAML files, not both: {', '.join(directories)}"
-        )
-    return tuple(str(path) for path in config)
+    directory = config[0] if len(config) == 1 and config[0].is_dir() else None
+    if directory is None and any(path.is_dir() for path in config):
+        raise ConfigError("pass one config directory or YAML files, not both")
+    files = () if directory is not None else tuple(str(path) for path in config)
+    return select_config_paths(files, directory, environment, caller="loom check")
 
 
 def _print(report: DeployReport, environment: Environment) -> None:

@@ -19,6 +19,7 @@ import yaml
 from typer.testing import CliRunner
 
 from loom.cli.app import app
+from tests.helpers.deploy_checks import write_failing_check_module
 
 runner = CliRunner()
 SRC = Path(__file__).resolve().parents[3] / "src"
@@ -170,32 +171,16 @@ def test_without_the_rest_extra_the_rest_checks_do_not_apply(tmp_path: Path) -> 
     assert "loom.rest" not in result.stdout
 
 
-_APP_CHECK_SOURCE = """\
-from loom.core.checks import Finding, deploy_check
-
-
-@deploy_check("clidemo.billing.E001")
-def _sandbox(config):
-    if not config.has("billing.sandbox"):
-        return None
-    return Finding(message="billing uses the sandbox", hint="unset billing.sandbox")
-"""
-
-
 def test_the_application_check_modules_run_from_its_code_path(tmp_path: Path) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "clidemo_checks.py").write_text(_APP_CHECK_SOURCE)
-    document = {
-        "app": _SAFE_APP,
-        "billing": {"sandbox": True},
-        "checks": {"modules": ["clidemo_checks"]},
-    }
+    check = write_failing_check_module(tmp_path / "src")
+    area, key = check.trigger.split(".")
+    document = {"app": _SAFE_APP, area: {key: True}, "checks": check.checks_section()}
     config = _write(tmp_path / "app.yaml", document)
 
     result = _run_cli("check", "--deploy", str(config))
 
     assert result.returncode == 1, result.stderr
-    assert "clidemo.billing.E001" in result.stdout
+    assert check.check_id in result.stdout
 
 
 def test_an_override_variable_is_checked_like_the_files(
@@ -208,3 +193,25 @@ def test_an_override_variable_is_checked_like_the_files(
 
     assert result.exit_code == 0, result.output
     assert "loom.rest.W001" in result.output
+
+
+def test_skip_leaves_out_an_area_for_a_process_serving_no_http(tmp_path: Path) -> None:
+    config = _write(tmp_path / "worker.yaml", {"celery": {"broker_url": "memory://"}})
+
+    result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert "loom.rest" not in result.output
+
+
+def test_a_secret_placeholder_in_the_logger_config_does_not_break_the_check(
+    tmp_path: Path,
+) -> None:
+    logger_config = {"renderer": "console", "level": "${secrets:/logging/level}"}
+    document = {"app": _SAFE_APP, "observability": {"log": {"config": logger_config}}}
+    config = _write(tmp_path / "app.yaml", document)
+
+    result = runner.invoke(app, ["check", "--deploy", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert "loom.logger.W001" in result.output

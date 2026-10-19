@@ -9,8 +9,10 @@ passes in code (``create_app`` refuses either without the other).
 which maps every route, parameter and field. The three URLs are on by
 default; an explicit ``null`` switches each off.
 
-Both read the configuration only: they resolve no placeholder, so
-``loom check --deploy`` runs them in CI without the application's secrets.
+Both read the keys as written and resolve no placeholder, so
+``loom check --deploy`` runs them in CI without the application's secrets. A
+value given by a placeholder is judged as written: ``custom`` must be the
+literal ``true``, and a placeholder URL counts as published.
 """
 
 from __future__ import annotations
@@ -30,12 +32,13 @@ SCHEMA_CHECK: Final = f"{REST_CHECKS}.W001"
 
 _JWT_KEY = "app.rest.auth.jwt"
 _CUSTOM_KEY = "app.rest.auth.custom"
-_SCHEMA_KEYS = ("app.rest.docs_url", "app.rest.redoc_url", "app.rest.openapi_url")
+_SCHEMA_KEYS = ("docs_url", "redoc_url", "openapi_url")
 
 
 @deploy_check(AUTHENTICATION_CHECK)
 def _authentication_configured(config: ConfigContext) -> Finding | None:
-    if config.has(_JWT_KEY) or config.section_or_default(_CUSTOM_KEY, bool, False):
+    auth = config.raw("app.rest.auth", {})
+    if isinstance(auth, dict) and (auth.get("jwt") is not None or auth.get("custom") is True):
         return None
     return Finding(
         message=f"the API authenticates no caller: neither {_JWT_KEY} nor {_CUSTOM_KEY} is set.",
@@ -49,7 +52,9 @@ def _authentication_configured(config: ConfigContext) -> Finding | None:
 
 @deploy_check(SCHEMA_CHECK)
 def _schema_published(config: ConfigContext) -> Finding | None:
-    published = [key for key in _SCHEMA_KEYS if config.has(key) or not config.declares(key)]
+    rest = config.raw("app.rest", {})
+    written = rest if isinstance(rest, dict) else {}
+    published = [f"app.rest.{key}" for key in _SCHEMA_KEYS if written.get(key, key) is not None]
     if not published:
         return None
     return Finding(

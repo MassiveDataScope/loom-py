@@ -128,10 +128,6 @@ class DeployCheckRegistry:
 
         return _register
 
-    def ids(self) -> tuple[str, ...]:
-        """Return the registered ids, in registration order."""
-        return tuple(self._checks)
-
     def items(self) -> tuple[tuple[str, DeployCheck], ...]:
         """Return the registered ids with their checks, in registration order."""
         return tuple(self._checks.items())
@@ -140,14 +136,8 @@ class DeployCheckRegistry:
 DEPLOY_CHECKS: Final = DeployCheckRegistry()
 """Registry loom's checks and the application's register into."""
 
-
-def deploy_check(check_id: str) -> Callable[[DeployCheck], DeployCheck]:
-    """Return a decorator registering a check in :data:`DEPLOY_CHECKS` under *check_id*.
-
-    Raises:
-        ValueError: When *check_id* is outside the id scheme or taken.
-    """
-    return DEPLOY_CHECKS.register(check_id)
+deploy_check: Final = DEPLOY_CHECKS.register
+"""Decorator registering a check in :data:`DEPLOY_CHECKS` under an id."""
 
 
 @dataclass(frozen=True)
@@ -210,8 +200,7 @@ def run_deploy_checks(
     Args:
         config: Loaded configuration the checks read.
         skip: Ids, or dotted areas such as ``"loom.rest"``, the caller knows
-            not to apply: a worker skips the REST checks, an application
-            authenticating in code skips the configuration check for it.
+            not to apply: a process serving no HTTP skips the REST checks.
         registry: Registry to run; loom's by default.
 
     Returns:
@@ -286,7 +275,9 @@ def _import_modules(modules: tuple[str, ...]) -> None:
     for module in modules:
         try:
             importlib.import_module(module)
-        except ImportError as exc:
+        except Exception as exc:
+            # Any failure at import, not only ImportError, means the checks of
+            # the module cannot run: it stops the run as a configuration error.
             raise ConfigError(f"{MODULES_KEY} entry {module!r} cannot be imported: {exc}") from exc
 
 

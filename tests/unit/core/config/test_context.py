@@ -115,19 +115,19 @@ class TestConfigContextCustomBinder:
             strict_ctx.bind(_Worker, path="worker")
 
 
-class TestConfigContextDeclares:
-    @pytest.mark.parametrize(
-        ("key", "declared", "has"),
-        [
-            ("rest.docs_url", True, False),
-            ("rest.title", True, True),
-            ("rest.redoc_url", False, False),
-            ("absent.section", False, False),
-        ],
-    )
-    def test_an_explicit_null_is_declared_but_not_held(
-        self, key: str, declared: bool, has: bool
-    ) -> None:
-        ctx = ConfigContext.from_dict({"rest": {"docs_url": None, "title": "API"}})
+class TestConfigContextRaw:
+    def test_a_value_is_read_as_written_without_resolving_it(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {"rest": {"docs_url": None, "secret": "${secrets:/api/key}", "auth": {"jwt": {}}}}
+        )
 
-        assert (ctx.declares(key), ctx.has(key)) == (declared, has)
+        assert ctx.raw("rest") == {
+            "docs_url": None,
+            "secret": "${secrets:/api/key}",
+            "auth": {"jwt": {}},
+        }
+
+    def test_an_absent_key_returns_the_default(self) -> None:
+        ctx = ConfigContext.from_dict({"rest": {"title": "API"}})
+
+        assert ctx.raw("rest.auth.jwt", "absent") == "absent"

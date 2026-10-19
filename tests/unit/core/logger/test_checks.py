@@ -24,10 +24,6 @@ def _ids(observability: dict[str, Any] | None) -> list[str]:
     return [result.id for result in report.results if result.id == CONSOLE_RENDERER_CHECK]
 
 
-def test_the_check_has_a_stable_warning_id() -> None:
-    assert CONSOLE_RENDERER_CHECK == "loom.logger.W001"
-
-
 @pytest.mark.parametrize(
     "observability",
     [
@@ -51,3 +47,13 @@ def test_json_or_default_rendering_passes(observability: dict[str, Any] | None) 
 )
 def test_an_explicit_console_renderer_warns(logger_config: dict[str, Any]) -> None:
     assert _ids({_LOG: {"config": logger_config}}) == [CONSOLE_RENDERER_CHECK]
+
+
+def test_a_placeholder_elsewhere_in_the_logger_config_is_not_resolved() -> None:
+    logger_config = {"renderer": "console", "level": "${secrets:/logging/level}"}
+
+    assert _ids({_LOG: {"config": logger_config}}) == [CONSOLE_RENDERER_CHECK]
+
+
+def test_a_renderer_from_a_placeholder_is_not_resolved_nor_flagged() -> None:
+    assert _ids({_LOG: {"config": {"renderer": "${oc.env:UNSET_LOG_RENDERER}"}}}) == []

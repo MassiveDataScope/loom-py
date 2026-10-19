@@ -24,6 +24,7 @@ from loom.core.checks import (
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
+from tests.helpers.deploy_checks import write_failing_check_module
 
 _ERROR_ID = "loom.sample.E001"
 _WARNING_ID = "loom.sample.W001"
@@ -70,10 +71,12 @@ class TestRegistry:
 
     def test_an_application_registers_under_its_own_area(self) -> None:
         registry = DeployCheckRegistry()
+        finding = Finding(message="sandbox gateway", hint="use the live one")
+        registry.register("billing.invoices.W001")(lambda config: finding)
 
-        registry.register("billing.invoices.W001")(lambda config: None)
+        report = run_deploy_checks(_config(), registry=registry)
 
-        assert registry.ids() == ("billing.invoices.W001",)
+        assert [r.id for r in report.results] == ["billing.invoices.W001"]
 
 
 class TestRunDeployChecks:
@@ -84,16 +87,6 @@ class TestRunDeployChecks:
             (_ERROR_ID, CheckLevel.ERROR),
             (_WARNING_ID, CheckLevel.WARNING),
         }
-
-    def test_a_result_carries_the_message_and_hint_of_its_finding(self) -> None:
-        report = run_deploy_checks(_config(), registry=_registry(warning=False))
-
-        (result,) = report.results
-        assert (result.id, result.message, result.hint) == (
-            _ERROR_ID,
-            "sample is unsafe",
-            "set sample.safe",
-        )
 
     def test_a_check_that_finds_nothing_reports_nothing(self) -> None:
         report = run_deploy_checks(_config(sample={"safe": True}), registry=_registry())
@@ -145,22 +138,12 @@ class TestEnforceDeployChecks:
             enforce_deploy_checks(_config(), environment, registry=_registry())
 
         message = str(caught.value)
+        assert [r.id for r in caught.value.results] == [_ERROR_ID]
         assert f"{_ERROR_ID}: sample is unsafe" in message
         assert "set sample.safe" in message
         assert f"'{environment}'" in message
-
-    def test_the_failure_says_how_to_select_a_local_environment(self) -> None:
-        with pytest.raises(DeployCheckError) as caught:
-            enforce_deploy_checks(_config(), Environment.PRODUCTION, registry=_registry())
-
-        assert "LOOM_ENV=development" in str(caught.value)
-        assert "checks.silenced" in str(caught.value)
-
-    def test_the_error_lists_the_failed_results(self) -> None:
-        with pytest.raises(DeployCheckError) as caught:
-            enforce_deploy_checks(_config(), Environment.PRODUCTION, registry=_registry())
-
-        assert [r.id for r in caught.value.results] == [_ERROR_ID]
+        assert "LOOM_ENV=development" in message
+        assert "checks.silenced" in message
 
     def test_a_warning_is_logged_and_startup_goes_on(
         self, caplog: pytest.LogCaptureFixture
@@ -190,30 +173,28 @@ class TestEnforceDeployChecks:
         assert _ERROR_ID in silenced[0].getMessage()
 
 
-_APP_CHECK_MODULE = """\
-from loom.core.checks import Finding, deploy_check
-
-
-@deploy_check("{area}.E001")
-def _unsafe(config):
-    if not config.has("{area}.unsafe"):
-        return None
-    return Finding(message="{area} is unsafe", hint="unset {area}.unsafe")
-"""
-
-
 class TestApplicationCheckModules:
     def test_a_listed_module_is_imported_and_its_checks_run(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        area = f"appchecks{abs(hash(request.node.nodeid)) % 10**8}"
-        (tmp_path / f"{area}_checks.py").write_text(_APP_CHECK_MODULE.format(area=area))
-        monkeypatch.syspath_prepend(str(tmp_path))
-        config = _config(checks={"modules": [f"{area}_checks"]}, **{area: {"unsafe": True}})
+        check = write_failing_check_module(tmp_path)
+        monkeypatch.syspath_prepend(str(check.directory))
+        area, key = check.trigger.split(".")
+        config = _config(checks=check.checks_section(), **{area: {key: True}})
 
         report = run_deploy_checks(config)
 
-        assert [r.id for r in report.results if r.id.startswith(area)] == [f"{area}.E001"]
+        assert [r.id for r in report.results if r.id.startswith(area)] == [check.check_id]
+
+    def test_a_module_failing_at_import_is_a_config_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "broken_checks_module.py").write_text("raise RuntimeError('boom')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        config = _config(checks={"modules": ["broken_checks_module"]})
+
+        with pytest.raises(ConfigError, match="broken_checks_module"):
+            run_deploy_checks(config, registry=_registry())
 
     def test_a_module_that_cannot_be_imported_is_a_config_error(self) -> None:
         config = _config(checks={"modules": ["no_such_package.checks"]})

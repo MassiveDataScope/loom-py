@@ -18,8 +18,6 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-_ABSENT = object()
-
 
 class ConfigContext:
     """Runtime config accessor backed by a resolved DictConfig.
@@ -135,21 +133,27 @@ class ConfigContext:
 
         return OmegaConf.select(self._config, _key_str(key), default=None) is not None
 
-    def declares(self, key: str | ConfigKey) -> bool:
-        """Return ``True`` if the dot-separated *key* is written in the config, even as null.
+    def raw(self, key: str | ConfigKey, default: Any = None) -> Any:
+        """Return the value at the dot-separated *key* as written, resolving nothing.
 
-        Unlike :meth:`has`, an explicit ``null`` counts: it tells a setting
-        switched off apart from one left to its default.
+        Interpolations stay as their ``${...}`` text and sections come back
+        as plain dicts and lists, so reading a key never calls a resolver.
 
         Args:
-            key: Dot-separated path (e.g. ``"app.rest.docs_url"``).
+            key: Dot-separated path (e.g. ``"app.rest.auth"``).
+            default: Returned when the key is absent.
 
         Returns:
-            ``True`` when the key is present, whatever its value.
+            The value as written, or *default*.
         """
         from omegaconf import OmegaConf
 
-        return OmegaConf.select(self._config, _key_str(key), default=_ABSENT) is not _ABSENT
+        node: Any = OmegaConf.to_container(self._config, resolve=False)
+        for part in _key_str(key).split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
 
     def section_optional(self, key: str | ConfigKey, target: type[T]) -> T | None:
         """Extract *key* as *target* when present, otherwise return ``None``.
