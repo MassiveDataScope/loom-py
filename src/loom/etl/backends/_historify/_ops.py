@@ -14,6 +14,10 @@ class HistorifyBackend(Protocol[F]):
 
     def columns(self, frame: F) -> list[str]: ...
 
+    def non_boolean_dtype(self, frame: F, col: str) -> str | None:
+        """Return the dtype name of ``col`` when it is not boolean, else ``None``."""
+        ...
+
     def history_dtype(self, spec: HistorifySpec) -> Any:
         """Return the native dtype for valid_from / valid_to columns."""
         ...
@@ -38,6 +42,10 @@ class HistorifyBackend(Protocol[F]):
 
     def null_col(self, frame: F, name: str, dtype: Any) -> F:
         """Add null column with given dtype."""
+        ...
+
+    def fill_null(self, frame: F, col: str, value: Any) -> F:
+        """Replace nulls in ``col`` with a literal value."""
         ...
 
     def rename(self, frame: F, rename_map: dict[str, str]) -> F:
@@ -77,11 +85,24 @@ class HistorifyBackend(Protocol[F]):
         """Compute valid_from / valid_to from sorted event frame (LOG mode)."""
         ...
 
+    def closure_events(self, history: F, spec: HistorifySpec) -> F:
+        """Return one tombstone instant per stored vector closed without a successor.
+
+        LOG history has no gaps except those left by tombstones, so every gap is
+        read as a deletion: a vector has no successor when no later vector of its
+        entity starts within one period after its ``valid_to``. Each row carries
+        ``keys`` and the effective-date column at that next period (the
+        tombstone's instant); the caller flags it with ``delete_marker``.
+        """
+        ...
+
     def apply_delete_policy(self, deleted: F, spec: HistorifySpec, eff_date: Any) -> F: ...
 
     def ensure_soft_delete_col(self, result: F, spec: HistorifySpec) -> F: ...
 
-    def assert_unique_keys(self, frame: F, keys: list[str]) -> None: ...
+    def duplicate_keys(self, frame: F, keys: list[str]) -> str | None:
+        """Describe up to five ``keys`` combinations repeated in ``frame``, or ``None``."""
+        ...
 
     def assert_no_date_collisions(
         self, frame: F, keys: list[str], eff_col: str, spec: HistorifySpec

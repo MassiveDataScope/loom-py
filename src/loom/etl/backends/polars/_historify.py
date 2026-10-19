@@ -6,12 +6,11 @@ from typing import Any
 
 import polars as pl
 
-from loom.etl.backends._historify._common import prev_period_value
+from loom.etl.backends._historify._common import log_run_cols, prev_period_value
 from loom.etl.backends.polars._frame import FrameT
 from loom.etl.declarative.target._history import (
     DeletePolicy,
     HistorifyDateCollisionError,
-    HistorifyKeyConflictError,
     HistorifySpec,
     HistoryDateType,
 )
@@ -21,11 +20,21 @@ def _history_boundary_dtype(spec: HistorifySpec) -> type[pl.Date] | pl.Datetime:
     return pl.Date if spec.date_type is HistoryDateType.DATE else pl.Datetime("us", "UTC")
 
 
+def _period_offset(spec: HistorifySpec) -> pl.Expr:
+    if spec.date_type is HistoryDateType.DATE:
+        return pl.duration(days=1)
+    return pl.duration(microseconds=1)
+
+
 class PolarsHistorifyBackend:
     """Polars implementation of HistorifyBackend."""
 
     def columns(self, frame: pl.DataFrame) -> list[str]:
         return list(frame.columns)
+
+    def non_boolean_dtype(self, frame: pl.DataFrame, col: str) -> str | None:
+        dtype = frame.collect_schema()[col]
+        return None if dtype == pl.Boolean else str(dtype)
 
     def history_dtype(self, spec: HistorifySpec) -> type[pl.Date] | pl.Datetime:
         return _history_boundary_dtype(spec)
@@ -73,6 +82,9 @@ class PolarsHistorifyBackend:
 
     def null_col(self, frame: pl.DataFrame, name: str, dtype: Any) -> pl.DataFrame:
         return frame.with_columns(pl.lit(None, dtype=dtype).alias(name))
+
+    def fill_null(self, frame: pl.DataFrame, col: str, value: Any) -> pl.DataFrame:
+        return frame.with_columns(pl.col(col).fill_null(value))
 
     def rename(self, frame: pl.DataFrame, rename_map: dict[str, str]) -> pl.DataFrame:
         return frame.rename(rename_map)
@@ -143,11 +155,7 @@ class PolarsHistorifyBackend:
         eff_col = str(spec.effective_date)
         entity_key = list(spec.keys)
         boundary_dtype = _history_boundary_dtype(spec)
-        offset = (
-            pl.duration(days=1)
-            if spec.date_type is HistoryDateType.DATE
-            else pl.duration(microseconds=1)
-        )
+        offset = _period_offset(spec)
 
         collapsed = self._collapse_same_track_runs(frame, spec, entity_key, eff_col)
         sorted_events = collapsed.sort(entity_key + [eff_col])
@@ -171,6 +179,24 @@ class PolarsHistorifyBackend:
             clamped_valid_to.cast(boundary_dtype).alias(spec.valid_to),
         ).drop(eff_col)
 
+    def closure_events(self, history: pl.DataFrame, spec: HistorifySpec) -> pl.DataFrame:
+        entity_key = list(spec.keys)
+        closed_at = pl.col(spec.valid_to) + _period_offset(spec)
+        next_from = pl.col("__next_from__")
+        # Nulls last: a zero-width vector sorts before the vector sharing its valid_from.
+        return (
+            history.sort([*entity_key, spec.valid_from, spec.valid_to], nulls_last=True)
+            .with_columns(pl.col(spec.valid_from).shift(-1).over(entity_key).alias("__next_from__"))
+            .filter(
+                pl.col(spec.valid_to).is_not_null()
+                & (next_from.is_null() | (next_from > closed_at))
+            )
+            .select(
+                *entity_key,
+                closed_at.cast(_history_boundary_dtype(spec)).alias(str(spec.effective_date)),
+            )
+        )
+
     @staticmethod
     def _collapse_same_track_runs(
         frame: FrameT,
@@ -187,9 +213,8 @@ class PolarsHistorifyBackend:
         if spec.track is None:
             return frame
 
-        track = list(spec.track)
         overwrite: list[str] = list(spec.overwrite or ())
-        track_struct = pl.struct(track)
+        track_struct = pl.struct(log_run_cols(spec))
 
         runs = (
             frame.sort(entity_key + [eff_col])
@@ -242,11 +267,11 @@ class PolarsHistorifyBackend:
         boundary_dtype = _history_boundary_dtype(spec)
         return result.with_columns(pl.lit(None, dtype=boundary_dtype).alias(spec.deleted_at))
 
-    def assert_unique_keys(self, frame: pl.DataFrame, keys: list[str]) -> None:
+    def duplicate_keys(self, frame: pl.DataFrame, keys: list[str]) -> str | None:
         if len(frame) == frame.select(keys).n_unique():
-            return
+            return None
         dupes = frame.filter(frame.select(keys).is_duplicated()).select(keys).head(5)
-        raise HistorifyKeyConflictError(str(dupes.to_dicts()))
+        return str(dupes.to_dicts())
 
     def assert_no_date_collisions(
         self,

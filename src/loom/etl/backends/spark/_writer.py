@@ -15,7 +15,6 @@ from pyspark.sql.column import Column
 from pyspark.storagelevel import StorageLevel
 
 from loom.etl.backends._format_registry import resolve_format_handler, write_options_or_default
-from loom.etl.backends._historify._transform import scd2_transform
 from loom.etl.backends._merge import (
     SOURCE_ALIAS,
     TARGET_ALIAS,
@@ -38,7 +37,7 @@ from loom.etl.declarative._write_options import (
 )
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._history import HistorifyRepairReport, HistorifySpec
+from loom.etl.declarative.target._history import HistorifySpec
 from loom.etl.declarative.target._table import AppendSpec, UpdateSpec, UpsertSpec
 from loom.etl.lineage._records import LineageRecord, get_lineage_schema
 from loom.etl.storage._config import MissingTablePolicy
@@ -404,41 +403,8 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
             return self._spark.read.format("delta").load(target.location.uri)
         return None
 
-    def _historify(
-        self,
-        frame: DataFrame,
-        existing: DataFrame | None,
-        target: ResolvedTarget,
-        *,
-        spec: HistorifySpec,
-        params_instance: Any,
-    ) -> HistorifyRepairReport | None:
-        """Run SCD Type 2 transform and write result via existing write hooks."""
-        result, report = scd2_transform(
-            SparkHistorifyBackend(), frame, existing, spec, params_instance
-        )
-        if report is not None:
-            _log.warning(
-                "historify temporal rerun rewound future history: "
-                "affected_key_count=%d dates_requiring_rerun=%s warnings=%s",
-                len(report.affected_keys),
-                [str(d) for d in report.dates_requiring_rerun],
-                list(report.warnings),
-            )
-        if existing is None:
-            self._create(
-                result,
-                target,
-                schema_mode=spec.schema_mode,
-                partition_cols=spec.partition_scope or (),
-            )
-        elif spec.partition_scope:
-            self._replace_partitions(
-                result, target, partition_cols=spec.partition_scope, schema_mode=spec.schema_mode
-            )
-        else:
-            self._replace(result, target, schema_mode=spec.schema_mode)
-        return report
+    def _historify_backend(self) -> SparkHistorifyBackend:
+        return SparkHistorifyBackend()
 
     def _write_file(
         self,

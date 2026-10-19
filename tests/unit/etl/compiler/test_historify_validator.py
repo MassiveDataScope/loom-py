@@ -2,7 +2,8 @@
 
 Covers:
 * validate_historify_spec — keys non-empty, track/keys overlap, effective_date
-  not in track, boundary cols disjoint, LOG mode not ParamExpr, warnings
+  not in track, boundary cols disjoint, LOG mode not ParamExpr, delete_marker
+  LOG-only and disjoint from declared and partition columns, warnings
 * validate_param_exprs — effective_date ParamExpr resolves to known field
 * Non-historify specs are silently skipped
 """
@@ -248,6 +249,41 @@ class TestValidateHistorifySpecLogModeParamExpr:
     def test_snapshot_mode_param_expr_passes(self) -> None:
         spec = _history_spec(effective_date=p.run_date, mode=HistorifyInputMode.SNAPSHOT)
         validate_historify_spec(object, spec)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# validate_historify_spec — error: delete_marker misuse
+# ---------------------------------------------------------------------------
+
+
+class TestValidateHistorifySpecDeleteMarker:
+    def _spec(self, mode: HistorifyInputMode, delete_marker: str) -> HistorifySpec:
+        return HistorifySpec(
+            table_ref=TableRef("wh.dim"),
+            keys=("id",),
+            track=("status",),
+            effective_date="event_date" if mode is HistorifyInputMode.LOG else p.run_date,
+            mode=mode,
+            partition_scope=("season",),
+            delete_marker=delete_marker,
+        )
+
+    def test_log_mode_marker_passes(self) -> None:
+        validate_historify_spec(object, self._spec(HistorifyInputMode.LOG, "is_deleted"))  # type: ignore[arg-type]
+
+    def test_snapshot_mode_marker_raises(self) -> None:
+        spec = self._spec(HistorifyInputMode.SNAPSHOT, "is_deleted")
+        with pytest.raises(ETLCompilationError) as exc_info:
+            validate_historify_spec(object, spec)  # type: ignore[arg-type]
+        assert exc_info.value.code == ETLErrorCode.INVALID_TARGET_TYPE
+        assert exc_info.value.field == "delete_marker"
+
+    @pytest.mark.parametrize("marker", ["id", "status", "event_date", "valid_to", "season"])
+    def test_marker_colliding_with_declared_column_raises(self, marker: str) -> None:
+        spec = self._spec(HistorifyInputMode.LOG, marker)
+        with pytest.raises(ETLCompilationError) as exc_info:
+            validate_historify_spec(object, spec)  # type: ignore[arg-type]
+        assert exc_info.value.field == "delete_marker"
 
 
 # ---------------------------------------------------------------------------
