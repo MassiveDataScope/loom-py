@@ -105,6 +105,7 @@ class TestBuildTracerSdkGuard:
 
     def test_names_the_missing_sdk_when_the_exporter_is_present(self) -> None:
         config = OtelConfig(endpoint="http://collector:4318/v1/traces")
+        importlib.import_module(f"{_HTTP}.trace_exporter")
         with _without("opentelemetry.sdk"), pytest.raises(ImportError) as excinfo:
             otel.build_tracer(config)
         assert "opentelemetry-sdk" in str(excinfo.value)

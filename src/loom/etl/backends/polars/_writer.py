@@ -10,7 +10,6 @@ from deltalake import CommitProperties, DeltaTable, WriterProperties, write_delt
 from deltalake.table import TableMerger
 
 from loom.core.logger import get_logger
-from loom.etl.backends._historify._transform import scd2_transform
 from loom.etl.backends._merge import (
     SOURCE_ALIAS,
     TARGET_ALIAS,
@@ -31,7 +30,7 @@ from loom.etl.backends.polars._schema import (
 )
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._history import HistorifyRepairReport, HistorifySpec
+from loom.etl.declarative.target._history import HistorifySpec
 from loom.etl.declarative.target._table import (
     AppendSpec,
     ReplacePartitionsSpec,
@@ -620,40 +619,8 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         except (TableNotFoundError, FileNotFoundError):
             return None
 
-    def _historify(
-        self,
-        frame: pl.DataFrame,
-        existing: pl.DataFrame | None,
-        target: ResolvedTarget,
-        *,
-        spec: HistorifySpec,
-        params_instance: Any,
-    ) -> HistorifyRepairReport | None:
-        """Run SCD Type 2 transform and write result via existing write hooks."""
-        result, report = scd2_transform(
-            PolarsHistorifyBackend(), frame, existing, spec, params_instance
-        )
-        if report is not None:
-            _log.warning(
-                "historify temporal rerun rewound future history",
-                affected_key_count=len(report.affected_keys),
-                dates_requiring_rerun=[str(d) for d in report.dates_requiring_rerun],
-                warnings=list(report.warnings),
-            )
-        if existing is None:
-            self._create(
-                result,
-                target,
-                schema_mode=spec.schema_mode,
-                partition_cols=spec.partition_scope or (),
-            )
-        elif spec.partition_scope:
-            self._replace_partitions(
-                result, target, partition_cols=spec.partition_scope, schema_mode=spec.schema_mode
-            )
-        else:
-            self._replace(result, target, schema_mode=spec.schema_mode)
-        return report
+    def _historify_backend(self) -> PolarsHistorifyBackend:
+        return PolarsHistorifyBackend()
 
     def _write_file(
         self,

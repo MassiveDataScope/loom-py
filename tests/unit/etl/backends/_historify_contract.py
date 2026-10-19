@@ -10,14 +10,16 @@ provide four pytest fixtures:
                    to build expected table URIs in assertions).
 * ``make_frame`` — callable ``(list[dict]) → backend-native frame``.
 * ``read_table`` — callable ``(uri: str) → list[dict[str, Any]]`` (rows as
-                   plain Python dicts with native-typed values).
+                   plain Python dicts with native-typed values). Timestamps
+                   must come back as UTC: aware, or naive UTC wall time — naive
+                   input datetimes are written as UTC.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,10 +29,12 @@ from loom.etl.declarative.expr._params import params as p
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import (
     DeletePolicy,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
     HistorifySpec,
     HistorifyTemporalConflictError,
+    HistoryDateType,
 )
 from loom.etl.declarative.target._schema_mode import SchemaMode
 
@@ -86,6 +90,68 @@ def _log_spec(
 
 def _sub_event(plan: str | None, event_date: date, *, sub: int = 1, **extra: Any) -> dict[str, Any]:
     return {"subscription_id": sub, "plan": plan, "event_date": event_date, **extra}
+
+
+def _replacement_spec(
+    *,
+    track: tuple[str, ...] | None = ("cost",),
+    overwrite: tuple[str, ...] | None = None,
+    date_type: HistoryDateType = HistoryDateType.TIMESTAMP,
+) -> HistorifySpec:
+    return HistorifySpec(
+        table_ref=TableRef("dim_replacements"),
+        keys=("wo", "rid"),
+        effective_date="event_ts",
+        mode=HistorifyInputMode.LOG,
+        track=track,
+        overwrite=overwrite,
+        delete_marker="is_deleted",
+        date_type=date_type,
+        schema_mode=SchemaMode.STRICT,
+    )
+
+
+def _replacement(
+    wo: str,
+    rid: str,
+    event_ts: date | datetime,
+    cost: int | None,
+    *,
+    deleted: bool | None = False,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "wo": wo,
+        "rid": rid,
+        "event_ts": event_ts,
+        "cost": cost,
+        "is_deleted": deleted,
+        **extra,
+    }
+
+
+def _naive(value: Any) -> Any:
+    return value.replace(tzinfo=None) if isinstance(value, datetime) else value
+
+
+_OCT10, _OCT11, _OCT12, _OCT15, _OCT20 = (datetime(2026, 10, d) for d in (10, 11, 12, 15, 20))
+_OCT10_END, _OCT11_END, _OCT14_END = (
+    datetime(2026, 10, d, 23, 59, 59, 999999) for d in (10, 11, 14)
+)
+_REPLACEMENTS_RUN1 = [
+    _replacement("W1", "R1", _OCT10, 100),
+    _replacement("W1", "R2", _OCT10, 50),
+]
+_REPLACEMENTS_RUN2 = [
+    _replacement("W1", "R1", _OCT12, 120),
+    _replacement("W1", "R2", _OCT12, None, deleted=True),
+]
+# (wo, rid, valid_from, valid_to, cost) after RUN1 + RUN2: R2 closed, no open row.
+_REPLACEMENTS_AFTER_RUN2 = [
+    ("W1", "R1", _OCT10, _OCT11_END, 100),
+    ("W1", "R1", _OCT12, None, 120),
+    ("W1", "R2", _OCT10, _OCT11_END, 50),
+]
 
 
 _D1, _D2, _D3 = date(2024, 1, 1), date(2024, 2, 1), date(2024, 3, 1)
@@ -1291,6 +1357,443 @@ class HistorifyContractTests:
         assert len(rows) == len(expected)
         for actual, want in zip(rows, expected, strict=True):
             assert {col: actual[col] for col in want} == want
+
+    # ------------------------------------------------------------------
+    # LOG mode — delete marker (tombstones)
+    # ------------------------------------------------------------------
+
+    def _replacement_vectors(self, root: Path, read_table: Callable) -> list[tuple[Any, ...]]:
+        rows = read_table(self._uri(root, "dim_replacements"))
+        assert all("is_deleted" not in row for row in rows)
+        vectors = [
+            (r["wo"], r["rid"], _naive(r["valid_from"]), _naive(r["valid_to"]), r["cost"])
+            for r in rows
+        ]
+        return sorted(vectors, key=lambda v: v[:3])
+
+    def _write_batches(
+        self, writer: Any, make_frame: Callable, spec: HistorifySpec, *batches: list[dict]
+    ) -> None:
+        for batch in batches:
+            writer.write(make_frame(batch), spec, None)
+
+    @pytest.mark.parametrize("track", [("cost",), None], ids=["explicit_track", "track_none"])
+    def test_log_delete_marker_closes_open_vector(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+        track: tuple[str, ...] | None,
+    ) -> None:
+        """A tombstone closes the open vector one period before it and opens nothing."""
+        spec = _replacement_spec(track=track)
+        self._write_batches(writer, make_frame, spec, _REPLACEMENTS_RUN1, _REPLACEMENTS_RUN2)
+        assert self._replacement_vectors(root, read_table) == _REPLACEMENTS_AFTER_RUN2
+
+    def test_log_delete_marker_rerun_is_idempotent(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer, make_frame, spec, _REPLACEMENTS_RUN1, _REPLACEMENTS_RUN2, _REPLACEMENTS_RUN2
+        )
+        assert self._replacement_vectors(root, read_table) == _REPLACEMENTS_AFTER_RUN2
+
+    def test_log_delete_marker_leaves_other_keys_untouched(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W2", "R1", _OCT15, 10)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            *_REPLACEMENTS_AFTER_RUN2,
+            ("W2", "R1", _OCT15, None, 10),
+        ]
+
+    def test_log_delete_marker_event_after_tombstone_reopens(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT15, 55)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            *_REPLACEMENTS_AFTER_RUN2,
+            ("W1", "R2", _OCT15, None, 55),
+        ]
+
+    def test_log_delete_marker_closure_survives_earlier_replay(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        """Replaying an event dated before a stored closure does not reopen the key."""
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT11, 50)],
+        )
+        assert self._replacement_vectors(root, read_table) == _REPLACEMENTS_AFTER_RUN2
+
+    def test_log_delete_marker_closure_survives_later_events_after_reopen(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        """A stored closure followed by a reopen keeps its gap when the key is rebuilt."""
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT15, 55)],
+            [_replacement("W1", "R2", _OCT20, 60)],
+        )
+        r2 = [v for v in self._replacement_vectors(root, read_table) if v[1] == "R2"]
+        assert r2 == [
+            ("W1", "R2", _OCT10, _OCT11_END, 50),
+            ("W1", "R2", _OCT15, datetime(2026, 10, 19, 23, 59, 59, 999999), 55),
+            ("W1", "R2", _OCT20, None, 60),
+        ]
+
+    def test_log_delete_marker_consecutive_tombstones_keep_first(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT15, 50, deleted=True)],
+        )
+        assert self._replacement_vectors(root, read_table) == _REPLACEMENTS_AFTER_RUN2
+
+    def test_log_delete_marker_without_history_writes_nothing(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [*_REPLACEMENTS_RUN1, _replacement("W3", "R1", _OCT10, 7, deleted=True)],
+            [_replacement("W4", "R1", _OCT12, 7, deleted=True)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            ("W1", "R1", _OCT10, None, 100),
+            ("W1", "R2", _OCT10, None, 50),
+        ]
+
+    def test_log_delete_marker_resolves_within_one_batch(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        """Tombstones sharing the open vector's track values still close it, and
+        consecutive tombstones collapse to the first one."""
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [
+                _replacement("W1", "R1", _OCT10, 100),
+                _replacement("W1", "R1", _OCT12, 100, deleted=True),
+                _replacement("W1", "R1", datetime(2026, 10, 13), 100, deleted=True),
+                _replacement("W1", "R1", _OCT15, 100),
+            ],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            ("W1", "R1", _OCT10, _OCT11_END, 100),
+            ("W1", "R1", _OCT15, None, 100),
+        ]
+
+    def test_log_delete_marker_date_precision(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec(date_type=HistoryDateType.DATE)
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [_replacement("W1", "R1", date(2026, 10, 10), 100)],
+            [_replacement("W1", "R1", date(2026, 10, 12), 100, deleted=True)],
+            [_replacement("W1", "R1", date(2026, 10, 11), 100)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            ("W1", "R1", date(2026, 10, 10), date(2026, 10, 11), 100),
+        ]
+
+    def test_log_delete_marker_missing_column_raises_on_first_run(
+        self,
+        writer: Any,
+        make_frame: Callable,
+    ) -> None:
+        frame = make_frame([{"wo": "W1", "rid": "R1", "event_ts": _OCT10, "cost": 100}])
+        spec = _replacement_spec()
+        with pytest.raises(HistorifyDeleteMarkerError, match="is_deleted"):
+            writer.write(frame, spec, None)
+
+    def test_log_delete_marker_missing_column_raises_on_later_run(
+        self,
+        writer: Any,
+        make_frame: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        writer.write(make_frame(_REPLACEMENTS_RUN1), spec, None)
+        frame = make_frame([{"wo": "W1", "rid": "R2", "event_ts": _OCT12, "cost": 50}])
+        with pytest.raises(HistorifyDeleteMarkerError, match="is_deleted"):
+            writer.write(frame, spec, None)
+
+    def test_log_delete_marker_non_boolean_column_raises(
+        self,
+        writer: Any,
+        make_frame: Callable,
+    ) -> None:
+        frame = make_frame(
+            [
+                _replacement("W1", "R1", _OCT10, 100, deleted="N"),  # type: ignore[arg-type]
+                _replacement("W1", "R1", _OCT12, 100, deleted="Y"),  # type: ignore[arg-type]
+            ]
+        )
+        spec = _replacement_spec()
+        with pytest.raises(HistorifyDeleteMarkerError, match="is_deleted.*cast it to Boolean"):
+            writer.write(frame, spec, None)
+
+    def test_log_delete_marker_tombstone_and_event_at_same_instant_raise(
+        self,
+        writer: Any,
+        make_frame: Callable,
+    ) -> None:
+        frame = make_frame(
+            [
+                _replacement("W1", "R1", _OCT10, 100),
+                _replacement("W1", "R1", _OCT10, 100, deleted=True),
+            ]
+        )
+        spec = _replacement_spec()
+        with pytest.raises(HistorifyKeyConflictError, match="effective_date"):
+            writer.write(frame, spec, None)
+
+    def test_log_delete_marker_null_marker_is_regular_event(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [
+                _replacement("W1", "R1", _OCT10, 100, deleted=None),
+                _replacement("W1", "R2", _OCT10, 50),
+            ],
+            [
+                _replacement("W1", "R1", _OCT12, 120, deleted=None),
+                _replacement("W1", "R2", _OCT12, None, deleted=True),
+            ],
+        )
+        assert self._replacement_vectors(root, read_table) == _REPLACEMENTS_AFTER_RUN2
+
+    def test_log_delete_marker_event_at_closure_instant_reopens(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        """A regular event at the stored tombstone instant replaces it (incoming wins)."""
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT12, 55)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            *_REPLACEMENTS_AFTER_RUN2,
+            ("W1", "R2", _OCT12, None, 55),
+        ]
+
+    def test_log_delete_marker_retraction_merges_back(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        """A same-track regular event at the tombstone instant undoes the deletion."""
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT12, 50)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            *_REPLACEMENTS_AFTER_RUN2[:2],
+            ("W1", "R2", _OCT10, None, 50),
+        ]
+
+    def test_log_delete_marker_overwrite_keeps_last_value_before_tombstone(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec(overwrite=("note",))
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [
+                _replacement("W1", "R1", _OCT10, 100, note="a"),
+                _replacement("W1", "R1", _OCT11, 100, note="b"),
+                _replacement("W1", "R1", _OCT12, 100, deleted=True, note="z"),
+            ],
+        )
+        rows = read_table(self._uri(root, "dim_replacements"))
+        assert [(_naive(r["valid_from"]), _naive(r["valid_to"]), r["note"]) for r in rows] == [
+            (_OCT10, _OCT11_END, "b")
+        ]
+
+    def test_log_delete_marker_late_tombstone_opens_gap_before_later_vector(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [_replacement("W1", "R1", _OCT10, 100), _replacement("W1", "R1", _OCT15, 120)],
+            [_replacement("W1", "R1", _OCT12, 100, deleted=True)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            ("W1", "R1", _OCT10, _OCT11_END, 100),
+            ("W1", "R1", _OCT15, None, 120),
+        ]
+
+    def test_log_delete_marker_tombstone_at_stored_valid_from_replaces_vector(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            [_replacement("W1", "R1", _OCT10, 100), _replacement("W1", "R1", _OCT15, 120)],
+            [_replacement("W1", "R1", _OCT15, 120, deleted=True)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            ("W1", "R1", _OCT10, _OCT14_END, 100),
+        ]
+
+    def test_log_delete_marker_replay_with_new_track_value_stays_closed(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        spec = _replacement_spec()
+        self._write_batches(
+            writer,
+            make_frame,
+            spec,
+            _REPLACEMENTS_RUN1,
+            _REPLACEMENTS_RUN2,
+            [_replacement("W1", "R2", _OCT11, 70)],
+        )
+        assert self._replacement_vectors(root, read_table) == [
+            *_REPLACEMENTS_AFTER_RUN2[:2],
+            ("W1", "R2", _OCT10, _OCT10_END, 50),
+            ("W1", "R2", _OCT11, _OCT11_END, 70),
+        ]
+
+    def test_log_delete_marker_same_day_tombstone_at_date_precision_is_stable(
+        self,
+        writer: Any,
+        root: Path,
+        make_frame: Callable,
+        read_table: Callable,
+    ) -> None:
+        """An event and a tombstone on the same day leave a stable zero-width [D, D] vector."""
+        spec = _replacement_spec(date_type=HistoryDateType.DATE)
+        batch = [
+            _replacement("W1", "R1", datetime(2026, 10, 10, 8), 100),
+            _replacement("W1", "R1", datetime(2026, 10, 10, 17), 100, deleted=True),
+        ]
+        expected = [("W1", "R1", date(2026, 10, 10), date(2026, 10, 10), 100)]
+        self._write_batches(writer, make_frame, spec, batch)
+        assert self._replacement_vectors(root, read_table) == expected
+        self._write_batches(writer, make_frame, spec, batch)
+        assert self._replacement_vectors(root, read_table) == expected
 
     # ------------------------------------------------------------------
     # Overwrite columns

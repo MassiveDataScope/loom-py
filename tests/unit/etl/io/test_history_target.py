@@ -21,6 +21,7 @@ from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import (
     DeletePolicy,
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
     HistorifyRepairReport,
@@ -461,6 +462,46 @@ class TestIntoHistoryValidation:
         spec = IntoHistory("t", keys=("id",), effective_date=params.run_date)._to_spec()
         assert spec.overwrite is None
 
+    def test_delete_marker_none_by_default(self) -> None:
+        spec = IntoHistory("t", keys=("id",), effective_date="event_date", mode="log")._to_spec()
+        assert spec.delete_marker is None
+
+    def test_delete_marker_accepted_in_log_mode(self) -> None:
+        spec = IntoHistory(
+            "t",
+            keys=("id",),
+            effective_date="event_date",
+            mode="log",
+            delete_marker="is_deleted",
+        )._to_spec()
+        assert spec.delete_marker == "is_deleted"
+
+    def test_delete_marker_in_snapshot_mode_raises(self) -> None:
+        with pytest.raises(ValueError, match="'delete_marker' requires mode='log'"):
+            IntoHistory(
+                "t",
+                keys=("id",),
+                effective_date=params.run_date,
+                delete_marker="is_deleted",
+            )
+
+    @pytest.mark.parametrize(
+        "marker",
+        ["id", "status", "email", "event_date", "valid_from", "valid_to", "deleted_at", "season"],
+    )
+    def test_delete_marker_colliding_with_declared_column_raises(self, marker: str) -> None:
+        with pytest.raises(ValueError, match="'delete_marker'"):
+            IntoHistory(
+                "t",
+                keys=("id",),
+                track=("status",),
+                overwrite=("email",),
+                effective_date="event_date",
+                mode="log",
+                partition_scope=("season",),
+                delete_marker=marker,
+            )
+
 
 # ---------------------------------------------------------------------------
 # IntoHistory — identity and repr
@@ -538,6 +579,22 @@ class TestHistorifyKeyConflictError:
         with pytest.raises(ValueError):
             raise HistorifyKeyConflictError("dup")
 
+    def test_log_mode_names_effective_date_key(self) -> None:
+        err = HistorifyKeyConflictError("[{'id': 1}]", mode=HistorifyInputMode.LOG)
+        assert "(keys + effective_date)" in str(err)
+        assert "[{'id': 1}]" in str(err)
+        assert str(HistorifyKeyConflictError("dup")) == str(
+            HistorifyKeyConflictError("dup", mode=HistorifyInputMode.SNAPSHOT)
+        )
+
+
+class TestHistorifyDeleteMarkerError:
+    def test_is_value_error_naming_column_and_problem(self) -> None:
+        err = HistorifyDeleteMarkerError("is_deleted", "is missing from the incoming frame")
+        assert isinstance(err, ValueError)
+        assert "'is_deleted'" in str(err)
+        assert "is missing from the incoming frame" in str(err)
+
 
 class TestHistorifyDateCollisionError:
     def test_is_value_error_with_context(self) -> None:
@@ -604,6 +661,7 @@ class TestHistorifyRepairReport:
         ("loom.etl", "HistorifySpec"),
         ("loom.etl", "DeletePolicy"),
         ("loom.etl", "HistorifyDateCollisionError"),
+        ("loom.etl", "HistorifyDeleteMarkerError"),
         ("loom.etl.declarative.target", "IntoHistory"),
     ],
 )

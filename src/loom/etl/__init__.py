@@ -63,6 +63,7 @@ from loom.etl.declarative import (
     FromTable,
     FromTemp,
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
     HistorifyRepairReport,
@@ -203,6 +204,7 @@ __all__ = [
     # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
+    "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
     "EmptyReplaceError",
     # intermediates

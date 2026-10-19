@@ -70,11 +70,13 @@ class _HistorifySpecLike(Protocol):
     effective_date: Any
     mode: Any
     track: tuple[str, ...] | None
+    overwrite: tuple[str, ...] | None
     valid_from: str
     valid_to: str
     deleted_at: str
     partition_scope: tuple[str, ...] | None
     allow_temporal_rerun: bool
+    delete_marker: str | None
 
 
 class _PredicateShape(Enum):
@@ -452,6 +454,7 @@ def validate_historify_spec(step_type: type[Any], spec: TargetSpec) -> None:
     _check_historify_effective_date_not_in_track(step_type, historify)
     _check_historify_boundary_cols_disjoint(step_type, historify)
     _check_historify_log_mode_not_param_expr(step_type, historify)
+    _check_historify_delete_marker(step_type, historify)
     _warn_historify_no_partition_scope(step_type, historify)
     _warn_historify_rerun_without_scope(step_type, historify)
     _warn_historify_track_none(step_type, historify)
@@ -548,6 +551,43 @@ def _check_historify_log_mode_not_param_expr(
                 f"{step_type.__qualname__}: IntoHistory LOG mode requires "
                 "'effective_date' to be a column name (str), not a ParamExpr. "
                 "In LOG mode each row carries its own timestamp."
+            ),
+        )
+
+
+def _check_historify_delete_marker(step_type: type[Any], spec: _HistorifySpecLike) -> None:
+    """Raise if delete_marker is set outside LOG mode or names a declared column."""
+    marker = spec.delete_marker
+    if marker is None:
+        return
+    if str(spec.mode) != "log":
+        raise ETLCompilationError(
+            code=ETLErrorCode.INVALID_TARGET_TYPE,
+            component=step_type.__qualname__,
+            field="delete_marker",
+            message=(
+                f"{step_type.__qualname__}: IntoHistory 'delete_marker' requires LOG mode. "
+                "SNAPSHOT deletions are governed by 'delete_policy'."
+            ),
+        )
+    declared = {
+        *spec.keys,
+        *(spec.track or ()),
+        *(spec.overwrite or ()),
+        str(spec.effective_date),
+        spec.valid_from,
+        spec.valid_to,
+        spec.deleted_at,
+        *(spec.partition_scope or ()),
+    }
+    if marker in declared:
+        raise ETLCompilationError(
+            code=ETLErrorCode.INVALID_TARGET_TYPE,
+            component=step_type.__qualname__,
+            field="delete_marker",
+            message=(
+                f"{step_type.__qualname__}: IntoHistory 'delete_marker' {marker!r} must not "
+                "name a key, track, overwrite, effective_date, boundary or partition_scope column."
             ),
         )
 

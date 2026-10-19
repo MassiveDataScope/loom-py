@@ -4,13 +4,16 @@ Verifies that:
 * Every table write mode reaches its own backend hook and no other.
 * HistorifySpec is routed to _do_historify (not any other handler).
 * _do_historify validates missing-table policy before delegating.
-* _do_historify materializes the frame and delegates to _historify.
+* _do_historify materializes the frame, runs the SCD2 transform with the
+  engine's _historify_backend and writes its result through the create/replace
+  hooks, releasing the existing frame before the write.
 * Temp specs still raise TypeError.
 * Specs that are not a table write mode raise TypeError.
 """
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
@@ -18,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.etl import col
+from loom.etl.backends import _write_policy
 from loom.etl.backends._write_policy import _WritePolicy
 from loom.etl.declarative.expr._params import params
 from loom.etl.declarative.expr._refs import TableRef
@@ -46,6 +50,30 @@ from loom.etl.storage.routing import ResolvedTarget
 # ---------------------------------------------------------------------------
 
 
+class _FakeHistorifyBackend:
+    """Engine stand-in: the patched transform records its calls here."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, ...]] = []
+        self.report: HistorifyRepairReport | None = None
+
+
+def _fake_scd2_transform(
+    ops: _FakeHistorifyBackend,
+    frame: list[int],
+    existing: Any,
+    spec: HistorifySpec,
+    params_instance: Any,
+) -> tuple[list[int], HistorifyRepairReport | None]:
+    ops.calls.append((frame, spec, params_instance))
+    return [*frame, -1], ops.report
+
+
+@pytest.fixture(autouse=True)
+def _fake_transform(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_write_policy, "scd2_transform", _fake_scd2_transform)
+
+
 class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
     """Minimal concrete subclass for testing dispatch logic only."""
 
@@ -59,8 +87,11 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
         resolver.resolve.return_value = MagicMock(spec=ResolvedTarget)
         super().__init__(resolver=resolver, missing_table_policy=missing_table_policy)
         self._schema_exists = schema_exists
-        self.historify_calls: list[tuple[Any, ...]] = []
+        self.historify = _FakeHistorifyBackend()
+        self.historify_calls = self.historify.calls
         self.create_calls: list[tuple[Any, ...]] = []
+        self.replace_calls: list[tuple[Any, ...]] = []
+        self.replace_partitions_calls: list[tuple[Any, ...]] = []
 
     def _physical_schema(self, target: ResolvedTarget) -> dict[str, Any] | None:
         return {"col": "type"} if self._schema_exists else None
@@ -95,7 +126,7 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
     def _replace(
         self, frame: list[int], target: ResolvedTarget, *, schema_mode: SchemaMode
     ) -> None:
-        pass  # Stub — not used in historify dispatch tests.
+        self.replace_calls.append((frame, schema_mode))
 
     def _replace_partitions(
         self,
@@ -105,7 +136,7 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
         partition_cols: tuple[str, ...],
         schema_mode: SchemaMode,
     ) -> None:
-        pass  # Stub — not used in historify dispatch tests.
+        self.replace_partitions_calls.append((frame, partition_cols, schema_mode))
 
     def _replace_where(
         self,
@@ -145,17 +176,8 @@ class _StubWritePolicy(_WritePolicy[list[int], list[int], dict[str, Any]]):
     ) -> list[int] | None:
         return [0] if self._schema_exists else None
 
-    def _historify(
-        self,
-        frame: list[int],
-        existing: list[int] | None,
-        target: ResolvedTarget,
-        *,
-        spec: HistorifySpec,
-        params_instance: Any,
-    ) -> HistorifyRepairReport | None:
-        self.historify_calls.append((frame, spec, params_instance))
-        return None
+    def _historify_backend(self) -> Any:
+        return self.historify
 
     def _write_file(self, frame: list[int], spec: Any, *, streaming: bool) -> None:
         pass  # Stub — not used in historify dispatch tests.
@@ -298,22 +320,75 @@ class TestHistorifyRepairReportPassthrough:
         result = writer._do_historify([1], writer._resolver.resolve(None), _spec(), None)
         assert result is None
 
-    def test_repair_report_returned_when_historify_returns_one(self) -> None:
+    def test_repair_report_returned_and_logged_when_transform_reports(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         report = HistorifyRepairReport(
             affected_keys=frozenset({("player_id", 42)}),
             dates_requiring_rerun=("2025-01-01",),
             warnings=("rewove 1 record",),
         )
+        log = MagicMock()
+        monkeypatch.setattr(_write_policy, "_log", log)
+        writer = _StubWritePolicy(schema_exists=True)
+        writer.historify.report = report
+        target = MagicMock()
+        target.logical_ref.ref = "wh.dim_players"
 
-        class _ReportingWriter(_StubWritePolicy):
-            def _historify(
-                self, frame: Any, existing: Any, target: Any, *, spec: Any, params_instance: Any
-            ) -> HistorifyRepairReport | None:
-                return report
+        result = writer._do_historify([1], target, _spec(), None)
 
-        writer = _ReportingWriter(schema_exists=True)
-        result = writer._do_historify([1], writer._resolver.resolve(None), _spec(), None)
         assert result is report
+        log.warning.assert_called_once()
+        assert log.warning.call_args.args == ("historify_temporal_rerun",)
+        assert log.warning.call_args.kwargs["target"] == "wh.dim_players"
+        assert log.warning.call_args.kwargs["affected_key_count"] == 1
+        assert log.warning.call_args.kwargs["dates_requiring_rerun"] == ["2025-01-01"]
+
+
+# ---------------------------------------------------------------------------
+# Historify result write
+# ---------------------------------------------------------------------------
+
+
+class _Existing:
+    """Weak-referenceable stand-in for the existing target frame."""
+
+
+class TestHistorifyResultWrite:
+    def test_first_run_creates_table_with_partition_scope(self) -> None:
+        writer = _StubWritePolicy(
+            schema_exists=False, missing_table_policy=MissingTablePolicy.CREATE
+        )
+        writer.write([1], _spec(partition_scope=("season",)), None)
+        assert writer.create_calls == [([1, -1], SchemaMode.STRICT, ("season",))]
+        assert writer.replace_calls == writer.replace_partitions_calls == []
+
+    def test_existing_table_is_replaced(self) -> None:
+        writer = _StubWritePolicy(schema_exists=True)
+        writer.write([1], _spec(), None)
+        assert writer.replace_calls == [([1, -1], SchemaMode.STRICT)]
+
+    def test_existing_table_with_partition_scope_replaces_partitions(self) -> None:
+        writer = _StubWritePolicy(schema_exists=True)
+        writer.write([1], _spec(partition_scope=("season",)), None)
+        assert writer.replace_partitions_calls == [([1, -1], ("season",), SchemaMode.STRICT)]
+
+    def test_existing_frame_is_released_before_the_write(self) -> None:
+        class _TrackingWriter(_StubWritePolicy):
+            existing_ref: weakref.ref[_Existing]
+            alive_at_write: bool | None = None
+
+            def _read_existing_data(self, target: Any, frame: Any, spec: Any) -> Any:
+                existing = _Existing()
+                self.existing_ref = weakref.ref(existing)
+                return existing
+
+            def _replace(self, frame: Any, target: Any, *, schema_mode: Any) -> None:
+                self.alive_at_write = self.existing_ref() is not None
+
+        writer = _TrackingWriter(schema_exists=True)
+        writer.write([1], _spec(), None)
+        assert writer.alive_at_write is False
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +402,7 @@ _HOOKS = (
     "_replace_where",
     "_upsert",
     "_update",
-    "_historify",
+    "_historify_backend",
 )
 
 _TABLE_REF = TableRef("wh.players")
@@ -348,15 +423,16 @@ _WRITE_MODES: tuple[tuple[Any, str], ...] = (
     ),
     (UpsertSpec(table_ref=_TABLE_REF, upsert_keys=("player_id",)), "_upsert"),
     (UpdateSpec(table_ref=_TABLE_REF, keys=("player_id",)), "_update"),
-    (_spec(), "_historify"),
+    (_spec(), "_historify_backend"),
 )
 
 
 def _recorder(log: list[str], name: str) -> Callable[..., None]:
     """Return a hook stand-in that records its own name when invoked."""
 
-    def record(*_args: Any, **_kwargs: Any) -> None:
+    def record(*_args: Any, **_kwargs: Any) -> Any:
         log.append(name)
+        return _FakeHistorifyBackend() if name == "_historify_backend" else None
 
     return record
 
@@ -373,7 +449,8 @@ class TestWriteModeRouting:
 
         writer.write([1], spec, None)
 
-        assert reached == [hook]
+        writes_history = hook == "_historify_backend"
+        assert reached == ([hook, "_replace"] if writes_history else [hook])
 
     def test_a_spec_that_is_not_a_table_write_mode_raises(self) -> None:
         writer = _StubWritePolicy(schema_exists=True)
