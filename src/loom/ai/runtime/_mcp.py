@@ -21,12 +21,7 @@ from loom.ai._concurrency import shield_and_drain
 from loom.ai._filters import select_names
 from loom.ai.abc import ConcurrentMcpSession, McpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import AgentPlan, CompiledMcpCapability, mcp_connection
-from loom.ai.errors import (
-    AgentCompilationIssue,
-    mcp_connection_conflict,
-    mcp_server_unreachable,
-    tool_filter_matches_nothing,
-)
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 
 _logger = logging.getLogger(__name__)
 
@@ -181,7 +176,9 @@ def filter_issues(
     failure than a filter matching nothing.
     """
     return [
-        tool_filter_matches_nothing(target.agent, target.server)
+        AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING.issue(
+            component=target.agent, target=target.server
+        )
         for target in targets
         if (target.include or target.exclude)
         and target.key in listed
@@ -197,7 +194,10 @@ def listing_timeout_issues(
         target.key: target.server for target in targets if target.key not in listed
     }
     return [
-        mcp_server_unreachable(server, "listing its tools timed out") for server in pending.values()
+        AgentErrorCode.MCP_SERVER_UNREACHABLE.issue(
+            server=server, reason="listing its tools timed out"
+        )
+        for server in pending.values()
     ]
 
 
@@ -236,7 +236,11 @@ def connection_conflicts(plans: Iterable[AgentPlan]) -> list[AgentCompilationIss
             connection = mcp_connection(capability)
             seen = first.setdefault(capability.server, (connection, plan.name))
             if seen[0] != connection:
-                issues.append(mcp_connection_conflict(capability.server, (seen[1], plan.name)))
+                issues.append(
+                    AgentErrorCode.MCP_CONNECTION_CONFLICT.issue(
+                        server=capability.server, agents=(seen[1], plan.name)
+                    )
+                )
     return issues
 
 

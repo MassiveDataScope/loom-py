@@ -57,14 +57,9 @@ from loom.ai.errors import (
     INVOKER_MISSING_REASON,
     AgentCompilationError,
     AgentCompilationIssue,
+    AgentErrorCode,
     AgentRunError,
     AgentRunErrorCode,
-    a2a_agent_unreachable,
-    conversation_invoker_missing,
-    mcp_server_unreachable,
-    on_output_invoker_missing,
-    sql_readonly_drift,
-    use_case_tool_filter_matches_nothing,
 )
 from loom.ai.runtime._bounded import RunContext
 from loom.ai.runtime._chain import enter_agent_call, exit_agent_call
@@ -560,9 +555,15 @@ class AgentRuntime:
             return
         issues: list[AgentCompilationIssue] = []
         if hooked:
-            issues.append(on_output_invoker_missing(hooked, reason=reason))
+            issues.append(
+                AgentErrorCode.ON_OUTPUT_INVOKER_MISSING.issue(agents=hooked, reason=reason)
+            )
         if conversational:
-            issues.append(conversation_invoker_missing(conversational, reason=reason))
+            issues.append(
+                AgentErrorCode.CONVERSATION_INVOKER_MISSING.issue(
+                    agents=conversational, reason=reason
+                )
+            )
         raise AgentCompilationError(issues)
 
     def _invoker_reason(self) -> str | None:
@@ -579,7 +580,7 @@ class AgentRuntime:
     def _verify_sql_readonly(self) -> None:
         """Abort start-up when a SQL grant's read-only state drifted (FR-046)."""
         issues = [
-            sql_readonly_drift(capability.connection)
+            AgentErrorCode.SQL_READONLY_DRIFT.issue(connection=capability.connection)
             for plan in self._plans.values()
             for capability in plan.capabilities
             if type(capability) is CompiledSqlCapability and self._sql_drifted(capability)
@@ -678,14 +679,20 @@ class AgentRuntime:
         factory = self._mcp_client_factory
         if factory is None:
             unwired.append(
-                mcp_server_unreachable(capability.server, "no MCP client factory is configured")
+                AgentErrorCode.MCP_SERVER_UNREACHABLE.issue(
+                    server=capability.server, reason="no MCP client factory is configured"
+                )
             )
             return
         client = factory(capability)
         try:
             session = await client.__aenter__()
         except Exception as exc:  # recovery: reported as a coded start-up issue
-            unreachable.append(mcp_server_unreachable(capability.server, str(exc)))
+            unreachable.append(
+                AgentErrorCode.MCP_SERVER_UNREACHABLE.issue(
+                    server=capability.server, reason=str(exc)
+                )
+            )
             return
         opened.append(_OpenedClient(key=mcp_key(capability), client=client, session=session))
 
@@ -699,14 +706,18 @@ class AgentRuntime:
         factory = self._a2a_client_factory
         if factory is None:
             unwired.append(
-                a2a_agent_unreachable(capability.agent, "no A2A client factory is configured")
+                AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(
+                    agent=capability.agent, reason="no A2A client factory is configured"
+                )
             )
             return
         client = factory(capability)
         try:
             session = await client.__aenter__()
         except Exception as exc:  # recovery: reported as a coded start-up issue
-            unreachable.append(a2a_agent_unreachable(capability.agent, str(exc)))
+            unreachable.append(
+                AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(agent=capability.agent, reason=str(exc))
+            )
             return
         opened.append(_OpenedClient(key=_a2a_key(capability), client=client, session=session))
 
@@ -728,12 +739,12 @@ class AgentRuntime:
         reason = f"connection did not complete within {self._config.startup_timeout_ms} ms"
         live = {entry.key for entry in opened}
         issues: list[AgentCompilationIssue] = [
-            mcp_server_unreachable(capability.server, reason)
+            AgentErrorCode.MCP_SERVER_UNREACHABLE.issue(server=capability.server, reason=reason)
             for capability in mcp
             if mcp_key(capability) not in live
         ]
         issues.extend(
-            a2a_agent_unreachable(remote.agent, reason)
+            AgentErrorCode.A2A_AGENT_UNREACHABLE.issue(agent=remote.agent, reason=reason)
             for remote in a2a
             if _a2a_key(remote) not in live
         )
@@ -824,9 +835,18 @@ class AgentRuntime:
             if not select_names(
                 names, include=grant.capability.include, exclude=grant.capability.exclude
             ):
+                # One condition, one code: the agent-artifact check's code, told
+                # apart by its message and its ``parameters.<name>`` field.
                 issues.append(
-                    use_case_tool_filter_matches_nothing(
-                        grant.usecase, grant.parameter, grant.capability.server
+                    AgentCompilationIssue(
+                        code=AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING,
+                        message=(
+                            f"{grant.usecase}: parameter '{grant.parameter}' declares an "
+                            f"include filter for mcp server '{grant.capability.server}' that "
+                            "matches no tool"
+                        ),
+                        component=grant.usecase,
+                        field=f"parameters.{grant.parameter}",
                     )
                 )
         return issues

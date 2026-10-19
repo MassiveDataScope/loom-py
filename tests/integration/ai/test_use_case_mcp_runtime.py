@@ -168,11 +168,15 @@ class TestServerDeclaredOnlyByAUseCase:
         with pytest.raises(AgentCompilationError) as failure:
             await runtime.__aenter__()
 
-        assert AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING in _codes(failure.value)
-        message = str(failure.value)
-        assert _USECASE in message
-        assert _PARAMETER in message
-        assert _SERVER_A in message
+        issue = next(
+            issue
+            for issue in failure.value.issues
+            if issue.code is AgentErrorCode.TOOL_FILTER_MATCHES_NOTHING
+        )
+        assert (issue.component, issue.field) == (_USECASE, f"parameters.{_PARAMETER}")
+        assert _USECASE in issue.message
+        assert _PARAMETER in issue.message
+        assert _SERVER_A in issue.message
 
     async def test_the_listings_expiry_still_aborts(
         self,

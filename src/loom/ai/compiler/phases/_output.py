@@ -13,7 +13,7 @@ so both may own the pass-through of the validated bytes.
 :func:`_resolve_symbol` and :func:`_schema_to_annotation` are shared with the
 state phase (:mod:`loom.ai.compiler.phases._state`), which compiles the same
 two authored shapes — a symbol reference and a hand-written JSON Schema —
-into a schema and an annotation. Each caller supplies its own issue factory
+into a schema and an annotation. Each caller supplies its own issue code
 and, for the schema path, its own generated-struct name; nothing about the
 issue codes, the messages, or the exceptions caught changes between the two
 callers. What differs between the two ``type_ref``/``deps_type`` paths stays
@@ -26,7 +26,7 @@ that never named a class keeps compiling.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -35,22 +35,11 @@ import msgspec
 from loom.ai.abc import OutputCheck
 from loom.ai.compiler._plan import CompiledOutput
 from loom.ai.declarative import JsonSchemaOutput, OutputSpec, TypeRefOutput
-from loom.ai.errors import (
-    AgentCompilationIssue,
-    output_check_unresolvable,
-    output_schema_invalid,
-    output_type_ref_unresolvable,
-    output_type_ref_unsupported,
-)
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 from loom.core.model import LoomType, UnsupportedBoundaryType, loom_type, msgspec_type
 from loom.core.symbols import import_symbol
 
 _CompileResult = tuple[CompiledOutput | None, list[AgentCompilationIssue]]
-
-_IssueFactory = Callable[[str, str], AgentCompilationIssue]
-"""Builds one compilation issue from ``(component, detail)`` — the shape
-every ``*_unresolvable`` and ``*_schema_invalid`` factory in
-:mod:`loom.ai.errors` already has."""
 
 # ``Any`` in the values: the mapped Python annotations are runtime objects
 # (``str``, ``list[...]``, generated structs) that a static alias cannot name.
@@ -94,7 +83,7 @@ def compile_output_check(
     """
     if ref is None:
         return None, []
-    symbol, issues = _resolve_symbol(ref, component, output_check_unresolvable)
+    symbol, issues = _resolve_symbol(ref, component, AgentErrorCode.OUTPUT_CHECK_UNRESOLVABLE)
     if symbol is None:
         return None, issues
     return cast("OutputCheck", symbol), []
@@ -102,7 +91,7 @@ def compile_output_check(
 
 def _compile_json_schema(output: JsonSchemaOutput, component: str) -> _CompileResult:
     compiled, issues = _schema_to_annotation(
-        output.schema, "CompiledOutputModel", component, output_schema_invalid
+        output.schema, "CompiledOutputModel", component, AgentErrorCode.OUTPUT_SCHEMA_INVALID
     )
     if compiled is None:
         return None, issues
@@ -111,49 +100,56 @@ def _compile_json_schema(output: JsonSchemaOutput, component: str) -> _CompileRe
 
 
 def _compile_type_ref(output: TypeRefOutput, component: str) -> _CompileResult:
-    symbol, issues = _resolve_symbol(output.ref, component, output_type_ref_unresolvable)
+    symbol, issues = _resolve_symbol(
+        output.ref, component, AgentErrorCode.OUTPUT_TYPE_REF_UNRESOLVABLE
+    )
     if symbol is None:
         return None, issues
     try:
         lt = loom_type(symbol)
     except UnsupportedBoundaryType as exc:
-        return None, [output_type_ref_unsupported(component, output.ref, str(exc))]
+        return None, [
+            AgentErrorCode.OUTPUT_TYPE_REF_UNSUPPORTED.issue(
+                component=component, ref=output.ref, reason=str(exc)
+            )
+        ]
     return CompiledOutput(schema=MappingProxyType(lt.schema()), loom_type=lt), []
 
 
 def _resolve_symbol(
-    ref: str, component: str, unresolvable_issue: _IssueFactory
+    ref: str, component: str, unresolvable: AgentErrorCode
 ) -> tuple[Any | None, list[AgentCompilationIssue]]:
-    """Resolve *ref*, or report it as unresolvable via *unresolvable_issue*.
+    """Resolve *ref*, or report it under the *unresolvable* code, which takes ``component, ref``.
 
     Shared with the state ``deps_type`` symbol path (:mod:`loom.ai.compiler.phases._state`).
     """
     try:
         return import_symbol(ref), []
     except (ImportError, AttributeError, ValueError):
-        return None, [unresolvable_issue(component, ref)]
+        return None, [unresolvable.issue(component=component, ref=ref)]
 
 
 def _schema_to_annotation(
-    schema: Mapping[str, Any], model_name: str, component: str, invalid_issue: _IssueFactory
+    schema: Mapping[str, Any], model_name: str, component: str, invalid: AgentErrorCode
 ) -> tuple[tuple[Mapping[str, Any], LoomType] | None, list[AgentCompilationIssue]]:
     """Compile a hand-written JSON Schema object into a ``(schema, loom_type)`` pair.
 
-    *model_name* names the generated struct type; *invalid_issue* reports a
-    structural fault, a failure to map the schema to a runtime annotation, or
-    a failure of :func:`~loom.core.model.msgspec_type` to build a decoder over
-    it — the annotation mapping and the decoder build both run inside the same
+    *model_name* names the generated struct type; the *invalid* code, which
+    takes ``component, reason``, reports a structural fault, a failure to map
+    the schema to a runtime annotation, or a failure of
+    :func:`~loom.core.model.msgspec_type` to build a decoder over it — the
+    annotation mapping and the decoder build both run inside the same
     guard, so either failure is a coded compilation issue and never an
     unhandled exception.
     """
     fault = _schema_fault(schema)
     if fault is not None:
-        return None, [invalid_issue(component, fault)]
+        return None, [invalid.issue(component=component, reason=fault)]
     try:
         annotation = _annotation_for(schema, model_name)
         lt = msgspec_type(annotation)
     except (TypeError, ValueError, UnsupportedBoundaryType) as exc:
-        return None, [invalid_issue(component, str(exc))]
+        return None, [invalid.issue(component=component, reason=str(exc))]
     return (MappingProxyType(dict(schema)), lt), []
 
 

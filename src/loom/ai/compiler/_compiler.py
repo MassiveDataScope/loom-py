@@ -31,11 +31,7 @@ from loom.ai.compiler.phases._output import compile_output, compile_output_check
 from loom.ai.compiler.phases._state import compile_state
 from loom.ai.config import AiConfig
 from loom.ai.declarative import AgentSpecV1, DecodedSpec
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentCompilationIssue,
-    agent_name_duplicate,
-)
+from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.core.sql.config import SqlConfig
@@ -240,4 +236,8 @@ def _duplicate_name_issues(
     sources: dict[str, list[str]] = defaultdict(list)
     for spec, source_path in entries:
         sources[spec.name].append(source_path if source_path is not None else _UNNAMED_SOURCE)
-    return [agent_name_duplicate(name, paths) for name, paths in sources.items() if len(paths) > 1]
+    return [
+        AgentErrorCode.AGENT_NAME_DUPLICATE.issue(component=name, sources=paths)
+        for name, paths in sources.items()
+        if len(paths) > 1
+    ]

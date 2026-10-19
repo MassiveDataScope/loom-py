@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
 from loom.ai.abc import ConcurrentMcpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
-from loom.ai.errors import AgentCompilationError, mcp_transport_invalid
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
 
@@ -281,7 +281,9 @@ def _mcp_client(component: str, capability: CompiledMcpCapability) -> str | Clie
     if capability.transport == "stdio" and capability.command is not None:
         return _stdio_transport(capability.command, capability)
     reason = f"transport {capability.transport!r} is not served by the pydantic-ai engine"
-    raise AgentCompilationError([mcp_transport_invalid(component, reason)])
+    raise AgentCompilationError(
+        [AgentErrorCode.MCP_TRANSPORT_INVALID.issue(component=component, reason=reason)]
+    )
 
 
 def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientTransport:

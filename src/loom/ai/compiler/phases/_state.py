@@ -9,7 +9,7 @@ The symbol-resolution step and the hand-written-schema-to-annotation step are
 not reimplemented here: both come from :mod:`loom.ai.compiler.phases._output`
 (:func:`~loom.ai.compiler.phases._output._resolve_symbol`,
 :func:`~loom.ai.compiler.phases._output._schema_to_annotation`), parametrised
-by this module's own issue factories.
+by this module's own issue codes.
 
 A resolved ``deps_type`` symbol that is a class is compiled the same way the
 output side compiles a ``type_ref`` (D3): :func:`~loom.core.model.loom_type`
@@ -37,13 +37,7 @@ import msgspec
 
 from loom.ai.abc import StateShape
 from loom.ai.compiler.phases._output import _resolve_symbol, _schema_to_annotation
-from loom.ai.errors import (
-    AgentCompilationIssue,
-    state_declaration_conflict,
-    state_schema_invalid,
-    state_type_ref_unresolvable,
-    state_type_ref_unsupported,
-)
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 from loom.core.model import UnsupportedBoundaryType, loom_type, msgspec_type
 
 _CompileResult = tuple[StateShape | None, list[AgentCompilationIssue]]
@@ -67,7 +61,7 @@ def compile_state(
         on failure) and the issues found.
     """
     if deps_type is not None and deps_schema is not None:
-        return None, [state_declaration_conflict(component)]
+        return None, [AgentErrorCode.STATE_DECLARATION_CONFLICT.issue(component=component)]
     if deps_type == "dict":
         return StateShape(schema=None, loom_type=None), []
     if deps_type is not None:
@@ -78,26 +72,34 @@ def compile_state(
 
 
 def _compile_type_ref(ref: str, component: str) -> _CompileResult:
-    symbol, issues = _resolve_symbol(ref, component, state_type_ref_unresolvable)
+    symbol, issues = _resolve_symbol(ref, component, AgentErrorCode.STATE_TYPE_REF_UNRESOLVABLE)
     if symbol is None:
         return None, issues
     if isinstance(symbol, type):
         try:
             lt = loom_type(symbol)
         except UnsupportedBoundaryType as exc:
-            return None, [state_type_ref_unsupported(component, ref, str(exc))]
+            return None, [
+                AgentErrorCode.STATE_TYPE_REF_UNSUPPORTED.issue(
+                    component=component, ref=ref, reason=str(exc)
+                )
+            ]
         return StateShape(schema=MappingProxyType(lt.schema()), loom_type=lt), []
     try:
         schema = msgspec.json.schema(symbol)
         lt = msgspec_type(symbol)
     except (TypeError, UnsupportedBoundaryType) as exc:
-        return None, [state_type_ref_unsupported(component, ref, str(exc))]
+        return None, [
+            AgentErrorCode.STATE_TYPE_REF_UNSUPPORTED.issue(
+                component=component, ref=ref, reason=str(exc)
+            )
+        ]
     if _schema_admits_unknown_fields(schema):
         return None, [
-            state_type_ref_unsupported(
-                component,
-                ref,
-                "the struct must declare forbid_unknown_fields=True: state decoded from a "
+            AgentErrorCode.STATE_TYPE_REF_UNSUPPORTED.issue(
+                component=component,
+                ref=ref,
+                reason="the struct must declare forbid_unknown_fields=True: state decoded from a "
                 "caller's request body must reject a field the artifact did not declare, "
                 "exactly as the output side already requires (FR-017)",
             )
@@ -126,7 +128,7 @@ def _schema_admits_unknown_fields(schema: Mapping[str, Any]) -> bool:
 
 def _compile_schema(schema: Mapping[str, Any], component: str) -> _CompileResult:
     compiled, issues = _schema_to_annotation(
-        schema, "CompiledStateModel", component, state_schema_invalid
+        schema, "CompiledStateModel", component, AgentErrorCode.STATE_SCHEMA_INVALID
     )
     if compiled is None:
         return None, issues

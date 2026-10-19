@@ -667,12 +667,12 @@ def _effective_agent_specs(
     """
     # Local import: same containment rule as '_resolve_ai'; this helper only
     # ever runs from the branch that already decided to load the AI pillar.
-    from loom.ai.errors import AgentCompilationError, agent_specs_conflict, agent_specs_missing
+    from loom.ai.errors import AgentCompilationError, AgentErrorCode
 
     if config_specs and manifest_specs:
-        raise AgentCompilationError([agent_specs_conflict()])
+        raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_CONFLICT.issue()])
     if not config_specs and not manifest_specs and not has_declaring_use_case:
-        raise AgentCompilationError([agent_specs_missing()])
+        raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
     return config_specs or manifest_specs
 
 
@@ -737,7 +737,7 @@ def _compile_use_case_mcp(
 
     ``_verify_mcp_markers`` already checked every binding's server name
     against this same ``servers`` mapping, so the shared compile helper's own
-    ``mcp_server_unknown`` is unreachable from this call by construction. The
+    ``MCP_SERVER_UNKNOWN`` is unreachable from this call by construction. The
     caller still raises on one anyway rather than dropping it silently,
     fail-closed should that ordering ever break — one line, no new
     vocabulary.

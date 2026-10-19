@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from loom.ai.abc import StateShape
 from loom.ai.compiler._plan import CompiledInstruction
 from loom.ai.declarative import InstructionBlock
-from loom.ai.errors import AgentCompilationIssue, instruction_block_invalid
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 
 _CompileResult = tuple[tuple[CompiledInstruction, ...], list[AgentCompilationIssue]]
 
@@ -61,9 +61,9 @@ def _duplicate_name_issues(
         if block.name is not None:
             positions[block.name].append(index)
     return [
-        instruction_block_invalid(
-            component,
-            f"name '{name}' is declared twice, at positions "
+        AgentErrorCode.INSTRUCTION_BLOCK_INVALID.issue(
+            component=component,
+            reason=f"name '{name}' is declared twice, at positions "
             f"{', '.join(str(position) for position in dupes)}",
         )
         for name, dupes in positions.items()
@@ -77,9 +77,9 @@ def _missing_state_issues(
     if state is not None:
         return []
     return [
-        instruction_block_invalid(
-            component,
-            f"block {_block_label(block, index)} declares template "
+        AgentErrorCode.INSTRUCTION_BLOCK_INVALID.issue(
+            component=component,
+            reason=f"block {_block_label(block, index)} declares template "
             f"'{block.template}' but the artifact declares no state "
             "(add deps_type or deps_schema)",
         )

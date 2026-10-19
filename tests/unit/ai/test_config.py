@@ -249,6 +249,18 @@ class TestAgentEndpointConfig:
 
         assert endpoint.allow_anonymous is False
 
+    def test_a_blank_auth_fails_the_config_with_endpoint_auth_missing(self) -> None:
+        """An exposed agent must name its authentication; whitespace names none."""
+        endpoints = {"triage": AgentEndpointConfig(enabled=True, auth="  ")}
+
+        with pytest.raises(AgentCompilationError) as excinfo:
+            _config_with(endpoints=endpoints)
+
+        (issue,) = excinfo.value.issues
+        assert issue.code is AgentErrorCode.ENDPOINT_AUTH_MISSING
+        assert issue.message == "triage: HTTP exposure requires a named authentication"
+        assert (issue.component, issue.field) == ("triage", "auth")
+
 
 class TestAiConfigDefaults:
     @pytest.fixture
