@@ -67,11 +67,35 @@ def resolve_environment(explicit: Environment | str | None = None) -> Environmen
     if isinstance(explicit, Environment):
         return explicit
     if explicit is not None:
-        return _parse(explicit, "the environment argument")
+        return parse_environment(explicit, source="the environment argument")
     raw = os.environ.get(ENVIRONMENT_VARIABLE)
     if raw is None:
         return Environment.PRODUCTION
-    return _parse(raw, ENVIRONMENT_VARIABLE)
+    return parse_environment(raw, source=ENVIRONMENT_VARIABLE)
+
+
+def parse_environment(raw: str, *, source: str) -> Environment:
+    """Parse *raw*, read from *source*, into an :class:`Environment`.
+
+    For values that name an environment without selecting the running one,
+    such as the keys of a per-environment configuration block.
+
+    Args:
+        raw: Environment name; surrounding blanks and case are ignored.
+        source: Where *raw* comes from, named in the error.
+
+    Returns:
+        The matching :class:`Environment`.
+
+    Raises:
+        ConfigError: When *raw* names no environment.
+    """
+    try:
+        return Environment(raw.strip().lower())
+    except ValueError:
+        raise ConfigError(
+            f"unknown environment {raw!r} from {source}. Valid values: {_VALID}."
+        ) from None
 
 
 def environment_config_paths(
@@ -128,12 +152,3 @@ def select_config_paths(
     if not config_paths:
         raise ConfigError(f"{caller} requires config files or a config_dir.")
     return tuple(config_paths)
-
-
-def _parse(raw: str, source: str) -> Environment:
-    try:
-        return Environment(raw.strip().lower())
-    except ValueError:
-        raise ConfigError(
-            f"unknown environment {raw!r} from {source}. Valid values: {_VALID}."
-        ) from None

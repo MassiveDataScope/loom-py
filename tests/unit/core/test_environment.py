@@ -18,6 +18,7 @@ from loom.core.environment import (
     ENVIRONMENT_VARIABLE,
     Environment,
     environment_config_paths,
+    parse_environment,
     resolve_environment,
 )
 
@@ -72,6 +73,15 @@ class TestResolveEnvironment:
 
         with pytest.raises(ConfigError, match=ENVIRONMENT_VARIABLE):
             resolve_environment()
+
+
+class TestParseEnvironment:
+    def test_a_value_from_another_source_parses_to_its_member(self) -> None:
+        assert parse_environment(" Staging ", source="environments key") is Environment.STAGING
+
+    def test_an_unknown_value_names_its_source(self) -> None:
+        with pytest.raises(ConfigError, match="'dev' from environments key"):
+            parse_environment("dev", source="environments key")
 
 
 class TestDeployedEnvironments:

@@ -12,9 +12,11 @@ logged. A check returns a :class:`Finding` when the configuration is unsafe,
             return None
         return Finding(message="billing uses the sandbox gateway", hint="set billing.gateway")
 
-A check registers when the module defining it is imported; loom's own checks
-live in packages the application factories import anyway (``loom.core.logger``
-and ``loom.rest``).
+A check registers when the module defining it is imported. loom's own checks
+live in packages the entry points import anyway (``loom.core.logger`` and
+``loom.rest``); an application lists the modules holding its checks under
+``checks.modules``, which every run imports first, so the same checks run at
+startup and in ``loom check --deploy``.
 
 The application factories call :func:`enforce_deploy_checks`, which runs the
 checks only in production and staging. ``loom check --deploy`` calls
@@ -25,6 +27,7 @@ enforcing logs a warning naming every silenced id.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 from collections.abc import Callable, Collection, Iterable
@@ -47,6 +50,12 @@ CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}"
 
 SILENCED_KEY: Final = "checks.silenced"
 """Configuration key listing the check ids accepted on purpose."""
+
+MODULES_KEY: Final = "checks.modules"
+"""Configuration key listing the modules that register the application's checks."""
+
+REST_CHECKS: Final = "loom.rest"
+"""Area of loom's REST checks; a process serving no HTTP skips it."""
 
 
 class CheckLevel(StrEnum):
@@ -185,8 +194,9 @@ class DeployCheckError(ConfigError):
         )
 
 
-class _ChecksConfig(msgspec.Struct, frozen=True, kw_only=True):
+class _ChecksConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     silenced: tuple[str, ...] = ()
+    modules: tuple[str, ...] = ()
 
 
 def run_deploy_checks(
@@ -195,7 +205,7 @@ def run_deploy_checks(
     skip: Collection[str] = (),
     registry: DeployCheckRegistry = DEPLOY_CHECKS,
 ) -> DeployReport:
-    """Run every registered check not silenced by *config* nor skipped.
+    """Import ``checks.modules``, then run every check not silenced nor skipped.
 
     Args:
         config: Loaded configuration the checks read.
@@ -208,9 +218,13 @@ def run_deploy_checks(
         The findings and the silenced ids.
 
     Raises:
-        ConfigError: When ``checks.silenced`` holds an entry outside the id scheme.
+        ConfigError: When the ``checks`` section has an unknown key,
+            ``checks.silenced`` holds an entry outside the id scheme, or a
+            module of ``checks.modules`` cannot be imported.
     """
-    silenced = _silenced(config)
+    section = config.section_or_default("checks", _ChecksConfig, _ChecksConfig())
+    _import_modules(section.modules)
+    silenced = _silenced(section.silenced)
     results = tuple(
         CheckResult(id=check_id, message=finding.message, hint=finding.hint)
         for check_id, check in registry.items()
@@ -268,8 +282,15 @@ def _require_id(check_id: str) -> None:
         )
 
 
-def _silenced(config: ConfigContext) -> tuple[str, ...]:
-    silenced = config.section_or_default("checks", _ChecksConfig, _ChecksConfig()).silenced
+def _import_modules(modules: tuple[str, ...]) -> None:
+    for module in modules:
+        try:
+            importlib.import_module(module)
+        except ImportError as exc:
+            raise ConfigError(f"{MODULES_KEY} entry {module!r} cannot be imported: {exc}") from exc
+
+
+def _silenced(silenced: tuple[str, ...]) -> tuple[str, ...]:
     for entry in silenced:
         if CHECK_ID.fullmatch(entry) is None:
             raise ConfigError(
@@ -285,6 +306,8 @@ def _skipped(check_id: str, skip: Collection[str]) -> bool:
 __all__ = [
     "CHECK_ID",
     "DEPLOY_CHECKS",
+    "MODULES_KEY",
+    "REST_CHECKS",
     "SILENCED_KEY",
     "CheckLevel",
     "CheckResult",

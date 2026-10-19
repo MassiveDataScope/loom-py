@@ -8,6 +8,7 @@ accepted on purpose, and the startup log says which ones they are.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -187,3 +188,41 @@ class TestEnforceDeployChecks:
         assert len(silenced) == 1
         assert silenced[0].levelno == logging.WARNING
         assert _ERROR_ID in silenced[0].getMessage()
+
+
+_APP_CHECK_MODULE = """\
+from loom.core.checks import Finding, deploy_check
+
+
+@deploy_check("{area}.E001")
+def _unsafe(config):
+    if not config.has("{area}.unsafe"):
+        return None
+    return Finding(message="{area} is unsafe", hint="unset {area}.unsafe")
+"""
+
+
+class TestApplicationCheckModules:
+    def test_a_listed_module_is_imported_and_its_checks_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    ) -> None:
+        area = f"appchecks{abs(hash(request.node.nodeid)) % 10**8}"
+        (tmp_path / f"{area}_checks.py").write_text(_APP_CHECK_MODULE.format(area=area))
+        monkeypatch.syspath_prepend(str(tmp_path))
+        config = _config(checks={"modules": [f"{area}_checks"]}, **{area: {"unsafe": True}})
+
+        report = run_deploy_checks(config)
+
+        assert [r.id for r in report.results if r.id.startswith(area)] == [f"{area}.E001"]
+
+    def test_a_module_that_cannot_be_imported_is_a_config_error(self) -> None:
+        config = _config(checks={"modules": ["no_such_package.checks"]})
+
+        with pytest.raises(ConfigError, match="no_such_package.checks"):
+            run_deploy_checks(config, registry=_registry())
+
+    def test_an_unknown_key_under_checks_is_a_config_error(self) -> None:
+        config = _config(checks={"silence": [_ERROR_ID]})
+
+        with pytest.raises(ConfigError, match="silence"):
+            run_deploy_checks(config, registry=_registry())
