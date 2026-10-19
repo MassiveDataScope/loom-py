@@ -12,7 +12,9 @@ import msgspec
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
+from loom.core.checks import REST_CHECKS, enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigResolver
+from loom.core.environment import Environment, resolve_environment
 from loom.core.observability.protocol import LifecycleObserver
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import flush_runner
@@ -100,8 +102,15 @@ class ETLRunner:
         extra_observers: Sequence[LifecycleObserver] | None = None,
         config_context: ConfigContext | None = None,
         agents: AgentBatchRunner | None = None,
+        environment: Environment | str | None = None,
     ) -> ETLRunner:
         """Build an :class:`ETLRunner` from resolved config objects.
+
+        The environment is resolved once (*environment*, else ``LOOM_ENV``,
+        else production; see :mod:`loom.core.environment`) and drives the
+        logger defaults. With a *config_context* the deploy checks run in
+        production and staging, except the REST ones; without one there is
+        no configuration to check.
 
         Args:
             extra_observers: Optional additional :class:`LifecycleObserver`
@@ -112,10 +121,20 @@ class ETLRunner:
             agents: Runner of the agents the steps' ``WithAgent`` declare. On
                 Spark every declaration is refused at compile time with
                 ``AGENT_UNSUPPORTED_ENGINE``: agents map Polars frames only.
+            environment: Environment of the run; overrides ``LOOM_ENV``.
+
+        Raises:
+            DeployCheckError: When a deploy check of level error fails in
+                production or staging.
         """
+        resolved_environment = resolve_environment(environment)
         resolved_obs_config = obs_config or ETLObservabilityConfig()
+        observability = ObservabilityRuntime.from_config(
+            resolved_obs_config, environment=resolved_environment
+        )
+        if config_context is not None:
+            enforce_deploy_checks(config_context, resolved_environment, skip=(REST_CHECKS,))
         reader, writer = make_backends(config, spark)
-        observability = ObservabilityRuntime.from_config(resolved_obs_config)
         if resolved_obs_config.lineage.enabled:
             lineage_store = make_lineage_store(config, resolved_obs_config.lineage, spark)
             if lineage_store is not None:
@@ -146,6 +165,7 @@ class ETLRunner:
         spark: SparkSession | None = None,
         dispatcher: ParallelDispatcher | None = None,
         extra_observers: Sequence[LifecycleObserver] | None = None,
+        environment: Environment | str | None = None,
     ) -> ETLRunner:
         """Load config from a YAML file and build an :class:`ETLRunner`.
 
@@ -170,6 +190,8 @@ class ETLRunner:
                 resolver named like a default replaces it.
             extra_observers: Optional additional :class:`LifecycleObserver`
                 instances forwarded to :meth:`from_config`.
+            environment: Environment of the run; overrides ``LOOM_ENV``. In
+                production and staging the deploy checks run against the file.
         """
         _log.debug("load yaml path=%s", path)
         context = _load_context(path, resolvers=resolvers)
@@ -183,6 +205,7 @@ class ETLRunner:
             extra_observers=extra_observers,
             config_context=context,
             agents=make_agent_runner(context, config_dir(path), config=storage_config, spark=spark),
+            environment=environment,
         )
 
     @classmethod
@@ -193,11 +216,21 @@ class ETLRunner:
         *,
         dispatcher: ParallelDispatcher | None = None,
         cleaner: TempCleaner | None = None,
+        environment: Environment | str | None = None,
     ) -> ETLRunner:
-        """Build an :class:`ETLRunner` using Spark as the execution engine."""
+        """Build an :class:`ETLRunner` using Spark as the execution engine.
+
+        *environment* drives the logger defaults; with no configuration file
+        there is nothing for the deploy checks to read.
+        """
         config = StorageConfig(engine="spark")
         return cls.from_config(
-            config, obs_config, spark=spark, dispatcher=dispatcher, cleaner=cleaner
+            config,
+            obs_config,
+            spark=spark,
+            dispatcher=dispatcher,
+            cleaner=cleaner,
+            environment=environment,
         )
 
     @classmethod
@@ -209,8 +242,12 @@ class ETLRunner:
         spark: SparkSession | None = None,
         dispatcher: ParallelDispatcher | None = None,
         cleaner: TempCleaner | None = None,
+        environment: Environment | str | None = None,
     ) -> ETLRunner:
         """Build an :class:`ETLRunner` from pre-resolved plain Python dicts.
+
+        *environment* drives the logger defaults; the dicts are no
+        configuration file, so no deploy check runs.
 
         ``storage.tables`` and ``storage.files`` accept the list form or a
         mapping keyed by logical name. A ``path.profile: <name>`` key is
@@ -232,7 +269,12 @@ class ETLRunner:
             else ETLObservabilityConfig()
         )
         return cls.from_config(
-            storage_config, obs_config, spark=spark, dispatcher=dispatcher, cleaner=cleaner
+            storage_config,
+            obs_config,
+            spark=spark,
+            dispatcher=dispatcher,
+            cleaner=cleaner,
+            environment=environment,
         )
 
     def run(

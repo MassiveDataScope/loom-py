@@ -14,12 +14,14 @@ from bytewax.recovery import RecoveryConfig
 from bytewax.run import cli_main
 
 from loom.core.async_bridge import AsyncBridge, build_backend_options
+from loom.core.checks import REST_CHECKS, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.environment import Environment, resolve_environment
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
@@ -155,24 +157,45 @@ class StreamingRunner:
         *,
         config: ConfigContext,
         observability_runtime: ObservabilityRuntime | None = None,
+        environment: Environment | str | None = None,
     ) -> StreamingRunner:
-        """Build a runner from a resolved config context."""
+        """Build a runner from a resolved config context.
+
+        The environment is resolved once (*environment*, else ``LOOM_ENV``,
+        else production; see :mod:`loom.core.environment`): it drives the
+        logger defaults, and in production and staging the deploy checks run
+        against *config*, except the REST ones.
+
+        Raises:
+            DeployCheckError: When a deploy check of level error fails in
+                production or staging.
+        """
+        runner = cls()
+        runner._configure_from(flow, config, environment, observability_runtime)
+        return runner
+
+    def _configure_from(
+        self,
+        flow: StreamFlow[Any, Any],
+        config: ConfigContext,
+        environment: Environment | str | None,
+        observability_runtime: ObservabilityRuntime | None = None,
+    ) -> None:
+        resolved_environment = resolve_environment(environment)
+        observability_cfg = config.section_or_default(
+            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+        )
+        obs = observability_runtime or ObservabilityRuntime.from_config(
+            observability_cfg, environment=resolved_environment
+        )
+        enforce_deploy_checks(config, resolved_environment, skip=(REST_CHECKS,))
         plan = compile_flow(flow, config=config)
         runtime = config.section_or_default(
             ConfigKey.STREAMING_RUNTIME,
             BytewaxRuntimeConfig,
             BytewaxRuntimeConfig(),
         )
-        observability_cfg = config.section_optional(
-            ConfigKey.OBSERVABILITY,
-            ObservabilityConfig,
-        )
-        if observability_cfg is None:
-            observability_cfg = ObservabilityConfig()
-        obs = observability_runtime or ObservabilityRuntime.from_config(observability_cfg)
-        runner = cls()
-        runner._configure(flow, plan, runtime, obs)
-        return runner
+        self._configure(flow, plan, runtime, obs)
 
     @classmethod
     def from_yaml(
@@ -182,6 +205,7 @@ class StreamingRunner:
         *,
         resolvers: Sequence[ConfigResolver] = (),
         observability_runtime: ObservabilityRuntime | None = None,
+        environment: Environment | str | None = None,
     ) -> StreamingRunner:
         """Load config from YAML and build a runner.
 
@@ -192,11 +216,13 @@ class StreamingRunner:
                 before the built-in ``secrets`` and ``ssm`` defaults.  A
                 resolver named like a default replaces it.
             observability_runtime: Optional runtime override.
+            environment: Environment of the run; overrides ``LOOM_ENV``.
         """
         return cls.from_context(
             flow,
             config=_load_yaml(path, resolvers),
             observability_runtime=observability_runtime,
+            environment=environment,
         )
 
     @classmethod
@@ -206,12 +232,14 @@ class StreamingRunner:
         config: dict[str, Any],
         *,
         observability_runtime: ObservabilityRuntime | None = None,
+        environment: Environment | str | None = None,
     ) -> StreamingRunner:
-        """Build a runner from a plain Python config mapping."""
+        """Build a runner from a plain Python config mapping; see :meth:`from_context`."""
         return cls.from_context(
             flow,
             config=ConfigContext.from_dict(config),
             observability_runtime=observability_runtime,
+            environment=environment,
         )
 
     @property
@@ -287,6 +315,7 @@ class StreamingRunner:
         error_sinks: Mapping[ErrorKind, Any] | None = None,
         runtime: BytewaxRuntimeConfig | None = None,
         resolvers: Sequence[ConfigResolver] = (),
+        environment: Environment | str | None = None,
     ) -> None:
         """Execute the compiled dataflow with the real Bytewax runtime.
 
@@ -309,6 +338,8 @@ class StreamingRunner:
                 ``config_path``, registered before the built-in ``secrets``
                 and ``ssm`` defaults.  A resolver named like a default
                 replaces it.  Only meaningful together with ``config_path``.
+            environment: Environment used when ``flow`` reconfigures the
+                runner, as in :meth:`from_context`; overrides ``LOOM_ENV``.
 
         Raises:
             ValueError: If ``resolvers`` is given together with ``config``
@@ -323,13 +354,7 @@ class StreamingRunner:
         if config_path is not None:
             config = _load_yaml(str(config_path), resolvers)
         if flow is not None and config is not None:
-            plan = compile_flow(flow, config=config)
-            runtime_cfg = config.section_or_default(
-                ConfigKey.STREAMING_RUNTIME, BytewaxRuntimeConfig, BytewaxRuntimeConfig()
-            )
-            obs_cfg = config.section_optional(ConfigKey.OBSERVABILITY, ObservabilityConfig)
-            obs = ObservabilityRuntime.from_config(obs_cfg or ObservabilityConfig())
-            self._configure(flow, plan, runtime_cfg, obs)
+            self._configure_from(flow, config, environment)
         if config is not None:
             bindings = self._sink_registry.resolve(config)
             self._resolved_error_sinks = {
