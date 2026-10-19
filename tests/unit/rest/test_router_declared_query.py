@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -70,6 +70,21 @@ class ListGrantsFromModel(UseCase[Any, list[Any]]):
         return [query.state, query.limit]
 
 
+class GrantTier(IntEnum):
+    BASIC = 1
+    PREMIUM = 2
+
+
+class OwnerQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    owner: str
+    tier: GrantTier | None = None
+
+
+class ListOwnerGrants(UseCase[Any, list[Any]]):
+    async def execute(self, query: OwnerQuery = Query()) -> list[Any]:
+        return [query.owner, query.tier]
+
+
 class ListGrantsByProfile(UseCase[Any, list[Any]]):
     async def execute(self, profile: str, query: GrantQuery = Query()) -> list[Any]:
         return [profile, query.limit]
@@ -80,6 +95,7 @@ class Grants(RestInterface[Any]):
     routes = (
         RestRoute(use_case=ListGrants, method="GET", path=""),
         RestRoute(use_case=ListGrantsFromModel, method="GET", path="/from-model"),
+        RestRoute(use_case=ListOwnerGrants, method="GET", path="/by-owner"),
         RestRoute(
             use_case=ListGrantsByProfile,
             method="GET",
@@ -316,3 +332,18 @@ def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
         {"field": "profile", "message": "Not a profile this route allows."}
     ]
     assert "secret-input-value" not in response.text
+
+
+def test_a_field_without_default_is_a_required_parameter(client: TestClient) -> None:
+    operation = client.get("/openapi.json").json()["paths"]["/grants/by-owner"]["get"]
+
+    assert [(p["name"], p["required"]) for p in operation["parameters"]] == [
+        ("owner", True),
+        ("tier", False),
+    ]
+
+
+def test_an_int_enum_value_reaches_execute(client: TestClient) -> None:
+    response = client.get("/grants/by-owner", params={"owner": "ana", "tier": "2"})
+
+    assert (response.status_code, response.json()) == (200, ["ana", 2])
