@@ -41,7 +41,7 @@ class MissingTablePolicy(StrEnum):
     ERROR = "error"
 
 
-class CatalogConnection(LoomFrozenStruct, frozen=True):
+class CatalogConnection(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Catalog connection settings.
 
     Args:
@@ -139,7 +139,7 @@ _ROUTE_PROFILE_FIELDS: Final[dict[str, frozenset[str]]] = {
 """Route collections normalised by key, each with the profile fields it takes."""
 
 
-class StorageDefaults(LoomFrozenStruct, frozen=True):
+class StorageDefaults(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Default resolution settings used when no per-name override is declared."""
 
     table_path: TablePathConfig | None = None
@@ -159,7 +159,7 @@ class TempConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
             )
 
 
-class TableRoute(LoomFrozenStruct, frozen=True):
+class TableRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Route one logical table name to catalog ref or physical path.
 
     Args:
@@ -199,7 +199,7 @@ class TableRoute(LoomFrozenStruct, frozen=True):
             self.path.validate(context=f"{context}.path")
 
 
-class FileRoute(LoomFrozenStruct, frozen=True):
+class FileRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Route one logical file name to a physical file URI.
 
     Args:
@@ -261,7 +261,7 @@ class DynamoDbConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     profile: str = ""
 
 
-class CustomColumnDef(LoomFrozenStruct, frozen=True):
+class CustomColumnDef(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Definition of one custom audit column injected at write time.
 
     Exactly one of ``value`` or ``from_param`` must be set.

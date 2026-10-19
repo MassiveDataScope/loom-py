@@ -131,3 +131,11 @@ class TestConfigContextRaw:
         ctx = ConfigContext.from_dict({"rest": {"title": "API"}})
 
         assert ctx.raw("rest.auth.jwt", "absent") == "absent"
+
+    def test_a_key_set_to_null_is_none_not_the_default(self) -> None:
+        ctx = ConfigContext.from_dict({"rest": {"docs_url": None}})
+
+        assert (ctx.raw("rest.docs_url", "absent"), ctx.raw("rest.redoc_url", "absent")) == (
+            None,
+            "absent",
+        )

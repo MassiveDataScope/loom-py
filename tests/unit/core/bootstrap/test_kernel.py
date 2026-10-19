@@ -84,13 +84,10 @@ class _Deployment:
         self.environment = environment
 
 
-def test_a_module_service_resolves_the_environment_at_validation() -> None:
+def test_a_module_resolves_the_environment_while_it_registers() -> None:
     def _module(container: LoomContainer) -> None:
-        container.register(
-            _Deployment,
-            lambda: _Deployment(container.resolve(Environment)),
-            scope=Scope.APPLICATION,
-        )
+        deployment = _Deployment(container.resolve(Environment))
+        container.register(_Deployment, lambda: deployment, scope=Scope.APPLICATION)
 
     runtime = create_kernel(
         config=_Config(),

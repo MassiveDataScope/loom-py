@@ -295,9 +295,8 @@ def test_a_use_case_injects_the_resolved_environment(tmp_path: Path) -> None:
                 },
                 "database": {"url": "sqlite+aiosqlite:///"},
                 # Explicit about cursors ahead of #371, whose default "signed"
-                # needs a key: ephemeral signing, its deploy check accepted.
+                # needs a key. In development no deploy check runs.
                 "persistence": {"cursors": {"signing": "ephemeral"}},
-                "checks": {"silenced": ["loom.cursors.E001"]},
             }
         ),
         encoding="utf-8",

@@ -212,6 +212,50 @@ class TestRuns:
         environments = {call.kwargs["environment"] for call in from_yaml.call_args_list}
         assert environments == {Environment.PRODUCTION}
 
+    def test_a_backfill_run_whose_env_differs_from_the_worker_fails(
+        self, tmp_path: Path, from_yaml: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+        flow = backfill_flow(
+            name="env-backfill-mismatch",
+            pipeline=_Pipeline,
+            params_type=_Params,
+            config_path=_flow_yaml(tmp_path),
+            source_file=_SOURCE_FILE,
+            per_chunk_processes=["_Process"],
+            finalize_processes=["_Process"],
+            window_start_field="updated_at_from",
+            window_end_field="updated_at_to",
+            chunk="day",
+        )
+
+        with pytest.raises(ConfigError, match="'staging'.*'production'"):
+            flow.fn(env="staging", **_WINDOW)
+
+        from_yaml.assert_not_called()
+
+    def test_a_maintenance_run_whose_env_differs_from_the_worker_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        load_context = MagicMock()
+        monkeypatch.setattr(_maintenance, "_load_context", load_context)
+        monkeypatch.setattr(_maintenance, "install_log_bridge", lambda *a, **k: None)
+        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", lambda *a, **k: None)
+        monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: None)
+        monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+        flow = maintenance_flow(
+            name="env-maintenance-mismatch",
+            step=_Maintenance,
+            params_type=_MaintenanceParams,
+            config_path=_flow_yaml(tmp_path),
+            source_file=_SOURCE_FILE,
+        )
+
+        with pytest.raises(ConfigError, match="'development'.*'production'"):
+            flow.fn(env="development")
+
+        load_context.assert_not_called()
+
     def test_a_deployed_maintenance_run_checks_its_layered_storage_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
