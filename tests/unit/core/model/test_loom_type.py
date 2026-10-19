@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import enum
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -689,3 +689,143 @@ class TestErrorsDoNotEchoTheInput:
 
         assert excinfo.value.violations == (violation,)
         assert excinfo.value.message == f"{violation[0]}: {violation[1]}"
+
+
+class Tint(enum.StrEnum):
+    RED = "red"
+
+
+class Grade(enum.IntEnum):
+    LOW = 1
+    HIGH = 2
+
+
+class StructQuery(msgspec.Struct, forbid_unknown_fields=True):
+    limit: int = 50
+    ratio: float = 1.0
+    flag: bool = False
+    level: Grade | None = None
+    colour: Tint | None = None
+    ident: UUID | None = None
+    since: Annotated[datetime, msgspec.Meta(tz=True)] | None = None
+    day: date | None = None
+    at: time | None = None
+
+
+class ModelQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = 50
+    ratio: float = 1.0
+    flag: bool = False
+    level: Grade | None = None
+    colour: Tint | None = None
+    ident: UUID | None = None
+    since: pydantic.AwareDatetime | None = None
+    day: date | None = None
+    at: time | None = None
+
+
+_QUERY = {
+    "limit": "50",
+    "ratio": "0.5",
+    "flag": "true",
+    "level": "2",
+    "colour": "red",
+    "ident": "12345678-1234-5678-1234-567812345678",
+    "since": "2026-09-15T10:00:00+02:00",
+}
+
+
+class TestFromQuery:
+    """Query strings become typed values only when they are exactly what the field declares."""
+
+    @pytest.fixture(params=[StructQuery, ModelQuery], ids=["msgspec", "pydantic"])
+    def query(self, request: pytest.FixtureRequest) -> LoomType:
+        compiled: LoomType = loom_type(request.param)
+        return compiled
+
+    def test_converts_every_string(self, query: LoomType) -> None:
+        value = query.from_query(_QUERY)
+
+        assert (
+            value.limit,
+            value.ratio,
+            value.flag,
+            value.level,
+            value.colour,
+            value.ident,
+            value.since.utcoffset(),
+        ) == (
+            50,
+            0.5,
+            True,
+            Grade.HIGH,
+            Tint.RED,
+            UUID("12345678-1234-5678-1234-567812345678"),
+            timedelta(hours=2),
+        )
+
+    @pytest.mark.parametrize(
+        "since", ["2026-09-15T10:00:00Z", "2026-09-15T10:00:00-03:00", "2026-09-15T10:00:00+05:30"]
+    )
+    def test_accepts_a_date_time_with_any_offset(self, query: LoomType, since: str) -> None:
+        assert query.from_query({"since": since}).since.tzinfo is not None
+
+    @pytest.mark.parametrize(
+        ("field", "wrong"),
+        [
+            ("limit", "5.0"),
+            ("limit", " 5"),
+            ("limit", "5_0"),
+            ("limit", "+5"),
+            ("limit", "1e2"),
+            ("limit", "\u0663"),
+            ("ratio", "\u0663.5"),
+            ("limit", "007"),
+            ("limit", str(2**64)),
+            ("limit", str(-(2**63) - 1)),
+            ("limit", "9" * 5000),
+            ("ratio", ".5"),
+            ("ratio", "5."),
+            ("ratio", "+1.5"),
+            ("ratio", "01.5"),
+            ("ratio", "nan"),
+            ("ratio", "1e999"),
+            ("flag", "1"),
+            ("flag", "True"),
+            ("level", "3"),
+            ("colour", "blue"),
+            ("ident", "not-a-uuid"),
+            ("ident", "null"),
+            ("since", "2026-09-15T10:00:00"),
+            ("since", "1700000000"),
+            ("day", "20260915"),
+            ("at", "1000"),
+            ("since", "+1700000000"),
+            ("since", ".5"),
+            ("since", "-5"),
+            ("since", "null"),
+        ],
+    )
+    def test_a_bad_value_names_its_field(self, query: LoomType, field: str, wrong: str) -> None:
+        params = {**_QUERY, field: wrong}
+
+        with pytest.raises(BoundaryValidationError) as excinfo:
+            query.from_query(params)
+        assert [name for name, _ in excinfo.value.violations] == [field]
+        assert excinfo.value.code == "boundary_validation"
+        assert "sys." not in excinfo.value.message
+
+    def test_accepts_a_date_and_a_time(self, query: LoomType) -> None:
+        value = query.from_query({"day": "2026-09-15", "at": "10:30:00"})
+
+        assert (value.day, value.at) == (date(2026, 9, 15), time(10, 30))
+
+    @pytest.mark.parametrize("limit", [2**64 - 1, -(2**63), 0, -7])
+    def test_accepts_an_integer_in_the_64_bit_range(self, query: LoomType, limit: int) -> None:
+        assert query.from_query({"limit": str(limit)}).limit == limit
+
+    @pytest.mark.parametrize("ratio", ["0", "-0.5", "1e2", "1.5E-3"])
+    def test_accepts_the_json_number_grammar(self, query: LoomType, ratio: str) -> None:
+        assert query.from_query({"ratio": ratio}).ratio == float(ratio)

@@ -18,7 +18,9 @@ class Job(ABC, Generic[ResultT]):
 
     ``Job`` is independent of ``UseCase`` — it does not inherit from it.
     The compiler and factory operate on ``__execution_plan__`` and
-    ``execute()`` by duck typing, so they support ``Job`` without changes.
+    ``execute()`` by duck typing, so they support ``Job`` without changes,
+    except that the compiler refuses a ``Query()`` parameter on a ``Job``: a
+    job is dispatched with primitive parameters.
 
     Subclass and implement ``execute`` with any typed signature.  The method
     may be ``async def`` or a plain ``def``; the Celery runner detects the

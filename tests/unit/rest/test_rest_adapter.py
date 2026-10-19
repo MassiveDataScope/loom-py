@@ -16,8 +16,10 @@ from loom.core.engine.post_commit import PostCommitError
 from loom.core.errors import (
     Conflict,
     Forbidden,
+    InsufficientAuthentication,
     LoomError,
     NotFound,
+    RateLimited,
     RuleViolation,
     RuleViolations,
     Unauthenticated,
@@ -28,6 +30,7 @@ from loom.core.repository.abc.query import CursorResult, PageResult
 from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
+from loom.core.use_case import Created
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.etl import Format, UnsupportedFormatError
@@ -156,14 +159,52 @@ class TestHttpErrorMapper:
         assert detail["missing"] == ["a.b"]
         assert "reason" not in detail
 
-    def test_unauthenticated_maps_to_401(self) -> None:
-        exc = self._mapper().to_http(Unauthenticated())
-        assert exc.status_code == 401
-
-    def test_unauthenticated_carries_the_bearer_challenge(self) -> None:
+    @pytest.mark.parametrize(
+        "error",
+        [Unauthenticated(), LoomError("Step up.", code="insufficient_authentication")],
+        ids=["unauthenticated", "custom-insufficient-authentication"],
+    )
+    def test_a_401_carries_the_plain_bearer_challenge(self, error: LoomError) -> None:
         """RFC 9110 §11.6.1: a 401 without a challenge is not a valid response."""
-        exc = self._mapper().to_http(Unauthenticated())
-        assert exc.headers == {"WWW-Authenticate": "Bearer"}
+        exc = self._mapper().to_http(error)
+        assert (exc.status_code, exc.headers) == (401, {"WWW-Authenticate": "Bearer"})
+
+    def test_insufficient_authentication_challenges_a_step_up(self) -> None:
+        """RFC 9470 §3: the 401 names the error and what the next token must meet."""
+        error = InsufficientAuthentication(
+            "Recent multi-factor authentication required.",
+            max_age=300,
+            acr_values=("urn:mfa", "phr"),
+        )
+
+        exc = self._mapper().to_http(error)
+
+        assert (exc.status_code, _detail(exc)["code"]) == (401, "insufficient_authentication")
+        assert exc.headers == {
+            "WWW-Authenticate": 'Bearer error="insufficient_user_authentication", '
+            'error_description="Recent multi-factor authentication required.", '
+            'max_age="300", acr_values="urn:mfa phr"'
+        }
+
+    @pytest.mark.parametrize(
+        ("message", "description"),
+        [
+            ('Say "again"\r\nnow', "Say again now"),
+            ("Autenticación reciente", "Autenticaci n reciente"),
+            ("\r\n", "A different authentication level is required"),
+            ("a" * 300, "a" * 256),
+        ],
+        ids=["quotes-crlf", "non-ascii", "nothing-left", "capped"],
+    )
+    def test_a_step_up_description_keeps_only_what_the_header_allows(
+        self, message: str, description: str
+    ) -> None:
+        exc = self._mapper().to_http(InsufficientAuthentication(message))
+
+        assert exc.headers == {
+            "WWW-Authenticate": 'Bearer error="insufficient_user_authentication", '
+            f'error_description="{description}"'
+        }
 
     def test_non_401_errors_carry_no_challenge(self) -> None:
         """Only a 401 challenges the caller; a 403 is final."""
@@ -258,6 +299,33 @@ class TestHttpErrorMapper:
             {"field": "fullName", "message": "Expected `str`, got `int`"}
         ]
 
+    def test_rate_limited_maps_to_429_with_retry_after(self) -> None:
+        exc = self._mapper().to_http(RateLimited(1.2))
+        assert (exc.status_code, _detail(exc)["code"], exc.headers) == (
+            429,
+            ErrorCode.RATE_LIMITED,
+            {"Retry-After": "2"},
+        )
+
+    def test_another_error_coded_rate_limited_maps_to_429_without_retry_after(self) -> None:
+        exc = self._mapper().to_http(LoomError("slow down", code="rate_limited"))
+        assert (exc.status_code, exc.headers) == (429, None)
+
+    def test_query_validation_maps_to_400_with_its_violations(self) -> None:
+        error = BoundaryValidationError(
+            "Expected `int` <= 200 - at `$.limit`",
+            (("limit", "Expected `int` <= 200"),),
+            code=ErrorCode.QUERY_VALIDATION,
+        )
+
+        exc = self._mapper().to_http(error)
+
+        assert (exc.status_code, _detail(exc)["code"], _detail(exc)["violations"]) == (
+            400,
+            "query_validation",
+            [{"field": "limit", "message": "Expected `int` <= 200"}],
+        )
+
     def test_unknown_code_defaults_to_500(self) -> None:
         class _CustomError(LoomError):
             pass
@@ -287,6 +355,18 @@ class TestLoomRestAdapterSuccess:
         adapter = LoomRestAdapter(self._make_executor("ok"))
         result = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
         assert result == "ok"
+
+    async def test_a_created_result_answers_201_with_its_value(self) -> None:
+        created = Created(_ResultStruct(id=1, name="Alice"), location="/items/1")
+        adapter = LoomRestAdapter(self._make_executor(created))
+
+        response = await adapter.handle(_SimpleUseCase(), AdapterRequest(params={}))
+
+        assert (response.status_code, msgspec.json.decode(response.body)) == (
+            201,
+            {"id": 1, "name": "Alice"},
+        )
+        assert response.headers["location"] == "/items/1"
 
     async def test_struct_result_serialized_to_builtins(self) -> None:
         struct = _ResultStruct(id=1, name="Alice")

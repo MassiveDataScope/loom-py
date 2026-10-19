@@ -575,6 +575,7 @@ class RuntimeExecutor:
         inputs: _ExecutionInputs,
     ) -> Any:
         bound: dict[str, Any] = {}
+        self._check_query(plan, inputs.params or {})
         self._bind_params(plan, inputs.params or {}, bound)
         self._bind_caller(plan, inputs.identity, bound)
         self._bind_agents(plan, inputs.identity, bound)
@@ -686,6 +687,24 @@ class RuntimeExecutor:
                 annotation=pb.annotation,
                 raw=raw,
                 use_case_name=plan.use_case_type.__qualname__,
+            )
+
+    @staticmethod
+    def _check_query(plan: ExecutionPlan, params: dict[str, Any]) -> None:
+        """Refuse a ``Query()`` value that is not an instance of its type.
+
+        A generic coercion would call the type with the raw value: a struct
+        whose fields are positional would take a dict as its first field. The
+        message names the type received, never the value.
+        """
+        binding = plan.query_binding
+        if binding is None or binding.name not in params:
+            return
+        raw = params[binding.name]
+        if not isinstance(raw, binding.query_type):
+            raise ParameterBindingError(
+                f"{plan.use_case_type.__qualname__}: parameter '{binding.name}' takes a "
+                f"{binding.query_type.__name__} instance, got {type(raw).__name__}"
             )
 
     @staticmethod

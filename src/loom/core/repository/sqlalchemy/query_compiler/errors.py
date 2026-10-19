@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from loom.core.errors import DomainError
+from loom.core.errors.codes import ErrorCode
 
-class FilterPathError(ValueError):
+
+class FilterPathError(DomainError, ValueError):
     """Raised when a filter references a field path that does not exist.
 
     Args:
@@ -15,11 +18,11 @@ class FilterPathError(ValueError):
     """
 
     def __init__(self, path: str) -> None:
-        super().__init__(f"Unknown filter field path: {path!r}")
+        super().__init__(f"Unknown filter field path: {path!r}", code=ErrorCode.UNSUPPORTED_QUERY)
         self.path = path
 
 
-class UnsafeFilterError(ValueError):
+class UnsafeFilterError(DomainError, ValueError):
     """Raised when a filter field is not in the repository's allowed set.
 
     This is a hard rejection — the caller requested filtering on a field
@@ -34,5 +37,8 @@ class UnsafeFilterError(ValueError):
     """
 
     def __init__(self, field: str) -> None:
-        super().__init__(f"Filtering on field {field!r} is not allowed by this repository.")
+        super().__init__(
+            f"Filtering on field {field!r} is not allowed by this repository.",
+            code=ErrorCode.UNSUPPORTED_QUERY,
+        )
         self.field = field

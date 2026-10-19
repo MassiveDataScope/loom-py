@@ -154,6 +154,65 @@ async def execute(
 | `against` | Entity field to compare against |
 | `on_missing` | `RAISE` → 404 immediately; `NONE` → inject False |
 
+### `Query()` — declared query parameters
+
+`Query()` hands `execute` the query string as a typed value. The annotation is
+the whole contract: a strict `msgspec.Struct` (`forbid_unknown_fields=True`)
+or a strict pydantic model (`extra="forbid"`) whose fields are each a string
+(UUID, date-time and other string formats included), integer, number,
+boolean, enum or `Literal`, optionally `None`:
+
+```python
+from typing import Annotated
+import msgspec
+from loom.core.use_case import Query
+
+class GrantQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
+                 forbid_unknown_fields=True):
+    membership_id: UUID | None = None
+    state: GrantState | None = None
+    changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
+        default=None, name="changed_since")
+    cursor: str | None = None
+    limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
+
+class ListGrants(UseCase[Grant, GrantPage]):
+    async def execute(self, query: GrantQuery = Query()) -> GrantPage: ...
+```
+
+The route accepts exactly the declared wire names, plus `profile` when it
+exposes one and `execute` declares an annotated `profile` parameter, and
+OpenAPI publishes one query parameter per field with its constraints; named
+enums go to `components.schemas`. Each request is checked in this order:
+
+| Request | Answer |
+|---------|--------|
+| A parameter the type does not declare, or one given twice | `400 unsupported_query` |
+| A `profile` the route does not allow | `400 query_validation` on field `profile`, without the value |
+| A value the field refuses (wrong type, out of range, unknown enum value, a date-time without offset) | `400 query_validation` with `violations`; a query string is not request content, so `422` stays for bodies |
+| Otherwise | `execute` receives the typed value; absent fields take their defaults |
+
+Values are checked strictly, with either library. A number field takes the
+JSON number grammar: `ratio=0.5`, `ratio=1e2`, but not `+1.5`, `.5`, `5.` or
+`01.5`. An integer field takes the integer part of that grammar within
+`[-2**63, 2**64)`: `limit=50`, but not `5.0`, `1e2`, `+5` or `007`; an
+`IntEnum` or an int `Literal` field is read the same way. A boolean field
+takes `true` or `false`, not `1`. Every other field validates the text as it
+is. `null` is `None` for no field: it is the text `"null"` for a `str` field
+and refused for any other, so leave the parameter out instead. A date or time
+field refuses a number rather than reading a timestamp. An offset is required
+only where the type asks for one, with `msgspec.Meta(tz=True)` or pydantic's
+`AwareDatetime`.
+
+The application refuses to start when a field is a list, an object or a union
+of several types, when a field's wire name is `profile` or a path parameter,
+when the use case also takes a `QuerySpec`, or when it declares two `Query()`;
+a type that is not a strict model fails as a `CompilationError` naming the use
+case and the parameter. A `Job` that declares `Query()` fails as a
+`CompilationError` naming `<Qualname>.execute`. A route with a `QuerySpec`
+parameter keeps its own parameters, filters and limit clamp. Callers other
+than REST pass an instance of the type under the parameter's name.
+
 ---
 
 ## Agent marker — reaching a named agent
@@ -705,6 +764,45 @@ class ProductInterface(RestInterface[Product]):
 ```
 
 See [Auto-CRUD guide](autocrud.md) for the full options reference.
+
+### `201` when the use case created
+
+A route answers its `status_code` (`200` by default). A use case that may
+create or find the resource already there returns `Created` when it created:
+
+```python
+from loom.core.use_case import Created, Input
+
+class CreateGrant(UseCase[Grant, GrantView | Created[GrantView]]):
+    async def execute(self, cmd: CreateGrantCommand = Input()) -> GrantView | Created[GrantView]:
+        view, changed = await self._grants.grant(cmd)
+        return Created(view, location=f"/grants/{view.grant_id}") if changed else view
+```
+
+The route answers `Created(view)` with `201` and `view` as the body, and a
+plain `view` with its `status_code`. With `location`, the `201` also carries a
+`Location` header. The location, absolute or relative, must be non-empty and
+hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
+`ValueError`. OpenAPI documents both statuses with the `GrantView` schema and
+declares `Location` on the `201`. `Created` must wrap one of the other members
+of the result, and a route whose `status_code` is already `201` cannot return
+it; either fails at startup. `LoomRestAdapter` answers a `Created` the same
+way; other callers receive the wrapper and read `.value`.
+
+### `429` when the caller spent its budget
+
+loom ships no rate limiter. A use case that refuses a caller for exceeding a
+budget raises `RateLimited` from `loom.core.errors`:
+
+```python
+from loom.core.errors import RateLimited
+
+raise RateLimited(retry_after=1.5)
+```
+
+The route answers `429` with code `rate_limited`, the standard error body and
+`Retry-After: 2`: the delay is kept in whole seconds, rounded up and at least
+`1`. A non-finite `retry_after` raises `ValueError`.
 
 ---
 

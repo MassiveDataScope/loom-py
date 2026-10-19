@@ -18,9 +18,12 @@ from loom.core.engine.plan import (
     LoadStep,
     McpBinding,
     ParamBinding,
+    QueryBinding,
     RuleStep,
 )
+from loom.core.job.job import Job
 from loom.core.logger import LoggerPort, get_logger
+from loom.core.model import UnsupportedBoundaryType, loom_type
 from loom.core.use_case.markers import (
     LookupKind,
     SourceKind,
@@ -31,6 +34,7 @@ from loom.core.use_case.markers import (
     _LoadByIdMarker,
     _LoadMarker,
     _McpMarker,
+    _QueryMarker,
 )
 
 
@@ -57,6 +61,7 @@ class _SignatureBindings:
     mcp_bindings: list[McpBinding] = field(default_factory=list)
     input_binding: InputBinding | None = None
     caller_binding: CallerBinding | None = None
+    query_binding: QueryBinding | None = None
 
 
 class UseCaseCompiler:
@@ -173,6 +178,7 @@ class UseCaseCompiler:
             caller_binding=bindings.caller_binding,
             agent_bindings=tuple(bindings.agent_bindings),
             mcp_bindings=tuple(bindings.mcp_bindings),
+            query_binding=bindings.query_binding,
         )
         use_case_type.__execution_plan__ = plan
         return plan
@@ -222,6 +228,10 @@ class UseCaseCompiler:
 
         if isinstance(marker, _CallerMarker):
             self._collect_caller(use_case_type, name, bindings)
+            return
+
+        if isinstance(marker, _QueryMarker):
+            self._collect_query(use_case_type, name, annotation, bindings)
             return
 
         if isinstance(marker, _AgentMarker):
@@ -287,6 +297,32 @@ class UseCaseCompiler:
             )
         bindings.caller_binding = CallerBinding(name=name)
         self._logger.info(f"[BOOT]  - Detected Caller: {name}")
+
+    def _collect_query(
+        self,
+        use_case_type: type[Compilable],
+        name: str,
+        annotation: Any,
+        bindings: _SignatureBindings,
+    ) -> None:
+        where = f"{use_case_type.__qualname__}.execute"
+        if issubclass(use_case_type, Job):
+            raise CompilationError(
+                f"{where}: a Job cannot declare Query(); a job is dispatched with plain "
+                "parameters, so pass the values it needs as parameters instead"
+            )
+        if bindings.query_binding is not None:
+            raise CompilationError(f"{where}: only one Query() parameter is allowed")
+        try:
+            loom_type(annotation)
+        except UnsupportedBoundaryType as exc:
+            raise CompilationError(
+                f"{where}: Query() parameter '{name}' must be a strict msgspec.Struct or "
+                f"pydantic model: {exc.message}"
+            ) from exc
+        bindings.query_binding = QueryBinding(name=name, query_type=annotation)
+        bindings.param_bindings.append(ParamBinding(name=name, annotation=annotation))
+        self._logger.info(f"[BOOT]  - Detected Query: {annotation.__name__} -> {name}")
 
     def _collect_agent(
         self,

@@ -23,12 +23,15 @@ Usage::
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import Any
 
 import msgspec
 from starlette.responses import Response
 
 from loom.core.model import UnsupportedBoundaryType, loom_type_of
+from loom.core.use_case.outcome import Created
+from loom.rest.constants import LOCATION_HEADER
 
 
 class MsgspecJSONResponse(Response):
@@ -89,3 +92,14 @@ def _to_builtins(obj: Any) -> Any:
         return loom_type_of(type(obj)).to_builtins(obj)
     except UnsupportedBoundaryType as exc:
         raise TypeError(str(exc)) from exc
+
+
+def created_response(created: Created[Any]) -> MsgspecJSONResponse:
+    """Answer a :class:`~loom.core.use_case.Created` result: ``201``, its value, its location.
+
+    ``Location`` is sent only when the use case gave one (RFC 9110 §15.3.2).
+    """
+    headers = None if created.location is None else {LOCATION_HEADER: created.location}
+    return MsgspecJSONResponse(
+        content=created.value, status_code=HTTPStatus.CREATED, headers=headers
+    )

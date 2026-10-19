@@ -5,12 +5,19 @@ Generates async handler functions at startup, one per
 
 1. Extracts path parameters from ``request.path_params`` (populated by
    Starlette's routing layer from the URL).
-2. Reads the raw request body and decodes it with ``msgspec.json.decode``
+2. Decodes the query string: a ``Query()`` parameter accepts exactly its
+   declared names (``400 unsupported_query`` for an unknown or repeated one,
+   ``400 query_validation`` for a bad value), then ``profile`` and a
+   ``QuerySpec``.
+3. Reads the raw request body and decodes it with ``msgspec.json.decode``
    when bytes are present.
-3. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
-   :class:`~loom.core.use_case.factory.UseCaseFactory`.
-4. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
-5. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`.
+4. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
+   :class:`~loom.core.use_case.factory.UseCaseFactory`, only once the request
+   parameters are valid.
+5. Drives execution through :class:`~loom.core.engine.executor.RuntimeExecutor`.
+6. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`: a
+   :class:`~loom.core.use_case.Created` result answers ``201`` with its
+   ``value``, any other result the route's ``status_code``.
 
 Handler ``__signature__`` is manipulated so FastAPI validates and documents
 path parameters correctly in OpenAPI while keeping the implementation generic.
@@ -38,7 +45,9 @@ from starlette.responses import Response
 
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
+from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
+from loom.core.model import BoundaryValidationError, LoomType, loom_type
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -51,23 +60,29 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.outcome import Created
 from loom.rest._body import BodyTooLarge
-from loom.rest.compiler import CompiledRoute
+from loom.rest.compiler import CompiledRoute, names_query_spec
 from loom.rest.constants import LIMIT_DEFAULT, QueryParam
 from loom.rest.errors import ErrorField, HttpErrorMapper
 from loom.rest.fastapi.openapi import (
     QUERY_SPEC_PARAMETER_NAMES,
     build_query_parameters_schema,
     build_request_body_schema,
-    build_success_response_schema,
+    build_success_responses,
+    has_profile_parameter,
 )
-from loom.rest.fastapi.response import MsgspecJSONResponse
+from loom.rest.fastapi.response import MsgspecJSONResponse, created_response
 
 _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
+_UNSUPPORTED_QUERY_MESSAGE = (
+    "The request has a query parameter this route does not accept, or one given twice."
+)
+_INVALID_PROFILE_MESSAGE = "Not a profile this route allows."
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -327,12 +342,7 @@ def _resolve_query_param_name(uc_type: type[Any]) -> str | None:
     for name, param in execute_sig.parameters.items():
         if name == "self":
             continue
-        annotation = hints.get(name, param.annotation)
-        origin = typing.get_origin(annotation)
-        args = typing.get_args(annotation)
-        if annotation is QuerySpec:
-            return name
-        if origin in {typing.Union, types.UnionType} and QuerySpec in args:
+        if names_query_spec(hints.get(name, param.annotation)):
             return name
     return None
 
@@ -355,6 +365,46 @@ def _route_docs(compiled_route: CompiledRoute) -> tuple[str | None, str | None]:
 
 
 @dataclass(frozen=True, slots=True)
+class _DeclaredQuery:
+    param_name: str
+    accepted: frozenset[str]
+    profiles: frozenset[str]
+    decoder: LoomType
+
+    def decode(self, query_params: QueryParams) -> Any:
+        """Build the typed query, refusing a key the route does not accept or repeats.
+
+        ``profile`` is accepted only under the condition OpenAPI publishes it:
+        the route exposes it and ``execute`` declares an annotated ``profile``
+        parameter, and only with one of the route's allowed profiles;
+        :func:`_resolve_profile` then selects it.
+
+        Raises:
+            LoomError: ``unsupported_query`` for an unknown or repeated key.
+            BoundaryValidationError: ``query_validation`` when a value does
+                not satisfy its field.
+        """
+        keys = [key for key, _ in query_params.multi_items()]
+        if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
+            raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
+        profile = query_params.get(QueryParam.PROFILE)
+        if profile is not None and profile not in self.profiles:
+            raise BoundaryValidationError(
+                _INVALID_PROFILE_MESSAGE,
+                ((QueryParam.PROFILE, _INVALID_PROFILE_MESSAGE),),
+                code=ErrorCode.QUERY_VALIDATION,
+            )
+        try:
+            return self.decoder.from_query(
+                {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
+            )
+        except BoundaryValidationError as exc:
+            raise BoundaryValidationError(
+                exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION
+            ) from exc
+
+
+@dataclass(frozen=True, slots=True)
 class _RouteRuntime:
     """Per-route facts resolved once at startup and read on every request."""
 
@@ -363,6 +413,7 @@ class _RouteRuntime:
     accepts_profile_param: bool
     query_param_name: str | None
     has_input_binding: bool
+    declared_query: _DeclaredQuery | None
 
     @property
     def use_case_type(self) -> type[Any]:
@@ -372,12 +423,28 @@ class _RouteRuntime:
 def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     uc_type = compiled_route.route.use_case
     plan = getattr(uc_type, "__execution_plan__", None)
+    query_binding = plan.query_binding if plan is not None else None
+    accepts_profile_param = QueryParam.PROFILE in inspect.signature(uc_type.execute).parameters
+    declared_query = None
+    if query_binding is not None:
+        accepted = {field.name for field in compiled_route.query_fields}
+        if compiled_route.effective_expose_profile and has_profile_parameter(
+            typing.get_type_hints(uc_type.execute)
+        ):
+            accepted.add(QueryParam.PROFILE)
+        declared_query = _DeclaredQuery(
+            param_name=query_binding.name,
+            accepted=frozenset(accepted),
+            profiles=frozenset(compiled_route.effective_allowed_profiles),
+            decoder=loom_type(query_binding.query_type),
+        )
     return _RouteRuntime(
         compiled_route=compiled_route,
         path_params=tuple(_extract_path_params(compiled_route.route.path)),
-        accepts_profile_param="profile" in inspect.signature(uc_type.execute).parameters,
+        accepts_profile_param=accepts_profile_param,
         query_param_name=_resolve_query_param_name(uc_type),
         has_input_binding=plan is not None and plan.input_binding is not None,
+        declared_query=declared_query,
     )
 
 
@@ -407,6 +474,10 @@ def _build_execution_params(
 ) -> dict[str, Any]:
     compiled_route = runtime.compiled_route
     params: dict[str, Any] = {name: path_kwargs[name] for name in runtime.path_params}
+    if runtime.declared_query is not None:
+        params[runtime.declared_query.param_name] = runtime.declared_query.decode(
+            request.query_params
+        )
     selected_profile = _resolve_profile(request, compiled_route)
     if runtime.accepts_profile_param:
         params["profile"] = selected_profile
@@ -454,13 +525,17 @@ async def _execute_route(
         _authorize_route(
             identity, compiled_route.effective_requires_roles, compiled_route.full_path
         )
+        params = _build_execution_params(request, path_kwargs, runtime)
+        payload = await _decode_payload(request, runtime.has_input_binding)
         result = await executor.execute(
             factory.build(runtime.use_case_type),
-            params=_build_execution_params(request, path_kwargs, runtime),
-            payload=await _decode_payload(request, runtime.has_input_binding),
+            params=params,
+            payload=payload,
             read_only=compiled_route.read_only,
             identity=identity,
         )
+    if isinstance(result, Created):
+        return created_response(result)
     return MsgspecJSONResponse(content=result, status_code=status_code)
 
 
@@ -601,13 +676,10 @@ def bind_interfaces(
         handler = _make_handler(cr, factory, executor, observability_runtime)
         summary, description = _route_docs(cr)
         request_body = build_request_body_schema(cr, component_registry)
-        success_response = build_success_response_schema(cr, component_registry)
-        responses: dict[int | str, dict[str, Any]] | None = None
-        if success_response is not None:
-            responses = {cr.route.status_code: success_response}
+        responses = build_success_responses(cr, component_registry)
 
         openapi_extra: dict[str, Any] | None = None
-        query_parameters = build_query_parameters_schema(cr)
+        query_parameters = build_query_parameters_schema(cr, component_registry)
         if request_body is not None or query_parameters:
             openapi_extra = {}
             if request_body is not None:
@@ -622,7 +694,7 @@ def bind_interfaces(
             summary=summary,
             description=description,
             status_code=cr.route.status_code,
-            tags=list(cr.interface_tags) if cr.interface_tags else [],
+            tags=list(cr.interface_tags),
             responses=responses,
             openapi_extra=openapi_extra,
         )

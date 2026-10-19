@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
@@ -8,11 +9,14 @@ from loom.core.errors import (
     Conflict,
     DomainError,
     Forbidden,
+    InsufficientAuthentication,
     LoomError,
     NotFound,
+    RateLimited,
     RuleViolation,
     RuleViolations,
     SystemError,
+    Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
 
@@ -47,6 +51,8 @@ class TestLoomError:
         (NotFound, DomainError),
         (Forbidden, DomainError),
         (Conflict, DomainError),
+        (RateLimited, DomainError),
+        (InsufficientAuthentication, Unauthenticated),
         (RuleViolation, DomainError),
         (RuleViolations, DomainError),
     ],
@@ -70,6 +76,8 @@ def test_domain_error_not_system_error() -> None:
         (lambda: NotFound("User", id=1), ErrorCode.NOT_FOUND),
         (lambda: Forbidden(), ErrorCode.FORBIDDEN),
         (lambda: Conflict("x"), ErrorCode.CONFLICT),
+        (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
+        (lambda: InsufficientAuthentication(), ErrorCode.INSUFFICIENT_AUTHENTICATION),
         (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
         (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
         (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
@@ -265,3 +273,57 @@ class TestExecutorUsesNotFound:
         assert exc_info.value.entity == "_Entity"
         assert exc_info.value.id == 7
         assert exc_info.value.code == ErrorCode.NOT_FOUND
+
+
+class TestRateLimited:
+    @pytest.mark.parametrize(("seconds", "expected"), [(0.2, 1), (1.5, 2), (2, 2), (0, 1), (-3, 1)])
+    def test_retry_after_is_whole_seconds_rounded_up(self, seconds: float, expected: int) -> None:
+        assert RateLimited(seconds).retry_after == expected
+
+    @pytest.mark.parametrize("seconds", [math.nan, math.inf, -math.inf])
+    def test_a_non_finite_delay_is_refused(self, seconds: float) -> None:
+        with pytest.raises(ValueError, match="retry_after"):
+            RateLimited(seconds)
+
+
+class TestInsufficientAuthentication:
+    def test_carries_the_step_up_requirements(self) -> None:
+        error = InsufficientAuthentication(max_age=300, acr_values=["urn:mfa", "phr"])
+
+        assert (error.max_age, error.acr_values) == (300, ("urn:mfa", "phr"))
+
+    def test_accepts_a_max_age_of_zero(self) -> None:
+        assert InsufficientAuthentication(max_age=0).max_age == 0
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"max_age": -1},
+            {"max_age": True},
+            {"acr_values": "urn:mfa"},
+            {"acr_values": [""]},
+            {"acr_values": ["urn mfa"]},
+            {"acr_values": ['urn"mfa']},
+            {"acr_values": ["urn\\mfa"]},
+            {"acr_values": ["urn:mfá"]},
+            {"acr_values": [1]},
+            {"acr_values": b"urn"},
+            {"message": 5},
+        ],
+        ids=[
+            "negative-age",
+            "bool-age",
+            "single-str",
+            "blank",
+            "space",
+            "quote",
+            "backslash",
+            "non-ascii",
+            "int-item",
+            "bytes",
+            "non-str-message",
+        ],
+    )
+    def test_refuses_what_a_challenge_cannot_carry(self, kwargs: dict[str, Any]) -> None:
+        with pytest.raises(ValueError, match="InsufficientAuthentication"):
+            InsufficientAuthentication(**kwargs)

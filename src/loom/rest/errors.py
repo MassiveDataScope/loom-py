@@ -9,11 +9,21 @@ from typing import Any, ClassVar
 from fastapi import HTTPException
 
 from loom.core.engine.post_commit import PostCommitError
-from loom.core.errors import Forbidden, LoomError, NotFound, RuleViolation, RuleViolations
+from loom.core.errors import (
+    Forbidden,
+    InsufficientAuthentication,
+    LoomError,
+    NotFound,
+    RateLimited,
+    RuleViolation,
+    RuleViolations,
+)
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
-from loom.rest.constants import BEARER_CHALLENGE
+from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
+
+_DESCRIPTION_MAX_LENGTH = 256
 
 
 class ErrorField(StrEnum):
@@ -59,7 +69,14 @@ class HttpErrorMapper:
     - :class:`~loom.core.errors.RuleViolation` → ``field``
     - :class:`~loom.core.errors.RuleViolations` → ``violations``
     - :class:`~loom.core.model.BoundaryValidationError` → ``violations``
-      (``422``; a schema failure, distinct from a rule failure)
+      (``422``; a schema failure, distinct from a rule failure; ``400`` under
+      ``query_validation``, since RFC 9110 §15.5.21 defines ``422`` over
+      request content and a query string is not content)
+    - :class:`~loom.core.errors.RateLimited` → ``429`` with a ``Retry-After``
+      header carrying its whole seconds
+    - :class:`~loom.core.errors.InsufficientAuthentication` → ``401`` with the
+      RFC 9470 step-up challenge (``error="insufficient_user_authentication"``,
+      ``error_description``, and ``max_age`` / ``acr_values`` when given)
     - :class:`~loom.core.engine.post_commit.PostCommitError` → ``committed``
       (``500``; ``true`` when a unit of work committed, so a retry would
       repeat the write, ``false`` when the execution held none)
@@ -78,13 +95,16 @@ class HttpErrorMapper:
     _STATUS: ClassVar[dict[str, HTTPStatus]] = {
         ErrorCode.NOT_FOUND: HTTPStatus.NOT_FOUND,
         ErrorCode.UNAUTHENTICATED: HTTPStatus.UNAUTHORIZED,
+        ErrorCode.INSUFFICIENT_AUTHENTICATION: HTTPStatus.UNAUTHORIZED,
         ErrorCode.FORBIDDEN: HTTPStatus.FORBIDDEN,
         ErrorCode.CONFLICT: HTTPStatus.CONFLICT,
         ErrorCode.RULE_VIOLATIONS: HTTPStatus.UNPROCESSABLE_ENTITY,
         ErrorCode.RULE_VIOLATION: HTTPStatus.UNPROCESSABLE_ENTITY,
         ErrorCode.BOUNDARY_VALIDATION: HTTPStatus.UNPROCESSABLE_ENTITY,
+        ErrorCode.QUERY_VALIDATION: HTTPStatus.BAD_REQUEST,
         ErrorCode.UNSUPPORTED_FORMAT: HTTPStatus.BAD_REQUEST,
         ErrorCode.UNSUPPORTED_QUERY: HTTPStatus.BAD_REQUEST,
+        ErrorCode.RATE_LIMITED: HTTPStatus.TOO_MANY_REQUESTS,
         ErrorCode.SYSTEM_ERROR: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.SERVICE_UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
         ErrorCode.POST_COMMIT_FAILURE: HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -100,7 +120,8 @@ class HttpErrorMapper:
             ``HTTPException`` with the appropriate status code and a
             structured detail body keyed by :class:`ErrorField`.  A ``401``
             also carries the ``WWW-Authenticate`` challenge required by
-            RFC 9110 §11.6.1.
+            RFC 9110 §11.6.1, and a :class:`~loom.core.errors.RateLimited`
+            the ``Retry-After`` delay of RFC 9110 §10.2.3.
         """
         status = self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
         detail: dict[str, Any] = {
@@ -136,9 +157,39 @@ class HttpErrorMapper:
         if isinstance(error, PostCommitError):
             detail[ErrorField.COMMITTED] = error.committed
 
-        return HTTPException(status_code=status, detail=detail, headers=_challenge(status))
+        return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
 
 
-def _challenge(status: HTTPStatus) -> dict[str, str] | None:
-    """Return the ``WWW-Authenticate`` header a ``401`` must carry, else ``None``."""
-    return dict(BEARER_CHALLENGE) if status is HTTPStatus.UNAUTHORIZED else None
+def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
+    if isinstance(error, InsufficientAuthentication):
+        return {WWW_AUTHENTICATE_HEADER: _step_up_challenge(error)}
+    if status is HTTPStatus.UNAUTHORIZED:
+        return dict(BEARER_CHALLENGE)
+    if isinstance(error, RateLimited):
+        return {RETRY_AFTER_HEADER: str(error.retry_after)}
+    return None
+
+
+def _step_up_challenge(error: InsufficientAuthentication) -> str:
+    """Build the RFC 9470 §3 challenge.
+
+    The description replaces each character RFC 6750 §3 does not allow in it
+    with a space and collapses runs of spaces; an empty result falls back to
+    the default message. It is cut at ``_DESCRIPTION_MAX_LENGTH`` characters.
+    """
+    allowed = "".join(
+        char if " " <= char <= "~" and char not in '"\\' else " " for char in error.message
+    )
+    description = (
+        " ".join(allowed.split())[:_DESCRIPTION_MAX_LENGTH].rstrip()
+        or InsufficientAuthentication.default_message
+    )
+    params = [
+        'error="insufficient_user_authentication"',
+        f'error_description="{description}"',
+    ]
+    if error.max_age is not None:
+        params.append(f'max_age="{error.max_age}"')
+    if error.acr_values:
+        params.append(f'acr_values="{" ".join(error.acr_values)}"')
+    return f"{BEARER_CHALLENGE[WWW_AUTHENTICATE_HEADER]} {', '.join(params)}"
