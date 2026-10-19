@@ -483,9 +483,9 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:LOOM_JWT_SECRET_PATH}   # HS256 — a path, not the value
+        secret_path: ${oc.env:JWT_SECRET_PATH}   # HS256 — a path, not the value
         # public_keys:                      # RS256/ES256/EdDSA — one PEM per key id
-        #   "2026-08": ${oc.env:LOOM_JWT_PUBLIC_KEY_PEM}
+        #   "2026-08": ${oc.env:JWT_PUBLIC_KEY_PEM}
         algorithms: [HS256]                 # explicit allowlist; 'none' always rejected
         audience: loom-api                  # REQUIRED by any sql_endpoint with auth: identity
         issuer: null                        # validated only when set

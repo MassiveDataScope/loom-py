@@ -174,7 +174,7 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:LOOM_JWT_SECRET_PATH}
+        secret_path: ${oc.env:JWT_SECRET_PATH}
         algorithms: [HS256]
         audience: loom-api
         roles_claim: loom_roles

@@ -148,7 +148,7 @@ class JwtAuthConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
           rest:
             auth:
               jwt:
-                secret_path: ${oc.env:LOOM_JWT_SECRET_PATH}
+                secret_path: ${oc.env:JWT_SECRET_PATH}
                 algorithms: [HS256]
                 roles_claim: loom_sql_roles
     """
