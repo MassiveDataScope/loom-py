@@ -109,7 +109,10 @@ class Created(Generic[T]):
   responses carry the same `GrantView` schema.
 - The REST compiler refuses a return annotation where `Created` wraps a type
   other than one of the remaining union members, or appears twice: the two
-  responses would document different bodies for one resource.
+  responses would document different bodies for one resource. It also
+  refuses `Created` on a route whose `status_code` is already 201. The
+  result type and the type `Created` wraps are resolved once and held on
+  `CompiledRoute` (`result_type`, `created_type`).
 - Other callers (`UseCaseInvoker`, jobs, Celery, `LoomRestAdapter`) receive
   the wrapper as is; a caller that only wants the value reads `.value`.
 - The span attribute `status_code` is set before the use case runs
@@ -185,22 +188,33 @@ async def execute(self, query: GrantQuery = Query(), caller: Identity = Caller()
   `ParamBinding` (so the executor does not change) plus
   `ExecutionPlan.query_binding: QueryBinding | None = None` for transports.
 - REST compiler refuses, with `InterfaceCompilationError`: `Query()` together
-  with a `QuerySpec` parameter; a field whose wire name equals a path
-  parameter or `profile`; a field that is not a scalar (string, integer,
-  number, boolean, enum, UUID, date-time, each optionally nullable).
-- `LoomType` gains `from_query(params: Mapping[str, str]) -> Any`: msgspec
-  `convert(..., strict=False)`, pydantic lax validation. It raises
-  `BoundaryValidationError` like the other entry points, and keeps every
-  conversion call inside `_loom_type.py`.
+  with a `QuerySpec` parameter (`QuerySpec` itself or a union holding it); a
+  field whose wire name equals a path parameter or `profile`; a field that is
+  not a scalar (a string, UUID, date-time and other string formats included,
+  an integer, number, boolean, enum or `Literal`, each optionally nullable).
+  A `Query()` type that is not a strict model is a `CompilationError` naming
+  `UseCase.execute` and the parameter.
+- `LoomType` gains `from_query(params: Mapping[str, str]) -> Any`, strict
+  (decided in review, replacing lax conversion). The integer, number and
+  boolean fields, read once from the type's JSON Schema, take only their
+  exact spelling: an integer `[+-]?[0-9]+`, a finite JSON number, `true` or
+  `false`. A date-time field refuses a number. Every other value stays text.
+  The result is then validated strictly: msgspec `convert(..., strict=True)`,
+  pydantic `validate_json(..., strict=True)`. So `5.0` or `1e2` for an
+  integer, `1` for a boolean, `null` for any field and a Unix timestamp for a
+  date-time are 422. It raises `BoundaryValidationError` like the other entry
+  points, and keeps every conversion call inside `_loom_type.py`.
 
 Request handling, in order:
 
 1. A key that is neither a declared wire name nor `profile` (when the route
-   exposes it) → 400 `unsupported_query`.
-2. A key given twice → 400 `unsupported_query`.
+   exposes it) → 400 `unsupported_query`. An unexposed `profile` is unknown.
+2. A key given twice, `profile` included → 400 `unsupported_query`.
 3. `from_query` → 422 `boundary_validation` with `violations` on a bad value
    (wrong type, out of range, unknown enum value, missing time zone).
-4. The typed struct is passed to `execute`.
+4. Only then `profile` is resolved, and the use case is built; a 400 or 422
+   never constructs it.
+5. The typed struct is passed to `execute`.
 
 The accepted names and the decoder are resolved once per route at startup and
 held in `_RouteRuntime`.
@@ -347,6 +361,8 @@ parameters (open question 5).
 | 3 | Ignore unknown parameters | A misspelled `changed_since` would silently turn an incremental load into a full one |
 | 3 | 422 for an unknown parameter | It is not a bad value; the consumer's contract is 400 `unsupported_query` |
 | 3 | Validate the query struct strictly with `from_builtins` | Every query value is a string; strict conversion refuses `"50"` for `int` |
+| 3 | Lax conversion (`strict=False`, pydantic lax) | Accepts `5.0` for an integer, `1` for a boolean, `null` as `None` and a Unix timestamp as a date-time (msgspec); found in review |
+| 3 | pydantic `validate_strings(..., strict=True)` | Probed: still accepts `5.0`, `1`, `nan`, ` 5`, `5_0` and a numeric date-time |
 
 ## Standards
 
@@ -382,13 +398,14 @@ All under `tests/`, mirroring `src/loom`; none in `src`.
 
 Unit:
 
-- `tests/unit/core/use_case/test_created.py`: `Created` is frozen, generic,
-  equal by value.
+- `tests/unit/core/use_case/test_created.py`: `Created` carries its value.
 - `tests/unit/core/engine/test_query_binding.py`: `Query()` compiles to a
   `ParamBinding` plus `query_binding`; two `Query()` fail; a lax struct
-  (no `forbid_unknown_fields`) fails with `UnsupportedBoundaryType`.
+  (no `forbid_unknown_fields`) fails with a `CompilationError` naming the
+  parameter.
 - `tests/unit/core/model/test_loom_type.py`: `from_query` for msgspec and
-  pydantic: `"50"` → 50, UUID, enum, `tz=True` date-time; a bad value raises
+  pydantic: `"50"` → 50, UUID, enum, `tz=True` date-time with any offset;
+  `5.0`, `1e2`, `1` for a boolean, `null` and a Unix timestamp raise
   `BoundaryValidationError` with the field path.
 - `tests/unit/core/errors/test_errors.py`: `RateLimited` rounds 0.2 s up to 1
   and 1.5 s to 2; code `rate_limited`.
@@ -485,6 +502,27 @@ Accepted with the recommendations above and these decisions:
    and filter errors answering 500, the `QuerySpec` OpenAPI `maximum: 1000`
    (open question 7), and the enum value quoted by msgspec (open question 5).
    Open questions 6 and 8 stay as written.
+
+### Review round
+
+The owner's review changed these points, all reflected above:
+
+- Declared queries decode strictly, not in lax mode. The integer, number and
+  boolean fields are read from the JSON Schema, not from the Python
+  annotations, because pydantic's `AwareDatetime` is not a `date` subclass.
+  The schema helpers live once in `loom.core.model.json_schema`, shared by
+  `_loom_type.py`, the REST compiler and `openapi.py`.
+- `profile` on a `Query()` route is accepted only when exposed, and refused
+  when repeated. Request parameters are resolved before the use case is
+  built.
+- An agent granted a use case that takes `Query()` fails to compile with
+  `USECASE_DECLARES_QUERY`: a tool call cannot bind a declared query.
+- `Created` on a route with `status_code` 201 is refused. OpenAPI builds both
+  success entries in one `build_success_responses`. A pydantic result model
+  is one component under its class name, as a `msgspec.Struct` already was.
+- `RateLimited` refuses a non-finite `retry_after` with a `ValueError`.
+- Importing every `loom.core` module loads no `loom.rest`, FastAPI or
+  Starlette (a containment test).
 
 ## Consequences
 
