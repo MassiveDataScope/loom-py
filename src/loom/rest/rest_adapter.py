@@ -58,9 +58,10 @@ class LoomRestAdapter:
         """Execute the UseCase and return a serializable result.
 
         Converts ``msgspec.Struct`` results to plain dicts/lists via
-        ``msgspec.to_builtins``. A :class:`~loom.core.use_case.Created`
-        result becomes a ``201`` response with its value as the body and
-        ``Location`` when it gives one. Other results are returned as-is.
+        ``msgspec.to_builtins``. For a :class:`~loom.core.use_case.Created`
+        result it returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`:
+        ``201``, the value as the body, and ``Location`` when it gives one.
+        Other results are returned as-is.
 
         Args:
             use_case: Constructed UseCase instance.
@@ -68,7 +69,8 @@ class LoomRestAdapter:
                 pre-resolved dependencies.
 
         Returns:
-            Serializable result (plain Python primitives for Struct results).
+            Serializable result (plain Python primitives for Struct results),
+            or a ``MsgspecJSONResponse`` for a ``Created`` result.
 
         Raises:
             HTTPException: When the UseCase raises a ``LoomError``.

@@ -385,7 +385,7 @@ class _PydanticType:
 
 
 _INTEGER = re.compile(r"-?(?:0|[1-9]\d*)", re.ASCII)
-_FRACTION_EXPONENT = re.compile(r"(?:\.\d+)?(?:[eE][+-]?\d+)?", re.ASCII)
+_NUMBER = re.compile(_INTEGER.pattern + r"(?:\.\d+)?(?:[eE][+-]?\d+)?", re.ASCII)
 _LOOSE_NUMBER = re.compile(r"[+-]?[\d.]+(?:[eE][+-]?\d+)?", re.ASCII)
 _INT_RANGE = range(-(2**63), 2**64)
 _INT_MAX_LENGTH = len(str(-(2**63)))
@@ -402,10 +402,7 @@ def _to_int(text: str) -> Any:
 
 
 def _to_float(text: str) -> Any:
-    integer = _INTEGER.match(text)
-    if integer is None or not _FRACTION_EXPONENT.fullmatch(text, integer.end()):
-        return text
-    number = float(text)
+    number = float(text) if _NUMBER.fullmatch(text) else math.nan
     return number if math.isfinite(number) else text
 
 
