@@ -108,9 +108,10 @@ class InsufficientAuthentication(Unauthenticated):
 
     Raises:
         ValueError: If ``message`` is not a ``str``, ``max_age`` is not a
-            non-negative ``int``, ``acr_values`` is a single ``str``, ``bytes``
-            or not iterable, or a value is not a ``str``, is empty, or holds a
+            non-negative ``int``, ``acr_values`` is a single ``str`` or
+            ``bytes``, or a value is not a ``str``, is empty, or holds a
             character outside visible ASCII, a double quote or a backslash.
+        TypeError: If ``acr_values`` is not iterable.
 
     Example::
 
@@ -130,10 +131,10 @@ class InsufficientAuthentication(Unauthenticated):
             raise ValueError("InsufficientAuthentication.message must be a str")
         if max_age is not None and (type(max_age) is not int or max_age < 0):
             raise ValueError("InsufficientAuthentication.max_age must be a non-negative int")
-        if isinstance(acr_values, (str, bytes)) or not isinstance(acr_values, Iterable):
+        if isinstance(acr_values, (str, bytes)):
             raise ValueError(
                 "InsufficientAuthentication.acr_values takes an iterable of str values, "
-                "not one str, bytes or a non-iterable"
+                "not one str or bytes"
             )
         values = tuple(acr_values)
         if not all(

@@ -189,8 +189,9 @@
   `Created(v)` with `201` and body `v`, and any other result with the route's
   `status_code` as before; OpenAPI documents both statuses with the same
   schema. `Created(v, location="/items/1")` also sends `Location` (RFC 9110
-  §15.3.2), which OpenAPI declares on the `201`; a location that is not an
-  RFC 3986 URI reference, a non-`str` included, raises `ValueError`.
+  §15.3.2), which OpenAPI declares on the `201`; a location that is empty or
+  holds a character not allowed in an RFC 3986 URI reference raises
+  `ValueError`.
   `LoomRestAdapter.handle` answers a `Created` the same way. Compilation
   refuses a `Created` that wraps a type other than another member of the
   result, appears twice or is not parameterised, and a `Created` on a route
@@ -249,7 +250,7 @@
   character RFC 6750 §3 does not allow becomes a space, runs of spaces
   collapse, an empty result falls back to the default message, and the text
   is cut at 256 characters. A non-`str` message, a negative or non-int
-  `max_age`, `acr_values` that is a single `str`, `bytes` or not iterable, or
+  `max_age`, `acr_values` that is a single `str` or `bytes`, or
   an ACR value that is not a `str`, is empty, or holds anything but visible
   ASCII other than a double quote or a backslash raise `ValueError`. Every
   other 401 keeps the plain `Bearer` challenge.

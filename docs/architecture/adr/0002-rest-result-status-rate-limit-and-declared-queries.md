@@ -99,7 +99,7 @@ class Created(Generic[T]):
     """The use case created ``value``."""
 
     value: T
-    location: str | None = None          # an RFC 3986 URI reference, else ValueError
+    location: str | None = None          # only URI-reference characters, else ValueError
 ```
 
 - A use case that may create returns `T | Created[T]`. "Created" is a fact
@@ -591,9 +591,10 @@ turns into a status and a header.
 - `Created(value, location=None)`: when set, the 201 carries `Location`
   (RFC 9110 §15.3.2), and OpenAPI declares that header on every 201 it
   documents. `LoomRestAdapter` answers a `Created` the same way. A location
-  must be a non-empty RFC 3986 URI reference (unreserved, reserved and
-  percent-encoded characters, matching the `format: uri-reference` OpenAPI
-  publishes); anything else, a non-`str` included, raises `ValueError`.
+  must be non-empty and hold only characters allowed in an RFC 3986 URI
+  reference (unreserved, reserved and percent-encoded); the check is per
+  character, not structural. Anything else raises `ValueError`, and a
+  non-`str` the `TypeError` Python raises for it.
 - Declared numbers follow the JSON number grammar (RFC 8259 §6): `+5`,
   `007`, `.5`, `5.` and `+1.5` are refused, and an integer must lie in
   `[-2**63, 2**64)`. Probed before the change: a huge integer gave no 500 on

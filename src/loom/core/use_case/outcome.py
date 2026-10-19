@@ -18,13 +18,14 @@ class Created(Generic[T]):
 
     Args:
         value: The created resource.
-        location: RFC 3986 URI reference of the created resource, absolute
-            or relative, or ``None``.
+        location: URI of the created resource, absolute or relative, or
+            ``None``.
 
     Raises:
-        ValueError: If ``location`` is not a ``str`` or not a non-empty URI
-            reference: only unreserved, reserved and percent-encoded
-            characters.
+        ValueError: If ``location`` is empty or holds a character not allowed
+            in an RFC 3986 URI reference (unreserved, reserved and
+            percent-encoded characters only).
+        TypeError: If ``location`` is not a ``str``.
 
     Example::
 
@@ -38,7 +39,8 @@ class Created(Generic[T]):
 
     def __post_init__(self) -> None:
         location = self.location
-        if location is not None and not (
-            isinstance(location, str) and _URI_REFERENCE.fullmatch(location)
-        ):
-            raise ValueError("Created.location must be a non-empty RFC 3986 URI reference")
+        if location is not None and not _URI_REFERENCE.fullmatch(location):
+            raise ValueError(
+                "Created.location must be non-empty and hold only characters allowed "
+                "in an RFC 3986 URI reference"
+            )

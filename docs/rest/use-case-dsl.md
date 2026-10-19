@@ -781,13 +781,13 @@ class CreateGrant(UseCase[Grant, GrantView | Created[GrantView]]):
 
 The route answers `Created(view)` with `201` and `view` as the body, and a
 plain `view` with its `status_code`. With `location`, the `201` also carries a
-`Location` header. The location must be an RFC 3986 URI reference, absolute
-or relative; anything else, a non-`str` included, raises `ValueError`. OpenAPI documents both statuses with the
-`GrantView` schema and declares `Location` on the `201`. `Created` must wrap
-one of the other members of the result, and a route whose `status_code` is
-already `201` cannot return it; either fails at startup. `LoomRestAdapter`
-answers a `Created` the same way; other callers receive the wrapper and read
-`.value`.
+`Location` header. The location, absolute or relative, must be non-empty and
+hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
+`ValueError`. OpenAPI documents both statuses with the `GrantView` schema and
+declares `Location` on the `201`. `Created` must wrap one of the other members
+of the result, and a route whose `status_code` is already `201` cannot return
+it; either fails at startup. `LoomRestAdapter` answers a `Created` the same
+way; other callers receive the wrapper and read `.value`.
 
 ### `429` when the caller spent its budget
 

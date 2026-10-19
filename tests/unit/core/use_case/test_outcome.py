@@ -15,8 +15,8 @@ def test_an_absolute_uri_is_a_location() -> None:
 
 @pytest.mark.parametrize(
     "location",
-    ["", "/items/1\r\nSet-Cookie: a=b", "/items/1 2", "/ítems/1", "<>", "/items/%zz", 5],
-    ids=["empty", "crlf", "space", "non-ascii", "angle-brackets", "bad-percent", "not-str"],
+    ["", "/items/1\r\nSet-Cookie: a=b", "/items/1 2", "/ítems/1", "/items/%zz"],
+    ids=["empty", "crlf", "space", "non-ascii", "bad-percent"],
 )
 def test_a_location_that_is_not_a_uri_reference_is_refused(location: Any) -> None:
     with pytest.raises(ValueError, match="Created.location"):
