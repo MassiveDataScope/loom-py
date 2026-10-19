@@ -168,7 +168,9 @@ def test_an_unknown_or_repeated_parameter_is_unsupported(client: TestClient, que
 
     detail = response.json()["detail"]
     assert (response.status_code, detail["code"]) == (400, "unsupported_query")
-    assert detail["message"] == "The request has a query parameter this route does not accept."
+    assert detail["message"] == (
+        "The request has a query parameter this route does not accept, or one given twice."
+    )
 
 
 def test_an_exposed_profile_is_accepted_next_to_the_declared_parameters(
@@ -334,3 +336,16 @@ def test_a_huge_integer_is_a_query_validation_error(
     assert (response.status_code, detail["code"]) == (400, "query_validation")
     assert [violation["field"] for violation in detail["violations"]] == ["limit"]
     assert "sys." not in response.text
+
+
+def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
+    client: TestClient,
+) -> None:
+    response = client.get("/grants/by-profile", params={"profile": "secret-input-value"})
+
+    detail = response.json()["detail"]
+    assert (response.status_code, detail["code"]) == (400, "query_validation")
+    assert detail["violations"] == [
+        {"field": "profile", "message": "Not a profile this route allows."}
+    ]
+    assert "secret-input-value" not in response.text

@@ -78,7 +78,10 @@ _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
-_UNSUPPORTED_QUERY_MESSAGE = "The request has a query parameter this route does not accept."
+_UNSUPPORTED_QUERY_MESSAGE = (
+    "The request has a query parameter this route does not accept, or one given twice."
+)
+_INVALID_PROFILE_MESSAGE = "Not a profile this route allows."
 
 
 def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
@@ -369,13 +372,15 @@ def _route_docs(compiled_route: CompiledRoute) -> tuple[str | None, str | None]:
 class _DeclaredQuery:
     param_name: str
     accepted: frozenset[str]
+    profiles: frozenset[str]
     decoder: LoomType
 
     def decode(self, query_params: QueryParams) -> Any:
         """Build the typed query, refusing a key the route does not accept or repeats.
 
-        ``profile`` is accepted only where the route exposes it, and its value
-        is left to :func:`_resolve_profile`.
+        ``profile`` is accepted only where the route exposes it, and only with
+        one of the route's allowed profiles; :func:`_resolve_profile` then
+        selects it.
 
         Raises:
             LoomError: ``unsupported_query`` for an unknown or repeated key.
@@ -385,6 +390,13 @@ class _DeclaredQuery:
         keys = [key for key, _ in query_params.multi_items()]
         if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
             raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
+        profile = query_params.get(QueryParam.PROFILE)
+        if profile is not None and profile not in self.profiles:
+            raise BoundaryValidationError(
+                _INVALID_PROFILE_MESSAGE,
+                ((QueryParam.PROFILE, _INVALID_PROFILE_MESSAGE),),
+                code=ErrorCode.QUERY_VALIDATION,
+            )
         try:
             return self.decoder.from_query(
                 {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
@@ -423,6 +435,7 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
         declared_query = _DeclaredQuery(
             param_name=query_binding.name,
             accepted=frozenset(accepted),
+            profiles=frozenset(compiled_route.effective_allowed_profiles),
             decoder=loom_type(query_binding.query_type),
         )
     return _RouteRuntime(

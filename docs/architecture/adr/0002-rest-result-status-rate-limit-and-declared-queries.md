@@ -334,7 +334,7 @@ All use loom's body (`_errors.py:62-83`, `auth/middleware.py:204-227`).
 
 400 (unknown or repeated parameter)
 {"detail": {"code": "unsupported_query",
-            "message": "The request has a query parameter this route does not accept.",
+            "message": "The request has a query parameter this route does not accept, or one given twice.",
             "trace_id": "…"}}
 
 400 (bad value)
