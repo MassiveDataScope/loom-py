@@ -15,18 +15,20 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic.alias_generators import to_camel
 
+from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.bootstrap.bootstrap import BootstrapResult, bootstrap_app
 from loom.core.command import Command, Internal
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.model import LoomStruct
+from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
+from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.markers import Exists, Input
 from loom.core.use_case.use_case import UseCase
@@ -146,6 +148,35 @@ class QueryAwareUseCase(UseCase[Any, dict[str, Any]]):
             "sort_field": first_sort.field if first_sort else None,
             "sort_direction": first_sort.direction if first_sort else None,
         }
+
+
+class _FilterRow(BaseModel):
+    __tablename__ = "router_runtime_filter_rows"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    rank: int = ColumnField()
+
+
+class CompiledFilterUseCase(UseCase[Any, str]):
+    allowed_fields: frozenset[str] = frozenset()
+
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> str:
+        compile_all(_FilterRow)
+        sa_model = get_compiled(_FilterRow)
+        assert sa_model is not None
+        assert query.filters is not None
+        compiler = QuerySpecCompiler(
+            sa_model,
+            sa_model.id,
+            self.allowed_fields,
+            backend="sqlalchemy",
+            model_name="_FilterRow",
+        )
+        return str(compiler.compile_filter(query.filters))
+
+
+class IdOnlyFilterUseCase(CompiledFilterUseCase):
+    allowed_fields = frozenset({"id"})
 
 
 class DocUseCase(UseCase[Any, str]):
@@ -523,6 +554,31 @@ def test_bind_interfaces_normalizes_camelcase_query_fields() -> None:
     assert response.status_code == 200
     assert response.json()["sort_field"] == "created_at"
     assert response.json()["filter_field"] == "price_total"
+
+
+@pytest.mark.parametrize(
+    ("use_case", "url", "field"),
+    [
+        (CompiledFilterUseCase, "/rows/?no_such_field=s3cr3t", "no_such_field"),
+        (IdOnlyFilterUseCase, "/rows/?rank=s3cr3t", "rank"),
+    ],
+)
+def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
+    use_case: type[CompiledFilterUseCase], url: str, field: str
+) -> None:
+    class IFace(RestInterface[str]):
+        prefix = "/rows"
+        routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
+
+    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+    response = client.get(url)
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["code"] == "unsupported_query"
+    assert field in body["message"]
+    assert "s3cr3t" not in body["message"]
 
 
 # ---------------------------------------------------------------------------

@@ -797,6 +797,12 @@
   while the router clamped `?limit=` to `max_limit`. The schema now publishes
   `max_limit` as its `maximum` and `min(50, max_limit)` as its `default`, the
   values the router applies. A larger `?limit=` is still clamped, not refused.
+- **rest:** a `QuerySpec` filter or sort on a field the SQLAlchemy compiler
+  cannot resolve, or a filter the repository's allow-list refuses, answered
+  `500 internal_error`. `FilterPathError` and `UnsafeFilterError` are now
+  `DomainError`s with code `unsupported_query`, so the route answers `400` with
+  the standard error body, whose message names the field and never its value.
+  Both remain `ValueError` subclasses with unchanged constructors and messages.
 - **rest:** a path placeholder in `RestInterface.prefix` was dropped. The route
   was registered on prefix + path, but path parameters were read from the
   route `path` only, so the use case never received the prefix parameter (a
