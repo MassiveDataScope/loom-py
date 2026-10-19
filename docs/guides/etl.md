@@ -1053,9 +1053,16 @@ from loom.prefect.deploy import discover_and_deploy_etls
 deployment_ids = discover_and_deploy_etls(
     config="config/etls/*.yaml",
     work_pool="loom-fargate",   # default; "loom-docker" for local dev
-    env="prod",                 # picks environments.<env> from each declaration
+    env="production",           # picks environments.<env>; default: LOOM_ENV, else production
 )
 ```
+
+`env` and the keys of `environments` are loom environments: `production`,
+`staging`, `development` or `test`; any other value fails. Each deployment
+records its environment as the flow's `env` parameter, so its runs resolve to
+it: the runner takes its logger defaults from it and, in production and
+staging, runs the [deploy checks](../getting-started/environments.md). A run
+started without `env` resolves `LOOM_ENV`, else production.
 
 Globs follow the rules of [`includes`](#composing-files-with-includes): only
 regular `.yaml` / `.yml` files match, sorted by resolved path, and a pattern
@@ -1076,7 +1083,7 @@ from loom.prefect import deploy_flow
 
 deployment_id = deploy_flow(
     daily_orders,
-    env="prod",                 # required, keyword only
+    env="production",           # keyword only; default: LOOM_ENV, else production
     work_pool="loom-fargate",   # used when the YAML sets no work_pool for env
 )
 ```
@@ -1121,7 +1128,7 @@ params:
   run_date: ${today-1d}
 tags: [orders, daily]
 environments:
-  prod:
+  production:
     work_pool: loom-fargate
     job_variables:
       cpu: 1024

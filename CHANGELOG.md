@@ -478,6 +478,18 @@
   `loom.core.environment.Environment`, `PRODUCTION` by default. A leftover
   `environment:` key under `observability.log.config` is ignored.
   `ObservabilityRuntime.from_config` takes `environment=` as well.
+- **core:** `LoggerConfig` and its handler configs forbid unknown fields, so a
+  leftover `logger.environment` (or any typo) is a `ConfigError`, and
+  `create_app` and `bootstrap_worker` no longer fall back to the default
+  `observability` section when it fails validation. `checks` forbids unknown
+  keys. A `LOOM__*` variable naming no known section stops startup.
+- **core:** `ETLRunner` and `StreamingRunner` resolve the environment
+  (`LOOM_ENV`, else production): without one they log JSON and, built from a
+  configuration file, run the deploy checks.
+- **rest:** `create_app(authenticator=...)` requires
+  `app.rest.auth.custom: true`, and `custom: true` requires an
+  `authenticator`; `loom.rest.E001` passes on `custom: true` instead of being
+  skipped when an authenticator is passed.
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number
   grammar and must be finite, an integer its integer subset within
@@ -644,9 +656,16 @@
 
 ### prefect
 
-- **prefect:** `FlowCtx.environment` is removed; nothing read it. The flow
-  parameter `env` still names the deployment target whose
-  `environments.<env>` block applies, and notifications still report it.
+- **prefect:** `FlowCtx.environment` is removed; nothing read it.
+- **prefect:** the flow parameter `env` and the keys of a flow YAML's
+  `environments` block are loom environments (`production`, `staging`,
+  `development`, `test`); `prod`, `dev`, `local` or any other key or value is
+  a `ConfigError`. `env` defaults to `None` and resolves like any loom
+  process (`LOOM_ENV`, else production); the run hands it to the runner,
+  which takes its logger defaults from it and runs the deploy checks when
+  deployed, and notifications report the resolved value. `deploy_flow` and
+  `discover_and_deploy_etls` take an optional `env` resolved the same way
+  and record it as the deployment's `env` parameter.
 - **prefect:** a placeholder counts from the run's scheduled start instead of
   the wall clock. `${today-1d}`, `${yesterday}` and `${now±N}` counted from
   `datetime.now()` inside the flow, so a queued run that started after
@@ -803,6 +822,25 @@
   worker skips the `loom.rest` checks. `loom check --deploy [--env X]
   <config>` runs them in CI without starting the application.
   `ConfigContext.declares(key)` tells an explicit `null` from an absent key.
+- **core:** one place tells every loom process its environment and
+  configuration (ADR 0005). `LOOM__SECTION__KEY` variables override any
+  configuration key as the last layer (code defaults < `base.yaml` <
+  `<LOOM_ENV>.yaml` < `LOOM__*`), merged as an OmegaConf dotlist; levels
+  match declared keys case-insensitively, a first level naming no known
+  section is a `ConfigError` naming the variable, and one WARNING line names
+  the overridden keys without their values.
+  `loom.core.config.overrides.load_application_config` is the one loader
+  behind REST and Celery `create_app`, `bootstrap_worker`,
+  `loom check --deploy`, `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`
+  and the migration locator, so deploy checks see the final configuration.
+  `ETLRunner` and `StreamingRunner` take `environment=`, take their logger
+  defaults from it and run the deploy checks when deployed, like the Prefect
+  flows through them. `checks.modules` lists the modules registering an
+  application's own checks, imported before every run, at startup and in
+  `loom check --deploy` (which puts `app.code_path` on the import path as
+  `create_app` does). `app.rest.auth.custom: true` declares an authenticator
+  passed in code, so `loom.rest.E001` reads the same answer in CI and at
+  startup. `parse_environment` validates a value naming an environment.
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become

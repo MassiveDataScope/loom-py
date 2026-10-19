@@ -1,4 +1,4 @@
-# Environments and deploy checks
+# Environments, configuration and deploy checks
 
 A loom application runs in one of four environments: `production`, `staging`,
 `development` or `test`. One selector picks it, and the environment then picks
@@ -7,12 +7,15 @@ run. The pattern is the one Django, Spring and Rails use: secure defaults live
 in code, configuration files override them, and nothing guesses the
 environment on its own.
 
+`LOOM_ENV` is the only variable loom requires.
+
 ## Selecting the environment
 
 The environment comes from, in order:
 
-1. the `environment=` argument of `create_app` (REST or Celery) or
-   `bootstrap_worker`;
+1. the `environment=` argument of the entry point: REST and Celery
+   `create_app`, `bootstrap_worker`, `ETLRunner`, `StreamingRunner`, or the
+   `env` parameter of a Prefect flow;
 2. the `LOOM_ENV` variable;
 3. `production`, when neither is given.
 
@@ -37,9 +40,33 @@ class DescribeDeployment(UseCase[Deployment, str]):
         self._environment = environment
 ```
 
-No other loom module reads `LOOM_ENV`; an architecture test enforces it.
+No other loom module reads `LOOM_ENV` or the `LOOM__*` variables; an
+architecture test enforces it.
 
-## Configuration per environment
+### Prefect flows
+
+The `env` parameter of every loom flow and the keys of a flow YAML's
+`environments` block are environments too: `production`, `staging`,
+`development` or `test`. Any other key or value fails. `deploy_flow` and
+`discover_and_deploy_etls` resolve `env` like the factories (default:
+`LOOM_ENV`, else production), pick `environments.<env>`, and record the
+environment as the deployment's `env` parameter, so each run resolves to it.
+A run started without `env` resolves `LOOM_ENV`, else production.
+
+## Configuration sources
+
+From lowest to highest precedence:
+
+1. defaults in code (the secure ones);
+2. `base.yaml`, or the first explicit file;
+3. `<LOOM_ENV>.yaml`, or each later explicit file in order;
+4. the `LOOM__SECTION__KEY` variables.
+
+Within any file, its own values win over the files it `includes`. Every entry
+point loads its configuration this way, and the deploy checks run on the
+final, merged result.
+
+### Files per environment
 
 Keep one directory with a base and one overlay per environment:
 
@@ -72,15 +99,6 @@ app = create_app("config/base.yaml", "config/eu.yaml", environment="production")
 ```
 
 A factory takes one form or the other, never both.
-
-### Precedence
-
-From lowest to highest:
-
-1. defaults in code (the secure ones);
-2. `base.yaml`, or the first explicit file;
-3. the overlay of the environment, or each later explicit file in order;
-4. within any file, its own values over the files it `includes`.
 
 An example layout:
 
@@ -128,6 +146,107 @@ app:
 LOOM_ENV=development
 ```
 
+The logger section refuses a key it does not declare, a removed one included
+(`observability.log.config.environment`), and an `observability` section that
+fails validation stops startup: a stale setting fails loudly instead of being
+silently ignored.
+
+### `LOOM__*` overrides
+
+Any configuration key can be overridden from a variable named `LOOM__` plus
+its path, with a double underscore between levels, as in ASP.NET Core and
+pydantic-settings:
+
+```bash
+LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
+LOOM__SQL__CONNECTIONS__ANALYTICS__POOL_SIZE=20   # sql.connections.analytics.pool_size
+LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.example]'
+```
+
+- Each level matches the key the configuration declares at that place,
+  whatever its case. A level the configuration does not declare is added in
+  lower case, and a section type that refuses unknown keys then refuses it.
+- The first level must name a section the configuration declares or loom
+  knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
+  the variable.
+- Values parse as an OmegaConf dotlist, then the section types validate them:
+  `5` is an integer, `false` a boolean, `[a, b]` a list and `{read: 5, write: 10}`
+  a mapping. A list is replaced whole; its items cannot be set one by one.
+- At startup one WARNING line names the keys that came from variables. Their
+  values are never logged.
+
+What belongs in `LOOM__*`: operational tuning that changes per deployment
+without changing the application, such as the log level, pool sizes and
+timeouts, the OpenTelemetry endpoint, CORS origins or the public URL.
+
+What does not: secrets, and the structure of the application (discovery,
+routes, authentication mechanism). Structure belongs in the files, where it is
+reviewed. Secrets never go through `LOOM__*`, so they never appear in the
+override line.
+
+### Secrets
+
+On ECS, put secrets in the task definition's `secrets`. ECS reads them from
+Secrets Manager or SSM Parameter Store with the task's execution role and
+injects them as variables, and the YAML references them with
+`${oc.env:...}`:
+
+```json
+{
+  "containerDefinitions": [
+    {
+      "name": "api",
+      "environment": [
+        {"name": "LOOM_ENV", "value": "production"},
+        {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
+        {"name": "LOOM__OBSERVABILITY__OTEL__CONFIG__ENDPOINT", "value": "http://otel:4318"}
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:store/database-url"
+        },
+        {
+          "name": "PAYMENTS_API_KEY",
+          "valueFrom": "arn:aws:ssm:eu-west-1:123456789012:parameter/store/payments-api-key"
+        }
+      ]
+    }
+  ]
+}
+```
+
+```yaml
+# config/base.yaml
+database:
+  url: ${oc.env:DATABASE_URL}
+payments:
+  api_key: ${oc.env:PAYMENTS_API_KEY}
+```
+
+On other platforms, the `${secrets:...}` and `${ssm:...}` resolvers read
+Secrets Manager and SSM at load time.
+
+loom has no check for secrets written into the configuration. Scan the
+repository with [gitleaks](https://github.com/gitleaks/gitleaks), in
+pre-commit and in CI:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: vX.Y.Z   # pin the latest gitleaks release
+    hooks:
+      - id: gitleaks
+```
+
+```yaml
+# .github/workflows/ci.yml (a step)
+- uses: gitleaks/gitleaks-action@v2
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
 ## Logger defaults
 
 The logger's renderer and colours follow the environment unless
@@ -140,18 +259,43 @@ The logger's renderer and colours follow the environment unless
 
 ## Deploy checks
 
-In `production` and `staging`, `create_app` and `bootstrap_worker` run the
-deploy checks before building anything, in the spirit of Django's
-`manage.py check --deploy`. Each check has a stable id
-`<area>.<E|W><nnn>`: an `E` check fails startup, a `W` check logs a warning.
+In `production` and `staging`, every entry point runs the deploy checks on
+its final configuration before it builds anything, in the spirit of Django's
+`manage.py check --deploy`: REST and Celery `create_app`, `bootstrap_worker`,
+`ETLRunner` and `StreamingRunner` built from a configuration, and the Prefect
+flows through them. Each check has a stable id `<area>.<E|W><nnn>`: an `E`
+check fails startup, a `W` check logs a warning.
 
 | Id | What it finds |
 |---|---|
-| `loom.rest.E001` | The API authenticates no caller: `app.rest.auth.jwt` is not configured. An `authenticator` passed to `create_app` satisfies it. |
+| `loom.rest.E001` | The API authenticates no caller: neither `app.rest.auth.jwt` nor `app.rest.auth.custom: true` is set. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
 
-A worker serves no HTTP, so `bootstrap_worker` skips the `loom.rest` checks.
+Processes that serve no HTTP (the worker and the runners) skip the
+`loom.rest` checks. An `ETLRunner` built without a configuration file
+(`from_dict`, `from_spark`) has nothing to check and runs none.
+
+### Authentication supplied in code
+
+The configuration always names the authentication mechanism. For the built-in
+JWT one, configure `app.rest.auth.jwt`. For an authenticator passed in code,
+declare it:
+
+```yaml
+app:
+  rest:
+    auth:
+      custom: true
+```
+
+```python
+app = create_app(config_dir="config", authenticator=MyMtlsAuthenticator())
+```
+
+`create_app` refuses an `authenticator` without `custom: true`, `custom: true`
+without an `authenticator`, and `custom: true` beside `jwt`. `loom check
+--deploy` therefore reads the same answer from the same file.
 
 ### Accepting a finding on purpose
 
@@ -173,6 +317,7 @@ logs a warning naming the silenced ids, so the exception stays visible.
 An application registers its own checks under its own area:
 
 ```python
+# src/store/checks.py
 from loom.core.checks import Finding, deploy_check
 from loom.core.config import ConfigContext
 
@@ -187,8 +332,17 @@ def _no_sandbox_gateway(config: ConfigContext) -> Finding | None:
     )
 ```
 
-The check registers when its module is imported; import it from the module
-that builds the application.
+and lists the module in the configuration:
+
+```yaml
+checks:
+  modules:
+    - store.checks
+```
+
+Every run of the checks imports `checks.modules` first, at startup and in
+`loom check --deploy` alike. An unknown key under `checks`, or a module that
+cannot be imported, is a configuration error.
 
 ### Running the checks in CI
 
@@ -202,8 +356,11 @@ loom check --deploy config/base.yaml config/production.yaml
 ```
 
 `--env` picks the overlay of a directory and defaults to `LOOM_ENV`. The
-checks read configuration keys only, so no secret needs to be reachable. The
-command loads loom's own checks; the REST ones only when the `rest` extra is
+`LOOM__*` variables of the shell apply as at startup. `app.code_path` (`src`
+by default, relative to the first file) joins the import path as `create_app`
+adds it, so `checks.modules` import here as well. The checks read
+configuration keys only, so no secret needs to be reachable. The command
+loads loom's own checks, the REST ones only when the `rest` extra is
 installed.
 
 ## Tests
@@ -224,4 +381,4 @@ def _test_environment():
 ```
 
 A test about the production path passes `environment="production"` to the
-factory.
+entry point.
