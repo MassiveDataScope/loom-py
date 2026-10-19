@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 T = TypeVar("T")
+
+_URI_REFERENCE = re.compile(r"(?:[\w\-.~:/?#\[\]@!$&'()*+,;=]|%[\dA-Fa-f]{2})+", re.ASCII)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,11 +18,13 @@ class Created(Generic[T]):
 
     Args:
         value: The created resource.
-        location: URI reference of the created resource, or ``None``.
+        location: RFC 3986 URI reference of the created resource, absolute
+            or relative, or ``None``.
 
     Raises:
-        ValueError: If ``location`` is empty or holds a character outside
-            printable ASCII, or a space.
+        ValueError: If ``location`` is not a ``str`` or not a non-empty URI
+            reference: only unreserved, reserved and percent-encoded
+            characters.
 
     Example::
 
@@ -34,9 +39,6 @@ class Created(Generic[T]):
     def __post_init__(self) -> None:
         location = self.location
         if location is not None and not (
-            location and location.isascii() and location.isprintable() and " " not in location
+            isinstance(location, str) and _URI_REFERENCE.fullmatch(location)
         ):
-            raise ValueError(
-                "Created.location must be a non-empty URI reference of printable ASCII "
-                "without spaces"
-            )
+            raise ValueError("Created.location must be a non-empty RFC 3986 URI reference")

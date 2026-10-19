@@ -582,8 +582,9 @@ turns into a status and a header.
 - `Created(value, location=None)`: when set, the 201 carries `Location`
   (RFC 9110 §15.3.2), and OpenAPI declares that header on every 201 it
   documents. `LoomRestAdapter` answers a `Created` the same way. A location
-  must be a non-empty URI reference of printable ASCII without spaces;
-  anything else raises `ValueError`, because a header cannot carry it.
+  must be a non-empty RFC 3986 URI reference (unreserved, reserved and
+  percent-encoded characters, matching the `format: uri-reference` OpenAPI
+  publishes); anything else, a non-`str` included, raises `ValueError`.
 - Declared numbers follow the JSON number grammar (RFC 8259 §6): `+5`,
   `007`, `.5`, `5.` and `+1.5` are refused, and an integer must lie in
   `[-2**63, 2**64)`. Probed before the change: a huge integer gave no 500 on
