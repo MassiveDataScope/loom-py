@@ -606,6 +606,16 @@
 
 ### core
 
+- **core:** a `BoundaryValidationError` no longer echoes the rejected value
+  (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
+  field or dict key) and `Invalid value 'x'` (a tagged-union tag) become
+  `Invalid enum value` and `Invalid value`, in the message and the violation,
+  with the field path kept: ``Invalid enum value - at `$.colour` ``. pydantic's
+  `union_tag_invalid`, `uuid_parsing` and `bytes_invalid_encoding` reasons
+  become `Input tag does not match any of the expected tags`, `Input should be
+  a valid UUID` and `Data should be valid in its declared encoding`. A message
+  raised by the type's own validator keeps its text.
+
 - **core:** the relation steps and the `load_many` projection steps of a read
   profile run one after another on the request's session. They ran with
   `asyncio.gather` on that one session: when one step failed while another was
