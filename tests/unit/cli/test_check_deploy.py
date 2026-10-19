@@ -201,7 +201,8 @@ def test_skip_leaves_out_an_area_for_a_process_serving_no_http(tmp_path: Path) -
     result = runner.invoke(app, ["check", "--deploy", "--skip", "loom.rest", str(config)])
 
     assert result.exit_code == 0, result.output
-    assert "loom.rest" not in result.output
+    assert "skipped: loom.rest" in result.output
+    assert "loom.rest.E001" not in result.output
 
 
 def test_a_secret_placeholder_in_the_logger_config_does_not_break_the_check(

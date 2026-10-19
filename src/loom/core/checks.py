@@ -48,6 +48,8 @@ _logger = logging.getLogger(__name__)
 CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}")
 """Shape of a check id: a dotted area, then ``E`` or ``W`` and three digits."""
 
+_INTERPOLATION: Final = "${"
+
 SILENCED_KEY: Final = "checks.silenced"
 """Configuration key listing the check ids accepted on purpose."""
 
@@ -211,7 +213,7 @@ def run_deploy_checks(
             ``checks.silenced`` holds an entry outside the id scheme, or a
             module of ``checks.modules`` cannot be imported.
     """
-    section = config.section_or_default("checks", _ChecksConfig, _ChecksConfig())
+    section = _checks_section(config)
     _import_modules(section.modules)
     silenced = _silenced(section.silenced)
     results = tuple(
@@ -248,6 +250,11 @@ def enforce_deploy_checks(
         ConfigError: When ``checks.silenced`` holds an entry outside the id scheme.
     """
     if not environment.is_deployed:
+        _logger.warning(
+            "deploy checks skipped: the environment is %r (%s); they run in production and staging",
+            str(environment),
+            ENVIRONMENT_VARIABLE,
+        )
         return None
     report = run_deploy_checks(config, skip=skip, registry=registry)
     if report.silenced:
@@ -269,6 +276,20 @@ def _require_id(check_id: str) -> None:
         raise ValueError(
             f"check id {check_id!r} must look like '<area>.<E|W><nnn>', e.g. 'loom.rest.E001'"
         )
+
+
+def _checks_section(config: ConfigContext) -> _ChecksConfig:
+    """Decode ``checks`` as written: silences and modules are literals, never placeholders."""
+    raw = config.raw("checks", {})
+    if _INTERPOLATION in repr(raw):
+        raise ConfigError(
+            "the checks section holds a placeholder; silenced ids and check modules "
+            "are written literally, where they are reviewed"
+        )
+    try:
+        return msgspec.convert(raw, _ChecksConfig)
+    except msgspec.ValidationError as exc:
+        raise ConfigError(f"the checks section is invalid: {exc}") from exc
 
 
 def _import_modules(modules: tuple[str, ...]) -> None:

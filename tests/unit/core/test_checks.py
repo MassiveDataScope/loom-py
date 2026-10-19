@@ -125,10 +125,17 @@ class TestRunDeployChecks:
 
 class TestEnforceDeployChecks:
     @pytest.mark.parametrize("environment", [Environment.DEVELOPMENT, Environment.TEST])
-    def test_local_environments_run_no_check(self, environment: Environment) -> None:
-        report = enforce_deploy_checks(_config(), environment, registry=_registry())
+    def test_local_environments_run_no_check_and_say_so_once(
+        self, environment: Environment, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            report = enforce_deploy_checks(_config(), environment, registry=_registry())
 
+        skipped = [r.getMessage() for r in caplog.records if "skipped" in r.getMessage()]
         assert report is None
+        assert len(skipped) == 1
+        assert f"'{environment}'" in skipped[0]
+        assert "LOOM_ENV" in skipped[0]
 
     @pytest.mark.parametrize("environment", [Environment.PRODUCTION, Environment.STAGING])
     def test_an_error_fails_startup_in_a_deployed_environment(
@@ -207,3 +214,18 @@ class TestApplicationCheckModules:
 
         with pytest.raises(ConfigError, match="silence"):
             run_deploy_checks(config, registry=_registry())
+
+
+@pytest.mark.parametrize(
+    "checks",
+    [
+        {"silenced": ["${oc.env:SILENCED}"]},
+        {"modules": ["${oc.env:CHECK_MODULE}"]},
+        {"silenced": "${shared.silenced}"},
+    ],
+)
+def test_a_placeholder_in_the_checks_section_is_a_config_error(checks: dict[str, Any]) -> None:
+    config = _config(checks=checks, shared={"silenced": [_ERROR_ID]})
+
+    with pytest.raises(ConfigError, match="checks"):
+        run_deploy_checks(config, registry=_registry())

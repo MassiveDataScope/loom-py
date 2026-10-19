@@ -65,7 +65,7 @@ def check(
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-    _print(report, environment)
+    _print(report, environment, tuple(skip or ()))
     if report.errors:
         raise typer.Exit(1)
 
@@ -95,8 +95,10 @@ def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ..
     return select_config_paths(files, directory, environment, caller="loom check")
 
 
-def _print(report: DeployReport, environment: Environment) -> None:
+def _print(report: DeployReport, environment: Environment, skipped: tuple[str, ...]) -> None:
     typer.echo(f"environment: {environment}")
+    if skipped:
+        typer.echo(f"skipped: {', '.join(skipped)}")
     if report.silenced:
         typer.echo(f"silenced: {', '.join(report.silenced)}")
     for result in report.results:

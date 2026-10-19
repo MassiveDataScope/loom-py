@@ -221,8 +221,8 @@ def _build_celery_service(
     """Return a ``CeleryJobService`` if the celery extra is installed and configured.
 
     Returns ``None`` when the ``loom[celery]`` extra is absent or the
-    ``celery`` config section is missing / malformed, so the caller can
-    fall back to :func:`_build_inline_service`.
+    ``celery`` section is, so the caller can fall back to
+    :func:`_build_inline_service`. A section that fails validation raises.
 
     Args:
         ctx: Resolved configuration context.
@@ -242,23 +242,23 @@ def _build_celery_service(
             CeleryJobService,  # type: ignore[import-untyped,unused-ignore]
         )
 
-        celery_cfg = ctx.section(ConfigKey.CELERY, _CC)
-        return CeleryJobService(
-            create_celery_app(celery_cfg),
-            metrics=result.metrics,
-            factory=result.factory,
-            executor=result.executor,
-            observability_runtime=observability_runtime,
-        )
     except ImportError:
         return None
-    except ConfigError:
+    celery_cfg = ctx.section_optional(ConfigKey.CELERY, _CC)
+    if celery_cfg is None:
         warnings.warn(
-            "Celery config section is missing or malformed — falling back to InlineJobService. "
-            "Add a 'celery' section to your config or install loom[celery] to suppress this.",
+            "Celery config section is missing — falling back to InlineJobService. "
+            "Add a 'celery' section to your config to suppress this.",
             stacklevel=3,
         )
         return None
+    return CeleryJobService(
+        create_celery_app(celery_cfg),
+        metrics=result.metrics,
+        factory=result.factory,
+        executor=result.executor,
+        observability_runtime=observability_runtime,
+    )
 
 
 def _build_inline_service(result: KernelRuntime) -> InlineJobService:

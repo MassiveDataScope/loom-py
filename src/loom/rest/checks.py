@@ -11,8 +11,9 @@ default; an explicit ``null`` switches each off.
 
 Both read the keys as written and resolve no placeholder, so
 ``loom check --deploy`` runs them in CI without the application's secrets. A
-value given by a placeholder is judged as written: ``custom`` must be the
-literal ``true``, and a placeholder URL counts as published.
+value given by a placeholder is judged as written: ``jwt`` must be a literal
+mapping and ``custom`` the literal ``true``, since a placeholder may resolve
+to null; a placeholder URL counts as published.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ _SCHEMA_KEYS = ("docs_url", "redoc_url", "openapi_url")
 @deploy_check(AUTHENTICATION_CHECK)
 def _authentication_configured(config: ConfigContext) -> Finding | None:
     auth = config.raw("app.rest.auth", {})
-    if isinstance(auth, dict) and (auth.get("jwt") is not None or auth.get("custom") is True):
+    if isinstance(auth, dict) and (isinstance(auth.get("jwt"), dict) or auth.get("custom") is True):
         return None
     return Finding(
         message=f"the API authenticates no caller: neither {_JWT_KEY} nor {_CUSTOM_KEY} is set.",

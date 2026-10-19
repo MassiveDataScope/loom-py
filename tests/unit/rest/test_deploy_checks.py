@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from loom.core.checks import DeployCheckError, run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.core.environment import ENVIRONMENT_VARIABLE
 from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
@@ -58,6 +59,21 @@ class TestRestChecks:
         rest = {**_NO_DOCS, "auth": {"jwt": {"secret_path": "${oc.env:UNSET_SECRET}"}}}
 
         assert _rest_ids({"name": "demo", "rest": rest}) == []
+
+    def test_a_jwt_given_by_a_placeholder_fails_e001_even_when_it_resolves_to_null(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        document = {
+            "shared": {"jwt": {"secret_path": "/k"}},
+            "app": {"name": "demo", "rest": {**_NO_DOCS, "auth": {"jwt": "${shared.jwt}"}}},
+        }
+        path = tmp_path / "app.yaml"
+        path.write_text(yaml.safe_dump(document), encoding="utf-8")
+        monkeypatch.setenv("LOOM__SHARED__JWT", "")
+
+        report = run_deploy_checks(load_application_config(str(path)))
+
+        assert AUTHENTICATION_CHECK in [r.id for r in report.results]
 
     def test_authentication_declared_as_custom_passes_e001(self) -> None:
         assert _rest_ids({"name": "demo", "rest": _CUSTOM_AUTH}) == []
@@ -176,13 +192,13 @@ def test_a_removed_logger_key_stops_startup(tmp_path: Path) -> None:
 
 
 class TestOverridesFromVariables:
-    def test_an_override_switching_off_authentication_fails_production_startup(
+    def test_an_override_switching_off_authentication_stops_startup(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = write_project(tmp_path, rest={**_NO_DOCS, "auth": {"custom": True}})
         monkeypatch.setenv("LOOM__APP__REST__AUTH__CUSTOM", "false")
 
-        with pytest.raises(DeployCheckError, match=AUTHENTICATION_CHECK):
+        with pytest.raises(ConfigError, match="reviewed"):
             create_app(config, environment=_PRODUCTION)
 
     def test_an_override_reaches_the_application(
@@ -199,7 +215,7 @@ class TestOverridesFromVariables:
         ("variable", "typo"),
         [
             ("LOOM__APP__REST__DOCS_ULR", "docs_ulr"),
-            ("LOOM__APP__REST__AUTH__CUSTM", "custm"),
+            ("LOOM__APP__REST__OPENAPI_ULR", "openapi_ulr"),
             ("LOOM__APP__REST__CORS__ALLOW_ORIGNS", "allow_origns"),
             ("LOOM__OBSERVABILITY__LOG__ENABLD", "enabld"),
             ("LOOM__OBSERVABILITY__OTEL__ENABLD", "enabld"),
@@ -222,6 +238,14 @@ class TestOverridesFromVariables:
 
         with pytest.raises(ConfigError, match="levle"):
             create_app(config, environment="development")
+
+
+def test_a_misspelt_celery_key_stops_startup(tmp_path: Path) -> None:
+    config = write_project(tmp_path, rest=_NO_DOCS)
+    _merge_yaml(Path(config), {"celery": {"broker_urll": "memory://"}})
+
+    with pytest.raises(ConfigError, match="broker_urll"):
+        create_app(config, environment="development")
 
 
 class TestCreateAppFromAConfigDirectory:
