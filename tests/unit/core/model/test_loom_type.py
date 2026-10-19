@@ -9,10 +9,11 @@ malformed JSON rejected with one loom exception carrying a one-line message.
 
 from __future__ import annotations
 
+import enum
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import msgspec
@@ -559,3 +560,132 @@ class TestPydanticViolations:
         fields = {field for field, _ in excinfo.value.violations}
         assert fields == {"nested.id", "other"}
         assert len(excinfo.value.violations) == 2
+
+
+_SECRET = "secret-input-value"
+_SECRET_NUMBER = 424242
+
+
+class Colour(enum.Enum):
+    RED = "red"
+
+
+class Level(enum.IntEnum):
+    LOW = 1
+
+
+class Circle(msgspec.Struct, forbid_unknown_fields=True, tag="circle"):
+    pass
+
+
+class Square(msgspec.Struct, forbid_unknown_fields=True, tag="square"):
+    pass
+
+
+class Draft(msgspec.Struct, forbid_unknown_fields=True, tag=1):
+    pass
+
+
+class Final(msgspec.Struct, forbid_unknown_fields=True, tag=2):
+    pass
+
+
+class Paint(msgspec.Struct, forbid_unknown_fields=True):
+    colour: Colour = Colour.RED
+    level: Level = Level.LOW
+    finish: Literal["matte"] = "matte"
+    code: Annotated[str, msgspec.Meta(pattern="^[A-Z]{3}$")] = "ABC"
+    stock: dict[Colour, int] = msgspec.field(default_factory=dict)
+    shape: Circle | Square = msgspec.field(default_factory=Circle)
+    stage: Draft | Final = msgspec.field(default_factory=Draft)
+
+
+class CircleModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["circle"] = "circle"
+
+
+class SquareModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["square"] = "square"
+
+
+class PaintModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", val_json_bytes="base64")
+
+    colour: Colour = Colour.RED
+    finish: Literal["matte"] = "matte"
+    code: Annotated[str, pydantic.Field(pattern="^[A-Z]{3}$")] = "ABC"
+    shape: Annotated[CircleModel | SquareModel, pydantic.Field(discriminator="type")] = (
+        CircleModel()
+    )
+    ident: UUID = UUID(int=0)
+    raw: bytes = b""
+
+
+class TestErrorsDoNotEchoTheInput:
+    """A violation names the field and the reason, never the rejected value."""
+
+    @pytest.mark.parametrize(
+        ("payload", "violation"),
+        [
+            ({"colour": _SECRET}, ("colour", "Invalid enum value")),
+            ({"level": _SECRET_NUMBER}, ("level", "Invalid enum value")),
+            ({"finish": _SECRET}, ("finish", "Invalid enum value")),
+            ({"code": _SECRET}, ("code", "Expected `str` matching regex '^[A-Z]{3}$'")),
+            ({"stock": {_SECRET: 1}}, ("stock", "Invalid enum value")),
+            ({"shape": {"type": _SECRET}}, ("shape.type", "Invalid value")),
+            ({"stage": {"type": _SECRET_NUMBER}}, ("stage.type", "Invalid value")),
+        ],
+        ids=["enum", "int-enum", "literal", "pattern", "enum-key", "str-tag", "int-tag"],
+    )
+    def test_msgspec_decode_json(self, payload: dict[str, Any], violation: tuple[str, str]) -> None:
+        compiled = loom_type(Paint)
+
+        raw = json.dumps(payload)
+
+        with pytest.raises(BoundaryValidationError) as excinfo:
+            compiled.decode_json(raw)
+
+        assert excinfo.value.violations == (violation,)
+        assert str(_SECRET_NUMBER) not in excinfo.value.message
+        assert _SECRET not in excinfo.value.message
+
+    def test_msgspec_from_builtins(self) -> None:
+        compiled = loom_type(Paint)
+
+        with pytest.raises(BoundaryValidationError) as excinfo:
+            compiled.from_builtins({"colour": _SECRET})
+
+        assert excinfo.value.violations == (("colour", "Invalid enum value"),)
+        assert excinfo.value.message == "Invalid enum value - at `$.colour`"
+
+    @pytest.mark.parametrize(
+        ("payload", "violation"),
+        [
+            ({"colour": _SECRET}, ("colour", "Input should be 'red'")),
+            ({"finish": _SECRET}, ("finish", "Input should be 'matte'")),
+            ({"code": _SECRET}, ("code", "String should match pattern '^[A-Z]{3}$'")),
+            (
+                {"shape": {"type": _SECRET}},
+                ("shape", "Input tag does not match any of the expected tags"),
+            ),
+            ({"ident": f"z{_SECRET}"}, ("ident", "Input should be a valid UUID")),
+            ({"raw": f"!{_SECRET}"}, ("raw", "Data should be valid in its declared encoding")),
+        ],
+        ids=["enum", "literal", "pattern", "tag", "uuid", "base64"],
+    )
+    def test_pydantic_decode_json(
+        self, payload: dict[str, Any], violation: tuple[str, str]
+    ) -> None:
+        compiled = loom_type(PaintModel)
+
+        raw = json.dumps(payload)
+
+        with pytest.raises(BoundaryValidationError) as excinfo:
+            compiled.decode_json(raw)
+
+        assert excinfo.value.violations == (violation,)
+        assert excinfo.value.message == f"{violation[0]}: {violation[1]}"

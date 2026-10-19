@@ -85,8 +85,11 @@ class BoundaryValidationError(LoomError, ValueError):
 
     Raised by every :class:`LoomType` implementation with the library error as
     ``__cause__``. The pydantic message is built field by field and omits the
-    input and any documentation URL; the msgspec message is forwarded
-    verbatim, and is one line and free of the input already. It is also a
+    input and any documentation URL, and its tag, UUID and bytes-encoding
+    reasons drop the detail pydantic derives from the input; the msgspec
+    message is forwarded as one line, without the value msgspec echoes for an
+    invalid enum value or tag. A message raised by the type's own validator
+    keeps its text. It is also a
     :class:`ValueError`, so an ``except ValueError`` that used to catch
     ``msgspec.ValidationError`` or ``pydantic.ValidationError`` keeps
     catching it.
@@ -295,8 +298,7 @@ class _MsgspecType:
         try:
             return self._decoder.decode(data)
         except (msgspec.ValidationError, msgspec.DecodeError) as exc:
-            text = str(exc)
-            raise BoundaryValidationError(text, (_msgspec_violation(text),)) from exc
+            raise _msgspec_error(exc) from exc
 
     def to_builtins(self, obj: Any, /) -> Any:
         return msgspec.to_builtins(obj)
@@ -305,8 +307,7 @@ class _MsgspecType:
         try:
             return msgspec.convert(payload, self.type)
         except msgspec.ValidationError as exc:
-            text = str(exc)
-            raise BoundaryValidationError(text, (_msgspec_violation(text),)) from exc
+            raise _msgspec_error(exc) from exc
 
 
 class _PydanticType:
@@ -343,13 +344,24 @@ class _PydanticType:
             raise BoundaryValidationError(message, violations) from exc
 
 
+_PYDANTIC_ECHOING_REASONS = {
+    "union_tag_invalid": "Input tag does not match any of the expected tags",
+    "uuid_parsing": "Input should be a valid UUID",
+    "bytes_invalid_encoding": "Data should be valid in its declared encoding",
+}
+
+
 def _pydantic_violations(exc: Any) -> tuple[tuple[str, str], ...]:
     return tuple(
-        ("body" if not error["loc"] else ".".join(map(str, error["loc"])), error["msg"])
+        (
+            "body" if not error["loc"] else ".".join(map(str, error["loc"])),
+            _PYDANTIC_ECHOING_REASONS.get(error["type"], str(error["msg"])),
+        )
         for error in exc.errors(include_url=False, include_input=False)
     )
 
 
+_MSGSPEC_ECHOING_REASONS = ("Invalid enum value", "Invalid value")
 _MSGSPEC_AT_MARKER = " - at `"
 _MSGSPEC_AT_KEY_IN_PREFIX = "key` in `"
 _MSGSPEC_FIELD = re.compile(r"(?:missing required|contains unknown) field `([^`]+)`")
@@ -373,6 +385,18 @@ def _msgspec_at_path(text: str) -> tuple[str, str | None]:
         return text, None
 
     return text[:marker_index], suffix[1:-1]
+
+
+def _msgspec_error(exc: msgspec.DecodeError) -> BoundaryValidationError:
+    """Build the loom error from *exc*, dropping any value msgspec echoes from the input."""
+    text = str(exc)
+    message, _ = _msgspec_at_path(text)
+    reason = next(
+        (reason for reason in _MSGSPEC_ECHOING_REASONS if message.startswith(f"{reason} ")),
+        message,
+    )
+    text = reason + text.removeprefix(message)
+    return BoundaryValidationError(text, (_msgspec_violation(text),))
 
 
 def _msgspec_violation(text: str) -> tuple[str, str]:
