@@ -9,6 +9,8 @@ directory: ``base.yaml`` first, then ``<environment>.yaml`` when present.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,7 @@ from loom.core.environment import (
     ENVIRONMENT_VARIABLE,
     Environment,
     environment_config_paths,
+    override_variables,
     parse_environment,
     resolve_environment,
 )
@@ -122,3 +125,30 @@ class TestEnvironmentConfigPaths:
 
         with pytest.raises(ConfigError, match="base.yaml"):
             environment_config_paths(tmp_path, Environment.PRODUCTION)
+
+
+class TestOverrideVariables:
+    def test_only_the_loom_double_underscore_variables_are_overrides(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOOM__APP__NAME", "x")
+        monkeypatch.setenv("LOOM_ENV", "test")
+        monkeypatch.setenv("LOOMX__APP__NAME", "y")
+
+        assert override_variables() == {"LOOM__APP__NAME": "x"}
+
+
+@pytest.mark.parametrize(
+    "module", ["loom.core.environment", "loom.core.config.overrides", "loom.core.checks"]
+)
+def test_each_module_imports_first_in_a_fresh_interpreter(module: str) -> None:
+    src = Path(__file__).resolve().parents[3] / "src"
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PYTHONPATH": str(src)},
+    )
+
+    assert result.returncode == 0, result.stderr

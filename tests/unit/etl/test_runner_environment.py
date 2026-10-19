@@ -77,3 +77,21 @@ def test_the_logger_takes_the_environment_of_the_runner(monkeypatch: pytest.Monk
     ETLRunner.from_dict(_STORAGE, msgspec.to_builtins(config), environment="test")
 
     assert captured["environment"] is Environment.TEST
+
+
+def test_an_override_variable_reaches_the_storage_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "etl.yaml"
+    path.write_text(yaml.safe_dump({"storage": _STORAGE}), encoding="utf-8")
+    monkeypatch.setenv("LOOM__STORAGE__DEFAULTS__TABLE_PATH__URI", "/tmp/overridden")
+    captured: dict[str, Any] = {}
+
+    def _capture(cls: type[ETLRunner], config: Any, *args: Any, **kwargs: Any) -> None:
+        captured["config"] = config
+
+    monkeypatch.setattr(ETLRunner, "from_config", classmethod(_capture))
+
+    ETLRunner.from_yaml(str(path), environment="development")
+
+    assert captured["config"].defaults.table_path.uri == "/tmp/overridden"

@@ -91,6 +91,7 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.core.di.container import LoomContainer
 from loom.core.discovery._utils import collect_from_modules, import_modules
 from loom.core.engine.compilable import Compilable
@@ -884,7 +885,8 @@ def bootstrap_worker(
             exclusive with *config_dir*.
         config_dir: Local directory holding ``base.yaml`` and the
             per-environment overlays: ``base.yaml`` loads first, then
-            ``<environment>.yaml`` when present.
+            ``<environment>.yaml`` when present. Either way the
+            ``LOOM__SECTION__KEY`` variables merge last.
         environment: Environment of the worker; overrides ``LOOM_ENV``.
         jobs: Concrete ``Job`` subclasses to compile/register.  When
             omitted, jobs are discovered from ``app.discovery`` using
@@ -940,7 +942,7 @@ def bootstrap_worker(
     paths = select_config_paths(
         config_paths, config_dir, resolved_environment, caller="bootstrap_worker"
     )
-    ctx = ConfigContext.from_yaml(*paths, resolvers=with_default_resolvers(resolvers))
+    ctx = load_application_config(*paths, resolvers=with_default_resolvers(resolvers))
     app_cfg = ctx.section_optional(ConfigKey.APP, _WorkerAppConfig) or _WorkerAppConfig()
     celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
     observability_runtime = _build_observability_runtime(ctx, resolved_environment)

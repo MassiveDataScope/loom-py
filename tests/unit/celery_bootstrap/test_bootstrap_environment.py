@@ -93,3 +93,14 @@ def test_a_removed_logger_key_stops_the_worker(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="environment"):
         bootstrap_worker(config, environment="development", jobs=[_SyncJob])
+
+
+def test_an_override_variable_reaches_the_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _write(tmp_path / "worker.yaml", {"celery": _CELERY})
+    monkeypatch.setenv("LOOM__CELERY__BROKER_URL", "memory://overridden")
+
+    result = bootstrap_worker(config, environment="development", jobs=[_SyncJob])
+
+    assert result.celery_app.conf.broker_url == "memory://overridden"

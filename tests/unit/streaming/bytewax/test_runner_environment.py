@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 from tests.helpers.version_limited_extras import require_bytewax
 
@@ -108,3 +109,17 @@ def test_the_logger_takes_the_environment_of_the_runner(
     StreamingRunner.from_dict(bytewax_stream_flow, config, environment="test")
 
     assert captured["environment"] is Environment.TEST
+
+
+def test_an_override_variable_reaches_the_runtime(
+    bytewax_stream_flow: StreamFlow[Order, Result],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "streaming.yaml"
+    path.write_text(yaml.safe_dump({"kafka": _KAFKA}), encoding="utf-8")
+    monkeypatch.setenv("LOOM__STREAMING__RUNTIME__WORKERS_PER_PROCESS", "3")
+
+    runner = StreamingRunner.from_yaml(bytewax_stream_flow, str(path), environment="development")
+
+    assert runner._runtime.workers_per_process == 3

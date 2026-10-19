@@ -7,9 +7,11 @@ developer who forgot it locally meets the deploy checks, whose failure says to
 set ``LOOM_ENV=development``. An unknown value is a startup error, never a
 silent fallback.
 
-This is the only loom module that reads the selector. Every other module
-receives the resolved :class:`Environment` through configuration or the
-container; the application factories resolve it once and pass it on.
+This is the only loom module that reads the process environment for loom:
+the selector and the ``LOOM__SECTION__KEY`` configuration overrides (see
+:mod:`loom.core.config.overrides`). Every other module receives the resolved
+:class:`Environment` through configuration or the container; the entry
+points resolve it once and pass it on.
 
 The environment also picks the configuration overlay of a config directory:
 ``base.yaml`` first, then ``<environment>.yaml`` when it exists.
@@ -27,6 +29,9 @@ from loom.core.config.errors import ConfigError
 
 ENVIRONMENT_VARIABLE: Final = "LOOM_ENV"
 """Name of the variable selecting the environment."""
+
+OVERRIDE_PREFIX: Final = "LOOM__"
+"""Prefix of the variables overriding configuration keys."""
 
 BASE_CONFIG_FILE: Final = "base.yaml"
 """File of a config directory every environment loads first."""
@@ -96,6 +101,15 @@ def parse_environment(raw: str, *, source: str) -> Environment:
         raise ConfigError(
             f"unknown environment {raw!r} from {source}. Valid values: {_VALID}."
         ) from None
+
+
+def override_variables() -> dict[str, str]:
+    """Return the ``LOOM__*`` variables of the process, by name.
+
+    Returns:
+        Each variable whose name starts with ``LOOM__``, with its value.
+    """
+    return {name: value for name, value in os.environ.items() if name.startswith(OVERRIDE_PREFIX)}
 
 
 def environment_config_paths(

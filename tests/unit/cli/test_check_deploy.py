@@ -196,3 +196,15 @@ def test_the_application_check_modules_run_from_its_code_path(tmp_path: Path) ->
 
     assert result.returncode == 1, result.stderr
     assert "clidemo.billing.E001" in result.stdout
+
+
+def test_an_override_variable_is_checked_like_the_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _write(tmp_path / "app.yaml", {"app": _SAFE_APP})
+    monkeypatch.setenv("LOOM__APP__REST__DOCS_URL", "/docs")
+
+    result = runner.invoke(app, ["check", "--deploy", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert "loom.rest.W001" in result.output

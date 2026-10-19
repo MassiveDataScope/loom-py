@@ -192,6 +192,36 @@ def test_a_removed_logger_key_stops_startup(tmp_path: Path) -> None:
         create_app(config, environment="development")
 
 
+class TestOverridesFromVariables:
+    def test_an_override_switching_off_authentication_fails_production_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = write_project(tmp_path, rest={**_NO_DOCS, "auth": {"custom": True}})
+        monkeypatch.setenv("LOOM__APP__REST__AUTH__CUSTOM", "false")
+
+        with pytest.raises(DeployCheckError, match=AUTHENTICATION_CHECK):
+            create_app(config, environment=_PRODUCTION)
+
+    def test_an_override_reaches_the_application(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = write_project(tmp_path)
+        monkeypatch.setenv("LOOM__APP__REST__TITLE", "From A Variable")
+
+        app = create_app(config, environment="development")
+
+        assert app.title == "From A Variable"
+
+    def test_a_misspelt_key_inside_a_known_section_stops_startup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = write_project(tmp_path)
+        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__LEVLE", "DEBUG")
+
+        with pytest.raises(ConfigError, match="levle"):
+            create_app(config, environment="development")
+
+
 class TestCreateAppFromAConfigDirectory:
     def test_the_overlay_of_the_environment_overrides_the_base(self, tmp_path: Path) -> None:
         config_dir = _config_dir(tmp_path)

@@ -60,13 +60,8 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     captured: dict[str, Any] = {}
     runtime = ObservabilityRuntime.noop()
 
-    def _fake_from_yaml(
-        cls: type[ConfigContext],
-        *config_paths: str,
-        resolvers: Any = (),
-        binder: Any = None,
-    ) -> ConfigContext:
-        del config_paths, resolvers, binder, cls
+    def _fake_load(*config_paths: str, resolvers: Any = ()) -> ConfigContext:
+        del config_paths, resolvers
         return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
 
     def _fake_from_config(
@@ -131,7 +126,7 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         captured["runtime"] = observability_runtime
         return FastAPI()
 
-    monkeypatch.setattr(ConfigContext, "from_yaml", classmethod(_fake_from_yaml))
+    monkeypatch.setattr(auto, "load_application_config", _fake_load)
     monkeypatch.setattr(
         _AUTO.ObservabilityRuntime,
         "from_config",

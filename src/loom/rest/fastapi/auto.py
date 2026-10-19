@@ -29,6 +29,7 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.discovery import (
@@ -1528,8 +1529,9 @@ def create_app(
     Configuration comes from exactly one of two forms. *config_dir* loads its
     ``base.yaml``, then ``<environment>.yaml`` when present. Explicit
     *config_paths* are merged left-to-right as given. Either way later files
-    override earlier ones, and each file's ``includes`` merge before its own
-    values (resolved by :meth:`loom.core.config.ConfigContext.from_yaml`).
+    override earlier ones, each file's ``includes`` merge before its own
+    values, and the ``LOOM__SECTION__KEY`` variables merge last (see
+    :mod:`loom.core.config.overrides`).
 
     In production and staging the deploy checks run once the logger is
     configured and the code path is importable, before the kernel is built
@@ -1641,7 +1643,7 @@ def create_app(
     """
     resolved_environment = resolve_environment(environment)
     paths = select_config_paths(config_paths, config_dir, resolved_environment, caller="create_app")
-    ctx = ConfigContext.from_yaml(*paths, resolvers=with_default_resolvers(resolvers))
+    ctx = load_application_config(*paths, resolvers=with_default_resolvers(resolvers))
     app_cfg = _section_app_config(ctx)
     observability_cfg = _load_observability_config(ctx)
     observability_runtime = ObservabilityRuntime.from_config(

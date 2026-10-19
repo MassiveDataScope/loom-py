@@ -15,6 +15,7 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.overrides import load_application_config
 from loom.etl._uri import is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.storage._config import (
@@ -64,7 +65,8 @@ def _load_context(path: str, *, resolvers: Sequence[ConfigResolver] = ()) -> Con
     """Load an ETL config YAML into a :class:`ConfigContext`.
 
     Interpolations stay lazy: a section is resolved when it is read, so the
-    ``FromConfig`` keys outside ``storage:`` resolve when a step runs.
+    ``FromConfig`` keys outside ``storage:`` resolve when a step runs. The
+    ``LOOM__SECTION__KEY`` variables merge last.
 
     Args:
         path: Local path or cloud URI of the YAML file.
@@ -79,7 +81,7 @@ def _load_context(path: str, *, resolvers: Sequence[ConfigResolver] = ()) -> Con
             or a keyed collection holds a duplicate key or mixes list and
             mapping forms.
     """
-    return ConfigContext.from_yaml(
+    return load_application_config(
         path,
         resolvers=with_default_resolvers(resolvers),
         keyed=STORAGE_KEYED_COLLECTIONS,

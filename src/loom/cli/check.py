@@ -22,6 +22,7 @@ import typer
 from loom.core.checks import DeployReport, run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, environment_config_paths, resolve_environment
 
 # create_app's default for app.code_path.
@@ -55,7 +56,7 @@ def check(
     try:
         environment = resolve_environment(env)
         paths = _config_paths(config, environment)
-        context = ConfigContext.from_yaml(*paths)
+        context = load_application_config(*paths)
         _add_code_path(context, Path(paths[0]))
         report = run_deploy_checks(context)
     except ConfigError as exc:

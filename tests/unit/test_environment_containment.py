@@ -1,9 +1,10 @@
-"""Only ``loom.core.environment`` reads the environment selector.
+"""Only ``loom.core.environment`` reads the environment selector and overrides.
 
 Every other module receives the resolved environment through configuration or
 the container. A module reading ``LOOM_ENV``, ``ENVIRONMENT`` or a similar
 variable on its own would be a second source of truth for the environment,
-which is exactly what this containment forbids.
+which is exactly what this containment forbids. The same holds for the
+``LOOM__*`` configuration overrides.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "loom"
 _SELECTOR_MODULE = _SRC / "core" / "environment.py"
-_SELECTOR_NAMES = re.compile(r"^[A-Z0-9_]*_?ENV(IRONMENT)?$")
+_SELECTOR_NAMES = re.compile(r"^([A-Z0-9_]*_?ENV(IRONMENT)?|LOOM__.*)$")
 
 
 def _selector_literals(path: Path) -> list[str]:
@@ -29,7 +30,15 @@ def _selector_literals(path: Path) -> list[str]:
 
 
 def test_the_selector_pattern_catches_the_usual_names() -> None:
-    names = ("LOOM_ENV", "ENVIRONMENT", "ENV", "APP_ENV", "PYTHON_ENV", "DEPLOY_ENVIRONMENT")
+    names = (
+        "LOOM_ENV",
+        "ENVIRONMENT",
+        "ENV",
+        "APP_ENV",
+        "PYTHON_ENV",
+        "DEPLOY_ENVIRONMENT",
+        "LOOM__",
+    )
 
     assert [name for name in names if not _SELECTOR_NAMES.match(name)] == []
 

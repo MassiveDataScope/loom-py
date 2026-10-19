@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Literal, TypeVar, get_args
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigError, ConfigKey
+from loom.core.config.overrides import load_application_config
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
@@ -151,7 +152,7 @@ def load_application(config_path: str | None = None) -> Application:
     )
 
     path = _resolve_path(config_path)
-    context = ConfigContext.from_yaml(path)
+    context = load_application_config(path)
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
     _ensure_on_path(app.code_path, Path(path).resolve().parent)
