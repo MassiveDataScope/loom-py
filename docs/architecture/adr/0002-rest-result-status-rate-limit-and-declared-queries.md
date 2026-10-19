@@ -398,7 +398,6 @@ All under `tests/`, mirroring `src/loom`; none in `src`.
 
 Unit:
 
-- `tests/unit/core/use_case/test_created.py`: `Created` carries its value.
 - `tests/unit/core/engine/test_query_binding.py`: `Query()` compiles to a
   `ParamBinding` plus `query_binding`; two `Query()` fail; a lax struct
   (no `forbid_unknown_fields`) fails with a `CompilationError` naming the
