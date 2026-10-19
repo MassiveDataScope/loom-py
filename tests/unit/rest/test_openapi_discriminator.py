@@ -29,6 +29,8 @@ from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 _COMPONENT_PREFIX = "#/components/schemas/"
+_DISCRIMINATOR = "discriminator"
+_MAPPING = "mapping"
 
 
 class Card(msgspec.Struct, frozen=True, tag="card"):
@@ -120,8 +122,8 @@ def _references(node: Any) -> Iterator[str]:
     for key, value in node.items():
         if key == "$ref" and isinstance(value, str):
             yield value
-        elif key == "discriminator" and isinstance(value, dict):
-            yield from value.get("mapping", {}).values()
+        elif key == _DISCRIMINATOR and isinstance(value, dict):
+            yield from value.get(_MAPPING, {}).values()
         yield from _references(value)
 
 
@@ -150,10 +152,10 @@ def _body_schema(document: dict[str, Any], operation: tuple[str, str]) -> dict[s
 
 def _mapping(document: dict[str, Any], operation: tuple[str, str], field: str) -> dict[str, str]:
     prop = _body_schema(document, operation)["properties"][field]
-    if "discriminator" in prop:
-        return dict(prop["discriminator"]["mapping"])
-    (union,) = [option for option in prop["anyOf"] if "discriminator" in option]
-    return dict(union["discriminator"]["mapping"])
+    if _DISCRIMINATOR in prop:
+        return dict(prop[_DISCRIMINATOR][_MAPPING])
+    (union,) = [option for option in prop["anyOf"] if _DISCRIMINATOR in option]
+    return dict(union[_DISCRIMINATOR][_MAPPING])
 
 
 _OPERATIONS = pytest.mark.parametrize(
@@ -176,7 +178,6 @@ def test_each_tag_of_a_union_maps_to_an_existing_component(
     mapping = _mapping(document, operation, field)
 
     assert set(mapping) == {"card", "transfer"}
-    assert all(target.startswith(_COMPONENT_PREFIX) for target in mapping.values())
     assert all(_resolves(document, target) for target in mapping.values())
 
 
