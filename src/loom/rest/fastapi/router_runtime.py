@@ -373,7 +373,8 @@ class _DeclaredQuery:
     def decode(self, query_params: QueryParams) -> Any:
         """Build the typed query, refusing a key the route does not accept or repeats.
 
-        ``profile`` is accepted only where the route exposes it, and only with
+        ``profile`` is accepted only where the route exposes it and
+        ``execute`` takes it, which is when OpenAPI publishes it, and only with
         one of the route's allowed profiles; :func:`_resolve_profile` then
         selects it.
 
@@ -422,10 +423,11 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     uc_type = compiled_route.route.use_case
     plan = getattr(uc_type, "__execution_plan__", None)
     query_binding = plan.query_binding if plan is not None else None
+    accepts_profile_param = "profile" in inspect.signature(uc_type.execute).parameters
     declared_query = None
     if query_binding is not None:
         accepted = {field.name for field in compiled_route.query_fields}
-        if compiled_route.effective_expose_profile:
+        if compiled_route.effective_expose_profile and accepts_profile_param:
             accepted.add(QueryParam.PROFILE)
         declared_query = _DeclaredQuery(
             param_name=query_binding.name,
@@ -436,7 +438,7 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     return _RouteRuntime(
         compiled_route=compiled_route,
         path_params=tuple(_extract_path_params(compiled_route.route.path)),
-        accepts_profile_param="profile" in inspect.signature(uc_type.execute).parameters,
+        accepts_profile_param=accepts_profile_param,
         query_param_name=_resolve_query_param_name(uc_type),
         has_input_binding=plan is not None and plan.input_binding is not None,
         declared_query=declared_query,

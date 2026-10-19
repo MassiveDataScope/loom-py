@@ -97,6 +97,13 @@ class Grants(RestInterface[Any]):
         RestRoute(use_case=ListGrantsFromModel, method="GET", path="/from-model"),
         RestRoute(use_case=ListOwnerGrants, method="GET", path="/by-owner"),
         RestRoute(
+            use_case=ListGrants,
+            method="GET",
+            path="/exposed-unused",
+            expose_profile=True,
+            allowed_profiles=("default", "detail"),
+        ),
+        RestRoute(
             use_case=ListGrantsByProfile,
             method="GET",
             path="/by-profile",
@@ -277,7 +284,12 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
 
 
 @pytest.mark.parametrize(
-    "url", ["/grants?profile=detail", "/grants/by-profile?profile=detail&profile=default"]
+    "url",
+    [
+        "/grants?profile=detail",
+        "/grants/by-profile?profile=detail&profile=default",
+        "/grants/exposed-unused?profile=detail",
+    ],
 )
 def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
     client: TestClient, url: str
