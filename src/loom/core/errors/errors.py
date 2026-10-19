@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 from loom.core.errors.codes import ErrorCode
 
@@ -109,17 +109,19 @@ class InsufficientAuthentication(Unauthenticated):
 
     Raises:
         ValueError: If ``max_age`` is not a non-negative ``int``, ``acr_values``
-            is a single ``str``, or a value is empty or holds whitespace, a
-            double quote or a backslash.
+            is a single ``str``, or a value is not a ``str``, is empty, or holds
+            a character outside visible ASCII, a double quote or a backslash.
 
     Example::
 
         raise InsufficientAuthentication(max_age=300, acr_values=("urn:mfa",))
     """
 
+    default_message: ClassVar[str] = "A different authentication level is required"
+
     def __init__(
         self,
-        message: str = "A different authentication level is required",
+        message: str = default_message,
         *,
         max_age: int | None = None,
         acr_values: Iterable[str] = (),
@@ -132,7 +134,9 @@ class InsufficientAuthentication(Unauthenticated):
             )
         values = tuple(acr_values)
         if not all(
-            value and all("!" <= char <= "~" and char not in '"\\' for char in value)
+            isinstance(value, str)
+            and value
+            and all("!" <= char <= "~" and char not in '"\\' for char in value)
             for value in values
         ):
             raise ValueError(

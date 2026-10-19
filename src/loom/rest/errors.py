@@ -166,10 +166,16 @@ def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:
 
 
 def _step_up_challenge(error: InsufficientAuthentication) -> str:
-    """Build the RFC 9470 §3 challenge; the description keeps only RFC 6750 §3 characters."""
-    description = "".join(
-        char for char in error.message if " " <= char <= "~" and char not in '"\\'
+    """Build the RFC 9470 §3 challenge.
+
+    The description replaces each character RFC 6750 §3 does not allow in it
+    with a space and collapses runs of spaces; an empty result falls back to
+    the default message.
+    """
+    allowed = "".join(
+        char if " " <= char <= "~" and char not in '"\\' else " " for char in error.message
     )
+    description = " ".join(allowed.split()) or InsufficientAuthentication.default_message
     params = [
         'error="insufficient_user_authentication"',
         f'error_description="{description}"',

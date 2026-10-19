@@ -185,12 +185,24 @@ class TestHttpErrorMapper:
             'max_age="300", acr_values="urn:mfa phr"'
         }
 
-    def test_a_step_up_without_requirements_names_only_the_error(self) -> None:
-        exc = self._mapper().to_http(InsufficientAuthentication('Say "again"\r\nnow'))
+    @pytest.mark.parametrize(
+        ("message", "description"),
+        [
+            ('Say "again"\r\nnow', "Say again now"),
+            ("Autenticación reciente", "Autenticaci n reciente"),
+            ("", "A different authentication level is required"),
+            ("\r\n", "A different authentication level is required"),
+        ],
+        ids=["quotes-crlf", "non-ascii", "empty", "nothing-left"],
+    )
+    def test_a_step_up_description_keeps_only_what_the_header_allows(
+        self, message: str, description: str
+    ) -> None:
+        exc = self._mapper().to_http(InsufficientAuthentication(message))
 
         assert exc.headers == {
             "WWW-Authenticate": 'Bearer error="insufficient_user_authentication", '
-            'error_description="Say againnow"'
+            f'error_description="{description}"'
         }
 
     def test_non_401_errors_carry_no_challenge(self) -> None:

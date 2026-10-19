@@ -225,10 +225,13 @@
   `ErrorCode.INSUFFICIENT_AUTHENTICATION` (`"insufficient_authentication"`),
   answers `401` with `WWW-Authenticate: Bearer
   error="insufficient_user_authentication", error_description="…"`, plus
-  `max_age="N"` and `acr_values="…"` when given. A negative or non-int
-  `max_age`, a single string as `acr_values`, or an ACR value that is empty or
-  holds whitespace, a double quote or a backslash raise `ValueError`. Every
-  other 401 keeps the plain `Bearer` challenge.
+  `max_age="N"` and `acr_values="…"` when given. In the description each
+  character RFC 6750 §3 does not allow becomes a space, runs of spaces
+  collapse, and an empty result falls back to the default message. A negative
+  or non-int `max_age`, a single string as `acr_values`, or an ACR value that
+  is not a `str`, is empty, or holds anything but visible ASCII other than a
+  double quote or a backslash raise `ValueError`. Every other 401 keeps the
+  plain `Bearer` challenge.
 - **rest:** a `403` can say why and what is missing. `Forbidden` takes two
   optional keyword arguments, `reason` (a machine-readable cause such as
   `"mfa_required"`) and `missing` (the permissions the caller lacks, kept as a

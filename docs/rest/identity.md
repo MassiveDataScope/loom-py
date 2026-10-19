@@ -45,8 +45,9 @@ WWW-Authenticate: Bearer error="insufficient_user_authentication",
   error_description="<message>", max_age="300", acr_values="urn:mfa"
 ```
 
-`max_age` and `acr_values` appear only when given. The description keeps only the
-characters RFC 6750 §3 allows in it.
+`max_age` and `acr_values` appear only when given. In the description, each
+character RFC 6750 §3 does not allow becomes a space and runs of spaces collapse;
+an empty result falls back to "A different authentication level is required".
 
 A refusal that knows its cause can say it. `Forbidden(message, reason=..., missing=...)`
 answers the same 403 with two more keys, each only when given:

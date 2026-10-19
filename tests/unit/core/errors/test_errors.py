@@ -295,10 +295,8 @@ class TestInsufficientAuthentication:
 
         assert (error.max_age, error.acr_values) == (300, ("urn:mfa", "phr"))
 
-    def test_requires_nothing_by_default(self) -> None:
-        error = InsufficientAuthentication()
-
-        assert (error.max_age, error.acr_values) == (None, ())
+    def test_accepts_a_max_age_of_zero(self) -> None:
+        assert InsufficientAuthentication(max_age=0).max_age == 0
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -309,8 +307,25 @@ class TestInsufficientAuthentication:
             {"acr_values": [""]},
             {"acr_values": ["urn mfa"]},
             {"acr_values": ['urn"mfa']},
+            {"acr_values": ["urn\\mfa"]},
+            {"acr_values": ["urn\tmfa"]},
+            {"acr_values": ["urn:mfá"]},
+            {"acr_values": [1]},
+            {"acr_values": [b"urn:mfa"]},
         ],
-        ids=["negative-age", "bool-age", "single-str", "blank", "space", "quote"],
+        ids=[
+            "negative-age",
+            "bool-age",
+            "single-str",
+            "blank",
+            "space",
+            "quote",
+            "backslash",
+            "tab",
+            "non-ascii",
+            "int-item",
+            "bytes-item",
+        ],
     )
     def test_refuses_what_a_challenge_cannot_carry(self, kwargs: dict[str, Any]) -> None:
         with pytest.raises(ValueError, match="InsufficientAuthentication"):
