@@ -61,8 +61,10 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     captured: dict[str, Any] = {}
     runtime = ObservabilityRuntime.noop()
 
-    def _fake_load(*config_paths: str, resolvers: Any = ()) -> ConfigContext:
-        del config_paths, resolvers
+    def _fake_load(
+        *config_paths: str, resolvers: Any = (), environment: Any = None
+    ) -> ConfigContext:
+        del config_paths, resolvers, environment
         return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
 
     def _fake_from_config(

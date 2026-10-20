@@ -1637,7 +1637,9 @@ def create_app(
     """
     resolved_environment = resolve_environment(environment)
     paths = select_config_paths(config_paths, config_dir, resolved_environment, caller="create_app")
-    ctx = load_application_config(*paths, resolvers=with_default_resolvers(resolvers))
+    ctx = load_application_config(
+        *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
+    )
     app_cfg = _section_app_config(ctx)
     observability_cfg = _load_observability_config(ctx)
     observability_runtime = ObservabilityRuntime.from_config(

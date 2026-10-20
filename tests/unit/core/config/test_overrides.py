@@ -22,6 +22,7 @@ from omegaconf import OmegaConf
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
+from loom.core.environment import Environment
 
 _LOGGER = "loom.core.config.overrides"
 
@@ -154,65 +155,179 @@ def test_a_value_that_does_not_parse_is_an_error_naming_the_variable_not_the_val
     assert "unclosed-secret" not in str(caught.value)
 
 
-@pytest.fixture
-def checks_and_auth_file(tmp_path: Path) -> str:
-    """A configuration that declares checks and app.rest.auth, so only the guard can refuse."""
-    document = {
-        "app": {"name": "x", "rest": {"auth": {"custom": True}}},
-        "checks": {"silenced": ["loom.rest.W001"], "modules": []},
-    }
+_DEPLOYED_DOCUMENT: dict[str, Any] = {
+    "shared": {"audience": "api"},
+    "app": {
+        "name": "x",
+        "code_path": "src",
+        "rest": {
+            "title": "Base",
+            "auth": {"jwt": {"audience": "${shared.audience}"}},
+            "interfaces": {"orders": {"prefix": "/orders"}},
+            "disable_routes": [{"method": "GET", "path": "/orders/"}],
+        },
+    },
+    "observability": {"log": {"config": {"level": "INFO"}}, "prometheus": {"enabled": True}},
+    "checks": {"silenced": ["loom.rest.W001"]},
+}
+
+
+def _write_document(tmp_path: Path, document: dict[str, Any]) -> str:
     path = tmp_path / "base.yaml"
     path.write_text(yaml.safe_dump(document), encoding="utf-8")
     return str(path)
 
 
+def _load_deployed(path: str) -> ConfigContext:
+    return load_application_config(path, environment=Environment.PRODUCTION)
+
+
+@pytest.fixture
+def deployed_file(tmp_path: Path) -> str:
+    return _write_document(tmp_path, _DEPLOYED_DOCUMENT)
+
+
 @pytest.mark.parametrize(
-    ("variable", "value"),
+    ("variable", "value", "key"),
     [
-        ("LOOM__CHECKS__SILENCED", "[loom.rest.E001]"),
-        ("LOOM__checks__modules", "[]"),
-        ("LOOM__APP__REST__AUTH__CUSTOM", "false"),
-        ("LOOM__app__Rest__Auth__JWT__AUDIENCE", "other"),
-        ("LOOM__APP__REST__DOCS_URL", "/docs"),
-        ("LOOM__APP__REST__REDOC_URL", "/redoc"),
-        ("LOOM__app__rest__OPENAPI_URL", "/openapi.json"),
-        ("LOOM__OBSERVABILITY__PROMETHEUS__CONFIG__PATH", "/metrics"),
+        ("LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "DEBUG", "observability.log.config.level"),
+        (
+            "LOOM__OBSERVABILITY__LOG__CONFIG__NAMED_LEVELS__ASYNCIO",
+            "WARNING",
+            "observability.log.config.named_levels.asyncio",
+        ),
+        ("LOOM__CELERY__WORKER_CONCURRENCY", "8", "celery.worker_concurrency"),
+        (
+            "LOOM__SQL__CONNECTIONS__ANALYTICS__CONNECT_TIMEOUT",
+            "5",
+            "sql.connections.analytics.connect_timeout",
+        ),
     ],
 )
-def test_reviewed_keys_cannot_be_overridden(
-    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str, key: str
 ) -> None:
     monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ConfigError, match="reviewed"):
-        _load(checks_and_auth_file)
+    assert str(_value(_load_deployed(deployed_file), key)) == value
 
 
 @pytest.mark.parametrize(
     ("variable", "value"),
     [
-        ("LOOM__APP", "{REST: 0, rest: {auth: {custom: false}}}"),
-        ("LOOM__APP__REST", "{title: Live}"),
-        ("LOOM__APP__WORKERS", "[1, {admin: true}]"),
+        ("LOOM__SHARED__AUDIENCE", "other"),
+        ("LOOM__OBSERVABILITY__PROMETHEUS__ENABLED", "false"),
+        ("LOOM__APP__REST__INTERFACES__ORDERS__PREFIX", "/admin"),
+        ("LOOM__APP__CODE_PATH", "/tmp/elsewhere"),
+        ("LOOM__APP__REST__AUTH__JWT__AUDIENCE", "other"),
+        ("LOOM__CHECKS__SILENCED", "[loom.rest.E001]"),
+        ("LOOM__APP__REST__DOCS_URL", "/docs"),
+        ("LOOM__OBSERVABILITY__LOG__CONFIG__LEVELS", "DEBUG"),
     ],
+    ids=[
+        "interpolation indirection into a reviewed key",
+        "prometheus enabled",
+        "interfaces",
+        "code_path",
+        "auth",
+        "checks",
+        "a documentation path",
+        "a key one character off an allowlisted one",
+    ],
+)
+def test_a_deployed_environment_refuses_every_key_off_the_allowlist(
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ConfigError, match=f"{variable}.*not overridable in 'production'"):
+        _load_deployed(deployed_file)
+
+
+def test_the_files_extend_the_allowlist_under_config_overridable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": ["app.rest.title"]}}
+    monkeypatch.setenv("LOOM__APP__REST__TITLE", "Live")
+
+    context = _load_deployed(_write_document(tmp_path, document))
+
+    assert _value(context, "app.rest.title") == "Live"
+
+
+def test_an_allowlist_entry_covers_one_key_and_not_its_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": ["app.rest.title"]}}
+    monkeypatch.setenv("LOOM__APP__REST__TITLES", "Live")
+
+    with pytest.raises(ConfigError, match="LOOM__APP__REST__TITLES"):
+        _load_deployed(_write_document(tmp_path, document))
+
+
+@pytest.mark.parametrize(
+    "overridable",
+    [["${oc.env:KEYS}"], "app.rest.title", ["app.rest.ti-tle"], ["app..title"]],
+)
+def test_config_overridable_must_be_a_literal_list_of_dotted_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overridable: object
+) -> None:
+    document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": overridable}}
+    path = _write_document(tmp_path, document)
+    monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "DEBUG")
+
+    with pytest.raises(ConfigError, match="config.overridable"):
+        _load_deployed(path)
+
+
+@pytest.mark.parametrize("environment", list(Environment))
+def test_config_overridable_itself_can_never_be_overridden(
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch, environment: Environment
+) -> None:
+    monkeypatch.setenv("LOOM__CONFIG__OVERRIDABLE", "[app.code_path]")
+
+    with pytest.raises(ConfigError, match="LOOM__CONFIG__OVERRIDABLE"):
+        load_application_config(deployed_file, environment=environment)
+
+
+def test_a_local_environment_takes_any_leaf(
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM__APP__CODE_PATH", "elsewhere")
+
+    context = load_application_config(deployed_file, environment=Environment.DEVELOPMENT)
+
+    assert _value(context, "app.code_path") == "elsewhere"
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [("LOOM__APP__EXTRA", "{admin: true}"), ("LOOM__APP__EXTRA", "[1, {admin: true}]")],
 )
 def test_a_value_that_is_or_holds_a_mapping_is_refused(
-    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
     monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ConfigError, match=f"{variable}.*leaf"):
-        _load(checks_and_auth_file)
+    with pytest.raises(ConfigError, match=f"{variable} is a mapping"):
+        load_application_config(deployed_file, environment=Environment.DEVELOPMENT)
 
 
-@pytest.mark.parametrize(("variable", "value"), [("LOOM__APP__REST", ""), ("LOOM__APP", "null")])
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("LOOM__APP__REST", ""),
+        ("LOOM__APP", "null"),
+        ("LOOM__APP__REST__DISABLE_ROUTES", "[]"),
+    ],
+)
 def test_a_structure_the_files_declare_cannot_be_replaced(
-    checks_and_auth_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
     monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ConfigError, match=f"{variable}.*leaf"):
-        _load(checks_and_auth_file)
+    with pytest.raises(ConfigError, match=f"{variable} targets"):
+        load_application_config(deployed_file, environment=Environment.DEVELOPMENT)
 
 
 def test_a_mapping_over_an_interpolated_section_is_refused_without_resolving_it(

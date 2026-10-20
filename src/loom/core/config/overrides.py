@@ -16,16 +16,18 @@ naming the variable. Two variables for the same key, or for a key and one of
 its parents, are refused.
 
 An override sets one leaf value. A value that is or holds a mapping is
-refused, and so is a target the files declare as a mapping, whatever the new
-value (null, a scalar or a list): an override cannot replace a structure.
-Lists of scalars are leaves.
+refused, and so is a target the files declare as a mapping or as a list
+holding mappings, whatever the new value (null, a scalar or a list): an
+override cannot replace a structure. Lists of scalars are leaves.
 
-Reviewed keys cannot be overridden: everything at or under ``checks`` and
-``app.rest.auth``, and the keys feeding the authentication exclusion list
-(``app.rest.docs_url``, ``redoc_url``, ``openapi_url`` and
-``observability.prometheus.config.path``). Deploy-check silences, check
-modules and the authentication surface are declared in the versioned files,
-where they are reviewed.
+In production and staging an override may set only an allowlisted key: the
+operational keys loom lists in :data:`OVERRIDABLE` (log levels, worker and
+pool sizes, timeouts), plus the keys the reviewed files list under
+``config.overridable``. Every other key, the authentication surface, the
+deploy checks and anything a placeholder points at included, is a startup
+error naming the variable. An entry is a dotted key; ``*`` stands for one
+level. In development and test any leaf may be overridden. ``config`` itself
+can never be overridden, in any environment.
 
 Values are literals. They parse as an OmegaConf dotlist (YAML 1.1): ``5`` is
 an int, ``false``, ``no`` and ``off`` are booleans, ``[a, b]`` is a list,
@@ -52,7 +54,12 @@ from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.config.loader import load_config
-from loom.core.environment import OVERRIDE_PREFIX, override_variables
+from loom.core.environment import (
+    OVERRIDE_PREFIX,
+    Environment,
+    override_variables,
+    resolve_environment,
+)
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -64,15 +71,27 @@ _logger = logging.getLogger(__name__)
 _SEPARATOR: Final = "__"
 _LEVEL: Final = re.compile(r"\w+", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
 _INTERPOLATION: Final = "${"
-_REVIEWED_PREFIXES: Final = ("checks", "app.rest.auth")
-_REVIEWED_KEYS: Final = frozenset(
-    {
-        "app.rest.docs_url",
-        "app.rest.redoc_url",
-        "app.rest.openapi_url",
-        "observability.prometheus.config.path",
-    }
+_ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
+_ALLOWLIST_SECTION: Final = "config"
+_ALLOWLIST_KEY: Final = "config.overridable"
+
+OVERRIDABLE: Final = (
+    "observability.log.config.level",
+    "observability.log.config.named_levels.*",
+    "celery.worker_concurrency",
+    "celery.worker_max_tasks_per_child",
+    "celery.worker_prefetch_multiplier",
+    "celery.runtime.shutdown_timeout_ms",
+    "streaming.runtime.workers_per_process",
+    "streaming.runtime.epoch_interval_ms",
+    "streaming.runtime.force_shutdown_timeout_ms",
+    "sql.connections.*.pool_size",
+    "sql.connections.*.executor_threads",
+    "sql.connections.*.connect_timeout",
+    "sql.connections.*.send_receive_timeout",
+    "sql.connections.*.max_execution_time",
 )
+"""Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
 
 
@@ -80,6 +99,7 @@ def load_application_config(
     *paths: str,
     resolvers: Sequence[ConfigResolver] = (),
     keyed: Sequence[str] = (),
+    environment: Environment | str | None = None,
 ) -> ConfigContext:
     """Load an application's configuration files, then apply the ``LOOM__*`` variables.
 
@@ -87,22 +107,30 @@ def load_application_config(
         *paths: Files merged left to right, as :func:`load_config` merges them.
         resolvers: Resolvers for ``${name:key}`` placeholders.
         keyed: Dotted paths of the collections merged by key.
+        environment: Environment deciding which keys an override may set,
+            resolved like :func:`~loom.core.environment.resolve_environment`
+            when ``None``.
 
     Returns:
         The merged configuration.
 
     Raises:
         ConfigError: When a file cannot be loaded, or a ``LOOM__*`` variable
-            names no known section or a reviewed one, has an empty or
-            malformed level, collides with another variable, reaches inside
-            an interpolated key, holds ``${``, or does not parse or merge.
-            The error names the variable, never the value.
+            names no known section, a key off the allowlist in a deployed
+            environment or ``config``, has an empty or malformed level,
+            collides with another variable, replaces a declared structure,
+            reaches inside an interpolated key, holds ``${``, or does not
+            parse or merge; or when ``config.overridable`` is not a literal
+            list of dotted keys. The error names the variable, never the value.
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
-    return ConfigContext(_apply_overrides(config, override_variables()))
+    resolved = resolve_environment(environment)
+    return ConfigContext(_apply_overrides(config, override_variables(), resolved))
 
 
-def _apply_overrides(config: DictConfig, variables: Mapping[str, str]) -> DictConfig:
+def _apply_overrides(
+    config: DictConfig, variables: Mapping[str, str], environment: Environment
+) -> DictConfig:
     from omegaconf import OmegaConf
 
     if not variables:
@@ -110,6 +138,10 @@ def _apply_overrides(config: DictConfig, variables: Mapping[str, str]) -> DictCo
     written = OmegaConf.to_container(config, resolve=False)
     keys = {name: _leaf_key(written, name) for name in variables}
     _refuse_collisions(keys)
+    if environment.is_deployed:
+        allowlist = (*OVERRIDABLE, *_declared_allowlist(written))
+        for name, key in keys.items():
+            _require_allowlisted(name, key, allowlist, environment)
     merged: Any = config
     for name, key in sorted(keys.items(), key=lambda item: item[1]):
         merged = _merged(merged, name, key, _parsed(name, key, variables[name]))
@@ -204,24 +236,50 @@ def _leaf_key(written: Any, name: str) -> str:
             "check the variable for a typo"
         )
     key = ".".join(keys)
-    if isinstance(node, dict):
+    if isinstance(node, dict) or (
+        isinstance(node, list) and any(isinstance(item, dict) for item in node)
+    ):
         raise ConfigError(
-            f"{name} targets {key!r}, which the files declare as a mapping; an override "
+            f"{name} targets {key!r}, which the files declare as a structure; an override "
             "sets one leaf value"
         )
-    _refuse_reviewed(name, key)
+    if section.casefold() == _ALLOWLIST_SECTION:
+        raise ConfigError(
+            f"{name} overrides {key!r}; {_ALLOWLIST_KEY} is declared only in the "
+            "configuration files, where it is reviewed"
+        )
     return key
 
 
-def _refuse_reviewed(name: str, key: str) -> None:
-    folded = key.casefold()
-    reviewed = folded in _REVIEWED_KEYS or any(
-        folded == prefix or folded.startswith(f"{prefix}.") for prefix in _REVIEWED_PREFIXES
+def _declared_allowlist(written: Any) -> tuple[str, ...]:
+    """Return ``config.overridable`` as the files declare it, a literal list of dotted keys."""
+    section = written.get(_ALLOWLIST_SECTION) if isinstance(written, dict) else None
+    entries = section.get("overridable", []) if isinstance(section, dict) else []
+    valid = isinstance(entries, list) and all(
+        isinstance(entry, str) and _ENTRY.fullmatch(entry) for entry in entries
     )
-    if reviewed:
+    if not valid:
         raise ConfigError(
-            f"{name} overrides {key!r}, a reviewed key declared only in the configuration files"
+            f"{_ALLOWLIST_KEY} must be a literal list of dotted keys, '*' standing for one level"
         )
+    return tuple(entries)
+
+
+def _require_allowlisted(
+    name: str, key: str, allowlist: Sequence[str], environment: Environment
+) -> None:
+    levels = key.casefold().split(".")
+    for entry in allowlist:
+        parts = entry.casefold().split(".")
+        if len(parts) == len(levels) and all(
+            part in ("*", level) for part, level in zip(parts, levels, strict=True)
+        ):
+            return
+    raise ConfigError(
+        f"{name} sets {key!r}, which is not overridable in {str(environment)!r}: loom "
+        f"allows its operational keys and those listed under {_ALLOWLIST_KEY} in the "
+        "reviewed configuration files"
+    )
 
 
 def _declared(node: Any, level: str) -> str:
@@ -232,4 +290,4 @@ def _declared(node: Any, level: str) -> str:
     return level.lower()
 
 
-__all__ = ["load_application_config"]
+__all__ = ["OVERRIDABLE", "load_application_config"]

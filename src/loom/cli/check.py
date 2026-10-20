@@ -56,7 +56,9 @@ def check(
     try:
         environment = resolve_environment(env)
         paths = _config_paths(config, environment)
-        context = load_application_config(*paths, resolvers=with_default_resolvers(()))
+        context = load_application_config(
+            *paths, resolvers=with_default_resolvers(()), environment=environment
+        )
         _add_code_path(context, Path(paths[0]).resolve().parent)
         report = run_deploy_checks(context, skip=tuple(skip or ()))
     except ConfigError as exc:

@@ -407,7 +407,9 @@ def _load_yaml(
 ) -> ConfigContext:
     """Load *path*, a file or a config directory, with *resolvers* ahead of the defaults."""
     return load_application_config(
-        *config_source_paths(path, environment), resolvers=with_default_resolvers(resolvers)
+        *config_source_paths(path, environment),
+        resolvers=with_default_resolvers(resolvers),
+        environment=environment,
     )
 
 

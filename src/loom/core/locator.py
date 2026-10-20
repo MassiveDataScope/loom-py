@@ -166,8 +166,9 @@ def load_application(config_path: str | None = None) -> Application:
     )
 
     path = _resolve_path(config_path)
-    paths = config_source_paths(path, resolve_environment())
-    context = load_application_config(*paths)
+    environment = resolve_environment()
+    paths = config_source_paths(path, environment)
+    context = load_application_config(*paths, environment=environment)
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)

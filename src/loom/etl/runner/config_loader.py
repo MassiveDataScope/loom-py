@@ -91,10 +91,12 @@ def _load_context(
             or a keyed collection holds a duplicate key or mixes list and
             mapping forms.
     """
+    resolved = resolve_environment(environment)
     return load_application_config(
-        *config_source_paths(path, resolve_environment(environment)),
+        *config_source_paths(path, resolved),
         resolvers=with_default_resolvers(resolvers),
         keyed=STORAGE_KEYED_COLLECTIONS,
+        environment=resolved,
     )
 
 

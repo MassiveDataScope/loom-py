@@ -942,7 +942,9 @@ def bootstrap_worker(
     paths = select_config_paths(
         config_paths, config_dir, resolved_environment, caller="bootstrap_worker"
     )
-    ctx = load_application_config(*paths, resolvers=with_default_resolvers(resolvers))
+    ctx = load_application_config(
+        *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
+    )
     app_cfg = ctx.section_optional(ConfigKey.APP, _WorkerAppConfig) or _WorkerAppConfig()
     celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
     observability_runtime = _build_observability_runtime(ctx, resolved_environment)
