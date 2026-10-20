@@ -214,7 +214,9 @@ def test_a_relation_field_is_neither_a_column_nor_a_value(bridge: AsyncBridge) -
 def test_a_field_without_a_declared_column_type_is_refused(
     bridge: AsyncBridge, payload: type[Any], field: str
 ) -> None:
+    sink = _sink(payload)
+    config = _sink_config()
+    session_manager = _RecordingSessionManager()
+
     with pytest.raises(ValueError, match=rf"^{re.escape(field)}: no column type is inferred"):
-        _sink(payload).build_partition(
-            _sink_config(), 0, 1, bridge=bridge, session_manager=_RecordingSessionManager()
-        )
+        sink.build_partition(config, 0, 1, bridge=bridge, session_manager=session_manager)
