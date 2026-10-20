@@ -704,6 +704,46 @@ class AgentErrorCode(IssueCode):
         ),
     )
 
+    # Engine build
+    TOOL_NAME_COLLISION = (
+        "TOOL_NAME_COLLISION",
+        Template(
+            "{component}: grants '{first}' and '{second}' both derive the tool name '{name}'",
+            field=_FIELD_CAPABILITIES,
+        ),
+    )
+    TOOL_NAME_TOO_LONG = (
+        "TOOL_NAME_TOO_LONG",
+        Template(
+            "{component}: grant '{granted}' derives the tool name '{name}' of {length} "
+            "characters, above the {limit}-character bound providers accept",
+            field=_FIELD_CAPABILITIES,
+        ),
+    )
+    USECASE_NOT_COMPILED = (
+        "USECASE_NOT_COMPILED",
+        Template(
+            "use case '{key}' carries no compiled execution plan; it was never compiled",
+            field="capabilities.keys",
+            component="use case '{key}'",
+        ),
+    )
+    CAPABILITY_KIND_NO_BUILDER = (
+        "CAPABILITY_KIND_NO_BUILDER",
+        Template("{component}: capability kind '{kind}' has no builder", field=_FIELD_CAPABILITIES),
+    )
+    MCP_CONNECTION_NOT_OPENED = (
+        "MCP_CONNECTION_NOT_OPENED",
+        Template(
+            "{component}: the runtime never opened mcp server '{server}' through this "
+            "engine's shared toolsets. The runtime's 'mcp_client_factory' must be the "
+            "'mcp_client_factory' of the very provider instance that builds the engines, "
+            "or the run would hold a second connection whose tool filters start-up never "
+            "validated",
+            field=_FIELD_CAPABILITIES_CONNECTION,
+        ),
+    )
+
     # Compatibility
     SPEC_VERSION_DEPRECATED = (
         "SPEC_VERSION_DEPRECATED",
@@ -712,7 +752,6 @@ class AgentErrorCode(IssueCode):
             field=_FIELD_SPEC_VERSION,
         ),
     )
-    UNSPECIFIED = "UNSPECIFIED", Template("{message}", component="")
 
 
 AgentCompilationIssue: TypeAlias = CompileIssue[AgentErrorCode]
@@ -728,15 +767,11 @@ class AgentCompilationError(Exception):
         issues: Structured issues, one per failure.
 
     Args:
-        issues: Issues (or bare message strings) collected by the compiler.
-            Strings become :data:`AgentErrorCode.UNSPECIFIED` issues.
+        issues: Issues collected by the compiler.
     """
 
-    def __init__(self, issues: Sequence[AgentCompilationIssue | str]) -> None:
-        self.issues: tuple[AgentCompilationIssue, ...] = tuple(
-            AgentErrorCode.UNSPECIFIED.issue(message=item) if isinstance(item, str) else item
-            for item in issues
-        )
+    def __init__(self, issues: Sequence[AgentCompilationIssue]) -> None:
+        self.issues: tuple[AgentCompilationIssue, ...] = tuple(issues)
         messages = [issue.message for issue in self.issues]
         super().__init__(
             f"Agent compilation failed with {len(messages)} error(s): {'; '.join(messages)}"

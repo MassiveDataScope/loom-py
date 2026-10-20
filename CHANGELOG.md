@@ -802,9 +802,15 @@
   example `spec_malformed`, `engine_not_found` and `mcp_server_unreachable`.
   Build an issue with `AgentErrorCode.X.issue(...)` and keyword arguments,
   such as `AgentErrorCode.ENGINE_NOT_FOUND.issue(component="openai-agents",
-  available=["pydantic-ai"])`. `loom.ai.errors.from_message` is removed too:
-  `AgentCompilationError` still turns a bare string into an `UNSPECIFIED`
-  issue. Messages keep their text; a list that is empty renders `none`.
+  available=["pydantic-ai"])`. `loom.ai.errors.from_message` is removed too.
+  Messages keep their text; a list that is empty renders `none`.
+- **ai:** `AgentCompilationError` takes `AgentCompilationIssue` values only;
+  bare strings and the `AgentErrorCode.UNSPECIFIED` code they became are
+  removed. Build an issue from an `AgentErrorCode` member with `.issue()`.
+  The five pydantic-ai engine failures that raised bare strings now carry
+  their own codes, with the same messages: `TOOL_NAME_COLLISION`,
+  `TOOL_NAME_TOO_LONG`, `USECASE_NOT_COMPILED`, `CAPABILITY_KIND_NO_BUILDER`
+  and `MCP_CONNECTION_NOT_OPENED`.
 - **ai:** `AgentCompilationIssue` is a type alias of
   `CompileIssue[AgentErrorCode]` from `loom.core.errors.codes`, not a class.
   It has the same fields, but `isinstance` against it raises `TypeError`
