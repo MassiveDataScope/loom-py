@@ -21,9 +21,8 @@ from loom.streaming.compiler._plan import (
     CompiledStorageSink,
 )
 from loom.streaming.compiler.phases.validate import (
-    _node_needs_async_bridge,
-    _node_output_shape,
-    _walk_all_process_nodes,
+    node_output_shape,
+    walk_process_nodes,
 )
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
@@ -33,7 +32,7 @@ from loom.streaming.mongo import MongoConfig
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
 from loom.streaming.nodes._mongo import FromMongoCDC
-from loom.streaming.nodes._shape import CollectBatch
+from loom.streaming.nodes._shape import CollectBatch, StreamShape
 from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._table import Backend, IntoTable
 from loom.streaming.nodes._table.config import (
@@ -60,7 +59,7 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
     terminal_sinks, terminal_storage_sinks = _build_terminal_sinks(flow.process.nodes, ctx)
     error_routes = {kind: _build_sink(topic, ctx) for kind, topic in flow.errors.items()}
     needs_async = any(
-        _node_needs_async_bridge(node) for node in _walk_all_process_nodes(flow.process.nodes)
+        _node_needs_async_bridge(node) for node in walk_process_nodes(flow.process.nodes)
     )
     return CompiledPlan(
         name=flow.name,
@@ -71,6 +70,12 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
         terminal_storage_sinks=terminal_storage_sinks,
         error_routes=error_routes,
         needs_async_bridge=needs_async,
+    )
+
+
+def _node_needs_async_bridge(node: object) -> bool:
+    return isinstance(node, WithAsync) or (
+        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
     )
 
 
@@ -85,7 +90,6 @@ def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         settings=settings,
         collections=source.collections,
         watch_options=watch_options,
-        shape=source.shape,
     )
 
 
@@ -100,7 +104,6 @@ def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Comp
         settings=consumer,
         topics=consumer.topics,
         payload_type=source.payload,
-        shape=source.shape,
         decode_strategy=decode_strategy,
     )
 
@@ -117,7 +120,6 @@ def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         settings=consumer,
         topics=consumer.topics,
         dispatch=dispatch,
-        shape=source.shape,
         decode_strategy=decode_strategy,
     )
 
@@ -169,10 +171,10 @@ def _require_message_type(t: type[Any]) -> str:
 
 def _build_nodes(flow: StreamFlow[Any, Any]) -> list[CompiledNode]:
     nodes: list[CompiledNode] = []
-    current_shape = flow.source.shape
+    current_shape = StreamShape.RECORD
     for node in flow.process.nodes:
         input_shape = current_shape
-        output_shape = _node_output_shape(node, current_shape)
+        output_shape = node_output_shape(node, current_shape)
         nodes.append(
             CompiledNode(
                 node=node,

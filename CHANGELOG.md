@@ -959,6 +959,22 @@
 
 ### streaming
 
+- **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
+  `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
+  and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
+  is removed. The runtime never read a declared shape: every source emits one
+  record per message, so a source declared `BATCH` was shape-checked as
+  batches while its nodes received records, and an `IntoTopic` writes one
+  record per message whatever it declared. Every flow now starts as a record
+  stream, and an `IntoTopic` ends its path (shape `none`). Migration: drop
+  `shape=`; to work on batches, use `CollectBatch` and, back to records,
+  `ForEach`.
+- **streaming:** a batch reaching a `Drain` or a `Broadcast` fails compilation
+  with `SHAPE_MISMATCH`, whatever the delivery. Under at-most-once delivery
+  `CollectBatch → Drain` compiled and dropped the batch; under at-least-once
+  the batch's offsets never completed. Under at-least-once a `Broadcast` with
+  more than one route raised `TypeError` (`Expected Message, got list`) on a
+  batch. Put a `ForEach` before the node.
 - **streaming:** `BatchExpandStep.execute` returns one list of payloads per
   message of its batch, in batch order, instead of one flat list. List `i`
   holds what `messages[i]` expands into; each output takes that message's
@@ -985,9 +1001,11 @@
   `CompileIssue` instead), `loom_message_type()` is gone, and
   `CompilationIssue.prefixed()` is removed. Messages keep their text.
 - **streaming:** a `Broadcast` followed by another node reports
-  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level, in a
-  branch and in a Router branch. It used to report `TERMINAL_NOT_LAST` with
-  component `Broadcast`.
+  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level and in a
+  branch. It used to report `TERMINAL_NOT_LAST` with component `Broadcast`. In
+  a Router branch a `Broadcast` reports `ROUTER_BRANCH_UNSAFE_NODE`, and one
+  followed by another node also `TERMINAL_NOT_LAST` with component
+  `router branch <label> > Broadcast`.
 - **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
   `IntoSink`) or `Drain` hands the message to that terminal. The branch's
   terminal was skipped: with a flow `output` the message went to the output
@@ -1374,6 +1392,27 @@
 
 ### streaming
 
+- **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
+  `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
+  `shape mismatch: expected many but got batch before ForEach`. Under
+  at-least-once delivery each offset completes once, after its write is
+  flushed.
+- **streaming:** a batch reaching a node that takes records fails compilation
+  with `SHAPE_MISMATCH`: `IntoTopic`, `IntoTable` (any `IntoSink`), `Fork`,
+  `ExpandRoutes`, `CollectBatch` (it groups records), the flow `output`
+  (component `flow.output`, field `output`)
+  and a Broadcast route `output` (component `broadcast branch <n> > output`,
+  field `output`). Such flows used to compile. `CollectBatch → BatchStep →
+  IntoTopic` raised `'list' object has no attribute 'meta'` at runtime. Put a
+  `ForEach` before the node. `Drain` and `Broadcast` are under Behaviour
+  changes.
+- **streaming:** a `BatchExpandStep` subclass outputs records to the shape
+  check. The compiler matched step output shapes by exact type, so every step
+  subclass kept the incoming shape and a record step after a
+  `BatchExpandStep` failed with `expected record but got batch`. The shape
+  check reads a step's `input_shape` and `output_shape` from its class,
+  except in a Router branch: there a `BatchStep` runs one record at a time,
+  on a one-message batch, so it is record to record.
 - **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
   treated it as a plain terminal, so the nodes of its branches were never
   shape-checked. A branch with a shape mismatch, such as a record step after

@@ -12,7 +12,6 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.streaming import StreamShape  # noqa: E402
 from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
 from loom.streaming.mongo._bytewax_source import (  # noqa: E402
@@ -183,7 +182,6 @@ def _compiled_source(
         ),
         collections=("orders",),
         watch_options={},
-        shape=StreamShape.RECORD,
     )
 
 

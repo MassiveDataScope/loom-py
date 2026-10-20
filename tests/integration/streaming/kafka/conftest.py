@@ -32,7 +32,6 @@ from loom.core.model import LoomFrozenStruct
 from loom.streaming.compiler._plan import CompiledMultiSource, CompiledSingleSource
 from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._wire import DispatchTable
-from loom.streaming.nodes._shape import StreamShape
 
 BOOTSTRAP_ENV_VAR = "LOOM_KAFKA_IT_BOOTSTRAP"
 DEFAULT_BOOTSTRAP = "localhost:19092"
@@ -169,7 +168,6 @@ def make_multi_source(bootstrap: str) -> Callable[..., CompiledMultiSource]:
             settings=settings,
             topics=(topic,),
             dispatch=DispatchTable(plain={"it": ItPayload}, error={}, wire={}),
-            shape=StreamShape.RECORD,
             decode_strategy="record",
         )
 
@@ -198,7 +196,6 @@ def make_source(bootstrap: str) -> Callable[..., CompiledSingleSource]:
             settings=settings,
             topics=(topic,),
             payload_type=ItPayload,
-            shape=StreamShape.RECORD,
             decode_strategy="record",
         )
 
