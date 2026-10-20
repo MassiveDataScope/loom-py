@@ -191,12 +191,14 @@ class TestUndeclaredColumnTypes:
 
     @pytest.mark.parametrize("model", [_PricedItem, _MaybePricedItem])
     def test_a_decimal_without_a_column_type_is_refused(self, model: type) -> None:
+        metadata = MetaData()
+
         with pytest.raises(
             ValueError,
             match=rf"{model.__name__}\.price: .*"
             r"Annotated\[Decimal, Numeric\(precision=12, scale=2\)\]",
         ):
-            compile_all(model, metadata=MetaData())
+            compile_all(model, metadata=metadata)
 
     def test_a_decimal_compiles_to_its_declared_precision_and_scale(self) -> None:
         metadata = MetaData()
