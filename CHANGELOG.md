@@ -809,6 +809,8 @@
   present convert those rows deliberately (for example to UTC with
   `(c::timetz AT TIME ZONE 'UTC')::time`) before changing the type. MongoDB is
   unaffected: it stores `date` and `time` values as ISO 8601 strings.
+- **core:** `to_column_value` is imported from `loom.core.model.convert`; it is
+  no longer exported by `loom.core.repository.sqlalchemy.values`.
 
 ### ai
 
@@ -1389,7 +1391,7 @@
   startup. `parse_environment` validates a value naming an environment.
 - **core:** the SQLAlchemy query compiler converts a filter value, and each
   `in` item, as the repository converts a value it writes
-  (`loom.core.repository.sqlalchemy.values.to_column_value`, now shared by
+  (`loom.core.model.convert.to_column_value`, now shared by
   both): an `Enum` member is bound as its value, a JSON column's value is
   reduced to builtins. A plain `Enum` member as the value of a filter on a
   string column failed to bind.
@@ -1784,9 +1786,9 @@
   of type Decimal is not JSON serializable"); an `Enum` is now inserted as its
   value and a struct or `dict` as JSON text from `msgspec.json`, a `datetime`
   inside it as ISO-8601 text and a `Decimal` as decimal text.
-  `to_column_value` moved from `loom.core.repository.sqlalchemy.values`, which
-  still exports it, to `loom.core.model.convert`, so the Delta and ClickHouse
-  writers use it without SQLAlchemy installed.
+  `to_column_value` moved to `loom.core.model.convert` (under Behaviour
+  changes), so the Delta and ClickHouse writers use it without SQLAlchemy
+  installed.
 
 ### prefect
 

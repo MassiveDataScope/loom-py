@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import get_compiled_core
 from loom.core.errors.codes import ErrorCode
-from loom.core.model.convert import to_struct
+from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
     get_column_fields,
     get_id_attributes,
@@ -40,7 +40,6 @@ from loom.core.repository.sqlalchemy.transactional import record_mutation
 from loom.core.repository.sqlalchemy.values import (
     check_time_offsets,
     is_json_column,
-    to_column_value,
     to_comparison_value,
 )
 
