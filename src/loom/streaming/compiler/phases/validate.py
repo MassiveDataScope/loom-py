@@ -559,12 +559,21 @@ def _path_end(nodes: tuple[object, ...]) -> object | None:
 
     Nothing runs after such a node, so an output declared after it is never written.
     A Fork ends the path only with a default branch; without one, the messages no
-    branch claims go on.
+    branch claims go on. A Router ends it only with a default branch and when every
+    branch ends in a path-ending node; otherwise some messages continue after it.
     """
     last = nodes[-1] if nodes else None
     if _is_leaf_terminal(last) or isinstance(last, ExpandRoutes):
         return last
     if isinstance(last, Fork) and last.default is not None:
+        return last
+    if (
+        isinstance(last, Router)
+        and last.default is not None
+        and all(
+            branch.nodes and _is_leaf_terminal(branch.nodes[-1]) for branch in iter_branches(last)
+        )
+    ):
         return last
     return None
 
