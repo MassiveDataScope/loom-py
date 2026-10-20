@@ -238,7 +238,9 @@ class TestStorageForm:
     async def test_a_plain_enum_field_needs_no_declared_column_type(
         self, collection: FakeCollection
     ) -> None:
-        repo: RepositoryMongo[Swatch, str] = RepositoryMongo(Swatch, collection)
+        repo: RepositoryMongo[Swatch, str] = RepositoryMongo(
+            Swatch, collection, cursor_codec=_CODEC
+        )
 
         created = await repo.create(SwatchCreate(shade=Shade.DARK))
 

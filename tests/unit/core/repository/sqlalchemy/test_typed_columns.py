@@ -185,7 +185,9 @@ class TestEnumColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Case, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Case
+            session_manager=session_manager,
+            model=_Case,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         created = await repo.create(_CreateCase(state=_State.CLOSED, level=_Level.HIGH))
         await repo.create(_CreateCase(state=_State.OPEN, level=_Level.LOW))
