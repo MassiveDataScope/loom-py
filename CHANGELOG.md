@@ -412,7 +412,7 @@
   selection can be checked without running it. A bare string as `include`
   raises `TypeError`. The runner now filters through it. `InvalidStageError`
   is exported from `loom.etl.compiler` as well; it is the same class as
-  `loom.etl.runner.InvalidStageError` and `loom.etl.InvalidStageError`.
+  `loom.etl.InvalidStageError`.
 - **etl:** `iter_processes`, `iter_steps_in_process` and `iter_all_steps` are
   exported from `loom.etl.compiler`. They flatten a compiled plan in
   execution order, parallel groups in declaration order, so code that walks
@@ -1106,8 +1106,7 @@
   `Unknown step or process names: [...]` instead of `No steps or processes
   match include=[...]`, the constructor's parameter is `unknown`, and the
   names are kept on the new `unknown` attribute. Positional construction is
-  unchanged; `InvalidStageError(include=...)` still works, emits a
-  `DeprecationWarning` and is removed in loom 3.0. The error survives pickle
+  unchanged. The error survives pickle
   with its `unknown` names, so it crosses process boundaries intact.
 - **etl:** `ThreadDispatcher` runs each task in a copy of the caller's
   context, as `asyncio.to_thread` does, so a step of a parallel group sees
@@ -1118,13 +1117,31 @@
   caller's context among the requirements on an implementation.
 - **etl:** `WithAgent(max_usd=...)` keeps the budget as a `Decimal`. An
   `int`, or another `numbers.Integral` such as `numpy.int64`, is converted
-  exactly. A `float` emits a `DeprecationWarning`, is converted through its
-  `str()` (`0.1` becomes `Decimal("0.1")`) and is removed in loom 3.0. A
-  `bool`, accepted before, and any other type, such as `str`, raise
-  `TypeError`. `NaN`, `sNaN` and `Infinity`, as a `Decimal` or a `float`,
-  raise `ValueError`, like zero and a negative amount; a `Decimal` `NaN` or
-  `sNaN` used to raise `decimal.InvalidOperation`, and a `Decimal`
-  `Infinity`, a `float` `inf` and a `float` `nan` were accepted.
+  exactly. A `bool`, accepted before, and any other type, such as `str`,
+  raise `TypeError`. `NaN`, `sNaN` and `Infinity` raise `ValueError`, like
+  zero and a negative amount; a `Decimal` `NaN` or `sNaN` used to raise
+  `decimal.InvalidOperation`, and a `Decimal` `Infinity` was accepted.
+- **etl:** `InvalidStageError(include=...)` is removed; use
+  `InvalidStageError(unknown=...)` or pass the names positionally.
+- **etl:** `WithAgent(max_usd=<float>)` is removed and raises `TypeError`;
+  pass a `Decimal`, such as `Decimal("2.50")`, or an `int`.
+- **etl:** `loom.etl.CheckpointCleaner` and
+  `loom.etl.checkpoint.CheckpointCleaner` are removed; use
+  `FsspecTempCleaner`, now exported from `loom.etl` as well.
+- **etl:** the module `loom.etl.declarative.target._schema_mode` is removed;
+  import `SchemaMode` from `loom.core.schema` (or `loom.etl`).
+- **etl:** `FromClickHouse.select(columns)` is removed; use
+  `FromClickHouse.columns(*columns)`.
+- **etl:** `ClickHouseSourceSpec.table` is removed; use
+  `ClickHouseSourceSpec.table_ref.ref`.
+- **etl:** `loom.etl.backends.polars._reader._apply_source_schema` is
+  removed. It was a test helper and has no public replacement.
+- **etl:** the module `loom.etl.runner.errors` is removed, and neither
+  `loom.etl.runner` nor `loom.etl.runner.core` exports `InvalidStageError`;
+  import it from `loom.etl.compiler` (or `loom.etl`).
+- **etl:** `loom.etl.io.sources._clickhouse` no longer re-exports
+  `FromClickHouse` and `ClickHouseSourceSpec`; import them from
+  `loom.etl.declarative.source` (`FromClickHouse` also from `loom.etl`).
 
 ### streaming
 
@@ -1297,6 +1314,17 @@
 - **streaming:** a sync `With(process=...)` hands on one message at a time, as
   `WithAsync` does. After a `CollectBatch` it handed on whole batches, so as
   the last node of a flow without `output` its messages never completed.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds each column with
+  the type core compiles for the field instead of its own map:
+  - a `StrEnum` or `IntEnum` field is written as its scalar (`String`,
+    `Integer`) instead of as JSON;
+  - a column type declared with `ColumnField` (on a `BaseModel`) or
+    `Annotated[T, <ColumnType>]` is used;
+  - a `Decimal`, plain `Enum` or `Literal` field without a declared column
+    type is refused when the partition is built, with core's message, instead
+    of being written as `Numeric()` (a `Decimal`) or as JSON. Declare it, e.g.
+    `Annotated[Decimal, Numeric(precision=12, scale=2)]`, or
+    `Annotated[Decimal, Numeric()]` for an unbounded `NUMERIC`.
 
 ## 🐛 Fixes
 
@@ -1478,6 +1506,12 @@
   evaluated `__annotations__` and no `__annotate__` function.
 
 ### etl
+
+- **etl:** the error for a missing destination table names only advice that
+  works under the policy in force. Under `missing_table_policy='error'` it
+  used to suggest `SchemaMode.OVERWRITE`, which that policy ignores; it now
+  suggests `missing_table_policy='create'`, `'schema_mode'` with
+  `SchemaMode.OVERWRITE`, or creating the table first.
 
 - **etl:** `replace(allow_empty=False)` on Spark writes the rows it checked.
   The writer ran `DataFrame.isEmpty()` and then let the write compute the
@@ -1754,6 +1788,32 @@
   offset at the step, also when the batch holds several messages of one
   offset that an earlier expanding node produced. The new return type is under
   Behaviour changes.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds a `bytes` field as
+  `LargeBinary` (`bytea` on Postgres). It bound it as text, which Postgres
+  refused for a `bytea` column ("column is of type bytea but expression is of
+  type character varying"). IntoTable now takes each column's type from core's
+  model introspection (`loom.core.backend.sqlalchemy.sa_table_for`), the type
+  a compiled model declares, and builds each row with core's new
+  `loom.core.repository.sqlalchemy.values.to_column_row`, which converts and
+  checks values as the repository does when it writes them: a plain `Enum` as
+  its value, a struct in a JSON column as a dict, an `UNSET` value left out so
+  the column's database default applies, also when other rows of the batch
+  set it, and a `time` whose UTC offset its column cannot take refused with
+  `BoundaryValidationError` (`boundary_validation`) instead of being written
+  without the offset. Relation and projection fields are no longer columns
+  for any backend: the SQLAlchemy and Delta rows included them and failed on
+  their `UNSET` value, and the ClickHouse insert named them. A `date` or
+  `time` field is bound as `Date` or `Time`, as core infers it, so it is
+  written into a Postgres `date` or `time` column; it was bound as `String`
+  and Postgres refused it ("column is of type date but expression is of type
+  character varying").
+- **streaming:** `IntoTable` with `Backend.DELTA` or `Backend.CLICKHOUSE`
+  refuses an `UNSET` column value when the item is written, with
+  `BoundaryValidationError` (`boundary_validation`) naming the field and the
+  table. Delta failed later, at a mini-batch or flush, with pyarrow's
+  `ArrowInvalid`, and ClickHouse passed the `UNSET` object to
+  clickhouse-connect's `insert`. Neither can leave a column out for one row as
+  `Backend.SQLALCHEMY` does.
 
 ### prefect
 

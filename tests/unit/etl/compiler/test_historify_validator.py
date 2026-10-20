@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.schema import SchemaMode
 from loom.etl import ETLParams, ETLStep, IntoHistory, IntoTable
 from loom.etl.compiler import ETLCompilationError
 from loom.etl.compiler._errors import ETLErrorCode
@@ -28,7 +29,6 @@ from loom.etl.declarative.target._history import (
     HistorifyInputMode,
     HistorifySpec,
 )
-from loom.etl.declarative.target._schema_mode import SchemaMode
 from loom.etl.declarative.target._table import AppendSpec
 
 # ---------------------------------------------------------------------------

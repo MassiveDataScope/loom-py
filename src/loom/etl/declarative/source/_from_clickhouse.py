@@ -64,10 +64,6 @@ class FromClickHouse:
             raise ValueError("FromClickHouse.columns() requires at least one column name.")
         return self._clone(_columns=cols)
 
-    def select(self, columns: list[str]) -> FromClickHouse:
-        """Compatibility alias for :meth:`columns`."""
-        return self.columns(*columns)
-
     def distinct(self) -> FromClickHouse:
         """Return a new source marked as DISTINCT."""
         return self._clone(_distinct=True)

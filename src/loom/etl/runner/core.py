@@ -34,7 +34,6 @@ from loom.etl.runner._wiring import (
     make_lineage_store,
 )
 from loom.etl.runner.config_loader import _load_context, _parse_sections, config_dir
-from loom.etl.runner.errors import InvalidStageError
 from loom.etl.runtime.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
@@ -382,4 +381,4 @@ class ETLRunner:
         self._checkpoint_store.cleanup_correlation(correlation_id)
 
 
-__all__ = ["ETLRunner", "InvalidStageError"]
+__all__ = ["ETLRunner"]

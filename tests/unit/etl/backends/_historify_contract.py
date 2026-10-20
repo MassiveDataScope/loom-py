@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._params import params as p
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history import (
@@ -36,7 +37,6 @@ from loom.etl.declarative.target._history import (
     HistorifyTemporalConflictError,
     HistoryDateType,
 )
-from loom.etl.declarative.target._schema_mode import SchemaMode
 
 # ---------------------------------------------------------------------------
 # Shared helpers (module-level — imported by concrete test modules too)
