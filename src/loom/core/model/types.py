@@ -29,8 +29,16 @@ def DateTime(*, tz: bool = True) -> ColumnType:
     return ColumnType("DateTime", kwargs={"timezone": tz})
 
 
-def Numeric(*, precision: int = 10, scale: int = 2) -> ColumnType:
-    return ColumnType("Numeric", args=(precision, scale))
+def Numeric(*, precision: int | None = None, scale: int | None = None) -> ColumnType:
+    """A ``NUMERIC`` column; with no precision it is unbounded.
+
+    Raises:
+        ValueError: A scale is given without a precision; SQLAlchemy would
+            ignore it.
+    """
+    if scale is not None and precision is None:
+        raise ValueError("Numeric: a scale needs a precision")
+    return ColumnType("Numeric", kwargs={"precision": precision, "scale": scale})
 
 
 class _JsonMarker:
