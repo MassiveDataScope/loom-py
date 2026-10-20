@@ -69,14 +69,11 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
-from decimal import Decimal
+from datetime import date, datetime
 from enum import StrEnum
 from tempfile import SpooledTemporaryFile
 from time import monotonic
-from types import UnionType
 from typing import (
-    Annotated,
     Any,
     ClassVar,
     Generic,
@@ -84,60 +81,35 @@ from typing import (
     Protocol,
     Self,
     TypeVar,
-    Union,
     cast,
-    get_args,
-    get_origin,
-    get_type_hints,
 )
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import msgspec
-import msgspec.structs
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.model.types import _JsonMarker
+from loom.core.errors.codes import ErrorCode
+from loom.core.model import BoundaryValidationError
+from loom.core.model.introspection import get_column_fields
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
 
 # ── optional SQLAlchemy dependency ────────────────────────────────────────────
 # Imported once at module level. _SA_AVAILABLE stays False when sqlalchemy is
-# not installed; every class and helper below can reference these names safely
-# because from __future__ import annotations makes all annotations lazy strings.
+# missing; an import error naming another module (a broken dependency) is raised.
 try:
-    import sqlalchemy as _sa
     from sqlalchemy import insert as _sa_insert
 
-    Boolean = _sa.Boolean
-    Column = _sa.Column
-    DateTime = _sa.DateTime
-    Integer = _sa.Integer
-    MetaData = _sa.MetaData
-    Numeric = _sa.Numeric
-    SAJSON = _sa.JSON
-    SAFloat = _sa.Float
-    String = _sa.String
-    Table = _sa.Table
-    Text = _sa.Text
-    Uuid = _sa.Uuid
+    from loom.core.backend.sqlalchemy import sa_table_for
+    from loom.core.repository.sqlalchemy.values import to_column_row
 
-    # Defined inside the try block so all SA names are provably bound here.
-    _SA_TYPE_MAP: dict[type, Any] = {
-        int: Integer(),
-        float: SAFloat(),
-        bool: Boolean(),
-        str: String(),
-        datetime: DateTime(timezone=True),
-        date: String(10),
-        time: String(8),
-        Decimal: Numeric(),
-        bytes: Text(),
-        UUID: Uuid(),
-    }
     _SA_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
+    if exc.name is not None and exc.name.partition(".")[0] != "sqlalchemy":
+        raise
     _sa_insert = cast(Any, None)
-    _SA_TYPE_MAP = {}
+    sa_table_for = cast(Any, None)
+    to_column_row = cast(Any, None)
     _SA_AVAILABLE = False
 
 # ── optional Delta dependency ─────────────────────────────────────────────────
@@ -328,14 +300,14 @@ class IntoTable(Generic[EventT]):
         if self.backend is Backend.DELTA:
             if not isinstance(config, DeltaSinkConfig):
                 raise TypeError("IntoTable backend=delta requires a DeltaSinkConfig.")
-            if not msgspec.structs.fields(cast(Any, self.payload)):
+            if not _column_names(self.payload):
                 raise ValueError(
                     f"IntoTable backend=delta requires a payload type with fields; "
                     f"{self.payload.__name__} has none, so it has no row to write."
                 )
             return cast(
                 SinkPartition[EventT],
-                _DeltaTablePartition(config, logger=logger),
+                _DeltaTablePartition(config, self.payload, logger=logger),
             )
         if self.backend is Backend.CLICKHOUSE:
             if not isinstance(config, ClickHouseSinkConfig):
@@ -348,9 +320,8 @@ class IntoTable(Generic[EventT]):
 
 
 # ── SQLAlchemy helpers ────────────────────────────────────────────────────────
-# These functions reference module-level SA names (Column, Integer, …).
-# They are only called after _SA_AVAILABLE is confirmed in __init__, so
-# NameError cannot occur — no import statements appear inside them.
+# The SQLAlchemy partition uses the names bound by the optional-import block
+# above; its __init__ raises ImportError first when _SA_AVAILABLE is False.
 
 
 def _optional_int(value: Any, default: int) -> int:
@@ -589,60 +560,6 @@ def _build_writer_properties(config: Mapping[str, Any] | None) -> Any | None:
     return _writer_properties_factory(**kwargs)
 
 
-def _sa_type_for(annotation: Any) -> Any:
-    """Map a Python type annotation to a SQLAlchemy column type instance.
-
-    Unwraps ``Optional[T]`` before mapping.  Collections and unmapped types
-    fall back to ``JSON()``.  References module-level ``_SA_TYPE_MAP`` —
-    no import statements inside.
-
-    Args:
-        annotation: A Python type or ``Optional`` / union variant.
-
-    Returns:
-        A SQLAlchemy column type instance.
-    """
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        base_type, *metadata = get_args(annotation)
-        if any(isinstance(m, _JsonMarker) for m in metadata):
-            return Text()
-        return _sa_type_for(base_type)
-    if origin in (Union, UnionType):
-        non_none = [a for a in get_args(annotation) if a is not type(None)]
-        return _sa_type_for(non_none[0]) if len(non_none) == 1 else SAJSON()
-    if origin in (list, tuple, set, dict, frozenset):
-        return SAJSON()
-    if isinstance(annotation, type):
-        return _SA_TYPE_MAP.get(annotation, SAJSON())
-    return SAJSON()
-
-
-def _sa_table_from_struct(table_name: str, payload_type: type[Any]) -> Table:
-    """Build a SQLAlchemy Core ``Table`` from a msgspec Struct type.
-
-    Resolves annotations via :func:`~typing.get_type_hints` and maps each
-    Python type to the corresponding SA column type via :func:`_sa_type_for`.
-    References module-level ``Column``, ``MetaData``, ``Table`` — no imports
-    inside.
-
-    Args:
-        table_name:   Target table name used in the SQL DDL.
-        payload_type: A :class:`~loom.core.model.struct.LoomStruct` or
-                      :class:`~loom.core.model.struct.LoomFrozenStruct`
-                      subclass whose fields define the column layout.
-
-    Returns:
-        A :class:`~sqlalchemy.Table` bound to a fresh :class:`~sqlalchemy.MetaData`.
-    """
-    hints = get_type_hints(payload_type)
-    columns = [
-        Column(field.name, _sa_type_for(hints.get(field.name, object)))
-        for field in msgspec.structs.fields(payload_type)
-    ]
-    return Table(table_name, MetaData(), *columns)
-
-
 def _row_size_bytes(row: Mapping[str, Any]) -> int:
     """Estimate the serialized size of one row for buffer accounting."""
     return len(msgspec.json.encode(dict(row)))
@@ -654,8 +571,9 @@ class _SQLAlchemyTablePartition:
     The partition reuses a shared SessionManager owned by the Bytewax adapter
     and uses the Bytewax async bridge to execute batch inserts without exposing
     event-loop management to callers.
-    Column types are inferred from the msgspec Struct field annotations — no
-    ORM mapping or reflection required.
+    Columns and their types are those core compiles for the payload's fields,
+    and each value takes the form core's repository writes; no ORM mapping or
+    reflection is required.
 
     Args:
         settings:        Resolved SQLAlchemy sink config.
@@ -682,7 +600,7 @@ class _SQLAlchemyTablePartition:
         self._bridge = bridge
         self._session_manager = session_manager
         self._logger = logger
-        self._table = _sa_table_from_struct(settings.table, payload_type)
+        self._table = sa_table_for(payload_type, settings.table)
         self._chunk_size = settings.chunk_size
         self._buffer_policy = settings.buffer_policy
         self._buffer: deque[tuple[dict[str, Any], int]] = deque()
@@ -708,7 +626,7 @@ class _SQLAlchemyTablePartition:
             return 0
         durable = 0
         for item in items:
-            row = _to_row_dict(item)
+            row = to_column_row(item, self._table.columns)
             row_bytes = _row_size_bytes(row)
             if not self._buffer:
                 self._buffer_started_at = monotonic()
@@ -761,9 +679,9 @@ class _SQLAlchemyTablePartition:
                         rows.append(row)
                         self._buffer_records -= 1
                         self._buffer_bytes -= row_bytes
-                    if rows:
-                        await session.execute(statement, rows)
-                        n += len(rows)
+                    for same_columns in _rows_by_column_set(rows):
+                        await session.execute(statement, same_columns)
+                    n += len(rows)
                 await session.commit()
                 if self._logger is not None:
                     self._logger.info(
@@ -782,9 +700,53 @@ class _SQLAlchemyTablePartition:
         return n
 
 
-def _to_row_dict(item: Any) -> dict[str, Any]:
-    """Serialise one LoomStruct instance to a plain dict."""
-    return msgspec.structs.asdict(cast(msgspec.Struct, item))
+def _column_names(payload_type: type[Any]) -> list[str]:
+    """Return the column fields of *payload_type* in declaration order.
+
+    Relation and projection fields are not columns.
+    """
+    return list(get_column_fields(payload_type))
+
+
+def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> list[Any]:
+    """Return the values of *item*'s attributes named by *column_names*, in that order.
+
+    Neither partition that calls it can leave a column out for one row: Delta
+    has no per-insert column defaults, and the ClickHouse insert names every
+    column for the whole buffer. An ``UNSET`` value is therefore refused rather
+    than written.
+
+    Args:
+        item: A struct with one attribute per column.
+        column_names: The columns to read.
+        target: The table, as named in the error.
+
+    Raises:
+        BoundaryValidationError: ``boundary_validation``, with one violation per
+            ``UNSET`` value, in column order.
+    """
+    values = [getattr(item, name) for name in column_names]
+    violations = tuple(
+        (name, f"UNSET has no column value in {target}")
+        for name, value in zip(column_names, values, strict=True)
+        if value is msgspec.UNSET
+    )
+    if violations:
+        message = "; ".join(f"{name}: {reason}" for name, reason in violations)
+        raise BoundaryValidationError(message, violations, code=ErrorCode.BOUNDARY_VALIDATION)
+    return values
+
+
+def _rows_by_column_set(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group *rows* by the columns they set, keeping their order within a group.
+
+    One executemany INSERT takes its columns from the first row: a later row
+    missing one fails, and a column only a later row sets is dropped.
+    """
+    groups: dict[frozenset[str], list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(frozenset(row), []).append(row)
+    return list(groups.values())
 
 
 # ── Delta helpers ─────────────────────────────────────────────────────────────
@@ -810,7 +772,8 @@ class _DeltaTablePartition:
     them into a single in-memory frame.
 
     Args:
-        settings: Resolved Delta sink config.
+        settings:     Resolved Delta sink config.
+        payload_type: Struct type whose column fields map to table columns.
 
     Raises:
         ImportError: If ``deltalake``, ``polars``, or ``pyarrow`` are not installed.
@@ -819,6 +782,7 @@ class _DeltaTablePartition:
     def __init__(
         self,
         settings: DeltaSinkConfig,
+        payload_type: type[Any],
         logger: Any = None,
     ) -> None:
         if not _DELTA_AVAILABLE:
@@ -827,6 +791,8 @@ class _DeltaTablePartition:
                 "Install them with: pip install deltalake polars pyarrow"
             )
         self._logger = logger
+        self._column_names = _column_names(payload_type)
+        self._target = f"Delta table {settings.table!r}"
         self._uri = settings.uri
         self._mode = settings.mode
         self._storage_options = dict(settings.storage_options)
@@ -878,7 +844,8 @@ class _DeltaTablePartition:
         return durable
 
     def _stage_item(self, item: Any) -> None:
-        self._mini_batch.append(msgspec.structs.asdict(cast(msgspec.Struct, item)))
+        values = _set_column_values(item, self._column_names, self._target)
+        self._mini_batch.append(dict(zip(self._column_names, values, strict=True)))
         self._staged_records += 1
         if len(self._mini_batch) >= self._mini_batch_size:
             self._commit_mini_batch()
@@ -1026,15 +993,11 @@ class _DeltaTablePartition:
 # ── ClickHouse helpers ────────────────────────────────────────────────────────
 
 
-def _column_names_from_struct(payload_type: type[Any]) -> list[str]:
-    """Return field names for a msgspec Struct in declaration order."""
-    return [f.name for f in msgspec.structs.fields(payload_type)]
+def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
+    """Return *item*'s values for *column_names*, in order, for a ``clickhouse-connect`` insert.
 
-
-def _to_ch_row(row: Mapping[str, Any], column_names: list[str]) -> list[Any]:
-    """Coerce one row dict to an ordered list for ``clickhouse-connect`` insert.
-
-    Applies the minimal coercions that ClickHouse native types require:
+    An ``UNSET`` value is refused, as :func:`_set_column_values` refuses it.
+    The other values get the minimal coercions ClickHouse native types require:
 
     - ``bool``      → ``int`` (ClickHouse ``UInt8`` expects 0/1, not ``True``/``False``)
     - ``date``      → ISO-8601 string (``clickhouse-connect`` handles ``datetime`` natively)
@@ -1044,8 +1007,7 @@ def _to_ch_row(row: Mapping[str, Any], column_names: list[str]) -> list[Any]:
     ``list``, ``None``) are passed through unchanged.
     """
     result: list[Any] = []
-    for name in column_names:
-        value = row[name]
+    for value in _set_column_values(item, column_names, target):
         if isinstance(value, bool):
             result.append(int(value))
         elif isinstance(value, date) and not isinstance(value, datetime):
@@ -1107,7 +1069,8 @@ class _ClickHouseTablePartition:
         self._client = _cc.get_client(dsn=settings.url, **kwargs)
         self._logger = logger
         self._table = settings.table
-        self._column_names = _column_names_from_struct(payload_type)
+        self._target = f"ClickHouse table {settings.table!r}"
+        self._column_names = _column_names(payload_type)
         self._buffer_policy = settings.buffer_policy
         # Column-oriented: one inner list per column, grows with each row.
         self._buffer: list[list[Any]] = [[] for _ in self._column_names]
@@ -1135,7 +1098,7 @@ class _ClickHouseTablePartition:
         for item in items:
             if not self._buffer_records:
                 self._buffer_started_at = monotonic()
-            row = _to_ch_row(_to_row_dict(item), self._column_names)
+            row = _to_ch_row(item, self._column_names, self._target)
             row_bytes = sum(len(str(v)) for v in row)
             for col_idx, value in enumerate(row):
                 self._buffer[col_idx].append(value)

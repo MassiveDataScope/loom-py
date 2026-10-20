@@ -8,15 +8,23 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
+from collections.abc import Iterator, Sequence
+from datetime import date
+from datetime import time as time_of_day
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import MagicMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import msgspec
 import polars as pl
 import pytest
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import Row, create_engine, event, text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from tests.helpers.version_limited_extras import require_bytewax
 
@@ -24,7 +32,16 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.model import LoomStruct  # noqa: E402
+from loom.core.errors.codes import ErrorCode  # noqa: E402
+from loom.core.model import (  # noqa: E402
+    BaseModel,
+    BoundaryValidationError,
+    ColumnField,
+    LoomStruct,
+    Text,
+)
+from loom.core.model.enums import Cardinality  # noqa: E402
+from loom.core.model.relation import RelationField  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
 from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
@@ -37,6 +54,27 @@ class _OrderRow(LoomStruct):
     order_id: int
     amount: float
     status: str
+
+
+class _NoteRow(LoomStruct):
+    note_id: int
+    note: Annotated[str | msgspec.UnsetType, Text] = msgspec.UNSET
+
+
+class _Owner(LoomStruct):
+    id: int
+
+
+class _OwnedRow(BaseModel):
+    """A model whose relation field is not a column."""
+
+    __tablename__ = "owned_rows"
+
+    owner_id: int
+    owner: _Owner | None = RelationField(
+        foreign_key="owners.id", cardinality=Cardinality.MANY_TO_ONE
+    )
+    row_id: int = ColumnField(primary_key=True)
 
 
 class _VisitRow(LoomStruct):
@@ -135,6 +173,41 @@ class TestIntoTableSQLAlchemyIntegration:
         assert rows[0] == (1, 99.9, "shipped")
         assert rows[1] == (2, 49.5, "pending")
         assert (buffered, flushed) == (0, 2), "durable only once the close flush committed"
+
+    @pytest.mark.parametrize("first_has_note", [True, False], ids=["set_first", "unset_first"])
+    def test_a_batch_mixing_set_and_unset_fields_writes_every_row(
+        self, tmp_path: Path, first_has_note: bool
+    ) -> None:
+        path = _make_db(
+            tmp_path, "CREATE TABLE notes (note_id INTEGER, note TEXT DEFAULT 'from-default')"
+        )
+        with_note = _NoteRow(note_id=1, note="written")
+        without_note = _NoteRow(note_id=2)
+        items = [with_note, without_note] if first_has_note else [without_note, with_note]
+        bridge = AsyncBridge()
+        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.SQLALCHEMY)
+        partition = node.build_partition(
+            SqlAlchemySinkConfig.from_config({"table": "notes"}, default_table="notes"),
+            worker_index=0,
+            worker_count=1,
+            bridge=bridge,
+            session_manager=session_manager,
+        )
+        try:
+            partition.write_batch(items)
+            flushed = partition.close()
+        finally:
+            bridge.run(session_manager.dispose())
+            bridge.shutdown()
+
+        engine = create_engine(_sync_url(path))
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT note_id, note FROM notes ORDER BY note_id")).fetchall()
+        engine.dispose()
+
+        assert flushed == 2
+        assert [tuple(row) for row in rows] == [(1, "written"), (2, "from-default")]
 
     def test_a_uuid_field_is_written_as_core_writes_a_uuid_column(self, tmp_path: Path) -> None:
         path = _make_db(tmp_path, "CREATE TABLE visits (visit_id CHAR(32), label TEXT)")
@@ -436,6 +509,38 @@ class TestIntoTableSQLAlchemyIntegration:
         assert partition.write_batch(rows[2:]) == 3
         assert partition.close() == 1
 
+    def test_a_delta_table_gets_no_column_for_a_relation_field(self, tmp_path: Path) -> None:
+        pytest.importorskip("deltalake")
+        uri = str(tmp_path / "owned_delta")
+        node = IntoTable(payload=_OwnedRow, table="owned", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config({"uri": uri}, default_table="owned")
+        partition = node.build_partition(config, worker_index=0, worker_count=1)
+
+        partition.write_batch([_OwnedRow(owner_id=3, row_id=7)])
+        partition.close()
+
+        assert pl.read_delta(uri).to_dicts() == [{"owner_id": 3, "row_id": 7}]
+
+    def test_an_unset_column_field_is_refused_on_delta_with_its_name_and_table(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("deltalake")
+        uri = str(tmp_path / "notes_delta")
+        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config({"uri": uri}, default_table="notes")
+        partition = node.build_partition(config, worker_index=0, worker_count=1)
+        batch = [_NoteRow(note_id=1)]
+
+        with pytest.raises(BoundaryValidationError) as raised:
+            partition.write_batch(batch)
+
+        assert raised.value.code == ErrorCode.BOUNDARY_VALIDATION
+        assert raised.value.violations == (
+            ("note", "UNSET has no column value in Delta table 'notes'"),
+        )
+        assert partition.close() == 0
+        assert not Path(uri).exists()
+
     def test_a_delta_payload_without_fields_is_refused_at_startup(self, tmp_path: Path) -> None:
         class _NoColumns(LoomStruct):
             pass
@@ -470,6 +575,105 @@ class TestIntoTableSQLAlchemyIntegration:
         assert config.target_file_size == 134_217_728
 
 
+_PG_URI_ENV_VAR = "LOOM_PG_IT_URI"
+
+
+class _BinaryRow(LoomStruct):
+    reading_id: int
+    blob: bytes
+
+
+class _CalendarRow(LoomStruct):
+    reading_id: int
+    taken_on: date
+    opens_at: time_of_day
+
+
+async def _pg_fetch(uri: str, statements: Sequence[str]) -> list[Row[Any]]:
+    """Run ``statements`` in one transaction and return the rows of the last one."""
+    engine = create_async_engine(uri, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            result = None
+            for statement in statements:
+                result = await conn.execute(text(statement))
+            return list(result.fetchall()) if result is not None and result.returns_rows else []
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+def pg_uri() -> str:
+    uri = os.environ.get(_PG_URI_ENV_VAR)
+    if not uri:
+        pytest.skip(f"{_PG_URI_ENV_VAR} is not set")
+    return uri
+
+
+@pytest.fixture
+def pg_table(pg_uri: str) -> Iterator[str]:
+    """A throwaway table name, dropped after the test."""
+    table = f"into_table_it_{uuid4().hex[:12]}"
+    yield table
+    asyncio.run(_pg_fetch(pg_uri, [f"DROP TABLE IF EXISTS {table}"]))
+
+
+def _write_to_postgres(uri: str, table: str, payload: type[Any], items: list[Any]) -> None:
+    bridge = AsyncBridge()
+    session_manager = SessionManager.from_config({"url": uri})
+    node = IntoTable(payload=payload, table=table, backend=Backend.SQLALCHEMY)
+    partition = node.build_partition(
+        SqlAlchemySinkConfig.from_config({"table": table}, default_table=table),
+        worker_index=0,
+        worker_count=1,
+        bridge=bridge,
+        session_manager=session_manager,
+    )
+    try:
+        partition.write_batch(items)
+        partition.close()
+    finally:
+        bridge.run(session_manager.dispose())
+        bridge.shutdown()
+
+
+@pytest.mark.integration
+class TestIntoTablePostgresIntegration:
+    def test_writes_bytes_into_a_bytea_column(self, pg_uri: str, pg_table: str) -> None:
+        asyncio.run(
+            _pg_fetch(pg_uri, [f"CREATE TABLE {pg_table} (reading_id integer, blob bytea)"])
+        )
+
+        _write_to_postgres(
+            pg_uri, pg_table, _BinaryRow, [_BinaryRow(reading_id=1, blob=b"\x00\xff")]
+        )
+
+        rows = asyncio.run(_pg_fetch(pg_uri, [f"SELECT reading_id, blob FROM {pg_table}"]))
+        assert [tuple(row) for row in rows] == [(1, b"\x00\xff")]
+
+    def test_writes_date_and_time_into_date_and_time_columns(
+        self, pg_uri: str, pg_table: str
+    ) -> None:
+        asyncio.run(
+            _pg_fetch(
+                pg_uri,
+                [f"CREATE TABLE {pg_table} (reading_id integer, taken_on date, opens_at time)"],
+            )
+        )
+
+        _write_to_postgres(
+            pg_uri,
+            pg_table,
+            _CalendarRow,
+            [_CalendarRow(reading_id=1, taken_on=date(2026, 1, 2), opens_at=time_of_day(8, 30))],
+        )
+
+        rows = asyncio.run(
+            _pg_fetch(pg_uri, [f"SELECT reading_id, taken_on, opens_at FROM {pg_table}"])
+        )
+        assert [tuple(row) for row in rows] == [(1, date(2026, 1, 2), time_of_day(8, 30))]
+
+
 class TestIntoTableClickHouseUnit:
     """Unit tests for _ClickHouseTablePartition — no real ClickHouse server."""
 
@@ -497,6 +701,34 @@ class TestIntoTableClickHouseUnit:
         assert data[2] == [1, 0]  # active: bool → int
         assert data[3] == [["a", "b"], ["c"]]  # tags: list[str] native, no json.dumps
         assert data[4] == [None, 10]  # parent_id: Nullable
+
+    def test_a_relation_field_is_not_a_column(self, mock_ch_client: MagicMock) -> None:
+        node = IntoTable(payload=_OwnedRow, table="t", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
+
+        partition.write_batch([_OwnedRow(owner_id=3, row_id=7)])
+        partition.close()
+
+        _, kwargs = mock_ch_client.insert.call_args
+        assert kwargs["column_names"] == ["owner_id", "row_id"]
+        assert mock_ch_client.insert.call_args.args[1] == [[3], [7]]
+
+    def test_an_unset_column_field_is_refused_with_its_name_and_table(
+        self, mock_ch_client: MagicMock
+    ) -> None:
+        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config("notes"), worker_index=0, worker_count=1)
+        batch = [_NoteRow(note_id=1)]
+
+        with pytest.raises(BoundaryValidationError) as raised:
+            partition.write_batch(batch)
+
+        assert raised.value.code == ErrorCode.BOUNDARY_VALIDATION
+        assert raised.value.violations == (
+            ("note", "UNSET has no column value in ClickHouse table 'notes'"),
+        )
+        assert partition.close() == 0
+        mock_ch_client.insert.assert_not_called()
 
     def test_list_field_not_json_serialised(self, mock_ch_client: MagicMock) -> None:
         """list[str] arrives at insert() as a Python list, never as a JSON string."""

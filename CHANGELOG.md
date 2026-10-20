@@ -1274,6 +1274,17 @@
 - **streaming:** a sync `With(process=...)` hands on one message at a time, as
   `WithAsync` does. After a `CollectBatch` it handed on whole batches, so as
   the last node of a flow without `output` its messages never completed.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds each column with
+  the type core compiles for the field instead of its own map:
+  - a `StrEnum` or `IntEnum` field is written as its scalar (`String`,
+    `Integer`) instead of as JSON;
+  - a column type declared with `ColumnField` (on a `BaseModel`) or
+    `Annotated[T, <ColumnType>]` is used;
+  - a `Decimal`, plain `Enum` or `Literal` field without a declared column
+    type is refused when the partition is built, with core's message, instead
+    of being written as `Numeric()` (a `Decimal`) or as JSON. Declare it, e.g.
+    `Annotated[Decimal, Numeric(precision=12, scale=2)]`, or
+    `Annotated[Decimal, Numeric()]` for an unbounded `NUMERIC`.
 
 ## 🐛 Fixes
 
@@ -1726,6 +1737,32 @@
   offset at the step, also when the batch holds several messages of one
   offset that an earlier expanding node produced. The new return type is under
   Behaviour changes.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds a `bytes` field as
+  `LargeBinary` (`bytea` on Postgres). It bound it as text, which Postgres
+  refused for a `bytea` column ("column is of type bytea but expression is of
+  type character varying"). IntoTable now takes each column's type from core's
+  model introspection (`loom.core.backend.sqlalchemy.sa_table_for`), the type
+  a compiled model declares, and builds each row with core's new
+  `loom.core.repository.sqlalchemy.values.to_column_row`, which converts and
+  checks values as the repository does when it writes them: a plain `Enum` as
+  its value, a struct in a JSON column as a dict, an `UNSET` value left out so
+  the column's database default applies, also when other rows of the batch
+  set it, and a `time` whose UTC offset its column cannot take refused with
+  `BoundaryValidationError` (`boundary_validation`) instead of being written
+  without the offset. Relation and projection fields are no longer columns
+  for any backend: the SQLAlchemy and Delta rows included them and failed on
+  their `UNSET` value, and the ClickHouse insert named them. A `date` or
+  `time` field is bound as `Date` or `Time`, as core infers it, so it is
+  written into a Postgres `date` or `time` column; it was bound as `String`
+  and Postgres refused it ("column is of type date but expression is of type
+  character varying").
+- **streaming:** `IntoTable` with `Backend.DELTA` or `Backend.CLICKHOUSE`
+  refuses an `UNSET` column value when the item is written, with
+  `BoundaryValidationError` (`boundary_validation`) naming the field and the
+  table. Delta failed later, at a mini-batch or flush, with pyarrow's
+  `ArrowInvalid`, and ClickHouse passed the `UNSET` object to
+  clickhouse-connect's `insert`. Neither can leave a column out for one row as
+  `Backend.SQLALCHEMY` does.
 
 ### prefect
 
