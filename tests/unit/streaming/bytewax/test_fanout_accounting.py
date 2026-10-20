@@ -59,6 +59,7 @@ from loom.streaming import (  # noqa: E402
     IntoTopic,
     Process,
     RecordStep,
+    Route,
     Router,
     Selector,
     StreamFlow,
@@ -390,6 +391,22 @@ class TestSinkTrackingContract:
         issue = exc_info.value.issues[0]
         assert issue.code is StreamingErrorCode.TERMINAL_SINK_MISSING
         assert "(topic t.b)" in issue.message
+
+    def test_a_compiled_inline_into_topic_without_a_runtime_sink_is_refused(self) -> None:
+        """Without the check, the inline write was skipped and nothing was written."""
+        plan = build_compiled_plan(terminal_sinks={(0, 1): _compiled_topic("t.inline")})
+        ctx = _adapter._BuildContext(
+            plan=plan,
+            bridge=None,
+            flow_runtime=ObservabilityRuntime.noop(),
+            flow_run_id="run-1",
+            terminal_sinks={},
+        )
+
+        with pytest.raises(RuntimeConfigurationError, match=r"\(topic t\.inline\)") as exc_info:
+            ctx.inline_sink_partition_for((0, 1))
+
+        assert exc_info.value.issues[0].code is StreamingErrorCode.TERMINAL_SINK_MISSING
 
     def test_an_inline_sink_that_cannot_skip_commits_is_rejected(self) -> None:
         """Its partitions would complete offsets of messages that go on after the write."""
@@ -1134,6 +1151,15 @@ _PATH_CASES = {
         lambda: Process(ExpandRoutes(expander=_TwoRows, routes={_Row: Process(_table(_Row))})),
         _each("items_table", 0, 0, 1, 1, 2, 2),
         shares=2,
+    ),
+    "router_when_into_a_terminal": _PathCase(
+        lambda: Process(
+            Router.when(
+                [Route(when=msg.payload.value == "item-0", process=Process(_topic("t.a")))],
+                default=Process(_topic("t.b")),
+            )
+        ),
+        _each("t.a", 0) + _each("t.b", 1, 2),
     ),
     "router_branch_step_fails": _PathCase(
         lambda: Process(
