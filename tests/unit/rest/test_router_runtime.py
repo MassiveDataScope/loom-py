@@ -22,7 +22,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.model import BaseModel, ColumnField, LoomStruct
+from loom.core.model import BaseModel, Cardinality, ColumnField, LoomStruct, RelationField
 from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
@@ -177,6 +177,35 @@ class CompiledFilterUseCase(UseCase[Any, str]):
 
 class IdOnlyFilterUseCase(CompiledFilterUseCase):
     allowed_fields = frozenset({"id"})
+
+
+class _Section(BaseModel):
+    __tablename__ = "router_runtime_sections"
+
+    id: int = ColumnField(primary_key=True)
+    position: int
+
+
+class _Entry(BaseModel):
+    __tablename__ = "router_runtime_entries"
+
+    id: int = ColumnField(primary_key=True)
+    code: str
+    rank: int
+    active: bool
+    section: _Section | None = RelationField(
+        foreign_key="section_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class EntryFilterValuesUseCase(UseCase[_Entry, dict[str, Any]]):
+    def __init__(self) -> None:
+        super().__init__()
+
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
+        await asyncio.sleep(0)
+        assert query.filters is not None
+        return {spec.field: spec.value for spec in query.filters.filters}
 
 
 class DocUseCase(UseCase[Any, str]):
@@ -484,7 +513,7 @@ def test_bind_interfaces_builds_query_spec_from_offset_url_params() -> None:
         "cursor": None,
         "filter_field": "price",
         "filter_op": FilterOp.GTE.value,
-        "filter_value": 20,
+        "filter_value": "20",
         "sort_field": "id",
         "sort_direction": "DESC",
     }
@@ -507,7 +536,7 @@ def test_bind_interfaces_builds_query_spec_from_cursor_url_params() -> None:
         "cursor": "abc123",
         "filter_field": "reviews",
         "filter_op": FilterOp.EXISTS.value,
-        "filter_value": True,
+        "filter_value": "true",
         "sort_field": None,
         "sort_direction": None,
     }
@@ -579,6 +608,78 @@ def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
     assert body["code"] == "unsupported_query"
     assert field in body["message"]
     assert "s3cr3t" not in body["message"]
+
+
+def _entry_filter_client() -> TestClient:
+    class IFace(RestInterface[_Entry]):
+        prefix = "/entries"
+        routes = (RestRoute(use_case=EntryFilterValuesUseCase, method="GET", path="/"),)
+
+    return TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
+def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> None:
+    response = _entry_filter_client().get(f"/entries/?code={raw}")
+
+    assert response.status_code == 200
+    assert response.json() == {"code": raw}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("rank=7", {"rank": 7}),
+        ("rank__gte=-3", {"rank": -3}),
+        ("active=false", {"active": False}),
+        ("section__position=2", {"section.position": 2}),
+    ],
+)
+def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
+    query: str, expected: dict[str, Any]
+) -> None:
+    response = _entry_filter_client().get(f"/entries/?{query}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "field"),
+    [
+        ("rank=s3cr3t", "rank"),
+        ("rank=1.5", "rank"),
+        ("active=1", "active"),
+        ("rank__in=1,s3cr3t", "rank"),
+        ("section__position=s3cr3t", "section.position"),
+    ],
+)
+def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
+    query: str, field: str
+) -> None:
+    response = _entry_filter_client().get(f"/entries/?{query}")
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["code"] == "query_validation"
+    assert [violation["field"] for violation in body["violations"]] == [field]
+    assert "s3cr3t" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("rank__in=1,2,3", {"rank": [1, 2, 3]}),
+        ("code__in=01,true,2.5", {"code": ["01", "true", "2.5"]}),
+    ],
+)
+def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
+    query: str, expected: dict[str, Any]
+) -> None:
+    response = _entry_filter_client().get(f"/entries/?{query}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
 
 
 # ---------------------------------------------------------------------------

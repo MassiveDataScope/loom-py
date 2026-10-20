@@ -47,7 +47,15 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
-from loom.core.model import BoundaryValidationError, LoomType, loom_type
+from loom.core.model import (
+    BoundaryValidationError,
+    LoomType,
+    get_column_fields,
+    get_relations,
+    loom_type,
+    msgspec_type,
+)
+from loom.core.model.introspection import extract_model_from_hint, resolve_type_hints
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -176,18 +184,91 @@ def _normalize_field_name(value: str) -> str:
     return value
 
 
-def _coerce_scalar(value: str) -> Any:
-    lowered = value.lower()
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    try:
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value
+@dataclass(frozen=True, slots=True)
+class _FilterValues:
+    """Converts filter values by the type their field declares on the route's model.
+
+    ``attributes`` maps each filterable path (``"rank"``, ``"section.rank"``)
+    to its attribute on ``decoder``'s struct, whose encoded names are those
+    paths. A path the model does not declare keeps the text it was sent as
+    and is left to the repository, whose SQLAlchemy and Mongo query
+    compilers refuse an unknown path with ``400 unsupported_query``.
+    """
+
+    decoder: LoomType | None
+    attributes: Mapping[str, str]
+
+    def convert(self, field: str, op: FilterOp, raw: str) -> Any:
+        """Return the filter value of *op* on *field*, typed by the field.
+
+        Raises:
+            BoundaryValidationError: ``query_validation`` when a value does
+                not satisfy the field's type.
+        """
+        if op not in _TYPED_FILTER_OPS:
+            return raw
+        if op is FilterOp.IN:
+            return [self._typed(field, item) for item in raw.split(",") if item != ""]
+        return self._typed(field, raw)
+
+    def _typed(self, field: str, text: str) -> Any:
+        attribute = self.attributes.get(field)
+        if self.decoder is None or attribute is None:
+            return text
+        try:
+            return getattr(self.decoder.from_query({field: text}), attribute)
+        except BoundaryValidationError as exc:
+            raise BoundaryValidationError(
+                exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION
+            ) from exc
+
+
+# LIKE and ILIKE take a text pattern; the query compilers ignore the value of
+# IS_NULL, EXISTS and NOT_EXISTS.
+_TYPED_FILTER_OPS = frozenset(
+    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
+)
+
+
+def _column_annotations(model: type[Any]) -> list[tuple[str, Any]]:
+    columns = get_column_fields(model)
+    return [
+        (field.name, field.type) for field in msgspec.structs.fields(model) if field.name in columns
+    ]
+
+
+def _filterable_fields(model: type[Any]) -> list[tuple[str, Any]]:
+    """Return ``(path, annotation)`` per column of *model* and of each related model.
+
+    One relation level, the depth the SQLAlchemy query compiler resolves.
+    """
+    fields = _column_annotations(model)
+    hints = resolve_type_hints(model)
+    for relation in get_relations(model):
+        target = extract_model_from_hint(hints.get(relation))
+        if target is not None and issubclass(target, msgspec.Struct):
+            fields.extend(
+                (f"{relation}.{name}", annotation)
+                for name, annotation in _column_annotations(target)
+            )
+    return fields
+
+
+def _filter_values(model: type[Any] | None) -> _FilterValues:
+    """Compile the filter value converter of a route whose use case serves *model*.
+
+    Without a model no field declares a type, so every value keeps its text.
+    """
+    if model is None:
+        return _FilterValues(decoder=None, attributes={})
+    fields = _filterable_fields(model)
+    attributes = {path: f"f{index}" for index, (path, _) in enumerate(fields)}
+    struct = msgspec.defstruct(
+        f"{model.__name__}FilterValues",
+        [(attributes[path], annotation, None) for path, annotation in fields],
+        rename={attribute: path for path, attribute in attributes.items()},
+    )
+    return _FilterValues(decoder=msgspec_type(struct), attributes=attributes)
 
 
 def _parse_filter_op(op: str) -> FilterOp:
@@ -246,7 +327,9 @@ def _parse_sort(sort_field: str | None, direction_raw: str) -> tuple[SortSpec, .
     )
 
 
-def _parse_filter_specs(query_params: QueryParams) -> list[FilterSpec]:
+def _parse_filter_specs(
+    query_params: QueryParams, filter_values: _FilterValues
+) -> list[FilterSpec]:
     filters: list[FilterSpec] = []
     for key, raw_value in query_params.items():
         if key in _RESERVED_QUERY_KEYS:
@@ -268,11 +351,7 @@ def _parse_filter_specs(query_params: QueryParams) -> list[FilterSpec]:
             raise HTTPException(status_code=400, detail=f"Invalid filter field: {key!r}.")
         field = ".".join(_normalize_field_name(part) for part in field_parts)
 
-        if op == FilterOp.IN:
-            value = [_coerce_scalar(item) for item in raw_value.split(",") if item != ""]
-        else:
-            value = _coerce_scalar(raw_value)
-
+        value = filter_values.convert(field, op, raw_value)
         filters.append(FilterSpec(field=field, op=op, value=value))
     return filters
 
@@ -307,6 +386,7 @@ def _build_query_spec(
     default_pagination_mode: PaginationMode,
     allow_pagination_override: bool,
     max_limit: int,
+    filter_values: _FilterValues,
 ) -> QuerySpec:
     query_params = request.query_params
     page = _positive_int(query_params, QueryParam.PAGE, _DEFAULT_PAGE)
@@ -324,7 +404,7 @@ def _build_query_spec(
         query_params.get(QueryParam.SORT),
         query_params.get(QueryParam.DIRECTION, "ASC"),
     )
-    filters = _parse_filter_specs(query_params)
+    filters = _parse_filter_specs(query_params, filter_values)
     filter_group = FilterGroup(filters=tuple(filters)) if filters else None
     return QuerySpec(
         filters=filter_group,
@@ -414,6 +494,7 @@ class _RouteRuntime:
     query_param_name: str | None
     has_input_binding: bool
     declared_query: _DeclaredQuery | None
+    filter_values: _FilterValues
 
     @property
     def use_case_type(self) -> type[Any]:
@@ -425,6 +506,8 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     plan = getattr(uc_type, "__execution_plan__", None)
     query_binding = plan.query_binding if plan is not None else None
     accepts_profile_param = QueryParam.PROFILE in inspect.signature(uc_type.execute).parameters
+    query_param_name = _resolve_query_param_name(uc_type)
+    filter_model = uc_type.describe_main_repo()[0] if query_param_name is not None else None
     declared_query = None
     if query_binding is not None:
         accepted = {field.name for field in compiled_route.query_fields}
@@ -442,9 +525,10 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
         compiled_route=compiled_route,
         path_params=tuple(_extract_path_params(compiled_route.route.path)),
         accepts_profile_param=accepts_profile_param,
-        query_param_name=_resolve_query_param_name(uc_type),
+        query_param_name=query_param_name,
         has_input_binding=plan is not None and plan.input_binding is not None,
         declared_query=declared_query,
+        filter_values=_filter_values(filter_model),
     )
 
 
@@ -487,6 +571,7 @@ def _build_execution_params(
             default_pagination_mode=compiled_route.effective_pagination_mode,
             allow_pagination_override=compiled_route.effective_allow_pagination_override,
             max_limit=compiled_route.effective_max_limit,
+            filter_values=runtime.filter_values,
         )
     return params
 

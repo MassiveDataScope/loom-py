@@ -953,6 +953,20 @@
 
 ### rest
 
+- **rest:** a `QuerySpec` filter value was typed by its spelling: `true` and
+  `false` became booleans, text with a `.` a float and digits an integer,
+  whatever the filtered field declared. `?code=0123` on a `str` field compared
+  against `123`, and on Postgres a number bound to a text column answered
+  `500`. Values of `eq`, `ne`, `gt`, `gte`, `lt`, `lte` and each item of `in`
+  are now converted by the type the field declares on the use case's model
+  (`UseCase[Model, ...]`), its columns and those of a related model one level
+  down, with the strict grammar of `Query()`: a `str` field keeps the text as
+  sent, and a value its field's type refuses answers `400 query_validation`
+  with `violations` naming the field. `like` and `ilike` keep their pattern as
+  text. A use case declaring no model (`UseCase[Any, ...]`) has no field types
+  to apply, so its filter values now reach it as the text sent; a path the
+  model does not declare is passed as text to the repository, which refuses an
+  unknown one with `400 unsupported_query`.
 - **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
   `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
   while the router clamped `?limit=` to `max_limit`. The schema now publishes
