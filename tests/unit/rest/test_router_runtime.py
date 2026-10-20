@@ -654,6 +654,7 @@ def test_bind_interfaces_answers_400_when_the_repository_refuses_a_filter_field(
     class IFace(RestInterface[str]):
         prefix = "/rows"
         filterable = ALL
+        allow_pagination_override = False
         routes = (RestRoute(use_case=IdOnlyFilterUseCase, method="GET", path="/"),)
 
     client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)

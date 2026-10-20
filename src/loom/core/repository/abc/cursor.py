@@ -558,7 +558,7 @@ def require_cursor_sort(
         UnsupportedQuery: Naming the first field that does not qualify.
     """
     for name in (*(spec.field for spec in query.sort), *primary_key):
-        if not _sortable(columns.get(name)):
+        if not cursor_carries(columns.get(name)):
             raise UnsupportedQuery(
                 backend,
                 _model_names(model)[1],
@@ -596,7 +596,14 @@ def _model_names(model: type | str) -> tuple[str, str]:
     return f"{model.__module__}.{model.__qualname__}", model.__qualname__
 
 
-def _sortable(annotation: Any) -> bool:
+def cursor_carries(annotation: Any) -> bool:
+    """Whether a token can carry a value of a column annotated ``annotation``.
+
+    A non-optional ``bool``, ``int``, ``float``, ``str``, ``datetime``,
+    ``date``, ``time``, ``UUID``, ``Decimal``, ``Enum`` or ``Literal`` of
+    those; an optional annotation is refused, since a null cannot position a
+    page.
+    """
     if get_origin(annotation) is Literal:
         return all(isinstance(value, int | str) for value in get_args(annotation))
     return isinstance(annotation, type) and issubclass(annotation, _SORTABLE_TYPES)
@@ -624,6 +631,7 @@ __all__ = [
     "CursorCodec",
     "CursorConfig",
     "CursorKeySource",
+    "cursor_carries",
     "register_cursor_codec",
     "require_cursor_sort",
 ]

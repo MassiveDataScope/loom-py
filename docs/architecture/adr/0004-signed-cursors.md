@@ -186,11 +186,16 @@ its values with the order of the rows, and reads them from the token
   scalar column, hidden ones included, with a WARNING at startup naming the
   route. This one rule closes both channels. `filterable` follows the same
   rule, with `filterable=ALL` as its escape hatch, since the rows a filter
-  keeps reveal the filtered values just as an order does. The primary key is
-  sortable, and carried in every token, even when the response hides it: a
-  deliberate choice, since it is the order every page falls back to and the
-  tie-breaker that makes the keyset total; a route that must hide its keys
-  answers with a projection and pages by offset.
+  keeps reveal the filtered values just as an order does. A pydantic field
+  declared `exclude=True` is not shown.
+- **The primary key** is the order every page falls back to and the
+  tie-breaker in every token, so a token always carries it. A route that can
+  serve cursor pages (cursor mode, or a client may switch to it) whose
+  response does not show the key fails compilation, as a hidden sort column
+  does; `sortable=ALL` opens it with the same warning, and a route that must
+  hide its keys serves offset pages only (`allow_pagination_override=False`).
+  A key of a type a token cannot carry fails compilation on such a route too,
+  instead of on the first cursor request.
 - **Repositories, before the query runs.** In cursor mode every sort field
   and primary-key column must be a column whose type a token carries
   (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
