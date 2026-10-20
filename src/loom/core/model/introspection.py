@@ -20,11 +20,13 @@ from loom.core.model.types import (
     JSON,
     Boolean,
     Bytes,
+    Date,
     DateTime,
     Float,
     Integer,
     Numeric,
     String,
+    Time,
 )
 from loom.core.schema_names import sql_identifier
 
@@ -383,6 +385,8 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     bool: Boolean,
     bytes: Bytes,
     datetime: DateTime(tz=True),
+    date: Date,
+    time: Time,
     Decimal: Numeric(),
 }
 
@@ -394,8 +398,6 @@ def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType:
     python_type = _extract_origin_type(base)
     if python_type is str:
         return String(field.length)
-    if python_type in (date, time):
-        return String(None)
     return _SCALAR_TYPE_MAP.get(python_type, JSON)
 
 

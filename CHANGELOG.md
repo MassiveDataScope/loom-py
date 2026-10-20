@@ -589,6 +589,18 @@
   it. A `@cache_query` argument that is a pydantic instance now contributes
   its builtins rendering to the cache key rather than the instance's own
   `repr`, a one-time key change.
+- **core:** a `date` field is inferred as a `Date` column and a `time` field
+  as a `Time` column (`loom.core.model.Date`, `loom.core.model.Time`, new),
+  where both used to be inferred as an unbounded `String`. The SQLAlchemy
+  repository binds `date` and `time` values natively, so on Postgres with
+  asyncpg writing such a field failed with `expected str, got date`; SQLite
+  accepted it. An existing Postgres table holding these columns as `varchar`
+  needs a migration: Alembic autogenerate detects the type change, but
+  Postgres refuses it without a cast, so the revision passes
+  `postgresql_using="c::date"` (`"c::time"` for a `time` field) to
+  `op.alter_column`, which is
+  `ALTER TABLE t ALTER COLUMN c TYPE date USING c::date`. MongoDB is
+  unaffected: it stores `date` and `time` values as ISO 8601 strings.
 
 ### ai
 

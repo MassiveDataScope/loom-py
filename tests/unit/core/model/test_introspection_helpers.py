@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+from datetime import date, time
 from typing import Annotated, Any, Generic, TypeVar
 
 import msgspec
@@ -17,7 +18,7 @@ from loom.core.model.introspection import (
     resolve_type_hints,
     scalar_column_annotations,
 )
-from loom.core.model.types import Integer, String
+from loom.core.model.types import Date, Integer, String, Time
 
 
 class _Note:
@@ -143,6 +144,18 @@ class TestOptionalColumnTypes:
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
+
+
+class _Temporal(msgspec.Struct):
+    day: date
+    at: time | None = None
+
+
+class TestTemporalColumnTypes:
+    def test_infers_date_and_time_columns_for_date_and_time_annotations(self) -> None:
+        fields = get_column_fields(_Temporal)
+
+        assert (fields["day"].column_type, fields["at"].column_type) == (Date, Time)
 
 
 class _Shelf(BaseModel):

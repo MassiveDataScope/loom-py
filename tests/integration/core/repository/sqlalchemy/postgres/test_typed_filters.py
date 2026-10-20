@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -32,23 +32,31 @@ class Sample(BaseModel):
     shade: Shade = ColumnField(String(16))
     seen_at: datetime = ColumnField()
     ref: UUID = ColumnField(Postgres.UUID)
+    due_on: date = ColumnField()
+    opens_at: time = ColumnField()
 
 
 class CreateSample(Command, frozen=True):
     shade: Shade
     seen_at: datetime
     ref: UUID
+    due_on: date
+    opens_at: time
 
 
 _FIRST = CreateSample(
     shade=Shade.DARK,
     seen_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
     ref=UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60"),
+    due_on=date(2026, 1, 2),
+    opens_at=time(8, 30),
 )
 _SECOND = CreateSample(
     shade=Shade.LIGHT,
     seen_at=datetime(2026, 2, 3, 4, 5, 6, tzinfo=UTC),
     ref=UUID("0b9d2f1c-1111-4c1e-9d1e-1b2c3d4e5f60"),
+    due_on=date(2026, 2, 3),
+    opens_at=time(17, 0),
 )
 
 
@@ -75,6 +83,8 @@ async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, 
         ("shade", FilterOp.EQ, Shade.DARK),
         ("seen_at", FilterOp.LTE, datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)),
         ("ref", FilterOp.EQ, UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")),
+        ("due_on", FilterOp.LT, date(2026, 2, 1)),
+        ("opens_at", FilterOp.EQ, time(8, 30)),
     ],
 )
 async def test_a_typed_filter_value_selects_the_row_written_with_it(
@@ -88,3 +98,14 @@ async def test_a_typed_filter_value_selects_the_row_written_with_it(
     )
 
     assert [item.id for item in page.items] == [first.id]
+
+
+async def test_date_and_time_values_read_back_as_written(
+    repo: RepositorySQLAlchemy[Sample, int],
+) -> None:
+    created = await repo.create(_FIRST)
+
+    stored = await repo.get_by_id(created.id)
+
+    assert stored is not None
+    assert (stored.due_on, stored.opens_at) == (_FIRST.due_on, _FIRST.opens_at)
