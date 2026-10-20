@@ -545,11 +545,11 @@ def _compute_subtotal(unit_price: float, quantity: int) -> float:
 def _compute_tax(subtotal: float, tax_rate: float) -> float:
     return subtotal * tax_rate
 
-def _unit_price_invalid(unit_price: float) -> bool:
-    return unit_price <= 0
+def _unit_price_must_be_positive(unit_price: float) -> str | None:
+    return None if unit_price > 0 else "unit_price must be > 0"
 
-def _country_unsupported(country: str) -> bool:
-    return country not in TAX_RATES
+def _country_must_be_supported(country: str) -> str | None:
+    return None if country in TAX_RATES else "Unsupported country"
 
 class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
     computes = (
@@ -566,8 +566,8 @@ class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
         ),
     )
     rules = (
-        Rule.check(F(PricingCommand).unit_price, via=_unit_price_invalid, message="unit_price must be > 0"),
-        Rule.check(F(PricingCommand).country, via=_country_unsupported, message="Unsupported country"),
+        Rule.check(F(PricingCommand).unit_price, via=_unit_price_must_be_positive),
+        Rule.check(F(PricingCommand).country, via=_country_must_be_supported),
     )
 
     async def execute(self, record_id: int, cmd: PricingCommand = Input()) -> PricingPreviewResponse:

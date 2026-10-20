@@ -47,7 +47,6 @@ class RuleBuilderFn(RuleFn, Protocol):
 class _RuleSpec:
     evaluator: Callable[..., Any]
     field: str | None = None
-    message: str | None = None
     command_sources: tuple[FieldRef, ...] = ()
     param_names: tuple[str, ...] = ()
     include_command: bool = False
@@ -101,13 +100,19 @@ class _RuleSpec:
                 raise ValueError(f"Missing runtime context keys for rule: {', '.join(missing)}")
             args.extend(context[n] for n in self.param_names)
 
-        result = self.evaluator(*args)
+        self._raise_outcome(self.evaluator(*args), command)
+
+    def _raise_outcome(self, result: object, command: Command) -> None:
         if isinstance(result, RuleViolation):
             raise result
         if isinstance(result, str):
             raise RuleViolation(self._resolved_field(command), result)
-        if result is True:  # intentional: only boolean True signals failure, not any truthy value
-            raise RuleViolation(self._resolved_field(command), self._resolved_message())
+        if result is not None:
+            raise TypeError(
+                f"Rule.check on field '{self._resolved_field(command)}': the evaluator "
+                f"returned {type(result).__name__}; return the violation message (str), "
+                "a RuleViolation, or None when the value is valid."
+            )
 
     def _resolved_field(self, command: Command) -> str:
         candidates = (
@@ -117,9 +122,6 @@ class _RuleSpec:
             self.predicate.leaf if isinstance(self.predicate, FieldRef) else None,
         )
         return next((c for c in candidates if c is not None), type(command).__name__)
-
-    def _resolved_message(self) -> str:
-        return self.message or "Rule check failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,15 +154,19 @@ class Rule:
     @staticmethod
     def check(
         *targets: FieldRef,
-        via: Callable[..., Any],
-        message: str | None = None,
+        via: Callable[..., str | RuleViolation | None],
     ) -> RuleBuilderFn:
+        """Validate fields with ``via``, which receives the targets' values.
+
+        ``via`` returns the violation message (``str``), a ``RuleViolation``, or
+        ``None`` when the values are valid. Any other result, a ``bool``
+        included, raises ``TypeError``.
+        """
         if not targets:
             raise ValueError("Rule.check(...) requires at least one target.")
         return _RuleSpec(
             evaluator=via,
             field=targets[0].leaf,
-            message=message,
             command_sources=tuple(targets),
         )
 
@@ -170,9 +176,12 @@ class Rule:
         *,
         message: str,
     ) -> RuleBuilderFn:
+        def _violation(*args: Any) -> str | None:
+            # Only boolean True signals failure, not any truthy value.
+            return message if condition(*args) is True else None
+
         return _RuleSpec(
-            evaluator=condition,
-            message=message,
+            evaluator=_violation,
             include_command=True,
             include_fields_set=True,
         )
