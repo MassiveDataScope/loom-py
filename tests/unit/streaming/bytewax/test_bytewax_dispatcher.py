@@ -229,10 +229,10 @@ class _UpperBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
         self,
         messages: list[Message[StreamPayload]],
         **kwargs: object,
-    ) -> list[StreamPayload]:
+    ) -> list[list[StreamPayload]]:
         del kwargs
         return [
-            cast(StreamPayload, _Payload(value=_message_payload(message).value.upper()))
+            [cast(StreamPayload, _Payload(value=_message_payload(message).value.upper()))]
             for message in messages
         ]
 
@@ -259,17 +259,17 @@ class _InvalidExpandStep(ExpandStep[_Payload, _Payload]):
         return _Payload(value="bad")
 
 
-class _UpperFirstTwoBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
+class _ResultBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
+    def __init__(self, result: object) -> None:
+        self.result = result
+
     def execute(
         self,
         messages: list[Message[StreamPayload]],
         **kwargs: object,
-    ) -> list[StreamPayload]:
-        del kwargs
-        return [
-            cast(StreamPayload, _Payload(value=_message_payload(message).value.upper()))
-            for message in messages[:2]
-        ]
+    ) -> Any:
+        del kwargs, messages
+        return self.result
 
 
 class _InvalidBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
@@ -625,7 +625,7 @@ def test_execute_batch_expand_step_rejects_non_iterable_result() -> None:
     messages: list[Message[StreamPayload]] = [_message("a"), _message("b")]
     with pytest.raises(
         TypeError,
-        match="UpperBatchExpand must return an iterable of payloads.",
+        match="UpperBatchExpand must return one list of payloads per message.",
     ):
         _steps._execute_batch_expand_step(
             noop,
@@ -637,16 +637,64 @@ def test_execute_batch_expand_step_rejects_non_iterable_result() -> None:
         )
 
 
-def test_execute_batch_expand_step_rejects_payloads_it_cannot_attribute() -> None:
-    noop = ObservabilityRuntime.noop()
+def test_execute_batch_expand_step_gives_each_output_the_metadata_of_its_message() -> None:
+    messages: list[Message[StreamPayload]] = [
+        _message("a", offset=0),
+        _message("b", offset=1),
+        _message("c", offset=2),
+    ]
+    step = _ResultBatchExpandStep(
+        [[_Payload(value="a1"), _Payload(value="a2")], [], [_Payload(value="c1")]]
+    )
+
+    result = _steps._execute_batch_expand_step(
+        ObservabilityRuntime.noop(), "orders", 4, "UpperBatchExpand", step, messages
+    )
+
+    assert [(_message_payload(item).value, item.meta.offset) for item in result] == [
+        ("a1", 0),
+        ("a2", 0),
+        ("c1", 2),
+    ]
+
+
+def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing() -> None:
+    result = _steps._execute_batch_expand_step(
+        ObservabilityRuntime.noop(), "orders", 4, "UpperBatchExpand", _ResultBatchExpandStep([]), []
+    )
+
+    assert result == []
+
+
+@pytest.mark.parametrize(
+    ("result", "error"),
+    [
+        (
+            [[_Payload(value="a1")], [_Payload(value="b1")]],
+            "UpperBatchExpand returned 2 output lists for 3 messages",
+        ),
+        (
+            [_Payload(value="a1"), _Payload(value="b1"), _Payload(value="c1")],
+            "UpperBatchExpand must return one list of payloads per message",
+        ),
+        (
+            [[_message("a1")], [], []],
+            "UpperBatchExpand must return payloads, not messages",
+        ),
+    ],
+    ids=["outer_length", "flat_payloads", "message_output"],
+)
+def test_execute_batch_expand_step_rejects_a_result_not_aligned_with_the_batch(
+    result: object, error: str
+) -> None:
     messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
-    with pytest.raises(TypeError, match="UpperBatchExpand returned 2 outputs for 3 messages"):
+    with pytest.raises(TypeError, match=error):
         _steps._execute_batch_expand_step(
-            noop,
+            ObservabilityRuntime.noop(),
             "orders",
             4,
             "UpperBatchExpand",
-            _UpperFirstTwoBatchExpandStep(),
+            _ResultBatchExpandStep(result),
             messages,
         )
 

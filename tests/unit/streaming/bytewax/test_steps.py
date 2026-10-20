@@ -50,9 +50,9 @@ class _ExpandStep(ExpandStep[Order, Result]):
 
 
 class _BatchExpandStep(BatchExpandStep[Order, Result]):
-    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[list[Result]]:
         del kwargs
-        return [Result(value=message.payload.order_id.upper()) for message in messages]
+        return [[Result(value=message.payload.order_id.upper())] for message in messages]
 
 
 def _ctx() -> SimpleNamespace:

@@ -673,20 +673,21 @@ class _UpperBatch(BatchStep[Item, Item]):
         return [Item(value=message.payload.value.upper()) for message in messages]
 
 
-class _TwiceEachInBatch(BatchExpandStep[Item, Item]):
-    """Expand every message of a batch into two that keep its metadata."""
+class _TwoNoneOneInBatch(BatchExpandStep[Item, Item]):
+    """Expand item 0 of a batch into two, item 1 into none, and any other item into one."""
 
-    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[Message[Item]]:
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
         del kwargs
-        return [copy for message in messages for copy in (message, message)]
+        counts = {"item-0": 2, "item-1": 0}
+        return [[message.payload] * counts.get(message.payload.value, 1) for message in messages]
 
 
 class _NothingFromBatch(BatchExpandStep[Item, Item]):
-    """Expand a batch into no messages at all."""
+    """Expand every message of a batch into nothing."""
 
-    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[Message[Item]]:
-        del kwargs, messages
-        return []
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
+        del kwargs
+        return [[] for _ in messages]
 
 
 class _TwoRows:
@@ -1089,10 +1090,10 @@ _PATH_CASES = {
     ),
     "batch_expand_step": _PathCase(
         lambda: Process(
-            CollectBatch(max_records=3, timeout_ms=50), _TwiceEachInBatch(), _topic("t.a")
+            CollectBatch(max_records=3, timeout_ms=50), _TwoNoneOneInBatch(), _topic("t.a")
         ),
-        _each("t.a", 0, 0, 1, 1, 2, 2),
-        shares=2,
+        _each("t.a", 0, 0, 2),
+        shares={0: 2, 1: 1, 2: 1},
         errors="t.err",
     ),
     "batch_expand_step_to_nothing": _PathCase(

@@ -130,7 +130,7 @@ class ExpandStep(Step[InT, OutT], ABC):
 
 
 class BatchExpandStep(Step[InT, OutT], ABC):
-    """Streaming step that expands one batch into many output messages.
+    """Streaming step that expands each message of a batch into its own outputs.
 
     Declare the subclass itself in a flow, not an instance. The compiler
     materializes the class during binding resolution.
@@ -138,13 +138,12 @@ class BatchExpandStep(Step[InT, OutT], ABC):
     Pattern:
         Batch fan-out step.
 
-    Subclasses define ``execute(self, messages, **kwargs) -> Iterable[OutT]``
-    with the explicit batch and dependency signature they need.
-
-    Each output must say which message it came from. An output that is a
-    ``Message`` keeps its own metadata, so its source is the message whose
-    metadata it carries; bare payloads are paired with the messages by
-    position and therefore need exactly one per message.
+    Subclasses define ``execute(self, messages, **kwargs) -> list[list[OutT]]``
+    with the explicit batch and dependency signature they need. The result
+    holds one list per message, in batch order: list ``i`` holds the payloads
+    ``messages[i]`` expands into, and each takes that message's metadata. An
+    empty list filters the message out. A result of any other length raises
+    ``TypeError``.
     """
 
     router_branch_safe: ClassVar[bool] = True

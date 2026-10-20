@@ -91,11 +91,8 @@ class _ExecutableBatchExpandStep(Protocol):
         self,
         messages: list[Message[StreamPayload]],
         **kwargs: object,
-    ) -> (
-        Iterable[StreamPayload | Message[StreamPayload]]
-        | Awaitable[Iterable[StreamPayload | Message[StreamPayload]]]
-    ):
-        """Expand one batch into many payloads or replacement messages."""
+    ) -> Iterable[Iterable[StreamPayload]] | Awaitable[Iterable[Iterable[StreamPayload]]]:
+        """Expand each message of one batch into its own list of payloads."""
         ...
 
 
@@ -264,6 +261,16 @@ def _resolve_expand_result(
     node_type: str,
 ) -> Iterable[StreamPayload | Message[StreamPayload]]:
     """Resolve a synchronous expanding result and reject awaitables."""
+    if isinstance(result, Awaitable):
+        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+    return result
+
+
+def _resolve_batch_expand_result(
+    result: Iterable[Iterable[StreamPayload]] | Awaitable[Iterable[Iterable[StreamPayload]]],
+    node_type: str,
+) -> Iterable[Iterable[StreamPayload]]:
+    """Resolve a synchronous batch-expanding result and reject awaitables."""
     if isinstance(result, Awaitable):
         raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
     return result

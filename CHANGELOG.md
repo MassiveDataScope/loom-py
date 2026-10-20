@@ -909,6 +909,22 @@
 
 ### streaming
 
+- **streaming:** `BatchExpandStep.execute` returns one list of payloads per
+  message of its batch, in batch order, instead of one flat list. List `i`
+  holds what `messages[i]` expands into; each output takes that message's
+  metadata, and an empty list filters the message out. A result whose length
+  differs from the batch, a flat list of payloads, or a `Message` among the
+  outputs raises `TypeError`, and the batch becomes error envelopes.
+
+  ```python
+  # before
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
+      return [Score(value=m.payload.amount) for m in messages]
+
+  # after
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
+      return [[Score(value=m.payload.amount)] for m in messages]
+  ```
 - **streaming:** compile issues come from the code catalogue
   (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
   factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
@@ -1351,14 +1367,12 @@
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
-- **streaming:** a `BatchExpandStep` can return more or fewer outputs than the
-  messages of its batch. Every output had to pair with one input message, so
-  an expansion raised and each message of the batch became an error envelope.
-  An output that is a `Message` keeps its own metadata and completes the
-  source offset it carries, once per output under at-least-once delivery; a
-  message with no output completes its offset at the step. Bare payloads are
-  still paired with the messages by position, so they need one per message;
-  any other count raises `TypeError` and the batch becomes error envelopes.
+- **streaming:** a `BatchExpandStep` expands. Every output had to pair with
+  one input message, so a step returning more or fewer outputs than its batch
+  raised and each message of the batch became an error envelope. Under
+  at-least-once delivery each source offset now completes once per output,
+  after that output's write, and a message with no output completes its
+  offset at the step. The new return type is under Behaviour changes.
 
 ### prefect
 

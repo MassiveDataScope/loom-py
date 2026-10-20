@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, cast
+from typing import Any
 
 from bytewax.operators import flat_map
 from bytewax.operators import map as bw_map
@@ -30,6 +30,7 @@ from loom.streaming.bytewax.handlers._shared import (
     _replace_payload,
     _replace_payloads,
     _require_message,
+    _resolve_batch_expand_result,
     _resolve_batch_result,
     _resolve_expand_result,
     _resolve_node_name,
@@ -295,33 +296,39 @@ def _execute_batch_expand_step(
         trace_id=messages[0].meta.trace_id if messages else None,
         correlation_id=messages[0].meta.correlation_id if messages else None,
     ):
-        result = _resolve_expand_result(batch_expand_step.execute(messages), name)
+        result = _resolve_batch_expand_result(batch_expand_step.execute(messages), name)
         if not isinstance(result, Iterable):
-            raise TypeError(f"{name} must return an iterable of payloads.")
-        return _attribute_batch_outputs(messages, list(result), name)
+            raise TypeError(f"{name} must return one list of payloads per message.")
+        return _outputs_per_message(messages, list(result), name)
 
 
-def _attribute_batch_outputs(
+def _outputs_per_message(
     messages: list[Message[StreamPayload]],
-    outputs: list[Any],
+    groups: list[Any],
     name: str,
 ) -> list[Message[StreamPayload]]:
-    """Give every output of a batch expansion the metadata of its source message.
+    """Give each output the metadata of the message whose list it is in.
 
-    An output that is a ``Message`` names its source through its own metadata,
-    which is what offset accounting completes. A bare payload names nothing, so
-    it is matched by position — possible only when there is one output per
-    message; otherwise no output could be attributed without guessing.
+    ``groups[i]`` holds the outputs of ``messages[i]``; an empty list filters
+    that message out.
     """
-    if len(outputs) == len(messages):
-        return _replace_payloads(messages, outputs)
-    if all(isinstance(output, Message) for output in outputs):
-        return cast(list[Message[StreamPayload]], outputs)
-    raise TypeError(
-        f"{name} returned {len(outputs)} outputs for {len(messages)} messages; "
-        "when the counts differ, every output must be a Message carrying the "
-        "metadata of the message it came from."
-    )
+    if len(groups) != len(messages):
+        raise TypeError(
+            f"{name} returned {len(groups)} output lists for {len(messages)} messages; "
+            "return one list of payloads per message, in batch order."
+        )
+    outputs: list[Message[StreamPayload]] = []
+    for message, payloads in zip(messages, groups, strict=True):
+        if not isinstance(payloads, Iterable):
+            raise TypeError(f"{name} must return one list of payloads per message.")
+        for payload in payloads:
+            if isinstance(payload, Message):
+                raise TypeError(
+                    f"{name} must return payloads, not messages: each output "
+                    "takes the metadata of the message it came from."
+                )
+            outputs.append(_replace_payload(message, payload))
+    return outputs
 
 
 def _execute_explode_step(
