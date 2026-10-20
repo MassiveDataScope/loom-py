@@ -862,26 +862,6 @@ def build_runtime_terminal_sinks(
     return {path: build_runtime_sink(sink, commit_tracker) for path, sink in terminal_sinks.items()}
 
 
-def build_inline_sink_partition(
-    sink: CompiledSink,
-    commit_tracker: CommitCompletionPort | None = None,
-) -> _KafkaMessageSinkPartition:
-    """Build a sink partition for direct (non-Bytewax-graph) message writing.
-
-    Used by ``WithAsync(process=...)`` to write messages directly to Kafka
-    from within the async concurrent execution, bypassing the Bytewax output
-    wiring layer.
-
-    Args:
-        sink: Compiled Kafka sink configuration.
-        commit_tracker: Optional commit tracker for manual offset acknowledgment.
-
-    Returns:
-        A ready-to-write sink partition.
-    """
-    return _KafkaMessageSinkPartition(sink, commit_tracker)
-
-
 def build_commit_tracker(source: CompiledSource) -> KafkaCommitTracker | None:
     """Build a commit tracker when explicit source commits are required."""
     if not isinstance(source, (CompiledSingleSource, CompiledMultiSource)):
