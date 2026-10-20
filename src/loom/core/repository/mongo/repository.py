@@ -190,6 +190,9 @@ class RepositoryMongo(
             backend builds one from ``persistence.cursors`` and shares it.
             Mongo has no row-level-security scope, so cursors are bound to
             no scope (``""``) beyond the model, filters and sort.
+            A codec passed here by hand skips the deployed-environment
+            refusal of an opt-out that ``register_cursor_codec`` applies; a
+            custom builder passes ``context.container.resolve(CursorCodec)``.
 
     Raises:
         ValueError: If the model declares no primary key.

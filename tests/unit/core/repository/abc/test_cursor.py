@@ -13,7 +13,7 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.environment import Environment
+from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors.codes import ErrorCode
 from loom.core.repository.abc import (
     CURSOR_SIGNING_CHECK,
@@ -640,6 +640,15 @@ class TestOptOutsInADeployedEnvironment:
 
         with pytest.raises(ConfigError, match=r"loom\.cursors\.E001"):
             register_cursor_codec(container, CursorCodec(signing=signing))
+
+    def test_without_a_registered_environment_the_process_environment_decides(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(ENVIRONMENT_VARIABLE, raising=False)
+        codec = CursorCodec(signing="unsigned")
+
+        with pytest.raises(ConfigError, match=r"'production'"):
+            register_cursor_codec(LoomContainer(), codec)
 
     def test_an_opt_out_whose_configuration_silences_the_check_registers(self) -> None:
         ctx = ConfigContext.from_dict(

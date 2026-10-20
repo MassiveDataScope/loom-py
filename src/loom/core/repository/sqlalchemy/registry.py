@@ -46,7 +46,10 @@ class SQLAlchemyDefaultRepositoryBuilder:
 
     Args:
         session_manager: Shared SQLAlchemy session manager.
-        cursor_codec: Shared codec that issues and verifies cursor tokens.
+        cursor_codec: Shared codec that issues and verifies cursor tokens: the
+            one the registration module registered. A builder built by hand
+            with another codec skips the deployed-environment refusal of an
+            opt-out that ``register_cursor_codec`` applies.
     """
 
     session_manager: SessionManager

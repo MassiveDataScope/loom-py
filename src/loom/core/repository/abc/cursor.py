@@ -47,7 +47,7 @@ import msgspec
 from loom.core.checks import silenced_checks
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
-from loom.core.environment import Environment, configured_variable
+from loom.core.environment import Environment, configured_variable, resolve_environment
 from loom.core.model.struct import LoomFrozenStruct
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import FilterSpec, QuerySpec
@@ -599,7 +599,8 @@ def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
     rule applies here: in the deployed environment the container resolves,
     an ``ephemeral`` or ``unsigned`` codec is refused unless it was built by
     :meth:`CursorCodec.from_context` from a configuration that silences the
-    check. Without a registered ``Environment`` nothing is refused.
+    check. Without a registered ``Environment`` the process environment
+    decides (``LOOM_ENV``, else production), as everywhere in loom.
 
     Raises:
         ConfigError: When another codec is already registered: two codecs
@@ -608,9 +609,11 @@ def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
     """
     if codec.signing != _SIGNED and not codec._opt_out_silenced:
         environment = (
-            container.resolve(Environment) if container.is_registered(Environment) else None
+            container.resolve(Environment)
+            if container.is_registered(Environment)
+            else resolve_environment()
         )
-        if environment is not None and environment.is_deployed:
+        if environment.is_deployed:
             raise ConfigError(
                 f"{CURSOR_SIGNING_CHECK}: a CursorCodec in {codec.signing} mode cannot serve "
                 f"the {str(environment)!r} environment; configure persistence.cursors keys, "

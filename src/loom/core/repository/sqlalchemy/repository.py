@@ -80,6 +80,9 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             backend builds one from ``persistence.cursors`` and shares it.
             Cursors are bound to the row-level-security scope values of the
             caller when the session manager has them, to no scope otherwise.
+            A codec passed here by hand skips the deployed-environment
+            refusal of an opt-out that ``register_cursor_codec`` applies; a
+            custom builder passes ``context.container.resolve(CursorCodec)``.
     """
 
     backend_name: ClassVar[str] = "sqlalchemy"

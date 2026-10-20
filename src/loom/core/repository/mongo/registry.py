@@ -66,7 +66,10 @@ class MongoDefaultRepositoryBuilder:
         collections: Per-model collection overrides keyed by class name.
         id_policy: Strategy minting and converting primary keys.
         session_provider: Returns the active client session, or ``None``.
-        cursor_codec: Shared codec that issues and verifies cursor tokens.
+        cursor_codec: Shared codec that issues and verifies cursor tokens: the
+            one the registration module registered. A builder built by hand
+            with another codec skips the deployed-environment refusal of an
+            opt-out that ``register_cursor_codec`` applies.
     """
 
     database: MongoDatabase
