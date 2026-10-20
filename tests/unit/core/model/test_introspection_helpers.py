@@ -208,6 +208,7 @@ class _Enums(BaseModel):
     mode: Annotated[Literal["a", "b"], String(1)] = "a"
     maybe_mode: Annotated[Literal["a", "b"], String(1)] | None = None
     annotated_maybe: Annotated[_Status | None, Field(length=12)] = None
+    declared_mode: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
 
 
 class _MixedEnums(BaseModel):
@@ -269,6 +270,11 @@ class TestEnumColumnTypes:
 
         assert fields["maybe_mode"].column_type == String(1)
         assert fields["annotated_maybe"].column_type == String(12)
+
+    def test_a_column_field_without_a_type_takes_the_annotated_column_type(self) -> None:
+        info = get_column_fields(_Enums)["declared_mode"]
+
+        assert (info.column_type, info.field.nullable) == (String(1), True)
 
     @pytest.mark.parametrize(
         ("field", "expected"),

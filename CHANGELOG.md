@@ -608,7 +608,8 @@
   example `colour: Colour = ColumnField(String(20))`. Mongo and DynamoDB
   models keep such fields as they are. Declared column types are unchanged,
   and an `Annotated[...]` column type or `Field` is now read also when the
-  `Annotated` sits inside `Optional` (`Annotated[T, String(1)] | None`).
+  `Annotated` sits inside `Optional` (`Annotated[T, String(1)] | None`), and
+  is used when a `ColumnField(...)` on the field declares no column type.
   `ColumnFieldInfo` gains `needs_declared_type`.
 - **core:** an `Optional` inside `Annotated` whose metadata carries no column
   type, such as `Annotated[int | None, msgspec.Meta(ge=0)]`, now takes the

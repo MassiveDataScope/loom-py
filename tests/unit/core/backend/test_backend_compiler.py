@@ -145,6 +145,7 @@ class _DeclaredShadeItem(BaseModel):
     id: int = ColumnField(primary_key=True, autoincrement=True)
     shade: _Shade = ColumnField(String(8))
     mode: Annotated[Literal["a", "b"], String(1)] | None = None
+    kind: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
 
 
 class TestUndeclaredColumnTypes:
@@ -163,7 +164,9 @@ class TestUndeclaredColumnTypes:
         compile_all(_DeclaredShadeItem, metadata=metadata)
 
         columns = metadata.tables["test_declared_shade_items"].c
-        assert (str(columns.shade.type), str(columns.mode.type)) == ("VARCHAR(8)", "VARCHAR(1)")
+        types = (str(columns.shade.type), str(columns.mode.type), str(columns.kind.type))
+        assert types == ("VARCHAR(8)", "VARCHAR(1)", "VARCHAR(1)")
+        assert columns.kind.nullable is True
 
 
 class TestCompileModel:

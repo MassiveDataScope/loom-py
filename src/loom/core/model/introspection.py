@@ -53,9 +53,9 @@ class PartialUnique:
 class ColumnFieldInfo:
     """Resolved metadata for a single column field.
 
-    ``needs_declared_type`` marks a plain enum or ``Literal`` field whose column
-    type was not declared: ``column_type`` is then a JSON placeholder and a SQL
-    backend refuses the field.
+    ``needs_declared_type`` marks a field whose column type was not declared
+    and cannot be inferred, a plain enum or a ``Literal``: ``column_type`` is
+    then a JSON placeholder.
     """
 
     name: str
@@ -103,26 +103,22 @@ def _resolve_column_field(
     struct_default: Any,
     declared: ColumnFieldSpec | None,
 ) -> ColumnFieldInfo:
-    """Build the column metadata for one field, declared or inferred."""
-    python_type = _extract_origin_type(annotation)
-    if declared is not None:
-        return ColumnFieldInfo(
-            name=name,
-            python_type=python_type,
-            column_type=declared.column_type
-            or _infer_column_type(annotation, field=declared.field),
-            field=_with_struct_default(declared.field, struct_default),
-            needs_declared_type=declared.column_type is None and _is_uninferable(annotation),
-        )
+    """Build the column metadata for one field, declared or inferred.
 
-    annotated_type, annotated_field = _extract_annotated_column(annotation)
-    field = _with_struct_default(annotated_field, struct_default)
+    A ``ColumnField`` supplies the ``Field``; its column type, else the one in
+    ``Annotated``, else the inferred one is used.
+    """
+    annotated_type, field = _extract_annotated_column(annotation)
+    if declared is not None:
+        annotated_type, field = declared.column_type or annotated_type, declared.field
+    field = _with_struct_default(field, struct_default)
+    column_type = annotated_type or _infer_column_type(annotation, field=field)
     return ColumnFieldInfo(
         name=name,
-        python_type=python_type,
-        column_type=annotated_type or _infer_column_type(annotation, field=field),
+        python_type=_extract_origin_type(annotation),
+        column_type=column_type or JSON,
         field=field,
-        needs_declared_type=annotated_type is None and _is_uninferable(annotation),
+        needs_declared_type=column_type is None,
     )
 
 
@@ -130,7 +126,8 @@ def _extract_annotated_column(annotation: Any) -> tuple[ColumnType | None, Field
     """Read the ``ColumnType`` and ``Field`` carried by ``Annotated[T, ...]``, optional or not."""
     column_type: ColumnType | None = None
     field = Field()
-    for entry in _column_base(annotation)[1]:
+    _, metadata = _column_base(annotation)
+    for entry in metadata:
         if isinstance(entry, ColumnType):
             column_type = entry
         elif isinstance(entry, Field):
@@ -332,9 +329,9 @@ def scalar_column_annotations(model: type) -> dict[str, Any]:
 
     A JSON, array or text-search column is not scalar; lists, dicts and
     structs are inferred as JSON. An enum mixed with a scalar type, such as a
-    ``StrEnum`` or ``IntEnum``, takes that type's column and is scalar. A plain
-    ``Enum`` or a ``Literal`` declared without a column type has only a JSON
-    placeholder, which SQLAlchemy compilation refuses, and is not listed.
+    ``StrEnum`` or ``IntEnum``, takes that type's column and is scalar. No
+    column type can be inferred for a plain ``Enum`` or a ``Literal`` declared
+    without one; its ``column_type`` is a JSON placeholder and it is not listed.
 
     Args:
         model: Model whose columns are read.
@@ -408,14 +405,16 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     bool: Boolean,
     bytes: Bytes,
     datetime: DateTime(tz=True),
+    date: String(None),
+    time: String(None),
     Decimal: Numeric(),
 }
 
 
-_COLUMN_RULE_TYPES = frozenset({str, date, time, *_SCALAR_TYPE_MAP})
+_COLUMN_RULE_TYPES = frozenset({str, *_SCALAR_TYPE_MAP})
 
 
-def _scalar_type(annotation: Any) -> type:
+def _column_rule_type(annotation: Any) -> type:
     """The class whose column rule the annotation follows.
 
     An enum follows the first class of its MRO that has a rule, the scalar it is
@@ -427,23 +426,25 @@ def _scalar_type(annotation: Any) -> type:
     return next((t for t in python_type.__mro__ if t in _COLUMN_RULE_TYPES), python_type)
 
 
-def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType:
-    """Infer the column type from the annotation; an enum follows its scalar mixin."""
-    base = _column_base(annotation)[0]
-    if get_origin(base) in (list, tuple, set, dict):
+def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType | None:
+    """Infer the column type from the annotation; an enum follows its scalar mixin.
+
+    Returns:
+        The column type, or ``None`` for a plain enum or a ``Literal``, which
+        have no scalar type to follow.
+    """
+    base, _ = _column_base(annotation)
+    origin = get_origin(base)
+    if origin is Literal:
+        return None
+    if origin in (list, tuple, set, dict):
         return JSON
-    python_type = _scalar_type(base)
-    if python_type is str:
+    rule_type = _column_rule_type(base)
+    if rule_type is str:
         return String(field.length)
-    if python_type in (date, time):
-        return String(None)
-    return _SCALAR_TYPE_MAP.get(python_type, JSON)
-
-
-def _is_uninferable(annotation: Any) -> bool:
-    """Whether the annotation is a plain enum or a ``Literal``: no scalar type to follow."""
-    base = _column_base(annotation)[0]
-    return issubclass(_scalar_type(base), Enum) or get_origin(base) is Literal
+    if issubclass(rule_type, Enum):
+        return None
+    return _SCALAR_TYPE_MAP.get(rule_type, JSON)
 
 
 _SCOPE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
