@@ -236,12 +236,16 @@ class RepositoryDynamoDB(
         return cast(OutputT, to_struct(self._model, kwargs))
 
     def _encode_value(self, value: Any) -> dict[str, Any]:
-        """Serialize a plain Python value to a low-level ``AttributeValue`` dict.
+        """Serialize a Python value to a low-level ``AttributeValue`` dict.
 
-        Floats are converted to ``Decimal`` first because DynamoDB — and
-        ``TypeSerializer`` — reject native floats.
+        The value is first converted with :func:`msgspec.to_builtins`, the same
+        conversion ``create`` stores items with, so a key such as a ``UUID``
+        encodes to the stored form and round-trips. Floats are then converted
+        to ``Decimal`` because DynamoDB — and ``TypeSerializer`` — reject
+        native floats.
         """
-        return cast("dict[str, Any]", self._serializer.serialize(_floats_to_decimal(value)))
+        builtins = msgspec.to_builtins(value)
+        return cast("dict[str, Any]", self._serializer.serialize(_floats_to_decimal(builtins)))
 
     def _decode_value(self, value: dict[str, Any]) -> Any:
         """Deserialize a low-level ``AttributeValue`` dict back to a Python value.

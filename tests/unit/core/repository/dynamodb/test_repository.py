@@ -100,20 +100,48 @@ class _BadgeCreate(BaseModel):
     label: str = ""
 
 
+class _BadgeUpdate(BaseModel):
+    label: str = ""
+
+
 _BADGE_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
 
 
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason="follow-up hotfix: a UUID key reaches boto3's TypeSerializer unconverted",
-)
-async def test_a_uuid_primary_key_is_read_back_by_the_uuid() -> None:
-    repo: RepositoryDynamoDB[_Badge, UUID] = RepositoryDynamoDB(
+def _badge_repo() -> RepositoryDynamoDB[_Badge, UUID]:
+    return RepositoryDynamoDB(
         client=FakeClient(key_name="id", table_names=("badges",)),
         table_name="badges",
         model=_Badge,
     )
+
+
+async def test_a_uuid_primary_key_is_read_back_by_the_uuid() -> None:
+    repo = _badge_repo()
     await repo.create(_BadgeCreate(id=_BADGE_ID, label="first"))
 
     assert await repo.get_by_id(_BADGE_ID) == _Badge(id=_BADGE_ID, label="first")
+
+
+async def test_a_uuid_primary_key_answers_exists_by() -> None:
+    repo = _badge_repo()
+    await repo.create(_BadgeCreate(id=_BADGE_ID, label="first"))
+
+    assert await repo.exists_by("id", _BADGE_ID) is True
+
+
+async def test_an_item_is_updated_by_its_uuid_primary_key() -> None:
+    repo = _badge_repo()
+    await repo.create(_BadgeCreate(id=_BADGE_ID, label="first"))
+
+    updated = await repo.update(_BADGE_ID, _BadgeUpdate(label="second"))
+
+    assert updated == _Badge(id=_BADGE_ID, label="second")
+    assert await repo.get_by_id(_BADGE_ID) == _Badge(id=_BADGE_ID, label="second")
+
+
+async def test_an_item_is_deleted_by_its_uuid_primary_key() -> None:
+    repo = _badge_repo()
+    await repo.create(_BadgeCreate(id=_BADGE_ID, label="first"))
+
+    assert await repo.delete(_BADGE_ID) is True
+    assert await repo.get_by_id(_BADGE_ID) is None
