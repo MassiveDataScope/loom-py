@@ -464,9 +464,8 @@
   `JSON`: `UUID` on Postgres, `CHAR(32)` holding the hex form on dialects
   without a native UUID type, such as SQLite. Such a field is now a scalar
   column, so REST `filterable`, `sortable` and `ALL` accept it on every
-  backend, `mongo` included; a cursor walk sorted by it pages in UUID order
-  on Postgres and SQLite, and an equality filter on it matches on SQLite,
-  which it did not as JSON. Streaming `IntoTable` with the
+  backend, `mongo` included; on SQLite a cursor walk sorted by it pages in
+  UUID order and an equality filter on it matches. Streaming `IntoTable` with the
   SQLAlchemy backend binds a `UUID` field the same way instead of failing to
   serialise it as JSON. Migration: an existing table with such a column needs
   a revision changing its type; Alembic autogenerate reports it as a type
