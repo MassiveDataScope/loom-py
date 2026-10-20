@@ -75,8 +75,10 @@ def test_an_unset_decimal_needs_a_declared_column_type_like_a_decimal() -> None:
         id: int = ColumnField(primary_key=True)
         price: Decimal | msgspec.UnsetType = msgspec.UNSET
 
+    metadata = MetaData()
+
     with pytest.raises(ValueError, match="no column type is inferred from a Decimal"):
-        compile_all(_Priced, metadata=MetaData())
+        compile_all(_Priced, metadata=metadata)
 
 
 async def test_an_unset_field_left_out_on_create_is_read_back_as_null(
