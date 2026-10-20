@@ -8,7 +8,6 @@ invalid values abort the parse and surface as
 from __future__ import annotations
 
 import re
-import warnings
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -24,11 +23,8 @@ _URL_CREDENTIALS_RE = re.compile(r"://[^@]+@")
 
 # The only ``sql_endpoint.auth`` mode carrying a verified caller identity, and
 # therefore the only one able to bind a request to a subset of the allowlist.
-# ``jwt`` is the deprecated spelling of the same mode, kept because it named a
-# mechanism where the contract only ever needed "the framework knows the caller".
 _IDENTITY_BOUND_AUTH = "identity"
-_DEPRECATED_AUTH_ALIAS = "jwt"
-_IDENTITY_BOUND_AUTH_MODES = frozenset({_IDENTITY_BOUND_AUTH, _DEPRECATED_AUTH_ALIAS})
+_AUTH_MODES = frozenset({_IDENTITY_BOUND_AUTH, "external"})
 
 
 def _redact_url(url: str) -> str:
@@ -69,36 +65,31 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
             authenticates the caller with the configured mechanism and binds
             roles to their verified identity) or ``"external"`` (explicit
             acknowledgement that the operator provides authentication, with no
-            identity the framework can read).  ``"jwt"`` is a deprecated alias
-            of ``"identity"``.
+            identity the framework can read).  Any other value fails the
+            parse with an error naming both.
         path: Mount path override. Defaults to ``/sql/{name}`` when ``None``.
         include_in_schema: Whether the endpoint appears in the OpenAPI schema.
     """
 
     enabled: bool = False
-    auth: Literal["identity", "jwt", "external"] | None = None
+    auth: str | None = None
     path: str | None = None
     include_in_schema: bool = False
 
     def __post_init__(self) -> None:
-        if self.auth != _DEPRECATED_AUTH_ALIAS:
-            return
-        warnings.warn(
-            f"sql_endpoint.auth: {_DEPRECATED_AUTH_ALIAS!r} is deprecated because it names "
-            f"a mechanism instead of a contract. Use {_IDENTITY_BOUND_AUTH!r}: the endpoint "
-            "requires a verified caller, whichever authenticator provides it.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
+        if self.auth is not None and self.auth not in _AUTH_MODES:
+            raise ValueError(
+                f"sql_endpoint.auth must be one of {sorted(_AUTH_MODES)}, got {self.auth!r}"
+            )
 
     @property
     def binds_identity(self) -> bool:
         """Whether this endpoint requires an identity the framework can read.
 
         Returns:
-            ``True`` for ``"identity"`` and its deprecated ``"jwt"`` alias.
+            ``True`` for ``"identity"``.
         """
-        return self.auth in _IDENTITY_BOUND_AUTH_MODES
+        return self.auth == _IDENTITY_BOUND_AUTH
 
 
 class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):

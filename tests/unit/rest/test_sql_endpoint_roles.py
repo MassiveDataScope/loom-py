@@ -460,12 +460,11 @@ def test_the_span_names_the_default_role_of_a_single_role_connection() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Deprecated auth spelling
+# Removed auth spelling
 # ---------------------------------------------------------------------------
 
 
-def test_the_jwt_auth_mode_is_a_deprecated_alias_of_identity() -> None:
-    """Existing configs keep working, loudly: 'jwt' still means 'identity'."""
-    with pytest.deprecated_call():
-        endpoint = SqlEndpointConfig(enabled=True, auth="jwt")
-    assert endpoint.binds_identity is True
+def test_the_jwt_auth_mode_is_refused_when_built_in_code() -> None:
+    """'jwt' no longer means 'identity': building the config with it fails."""
+    with pytest.raises(ValueError, match="'external', 'identity'"):
+        SqlEndpointConfig(enabled=True, auth="jwt")
