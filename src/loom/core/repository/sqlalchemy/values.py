@@ -6,10 +6,12 @@ SQLAlchemy binds ``bytes``, ``datetime``, ``date``, ``time``, ``Decimal`` and
 so its values are reduced completely.
 
 :func:`to_column_value` is the conversion the repository applies to a value it
-writes (:func:`to_column_row` applies it, with the offset check below, to a
-whole struct), and :func:`to_comparison_value` the one it applies to a value
-compared with a column (a filter, ``get_by``, ``exists_by``, a cursor's keyset
+writes, and :func:`to_comparison_value` the one it applies to a value compared
+with a column (a filter, ``get_by``, ``exists_by``, a cursor's keyset
 position), so a comparison matches exactly what the row holds.
+:func:`to_column_row` applies the offset check below and
+:func:`to_column_value` to the attributes of a struct named by the given
+columns, skipping those that are ``UNSET``.
 
 A ``time`` with a UTC offset is refused for a column that cannot hold the
 offset: SQL ``TIME`` without time zone (Postgres ``time``, SQLite text) stores

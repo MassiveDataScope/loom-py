@@ -32,7 +32,14 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.model import BaseModel, ColumnField, LoomStruct, Text  # noqa: E402
+from loom.core.errors.codes import ErrorCode  # noqa: E402
+from loom.core.model import (  # noqa: E402
+    BaseModel,
+    BoundaryValidationError,
+    ColumnField,
+    LoomStruct,
+    Text,
+)
 from loom.core.model.enums import Cardinality  # noqa: E402
 from loom.core.model.relation import RelationField  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
@@ -514,6 +521,25 @@ class TestIntoTableSQLAlchemyIntegration:
 
         assert pl.read_delta(uri).to_dicts() == [{"owner_id": 3, "row_id": 7}]
 
+    def test_an_unset_column_field_is_refused_on_delta_with_its_name_and_table(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("deltalake")
+        uri = str(tmp_path / "notes_delta")
+        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config({"uri": uri}, default_table="notes")
+        partition = node.build_partition(config, worker_index=0, worker_count=1)
+
+        with pytest.raises(BoundaryValidationError) as raised:
+            partition.write_batch([_NoteRow(note_id=1)])
+
+        assert raised.value.code == ErrorCode.BOUNDARY_VALIDATION
+        assert raised.value.violations == (
+            ("note", "UNSET has no column value in Delta table 'notes'"),
+        )
+        assert partition.close() == 0
+        assert not Path(uri).exists()
+
     def test_a_delta_payload_without_fields_is_refused_at_startup(self, tmp_path: Path) -> None:
         class _NoColumns(LoomStruct):
             pass
@@ -685,6 +711,22 @@ class TestIntoTableClickHouseUnit:
         _, kwargs = mock_ch_client.insert.call_args
         assert kwargs["column_names"] == ["owner_id", "row_id"]
         assert mock_ch_client.insert.call_args.args[1] == [[3], [7]]
+
+    def test_an_unset_column_field_is_refused_with_its_name_and_table(
+        self, mock_ch_client: MagicMock
+    ) -> None:
+        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config("notes"), worker_index=0, worker_count=1)
+
+        with pytest.raises(BoundaryValidationError) as raised:
+            partition.write_batch([_NoteRow(note_id=1)])
+
+        assert raised.value.code == ErrorCode.BOUNDARY_VALIDATION
+        assert raised.value.violations == (
+            ("note", "UNSET has no column value in ClickHouse table 'notes'"),
+        )
+        assert partition.close() == 0
+        mock_ch_client.insert.assert_not_called()
 
     def test_list_field_not_json_serialised(self, mock_ch_client: MagicMock) -> None:
         """list[str] arrives at insert() as a Python list, never as a JSON string."""

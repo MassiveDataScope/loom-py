@@ -1691,6 +1691,12 @@
   written into a Postgres `date` or `time` column; it was bound as `String`
   and Postgres refused it ("column is of type date but expression is of type
   character varying").
+- **streaming:** `IntoTable` with `Backend.DELTA` or `Backend.CLICKHOUSE`
+  refuses an `UNSET` column value when the item is written, with
+  `BoundaryValidationError` (`boundary_validation`) naming the field and the
+  table. Delta failed later, at a mini-batch or flush, with pyarrow's
+  `ArrowInvalid`, and ClickHouse sent the `UNSET` object in its insert. Neither
+  can leave a column out for one row as `Backend.SQLALCHEMY` does.
 
 ### prefect
 

@@ -314,8 +314,10 @@ def sa_table_for(struct_cls: type, name: str) -> Table:
     """Return a Core ``Table`` named *name* whose columns are those of *struct_cls*.
 
     Each column has the type :func:`compile_model` gives the field; keys,
-    constraints and defaults are left out. The table is bound to a fresh
-    ``MetaData`` and registered nowhere.
+    constraints and defaults are left out, and so is nullability: every column
+    is nullable, since the table builds inserts and IntoTable, its caller,
+    issues no DDL. The table is bound to a fresh ``MetaData`` and registered
+    nowhere.
 
     Raises:
         ValueError: If a ``Decimal``, plain enum or ``Literal`` field declares no

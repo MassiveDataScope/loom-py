@@ -86,9 +86,10 @@ from typing import (
 from uuid import uuid4
 
 import msgspec
-import msgspec.structs
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors.codes import ErrorCode
+from loom.core.model import BoundaryValidationError
 from loom.core.model.introspection import get_column_fields
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
@@ -707,6 +708,35 @@ def _column_names(payload_type: type[Any]) -> list[str]:
     return list(get_column_fields(payload_type))
 
 
+def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> list[Any]:
+    """Return the values of *item*'s attributes named by *column_names*, in that order.
+
+    Neither partition that calls it can leave a column out for one row: Delta
+    has no per-insert column defaults, and the ClickHouse insert names every
+    column for the whole buffer. An ``UNSET`` value is therefore refused rather
+    than written.
+
+    Args:
+        item: A struct with one attribute per column.
+        column_names: The columns to read.
+        target: The table, as named in the error.
+
+    Raises:
+        BoundaryValidationError: ``boundary_validation``, with one violation per
+            ``UNSET`` value, in column order.
+    """
+    values = [getattr(item, name) for name in column_names]
+    violations = tuple(
+        (name, f"UNSET has no column value in {target}")
+        for name, value in zip(column_names, values, strict=True)
+        if value is msgspec.UNSET
+    )
+    if violations:
+        message = "; ".join(f"{name}: {reason}" for name, reason in violations)
+        raise BoundaryValidationError(message, violations, code=ErrorCode.BOUNDARY_VALIDATION)
+    return values
+
+
 def _rows_by_column_set(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """Group *rows* by the columns they set, keeping their order within a group.
 
@@ -762,6 +792,7 @@ class _DeltaTablePartition:
             )
         self._logger = logger
         self._column_names = _column_names(payload_type)
+        self._target = f"Delta table {settings.table!r}"
         self._uri = settings.uri
         self._mode = settings.mode
         self._storage_options = dict(settings.storage_options)
@@ -813,7 +844,8 @@ class _DeltaTablePartition:
         return durable
 
     def _stage_item(self, item: Any) -> None:
-        self._mini_batch.append({name: getattr(item, name) for name in self._column_names})
+        values = _set_column_values(item, self._column_names, self._target)
+        self._mini_batch.append(dict(zip(self._column_names, values, strict=True)))
         self._staged_records += 1
         if len(self._mini_batch) >= self._mini_batch_size:
             self._commit_mini_batch()
@@ -961,10 +993,11 @@ class _DeltaTablePartition:
 # ── ClickHouse helpers ────────────────────────────────────────────────────────
 
 
-def _to_ch_row(row: Mapping[str, Any], column_names: list[str]) -> list[Any]:
-    """Coerce one row dict to an ordered list for ``clickhouse-connect`` insert.
+def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
+    """Return *item*'s values for *column_names*, in order, for a ``clickhouse-connect`` insert.
 
-    Applies the minimal coercions that ClickHouse native types require:
+    An ``UNSET`` value is refused, as :func:`_set_column_values` refuses it.
+    The other values get the minimal coercions ClickHouse native types require:
 
     - ``bool``      → ``int`` (ClickHouse ``UInt8`` expects 0/1, not ``True``/``False``)
     - ``date``      → ISO-8601 string (``clickhouse-connect`` handles ``datetime`` natively)
@@ -974,8 +1007,7 @@ def _to_ch_row(row: Mapping[str, Any], column_names: list[str]) -> list[Any]:
     ``list``, ``None``) are passed through unchanged.
     """
     result: list[Any] = []
-    for name in column_names:
-        value = row[name]
+    for value in _set_column_values(item, column_names, target):
         if isinstance(value, bool):
             result.append(int(value))
         elif isinstance(value, date) and not isinstance(value, datetime):
@@ -1037,6 +1069,7 @@ class _ClickHouseTablePartition:
         self._client = _cc.get_client(dsn=settings.url, **kwargs)
         self._logger = logger
         self._table = settings.table
+        self._target = f"ClickHouse table {settings.table!r}"
         self._column_names = _column_names(payload_type)
         self._buffer_policy = settings.buffer_policy
         # Column-oriented: one inner list per column, grows with each row.
@@ -1065,9 +1098,7 @@ class _ClickHouseTablePartition:
         for item in items:
             if not self._buffer_records:
                 self._buffer_started_at = monotonic()
-            row = _to_ch_row(
-                {name: getattr(item, name) for name in self._column_names}, self._column_names
-            )
+            row = _to_ch_row(item, self._column_names, self._target)
             row_bytes = sum(len(str(v)) for v in row)
             for col_idx, value in enumerate(row):
                 self._buffer[col_idx].append(value)
