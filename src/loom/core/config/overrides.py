@@ -15,19 +15,26 @@ the configuration declares or loom reads
 naming the variable. Two variables for the same key, or for a key and one of
 its parents, are refused.
 
-An override sets one leaf value. A value that is or holds a mapping is
-refused, and so is a target the files declare as a mapping or as a list
-holding mappings, whatever the new value (null, a scalar or a list): an
-override cannot replace a structure. Lists of scalars are leaves.
+An override sets one leaf value. A value that is a mapping, or a list
+holding one at any depth, is refused, and so is a target the files declare
+that way, whatever the new value (null, a scalar or a list): an override
+cannot replace a structure. Lists of scalars are leaves.
 
 In production and staging an override may set only an allowlisted key: the
 operational keys loom lists in :data:`OVERRIDABLE` (log levels, worker and
-pool sizes, timeouts), plus the keys the reviewed files list under
-``config.overridable``. Every other key, the authentication surface, the
-deploy checks and anything a placeholder points at included, is a startup
-error naming the variable. An entry is a dotted key; ``*`` stands for one
-level. In development and test any leaf may be overridden. ``config`` itself
-can never be overridden, in any environment.
+pool sizes, driver timeouts), plus the keys the reviewed files list under
+``config.overridable``. Every other key is a startup error naming the
+variable. An entry is a dotted key; ``*`` stands for one level but never the
+first, and an entry matching ``checks``, ``config``, ``app.code_path`` or
+``app.rest.auth``, or a key inside them, is refused. The entries are checked
+at every load, in any environment and with or without a variable. In
+development and test any leaf may be overridden. ``config`` itself can never
+be overridden, in any environment.
+
+An allowlisted key also changes every ``${...}`` placeholder in the files
+that references it, so the files are reviewed with that in mind; a key the
+files set from ``${oc.env:...}`` is controlled by the process environment
+because the files chose so.
 
 Values are literals. They parse as an OmegaConf dotlist (YAML 1.1): ``5`` is
 an int, ``false``, ``no`` and ``off`` are booleans, ``[a, b]`` is a list,
@@ -73,7 +80,15 @@ _LEVEL: Final = re.compile(r"\w+", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
 _INTERPOLATION: Final = "${"
 _ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
 _ALLOWLIST_SECTION: Final = "config"
-_ALLOWLIST_KEY: Final = "config.overridable"
+_ALLOWLIST_FIELD: Final = "overridable"
+_ALLOWLIST_KEY: Final = f"{_ALLOWLIST_SECTION}.{_ALLOWLIST_FIELD}"
+_PROTECTED: Final = (
+    (_ALLOWLIST_SECTION,),
+    ("checks",),
+    ("app", "code_path"),
+    ("app", "rest", "auth"),
+)
+"""Keys no ``config.overridable`` entry may open, at any depth."""
 
 OVERRIDABLE: Final = (
     "observability.log.config.level",
@@ -89,7 +104,6 @@ OVERRIDABLE: Final = (
     "sql.connections.*.executor_threads",
     "sql.connections.*.connect_timeout",
     "sql.connections.*.send_receive_timeout",
-    "sql.connections.*.max_execution_time",
 )
 """Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
@@ -115,13 +129,14 @@ def load_application_config(
         The merged configuration.
 
     Raises:
-        ConfigError: When a file cannot be loaded, or a ``LOOM__*`` variable
-            names no known section, a key off the allowlist in a deployed
+        ConfigError: When a file cannot be loaded; when ``config.overridable``
+            is not a literal list of dotted keys or an entry opens a protected
+            key, checked at every load; or when a ``LOOM__*`` variable names
+            no known section, a key off the allowlist in a deployed
             environment or ``config``, has an empty or malformed level,
             collides with another variable, replaces a declared structure,
             reaches inside an interpolated key, holds ``${``, or does not
-            parse or merge; or when ``config.overridable`` is not a literal
-            list of dotted keys. The error names the variable, never the value.
+            parse or merge. The error names the variable, never the value.
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
     resolved = resolve_environment(environment)
@@ -133,15 +148,21 @@ def _apply_overrides(
 ) -> DictConfig:
     from omegaconf import OmegaConf
 
+    written = OmegaConf.to_container(config, resolve=False)
+    # Validated with or without variables, so a bad entry fails in development.
+    declared = _declared_allowlist(written)
     if not variables:
         return config
-    written = OmegaConf.to_container(config, resolve=False)
     keys = {name: _leaf_key(written, name) for name in variables}
     _refuse_collisions(keys)
-    if environment.is_deployed:
-        allowlist = (*OVERRIDABLE, *_declared_allowlist(written))
-        for name, key in keys.items():
-            _require_allowlisted(name, key, allowlist, environment)
+    for name, key in keys.items():
+        if key.split(".", 1)[0].casefold() == _ALLOWLIST_SECTION:
+            raise ConfigError(
+                f"{name} overrides {key!r}; {_ALLOWLIST_KEY} is declared only in the "
+                "configuration files, where it is reviewed"
+            )
+        if environment.is_deployed:
+            _require_allowlisted(name, key, (*OVERRIDABLE, *declared), environment)
     merged: Any = config
     for name, key in sorted(keys.items(), key=lambda item: item[1]):
         merged = _merged(merged, name, key, _parsed(name, key, variables[name]))
@@ -160,7 +181,6 @@ def _parsed(name: str, key: str, value: str) -> Any:
 
     try:
         layer = OmegaConf.from_dotlist([f"{key}={value}"])
-        leaf = OmegaConf.select(layer, key, throw_on_resolution_failure=False)
         written = OmegaConf.to_container(layer, resolve=False)
     except Exception:
         # Any parse failure, a YAML tag that fails to construct included; from
@@ -168,17 +188,19 @@ def _parsed(name: str, key: str, value: str) -> Any:
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
     if any(_INTERPOLATION in text for text in _strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
+    leaf: Any = written
+    for level in key.split("."):
+        leaf = leaf[level]
     if _holds_mapping(leaf):
-        raise ConfigError(f"{name} is a mapping; an override sets one leaf value")
+        raise ConfigError(f"{name} is or holds a mapping; an override sets one leaf value")
     return layer
 
 
 def _holds_mapping(node: Any) -> bool:
-    from omegaconf import DictConfig, ListConfig
-
-    if isinstance(node, DictConfig):
+    """Whether *node* is a mapping or a list holding one, at any depth."""
+    if isinstance(node, dict):
         return True
-    return isinstance(node, ListConfig) and any(_holds_mapping(item) for item in node)
+    return isinstance(node, list) and any(_holds_mapping(item) for item in node)
 
 
 def _merged(config: Any, name: str, key: str, layer: Any) -> Any:
@@ -236,17 +258,10 @@ def _leaf_key(written: Any, name: str) -> str:
             "check the variable for a typo"
         )
     key = ".".join(keys)
-    if isinstance(node, dict) or (
-        isinstance(node, list) and any(isinstance(item, dict) for item in node)
-    ):
+    if _holds_mapping(node):
         raise ConfigError(
             f"{name} targets {key!r}, which the files declare as a structure; an override "
             "sets one leaf value"
-        )
-    if section.casefold() == _ALLOWLIST_SECTION:
-        raise ConfigError(
-            f"{name} overrides {key!r}; {_ALLOWLIST_KEY} is declared only in the "
-            "configuration files, where it is reviewed"
         )
     return key
 
@@ -254,7 +269,7 @@ def _leaf_key(written: Any, name: str) -> str:
 def _declared_allowlist(written: Any) -> tuple[str, ...]:
     """Return ``config.overridable`` as the files declare it, a literal list of dotted keys."""
     section = written.get(_ALLOWLIST_SECTION) if isinstance(written, dict) else None
-    entries = section.get("overridable", []) if isinstance(section, dict) else []
+    entries = section.get(_ALLOWLIST_FIELD, []) if isinstance(section, dict) else []
     valid = isinstance(entries, list) and all(
         isinstance(entry, str) and _ENTRY.fullmatch(entry) for entry in entries
     )
@@ -262,7 +277,24 @@ def _declared_allowlist(written: Any) -> tuple[str, ...]:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} must be a literal list of dotted keys, '*' standing for one level"
         )
+    for entry in entries:
+        _refuse_protected(entry)
     return tuple(entries)
+
+
+def _refuse_protected(entry: str) -> None:
+    """Refuse an entry with ``*`` first, or one matching a protected key or a key inside it."""
+    parts = entry.casefold().split(".")
+    opens = parts[0] == "*" or any(
+        len(parts) >= len(protected)
+        and all(part in ("*", level) for part, level in zip(parts, protected, strict=False))
+        for protected in _PROTECTED
+    )
+    if opens:
+        raise ConfigError(
+            f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
+            "first level, checks, config, app.code_path or app.rest.auth"
+        )
 
 
 def _require_allowlisted(

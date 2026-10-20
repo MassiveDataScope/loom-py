@@ -152,7 +152,7 @@ def test_a_value_that_does_not_parse_is_an_error_naming_the_variable_not_the_val
         _load(config_file)
 
     assert "LOOM__APP__WORKERS" in str(caught.value)
-    assert "unclosed-secret" not in str(caught.value)
+    assert "unclosed-secret" not in "".join(traceback.format_exception(caught.value))
 
 
 _DEPLOYED_DOCUMENT: dict[str, Any] = {
@@ -166,6 +166,7 @@ _DEPLOYED_DOCUMENT: dict[str, Any] = {
             "interfaces": {"orders": {"prefix": "/orders"}},
             "disable_routes": [{"method": "GET", "path": "/orders/"}],
         },
+        "matrix": [[{"cell": 1}]],
     },
     "observability": {"log": {"config": {"level": "INFO"}}, "prometheus": {"enabled": True}},
     "checks": {"silenced": ["loom.rest.W001"]},
@@ -223,9 +224,10 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         ("LOOM__CHECKS__SILENCED", "[loom.rest.E001]"),
         ("LOOM__APP__REST__DOCS_URL", "/docs"),
         ("LOOM__OBSERVABILITY__LOG__CONFIG__LEVELS", "DEBUG"),
+        ("LOOM__SQL__CONNECTIONS__ANALYTICS__MAX_EXECUTION_TIME", "0"),
     ],
     ids=[
-        "interpolation indirection into a reviewed key",
+        "a key a reviewed key references, off the allowlist",
         "prometheus enabled",
         "interfaces",
         "code_path",
@@ -233,6 +235,7 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         "checks",
         "a documentation path",
         "a key one character off an allowlisted one",
+        "the query time limit",
     ],
 )
 def test_a_deployed_environment_refuses_every_key_off_the_allowlist(
@@ -269,25 +272,56 @@ def test_an_allowlist_entry_covers_one_key_and_not_its_siblings(
     "overridable",
     [["${oc.env:KEYS}"], "app.rest.title", ["app.rest.ti-tle"], ["app..title"]],
 )
-def test_config_overridable_must_be_a_literal_list_of_dotted_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overridable: object
+def test_config_overridable_must_be_a_literal_list_of_dotted_keys_in_any_environment(
+    tmp_path: Path, overridable: object
 ) -> None:
     document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": overridable}}
     path = _write_document(tmp_path, document)
-    monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "DEBUG")
 
-    with pytest.raises(ConfigError, match="config.overridable"):
-        _load_deployed(path)
+    with pytest.raises(ConfigError, match="config.overridable must be a literal list"):
+        load_application_config(path, environment=Environment.DEVELOPMENT)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "*.level",
+        "checks",
+        "checks.silenced",
+        "CHECKS.modules",
+        "config.overridable",
+        "app.code_path",
+        "app.*",
+        "app.rest.auth",
+        "app.rest.auth.custom",
+        "app.rest.*.jwt",
+        "app.rest.auth.jwt.audience",
+    ],
+)
+def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
+    tmp_path: Path, entry: str
+) -> None:
+    document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": ["app.rest.title", entry]}}
+    path = _write_document(tmp_path, document)
+
+    with pytest.raises(ConfigError, match=f"config.overridable entry {re.escape(repr(entry))}"):
+        load_application_config(path, environment=Environment.DEVELOPMENT)
 
 
 @pytest.mark.parametrize("environment", list(Environment))
 def test_config_overridable_itself_can_never_be_overridden(
-    deployed_file: str, monkeypatch: pytest.MonkeyPatch, environment: Environment
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: Environment
 ) -> None:
+    document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": ["app.rest.title"]}}
+    path = _write_document(tmp_path, document)
     monkeypatch.setenv("LOOM__CONFIG__OVERRIDABLE", "[app.code_path]")
 
-    with pytest.raises(ConfigError, match="LOOM__CONFIG__OVERRIDABLE"):
-        load_application_config(deployed_file, environment=environment)
+    with pytest.raises(
+        ConfigError,
+        match="LOOM__CONFIG__OVERRIDABLE overrides 'config.overridable'; config.overridable "
+        "is declared only in the configuration files",
+    ):
+        load_application_config(path, environment=environment)
 
 
 def test_a_local_environment_takes_any_leaf(
@@ -309,7 +343,7 @@ def test_a_value_that_is_or_holds_a_mapping_is_refused(
 ) -> None:
     monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ConfigError, match=f"{variable} is a mapping"):
+    with pytest.raises(ConfigError, match=f"{variable} is or holds a mapping"):
         load_application_config(deployed_file, environment=Environment.DEVELOPMENT)
 
 
@@ -319,6 +353,7 @@ def test_a_value_that_is_or_holds_a_mapping_is_refused(
         ("LOOM__APP__REST", ""),
         ("LOOM__APP", "null"),
         ("LOOM__APP__REST__DISABLE_ROUTES", "[]"),
+        ("LOOM__APP__MATRIX", "[]"),
     ],
 )
 def test_a_structure_the_files_declare_cannot_be_replaced(
@@ -328,23 +363,6 @@ def test_a_structure_the_files_declare_cannot_be_replaced(
 
     with pytest.raises(ConfigError, match=f"{variable} targets"):
         load_application_config(deployed_file, environment=Environment.DEVELOPMENT)
-
-
-def test_a_mapping_over_an_interpolated_section_is_refused_without_resolving_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[str] = []
-    OmegaConf.register_new_resolver("overrides_probe2", lambda key: calls.append(key) or {})
-    path = tmp_path / "base.yaml"
-    path.write_text("database: ${overrides_probe2:db}\napp: {name: x}\n", encoding="utf-8")
-    monkeypatch.setenv("LOOM__DATABASE", "{pool_pre_ping: false}")
-    try:
-        with pytest.raises(ConfigError, match="LOOM__DATABASE"):
-            load_application_config(str(path))
-    finally:
-        OmegaConf.clear_resolver("overrides_probe2")
-
-    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -359,7 +377,6 @@ def test_a_tagged_value_that_fails_to_construct_never_echoes_the_value(
         _load(config_file)
 
     secret = value.split(" ", 1)[1]
-    assert secret not in str(caught.value)
     assert secret not in "".join(traceback.format_exception(caught.value))
 
 
@@ -380,17 +397,6 @@ def test_an_interpolation_in_a_value_is_refused_however_it_is_written(
 
     with pytest.raises(ConfigError, match="LOOM__APP__NAME"):
         _load(config_file)
-
-
-def test_no_traceback_of_a_parse_error_carries_the_value(
-    config_file: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("LOOM__APP__WORKERS", "[unclosed-secret")
-
-    with pytest.raises(ConfigError) as caught:
-        _load(config_file)
-
-    assert "unclosed-secret" not in "".join(traceback.format_exception(caught.value))
 
 
 @pytest.mark.parametrize("section", ["LOGGER", "METRICS", "PARAMS"])

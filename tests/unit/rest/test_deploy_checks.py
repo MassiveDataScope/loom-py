@@ -212,7 +212,11 @@ class TestOverridesFromVariables:
         config = write_project(tmp_path, rest={**_NO_DOCS, "auth": {"custom": True}})
         monkeypatch.setenv("LOOM__APP__REST__AUTH__CUSTOM", "false")
 
-        with pytest.raises(ConfigError, match="reviewed"):
+        with pytest.raises(
+            ConfigError,
+            match="LOOM__APP__REST__AUTH__CUSTOM sets 'app.rest.auth.custom', which is not "
+            "overridable in 'production'",
+        ):
             create_app(config, environment=_PRODUCTION)
 
     def test_an_override_reaches_the_application(

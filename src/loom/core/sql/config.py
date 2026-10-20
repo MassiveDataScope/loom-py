@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import msgspec
 
@@ -100,6 +100,10 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
         return self.auth in _IDENTITY_BOUND_AUTH_MODES
 
 
+_Seconds = Annotated[int, msgspec.Meta(gt=0)]
+"""A timeout in seconds; zero would disable it."""
+
+
 class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Named SQL connection with role policy, limits and driver tuning.
 
@@ -127,10 +131,12 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
         readonly: Whether queries run in read-only mode. Defaults to ``True``.
         default_limit: Row limit applied when the request brings none.
         max_limit: Hard cap for any requested limit.
-        max_execution_time: Per-query execution timeout in seconds.
+        max_execution_time: Per-query execution timeout in seconds, above
+            zero: ``0`` means no limit to ClickHouse.
         max_sql_bytes: Maximum accepted SQL statement size in bytes.
-        connect_timeout: Driver connect timeout in seconds.
-        send_receive_timeout: Driver send/receive timeout in seconds.
+        connect_timeout: Driver connect timeout in seconds, above zero.
+        send_receive_timeout: Driver send/receive timeout in seconds, above
+            zero.
         executor_threads: Async client thread pool size (driver default if
             ``None``).
         pool_size: HTTP connection pool size (driver default if ``None``).
@@ -155,10 +161,10 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
     readonly: bool = True
     default_limit: int = 1000
     max_limit: int = 10000
-    max_execution_time: int = 30
+    max_execution_time: _Seconds = 30
     max_sql_bytes: int = 262144
-    connect_timeout: int = 10
-    send_receive_timeout: int = 60
+    connect_timeout: _Seconds = 10
+    send_receive_timeout: _Seconds = 60
     executor_threads: int | None = None
     pool_size: int | None = None
     settings: dict[str, Any] = msgspec.field(default_factory=dict)
