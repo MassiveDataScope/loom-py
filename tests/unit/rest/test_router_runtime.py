@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from datetime import date, datetime
+from enum import Enum
+from typing import Annotated, Any
 
+import msgspec
 import pydantic
 import pytest
 from fastapi import FastAPI
@@ -183,16 +186,25 @@ class _Section(BaseModel):
     __tablename__ = "router_runtime_sections"
 
     id: int = ColumnField(primary_key=True)
-    position: int
+    position: int = ColumnField()
+    sort_order: int = ColumnField()
+
+
+class _Tone(Enum):
+    LIGHT = "light"
+    DARK = "dark"
 
 
 class _Entry(BaseModel):
     __tablename__ = "router_runtime_entries"
 
     id: int = ColumnField(primary_key=True)
-    code: str
-    rank: int
-    active: bool
+    code: str = ColumnField()
+    rank: Annotated[int, msgspec.Meta(ge=1)] = ColumnField()
+    active: bool = ColumnField()
+    tone: _Tone = ColumnField()
+    due: date = ColumnField()
+    seen_at: datetime = ColumnField()
     section: _Section | None = RelationField(
         foreign_key="section_id", cardinality=Cardinality.MANY_TO_ONE
     )
@@ -206,6 +218,12 @@ class EntryFilterValuesUseCase(UseCase[_Entry, dict[str, Any]]):
         await asyncio.sleep(0)
         assert query.filters is not None
         return {spec.field: spec.value for spec in query.filters.filters}
+
+
+class EntryFilterTypesUseCase(EntryFilterValuesUseCase):
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
+        values = await super().execute(query, **kwargs)
+        return {field: type(value).__name__ for field, value in values.items()}
 
 
 class DocUseCase(UseCase[Any, str]):
@@ -610,10 +628,12 @@ def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
     assert "s3cr3t" not in body["message"]
 
 
-def _entry_filter_client() -> TestClient:
+def _entry_filter_client(
+    use_case: type[EntryFilterValuesUseCase] = EntryFilterValuesUseCase,
+) -> TestClient:
     class IFace(RestInterface[_Entry]):
         prefix = "/entries"
-        routes = (RestRoute(use_case=EntryFilterValuesUseCase, method="GET", path="/"),)
+        routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
 
     return TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
 
@@ -633,6 +653,10 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
         ("rank__gte=-3", {"rank": -3}),
         ("active=false", {"active": False}),
         ("section__position=2", {"section.position": 2}),
+        ("section__sortOrder=4", {"section.sort_order": 4}),
+        ("rank__gt=0", {"rank": 0}),
+        ("rank__like=1%25", {"rank": "1%"}),
+        ("rank__ilike=1%25", {"rank": "1%"}),
     ],
 )
 def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
@@ -652,6 +676,8 @@ def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
         ("active=1", "active"),
         ("rank__in=1,s3cr3t", "rank"),
         ("section__position=s3cr3t", "section.position"),
+        ("tone=s3cr3t", "tone"),
+        ("due=s3cr3t", "due"),
     ],
 )
 def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
@@ -1243,3 +1269,12 @@ def test_create_fastapi_app_exists_marker_uses_registered_repository() -> None:
     response = client.post("/users/exists", json={"email": "taken@example.com"})
     assert response.status_code == 200
     assert response.json() is True
+
+
+def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
+    client = _entry_filter_client(EntryFilterTypesUseCase)
+
+    response = client.get("/entries/?tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z")
+
+    assert response.status_code == 200
+    assert response.json() == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}

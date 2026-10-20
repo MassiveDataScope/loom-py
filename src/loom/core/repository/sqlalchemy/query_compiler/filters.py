@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import and_, or_
+from sqlalchemy import JSON, and_, or_
 
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
@@ -14,6 +14,7 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_exists,
     compile_not_exists,
 )
+from loom.core.repository.sqlalchemy.values import to_column_value
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {
@@ -76,5 +77,13 @@ def _compile_spec(
 def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
     handler = _SIMPLE_OPS.get(op)
     if handler is not None:
-        return handler(col, value)
+        return handler(col, _column_value(col, op, value))
     raise ValueError(f"Unsupported FilterOp: {op!r}")
+
+
+def _column_value(col: Any, op: FilterOp, value: Any) -> Any:
+    """Convert *value*, or each ``IN`` item, as the repository converts a value it writes."""
+    json = isinstance(getattr(col, "type", None), JSON)
+    if op is FilterOp.IN:
+        return [to_column_value(item, json=json) for item in value]
+    return to_column_value(value, json=json)

@@ -55,7 +55,7 @@ from loom.core.model import (
     loom_type,
     msgspec_type,
 )
-from loom.core.model.introspection import extract_model_from_hint, resolve_type_hints
+from loom.core.model.introspection import extract_model_from_hint
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -170,6 +170,11 @@ def _normalize_path_param_annotation(annotation: Any) -> Any:
 
 _RESERVED_QUERY_KEYS = frozenset((*QUERY_SPEC_PARAMETER_NAMES, QueryParam.PROFILE))
 _FILTER_OP_VALUES = frozenset(item.value for item in FilterOp)
+# LIKE and ILIKE take a text pattern; the query compilers ignore the value of
+# IS_NULL, EXISTS and NOT_EXISTS.
+_TYPED_FILTER_OPS = frozenset(
+    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
+)
 
 
 def _camel_to_snake(value: str) -> str:
@@ -182,6 +187,11 @@ def _normalize_field_name(value: str) -> str:
     if any(char.isupper() for char in value):
         return _camel_to_snake(value)
     return value
+
+
+def _query_validation(exc: BoundaryValidationError) -> BoundaryValidationError:
+    """Re-issue a query-string validation failure under ``query_validation`` (``400``)."""
+    return BoundaryValidationError(exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION)
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,23 +228,17 @@ class _FilterValues:
         try:
             return getattr(self.decoder.from_query({field: text}), attribute)
         except BoundaryValidationError as exc:
-            raise BoundaryValidationError(
-                exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION
-            ) from exc
-
-
-# LIKE and ILIKE take a text pattern; the query compilers ignore the value of
-# IS_NULL, EXISTS and NOT_EXISTS.
-_TYPED_FILTER_OPS = frozenset(
-    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
-)
+            raise _query_validation(exc) from exc
 
 
 def _column_annotations(model: type[Any]) -> list[tuple[str, Any]]:
-    columns = get_column_fields(model)
-    return [
-        (field.name, field.type) for field in msgspec.structs.fields(model) if field.name in columns
-    ]
+    """Return ``(name, annotation)`` per column of *model*, ``Annotated`` metadata removed.
+
+    A filter value is typed, not constrained: ``rank__gt=0`` is a valid filter
+    on a column declared ``ge=1``.
+    """
+    hints = typing.get_type_hints(model)
+    return [(name, hints[name]) for name in get_column_fields(model)]
 
 
 def _filterable_fields(model: type[Any]) -> list[tuple[str, Any]]:
@@ -243,7 +247,7 @@ def _filterable_fields(model: type[Any]) -> list[tuple[str, Any]]:
     One relation level, the depth the SQLAlchemy query compiler resolves.
     """
     fields = _column_annotations(model)
-    hints = resolve_type_hints(model)
+    hints = typing.get_type_hints(model)
     for relation in get_relations(model):
         target = extract_model_from_hint(hints.get(relation))
         if target is not None and issubclass(target, msgspec.Struct):
@@ -257,7 +261,10 @@ def _filterable_fields(model: type[Any]) -> list[tuple[str, Any]]:
 def _filter_values(model: type[Any] | None) -> _FilterValues:
     """Compile the filter value converter of a route whose use case serves *model*.
 
-    Without a model no field declares a type, so every value keeps its text.
+    A ``QuerySpec`` use case queries its main model, the ``TModel`` of
+    ``UseCase[TModel, ...]``, so the fields of that model type the filter
+    values. A use case with no model (``UseCase[Any, ...]``) has no field to
+    type them by and receives every value as the text sent.
     """
     if model is None:
         return _FilterValues(decoder=None, attributes={})
@@ -479,9 +486,7 @@ class _DeclaredQuery:
                 {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
             )
         except BoundaryValidationError as exc:
-            raise BoundaryValidationError(
-                exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION
-            ) from exc
+            raise _query_validation(exc) from exc
 
 
 @dataclass(frozen=True, slots=True)

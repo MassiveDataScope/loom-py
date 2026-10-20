@@ -5,15 +5,17 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct
+from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
+from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -29,6 +31,22 @@ class _Doc(BaseModel):
 class _CreateDoc(Command, frozen=True):
     stamped_at: datetime
     meta: dict[str, Any]
+
+
+class _Shade(Enum):
+    LIGHT = "light"
+    DARK = "dark"
+
+
+class _Swatch(BaseModel):
+    __tablename__ = "typed_swatches"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    shade: _Shade = ColumnField(String(16))
+
+
+class _CreateSwatch(Command, frozen=True):
+    shade: _Shade
 
 
 class _CustomerOut(LoomStruct, rename="camel"):
@@ -87,7 +105,7 @@ _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
 @pytest.fixture
 async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Doc, _Customer, _Ticket, _Tag)
+    compile_all(_Doc, _Customer, _Ticket, _Tag, _Swatch)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -167,3 +185,24 @@ class TestRelatedStructs:
         assert read is not None
         assert read.tags == written.tags
         assert read.tags == [{"id": tag.id, "ticketId": ticket.id, "labelText": "urgent"}]
+
+
+class TestFilterValues:
+    @pytest.mark.parametrize(
+        ("op", "value"),
+        [(FilterOp.EQ, _Shade.DARK), (FilterOp.IN, [_Shade.DARK])],
+    )
+    async def test_a_plain_enum_filter_value_matches_what_the_write_stored(
+        self, session_manager: SessionManager, op: FilterOp, value: Any
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Swatch
+        )
+        await repo.create(_CreateSwatch(shade=_Shade.LIGHT))
+        dark = await repo.create(_CreateSwatch(shade=_Shade.DARK))
+
+        page = await repo.list_with_query(
+            QuerySpec(filters=FilterGroup(filters=(FilterSpec(field="shade", op=op, value=value),)))
+        )
+
+        assert [item.id for item in page.items] == [dark.id]

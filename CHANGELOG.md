@@ -767,6 +767,12 @@
 
 ### core
 
+- **core:** the SQLAlchemy query compiler converts a filter value, and each
+  `in` item, as the repository converts a value it writes
+  (`loom.core.repository.sqlalchemy.values.to_column_value`, now shared by
+  both): an `Enum` member is bound as its value, a JSON column's value is
+  reduced to builtins. A plain `Enum` member as the value of a filter on a
+  string column failed to bind.
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become
@@ -961,12 +967,16 @@
   are now converted by the type the field declares on the use case's model
   (`UseCase[Model, ...]`), its columns and those of a related model one level
   down, with the strict grammar of `Query()`: a `str` field keeps the text as
-  sent, and a value its field's type refuses answers `400 query_validation`
-  with `violations` naming the field. `like` and `ilike` keep their pattern as
-  text. A use case declaring no model (`UseCase[Any, ...]`) has no field types
-  to apply, so its filter values now reach it as the text sent; a path the
-  model does not declare is passed as text to the repository, which refuses an
-  unknown one with `400 unsupported_query`.
+  sent, a boolean accepts only `true` or `false`, an `Enum` or `Literal` only
+  its values, and a value its field's type refuses answers
+  `400 query_validation` with `violations` naming the field. The field's
+  constraints (`msgspec.Meta`) do not apply to a filter value, so `rank__gt=0`
+  is valid on a column declared `ge=1`. `like` and `ilike` keep their pattern
+  as text. A route whose use case declares no model (`UseCase[Any, ...]`) has
+  no field types to apply and now receives every filter value as the text
+  sent, so a use case that queries a repository of its own must convert them.
+  A path the model does not declare is passed as text to the repository,
+  which refuses an unknown one with `400 unsupported_query`.
 - **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
   `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
   while the router clamped `?limit=` to `max_limit`. The schema now publishes
