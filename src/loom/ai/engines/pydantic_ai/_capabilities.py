@@ -115,9 +115,7 @@ class _UsecaseGrant:
 def _grant(key: str, use_case: type[Compilable]) -> _UsecaseGrant:
     execution = use_case.__execution_plan__
     if execution is None:
-        raise AgentCompilationError(
-            [f"use case '{key}' carries no compiled execution plan; it was never compiled"]
-        )
+        raise AgentCompilationError([AgentErrorCode.USECASE_NOT_COMPILED.issue(key=key)])
     return _UsecaseGrant(
         tool_name=tool_name("usecase", key), key=key, use_case=use_case, execution=execution
     )
@@ -637,7 +635,11 @@ def _build(plan: AgentPlan, destination: _Destination, context: BuildContext) ->
         binding = _KINDS.get(type(capability))
         if binding is None:
             raise AgentCompilationError(
-                [f"{context.agent}: capability kind '{capability.kind}' has no builder"]
+                [
+                    AgentErrorCode.CAPABILITY_KIND_NO_BUILDER.issue(
+                        component=context.agent, kind=capability.kind
+                    )
+                ]
             )
         if binding.destination is destination:
             yield binding.builder(capability, context)

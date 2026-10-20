@@ -304,17 +304,6 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
     )
 
 
-def _unopened_connection(agent: str, server: str) -> str:
-    """Describe the wiring that would give an agent an unvalidated connection."""
-    return (
-        f"{agent}: the runtime never opened mcp server '{server}' through this engine's "
-        f"shared toolsets. The runtime's 'mcp_client_factory' must be the "
-        f"'mcp_client_factory' of the very provider instance that builds the engines, "
-        f"or the run would hold a second connection whose tool filters start-up never "
-        f"validated"
-    )
-
-
 class SharedMcpToolsets:
     """The MCP toolsets of one worker: one per distinct connection.
 
@@ -408,7 +397,13 @@ class SharedMcpToolsets:
         """
         connection = mcp_connection(capability)
         if connection not in self._opened:
-            raise AgentCompilationError([_unopened_connection(agent, capability.server)])
+            raise AgentCompilationError(
+                [
+                    AgentErrorCode.MCP_CONNECTION_NOT_OPENED.issue(
+                        component=agent, server=capability.server
+                    )
+                ]
+            )
         return self._toolset(connection)
 
     def _toolset(self, connection: CompiledMcpCapability) -> MCPToolset[Any]:

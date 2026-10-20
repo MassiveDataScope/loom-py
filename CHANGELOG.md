@@ -459,6 +459,36 @@
 
 ### core
 
+- **core:** `RuleViolation` and `RuleViolations` are no longer exported by
+  `loom.core.use_case` or `loom.core.use_case.rule`. Import them from
+  `loom.core.errors`, their only public home.
+- **core:** wrapping a repository in `CachedRepository` raises `RuntimeError`
+  when one of its `@cache_query` reads has a missing return annotation, one
+  the defining module cannot resolve, or one outside the supported grammar,
+  naming the repository and the method; a `@cached` repository therefore fails
+  when it is built. Before, wrapping emitted a `DeprecationWarning` and logged
+  `CacheQueryReturnTypeUnusable`, and the cached call returned the decoded
+  payload instead of the declared type. Annotate the read's return type with a
+  struct, a scalar, or a `list`, `tuple` or optional of those. A
+  `@cache_query` coroutine that is not defined on the repository class, such
+  as one set on the instance, raises `RuntimeError` when it is looked up on
+  the wrapper, since no codec was built for it; define it as a method of the
+  class.
+- **core:** a field annotated `X | UnsetType` infers `X`'s column type.
+  `UNSET` means "not provided", not another type, so `str | UnsetType` now
+  compiles to `String` and `int | UnsetType` to `Integer` instead of `JSON`,
+  and `Annotated[str, String(20)] | UnsetType` reads its declared type. Such
+  a column is scalar: a REST route may declare it filterable, `like` and
+  `ilike` included for text, and sortable by offset; a cursor sort on it is
+  still refused, since a cursor key must be a bare type. Nullability is
+  unchanged: `str | None | UnsetType` admits `None` and is nullable,
+  `UnsetType` alone keeps the column `NOT NULL`. An undeclared
+  `Decimal | UnsetType`, plain `Enum | UnsetType` or `Literal[...] | UnsetType`
+  now needs a declared column type, as it does without `UnsetType`. On Mongo,
+  a `str | UnsetType` or `UUID | UnsetType` primary key is now accepted, and
+  a range filter or sort on a `Decimal | UnsetType` field is refused, as on a
+  `Decimal` field. Alembic autogenerate will show the type change from `JSON`
+  for existing tables with such columns.
 - **core:** a column's nullability follows its field's annotation. A field
   whose annotation admits `None` (`x: int | None = None`, also inside
   `Annotated`) compiles to a nullable column; any other field compiles to
@@ -787,9 +817,15 @@
   example `spec_malformed`, `engine_not_found` and `mcp_server_unreachable`.
   Build an issue with `AgentErrorCode.X.issue(...)` and keyword arguments,
   such as `AgentErrorCode.ENGINE_NOT_FOUND.issue(component="openai-agents",
-  available=["pydantic-ai"])`. `loom.ai.errors.from_message` is removed too:
-  `AgentCompilationError` still turns a bare string into an `UNSPECIFIED`
-  issue. Messages keep their text; a list that is empty renders `none`.
+  available=["pydantic-ai"])`. `loom.ai.errors.from_message` is removed too.
+  Messages keep their text; a list that is empty renders `none`.
+- **ai:** `AgentCompilationError` takes `AgentCompilationIssue` values only;
+  bare strings and the `AgentErrorCode.UNSPECIFIED` code they became are
+  removed. Build an issue from an `AgentErrorCode` member with `.issue()`.
+  The five pydantic-ai engine failures that raised bare strings now carry
+  their own codes, with the same messages: `TOOL_NAME_COLLISION`,
+  `TOOL_NAME_TOO_LONG`, `USECASE_NOT_COMPILED`, `CAPABILITY_KIND_NO_BUILDER`
+  and `MCP_CONNECTION_NOT_OPENED`.
 - **ai:** `AgentCompilationIssue` is a type alias of
   `CompileIssue[AgentErrorCode]` from `loom.core.errors.codes`, not a class.
   It has the same fields, but `isinstance` against it raises `TypeError`
@@ -1262,6 +1298,14 @@
 
 ### core
 
+- **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
+  primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
+  handed the raw key to boto3's `TypeSerializer`, which raised
+  `TypeError: Unsupported type "<class 'uuid.UUID'>"`; `create` already stored
+  the key as a string through `msgspec.to_builtins`. The key is now encoded
+  with that same conversion, so it matches its stored form and round-trips.
+  `update` keeps the key as stored instead of rewriting it from the argument.
+  Attribute values are encoded as before.
 - **cache:** security: the repository cache keeps each caller's entries apart.
   The entity key (`get_by_id`, and the rows behind a cached page), the
   `list_paginated` index key, the `list_with_query` key and the key of a

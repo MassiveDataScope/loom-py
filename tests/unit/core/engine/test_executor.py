@@ -8,10 +8,9 @@ import pytest
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
-from loom.core.errors import NotFound
+from loom.core.errors import NotFound, RuleViolation, RuleViolations
 from loom.core.identity import ANONYMOUS
 from loom.core.use_case.markers import Exists, Input, Load, LoadById, OnMissing
-from loom.core.use_case.rule import RuleViolation, RuleViolations
 from loom.core.use_case.use_case import UseCase
 
 # ---------------------------------------------------------------------------

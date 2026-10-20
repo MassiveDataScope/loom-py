@@ -14,8 +14,8 @@ from loom.core.engine.plan import (
     ParamBinding,
     RuleStep,
 )
+from loom.core.errors import RuleViolation
 from loom.core.use_case.markers import LookupKind, SourceKind
-from loom.core.use_case.rule import RuleViolation
 
 # ---------------------------------------------------------------------------
 # Helpers

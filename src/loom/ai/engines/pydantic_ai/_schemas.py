@@ -24,7 +24,7 @@ from loom.ai.compiler import (
     CompiledSqlCapability,
     CompiledUsecaseCapability,
 )
-from loom.ai.errors import AgentCompilationError
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.engine.plan import ExecutionPlan
 
 _MAX_TOOL_NAME = 64
@@ -84,8 +84,9 @@ def reject_unusable_names(capabilities: Sequence[CompiledCapability], agent: str
             if clash is not None:
                 raise AgentCompilationError(
                     [
-                        f"{agent}: grants '{clash}' and '{granted}' both derive "
-                        f"the tool name '{name}'"
+                        AgentErrorCode.TOOL_NAME_COLLISION.issue(
+                            component=agent, first=clash, second=granted, name=name
+                        )
                     ]
                 )
             seen[name] = granted
@@ -96,9 +97,13 @@ def _reject_long_name(name: str, granted: str, agent: str) -> None:
         return
     raise AgentCompilationError(
         [
-            f"{agent}: grant '{granted}' derives the tool name '{name}' of "
-            f"{len(name)} characters, above the {_MAX_TOOL_NAME}-character bound "
-            f"providers accept"
+            AgentErrorCode.TOOL_NAME_TOO_LONG.issue(
+                component=agent,
+                granted=granted,
+                name=name,
+                length=len(name),
+                limit=_MAX_TOOL_NAME,
+            )
         ]
     )
 
