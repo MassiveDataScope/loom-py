@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
-from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
+from loom.streaming.compiler._errors import CompilationIssue
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.kafka._config import ConsumerSettings, ProducerSettings
 from loom.streaming.kafka._wire import DispatchTable
@@ -110,29 +110,19 @@ class CompilationError(Exception):
     """Raised when a StreamFlow fails validation or cannot be compiled.
 
     Aggregates every :class:`CompilationIssue` found in a compilation run.
-    Bare strings are accepted for backwards compatibility and normalized to
-    issues with code :data:`StreamingErrorCode.UNSPECIFIED`.
 
     Attributes:
         issues: Structured issues, one per failure, each carrying a
             machine-readable code, component, and optional config field.
 
     Args:
-        issues: Issues (or legacy message strings) collected by the compiler.
+        issues: Issues collected by the compiler.
     """
 
-    def __init__(self, issues: Sequence[CompilationIssue | str]) -> None:
-        self.issues: tuple[CompilationIssue, ...] = tuple(
-            StreamingErrorCode.UNSPECIFIED.issue(message=item) if isinstance(item, str) else item
-            for item in issues
-        )
+    def __init__(self, issues: Sequence[CompilationIssue]) -> None:
+        self.issues: tuple[CompilationIssue, ...] = tuple(issues)
         messages = [issue.message for issue in self.issues]
         super().__init__(f"Compilation failed with {len(messages)} error(s): {'; '.join(messages)}")
-
-    @property
-    def errors(self) -> list[str]:
-        """Human-readable messages, one per issue (legacy accessor)."""
-        return [issue.message for issue in self.issues]
 
 
 CompiledSource = CompiledSingleSource | CompiledMultiSource | CompiledMongoCDCSource

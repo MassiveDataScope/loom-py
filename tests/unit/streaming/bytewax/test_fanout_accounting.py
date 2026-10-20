@@ -619,7 +619,12 @@ class TestCommitKeyGuards:
 
 _PATH_CONFIG = {
     "kafka": {
-        "consumer": {"brokers": ["localhost:9092"], "group_id": "g", "topics": ["items"]},
+        "consumer": {
+            "brokers": ["localhost:9092"],
+            "group_id": "g",
+            "delivery": "at_most_once",
+            "topics": ["items"],
+        },
         # No default topic, so every IntoTopic writes to the topic it names.
         "producer": {"brokers": ["localhost:9092"]},
     },

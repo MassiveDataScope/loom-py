@@ -76,9 +76,7 @@ class TestCompilationErrorContract:
         assert mismatch.component == "FakeStep"
         assert "shape mismatch" in mismatch.message
 
-    def test_errors_property_mirrors_issue_messages(
-        self, streaming_kafka_config: DictConfig
-    ) -> None:
+    def test_message_lists_every_issue_message(self, streaming_kafka_config: DictConfig) -> None:
         flow: StreamFlow[Order, Result] = StreamFlow(
             name="test",
             source=FromTopic("in", payload=Order),
@@ -89,8 +87,10 @@ class TestCompilationErrorContract:
             compile_flow(flow, config=streaming_kafka_config)
 
         exc = exc_info.value
-        assert exc.errors == [issue.message for issue in exc.issues]
-        assert str(exc).startswith(f"Compilation failed with {len(exc.issues)} error(s):")
+        assert str(exc) == (
+            f"Compilation failed with {len(exc.issues)} error(s): "
+            + "; ".join(issue.message for issue in exc.issues)
+        )
 
     def test_missing_terminal_output_code_and_field(
         self, streaming_kafka_config: DictConfig
@@ -125,13 +125,6 @@ class TestCompilationErrorContract:
 
         codes = {issue.code for issue in exc_info.value.issues}
         assert StreamingErrorCode.KAFKA_CONFIG_INVALID in codes
-
-    def test_constructor_normalizes_bare_strings(self) -> None:
-        exc = CompilationError(["legacy message"])
-
-        assert exc.errors == ["legacy message"]
-        assert exc.issues[0].code is StreamingErrorCode.UNSPECIFIED
-        assert exc.issues[0].message == "legacy message"
 
 
 class TestBranchPrefixing:

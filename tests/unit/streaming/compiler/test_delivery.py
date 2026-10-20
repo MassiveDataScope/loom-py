@@ -1,4 +1,4 @@
-"""Delivery-semantics validation: DELIVERY_CONFLICT detection and compilation."""
+"""Delivery-semantics validation: a declared delivery and what it requires of a flow."""
 
 from __future__ import annotations
 
@@ -39,48 +39,9 @@ def _kafka_config(consumer_overrides: dict[str, object]) -> dict[str, object]:
 
 
 class TestValidateDelivery:
-    @pytest.mark.parametrize(
-        ("delivery", "enable_auto_commit"),
-        [
-            ("at_least_once", True),
-            ("at_most_once", False),
-        ],
-    )
-    def test_conflicting_fields_emit_delivery_conflict(
-        self,
-        delivery: str,
-        enable_auto_commit: bool,
-    ) -> None:
-        ctx = ConfigContext.from_dict(
-            _kafka_config({"delivery": delivery, "enable_auto_commit": enable_auto_commit})
-        )
-
-        issues = validate_delivery(_flow(), ctx)
-
-        assert len(issues) == 1
-        issue = issues[0]
-        assert issue.code is StreamingErrorCode.DELIVERY_CONFLICT
-        assert issue.field == "kafka.consumer.enable_auto_commit"
-        assert delivery in issue.message
-        assert "enable_auto_commit" in issue.message
-
-    @pytest.mark.parametrize(
-        "consumer_overrides",
-        [
-            {},
-            {"delivery": "at_least_once"},
-            {"delivery": "at_most_once"},
-            {"enable_auto_commit": True},
-            {"enable_auto_commit": False},
-            {"delivery": "at_least_once", "enable_auto_commit": False},
-            {"delivery": "at_most_once", "enable_auto_commit": True},
-        ],
-    )
-    def test_consistent_or_partial_fields_pass(
-        self,
-        consumer_overrides: dict[str, object],
-    ) -> None:
-        ctx = ConfigContext.from_dict(_kafka_config(consumer_overrides))
+    @pytest.mark.parametrize("delivery", ["at_least_once", "at_most_once"])
+    def test_a_declared_delivery_passes(self, delivery: str) -> None:
+        ctx = ConfigContext.from_dict(_kafka_config({"delivery": delivery}))
 
         assert validate_delivery(_flow(), ctx) == []
 
@@ -88,23 +49,20 @@ class TestValidateDelivery:
         assert validate_delivery(_flow(), ConfigContext.from_dict({})) == []
 
 
-class TestCompileFlowDeliveryConflict:
-    def test_compile_flow_raises_with_delivery_conflict_code(
-        self,
-        streaming_kafka_config: DictConfig,
-    ) -> None:
-        config = OmegaConf.merge(
-            streaming_kafka_config,
-            {"kafka": {"consumer": {"delivery": "at_least_once", "enable_auto_commit": True}}},
-        )
-
-        flow = _flow()
+class TestCompileFlowUndeclaredDelivery:
+    def test_a_consumer_without_delivery_is_refused(self) -> None:
+        config = OmegaConf.create(_kafka_config({}))
 
         with pytest.raises(CompilationError) as exc_info:
-            compile_flow(flow, config=config)
+            compile_flow(_flow(), config=config)
 
-        codes = {issue.code for issue in exc_info.value.issues}
-        assert StreamingErrorCode.DELIVERY_CONFLICT in codes
+        issues = [
+            issue
+            for issue in exc_info.value.issues
+            if issue.code is StreamingErrorCode.KAFKA_CONFIG_INVALID
+        ]
+        assert len(issues) == 1
+        assert "missing required field `delivery`" in issues[0].message
 
 
 class TestUnroutedForkUnderAtLeastOnce:

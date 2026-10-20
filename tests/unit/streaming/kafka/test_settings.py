@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import msgspec
 import pytest
 
 from loom.core.routing import LogicalRef
@@ -53,7 +54,7 @@ def test_consumer_settings_compile_to_confluent_config() -> None:
         group_id="g-1",
         topics=("orders",),
         auto_offset_reset="latest",
-        enable_auto_commit=False,
+        delivery="at_least_once",
         extra={"fetch.min.bytes": 1024},
     )
 
@@ -66,46 +67,27 @@ def test_consumer_settings_compile_to_confluent_config() -> None:
     assert config["fetch.min.bytes"] == 1024
 
 
-def test_consumer_settings_enable_auto_commit_defaults_to_true() -> None:
-    settings = ConsumerSettings(
-        brokers=("k1:9092",),
-        group_id="g-1",
-        topics=("orders",),
-    )
+_CONSUMER_SECTION: dict[str, object] = {
+    "brokers": ["k1:9092"],
+    "group_id": "g-1",
+    "topics": ["orders"],
+}
 
-    config = settings.to_confluent_config()
 
-    assert config["enable.auto.commit"] is True
+def test_consumer_settings_require_delivery() -> None:
+    with pytest.raises(msgspec.ValidationError, match="missing required field `delivery`"):
+        msgspec.convert(_CONSUMER_SECTION, ConsumerSettings)
 
 
 @pytest.mark.parametrize(
-    ("delivery", "enable_auto_commit", "expected"),
-    [
-        (None, None, "at_most_once"),
-        (None, True, "at_most_once"),
-        (None, False, "at_least_once"),
-        ("at_least_once", None, "at_least_once"),
-        ("at_least_once", True, "at_least_once"),
-        ("at_least_once", False, "at_least_once"),
-        ("at_most_once", None, "at_most_once"),
-        ("at_most_once", True, "at_most_once"),
-        ("at_most_once", False, "at_most_once"),
-    ],
+    ("field_name", "value"),
+    [("poll_timeout_ms", 100), ("enable_auto_commit", False)],
 )
-def test_consumer_settings_effective_delivery_matrix(
-    delivery: str | None,
-    enable_auto_commit: bool | None,
-    expected: str,
-) -> None:
-    settings = ConsumerSettings(
-        brokers=("k1:9092",),
-        group_id="g-1",
-        topics=("orders",),
-        delivery=delivery,  # type: ignore[arg-type]
-        enable_auto_commit=enable_auto_commit,
-    )
+def test_consumer_settings_refuse_removed_fields(field_name: str, value: object) -> None:
+    section = {**_CONSUMER_SECTION, "delivery": "at_least_once", field_name: value}
 
-    assert settings.effective_delivery() == expected
+    with pytest.raises(msgspec.ValidationError, match=f"unknown field `{field_name}`"):
+        msgspec.convert(section, ConsumerSettings)
 
 
 @pytest.mark.parametrize(
@@ -134,6 +116,7 @@ def test_consumer_settings_batching_defaults() -> None:
         brokers=("k1:9092",),
         group_id="g-1",
         topics=("orders",),
+        delivery="at_most_once",
     )
 
     assert settings.batch_size == 500
@@ -158,6 +141,7 @@ def test_consumer_settings_reject_non_positive_batching_values(
             brokers=("k1:9092",),
             group_id="g-1",
             topics=("orders",),
+            delivery="at_most_once",
             **{field_name: value},  # type: ignore[arg-type]
         )
 
@@ -204,6 +188,7 @@ def test_consumer_settings_reject_extra_override_of_typed_keys() -> None:
         group_id="g-1",
         topics=("orders",),
         extra={"group.id": "other-group"},
+        delivery="at_most_once",
     )
 
     with pytest.raises(ValueError, match="group.id"):
@@ -220,11 +205,13 @@ def test_kafka_settings_resolve_specific_config_before_default() -> None:
         brokers=("default:9092",),
         group_id="default",
         topics=("default.topic",),
+        delivery="at_most_once",
     )
     specific_consumer = ConsumerSettings(
         brokers=("reader:9092",),
         group_id="orders",
         topics=("orders.raw.v1",),
+        delivery="at_most_once",
     )
     settings = KafkaSettings(
         producer=default_producer,
@@ -255,6 +242,7 @@ def test_topic_resolution_uses_configured_physical_topic_before_boundary_fallbac
         brokers=("k1:9092",),
         group_id="g-1",
         topics=("physical.in",),
+        delivery="at_most_once",
     )
 
     assert resolve_producer_topic(LogicalRef("logical-output"), producer) == "physical.out"
@@ -275,4 +263,5 @@ def test_commit_keepalive_ms_rejects_non_positive_values() -> None:
             group_id="test",
             topics=("orders.in",),
             commit_keepalive_ms=0,
+            delivery="at_most_once",
         )

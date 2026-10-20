@@ -213,15 +213,6 @@ class StreamingErrorCode(IssueCode):
     )
 
     # Delivery-semantics phase (partitioned source spec)
-    DELIVERY_CONFLICT = (
-        "DELIVERY_CONFLICT",
-        Template(
-            "kafka consumer '{consumer_ref}': delivery={delivery} conflicts with "
-            "enable_auto_commit={enable_auto_commit}; remove the deprecated enable_auto_commit",
-            component="kafka consumer '{consumer_ref}'",
-            field="kafka.consumer.enable_auto_commit",
-        ),
-    )
     DELIVERY_KEYED_MULTIPROCESS = (
         "DELIVERY_KEYED_MULTIPROCESS",
         Template(
@@ -274,9 +265,6 @@ class StreamingErrorCode(IssueCode):
             field="default",
         ),
     )
-
-    # Issues built from bare strings
-    UNSPECIFIED = "UNSPECIFIED", Template("{message}", component="")
 
 
 CompilationIssue: TypeAlias = CompileIssue[StreamingErrorCode]

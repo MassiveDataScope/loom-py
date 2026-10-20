@@ -24,6 +24,7 @@ kafka:
     brokers:
       - localhost:9092
     group_id: orders
+    delivery: at_most_once
     topics:
       - orders.in
     auto_offset_reset: latest
@@ -78,6 +79,7 @@ kafka:
     brokers:
       - default:9092
     group_id: default-group
+    delivery: at_most_once
     topics:
       - default.topic
 
@@ -93,6 +95,7 @@ kafka:
       brokers:
         - reader:9092
       group_id: orders-reader
+      delivery: at_most_once
       topics:
         - orders.raw.v1
 """.lstrip(),

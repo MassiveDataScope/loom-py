@@ -1088,6 +1088,28 @@
 
 ### streaming
 
+- **streaming:** `ConsumerSettings.delivery` is required. A Kafka consumer
+  config without `delivery` fails to decode, so compiling a flow that reads
+  from Kafka raises `CompilationError` with `KAFKA_CONFIG_INVALID` naming the
+  missing field. Before, a missing `delivery` resolved to `at_most_once`.
+  Declare `delivery: at_most_once` to keep that behaviour, or
+  `delivery: at_least_once`. `ConsumerSettings.effective_delivery()` is
+  removed; read `ConsumerSettings.delivery`.
+- **streaming:** `ConsumerSettings.enable_auto_commit` is removed, together
+  with the `DELIVERY_CONFLICT` compile code. The consumer settings forbid
+  unknown fields, so a config that sets `enable_auto_commit` fails to decode
+  (`KAFKA_CONFIG_INVALID`). Declare `delivery` instead: `enable_auto_commit:
+  false` was `delivery: at_least_once`, and `true` was `delivery:
+  at_most_once`.
+- **streaming:** `ConsumerSettings.poll_timeout_ms` is removed. The
+  partitioned source ignored it and logged a deprecation warning; a config
+  that sets it now fails to decode (`KAFKA_CONFIG_INVALID`). Remove the key;
+  the partitioned source is tuned with `batch_size` and `poll_backoff_ms`.
+- **streaming:** `CompilationError` takes `CompilationIssue` values only;
+  bare strings and the `StreamingErrorCode.UNSPECIFIED` code they became are
+  removed. Build an issue from a `StreamingErrorCode` member with `.issue()`.
+- **streaming:** `CompilationError.errors` is removed. Read the messages from
+  `CompilationError.issues` (`[issue.message for issue in error.issues]`).
 - **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
   `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
   and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`

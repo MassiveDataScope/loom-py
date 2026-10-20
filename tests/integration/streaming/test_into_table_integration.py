@@ -282,6 +282,7 @@ class TestIntoTableSQLAlchemyIntegration:
                     "consumer": {
                         "brokers": ["localhost:9092"],
                         "group_id": "test",
+                        "delivery": "at_most_once",
                         "topics": ["orders.raw"],
                     }
                 },
@@ -381,6 +382,7 @@ class TestIntoTableSQLAlchemyIntegration:
                     "consumer": {
                         "brokers": ["localhost:9092"],
                         "group_id": "test",
+                        "delivery": "at_most_once",
                         "topics": ["events.raw"],
                     }
                 },

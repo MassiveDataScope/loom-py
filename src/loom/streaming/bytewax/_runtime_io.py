@@ -191,7 +191,6 @@ _METADATA_RETRY_INTERVAL_S = 0.25
 _RETRIABLE_METADATA_CODES = frozenset(
     {KafkaError.UNKNOWN_TOPIC_OR_PART, KafkaError.LEADER_NOT_AVAILABLE}
 )
-_DEFAULT_POLL_TIMEOUT_MS = 100
 _ADMIN_KEY_PREFIXES = ("security.", "sasl.", "ssl.", "enable.ssl.")
 
 
@@ -259,11 +258,6 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
         self._source = source
         self._commit_tracker = commit_tracker
         self._observability = observability
-        if source.settings.poll_timeout_ms != _DEFAULT_POLL_TIMEOUT_MS:
-            logger.warning(
-                "kafka consumer poll_timeout_ms is deprecated for the partitioned "
-                "source and ignored; use batch_size and poll_backoff_ms instead"
-            )
 
     def list_parts(self) -> list[str]:
         """List one partition key per Kafka partition of every source topic.
@@ -845,7 +839,7 @@ def build_commit_tracker(source: CompiledSource) -> KafkaCommitTracker | None:
     """Build a commit tracker when explicit source commits are required."""
     if not isinstance(source, (CompiledSingleSource, CompiledMultiSource)):
         return None
-    if source.settings.effective_delivery() == "at_most_once":
+    if source.settings.delivery == "at_most_once":
         return None
     return KafkaCommitTracker()
 
