@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from datetime import date, time
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
@@ -118,6 +119,13 @@ class _LegacyAuditEntity(BaseModel):
     __tablename__ = "test_legacy_audit_entities"
     id: int = ColumnField(primary_key=True, autoincrement=True)
     updated_at: str = ColumnField(server_onupdate="now", nullable=True)
+
+
+class _Shift(BaseModel):
+    __tablename__ = "test_shifts"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    day: date = ColumnField()
+    starts_at: time = ColumnField()
 
 
 @pytest.fixture(autouse=True)
@@ -242,6 +250,14 @@ class TestCompileModel:
         sa_cls = cast(Any, compile_model(_LegacyAuditEntity))
         updated = sa_cls.__table__.c.updated_at
         assert updated.onupdate is not None
+
+    def test_date_and_time_fields_compile_to_date_and_time_columns(self) -> None:
+        sa_cls = cast(Any, compile_model(_Shift))
+
+        ddl = str(CreateTable(sa_cls.__table__).compile(dialect=postgresql.dialect()))
+
+        assert "day DATE NOT NULL" in ddl
+        assert "starts_at TIME WITHOUT TIME ZONE NOT NULL" in ddl
 
 
 class TestCompileAll:

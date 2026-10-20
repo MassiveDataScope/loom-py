@@ -32,11 +32,13 @@ from loom.core.model.types import (
     JSON,
     Boolean,
     Bytes,
+    Date,
     DateTime,
     Float,
     Integer,
     Numeric,
     String,
+    Time,
 )
 from loom.core.schema_names import sql_identifier
 
@@ -411,8 +413,8 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     bool: Boolean,
     bytes: Bytes,
     datetime: DateTime(tz=True),
-    date: String(None),
-    time: String(None),
+    date: Date,
+    time: Time,
     Decimal: _UNDECLARED_DECIMAL,
 }
 
