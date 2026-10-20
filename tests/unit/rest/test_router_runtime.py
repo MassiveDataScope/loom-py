@@ -1199,63 +1199,30 @@ def test_create_fastapi_app_accepts_fastapi_kwargs() -> None:
     assert app.version == "2.0.0"
 
 
-class TestDeprecatedInterfacesKeyword:
-    """B1: the pre-``RouteSources`` ``interfaces=`` keyword keeps working."""
+class TestRoutesArgument:
+    """``routes`` is the one way to name the interfaces to mount."""
 
-    def test_interfaces_keyword_mounts_the_same_routes_as_routes(self) -> None:
-        class IFace(RestInterface[str]):
-            prefix = "/ping"
-            routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
+    def test_routes_are_required(self) -> None:
         result = _bootstrap(PingUseCase)
-        with pytest.deprecated_call():
-            app = create_fastapi_app(
-                result,
-                interfaces=[IFace],
-                observability_runtime=ObservabilityRuntime.noop(),
-            )
-        client = TestClient(app)
-        assert client.get("/ping/").json() == "pong"
+        observability_runtime = ObservabilityRuntime.noop()
+        with pytest.raises(TypeError, match="routes"):
+            create_fastapi_app(result, observability_runtime=observability_runtime)  # type: ignore[call-arg]
 
-    def test_interfaces_keyword_warns_naming_routes_as_the_replacement(self) -> None:
+    def test_the_interfaces_keyword_is_refused(self) -> None:
         class IFace(RestInterface[str]):
             prefix = "/ping"
             routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
 
         result = _bootstrap(PingUseCase)
         observability_runtime = ObservabilityRuntime.noop()
-        with pytest.warns(DeprecationWarning, match="routes=RouteSources"):
-            create_fastapi_app(
+        with pytest.raises(TypeError, match="routes"):
+            create_fastapi_app(  # type: ignore[call-arg]
                 result,
                 interfaces=[IFace],
                 observability_runtime=observability_runtime,
             )
 
-    def test_interfaces_keyword_warning_points_at_the_caller_not_this_module(self) -> None:
-        """L8: stacklevel must land on this test's call site, not app.py's internals."""
-
-        class IFace(RestInterface[str]):
-            prefix = "/ping"
-            routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-        result = _bootstrap(PingUseCase)
-        observability_runtime = ObservabilityRuntime.noop()
-        with pytest.warns(DeprecationWarning) as record:
-            create_fastapi_app(
-                result,
-                interfaces=[IFace],
-                observability_runtime=observability_runtime,
-            )
-
-        assert record[0].filename == __file__
-
-    def test_neither_routes_nor_interfaces_raises_type_error(self) -> None:
-        result = _bootstrap(PingUseCase)
-        observability_runtime = ObservabilityRuntime.noop()
-        with pytest.raises(TypeError, match="requires 'routes'"):
-            create_fastapi_app(result, observability_runtime=observability_runtime)
-
-    def test_the_old_positional_sequence_names_its_replacement(self) -> None:
+    def test_a_bare_sequence_names_route_sources(self) -> None:
         class IFace(RestInterface[str]):
             prefix = "/ping"
             routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
@@ -1266,22 +1233,6 @@ class TestDeprecatedInterfacesKeyword:
             create_fastapi_app(
                 result,
                 [IFace],  # type: ignore[arg-type]
-                observability_runtime=observability_runtime,
-            )
-
-    def test_both_routes_and_interfaces_raises_type_error(self) -> None:
-        class IFace(RestInterface[str]):
-            prefix = "/ping"
-            routes = (RestRoute(use_case=PingUseCase, method="GET", path="/"),)
-
-        result = _bootstrap(PingUseCase)
-        route_sources = RouteSources(python=[IFace])
-        observability_runtime = ObservabilityRuntime.noop()
-        with pytest.raises(TypeError, match="not both"):
-            create_fastapi_app(
-                result,
-                routes=route_sources,
-                interfaces=[IFace],
                 observability_runtime=observability_runtime,
             )
 
