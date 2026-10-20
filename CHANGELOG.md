@@ -1695,8 +1695,9 @@
   refuses an `UNSET` column value when the item is written, with
   `BoundaryValidationError` (`boundary_validation`) naming the field and the
   table. Delta failed later, at a mini-batch or flush, with pyarrow's
-  `ArrowInvalid`, and ClickHouse sent the `UNSET` object in its insert. Neither
-  can leave a column out for one row as `Backend.SQLALCHEMY` does.
+  `ArrowInvalid`, and ClickHouse passed the `UNSET` object to
+  clickhouse-connect's `insert`. Neither can leave a column out for one row as
+  `Backend.SQLALCHEMY` does.
 
 ### prefect
 

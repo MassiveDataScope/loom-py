@@ -315,8 +315,8 @@ def sa_table_for(struct_cls: type, name: str) -> Table:
 
     Each column has the type :func:`compile_model` gives the field; keys,
     constraints and defaults are left out, and so is nullability: every column
-    is nullable, since the table builds inserts and IntoTable, its caller,
-    issues no DDL. The table is bound to a fresh ``MetaData`` and registered
+    is nullable, since the table is built for inserts and no DDL is issued
+    from it. The table is bound to a fresh ``MetaData`` and registered
     nowhere.
 
     Raises:
