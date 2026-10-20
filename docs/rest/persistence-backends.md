@@ -373,11 +373,14 @@ Four limits decide what does not travel:
   - a `Time` column with time zone,
     `ColumnField(ColumnType("Time", kwargs={"timezone": True}))`, on Postgres
     only (`timetz`): on any other dialect startup refuses the column with a
-    `ConfigError` naming `table.column`;
+    `ConfigError` naming `table.column`. It takes only a `time` with an
+    offset; a naive one is refused like an aware one for a plain `Time`
+    column;
   - a JSON column, `ColumnField(JSON)`, which stores the ISO text.
 
-  A `datetime` field (`DateTime(tz=True)`) keeps the instant, not the
-  written offset: Postgres (`timestamptz`) and `mongo` read it back in UTC.
+  On Postgres (`timestamptz`) and `mongo`, a `datetime` field
+  (`DateTime(tz=True)`) keeps the instant, read back in UTC, not the written
+  offset.
 
 ## Upgrade notes
 

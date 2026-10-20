@@ -108,8 +108,8 @@ class BoundaryValidationError(LoomError, ValueError):
     message is forwarded as one line, without the value msgspec echoes for an
     invalid enum value or tag. A message raised by the type's own validator
     keeps its text. A repository raises it for a value its storage cannot
-    hold, such as the SQLAlchemy repository for a ``time`` with a UTC offset
-    bound to a column that would drop the offset. It is also a
+    hold, such as the SQLAlchemy repository for a ``time`` whose UTC offset,
+    present or missing, its column cannot take. It is also a
     :class:`ValueError`, so an ``except ValueError`` that used to catch
     ``msgspec.ValidationError`` or ``pydantic.ValidationError`` keeps
     catching it.

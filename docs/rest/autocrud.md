@@ -107,9 +107,10 @@ holds no UTC offset, so a `time` with an offset answers
 create or update body. A `Time` column with time zone
 (`ColumnField(ColumnType("Time", kwargs={"timezone": True}))`) keeps the
 written offset on Postgres (`timetz`; startup refuses it on any other
-dialect), and a JSON column
-keeps it as ISO text. A `datetime` field keeps the instant, not the written
-offset: Postgres (`timestamptz`) and MongoDB read it back in UTC.
+dialect) and takes only a `time` with an offset, answering the same `400` or
+`422` for a naive one; a JSON column keeps the offset as ISO text. On
+Postgres (`timestamptz`) and MongoDB, a `datetime` field keeps the instant,
+read back in UTC, not the written offset.
 
 In `app.rest.interfaces`, both take column names, or `all`:
 

@@ -50,8 +50,8 @@ def compile_filter_group(
     Raises:
         UnsafeFilterError: If a field is not in ``allowed_fields``.
         FilterPathError: If a field path cannot be resolved.
-        BoundaryValidationError: ``query_validation``, for a ``time`` with a
-            UTC offset compared with a column that would drop the offset.
+        BoundaryValidationError: ``query_validation``, for a ``time`` whose
+            offset the compared column cannot take.
     """
     clauses = [_compile_spec(sa_model, spec, allowed_fields) for spec in group.filters]
     if group.op == "OR":
@@ -80,8 +80,8 @@ def _compile_spec(
 def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
     """Apply *op*, converting *value* as the repository converts a value it writes.
 
-    A ``time`` with a UTC offset compared with a column that would drop the
-    offset is refused, as :func:`to_comparison_value` refuses it. A SQLAlchemy
+    A ``time`` whose offset the column cannot take is refused, as
+    :func:`to_comparison_value` refuses it. A SQLAlchemy
     expression, and an ``IN`` value that is a string or not iterable, reach
     SQLAlchemy as they are.
 

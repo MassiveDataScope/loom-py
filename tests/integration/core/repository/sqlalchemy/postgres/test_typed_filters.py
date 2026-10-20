@@ -8,11 +8,19 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+import msgspec
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.command import Command
-from loom.core.model import BaseModel, ColumnField, ColumnType, Postgres, String
+from loom.core.model import (
+    BaseModel,
+    BoundaryValidationError,
+    ColumnField,
+    ColumnType,
+    Postgres,
+    String,
+)
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -126,3 +134,12 @@ async def test_a_time_with_time_zone_column_keeps_the_offset(
     assert stored is not None
     assert stored.closes_at.utcoffset() == timedelta(hours=2)
     assert stored.closes_at == _FIRST.closes_at
+
+
+async def test_a_naive_time_for_a_time_with_time_zone_column_is_refused(
+    repo: RepositorySQLAlchemy[Sample, int],
+) -> None:
+    naive = msgspec.structs.replace(_FIRST, closes_at=time(18, 0))
+
+    with pytest.raises(BoundaryValidationError, match="closes_at: time must carry a UTC offset"):
+        await repo.create(naive)

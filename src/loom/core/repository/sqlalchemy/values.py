@@ -13,9 +13,11 @@ exactly what the row holds.
 A ``time`` with a UTC offset is refused for a column that cannot hold the
 offset: SQL ``TIME`` without time zone (Postgres ``time``, SQLite text) stores
 ``08:30+02:00`` as ``08:30``, and an aware value compared with it matches the
-row holding ``08:30``. A JSON column, which keeps the ISO text, and a ``Time``
-column with ``timezone=True`` (Postgres ``timetz``) accept it; the SQLAlchemy
-backend refuses the latter at startup on any dialect other than Postgres.
+row holding ``08:30``. A JSON column, which keeps the ISO text, takes any
+``time``. A ``Time`` column with ``timezone=True`` (Postgres ``timetz``) takes
+only a ``time`` with an offset: asyncpg cannot encode a naive one for it. The
+SQLAlchemy backend refuses such a column at startup on any dialect other than
+Postgres.
 """
 
 from __future__ import annotations
@@ -51,43 +53,47 @@ def to_column_value(value: object, *, json: bool = False) -> Any:
     return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)
 
 
-_OFFSET_REFUSAL = "time must not carry a UTC offset"
+_OFFSET_REFUSED = "time must not carry a UTC offset"
+_OFFSET_REQUIRED = "time must carry a UTC offset"
 
 
-def refuse_aware_time(name: str, column: object, value: object, *, code: str) -> None:
-    """Raise when *value* is a ``time`` with a UTC offset that *column* would drop.
+def check_time_offset(column: Any, value: object, *, code: str) -> None:
+    """Raise when *value* is a ``time`` whose offset *column* cannot take as it is.
 
-    A JSON column and a ``Time(timezone=True)`` column keep the offset and
-    accept it; every other column refuses it. A model that needs the offset
-    declares a ``datetime`` field (``DateTime(tz=True)``), a JSON column, or
-    ``ColumnType("Time", kwargs={"timezone": True})``. The error names the
-    column, not the value.
+    A JSON column takes any ``time``. A ``Time(timezone=True)`` column keeps the
+    offset and takes only a ``time`` that carries one; every other column
+    drops the offset and takes only a naive ``time``. A model that needs the
+    offset declares a JSON column or ``ColumnType("Time", kwargs={"timezone":
+    True})`` (Postgres only), or a ``datetime`` field for the instant. The
+    error names the column, not the value.
 
     Args:
-        name: The name of the column, for the error.
         column: The SQLAlchemy column or mapped attribute the value is bound to.
         value: A value about to be written to or compared with *column*.
         code: ``boundary_validation`` for a written value, ``query_validation``
             for a compared value.
 
     Raises:
-        BoundaryValidationError: If *value* is a ``time`` whose ``tzinfo`` is
-            set and *column* cannot hold the offset.
+        BoundaryValidationError: If *value* is a ``time`` with an offset for a
+            column that drops it, or a naive ``time`` for a
+            ``Time(timezone=True)`` column.
     """
-    if not isinstance(value, time) or value.tzinfo is None:
+    if not isinstance(value, time):
         return
     column_type = getattr(column, "type", None)
-    if isinstance(column_type, JSON) or (isinstance(column_type, Time) and column_type.timezone):
+    if isinstance(column_type, JSON):
         return
-    raise BoundaryValidationError(
-        f"{name}: {_OFFSET_REFUSAL}", ((name, _OFFSET_REFUSAL),), code=code
-    )
+    keeps_offset = isinstance(column_type, Time) and bool(column_type.timezone)
+    if (value.tzinfo is not None) == keeps_offset:
+        return
+    reason = _OFFSET_REQUIRED if keeps_offset else _OFFSET_REFUSED
+    raise BoundaryValidationError(f"{column.key}: {reason}", ((column.key, reason),), code=code)
 
 
 def to_comparison_value(column: Any, value: object) -> Any:
     """Return *value* in the form it is compared with *column*.
 
-    Refused as :func:`refuse_aware_time` refuses it, and converted as
+    Refused as :func:`check_time_offset` refuses it, and converted as
     :func:`to_column_value` converts a written value. A refusal is raised under
     ``query_validation`` whatever the value's source, so ``get_by`` and
     ``exists_by`` called with a value from a command body raise it too.
@@ -97,10 +103,10 @@ def to_comparison_value(column: Any, value: object) -> Any:
         value: A filter or lookup value.
 
     Raises:
-        BoundaryValidationError: ``query_validation``, for a ``time`` with a
-            UTC offset that *column* would drop.
+        BoundaryValidationError: ``query_validation``, for a ``time`` whose
+            offset *column* cannot take, as :func:`check_time_offset` decides.
     """
-    refuse_aware_time(column.key, column, value, code=ErrorCode.QUERY_VALIDATION)
+    check_time_offset(column, value, code=ErrorCode.QUERY_VALIDATION)
     return to_column_value(value, json=is_json_column(column))
 
 
@@ -112,4 +118,4 @@ def is_json_column(column: object) -> bool:
     return isinstance(getattr(column, "type", None), JSON)
 
 
-__all__ = ["is_json_column", "refuse_aware_time", "to_column_value", "to_comparison_value"]
+__all__ = ["check_time_offset", "is_json_column", "to_column_value", "to_comparison_value"]

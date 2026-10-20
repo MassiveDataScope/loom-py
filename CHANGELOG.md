@@ -635,7 +635,9 @@
   would match the row holding `08:30`. A JSON column and a `Time` column
   declared with `ColumnType("Time", kwargs={"timezone": True})` accept it;
   the JSON column keeps the written offset, and so does the `Time` column on
-  Postgres (`timetz`). On any other dialect startup refuses a
+  Postgres (`timetz`), which takes only a `time` with an offset: a naive one
+  is refused the same way, under `time must carry a UTC offset`, since
+  asyncpg cannot encode it for `timetz`. On any other dialect startup refuses a
   `Time(timezone=True)` column with a `ConfigError` naming `table.column`,
   since the dialect would not keep the offset. A
   `datetime` field (`DateTime(tz=True)`) keeps the instant on Postgres

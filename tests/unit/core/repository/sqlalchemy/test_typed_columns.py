@@ -268,7 +268,7 @@ class TestTimeColumns:
 
         with pytest.raises(BoundaryValidationError) as caught:
             await repo.create(
-                _CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME, closes_at=_NAIVE_TIME)
+                _CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME, closes_at=_AWARE_TIME)
             )
 
         assert (caught.value.code, caught.value.violations) == (
@@ -310,7 +310,7 @@ class TestTimeColumns:
         )
 
         created = await repo.create(
-            _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_AWARE_TIME, closes_at=_NAIVE_TIME)
+            _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_AWARE_TIME, closes_at=_AWARE_TIME)
         )
         stored = await repo.get_by_id(created.id)
 
@@ -344,6 +344,38 @@ class TestTimeOffsetEscapeHatches:
         clause = compile_filter_group(_compiled(_Slot), group, frozenset())
 
         assert list(clause.compile().params.values()) == [bound]
+
+    def test_a_time_with_time_zone_column_refuses_a_naive_time_on_write(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            repo._serialize_input(
+                _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_NAIVE_TIME, closes_at=_NAIVE_TIME)
+            )
+
+        assert (caught.value.code, caught.value.violations) == (
+            "boundary_validation",
+            (("closes_at", "time must carry a UTC offset"),),
+        )
+
+    def test_a_time_with_time_zone_column_refuses_a_naive_filter_value(
+        self, session_manager: SessionManager
+    ) -> None:
+        group = FilterGroup(
+            filters=(FilterSpec(field="closes_at", op=FilterOp.EQ, value=_NAIVE_TIME),)
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert (caught.value.code, caught.value.violations) == (
+            "query_validation",
+            (("closes_at", "time must carry a UTC offset"),),
+        )
 
 
 class TestLookupValues:

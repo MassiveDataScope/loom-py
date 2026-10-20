@@ -35,8 +35,8 @@ from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.transactional import record_mutation
 from loom.core.repository.sqlalchemy.values import (
+    check_time_offset,
     is_json_column,
-    refuse_aware_time,
     to_column_value,
     to_comparison_value,
 )
@@ -170,8 +170,8 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
             values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
             sa_model = self._effective_sa_model
             for name in (self._column_field_names or frozenset()).intersection(values):
-                refuse_aware_time(
-                    name, getattr(sa_model, name), values[name], code=ErrorCode.BOUNDARY_VALIDATION
+                check_time_offset(
+                    getattr(sa_model, name), values[name], code=ErrorCode.BOUNDARY_VALIDATION
                 )
             return values
         return data
