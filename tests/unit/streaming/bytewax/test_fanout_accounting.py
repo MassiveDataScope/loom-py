@@ -681,6 +681,14 @@ class _TwiceEachInBatch(BatchExpandStep[Item, Item]):
         return [copy for message in messages for copy in (message, message)]
 
 
+class _NothingFromBatch(BatchExpandStep[Item, Item]):
+    """Expand a batch into no messages at all."""
+
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[Message[Item]]:
+        del kwargs, messages
+        return []
+
+
 class _TwoRows:
     """Expand every item into two rows of one type."""
 
@@ -1087,6 +1095,13 @@ _PATH_CASES = {
         shares=2,
         errors="t.err",
     ),
+    "batch_expand_step_to_nothing": _PathCase(
+        lambda: Process(
+            CollectBatch(max_records=3, timeout_ms=50), _NothingFromBatch(), _topic("t.a")
+        ),
+        (),
+        errors="t.err",
+    ),
     "explode_then_router": _PathCase(
         lambda: Process(
             cast(Any, Explode(_TwoRows)),  # Process does not type Explode
@@ -1270,12 +1285,6 @@ _KNOWN_BUGS_WITH_FOLLOW_UP: dict[str, tuple[type[BaseException], str, str]] = {
         CompilationError,
         "shape mismatch: expected many but got batch before ForEach",
         "follow-up hotfix: ForEach must accept the batch a BatchStep produces",
-    ),
-    "batch_expand_step": (
-        AssertionError,
-        r"written somewhere else[\s\S]*'t\.err'",
-        "follow-up hotfix: a BatchExpandStep must be able to return more outputs than "
-        "inputs; today _replace_payloads refuses it and every message becomes an error",
     ),
 }
 """Shapes outside the completion invariant that fail today, pinned to their failure.

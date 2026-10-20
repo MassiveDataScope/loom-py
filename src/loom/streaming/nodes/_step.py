@@ -140,6 +140,11 @@ class BatchExpandStep(Step[InT, OutT], ABC):
 
     Subclasses define ``execute(self, messages, **kwargs) -> Iterable[OutT]``
     with the explicit batch and dependency signature they need.
+
+    Each output must say which message it came from. An output that is a
+    ``Message`` keeps its own metadata, so its source is the message whose
+    metadata it carries; bare payloads are paired with the messages by
+    position and therefore need exactly one per message.
     """
 
     router_branch_safe: ClassVar[bool] = True

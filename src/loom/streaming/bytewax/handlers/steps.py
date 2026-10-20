@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 from bytewax.operators import flat_map
 from bytewax.operators import map as bw_map
@@ -298,7 +298,30 @@ def _execute_batch_expand_step(
         result = _resolve_expand_result(batch_expand_step.execute(messages), name)
         if not isinstance(result, Iterable):
             raise TypeError(f"{name} must return an iterable of payloads.")
-        return _replace_payloads(messages, list(result))
+        return _attribute_batch_outputs(messages, list(result), name)
+
+
+def _attribute_batch_outputs(
+    messages: list[Message[StreamPayload]],
+    outputs: list[Any],
+    name: str,
+) -> list[Message[StreamPayload]]:
+    """Give every output of a batch expansion the metadata of its source message.
+
+    An output that is a ``Message`` names its source through its own metadata,
+    which is what offset accounting completes. A bare payload names nothing, so
+    it is matched by position — possible only when there is one output per
+    message; otherwise no output could be attributed without guessing.
+    """
+    if len(outputs) == len(messages):
+        return _replace_payloads(messages, outputs)
+    if all(isinstance(output, Message) for output in outputs):
+        return cast(list[Message[StreamPayload]], outputs)
+    raise TypeError(
+        f"{name} returned {len(outputs)} outputs for {len(messages)} messages; "
+        "when the counts differ, every output must be a Message carrying the "
+        "metadata of the message it came from."
+    )
 
 
 def _execute_explode_step(

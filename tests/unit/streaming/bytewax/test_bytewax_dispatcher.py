@@ -259,6 +259,19 @@ class _InvalidExpandStep(ExpandStep[_Payload, _Payload]):
         return _Payload(value="bad")
 
 
+class _UpperFirstTwoBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
+    def execute(
+        self,
+        messages: list[Message[StreamPayload]],
+        **kwargs: object,
+    ) -> list[StreamPayload]:
+        del kwargs
+        return [
+            cast(StreamPayload, _Payload(value=_message_payload(message).value.upper()))
+            for message in messages[:2]
+        ]
+
+
 class _InvalidBatchExpandStep(BatchExpandStep[_Payload, _Payload]):
     def execute(
         self,
@@ -620,6 +633,20 @@ def test_execute_batch_expand_step_rejects_non_iterable_result() -> None:
             4,
             "UpperBatchExpand",
             step,
+            messages,
+        )
+
+
+def test_execute_batch_expand_step_rejects_payloads_it_cannot_attribute() -> None:
+    noop = ObservabilityRuntime.noop()
+    messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
+    with pytest.raises(TypeError, match="UpperBatchExpand returned 2 outputs for 3 messages"):
+        _steps._execute_batch_expand_step(
+            noop,
+            "orders",
+            4,
+            "UpperBatchExpand",
+            _UpperFirstTwoBatchExpandStep(),
             messages,
         )
 

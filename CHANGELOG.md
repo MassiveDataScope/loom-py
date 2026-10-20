@@ -1351,6 +1351,14 @@
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
+- **streaming:** a `BatchExpandStep` can return more or fewer outputs than the
+  messages of its batch. Every output had to pair with one input message, so
+  an expansion raised and each message of the batch became an error envelope.
+  An output that is a `Message` keeps its own metadata and completes the
+  source offset it carries, once per output under at-least-once delivery; a
+  message with no output completes its offset at the step. Bare payloads are
+  still paired with the messages by position, so they need one per message;
+  any other count raises `TypeError` and the batch becomes error envelopes.
 
 ### prefect
 
