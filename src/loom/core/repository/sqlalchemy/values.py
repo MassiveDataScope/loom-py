@@ -59,15 +59,15 @@ _OFFSET_REQUIRED = "time must carry a UTC offset"
 
 
 def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: str) -> None:
-    """Raise when a ``time`` is bound to a column that cannot take its offset as it is.
+    """Raise when a time's offset, present or missing, does not fit the column it is bound to.
 
     A JSON column takes any ``time``. A ``Time(timezone=True)`` column keeps the
     offset and takes only a ``time`` that has one (``utcoffset()`` is not
     ``None``); every other column drops the offset and takes only a ``time``
     without one. A model that needs the offset declares a JSON column or
     ``ColumnType("Time", kwargs={"timezone": True})`` (Postgres only); on
-    Postgres and MongoDB a ``datetime`` field keeps the instant instead. The
-    error names the columns, not the values.
+    Postgres a ``datetime`` field keeps the instant instead. The error names
+    the columns, not the values.
 
     Args:
         bindings: ``(column, value)`` pairs, each a SQLAlchemy column or mapped

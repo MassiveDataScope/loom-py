@@ -367,6 +367,24 @@ class TestTimeOffsetEscapeHatches:
             _OFFSET_REQUIRED,
         )
 
+    def test_a_plain_time_column_accepts_a_time_with_a_zone_but_no_offset(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+        group = FilterGroup(
+            filters=(FilterSpec(field="opens_at", op=FilterOp.EQ, value=_ZONED_TIME),)
+        )
+
+        written = repo._serialize_input(
+            _CreateSlot(opens_at=_ZONED_TIME, noted_at=_NAIVE_TIME, closes_at=_AWARE_TIME)
+        )
+        clause = compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert written["opens_at"] == _ZONED_TIME
+        assert list(clause.compile().params.values()) == [_ZONED_TIME]
+
     def test_a_write_reports_every_refused_time_column_in_name_order(
         self, session_manager: SessionManager
     ) -> None:
