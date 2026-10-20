@@ -5,7 +5,7 @@ from typing import Annotated
 import pytest
 
 from loom.core.model import BaseModel, ColumnField, Field, ScopedField
-from loom.core.model.introspection import is_row_scoped, scope_columns
+from loom.core.model.introspection import get_column_fields, is_row_scoped, scope_columns
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.scoped import RowScoped, ScopeColumn
 from loom.core.model.types import Integer, String, Text
@@ -159,6 +159,15 @@ def test_c8_the_boundary_column_cannot_be_nullable() -> None:
 
     with pytest.raises(ValueError, match=r"C8.*NullableBoundary.*key"):
         scope_columns(NullableBoundary)
+
+
+def test_c8_an_optional_boundary_in_the_primary_key_is_not_null_and_accepted() -> None:
+    class OptionalBoundary(BaseModel, RowScoped):
+        __tablename__ = "optional_boundary"
+        key: int | None = ScopedField(Integer, primary_key=True, scope="holder")
+
+    assert [c.column for c in scope_columns(OptionalBoundary)] == ["key"]
+    assert get_column_fields(OptionalBoundary)["key"].field.nullable is False
 
 
 def test_other_scope_columns_may_be_nullable() -> None:

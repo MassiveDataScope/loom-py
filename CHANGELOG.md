@@ -459,6 +459,17 @@
 
 ### core
 
+- **core:** a column's nullability follows its field's annotation. A field
+  whose annotation admits `None` (`x: int | None = None`, also inside
+  `Annotated`) compiles to a nullable column; any other field compiles to
+  `NOT NULL`, and a primary key column is `NOT NULL` whatever its annotation.
+  Before, every column was `NOT NULL` unless declared otherwise, so the model
+  accepted `None` and the database refused it on insert. `nullable=` on
+  `ColumnField`, `ScopedField` or `Field` now defaults to `None` (follow the
+  annotation) and a declared `True` or `False` still wins. Alembic
+  autogenerate will propose `nullable` changes for existing tables whose
+  Optional fields were created `NOT NULL`; to keep such a column `NOT NULL`,
+  declare `nullable=False`.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
