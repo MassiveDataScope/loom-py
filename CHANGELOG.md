@@ -1149,10 +1149,12 @@
 
 - **cache:** security: the repository cache keeps each row-level-security
   scope's entries apart. The entity key (`get_by_id`, and the rows behind a
-  cached page) and the `list_paginated` index key now carry the caller's scope
-  (`SupportsCursorScope.cursor_scope()`, `""` for a repository without it), so
-  a row or a page of ids cached under one scope is no longer served to another
-  scope that row-level security hides it from. Writes still evict every
+  cached page), the `list_paginated` index key and the key of a
+  `@cache_query` read (`scope="entity"` and `scope="list"`) now carry the
+  caller's scope (`SupportsCursorScope.cursor_scope()`, `""` for a repository
+  without it), so a row, a page of ids or a custom read's result cached under
+  one scope is no longer served to another scope that row-level security
+  hides it from. Writes still evict every
   scope's entries: the scope is not part of the dependency tags, and a write
   bumps the same generation counters whatever its scope. `CachedRepository`
   implements `cursor_scope()` by forwarding the wrapped repository's scope, so
@@ -1161,7 +1163,8 @@
   settings but which does not implement `cursor_scope()`. The list filter and
   query fingerprints in cache keys are now the full SHA-256 instead of its
   first 64 bits. `entity_key` and `list_index_key` take a required
-  keyword-only `scope`. Existing entity, list and query entries are no longer
+  keyword-only `scope`, and the new `custom_query_key` builds the
+  `@cache_query` key. Existing entity, list, query and `@cache_query` entries are no longer
   read after the upgrade and expire by their TTL. Only `loom.scope.*` session
   settings make up the scope: a row-level policy that reads any other setting
   is not kept apart by the cache.

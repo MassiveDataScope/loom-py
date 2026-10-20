@@ -101,6 +101,33 @@ def list_index_key(
     )
 
 
+def custom_query_key(
+    entity: str,
+    method_name: str,
+    arguments_hash: str,
+    deps_fingerprint: str,
+    *,
+    scope: str,
+) -> str:
+    """Build the cache key for one call to a ``@cache_query`` repository read.
+
+    Args:
+        entity: Normalized entity name.
+        method_name: Name of the decorated repository method.
+        arguments_hash: Hash of the call's arguments.
+        deps_fingerprint: Dependency fingerprint for generational invalidation.
+        scope: The caller's row-level-security scope, ``""`` when unscoped;
+            a result cached for one scope is never served to another.
+
+    Returns:
+        A composite cache key string.
+    """
+    return (
+        f"{entity}:custom:{method_name}:{arguments_hash}:deps={deps_fingerprint}"
+        f":scope={_scope_digest(scope)}"
+    )
+
+
 def call_key(*, module: str, qualname: str, version: int, arguments: Any) -> str:
     """Build the cache key for one call to a ``@cache_call`` coroutine.
 

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
-from loom.core.cache.keys import entity_key, full_hash, list_index_key
+from loom.core.cache.keys import custom_query_key, entity_key, full_hash, list_index_key
 from loom.core.repository import PageParams
 
 from ._doubles import (
@@ -85,6 +85,14 @@ class TestKeys:
 
         assert len(keys) == 3
 
+    def test_a_custom_query_key_differs_by_scope(self) -> None:
+        keys = {
+            custom_query_key("widget", "all_names", "h", "d", scope=s)
+            for s in ("", SCOPE_A, SCOPE_B)
+        }
+
+        assert len(keys) == 3
+
     def test_an_unscoped_key_carries_an_empty_scope(self) -> None:
         assert entity_key("widget", 1, "default", "f", scope="").endswith(":scope=")
         assert list_index_key("widget", "f", 1, 10, "default", "d", scope="").endswith(":scope=")
@@ -122,6 +130,28 @@ class TestReadsStayInTheirScope:
 
         assert env.repository.list_paginated_calls == 2
 
+    @pytest.mark.asyncio
+    async def test_a_custom_list_read_cached_for_one_scope_runs_again_for_another(
+        self, env: CachedEnv[Widget]
+    ) -> None:
+        await env.wrapper.all_names()
+        await env.wrapper.all_names()
+        _scoped(env).scope = SCOPE_B
+        await env.wrapper.all_names()
+
+        assert _scoped(env).all_names_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_a_custom_entity_read_cached_for_one_scope_runs_again_for_another(
+        self, env: CachedEnv[Widget]
+    ) -> None:
+        await env.wrapper.note_count(ROW_A)
+        await env.wrapper.note_count(ROW_A)
+        _scoped(env).scope = SCOPE_B
+        await env.wrapper.note_count(ROW_A)
+
+        assert env.repository.note_count_calls == 2
+
 
 class TestAWriteReachesEveryScope:
     @pytest.mark.asyncio
@@ -157,6 +187,26 @@ class TestAWriteReachesEveryScope:
             repository.scope = scope
             await env.wrapper.list_paginated(PAGE)
         assert repository.list_paginated_calls == 4
+
+    @pytest.mark.asyncio
+    async def test_an_update_evicts_the_custom_reads_in_every_scope(
+        self, env: CachedEnv[Widget]
+    ) -> None:
+        repository = _scoped(env)
+        for scope in (SCOPE_A, SCOPE_B, SCOPE_A, SCOPE_B):
+            repository.scope = scope
+            await env.wrapper.all_names()
+            await env.wrapper.note_count(ROW_A)
+        assert (repository.all_names_calls, repository.note_count_calls) == (2, 2)
+
+        repository.scope = SCOPE_A
+        await env.wrapper.update(ROW_A, WidgetUpdate(name="a-updated"))
+
+        for scope in (SCOPE_A, SCOPE_B):
+            repository.scope = scope
+            assert await env.wrapper.all_names() == ["a-updated", "b"]
+            assert await env.wrapper.note_count(ROW_A) == len("a-updated")
+        assert (repository.all_names_calls, repository.note_count_calls) == (4, 4)
 
 
 class TestTheScopeIsNeverLost:

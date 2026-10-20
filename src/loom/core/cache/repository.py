@@ -18,7 +18,13 @@ from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
 from loom.core.cache.decorators import declares_cache_policy
-from loom.core.cache.keys import entity_key, full_hash, list_index_key, stable_hash
+from loom.core.cache.keys import (
+    custom_query_key,
+    entity_key,
+    full_hash,
+    list_index_key,
+    stable_hash,
+)
 from loom.core.cache.result_codec import (
     PassthroughResultCodec,
     ResultCodec,
@@ -844,12 +850,12 @@ class CachedRepository(
         kwargs: dict[str, Any],
     ) -> tuple[str, int]:
         """Resolve the cache key and the TTL of one call to a cached read."""
-        scope = cast(str, metadata.get("scope") or "list")
+        read_scope = cast(str, metadata.get("scope") or "list")
         ttl_key = cast(str | None, metadata.get("ttl_key"))
         raw = {"args": to_payload(args), "kwargs": to_payload(kwargs)}
         raw_hash = stable_hash(repr(raw))
 
-        if scope == "entity":
+        if read_scope == "entity":
             entity_id = self._entity_scope_id(method_name, args)
             tags = self._resolver.entity_tags(self.entity_name, entity_id)
             tags.extend(self._entity_dependency_tags(entity_id))
@@ -860,7 +866,10 @@ class CachedRepository(
             ttl = self._config.ttl_for_list(ttl_key or self.entity_name)
 
         fingerprint = await self._resolver.fingerprint(tags)
-        return f"{self.entity_name}:custom:{method_name}:{raw_hash}:deps={fingerprint}", ttl
+        key = custom_query_key(
+            self.entity_name, method_name, raw_hash, fingerprint, scope=self._cache_scope()
+        )
+        return key, ttl
 
     def _entity_scope_id(self, method_name: str, args: tuple[Any, ...]) -> object:
         """Return the primary key a ``scope="entity"`` read is keyed by, or raise.
@@ -1155,8 +1164,8 @@ class CachedRepository(
         """The caller's row-level-security scope every cache key carries; ``""`` when unscoped.
 
         It is the scope the wrapped repository binds cursor tokens to, so a
-        row, a page of ids or a query result cached for one scope is never
-        read back by another.  The scope stays out of the dependency tags: a
+        row, a page of ids, a query result or a ``@cache_query`` result cached
+        for one scope is never read back by another.  The scope stays out of the dependency tags: a
         write bumps the same generation counters whatever its scope, so the
         bump reaches the keys of every scope.
         """
