@@ -337,3 +337,19 @@ def test_an_unsigned_cursor_holding_a_value_of_another_type_answers_400(
     assert [item["name"] for item in typed.json()["items"]] == ["b"]
     assert forged.status_code == 400
     assert forged.json()["detail"]["code"] == "unsupported_query"
+
+
+@pytest.mark.parametrize("parameter", ["after", "cursor"])
+def test_an_empty_cursor_parameter_answers_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parameter: str
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'e.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert client.post("/products/", json={"name": "a", "price": 1.0}).status_code == 201
+        response = client.get(f"{_CURSOR_PAGE}&{parameter}=")
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_query"
+
