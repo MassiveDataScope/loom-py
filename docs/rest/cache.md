@@ -130,6 +130,15 @@ longer matches the counters is a miss. A write bumps only the tags it affects:
 event carries. Updating one row leaves every other cached row of the entity
 warm.
 
+Every entry also carries the caller's scope, which the wrapped repository
+reports through `cache_scope()`: on SQLAlchemy it is every session setting the
+caller's transactions start with, so a row-level policy reading any setting
+keeps its callers' entries apart (cursor tokens bind only the `loom.scope.*`
+settings). The scope is not a tag, so a write still evicts the entry in every
+scope. Visibility that depends on other tables, such as a membership join a
+policy reads, is not in the scope, so a change there reaches a cached entry
+only when its TTL runs out.
+
 Inside a use case or a `@transactional` scope the bump is not applied at the
 write: it is enqueued on the post-commit channel and published **after the
 commit**, ahead of any job dispatch queued in the same pipeline, so a reader
@@ -166,6 +175,9 @@ caller's answer to another. loom cannot detect this and does not try.
 An object that carries identity must put it in the arguments, where the key can
 see it. A toolset holding a per-tenant client is not a candidate; a toolset that
 takes `tenant` as a parameter is.
+
+A `@cache_call` key carries no scope, so a `@cache_call` coroutine must not
+wrap a read from a scoped repository.
 
 ### Declaring
 

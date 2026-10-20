@@ -560,8 +560,17 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         Implements :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`.
         """
         settings = self.session_manager.current_settings()
-        scoped = sorted(item for item in settings.items() if item[0].startswith(SCOPE_PREFIX))
-        return msgspec.json.encode(scoped).decode() if scoped else ""
+        return _encode_settings({k: v for k, v in settings.items() if k.startswith(SCOPE_PREFIX)})
+
+    def cache_scope(self) -> str:
+        """Every session setting the caller's transactions start with; ``""`` when none.
+
+        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
+        A row-level policy may read any setting, not only ``loom.scope.*``, so
+        all of them partition the cache; the ``loom.scope.*`` ones are among
+        them, so this tells apart every caller :meth:`cursor_scope` does.
+        """
+        return _encode_settings(self.session_manager.current_settings())
 
     async def _list_with_query_cursor(
         self,
@@ -731,3 +740,8 @@ def _to_internal_field_names(
         for field in msgspec.structs.fields(struct_type)
     }
     return {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+
+
+def _encode_settings(settings: Mapping[str, str]) -> str:
+    """Encode *settings* as sorted JSON pairs, one string per mapping; ``""`` when empty."""
+    return msgspec.json.encode(sorted(settings.items())).decode() if settings else ""

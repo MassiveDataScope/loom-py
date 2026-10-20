@@ -23,7 +23,7 @@ from loom.core.cache import (
 from loom.core.cache.decorators import cache_query
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository import PageParams, Repository
-from loom.core.repository.abc import CursorCodec
+from loom.core.repository.abc import CursorCodec, PaginationMode, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -32,7 +32,9 @@ pytestmark = pytest.mark.integration
 _ROLE = "loom_it_cache_scope_reader"
 _PASSWORD = "loom_it_cache_scope_reader"
 _TENANT_SETTING = "loom.scope.tenant"
-_tenant: ContextVar[str] = ContextVar("_tenant", default="")
+_ELEVATED_SETTING = "loom.scope.tenant.any"
+_APP_TENANT_SETTING = "app.tenant_id"
+_settings: ContextVar[Mapping[str, str] | None] = ContextVar("_settings", default=None)
 
 
 class Note(BaseModel):
@@ -65,8 +67,12 @@ _TABLE = Note.__tablename__
 _RLS_STATEMENTS = (
     f"ALTER TABLE {_TABLE} ENABLE ROW LEVEL SECURITY",
     f"ALTER TABLE {_TABLE} FORCE ROW LEVEL SECURITY",
-    f"CREATE POLICY tenant_notes ON {_TABLE}"
-    f" USING (tenant = NULLIF(current_setting('{_TENANT_SETTING}', true), ''))",
+    # The tenant comes from loom's scope setting or, for a product that sets
+    # its own, from app.tenant_id; the elevation flag shows every row.
+    f"CREATE POLICY tenant_notes ON {_TABLE} USING ("
+    f"tenant = COALESCE(NULLIF(current_setting('{_TENANT_SETTING}', true), ''),"
+    f" NULLIF(current_setting('{_APP_TENANT_SETTING}', true), ''))"
+    f" OR current_setting('{_ELEVATED_SETTING}', true) = 'on')",
     f"DROP ROLE IF EXISTS {_ROLE}",
     f"CREATE ROLE {_ROLE} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{_PASSWORD}'",
     f"GRANT SELECT ON {_TABLE} TO {_ROLE}",
@@ -80,7 +86,11 @@ _TEARDOWN_STATEMENTS = (
 
 
 def _scope_settings() -> Mapping[str, str]:
-    return {_TENANT_SETTING: _tenant.get()}
+    return _settings.get() or {}
+
+
+def _tenant(tenant: str) -> Mapping[str, str]:
+    return {_TENANT_SETTING: tenant}
 
 
 async def _run_as_admin(uri: str, statements: tuple[str, ...]) -> None:
@@ -168,12 +178,16 @@ async def cached(
         await counters.close()
 
 
-async def _as_tenant(tenant: str, read: Any) -> Any:
-    token = _tenant.set(tenant)
+async def _as(settings: Mapping[str, str], read: Any) -> Any:
+    token = _settings.set(settings)
     try:
         return await read()
     finally:
-        _tenant.reset(token)
+        _settings.reset(token)
+
+
+async def _as_tenant(tenant: str, read: Any) -> Any:
+    return await _as(_tenant(tenant), read)
 
 
 async def test_the_reader_role_is_subject_to_row_level_security(
@@ -239,3 +253,42 @@ async def test_a_custom_entity_read_cached_for_one_scope_is_not_served_to_anothe
 
     assert seen_by_a == "a1"
     assert seen_by_b == ""
+
+
+async def test_a_query_page_cached_for_one_scope_is_not_served_to_another(
+    cached: CachedRepository[Note, Any, Any, int],
+) -> None:
+    query = QuerySpec(sort=(SortSpec(field="id"),), pagination=PaginationMode.OFFSET, limit=10)
+
+    seen_by_a = await _as_tenant("a", lambda: cached.list_with_query(query))
+    seen_by_b = await _as_tenant("b", lambda: cached.list_with_query(query))
+
+    assert [note.body for note in seen_by_a.items] == ["a1", "a2"]
+    assert [note.body for note in seen_by_b.items] == ["b1"]
+
+
+async def test_a_page_cached_for_one_product_setting_is_not_served_to_another(
+    cached: CachedRepository[Note, Any, Any, int],
+) -> None:
+    """A policy may read a setting outside loom.scope.*; the cache keeps it apart too."""
+    page = PageParams(page=1, limit=10)
+
+    seen_by_a = await _as({_APP_TENANT_SETTING: "a"}, lambda: cached.list_paginated(page))
+    seen_by_b = await _as({_APP_TENANT_SETTING: "b"}, lambda: cached.list_paginated(page))
+
+    assert sorted(note.body for note in seen_by_a.items) == ["a1", "a2"]
+    assert [note.body for note in seen_by_b.items] == ["b1"]
+
+
+async def test_a_page_cached_for_an_elevated_caller_is_not_served_to_a_plain_one(
+    cached: CachedRepository[Note, Any, Any, int],
+) -> None:
+    page = PageParams(page=1, limit=10)
+    elevated = {_TENANT_SETTING: "a", _ELEVATED_SETTING: "on"}
+    plain = {_TENANT_SETTING: "a", _ELEVATED_SETTING: ""}
+
+    seen_elevated = await _as(elevated, lambda: cached.list_paginated(page))
+    seen_plain = await _as(plain, lambda: cached.list_paginated(page))
+
+    assert sorted(note.body for note in seen_elevated.items) == ["a1", "a2", "b1"]
+    assert sorted(note.body for note in seen_plain.items) == ["a1", "a2"]

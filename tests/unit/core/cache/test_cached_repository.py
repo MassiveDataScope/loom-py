@@ -1105,7 +1105,7 @@ class _ReadOnlyRepository:
         return None
 
 
-_OPTIONAL_OVERRIDES = frozenset({"on_transaction_committed", "cursor_scope"})
+_OPTIONAL_OVERRIDES = frozenset({"on_transaction_committed", "cache_scope"})
 """Public overrides outside the precondition: the wrapper adapts them when present."""
 
 

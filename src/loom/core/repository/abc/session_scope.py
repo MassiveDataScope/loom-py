@@ -45,9 +45,9 @@ class SupportsCursorScope(Protocol):
     keeps pages, such as the query cache, keys them by this scope too. A
     repository without it binds its tokens to no scope.
 
-    Only the ``loom.scope.*`` session settings make up the scope: they alone
-    partition the repository cache and bind cursor tokens, so a row-level
-    policy that reads any other setting is not kept apart by either.
+    Only the ``loom.scope.*`` session settings make up this scope, so it
+    binds cursor tokens only; the repository cache keys by
+    :class:`SupportsCacheScope`, which every session setting makes up.
 
     Like :class:`SupportsCallerScopedSession`, this capability is provisional
     and is not a stable extension point to build on.
@@ -55,4 +55,24 @@ class SupportsCursorScope(Protocol):
 
     def cursor_scope(self) -> str:
         """Return the caller's scope as cursor tokens bind it; ``""`` when unscoped."""
+        ...
+
+
+@runtime_checkable
+class SupportsCacheScope(Protocol):
+    """Optional capability: the caller scope a wrapper keeps this repository's results in.
+
+    What a read returns may depend on the caller, as row-level security makes
+    it depend on the session's settings, so a wrapper that keeps results, such
+    as the repository cache, keys them by this scope: a result kept for one
+    scope is never served to another. It must tell apart at least the callers
+    :class:`SupportsCursorScope` tells apart, since a kept first page carries
+    a cursor token bound to that scope.
+
+    Like :class:`SupportsCallerScopedSession`, this capability is provisional
+    and is not a stable extension point to build on.
+    """
+
+    def cache_scope(self) -> str:
+        """Return the caller's scope as cached results are kept by it; ``""`` when unscoped."""
         ...

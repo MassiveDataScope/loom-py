@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
+from loom.core.cache.decorators import cache_query
 from loom.core.cache.keys import custom_query_key, entity_key, full_hash, list_index_key
 from loom.core.repository import PageParams
 
@@ -28,14 +29,44 @@ SCOPE_B = '[["loom.scope.tenant","b"]]'
 
 
 class ScopedRepository(WritableRepository[Widget]):
-    """Writable double that reports the scope a test sets on it."""
+    """Writable double that reports the scope a test sets on it, counting the reads."""
 
     def __init__(self, rows: Sequence[Widget]) -> None:
         super().__init__(rows, Widget)
         self.scope = SCOPE_A
+        self.reads = 0
 
     def cursor_scope(self) -> str:
+        self.reads += 1
         return self.scope
+
+
+class CacheScopedRepository(ScopedRepository):
+    """Double whose cache scope tells apart callers its cursor scope does not."""
+
+    def __init__(self, rows: Sequence[Widget]) -> None:
+        super().__init__(rows)
+        self.cache_partition = "product-a"
+
+    def cache_scope(self) -> str:
+        return f"{self.scope}|{self.cache_partition}"
+
+
+class SwitchingRepository(ScopedRepository):
+    """Double whose caller scope changes while a read is loading."""
+
+    async def get_by_id(self, obj_id: Any, profile: str = "default") -> Widget | None:
+        self.scope = SCOPE_B
+        return await super().get_by_id(obj_id, profile)
+
+    async def list_paginated(self, *args: Any, **kwargs: Any) -> Any:
+        self.scope = SCOPE_B
+        return await super().list_paginated(*args, **kwargs)
+
+    @cache_query(scope="list")
+    async def all_names(self) -> list[str]:
+        self.scope = SCOPE_B
+        return [row.name for row in self.storage.values()]
 
 
 class _SessionManager:
@@ -49,6 +80,10 @@ class SettingsRepository(CountingRepository[Widget]):
     def __init__(self, has_session_settings: bool) -> None:
         super().__init__([Widget(id=ROW_A, name="a")], Widget)
         self.session_manager = _SessionManager(has_session_settings)
+
+
+def _entity_entries(backend: CountingCacheBackend) -> list[str]:
+    return [key for key in backend.data if key.startswith("widget:") and ":list:" not in key]
 
 
 def _wrap(repository: Any, backend: CountingCacheBackend) -> CachedRepository[Any, Any, Any, Any]:
@@ -213,14 +248,14 @@ class TestTheScopeIsNeverLost:
     def test_the_wrapper_forwards_the_wrapped_scope(self, env: CachedEnv[Widget]) -> None:
         _scoped(env).scope = SCOPE_B
 
-        assert env.wrapper.cursor_scope() == SCOPE_B
+        assert env.wrapper.cache_scope() == SCOPE_B
 
     def test_an_unscoped_repository_reports_the_empty_scope(self) -> None:
         wrapper = _wrap(
             CountingRepository([Widget(id=ROW_A, name="a")], Widget), CountingCacheBackend()
         )
 
-        assert wrapper.cursor_scope() == ""
+        assert wrapper.cache_scope() == ""
 
     @pytest.mark.asyncio
     async def test_a_wrapper_around_a_wrapper_keys_by_the_innermost_scope(self) -> None:
@@ -234,10 +269,75 @@ class TestTheScopeIsNeverLost:
         assert repository.get_by_id_calls == 2
 
     def test_a_repository_with_session_settings_and_no_scope_is_refused(self) -> None:
-        with pytest.raises(RuntimeError, match="cursor_scope"):
+        with pytest.raises(RuntimeError, match="cache_scope"):
             _wrap(SettingsRepository(has_session_settings=True), CountingCacheBackend())
 
     def test_a_repository_without_session_settings_needs_no_scope(self) -> None:
         wrapper = _wrap(SettingsRepository(has_session_settings=False), CountingCacheBackend())
 
-        assert wrapper.cursor_scope() == ""
+        assert wrapper.cache_scope() == ""
+
+    @pytest.mark.asyncio
+    async def test_the_cache_scope_wins_over_the_cursor_scope(self) -> None:
+        repository = CacheScopedRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        await wrapper.get_by_id(ROW_A)
+        repository.cache_partition = "product-b"
+        await wrapper.get_by_id(ROW_A)
+
+        assert repository.get_by_id_calls == 2
+
+    def test_a_repository_with_session_settings_and_only_a_cursor_scope_is_refused(self) -> None:
+        repository = SettingsRepository(has_session_settings=True)
+        repository.cursor_scope = lambda: SCOPE_A  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError, match="cache_scope"):
+            _wrap(repository, CountingCacheBackend())
+
+
+class TestAScopeChangeSkipsTheWrite:
+    """The scope is read once per operation; a write is skipped if it changed since."""
+
+    @pytest.mark.asyncio
+    async def test_an_entity_loaded_under_one_scope_is_not_stored_after_a_change(self) -> None:
+        repository = SwitchingRepository([Widget(id=ROW_A, name="a")])
+        backend = CountingCacheBackend()
+        wrapper = _wrap(repository, backend)
+
+        row = await wrapper.get_by_id(ROW_A)
+
+        assert row is not None
+        assert not _entity_entries(backend)
+
+    @pytest.mark.asyncio
+    async def test_a_page_loaded_under_one_scope_is_not_stored_after_a_change(self) -> None:
+        repository = SwitchingRepository([Widget(id=ROW_A, name="a")])
+        backend = CountingCacheBackend()
+        wrapper = _wrap(repository, backend)
+
+        page = await wrapper.list_paginated(PAGE)
+
+        assert [row.id for row in page.items] == [ROW_A]
+        assert not [key for key in backend.data if not key.startswith("tag:")]
+
+    @pytest.mark.asyncio
+    async def test_a_custom_read_under_one_scope_is_not_stored_after_a_change(self) -> None:
+        repository = SwitchingRepository([Widget(id=ROW_A, name="a")])
+        backend = CountingCacheBackend()
+        wrapper = _wrap(repository, backend)
+
+        assert await wrapper.all_names() == ["a"]
+        assert not [key for key in backend.data if ":custom:" in key]
+
+    @pytest.mark.asyncio
+    async def test_the_scope_is_read_once_for_the_keys_of_a_page(self) -> None:
+        repository = ScopedRepository([Widget(id=ROW_A, name="a")])
+        repository.reads = 0
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        await wrapper.list_paginated(PAGE)
+
+        # One read for the keys, one check before the index write and one
+        # before the entity batch write.
+        assert repository.reads == 3

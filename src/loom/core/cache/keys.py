@@ -37,8 +37,9 @@ def full_hash(value: str) -> str:
 def _scope_digest(scope: str) -> str:
     """Render a caller scope for a cache key: ``""`` stays ``""``, any other value is hashed.
 
-    Hashing keeps the scope's values, such as a tenant id, out of key names,
-    which the cache logs.
+    The values, such as a tenant id, are hashed but not secret: the digest is
+    an unsalted SHA-256 of low-entropy values, so anyone reading the logs or
+    the backend's key names can recover them by trying candidates.
     """
     return full_hash(scope) if scope else ""
 
@@ -133,8 +134,7 @@ def call_key(*, module: str, qualname: str, version: int, arguments: Any) -> str
 
     The digest is the **full** SHA-256 of the canonically rendered arguments,
     not :func:`stable_hash`: the arguments of a cached call are often chosen by
-    a model or an end user, and 64 bits over a space someone else influences is
-    not the problem an internal filter fingerprint solves.
+    a model or an end user.
 
     Args:
         module: ``__module__`` of the decorated coroutine, so two homonyms in
