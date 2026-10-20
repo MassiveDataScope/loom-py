@@ -1160,9 +1160,9 @@
   implements `cursor_scope()` by forwarding the wrapped repository's scope, so
   a wrapper around it keys by the same scope, and refuses at construction,
   with a `RuntimeError`, a repository whose `session_manager` has session
-  settings but which does not implement `cursor_scope()`. The list filter and
-  query fingerprints in cache keys are now the full SHA-256 instead of its
-  first 64 bits. `entity_key` and `list_index_key` take a required
+  settings but which does not implement `cursor_scope()`. The list filter,
+  query and `@cache_query` arguments fingerprints in cache keys are now the
+  full SHA-256 instead of its first 64 bits. `entity_key` and `list_index_key` take a required
   keyword-only `scope`, and the new `custom_query_key` builds the
   `@cache_query` key. Existing entity, list, query and `@cache_query` entries are no longer
   read after the upgrade and expire by their TTL. Only `loom.scope.*` session

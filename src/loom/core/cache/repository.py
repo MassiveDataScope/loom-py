@@ -23,7 +23,6 @@ from loom.core.cache.keys import (
     entity_key,
     full_hash,
     list_index_key,
-    stable_hash,
 )
 from loom.core.cache.result_codec import (
     PassthroughResultCodec,
@@ -853,7 +852,7 @@ class CachedRepository(
         read_scope = cast(str, metadata.get("scope") or "list")
         ttl_key = cast(str | None, metadata.get("ttl_key"))
         raw = {"args": to_payload(args), "kwargs": to_payload(kwargs)}
-        raw_hash = stable_hash(repr(raw))
+        raw_hash = full_hash(repr(raw))
 
         if read_scope == "entity":
             entity_id = self._entity_scope_id(method_name, args)
