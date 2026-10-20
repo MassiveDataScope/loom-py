@@ -414,9 +414,12 @@ class _BuildContext:
             sink is registered for *path*.
 
         Raises:
-            RuntimeConfigurationError: If a commit tracker is bound and the sink
-                cannot build an inline partition, so its partitions would
-                complete offsets at the inline write.
+            RuntimeConfigurationError: If an ``IntoTopic`` was compiled at *path*
+                but no runtime sink was supplied for it
+                (``TERMINAL_SINK_MISSING``), or if a commit tracker is bound and
+                the sink cannot build an inline partition, so its partitions
+                would complete offsets at the inline write
+                (``INLINE_SINK_CANNOT_SKIP_COMMITS``).
         """
         sink = self._runtime_sink_for(path)
         if sink is None:
