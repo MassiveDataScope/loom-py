@@ -292,15 +292,19 @@ def _compile_model(
 def _refuse_undeclared_column_types(
     struct_cls: type, column_fields: Mapping[str, ColumnFieldInfo]
 ) -> None:
-    """Refuse a plain enum or ``Literal`` field whose column type is not declared.
+    """Refuse a ``Decimal``, plain enum or ``Literal`` field whose column type is not declared.
 
-    loom does not infer a SQL type from the values of such a field.
+    loom does not infer a SQL type from the values of an enum or a ``Literal``,
+    nor a precision and scale for a ``Decimal``: Postgres rounds a value to the
+    declared scale and refuses one past the declared precision.
     """
     for name, info in column_fields.items():
         if info.needs_declared_type:
             raise ValueError(
-                f"{struct_cls.__name__}.{name}: no column type can be inferred from a plain "
-                "Enum or Literal annotation; declare it, e.g. `ColumnField(String(20))`"
+                f"{struct_cls.__name__}.{name}: no column type is inferred from a Decimal, "
+                "plain Enum or Literal annotation; declare it, e.g. "
+                "`Annotated[Decimal, Numeric(precision=12, scale=2)]` for a Decimal, "
+                "`ColumnField(String(20))` for an Enum or Literal"
             )
 
 

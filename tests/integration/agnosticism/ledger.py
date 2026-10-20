@@ -38,7 +38,7 @@ class Entry(BaseModel, RowScoped):
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
     reference: str = ColumnField(Text)
     booked_on: dt.datetime = ColumnField(DateTime())
-    amount: float = ColumnField(Numeric())
+    amount: float = ColumnField(Numeric(precision=10, scale=2))
 
 
 MODELS = (Account, Entry)
