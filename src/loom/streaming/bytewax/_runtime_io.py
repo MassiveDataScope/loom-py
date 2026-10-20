@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep, time_ns
 from typing import Any, Generic, TypeAlias, TypeVar, cast
@@ -20,11 +20,6 @@ from loom.core.observability.span import LoomSpan
 from loom.core.tracing import generate_trace_id
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort, KafkaCommitTracker
-from loom.streaming.bytewax._dlq import (
-    send_batch_to_dlq,
-    send_decode_error_batch_to_dlq,
-    send_error_batch_to_dlq,
-)
 from loom.streaming.compiler._plan import (
     CompiledMongoCDCSource,
     CompiledMultiSource,
@@ -75,6 +70,10 @@ class _KafkaSendRequest(Generic[PayloadT]):
     produced_at_ms: int | None
 
 
+_DlqLineage: TypeAlias = Callable[[ItemT, _KafkaSendRequest[PayloadT]], _KafkaSendRequest[PayloadT]]
+"""Adjusts the trace lineage of one DLQ record derived from the sink's send request."""
+
+
 @dataclass(frozen=True, slots=True)
 class _BatchOutcome:
     """How one Kafka batch write ended, for the two exits that return normally.
@@ -107,42 +106,65 @@ def _write_kafka_batch(
     items: list[ItemT],
     item_to_send: Callable[[ItemT], _KafkaSendRequest[PayloadT]],
     item_to_commit: Callable[[ItemT], tuple[str | None, int | None, int | None]] | None,
-    dlq_sender: Callable[
-        [KafkaMessageProducer[PayloadT], str, list[ItemT], KafkaDeliveryError], None
-    ]
-    | None,
     commit_tracker: CommitCompletionPort | None,
+    dlq_lineage: _DlqLineage[ItemT, PayloadT] | None = None,
 ) -> _BatchOutcome:
     try:
         for item in items:
-            request = item_to_send(item)
-            message_producer.send(
-                topic=sink.topic,
-                payload=request.payload,
-                descriptor=request.descriptor,
-                key=request.key,
-                headers=request.headers,
-                correlation_id=request.correlation_id,
-                parent_trace_id=request.parent_trace_id,
-                causation_id=request.causation_id,
-                trace_id=request.trace_id,
-                produced_at_ms=request.produced_at_ms,
-            )
+            _send_request(message_producer, sink.topic, item_to_send(item))
         producer.flush()
         _commit_runtime_items(items, item_to_commit, commit_tracker)
     except KafkaDeliveryError as exc:
-        if sink.dlq_topic is None or dlq_sender is None:
+        if sink.dlq_topic is None:
             raise
+        dlq_error = str(exc).encode("utf-8")
         try:
-            dlq_sender(message_producer, sink.dlq_topic, items, exc)
+            for item in items:
+                request = item_to_send(item)
+                if dlq_lineage is not None:
+                    request = dlq_lineage(item, request)
+                headers = {**request.headers, "x-dlq-error": dlq_error}
+                _send_request(message_producer, sink.dlq_topic, replace(request, headers=headers))
             producer.flush()
         except KafkaDeliveryError as dlq_exc:
             raise KafkaDeliveryError(
-                f"delivery to DLQ topic {sink.dlq_topic!r} failed after sink delivery error: {exc}"
+                f"delivery failed after diverting the batch to DLQ topic {sink.dlq_topic!r} "
+                f"(sink delivery error: {exc})"
             ) from dlq_exc
         _commit_runtime_items(items, item_to_commit, commit_tracker)
         return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
     return _DELIVERED
+
+
+def _send_request(
+    message_producer: KafkaMessageProducer[PayloadT],
+    topic: str,
+    request: _KafkaSendRequest[PayloadT],
+) -> None:
+    message_producer.send(
+        topic=topic,
+        payload=request.payload,
+        descriptor=request.descriptor,
+        key=request.key,
+        headers=request.headers,
+        correlation_id=request.correlation_id,
+        parent_trace_id=request.parent_trace_id,
+        causation_id=request.causation_id,
+        trace_id=request.trace_id,
+        produced_at_ms=request.produced_at_ms,
+    )
+
+
+def _keep_message_lineage(
+    message: Message[StreamPayload],
+    request: _KafkaSendRequest[StreamPayload],
+) -> _KafkaSendRequest[StreamPayload]:
+    """Keep the failed message's own trace on its DLQ record instead of a child trace."""
+    return replace(
+        request,
+        trace_id=message.meta.trace_id,
+        parent_trace_id=message.meta.parent_trace_id,
+    )
 
 
 def _commit_runtime_items(
@@ -476,8 +498,8 @@ class _KafkaMessageSinkPartition(
             items=items,
             item_to_send=lambda msg: _message_to_send_with_policy(msg, self._sink.partition_policy),
             item_to_commit=_message_to_commit,
-            dlq_sender=send_batch_to_dlq,
             commit_tracker=self._commit_tracker,
+            dlq_lineage=_keep_message_lineage,
         )
 
 
@@ -638,7 +660,6 @@ class _KafkaErrorEnvelopeSinkPartition(
                 envelope, self._sink.partition_policy
             ),
             item_to_commit=_error_item_to_commit,
-            dlq_sender=send_error_batch_to_dlq,
             commit_tracker=self._commit_tracker,
         )
 
@@ -656,7 +677,6 @@ class _KafkaDecodeErrorSinkPartition(_KafkaSinkPartitionBase, StatelessSinkParti
             items=items,
             item_to_send=lambda error: _decode_error_to_send(error, self._sink.partition_policy),
             item_to_commit=_decode_error_to_commit,
-            dlq_sender=send_decode_error_batch_to_dlq,
             commit_tracker=self._commit_tracker,
         )
 

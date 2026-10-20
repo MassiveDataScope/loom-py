@@ -1056,11 +1056,18 @@
   each record without flushing, logged and swallowed per-record failures, and
   committed anyway, so a batch the DLQ topic never received was lost. The
   producer is now flushed after the diversion, and a failed DLQ send or flush
-  raises `KafkaDeliveryError` naming the DLQ topic, with the DLQ failure as its
-  cause. The batch is not committed and is handled like a failed batch on a
+  raises `KafkaDeliveryError` naming the DLQ topic, with the failure the DLQ
+  step observed as its cause. The batch is not committed and is handled like a failed batch on a
   sink without a DLQ topic: the run fails and, on restart, the batch is
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `WithAsync` the message becomes an error envelope.
+- **streaming:** a DLQ record is built from the same send request as the sink
+  record: it keeps the message key (and with it the partition and order), the
+  message type and the headers of the sink record, error envelopes now carry
+  `x-error-reason` and follow the sink's partition policy, and `x-dlq-error`
+  is added. A diverted message keeps its own trace id and parent trace id; an
+  error envelope without an original message gets a new trace id, as on the
+  sink, instead of none.
 
 ### prefect
 

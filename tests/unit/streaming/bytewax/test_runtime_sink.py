@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import msgspec
 import pytest
 
 from tests.helpers.version_limited_extras import require_bytewax
@@ -12,10 +13,9 @@ require_bytewax()
 
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.core._message import Message  # noqa: E402
-from loom.streaming.kafka._errors import (  # noqa: E402
-    KafkaDeliveryError,
-    KafkaSerializationError,
-)
+from loom.streaming.kafka._codec import MsgspecCodec  # noqa: E402
+from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
+from loom.streaming.kafka._message import MessageEnvelope  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from loom.streaming.nodes._boundary import PartitionGuarantee, PartitionPolicy  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
@@ -114,16 +114,25 @@ class _RecordingTracker:
 
 
 class _DlqRejectingProducer(RawProducerStub):
-    """Raw producer whose sends to the DLQ topic raise ``dlq_error``."""
-
-    def __init__(self, dlq_error: Exception) -> None:
-        super().__init__()
-        self.dlq_error = dlq_error
+    """Raw producer whose sends to the DLQ topic are rejected."""
 
     def send(self, record: KafkaRecord[bytes]) -> None:
         if record.topic == "orders.dlq":
-            raise self.dlq_error
+            raise KafkaDeliveryError("dlq queue full")
         super().send(record)
+
+
+class _DlqUnencodableCodec(MsgspecCodec[Any]):
+    """Codec that encodes the first record, the sink's, and fails on every later one."""
+
+    def __init__(self) -> None:
+        self.encoded = 0
+
+    def encode(self, message: MessageEnvelope[Any]) -> bytes:
+        self.encoded += 1
+        if self.encoded > 1:
+            raise msgspec.EncodeError("payload not encodable")
+        return super().encode(message)
 
 
 def _dlq_sink(
@@ -157,7 +166,7 @@ class TestDlqRouting:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        fake_raw = _DlqRejectingProducer(KafkaDeliveryError("dlq queue full"))
+        fake_raw = _DlqRejectingProducer()
         fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
         sink, tracker = _dlq_sink(monkeypatch, fake_raw)
 
@@ -171,11 +180,12 @@ class TestDlqRouting:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        fake_raw = _DlqRejectingProducer(KafkaSerializationError("payload not encodable"))
+        fake_raw = RawProducerStub()
         fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
+        monkeypatch.setattr(_runtime_io, "MsgspecCodec", _DlqUnencodableCodec)
         sink, tracker = _dlq_sink(monkeypatch, fake_raw)
 
-        with pytest.raises(KafkaSerializationError, match="payload not encodable"):
+        with pytest.raises(msgspec.EncodeError, match="payload not encodable"):
             sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
 
         assert tracker.completed == []
@@ -202,7 +212,7 @@ class TestDlqRouting:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         fake_raw = RawProducerStub()
-        fake_raw.flush_error = KafkaDeliveryError("broker unavailable")
+        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
         monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
 
         sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink())

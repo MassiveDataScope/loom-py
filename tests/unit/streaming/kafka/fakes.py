@@ -205,7 +205,6 @@ class RawProducerStub:
         self.flushed = False
         self.closed = False
         self.close_error: Exception | None = None
-        self.flush_error: Exception | None = None
         self.flush_errors: list[Exception] = []
         self.flush_count = 0
 
@@ -213,13 +212,12 @@ class RawProducerStub:
         self.sent.append(record)
 
     def flush(self, timeout_ms: int | None = None) -> None:
-        """Flush, raising the next queued outcome first, then ``flush_error``."""
+        """Flush, raising the next queued error when one is left."""
         del timeout_ms
         self.flushed = True
         self.flush_count += 1
-        error = self.flush_errors.pop(0) if self.flush_errors else self.flush_error
-        if error is not None:
-            raise error
+        if self.flush_errors:
+            raise self.flush_errors.pop(0)
 
     def close(self) -> None:
         if self.close_error is not None:
