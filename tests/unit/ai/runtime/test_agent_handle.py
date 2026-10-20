@@ -808,7 +808,14 @@ class TestPublishedGrants:
                     ),
                 )
             ],
-            config=make_ai_config(mcp_servers=make_mcp_servers(_RUNBOOKS_SERVER, second)),
+            # The stubs answer without delay, so only wall-clock time on a
+            # loaded runner can spend the start-up budget, a real loop-time
+            # deadline; this test checks order, not that budget, so it gets
+            # ten seconds instead of the 500 ms default.
+            config=make_ai_config(
+                mcp_servers=make_mcp_servers(_RUNBOOKS_SERVER, second),
+                startup_timeout_ms=10_000,
+            ),
             sql_config=make_sql_config("analytics"),
             engine_provider=provider,  # type: ignore[arg-type]
             deps=deps,
