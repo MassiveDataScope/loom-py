@@ -5,7 +5,6 @@ from loom.core.repository.abc.cursor import (
     CursorCodec,
     CursorConfig,
     CursorKeySource,
-    cursor_carries,
     register_cursor_codec,
     require_cursor_sort,
 )
@@ -81,7 +80,6 @@ __all__ = [
     "UnsupportedQuery",
     "UpdateT",
     "build_page_result",
-    "cursor_carries",
     "register_cursor_codec",
     "require_cursor_sort",
 ]

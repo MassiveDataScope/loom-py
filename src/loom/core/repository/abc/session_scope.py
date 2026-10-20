@@ -44,6 +44,9 @@ class SupportsCursorScope(Protocol):
     A token is valid only in the scope it was issued in, so a wrapper that
     keeps pages, such as the query cache, keys them by this scope too. A
     repository without it binds its tokens to no scope.
+
+    Like :class:`SupportsCallerScopedSession`, this capability is provisional
+    and is not a stable extension point to build on.
     """
 
     def cursor_scope(self) -> str:

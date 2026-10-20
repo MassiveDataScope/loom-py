@@ -577,26 +577,6 @@
   may open a key under `persistence.cursors`. A key's `env` source must not
   name a `LOOM_*` variable. Tokens issued before this release are refused:
   clients restart from the first page.
-- **rest:** a `sortable` column must be a field of the items the route
-  answers with (`PageResult[T]`, `CursorResult[T]` or `list[T]`); a column
-  the response does not show, or a result type that does not say, fails
-  compilation naming the route and the field, since ordering by it reveals
-  its values. `sortable=ALL` opens every scalar column, hidden ones included,
-  and its startup warning says so. `filterable` follows the same rule, with
-  `filterable=ALL` as its escape hatch. "Shown" is decided by field name; a
-  pydantic field declared `exclude=True` is not shown.
-- **rest:** breaking: a `QuerySpec` route that can serve cursor pages (cursor
-  mode, or the default `allow_pagination_override=True`) must answer with
-  items that show its primary key, which every cursor token carries. A route
-  whose response hides the key, or whose result type is untyped (`str`,
-  `dict[str, Any]`, ...), now fails compilation naming the route and the key.
-  `sortable=ALL` opens it with a warning; a route that must hide its keys
-  serves offset pages only (`pagination_mode` offset and
-  `allow_pagination_override=False`). On such a route the key must also be of
-  a type a token carries and not in a JSON or array column; a bare `UUID`
-  annotation, inferred as JSON, fails compilation instead of on the first
-  cursor request: declare its column type (`Postgres.UUID`) or serve offset
-  pages only.
 - **core:** a cursor page orders only by non-null columns of a type a token
   carries; a dotted path, a JSON, `bytes` or optional column answers
   `400 unsupported_query` before the query runs (`require_cursor_sort`), and
@@ -615,14 +595,8 @@
   built it from a configuration silencing `loom.cursors.E001`. Without a
   registered `Environment` the process environment decides (`LOOM_ENV`, else
   production).
-- **cache:** the query cache key carries the caller's cursor scope
-  (`SupportsCursorScope`, `RepositorySQLAlchemy.cursor_scope()`), so a first
-  page and its next cursor cached under one row-level-security scope are not
-  served to another.
-  `loom.core.checks.silenced_checks(config)` returns the silenced ids.
-- **ai:** a provider's `credentials_ref` is read through
-  `loom.core.environment.configured_variable` and may not name a `LOOM_*`
-  variable.
+- **core:** `loom.core.checks.silenced_checks(config)` returns the ids
+  `checks.silenced` lists, as the deploy-check runner reads them.
 - **core:** the unsigned module functions `encode_cursor` and
   `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
   `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
@@ -852,6 +826,9 @@
   declares both a pydantic `type_ref` output and `output_check` serialises
   an accepted answer twice per attempt — once for the check's own builtins
   projection, once for the wire — accepted rather than optimised away.
+- **ai:** a provider's `credentials_ref` is read through
+  `loom.core.environment.configured_variable` and may not name a `LOOM_*`
+  variable.
 
 ### rest
 
@@ -914,6 +891,33 @@
   `msgspec.ValidationError`. The root `title` is dropped on pydantic
   OpenAPI schemas for request bodies and responses alike, matching the
   untitled document a Struct always produced.
+- **rest:** a `sortable` column must be a field of the items the route
+  answers with (`PageResult[T]`, `CursorResult[T]` or `list[T]`); a column
+  the response does not show, or a result type that does not say, fails
+  compilation naming the route and the field, since ordering by it reveals
+  its values. `sortable=ALL` opens every scalar column, hidden ones included,
+  and its startup warning says so. `filterable` follows the same rule, with
+  `filterable=ALL` as its escape hatch. "Shown" is decided by field name; a
+  pydantic field declared `exclude=True` is not shown.
+- **rest:** breaking: a `QuerySpec` route that can serve cursor pages (cursor
+  mode, or the default `allow_pagination_override=True`) must answer with
+  items that show its primary key, which every cursor token carries. A route
+  whose response hides the key, or whose result type is untyped (`str`,
+  `dict[str, Any]`, ...), now fails compilation naming the route and the key.
+  `sortable=ALL` opens it with a warning; a route that must hide its keys
+  serves offset pages only (`pagination_mode` offset and
+  `allow_pagination_override=False`). On such a route the key must also be of
+  a type a token carries and not in a JSON or array column; a bare `UUID`
+  annotation, inferred as JSON, fails compilation instead of on the first
+  cursor request: declare its column type (`Postgres.UUID`) or serve offset
+  pages only.
+
+### cache
+
+- **cache:** the query cache key carries the caller's cursor scope
+  (`SupportsCursorScope`, `RepositorySQLAlchemy.cursor_scope()`), so a first
+  page and its next cursor cached under one row-level-security scope are not
+  served to another.
 
 ### prefect
 

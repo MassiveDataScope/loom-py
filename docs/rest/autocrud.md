@@ -96,9 +96,9 @@ In cursor mode a sort column must also hold no null. A `filterable` column
 follows the same rule, since the rows a filter keeps reveal its values too.
 "Shown" is decided by field name; a pydantic field declared `exclude=True`
 is the only one treated as hidden. A route that can serve cursor pages must
-also show its primary key, which
-every token carries, or serve offset pages only (`pagination_mode` offset
-and `allow_pagination_override=False`).
+also show its primary key, which every token carries, and the key must be a
+scalar column of a type a token can carry; otherwise the route serves offset
+pages only (`pagination_mode` offset and `allow_pagination_override=False`).
 
 Only scalar columns of the use case's own model qualify; a related model's
 column, a JSON, array or text-search column, and a field reference rooted at
