@@ -56,7 +56,7 @@ class TestRouterCompiler:
         with pytest.raises(CompilationError) as exc_info:
             compile_flow(flow, config=streaming_kafka_config)
 
-        assert "router branches produce different shapes" in str(exc_info.value)
+        assert "messages continuing after the router have different shapes" in str(exc_info.value)
 
     def test_accepts_router_with_terminal_branch_output(
         self,
@@ -117,7 +117,7 @@ class TestRouterCompiler:
 
         assert plan.output is not None
 
-    def test_rejects_continuing_branches_that_change_the_unmatched_shape(
+    def test_rejects_a_batch_before_a_router(
         self,
         streaming_kafka_config: DictConfig,
     ) -> None:
@@ -128,9 +128,11 @@ class TestRouterCompiler:
 
         flow: StreamFlow[Order, Result] = StreamFlow(
             name="test",
-            source=FromTopic("in", payload=Order, shape=StreamShape.BATCH),
+            source=FromTopic("in", payload=Order),
             process=Process(
-                Router.by(msg.payload.order_id, routes={"vip": Process(_BatchFakeStep())})
+                CollectBatch(max_records=10, timeout_ms=1000),
+                Router.by(msg.payload.order_id, routes={"drop": Process(Drain())}),
+                _BatchFakeStep(),
             ),
             output=IntoTopic("out", payload=Result),
         )
@@ -138,8 +140,8 @@ class TestRouterCompiler:
         with pytest.raises(CompilationError) as exc_info:
             compile_flow(flow, config=streaming_kafka_config)
 
-        assert [issue.code for issue in exc_info.value.issues] == [
-            StreamingErrorCode.ROUTER_BRANCH_SHAPE_DIVERGENCE
+        assert [issue.message for issue in exc_info.value.issues] == [
+            "shape mismatch: expected record but got batch before Router"
         ]
 
     def test_mixed_keyed_and_predicate_router_sinks_have_unique_paths(

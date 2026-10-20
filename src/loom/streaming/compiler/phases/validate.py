@@ -526,7 +526,7 @@ def _validate_router_shapes(
     a default branch, the unmatched input; only they must agree on one shape.
     """
     errors: list[CompilationIssue] = []
-    outputs: set[StreamShape] = set() if router.default is not None else {initial_shape}
+    outputs: dict[StreamShape, None] = {} if router.default is not None else {initial_shape: None}
 
     for branch in iter_branches(router):
         label, nodes = branch.label, branch.nodes
@@ -546,7 +546,7 @@ def _validate_router_shapes(
                     )
                 )
         if not branch_ends_path(branch):
-            outputs.add(branch_output)
+            outputs[branch_output] = None
 
     if len(outputs) > 1:
         shapes = {shape.value for shape in outputs}
@@ -663,6 +663,8 @@ def _node_input_shape(node: object) -> StreamShape | None:
         return None
     if isinstance(node, Fork):
         return None
+    if isinstance(node, Router):
+        return StreamShape.RECORD
     return None
 
 

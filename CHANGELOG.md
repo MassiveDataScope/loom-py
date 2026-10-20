@@ -928,6 +928,14 @@
   `Explode` inside a Router branch fail compilation with
   `ROUTER_BRANCH_UNSAFE_NODE`. Such flows compiled and raised `TypeError` when
   the branch ran.
+- **streaming:** a `Router` requires a record stream. A batch reaching a
+  `Router`, such as after a `CollectBatch`, fails compilation with
+  `SHAPE_MISMATCH` before `Router`. Such flows compiled and raised
+  `TypeError` at the Router when a batch arrived.
+- **streaming:** `ROUTER_BRANCH_SHAPE_DIVERGENCE` reads "messages continuing
+  after the router have different shapes: ...", since the unmatched input of
+  a `Router` without a default takes part in the check. It read "router
+  branches produce different shapes: ...".
 - **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
   many of the oldest events not yet reported durable they made durable, `0`
   when they only buffered. A custom `IntoSink` partition must report it: a
@@ -1352,17 +1360,13 @@
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
 - **streaming:** a `Router` branch that ends its path in `IntoTopic`,
-  `IntoSink`, `Drain` or `Broadcast` no longer takes part in the branch shape
-  check, and a `Router` reports the shape of the messages that continue after
-  it: the output of the branches that do not end their path and, without a
-  default branch, the unmatched input. A `Router` with an `IntoTopic` branch
-  and a `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a
-  step after a `Router` without a default whose branches all end their path
-  failed with `SHAPE_MISMATCH`; both compile now. A `Router` without a default
-  whose continuing branches change the shape of its input, such as a
-  `BatchStep` branch on a batch source, now fails with
-  `ROUTER_BRANCH_SHAPE_DIVERGENCE`; it used to compile although its unmatched
-  messages continue in the input shape.
+  `IntoSink` or `Drain` no longer takes part in the branch shape check, and a
+  `Router` reports the shape of the messages that continue after it: the
+  output of the branches that do not end their path and, without a default
+  branch, the unmatched input. A `Router` with an `IntoTopic` branch and a
+  `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a step
+  after a `Router` without a default whose branches all end their path failed
+  with `SHAPE_MISMATCH`; both compile now.
 
 ### prefect
 
