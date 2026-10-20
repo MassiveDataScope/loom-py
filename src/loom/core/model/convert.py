@@ -1,15 +1,25 @@
-"""Build typed structs from values keyed by internal field name."""
+"""Convert between typed structs and the values a backend stores.
+
+:func:`to_struct` builds a struct from values keyed by internal field name;
+:func:`to_column_value` gives the form a field value takes in a table column.
+"""
 
 from __future__ import annotations
 
 import ipaddress
 from collections.abc import Mapping
+from datetime import date, datetime, time
+from decimal import Decimal
 from functools import cache
 from typing import Any, TypeVar, get_args, get_origin
+from uuid import UUID
 
 import msgspec
 
 StructT = TypeVar("StructT", bound=msgspec.Struct)
+# Values SQLAlchemy binds and pyarrow infers natively; encoding them to strings
+# breaks typed columns.
+_NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
 # What a Postgres driver returns for ``inet``; a model field holds its text form.
 _NETWORK_VALUES = (
     ipaddress.IPv4Address,
@@ -98,3 +108,23 @@ def to_struct(struct_type: type[StructT], values: Mapping[str, Any]) -> StructT:
         encode_name, nested = plan.get(key, (key, None))
         encoded[encode_name] = _coerce(value, nested)
     return msgspec.convert(encoded, type=struct_type)
+
+
+def to_column_value(value: object, *, json: bool = False) -> Any:
+    """Return the form ``value`` takes in a column.
+
+    An ``Enum`` becomes its value and a struct a dict, also inside a list or a
+    dict; ``bytes``, ``datetime``, ``date``, ``time``, ``Decimal`` and ``UUID``
+    are kept, unless the column is a JSON column, which holds builtins only.
+
+    Args:
+        value: A model value or a filter value.
+        json: ``True`` when the column is a JSON column.
+
+    Returns:
+        ``value`` reduced to msgspec builtins, keeping the natively bound
+        types unless the column is a JSON column.
+    """
+    if json:
+        return msgspec.to_builtins(value)
+    return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)

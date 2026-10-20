@@ -26,36 +26,15 @@ Postgres.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date, datetime, time
-from decimal import Decimal
+from datetime import time
 from typing import Any
-from uuid import UUID
 
 import msgspec
 from sqlalchemy import JSON, Time
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
-
-# Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
-_NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
-
-
-def to_column_value(value: object, *, json: bool = False) -> Any:
-    """Return the form ``value`` takes in a column.
-
-    Args:
-        value: A model value or a filter value.
-        json: ``True`` when the column is a JSON column.
-
-    Returns:
-        ``value`` reduced to msgspec builtins, keeping the natively bound
-        types unless the column is a JSON column.
-    """
-    if json:
-        return msgspec.to_builtins(value)
-    return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)
-
+from loom.core.model.convert import to_column_value
 
 _OFFSET_REFUSED = "time must not carry a UTC offset"
 _OFFSET_REQUIRED = "time must carry a UTC offset"

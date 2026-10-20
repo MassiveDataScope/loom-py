@@ -64,12 +64,10 @@ Delta example::
 
 from __future__ import annotations
 
-import json
 from collections import deque
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
-from datetime import date, datetime
 from enum import StrEnum
 from tempfile import SpooledTemporaryFile
 from time import monotonic
@@ -90,6 +88,7 @@ import msgspec
 from loom.core.async_bridge import AsyncBridge
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
+from loom.core.model.convert import to_column_value
 from loom.core.model.introspection import get_column_fields
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
@@ -709,7 +708,12 @@ def _column_names(payload_type: type[Any]) -> list[str]:
 
 
 def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> list[Any]:
-    """Return the values of *item*'s attributes named by *column_names*, in that order.
+    """Return the column values of *item*'s attributes named by *column_names*, in that order.
+
+    Each value is converted by :func:`~loom.core.model.convert.to_column_value`,
+    as ``Backend.SQLALCHEMY`` converts it: an ``Enum`` becomes its value and a
+    struct a dict, while ``bytes``, ``datetime``, ``date``, ``time``,
+    ``Decimal`` and ``UUID`` are kept.
 
     Neither partition that calls it can leave a column out for one row: Delta
     has no per-insert column defaults, and the ClickHouse insert names every
@@ -734,7 +738,7 @@ def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> l
     if violations:
         message = "; ".join(f"{name}: {reason}" for name, reason in violations)
         raise BoundaryValidationError(message, violations, code=ErrorCode.BOUNDARY_VALIDATION)
-    return values
+    return [to_column_value(value) for value in values]
 
 
 def _rows_by_column_set(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -996,24 +1000,25 @@ class _DeltaTablePartition:
 def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
     """Return *item*'s values for *column_names*, in order, for a ``clickhouse-connect`` insert.
 
-    An ``UNSET`` value is refused, as :func:`_set_column_values` refuses it.
-    The other values get the minimal coercions ClickHouse native types require:
+    The values come from :func:`_set_column_values`, which refuses an ``UNSET``
+    value and converts the others as core converts a column value. They then
+    get the minimal coercions ClickHouse native types require:
 
     - ``bool``      → ``int`` (ClickHouse ``UInt8`` expects 0/1, not ``True``/``False``)
-    - ``date``      → ISO-8601 string (``clickhouse-connect`` handles ``datetime`` natively)
-    - ``dict`` / ``frozenset`` → ``json.dumps`` (no universal Map type in CH)
+    - ``dict``      → JSON text from ``msgspec.json``, keys sorted (no universal
+      Map type in CH); a struct arrives here as a dict, and a ``datetime`` or
+      ``Decimal`` inside it is encoded as an ISO-8601 or decimal string
 
-    All other Python types (``str``, ``int``, ``float``, ``datetime``,
-    ``list``, ``None``) are passed through unchanged.
+    All other values (``str``, ``int``, ``float``, ``datetime``, ``date``,
+    ``Decimal``, ``UUID``, ``list``, ``None``) are passed through unchanged;
+    ``clickhouse-connect`` writes a ``Date`` column from ``date`` objects only.
     """
     result: list[Any] = []
     for value in _set_column_values(item, column_names, target):
         if isinstance(value, bool):
             result.append(int(value))
-        elif isinstance(value, date) and not isinstance(value, datetime):
-            result.append(value.isoformat())
-        elif isinstance(value, (dict, frozenset)):
-            result.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        elif isinstance(value, dict):
+            result.append(msgspec.json.encode(value, order="sorted").decode())
         else:
             result.append(value)
     return result
