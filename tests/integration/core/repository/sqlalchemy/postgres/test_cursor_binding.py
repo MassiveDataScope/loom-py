@@ -1,11 +1,13 @@
-"""Cursor pagination on Postgres: naive timestamp columns and the scope binding."""
+"""Cursor pagination on Postgres: naive timestamps, the scope binding and typed values."""
 
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 
+import msgspec
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
@@ -113,3 +115,28 @@ async def test_a_cursor_issued_for_one_tenant_is_refused_for_another(
             await _page(repository, cursor)
     finally:
         _tenant.reset(replayed)
+
+
+_AT = {"type": "datetime", "v": "2026-09-06T12:01:00+00:00"}
+
+
+@pytest.mark.parametrize(
+    "position",
+    [{"k": [_AT], "id": "1"}, {"k": ["2026-09-06T12:01:00+00:00"], "id": 1}],
+    ids=["text-for-the-integer-key", "text-for-the-timestamp"],
+)
+async def test_a_forged_value_of_another_type_is_refused_before_the_query(
+    repository: RepositorySQLAlchemy[Reading, int], position: dict[str, object]
+) -> None:
+    unsigned: RepositorySQLAlchemy[Reading, int] = RepositorySQLAlchemy(
+        session_manager=repository.session_manager,
+        model=Reading,
+        cursor_codec=CursorCodec(signing="unsigned"),
+    )
+    payload = msgspec.json.encode({"b": "sqlalchemy", **position})
+    forged = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+
+    with pytest.raises(UnsupportedQuery):
+        await unsigned.list_with_query(
+            QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=2, cursor=forged)
+        )

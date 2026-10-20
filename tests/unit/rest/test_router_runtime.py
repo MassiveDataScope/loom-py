@@ -181,6 +181,7 @@ class CompiledFilterUseCase(UseCase[_FilterRow, str]):
             model_name="_FilterRow",
             cursor_codec=CursorCodec(signing="ephemeral"),
             scope="",
+            columns={},
         )
         return str(compiler.compile_filter(query.filters))
 

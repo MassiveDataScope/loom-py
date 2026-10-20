@@ -264,7 +264,9 @@ a `secrets` entry of the task definition.
 Decoding is strict in every mode: a token that is not
 unpadded base64url, a payload that is not the token record, a datetime key
 without a time zone, a key of an unknown type, a token of another backend, or
-one whose key count differs from the sort or the primary key is refused. Every
+one whose key count differs from the sort or the primary key, or whose value
+has another type than its column, is refused: a string is not an integer and
+is never parsed into a datetime, date, UUID or decimal. Every
 refusal is `UnsupportedQuery` — `400 unsupported_query` on the wire — and its
 message never echoes the token. A naive datetime key, such as a
 `DateTime(tz=False)` column, is issued as UTC with an explicit offset and
@@ -273,6 +275,7 @@ compared as naive UTC again against that column.
 A service paginating by hand resolves the same codec and binds its own scope:
 
 ```python
+from loom.core.model.introspection import scalar_column_annotations
 from loom.core.repository.abc import Cursor, CursorCodec, PaginationMode, QuerySpec, SortSpec
 
 codec = container.resolve(CursorCodec)
@@ -283,13 +286,21 @@ token = codec.encode(
     query=query,
     scope=tenant_id,
 )
-position = codec.decode(token, backend="grants", model="access.Grant", query=query, scope=tenant_id)
+position = codec.decode(
+    token,
+    backend="grants",
+    model="access.Grant",
+    query=query,
+    scope=tenant_id,
+    columns=scalar_column_annotations(Grant),   # or {"updated_at": datetime, "id": UUID}
+    primary_key=("id",),
+)
 position.keys, position.tie_breaker   # (updated_at, grant_id); datetimes always aware
 ```
 
 A composite primary key is carried whole: the tie-breaker is the tuple of its
-values in key order, and `decode(..., id_count=2)` refuses a token carrying
-another number of key values. Tokens issued before signed cursors share the
+values in key order, and `decode(..., primary_key=("tenant", "id"))` refuses a
+token carrying another number of key values. Tokens issued before signed cursors share the
 fate of any invalid token: clients must treat tokens as opaque and restart from
 the first page.
 

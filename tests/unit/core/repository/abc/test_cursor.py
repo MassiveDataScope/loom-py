@@ -4,6 +4,8 @@ import base64
 import secrets
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
+from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 import msgspec
@@ -31,6 +33,8 @@ _QUERY = QuerySpec(
     sort=(SortSpec(field="created_at", direction="DESC"),),
     pagination=PaginationMode.CURSOR,
 )
+# Columns of any type, for the tests about the token rather than its values.
+_UNTYPED: dict[str, Any] = {"created_at": Any, "updated_at": Any, "account_id": Any, "id": Any}
 
 
 def _key() -> bytes:
@@ -55,10 +59,17 @@ def _decode(
     *,
     query: QuerySpec = _QUERY,
     scope: str = _SCOPE,
-    id_count: int = 1,
+    columns: dict[str, Any] = _UNTYPED,
+    primary_key: tuple[str, ...] = ("id",),
 ) -> Cursor:
     return codec.decode(
-        token, backend=_BACKEND, model=_MODEL, query=query, scope=scope, id_count=id_count
+        token,
+        backend=_BACKEND,
+        model=_MODEL,
+        query=query,
+        scope=scope,
+        columns=columns,
+        primary_key=primary_key,
     )
 
 
@@ -117,7 +128,9 @@ class TestRoundTrip:
     def test_a_composite_tie_breaker_keeps_every_value(self, codec: CursorCodec) -> None:
         position = _at("b", tie_breaker=(7, uuid4()))
 
-        assert _decode(codec, _encode(codec, position), id_count=2) == position
+        assert (
+            _decode(codec, _encode(codec, position), primary_key=("account_id", "id")) == position
+        )
 
     def test_a_naive_datetime_is_carried_as_utc(self, codec: CursorCodec) -> None:
         cursor = _decode(codec, _encode(codec, _at(datetime(2026, 9, 6, 12, 30))))
@@ -211,15 +224,21 @@ class TestStrictDecoding:
         assert excinfo.value.reason == "cursor token does not match the sort"
 
     @pytest.mark.parametrize(
-        ("tie_breaker", "id_count"), [(7, 2), ((7,), 1), ((7, 3), 1), ((7, 3, 1), 2)]
+        ("tie_breaker", "primary_key"),
+        [
+            (7, ("account_id", "id")),
+            ((7,), ("id",)),
+            ((7, 3), ("id",)),
+            ((7, 3, 1), ("account_id", "id")),
+        ],
     )
     def test_a_token_for_another_primary_key_is_refused(
-        self, unsigned: CursorCodec, tie_breaker: object, id_count: int
+        self, unsigned: CursorCodec, tie_breaker: object, primary_key: tuple[str, ...]
     ) -> None:
         token = _encode(unsigned, _at(1, tie_breaker=tie_breaker))
 
         with pytest.raises(UnsupportedQuery) as excinfo:
-            _decode(unsigned, token, id_count=id_count)
+            _decode(unsigned, token, primary_key=primary_key)
 
         assert excinfo.value.reason == "cursor token does not match the primary key"
 
@@ -232,6 +251,113 @@ class TestStrictDecoding:
             _decode(_signed(current=key), token)
 
         assert excinfo.value.reason == "cursor token does not match the sort"
+
+
+class _Status(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+_TYPED: dict[str, Any] = {
+    "created_at": datetime,
+    "closed_at": datetime | None,
+    "rank": int,
+    "code": str,
+    "status": _Status,
+    "amount": Decimal,
+    "ref": UUID,
+    "account_id": int,
+    "id": int,
+}
+
+
+def _sorted_by(field: str) -> QuerySpec:
+    return QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR)
+
+
+class TestTypedValues:
+    """A forged token holds values the server never issued; each must have its column's type."""
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("rank", "7"),
+            ("rank", True),
+            ("rank", None),
+            ("code", 7),
+            ("created_at", "2026-09-06T12:30:00+00:00"),
+            ("ref", "b7cdfa6d-0805-4c13-8071-af9317c08254"),
+            ("amount", 19.9),
+            ("status", "archived"),
+        ],
+        ids=["str-int", "bool-int", "null", "int-str", "str-dt", "str-uuid", "float-dec", "enum"],
+    )
+    def test_a_sort_value_of_another_type_is_refused(
+        self, unsigned: CursorCodec, field: str, value: object
+    ) -> None:
+        query = _sorted_by(field)
+        token = _encode(unsigned, _at(value), query=query)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            _decode(unsigned, token, query=query, columns=_TYPED)
+
+        assert excinfo.value.reason == "cursor token does not match the sort"
+
+    @pytest.mark.parametrize(
+        ("tie_breaker", "primary_key"),
+        [("9", ("id",)), ((7, "9"), ("account_id", "id")), (None, ("id",))],
+        ids=["str-id", "composite", "null"],
+    )
+    def test_a_primary_key_value_of_another_type_is_refused(
+        self, unsigned: CursorCodec, tie_breaker: object, primary_key: tuple[str, ...]
+    ) -> None:
+        query = _sorted_by("rank")
+        token = _encode(unsigned, _at(3, tie_breaker=tie_breaker), query=query)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            _decode(unsigned, token, query=query, columns=_TYPED, primary_key=primary_key)
+
+        assert excinfo.value.reason == "cursor token does not match the primary key"
+
+    def test_a_validly_signed_token_of_another_type_is_refused(self, codec: CursorCodec) -> None:
+        query = _sorted_by("rank")
+        token = _encode(codec, _at("7"), query=query)
+
+        with pytest.raises(UnsupportedQuery):
+            _decode(codec, token, query=query, columns=_TYPED)
+
+    def test_a_sort_field_without_a_known_type_is_refused(self, unsigned: CursorCodec) -> None:
+        query = _sorted_by("category.name")
+        token = _encode(unsigned, _at("a"), query=query)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            _decode(unsigned, token, query=query, columns=_TYPED)
+
+        assert excinfo.value.reason == "cursor token does not match the sort"
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("created_at", datetime(2026, 9, 6, 12, 30, tzinfo=UTC)),
+            ("closed_at", None),
+            ("rank", 7),
+            ("code", "0123"),
+            ("status", _Status.CLOSED),
+            ("amount", Decimal("19.90")),
+            ("ref", UUID("b7cdfa6d-0805-4c13-8071-af9317c08254")),
+        ],
+    )
+    def test_a_value_of_its_column_type_comes_back_as_issued(
+        self, codec: CursorCodec, field: str, value: object
+    ) -> None:
+        query = _sorted_by(field)
+
+        cursor = _decode(
+            codec, _encode(codec, _at(value), query=query), query=query, columns=_TYPED
+        )
+
+        assert cursor.keys == (value,)
+        assert type(cursor.keys[0]) is (str if isinstance(value, StrEnum) else type(value))
 
 
 class TestSignature:
@@ -348,6 +474,19 @@ class TestBinding:
     ) -> None:
         ascending = QuerySpec(sort=(SortSpec("created_at"),), pagination=PaginationMode.CURSOR)
         token = _encode(codec, _at(1), query=ascending)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            _decode(codec, token)
+
+        assert excinfo.value.reason == _INVALID
+
+    def test_a_cursor_issued_for_one_sort_field_is_refused_for_another(
+        self, codec: CursorCodec
+    ) -> None:
+        by_update = QuerySpec(
+            sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR
+        )
+        token = _encode(codec, _at(1), query=by_update)
 
         with pytest.raises(UnsupportedQuery) as excinfo:
             _decode(codec, token)

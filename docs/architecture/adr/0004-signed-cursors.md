@@ -35,9 +35,24 @@ confidentiality.
   record (bad JSON, unknown field, unknown tag), a datetime key without a
   time zone (`Annotated[datetime, Meta(tz=True)]`), a key of a type the
   format does not carry, a key count that differs from the sort, a
-  tie-breaker that differs from the primary key, or another backend. The
-  message is fixed text: it never echoes the token, and the decoder's own
-  error, which may quote the payload, is not chained.
+  tie-breaker that differs from the primary key, a value whose type is not
+  its column's, or another backend. The message is fixed text: it never
+  echoes the token, and the decoder's own error, which may quote the
+  payload, is not chained.
+- **Typed values.** `decode` takes the annotation of each column
+  (`columns`, by name) and the primary-key column names (`primary_key`).
+  Every sort key and every primary-key value must have its column's type,
+  checked with `msgspec.convert` in strict mode: an `int` is not a `str`, a
+  `bool` is not an `int`, `None` matches only an optional column, and a
+  string is never parsed into a datetime, date, UUID or decimal (those must
+  arrive as their tagged key). A sort field missing from `columns` is
+  refused, so a token can only position a query on a column whose type is
+  known. The repositories pass `scalar_column_annotations(model)`, the
+  columns a REST route may declare sortable. Without this check a token
+  carrying a string for an integer key, which an `unsigned` codec accepts
+  and a holder of the key can sign, reached the database and answered 500.
+  `LoomType.from_builtins` is not used because it parses strings into those
+  four types.
 - **Signed tokens.** HMAC-SHA256 over the payload and its binding, verified
   before the payload is parsed.
 

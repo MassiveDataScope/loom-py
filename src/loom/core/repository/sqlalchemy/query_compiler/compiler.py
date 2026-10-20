@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy import func, select
@@ -42,6 +43,9 @@ class QuerySpecCompiler:
         cursor_codec: Codec that issues and verifies cursor tokens.
         scope: Caller scope cursor tokens are bound to; ``""`` deliberately
             binds them to no scope.
+        columns: Annotation of each column a cursor may sort by, by name,
+            the primary key included; a decoded cursor value must have its
+            column's type.
 
     Example::
 
@@ -53,6 +57,7 @@ class QuerySpecCompiler:
             model_name="Product",
             cursor_codec=codec,
             scope="",
+            columns=scalar_column_annotations(Product),
         )
         result = await compiler.execute(session, query, profile_options)
     """
@@ -67,6 +72,7 @@ class QuerySpecCompiler:
         model_name: str,
         cursor_codec: CursorCodec,
         scope: str,
+        columns: Mapping[str, Any],
     ) -> None:
         self._sa_model = sa_model
         self._id_columns: tuple[Any, ...] = (
@@ -77,6 +83,7 @@ class QuerySpecCompiler:
         self._model_name = model_name
         self._cursor_codec = cursor_codec
         self._scope = scope
+        self._columns = columns
 
     def compile_filter(self, group: FilterGroup) -> Any:
         """Compile a filter group into a SQLAlchemy boolean clause.
@@ -143,7 +150,7 @@ class QuerySpecCompiler:
         Raises:
             UnsupportedQuery: If ``query.cursor`` is malformed or forged, was
                 issued for another binding or backend, or does not match
-                ``query.sort`` or the primary key.
+                ``query.sort`` or the primary key in number or type of values.
         """
         sa_model = self._sa_model
         stmt = base_stmt if base_stmt is not None else select(sa_model)
@@ -159,7 +166,8 @@ class QuerySpecCompiler:
                 model=self._model_name,
                 query=query,
                 scope=self._scope,
-                id_count=len(self._id_columns),
+                columns=self._columns,
+                primary_key=[column.key for column in self._id_columns],
             )
             predicate = compile_cursor_predicate(sa_model, cursor, query.sort, self._id_columns)
             stmt = stmt.where(predicate)

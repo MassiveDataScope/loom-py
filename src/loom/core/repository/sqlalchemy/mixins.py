@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
@@ -17,6 +17,7 @@ from loom.core.model.introspection import (
     get_id_attributes,
     get_relations,
     get_table_name,
+    scalar_column_annotations,
 )
 from loom.core.repository.abc import (
     CursorCodec,
@@ -55,6 +56,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None
     _json_column_names: frozenset[str] = frozenset()
+    _cursor_columns: Mapping[str, Any] | None = None
     # Pre-computed at init to avoid per-request/per-object reflection.
     _output_column_keys: tuple[str, ...] | None = None
     _all_sa_column_keys: tuple[str, ...] | None = None
@@ -81,6 +83,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         self._json_column_names = frozenset(
             name for name in column_fields if is_json_column(getattr(sa, name, None))
         )
+        self._cursor_columns = scalar_column_annotations(self.model)
         self._relations_cache = get_relations(self.model)
         self._core_model = get_compiled_core(self.model)
         if self._core_model is None:
@@ -509,6 +512,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 model_name=self.model.__qualname__,
                 cursor_codec=self.cursor_codec,
                 scope=self._cursor_scope(),
+                columns=self._cursor_columns or {},
             )
             core_model = self._effective_core_model
 

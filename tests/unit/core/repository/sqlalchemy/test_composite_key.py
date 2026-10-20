@@ -140,6 +140,7 @@ class TestCursorPagination:
             model_name="_Entry",
             cursor_codec=_CODEC,
             scope="",
+            columns={},
         )
 
         sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))

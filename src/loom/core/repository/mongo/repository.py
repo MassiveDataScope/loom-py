@@ -38,7 +38,12 @@ from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
-from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
+from loom.core.model.introspection import (
+    get_column_fields,
+    get_id_attributes,
+    get_table_name,
+    scalar_column_annotations,
+)
 from loom.core.repository.abc import (
     BulkCreatable,
     Countable,
@@ -214,6 +219,7 @@ class RepositoryMongo(
         self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
+        self._cursor_columns = scalar_column_annotations(model)
         self._naive_datetime_fields = frozenset(
             name
             for name, info in column_fields.items()
@@ -470,6 +476,8 @@ class RepositoryMongo(
             model=self._model.__qualname__,
             query=query,
             scope="",
+            columns=self._cursor_columns,
+            primary_key=(self._id_attr,),
         )
         keys = tuple(
             self._compiler.storage_value(spec.field, key)

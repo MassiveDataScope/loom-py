@@ -24,7 +24,15 @@ _ENV = "CURSOR_KEY_TEST"
 
 def _round_trip(issuer: CursorCodec, verifier: CursorCodec) -> Cursor:
     token = issuer.encode(_POSITION, model="Invoice", query=_QUERY, scope="")
-    return verifier.decode(token, backend="sqlalchemy", model="Invoice", query=_QUERY, scope="")
+    return verifier.decode(
+        token,
+        backend="sqlalchemy",
+        model="Invoice",
+        query=_QUERY,
+        scope="",
+        columns={"id": int},
+        primary_key=("id",),
+    )
 
 
 def _from_env(monkeypatch: pytest.MonkeyPatch, secret: str) -> CursorCodec:

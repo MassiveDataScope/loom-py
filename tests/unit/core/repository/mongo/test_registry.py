@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from loom.core.di.container import LoomContainer
+from loom.core.model.introspection import scalar_column_annotations
 from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 from loom.core.repository.abc import (
     Creatable,
@@ -128,7 +129,13 @@ async def test_the_registered_codec_verifies_the_cursors_repositories_issue() ->
     assert page.next_cursor is not None
 
     position = container.resolve(CursorCodec).decode(
-        page.next_cursor, backend="mongo", model="Article", query=query, scope=""
+        page.next_cursor,
+        backend="mongo",
+        model="Article",
+        query=query,
+        scope="",
+        columns=scalar_column_annotations(Article),
+        primary_key=("slug",),
     )
 
     assert position.keys == ("b",)

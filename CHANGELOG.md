@@ -575,13 +575,17 @@
   `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
   `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
   verifies tokens: `encode(cursor, *, model, query, scope)` and
-  `decode(token, *, backend, model, query, scope, id_count=1)`, where
-  `scope` is required and `""` binds a token to no tenant. The backends
+  `decode(token, *, backend, model, query, scope, columns, primary_key)`,
+  where `scope` is required and `""` binds a token to no tenant, `columns`
+  maps each column name to its annotation and `primary_key` names the key
+  columns in order. A sort key or primary-key value whose type is not its
+  column's is refused (`400 unsupported_query`), as is a sort field missing
+  from `columns`. The backends
   register the codec they build in DI, so a service paginating by hand
   resolves it with `container.resolve(CursorCodec)`. A decoded datetime key
   is always aware.
 - **core:** `RepositorySQLAlchemy`, `RepositoryMongo`, `QuerySpecCompiler`
-  (with a required `scope` too), `SQLAlchemyDefaultRepositoryBuilder`,
+  (with a required `scope` and `columns` too), `SQLAlchemyDefaultRepositoryBuilder`,
   `MongoDefaultRepositoryBuilder`, `build_sqlalchemy_repository_registration_module`,
   `build_mongo_repository_registration_module` and
   `loom.testing.build_repository_harness` take a required keyword-only

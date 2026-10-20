@@ -31,6 +31,7 @@ def _compiler(allowed: frozenset[str] = frozenset()) -> QuerySpecCompiler:
         model_name="_Row",
         cursor_codec=CursorCodec(signing="ephemeral"),
         scope="",
+        columns={},
     )
 
 

@@ -82,6 +82,7 @@ class TestOffsetOrdering:
             model_name="_Row",
             cursor_codec=CursorCodec(signing="ephemeral"),
             scope="",
+            columns={},
         )
 
         sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))

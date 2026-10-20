@@ -290,3 +290,49 @@ def test_a_malformed_cursor_answers_400_without_echoing_it(
         detail = response.json()["detail"]
         assert detail["code"] == "unsupported_query", case
         assert _malformed_cursors(issued)[case] not in response.text, case
+
+
+def test_a_cursor_issued_for_one_sort_answers_400_for_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 's.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+    by_price = "/products/?pagination=cursor&limit=1&sort=price&direction=ASC"
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name, price in (("a", 1.0), ("b", 2.0), ("c", 3.0)):
+            assert client.post("/products/", json={"name": name, "price": price}).status_code == 201
+        issued = client.get(by_price).json()["nextCursor"]
+
+        same_sort = client.get(f"{by_price}&after={issued}")
+        other_sort = client.get(f"{_CURSOR_PAGE}&after={issued}")
+
+    assert same_sort.status_code == 200
+    assert other_sort.status_code == 400
+    assert other_sort.json()["detail"]["code"] == "unsupported_query"
+
+
+@pytest.mark.parametrize(
+    "position",
+    [{"k": ["2"], "id": 2}, {"k": [2], "id": "2"}, {"k": [True], "id": 2}, {"k": [None], "id": 2}],
+    ids=["str-sort-key", "str-primary-key", "bool", "null"],
+)
+def test_an_unsigned_cursor_holding_a_value_of_another_type_answers_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, position: dict[str, object]
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 't.sqlite'}")
+    monkeypatch.setenv("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name in ("a", "b", "c"):
+            assert client.post("/products/", json={"name": name, "price": 1.0}).status_code == 201
+        typed = client.get(
+            f"{_CURSOR_PAGE}&after={_forged({'b': 'sqlalchemy', 'k': [1], 'id': 1})}"
+        )
+        forged = client.get(f"{_CURSOR_PAGE}&after={_forged({'b': 'sqlalchemy', **position})}")
+
+    assert typed.status_code == 200
+    assert [item["name"] for item in typed.json()["items"]] == ["b"]
+    assert forged.status_code == 400
+    assert forged.json()["detail"]["code"] == "unsupported_query"

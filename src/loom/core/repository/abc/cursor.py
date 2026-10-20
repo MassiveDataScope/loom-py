@@ -19,9 +19,9 @@ checked in constant time before the payload is parsed.
 The ``unsigned`` mode emits ``base64url(payload)`` alone, for tests and
 debugging. Strict decoding applies in every mode: a malformed token, a naive
 datetime, a key of an unknown type, a token of another backend or for another
-sort or primary key is refused with
-:class:`~loom.core.repository.abc.errors.UnsupportedQuery`, whose message
-never echoes the token. See ADR 0004.
+sort or primary key, or holding a value of another type than its column, is
+refused with :class:`~loom.core.repository.abc.errors.UnsupportedQuery`,
+whose message never echoes the token. See ADR 0004.
 """
 
 from __future__ import annotations
@@ -33,12 +33,12 @@ import hmac
 import logging
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 from uuid import UUID
 
 import msgspec
@@ -72,6 +72,9 @@ _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
 _INVALID: Final = "cursor token is not valid"
 _OPT_OUT: Final = "persistence.cursors.signing: ephemeral in development.yaml"
+# Types a decoded value must already have: msgspec would otherwise parse a
+# string into them, and the keyset predicate would bind that string.
+_CARRIED_TYPES: Final = (datetime, date, UUID, Decimal)
 
 
 class Cursor(LoomFrozenStruct, frozen=True):
@@ -188,7 +191,13 @@ class CursorCodec:
         codec = CursorCodec.from_context(ctx)  # or container.resolve(CursorCodec)
         token = codec.encode(position, model="billing.Invoice", query=query, scope=tenant_id)
         position = codec.decode(
-            token, backend="sqlalchemy", model="billing.Invoice", query=query, scope=tenant_id
+            token,
+            backend="sqlalchemy",
+            model="billing.Invoice",
+            query=query,
+            scope=tenant_id,
+            columns=scalar_column_annotations(Invoice),
+            primary_key=("id",),
         )
     """
 
@@ -298,7 +307,8 @@ class CursorCodec:
         model: str,
         query: QuerySpec,
         scope: str,
-        id_count: int = 1,
+        columns: Mapping[str, Any],
+        primary_key: Sequence[str],
     ) -> Cursor:
         """Verify and decode a client-supplied ``token``.
 
@@ -310,8 +320,11 @@ class CursorCodec:
                 ones the token was issued for, and it must sort by as many
                 keys as the token carries.
             scope: Caller scope; must equal the scope the token was issued in.
-            id_count: Number of primary-key columns: a single-column key is
-                carried as a scalar, a composite key as a list of that many values.
+            columns: Annotation of each column a token may carry a value of,
+                by name; every sort field and primary-key column must be here.
+            primary_key: Primary-key column names in key order. A
+                single-column key is carried as a scalar, a composite key as
+                a list of one value per column.
 
         Returns:
             The decoded position; datetime keys are always aware.
@@ -319,7 +332,8 @@ class CursorCodec:
         Raises:
             UnsupportedQuery: If the token is malformed, unsigned or forged,
                 signed by an unknown key, issued for another binding or
-                backend, or does not match the sort or the primary key.
+                backend, or does not match the sort or the primary key in
+                number or type of values.
         """
         payload = self._verified_payload(token, model, query, scope)
         if payload is None:
@@ -329,7 +343,9 @@ class CursorCodec:
         except msgspec.DecodeError:
             # The decoder's message may quote the payload: never chain it.
             raise UnsupportedQuery(backend, model, _INVALID) from None
-        return _position(record, backend, model, key_count=len(query.sort), id_count=id_count)
+        sort_types = tuple(columns.get(spec.field) for spec in query.sort)
+        id_types = tuple(columns.get(name) for name in primary_key)
+        return _position(record, backend, model, sort_types=sort_types, id_types=id_types)
 
     def _verified_payload(
         self, token: str, model: str, query: QuerySpec, scope: str
@@ -448,24 +464,48 @@ def _unwrap(key: _Key) -> object:
     return key
 
 
-def _position(record: _Token, backend: str, model: str, *, key_count: int, id_count: int) -> Cursor:
+def _position(
+    record: _Token,
+    backend: str,
+    model: str,
+    *,
+    sort_types: tuple[Any, ...],
+    id_types: tuple[Any, ...],
+) -> Cursor:
+    """The position ``record`` holds, once it matches the sort and the primary key.
+
+    A type of ``None`` stands for a column missing from ``columns``, which no
+    value matches.
+    """
     if record.b != backend:
         raise UnsupportedQuery(backend, model, "cursor token was issued by another backend")
-    if len(record.k) != key_count:
+    keys = tuple(_unwrap(key) for key in record.k)
+    if not _typed_as(keys, sort_types):
         raise UnsupportedQuery(backend, model, "cursor token does not match the sort")
-    carried = len(record.id) if isinstance(record.id, list) else None
-    if carried != (id_count if id_count > 1 else None):
+    composite = len(id_types) > 1
+    carried = record.id
+    ties = (
+        tuple(_unwrap(key) for key in carried) if isinstance(carried, list) else (_unwrap(carried),)
+    )
+    if isinstance(carried, list) != composite or not _typed_as(ties, id_types):
         raise UnsupportedQuery(backend, model, "cursor token does not match the primary key")
-    tie_breaker = (
-        tuple(_unwrap(key) for key in record.id)
-        if isinstance(record.id, list)
-        else _unwrap(record.id)
-    )
-    return Cursor(
-        backend=record.b,
-        keys=tuple(_unwrap(key) for key in record.k),
-        tie_breaker=tie_breaker,
-    )
+    return Cursor(backend=record.b, keys=keys, tie_breaker=ties if composite else ties[0])
+
+
+def _typed_as(values: tuple[object, ...], types: tuple[Any, ...]) -> bool:
+    """Whether ``values`` has one value of each of ``types``, in order.
+
+    msgspec checks each value strictly: an ``int`` is not a ``str``, a
+    ``bool`` is not an ``int``, ``None`` only matches an optional type, and a
+    string is never parsed into a datetime, date, UUID or decimal.
+    """
+    if len(values) != len(types) or None in types:
+        return False
+    try:
+        msgspec.convert(values, tuple[types], builtin_types=_CARRIED_TYPES)  # type: ignore[valid-type]
+    except msgspec.ValidationError:
+        return False
+    return True
 
 
 def _b64encode(data: bytes) -> str:
