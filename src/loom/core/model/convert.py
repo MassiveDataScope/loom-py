@@ -17,8 +17,8 @@ from uuid import UUID
 import msgspec
 
 StructT = TypeVar("StructT", bound=msgspec.Struct)
-# Values SQLAlchemy binds and pyarrow infers natively; encoding them to strings
-# breaks typed columns.
+# Values kept as they are, because SQLAlchemy binds them to typed columns and
+# encoding them to strings breaks those columns.
 _NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
 # What a Postgres driver returns for ``inet``; a model field holds its text form.
 _NETWORK_VALUES = (

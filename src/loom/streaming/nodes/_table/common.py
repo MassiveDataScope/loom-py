@@ -1010,7 +1010,8 @@ def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
       ``Decimal`` inside it is encoded as an ISO-8601 or decimal string
 
     All other values (``str``, ``int``, ``float``, ``datetime``, ``date``,
-    ``Decimal``, ``UUID``, ``list``, ``None``) are passed through unchanged;
+    ``Decimal``, ``UUID``, ``list``, ``None``) are passed through unchanged, a
+    ``list`` as it arrives, its structs already turned into dicts;
     ``clickhouse-connect`` writes a ``Date`` column from ``date`` objects only.
     """
     result: list[Any] = []
