@@ -32,8 +32,9 @@ kafka:
 Under `at_least_once` two structural rules are enforced at compile/startup:
 
 - A terminal `Fork` must declare a `default` branch
-  (`FORK_UNMATCHED_UNROUTED`): unmatched messages that silently drop would
-  otherwise freeze the commit watermark. `default=Process(Drain())` is enough.
+  (`FORK_UNMATCHED_UNROUTED`): a message no branch claims would otherwise be
+  committed without being written anywhere. Add a default route that writes
+  it, or `default=Process(Drain())` to discard it explicitly.
 - Keyed nodes (`CollectBatch`) are rejected on a **multi-process** Bytewax
   cluster (`DELIVERY_KEYED_MULTIPROCESS`): keyed operators route records to a
   primary worker by key hash, which may be another process, where completions

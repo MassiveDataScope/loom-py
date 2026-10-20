@@ -157,7 +157,7 @@ def _resolve_consumer_settings(
 
 
 def _unrouted_fork_issues(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
-    """Report terminal forks whose unmatched stream would drop without completing."""
+    """Report forks whose unmatched messages would be committed without being written."""
     issues: list[CompilationIssue] = []
     for node in _walk_all_process_nodes(flow.process.nodes):
         if isinstance(node, Fork) and node.default is None:

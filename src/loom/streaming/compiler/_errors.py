@@ -231,14 +231,13 @@ class StreamingErrorCode(IssueCode):
             field="streaming.delivery",
         ),
     )
-    # Under at-least-once delivery a dropped message that never completes
-    # freezes the partition's commit watermark forever.
+    # Under at-least-once delivery no message is discarded unless the flow says so.
     FORK_UNMATCHED_UNROUTED = (
         "FORK_UNMATCHED_UNROUTED",
         Template(
-            "fork has no default branch: unmatched messages are dropped without completing "
-            "and freeze the commit watermark under delivery=at_least_once. "
-            "Add default=Process(Drain()).",
+            "fork has no default branch: under delivery=at_least_once a message no branch "
+            "claims would be committed without being written anywhere. Add a default route "
+            "that writes it, or default=Process(Drain()) to discard it explicitly.",
             component=_FORK,
             field="default",
         ),
