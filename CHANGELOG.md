@@ -459,8 +459,8 @@
 
 ### core
 
-- **core:** `sql_endpoint.auth: jwt` is refused when the config is loaded, with
-  an error naming `identity` and `external`; the alias and its
+- **core:** `sql_endpoint.auth` admits only `identity` and `external`;
+  `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
   `auth: identity`.
 - **core:** with no `LOOM_ENV` and no `environment=`, a process starts as

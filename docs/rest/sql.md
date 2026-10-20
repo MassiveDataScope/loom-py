@@ -183,7 +183,6 @@ A connection mounts `POST /sql/{connection}` only with **double opt-in**:
 |--------------|---------|
 | `identity` | Requires a configured authentication mechanism — the built-in `app.rest.auth.jwt` section (with a validated `audience`) or `app.rest.auth.custom: true` with a `create_app(authenticator=...)` of your own; startup fails with `ConfigError` otherwise. The only mode that can bind roles to an identity |
 | `external` | Explicit acknowledgement that the operator provides authentication in front of the app. No identity the framework can read, therefore no allowlist: single-role endpoint only |
-| `jwt` | Deprecated alias of `identity`, kept for existing configs. It named a mechanism where the contract only needs "the framework knows the caller" |
 
 `auth` decides **who gets in**; the authentication mechanism decides **what they may
 become** once in — for JWT, through `app.rest.auth.jwt.roles_claim`.

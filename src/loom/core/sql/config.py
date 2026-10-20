@@ -24,7 +24,6 @@ _URL_CREDENTIALS_RE = re.compile(r"://[^@]+@")
 # The only ``sql_endpoint.auth`` mode carrying a verified caller identity, and
 # therefore the only one able to bind a request to a subset of the allowlist.
 _IDENTITY_BOUND_AUTH = "identity"
-_AUTH_MODES = frozenset({_IDENTITY_BOUND_AUTH, "external"})
 
 
 def _redact_url(url: str) -> str:
@@ -66,21 +65,15 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
             roles to their verified identity) or ``"external"`` (explicit
             acknowledgement that the operator provides authentication, with no
             identity the framework can read).  Any other value fails the
-            parse with an error naming both.
+            parse.
         path: Mount path override. Defaults to ``/sql/{name}`` when ``None``.
         include_in_schema: Whether the endpoint appears in the OpenAPI schema.
     """
 
     enabled: bool = False
-    auth: str | None = None
+    auth: Literal["identity", "external"] | None = None
     path: str | None = None
     include_in_schema: bool = False
-
-    def __post_init__(self) -> None:
-        if self.auth is not None and self.auth not in _AUTH_MODES:
-            raise ValueError(
-                f"sql_endpoint.auth must be one of {sorted(_AUTH_MODES)}, got {self.auth!r}"
-            )
 
     @property
     def binds_identity(self) -> bool:

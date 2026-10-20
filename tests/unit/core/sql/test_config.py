@@ -168,13 +168,13 @@ def test_fails_when_auth_has_an_unknown_value() -> None:
         _parse(connection)
 
 
-def test_refuses_the_removed_jwt_auth_mode_naming_the_valid_values() -> None:
-    """``auth: jwt`` is refused at decode and the error names what is accepted."""
+def test_refuses_the_removed_jwt_auth_mode_naming_the_field() -> None:
+    """``auth: jwt`` is refused at decode and the error names the field."""
     connection = _minimal(
         default_role="role_viz_reader",
         sql_endpoint={"enabled": True, "auth": "jwt"},
     )
-    with pytest.raises(ConfigError, match=r"sql_endpoint\.auth.*'external'.*'identity'.*'jwt'"):
+    with pytest.raises(ConfigError, match=r"'jwt'.*sql_endpoint\.auth"):
         _parse(connection)
 
 

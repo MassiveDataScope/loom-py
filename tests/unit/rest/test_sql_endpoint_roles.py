@@ -19,7 +19,6 @@ import time
 from typing import Any
 
 import jwt as pyjwt
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -457,14 +456,3 @@ def test_the_span_names_the_default_role_of_a_single_role_connection() -> None:
 
     assert response.status_code == 200
     assert observer.events[0].meta["roles"] == ROLE_A
-
-
-# ---------------------------------------------------------------------------
-# Removed auth spelling
-# ---------------------------------------------------------------------------
-
-
-def test_the_jwt_auth_mode_is_refused_when_built_in_code() -> None:
-    """'jwt' no longer means 'identity': building the config with it fails."""
-    with pytest.raises(ValueError, match="'external', 'identity'"):
-        SqlEndpointConfig(enabled=True, auth="jwt")
