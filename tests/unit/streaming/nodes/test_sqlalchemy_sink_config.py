@@ -7,7 +7,7 @@ import pytest
 from loom.streaming.nodes._table import SqlAlchemySinkConfig
 
 
-def test_an_inline_url_sink_reads_the_pool_keys() -> None:
+def test_an_inline_url_sink_accepts_the_pool_keys() -> None:
     config = SqlAlchemySinkConfig.from_config(
         {"url": "sqlite+aiosqlite:///:memory:", "pool_size": 5}, default_table="orders"
     )

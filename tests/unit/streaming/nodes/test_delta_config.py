@@ -55,3 +55,11 @@ def test_delta_sink_config_refuses_an_unknown_staging_key() -> None:
             {"uri": "s3://lake/events", "staging": {"compresion": "zstd"}},
             default_table="events",
         )
+
+
+@pytest.mark.parametrize("key", ["staging", "writer_properties"])
+def test_delta_sink_config_refuses_a_section_key_that_is_not_a_mapping(key: str) -> None:
+    with pytest.raises(ValueError, match=f"'{key}' must be a mapping"):
+        DeltaSinkConfig.from_config(
+            {"uri": "s3://lake/events", key: "zstd"}, default_table="events"
+        )

@@ -476,6 +476,8 @@ names the removal and gives examples of the removed functions.
     `OUTPUT_WITH_BROADCAST`, `WINDOW_STRATEGY_UNSUPPORTED`,
     `SCOPED_INTO_TOPIC_NOT_LAST`, `SCOPED_PROCESS_UNSUPPORTED_NODE`,
     `ERROR_ENVELOPE_UNPARAMETERIZED`, `SINK_CANNOT_TRACK_COMMITS`.
+    Note: since #397, `SINK_CONFIG_INVALID` and `SINK_CANNOT_TRACK_COMMITS`
+    have tests asserting the code.
 
   Each pillar's migration adds the missing compile-path tests in the same pull
   request, or deletes the dead code.

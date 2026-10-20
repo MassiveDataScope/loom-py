@@ -1170,7 +1170,8 @@
 - **streaming:** an `IntoTable` sink section (`streaming.sinks.<name>`) with a
   key its backend does not read fails at compile with `SINK_CONFIG_INVALID`,
   naming every unknown key; on Delta this covers the keys under `staging`
-  too. Before, such a key was ignored. A SQLAlchemy sink that references a
+  too, and a `staging` or `writer_properties` that is not a mapping is
+  refused. Before, such a key was ignored. A SQLAlchemy sink that references a
   shared `database` reads no pool keys (`pool_size`, `echo`, ...) from its own
   section, so they are refused there; set them under `database.<name>`.
   A SQLAlchemy or ClickHouse sink section that sets both `url` and `database`

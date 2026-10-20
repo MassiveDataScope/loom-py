@@ -1,4 +1,4 @@
-"""IntoTable streaming sink node — writes typed events to Delta or SQLAlchemy tables.
+"""IntoTable streaming sink node — writes typed events to SQLAlchemy, Delta or ClickHouse tables.
 
 IntoTable is a frozen dataclass that implements IntoSink structurally.
 The compiler detects it via isinstance(node, IntoSink) without any
@@ -10,10 +10,14 @@ Supported backends
   Requires an async bridge and a shared SQLAlchemy session manager from the
   Bytewax runtime.
   Install: ``pip install sqlalchemy``.
-- ``Backend.DELTA``: stages rows as parquet parts in temporary files and
-  appends them to Delta via delta-rs.
+- ``Backend.DELTA``: stages rows as a PyArrow IPC stream in a spooled
+  temporary file and appends it to Delta via delta-rs.
   Requires a ``uri`` key in the resolved config section.
   Install: ``pip install deltalake polars``.
+- ``Backend.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
+  Requires a ``database`` reference whose ``database.<name>`` section holds
+  ``http_url`` or ``url``.
+  Install: ``pip install clickhouse-connect``.
 
 Config example (streaming.sinks.<name>)::
 
@@ -164,7 +168,7 @@ class Backend(StrEnum):
     Args:
         SQLALCHEMY:  Bulk-insert rows via SQLAlchemy Core. Transport-agnostic —
             works with any SA-supported database.
-        DELTA:       Stage parquet parts and append them to a Delta Lake table.
+        DELTA:       Stage rows as a PyArrow IPC stream and append it to a Delta Lake table.
             Requires ``deltalake`` and ``polars`` to be installed.
         CLICKHOUSE:  Bulk-insert rows via ``clickhouse-connect`` (native HTTP/2
             protocol, no SQLAlchemy). Requires ``clickhouse-connect`` to be
@@ -420,6 +424,22 @@ _CLICKHOUSE_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
 }
 
 
+def _mapping_section(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """Return the nested section *key* of a Delta sink config, ``{}`` when unset.
+
+    Raises:
+        ValueError: If *key* is set to something other than a mapping.
+    """
+    value = config.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"Delta sink config '{key}' must be a mapping, got {type(value).__name__}."
+        )
+    return value
+
+
 def _refuse_unknown_keys(
     config: Mapping[str, Any], known: frozenset[str], *, sink: str, prefix: str = ""
 ) -> None:
@@ -523,15 +543,10 @@ class DeltaSinkConfig:
         if not uri:
             raise ValueError("Delta sink config requires a non-empty 'uri'.")
         raw_partition_by = config.get("partition_by") or []
-        raw_staging = config.get("staging")
-        staging_config: Mapping[str, Any] = raw_staging if isinstance(raw_staging, Mapping) else {}
+        staging_config = _mapping_section(config, "staging")
         _refuse_unknown_keys(staging_config, _DELTA_STAGING_KEYS, sink="Delta", prefix="staging.")
         staging_compression = _validate_ipc_compression(staging_config.get("compression"))
-        writer_properties = _build_writer_properties(
-            config.get("writer_properties")
-            if isinstance(config.get("writer_properties"), Mapping)
-            else {}
-        )
+        writer_properties = _build_writer_properties(_mapping_section(config, "writer_properties"))
         if writer_properties is None:
             writer_properties = _writer_properties_factory(
                 max_row_group_size=_DEFAULT_MAX_ROW_GROUP_SIZE

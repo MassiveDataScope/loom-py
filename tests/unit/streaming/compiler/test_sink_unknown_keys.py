@@ -76,11 +76,22 @@ def test_an_unknown_key_is_a_sink_config_issue_naming_the_key(
 
 
 @pytest.mark.parametrize(
-    ("backend", "database"),
-    [(Backend.SQLALCHEMY, "warehouse"), (Backend.CLICKHOUSE, "clickhouse")],
+    ("backend", "database", "remedy"),
+    [
+        (
+            Backend.SQLALCHEMY,
+            "warehouse",
+            "set 'database' for a shared section or 'url' inline, not both",
+        ),
+        (
+            Backend.CLICKHOUSE,
+            "clickhouse",
+            "the url comes from database.<name>, so set 'database' only",
+        ),
+    ],
 )
 def test_a_section_with_both_url_and_database_is_refused(
-    streaming_kafka_config: DictConfig, backend: Backend, database: str
+    streaming_kafka_config: DictConfig, backend: Backend, database: str, remedy: str
 ) -> None:
     section = {"url": "sqlite+aiosqlite:///:memory:", "database": database}
     flow = _flow(backend)
@@ -96,3 +107,4 @@ def test_a_section_with_both_url_and_database_is_refused(
     ]
     assert len(issues) == 1
     assert "both 'url' and 'database'" in issues[0].message
+    assert remedy in issues[0].message
