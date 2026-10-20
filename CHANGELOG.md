@@ -762,8 +762,26 @@
   `BROADCAST_NOT_LAST` with component `broadcast`, at the top level, in a
   branch and in a Router branch. It used to report `TERMINAL_NOT_LAST` with
   component `Broadcast`.
-
-## 🐛 Fixes
+- **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
+  `IntoSink`) or `Drain` hands the message to that terminal. The branch's
+  terminal was skipped: with a flow `output` the message went to the output
+  instead, without one it was not written.
+- **streaming:** `With`, `WithAsync`, `Router`, `CollectBatch`, `ForEach` and
+  `Explode` inside a Router branch fail compilation with
+  `ROUTER_BRANCH_UNSAFE_NODE`. Such flows compiled and raised `TypeError` when
+  the branch ran.
+- **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
+  many of the oldest events not yet reported durable they made durable, `0`
+  when they only buffered. A custom `IntoSink` partition must report it; one
+  that returns anything else fails with `TypeError`. A storage sink's
+  `terminal:sink_write` spans are emitted for the events a call made durable,
+  not for every event handed to it.
+- **streaming:** a node that ends a path in a sink ends it: a top-level
+  `IntoTopic` or `IntoSink` is no longer also sent to the flow `output`, a
+  Broadcast route whose process ends in a terminal no longer also writes the
+  route's `output`, and the expanded payload of an `ExpandRoutes` no longer
+  goes to the flow `output`. A branch that ends without a sink no longer logs
+  `unrouted_branch_drop_sink`.
 
 ### core
 
@@ -1007,6 +1025,26 @@
   follows. Each route is now checked on the record stream it receives, with
   issues scoped under `expand_routes branch <type>`, and a node after an
   `ExpandRoutes` fails with `TERMINAL_NOT_LAST`; such flows used to compile.
+- **streaming:** under at-least-once delivery each source offset completes
+  once per fork share, and not before the writes on its path are flushed.
+  These shapes broke it:
+  - an inline `IntoTopic` in `With(process=...)` or `WithAsync(process=...)`
+    followed by a flow `output` completed the offset at the inline write,
+    before the output write, and again at the output;
+  - an `ExpandRoutes` route ending in a scope completed at a drop sink wired
+    beside the route's process, which does not wait for the inline write, and
+    again at the inline write;
+  - an `IntoTopic` ending an `ExpandRoutes` route, or a Broadcast route
+    without `output`, completed at its sink and again at a drop sink;
+  - a Router branch terminal, and a Router's unmatched messages with nothing
+    after them, never completed;
+  - a storage sink (`IntoTable`, any `IntoSink`) never completed;
+  - an undecodable record with no `WIRE` error route never completed.
+
+  A Router keeps the source order of the messages that continue after it, and
+  an inline write no longer completes an offset: the message completes where
+  its path ends. A storage sink completes the offsets of the events its flush
+  wrote, so events still buffered when a worker dies are consumed again.
 
 ### prefect
 
