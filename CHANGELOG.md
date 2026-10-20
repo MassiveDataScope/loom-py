@@ -1517,17 +1517,20 @@
   refused for a `bytea` column ("column is of type bytea but expression is of
   type character varying"). IntoTable now takes each column's type from core's
   model introspection (`loom.core.backend.sqlalchemy.sa_table_for`), the type
-  a compiled model declares, and writes each value as core's repository does
-  (`to_column_value`): a plain `Enum` as its value, a struct in a JSON column
-  as a dict, an `UNSET` value left out so the column's database default
-  applies, also when other rows of the batch set it. Relation and projection
-  fields are no longer columns for any backend: the SQLAlchemy and Delta rows
-  included them and failed on their `UNSET` value, and the ClickHouse insert
-  named them. A
-  `date` or `time` field is bound as `Date` or `Time`, as core infers it, so
-  it is written into a Postgres `date` or `time` column; it was bound as
-  `String` and Postgres refused it ("column is of type date but expression is
-  of type character varying").
+  a compiled model declares, and builds each row with core's new
+  `loom.core.repository.sqlalchemy.values.to_column_row`, which converts and
+  checks values as the repository does when it writes them: a plain `Enum` as
+  its value, a struct in a JSON column as a dict, an `UNSET` value left out so
+  the column's database default applies, also when other rows of the batch
+  set it, and a `time` whose UTC offset its column cannot take refused with
+  `BoundaryValidationError` (`boundary_validation`) instead of being written
+  without the offset. Relation and projection fields are no longer columns
+  for any backend: the SQLAlchemy and Delta rows included them and failed on
+  their `UNSET` value, and the ClickHouse insert named them. A `date` or
+  `time` field is bound as `Date` or `Time`, as core infers it, so it is
+  written into a Postgres `date` or `time` column; it was bound as `String`
+  and Postgres refused it ("column is of type date but expression is of type
+  character varying").
 
 ### prefect
 

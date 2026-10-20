@@ -66,7 +66,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -100,7 +100,7 @@ try:
     from sqlalchemy import insert as _sa_insert
 
     from loom.core.backend.sqlalchemy import sa_table_for
-    from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+    from loom.core.repository.sqlalchemy.values import to_column_row
 
     _SA_AVAILABLE = True
 except ImportError as exc:
@@ -108,8 +108,7 @@ except ImportError as exc:
         raise
     _sa_insert = cast(Any, None)
     sa_table_for = cast(Any, None)
-    is_json_column = cast(Any, None)
-    to_column_value = cast(Any, None)
+    to_column_row = cast(Any, None)
     _SA_AVAILABLE = False
 
 # ── optional Delta dependency ─────────────────────────────────────────────────
@@ -626,7 +625,7 @@ class _SQLAlchemyTablePartition:
             return 0
         durable = 0
         for item in items:
-            row = _to_column_row(item, self._table.columns)
+            row = to_column_row(item, self._table.columns)
             row_bytes = _row_size_bytes(row)
             if not self._buffer:
                 self._buffer_started_at = monotonic()
@@ -718,21 +717,6 @@ def _rows_by_column_set(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]
     for row in rows:
         groups.setdefault(frozenset(row), []).append(row)
     return list(groups.values())
-
-
-def _to_column_row(item: Any, columns: Iterable[Any]) -> dict[str, Any]:
-    """Return the row core's repository writes for *item*: one value per set column."""
-    row: dict[str, Any] = {}
-    for column in columns:
-        value = getattr(item, column.name)
-        if value is not msgspec.UNSET:
-            row[column.name] = to_column_value(value, json=is_json_column(column))
-    return row
-
-
-def _to_row_dict(item: Any) -> dict[str, Any]:
-    """Serialise one LoomStruct instance to a plain dict."""
-    return msgspec.structs.asdict(cast(msgspec.Struct, item))
 
 
 # ── Delta helpers ─────────────────────────────────────────────────────────────
@@ -1081,7 +1065,9 @@ class _ClickHouseTablePartition:
         for item in items:
             if not self._buffer_records:
                 self._buffer_started_at = monotonic()
-            row = _to_ch_row(_to_row_dict(item), self._column_names)
+            row = _to_ch_row(
+                {name: getattr(item, name) for name in self._column_names}, self._column_names
+            )
             row_bytes = sum(len(str(v)) for v in row)
             for col_idx, value in enumerate(row):
                 self._buffer[col_idx].append(value)

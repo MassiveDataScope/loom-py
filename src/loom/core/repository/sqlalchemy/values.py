@@ -6,7 +6,8 @@ SQLAlchemy binds ``bytes``, ``datetime``, ``date``, ``time``, ``Decimal`` and
 so its values are reduced completely.
 
 :func:`to_column_value` is the conversion the repository applies to a value it
-writes, and :func:`to_comparison_value` the one it applies to a value compared
+writes (:func:`to_column_row` applies it, with the offset check below, to a
+whole struct), and :func:`to_comparison_value` the one it applies to a value compared
 with a column (a filter, ``get_by``, ``exists_by``), so a comparison matches
 exactly what the row holds.
 
@@ -99,6 +100,34 @@ def _time_offset_refusal(column: Any, value: object) -> str | None:
     return _OFFSET_REQUIRED if keeps_offset else _OFFSET_REFUSED
 
 
+def to_column_row(item: object, columns: Iterable[Any]) -> dict[str, Any]:
+    """Return the row *item* writes to *columns*, keyed by column name.
+
+    Each column takes the attribute of *item* with its name. A value that is
+    ``UNSET`` is left out, so the column's database default applies; every
+    other value is refused as :func:`check_time_offsets` refuses it, then
+    converted by :func:`to_column_value`.
+
+    Args:
+        item: A struct with one attribute per column.
+        columns: SQLAlchemy columns.
+
+    Raises:
+        BoundaryValidationError: ``boundary_validation``, for a ``time`` whose
+            offset its column cannot take.
+    """
+    bindings = [
+        (column, value)
+        for column in columns
+        if (value := getattr(item, column.name)) is not msgspec.UNSET
+    ]
+    check_time_offsets(bindings, code=ErrorCode.BOUNDARY_VALIDATION)
+    return {
+        column.name: to_column_value(value, json=is_json_column(column))
+        for column, value in bindings
+    }
+
+
 def to_comparison_value(column: Any, value: object) -> Any:
     """Return *value* in the form it is compared with *column*.
 
@@ -127,4 +156,10 @@ def is_json_column(column: object) -> bool:
     return isinstance(getattr(column, "type", None), JSON)
 
 
-__all__ = ["check_time_offsets", "is_json_column", "to_column_value", "to_comparison_value"]
+__all__ = [
+    "check_time_offsets",
+    "is_json_column",
+    "to_column_row",
+    "to_column_value",
+    "to_comparison_value",
+]

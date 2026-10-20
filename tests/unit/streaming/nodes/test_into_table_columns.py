@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import msgspec
 import pytest
@@ -17,7 +17,16 @@ from sqlalchemy.dialects import postgresql
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.backend.sqlalchemy import compile_model
-from loom.core.model import BaseModel, ColumnField, LoomStruct, Numeric, String, Text
+from loom.core.errors.codes import ErrorCode
+from loom.core.model import (
+    BaseModel,
+    BoundaryValidationError,
+    ColumnField,
+    LoomStruct,
+    Numeric,
+    String,
+    Text,
+)
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.streaming.nodes._table import Backend, IntoTable, SqlAlchemySinkConfig
@@ -89,6 +98,15 @@ class _UndeclaredMode(LoomStruct):
 
 class _UndeclaredAmount(LoomStruct):
     amount: Decimal
+
+
+class _UndeclaredKind(LoomStruct):
+    kind: Literal["first", "second"]
+
+
+class _Opening(LoomStruct):
+    opening_id: int
+    opens_at: time
 
 
 class _Owner(LoomStruct):
@@ -208,8 +226,12 @@ def test_a_relation_field_is_neither_a_column_nor_a_value(bridge: AsyncBridge) -
 
 @pytest.mark.parametrize(
     ("payload", "field"),
-    [(_UndeclaredMode, "_UndeclaredMode.mode"), (_UndeclaredAmount, "_UndeclaredAmount.amount")],
-    ids=["plain_enum", "decimal"],
+    [
+        (_UndeclaredMode, "_UndeclaredMode.mode"),
+        (_UndeclaredAmount, "_UndeclaredAmount.amount"),
+        (_UndeclaredKind, "_UndeclaredKind.kind"),
+    ],
+    ids=["plain_enum", "decimal", "literal"],
 )
 def test_a_field_without_a_declared_column_type_is_refused(
     bridge: AsyncBridge, payload: type[Any], field: str
@@ -220,3 +242,15 @@ def test_a_field_without_a_declared_column_type_is_refused(
 
     with pytest.raises(ValueError, match=rf"^{re.escape(field)}: no column type is inferred"):
         sink.build_partition(config, 0, 1, bridge=bridge, session_manager=session_manager)
+
+
+def test_a_time_with_an_offset_is_refused_for_a_time_column_as_the_repository_refuses_it(
+    bridge: AsyncBridge,
+) -> None:
+    aware = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
+
+    with pytest.raises(BoundaryValidationError) as refused:
+        _write(bridge, _Opening(opening_id=1, opens_at=aware))
+
+    assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
+    assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)
