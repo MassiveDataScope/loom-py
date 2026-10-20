@@ -69,14 +69,11 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
-from decimal import Decimal
+from datetime import date, datetime
 from enum import StrEnum
 from tempfile import SpooledTemporaryFile
 from time import monotonic
-from types import UnionType
 from typing import (
-    Annotated,
     Any,
     ClassVar,
     Generic,
@@ -84,11 +81,7 @@ from typing import (
     Protocol,
     Self,
     TypeVar,
-    Union,
     cast,
-    get_args,
-    get_origin,
-    get_type_hints,
 )
 from uuid import uuid4
 
@@ -96,7 +89,7 @@ import msgspec
 import msgspec.structs
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.model.types import _JsonMarker
+from loom.core.model.introspection import get_column_fields
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
 
@@ -108,34 +101,15 @@ try:
     import sqlalchemy as _sa
     from sqlalchemy import insert as _sa_insert
 
-    Boolean = _sa.Boolean
-    Column = _sa.Column
-    DateTime = _sa.DateTime
-    Integer = _sa.Integer
-    MetaData = _sa.MetaData
-    Numeric = _sa.Numeric
-    SAJSON = _sa.JSON
-    SAFloat = _sa.Float
-    String = _sa.String
-    Table = _sa.Table
-    Text = _sa.Text
+    from loom.core.backend.sqlalchemy import _build_sa_column_type
 
-    # Defined inside the try block so all SA names are provably bound here.
-    _SA_TYPE_MAP: dict[type, Any] = {
-        int: Integer(),
-        float: SAFloat(),
-        bool: Boolean(),
-        str: String(),
-        datetime: DateTime(timezone=True),
-        date: String(10),
-        time: String(8),
-        Decimal: Numeric(),
-        bytes: Text(),
-    }
+    Column = _sa.Column
+    MetaData = _sa.MetaData
+    Table = _sa.Table
     _SA_AVAILABLE = True
 except ImportError:
     _sa_insert = cast(Any, None)
-    _SA_TYPE_MAP = {}
+    _build_sa_column_type = cast(Any, None)
     _SA_AVAILABLE = False
 
 # ── optional Delta dependency ─────────────────────────────────────────────────
@@ -587,42 +561,11 @@ def _build_writer_properties(config: Mapping[str, Any] | None) -> Any | None:
     return _writer_properties_factory(**kwargs)
 
 
-def _sa_type_for(annotation: Any) -> Any:
-    """Map a Python type annotation to a SQLAlchemy column type instance.
-
-    Unwraps ``Optional[T]`` before mapping.  Collections and unmapped types
-    fall back to ``JSON()``.  References module-level ``_SA_TYPE_MAP`` —
-    no import statements inside.
-
-    Args:
-        annotation: A Python type or ``Optional`` / union variant.
-
-    Returns:
-        A SQLAlchemy column type instance.
-    """
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        base_type, *metadata = get_args(annotation)
-        if any(isinstance(m, _JsonMarker) for m in metadata):
-            return Text()
-        return _sa_type_for(base_type)
-    if origin in (Union, UnionType):
-        non_none = [a for a in get_args(annotation) if a is not type(None)]
-        return _sa_type_for(non_none[0]) if len(non_none) == 1 else SAJSON()
-    if origin in (list, tuple, set, dict, frozenset):
-        return SAJSON()
-    if isinstance(annotation, type):
-        return _SA_TYPE_MAP.get(annotation, SAJSON())
-    return SAJSON()
-
-
 def _sa_table_from_struct(table_name: str, payload_type: type[Any]) -> Table:
     """Build a SQLAlchemy Core ``Table`` from a msgspec Struct type.
 
-    Resolves annotations via :func:`~typing.get_type_hints` and maps each
-    Python type to the corresponding SA column type via :func:`_sa_type_for`.
-    References module-level ``Column``, ``MetaData``, ``Table`` — no imports
-    inside.
+    Each column takes the type core's model introspection gives the field, the
+    same type a compiled model declares for it.
 
     Args:
         table_name:   Target table name used in the SQL DDL.
@@ -633,10 +576,9 @@ def _sa_table_from_struct(table_name: str, payload_type: type[Any]) -> Table:
     Returns:
         A :class:`~sqlalchemy.Table` bound to a fresh :class:`~sqlalchemy.MetaData`.
     """
-    hints = get_type_hints(payload_type)
     columns = [
-        Column(field.name, _sa_type_for(hints.get(field.name, object)))
-        for field in msgspec.structs.fields(payload_type)
+        Column(name, _build_sa_column_type(info.column_type))
+        for name, info in get_column_fields(payload_type).items()
     ]
     return Table(table_name, MetaData(), *columns)
 

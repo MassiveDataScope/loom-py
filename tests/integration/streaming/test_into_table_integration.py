@@ -8,14 +8,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
+from collections.abc import Iterator, Sequence
+from datetime import date
+from datetime import time as time_of_day
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import polars as pl
 import pytest
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import Row, create_engine, event, text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from tests.helpers.version_limited_extras import require_bytewax
 
@@ -431,6 +439,109 @@ class TestIntoTableSQLAlchemyIntegration:
         assert config.writer_properties is not None
         assert config.writer_properties.compression == "SNAPPY"
         assert config.target_file_size == 134_217_728
+
+
+_PG_URI_ENV_VAR = "LOOM_PG_IT_URI"
+
+
+class _BinaryRow(LoomStruct):
+    reading_id: int
+    blob: bytes
+
+
+class _CalendarRow(LoomStruct):
+    reading_id: int
+    taken_on: date
+    opens_at: time_of_day
+
+
+async def _pg_fetch(uri: str, statements: Sequence[str]) -> list[Row[Any]]:
+    """Run ``statements`` in one transaction and return the rows of the last one."""
+    engine = create_async_engine(uri, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            result = None
+            for statement in statements:
+                result = await conn.execute(text(statement))
+            return list(result.fetchall()) if result is not None and result.returns_rows else []
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+def pg_uri() -> str:
+    uri = os.environ.get(_PG_URI_ENV_VAR)
+    if not uri:
+        pytest.skip(f"{_PG_URI_ENV_VAR} is not set")
+    return uri
+
+
+@pytest.fixture
+def pg_table(pg_uri: str) -> Iterator[str]:
+    """A throwaway table name, dropped after the test."""
+    table = f"into_table_it_{uuid4().hex[:12]}"
+    yield table
+    asyncio.run(_pg_fetch(pg_uri, [f"DROP TABLE IF EXISTS {table}"]))
+
+
+def _write_to_postgres(uri: str, table: str, payload: type[Any], items: list[Any]) -> None:
+    bridge = AsyncBridge()
+    session_manager = SessionManager.from_config({"url": uri})
+    node = IntoTable(payload=payload, table=table, backend=Backend.SQLALCHEMY)
+    partition = node.build_partition(
+        SqlAlchemySinkConfig.from_config({"table": table}, default_table=table),
+        worker_index=0,
+        worker_count=1,
+        bridge=bridge,
+        session_manager=session_manager,
+    )
+    try:
+        partition.write_batch(items)
+        partition.close()
+    finally:
+        bridge.run(session_manager.dispose())
+        bridge.shutdown()
+
+
+@pytest.mark.integration
+class TestIntoTablePostgresIntegration:
+    def test_writes_bytes_into_a_bytea_column(self, pg_uri: str, pg_table: str) -> None:
+        asyncio.run(
+            _pg_fetch(pg_uri, [f"CREATE TABLE {pg_table} (reading_id integer, blob bytea)"])
+        )
+
+        _write_to_postgres(
+            pg_uri, pg_table, _BinaryRow, [_BinaryRow(reading_id=1, blob=b"\x00\xff")]
+        )
+
+        rows = asyncio.run(_pg_fetch(pg_uri, [f"SELECT reading_id, blob FROM {pg_table}"]))
+        assert [tuple(row) for row in rows] == [(1, b"\x00\xff")]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="core infers date/time fields as String until #379 adds Date/Time columns",
+    )
+    def test_writes_date_and_time_into_date_and_time_columns(
+        self, pg_uri: str, pg_table: str
+    ) -> None:
+        asyncio.run(
+            _pg_fetch(
+                pg_uri,
+                [f"CREATE TABLE {pg_table} (reading_id integer, taken_on date, opens_at time)"],
+            )
+        )
+
+        _write_to_postgres(
+            pg_uri,
+            pg_table,
+            _CalendarRow,
+            [_CalendarRow(reading_id=1, taken_on=date(2026, 1, 2), opens_at=time_of_day(8, 30))],
+        )
+
+        rows = asyncio.run(
+            _pg_fetch(pg_uri, [f"SELECT reading_id, taken_on, opens_at FROM {pg_table}"])
+        )
+        assert [tuple(row) for row in rows] == [(1, date(2026, 1, 2), time_of_day(8, 30))]
 
 
 class TestIntoTableClickHouseUnit:

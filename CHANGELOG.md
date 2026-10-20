@@ -1351,6 +1351,17 @@
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` gives each column the
+  type core's model introspection infers for the field, the type a compiled
+  model declares, instead of its own map. A `bytes` field is now bound as
+  `LargeBinary` (`bytea` on Postgres) instead of text, which Postgres refused
+  for a `bytea` column ("column is of type bytea but expression is of type
+  character varying"). A `StrEnum` or `IntEnum` field is bound as its scalar
+  (`String`, `Integer`) instead of JSON, a type declared with `ColumnField` or
+  `Annotated` is honoured, and a `Decimal` field is `Numeric(10, 2)` as in
+  core. A `date` or `time` field follows core's inference, still `String`:
+  writing one into a Postgres `date` or `time` column fails until core infers
+  `Date` and `Time` columns (#379).
 
 ### prefect
 
