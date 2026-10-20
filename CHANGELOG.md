@@ -597,7 +597,10 @@
   decimal or UUID column, or keyed by a UUID, reaches the next page.
 - **core:** one `CursorCodec` per process: the registration modules register
   it with `register_cursor_codec`, which raises `ConfigError` when a
-  different codec is already registered.
+  different codec is already registered, and, in a deployed environment,
+  for an `ephemeral` or `unsigned` codec unless `CursorCodec.from_context`
+  built it from a configuration silencing `loom.cursors.E001`.
+  `loom.core.checks.silenced_checks(config)` returns the silenced ids.
 - **ai:** a provider's `credentials_ref` is read through
   `loom.core.environment.configured_variable` and may not name a `LOOM_*`
   variable.

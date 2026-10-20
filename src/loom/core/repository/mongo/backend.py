@@ -17,6 +17,7 @@ import msgspec
 from pymongo import AsyncMongoClient
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.keys import ConfigKey
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.repository.abc import CursorCodec
@@ -30,7 +31,7 @@ from loom.core.repository.mongo.registry import build_mongo_repository_registrat
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
 
-_SECTION = "persistence.mongo"
+_SECTION = ConfigKey.PERSISTENCE_MONGO.value
 
 _logger = logging.getLogger(__name__)
 

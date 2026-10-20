@@ -224,7 +224,11 @@ its values with the order of the rows, and reads them from the token
   registered in DI so a service paginating by hand resolves the codec the
   repositories use. `register_cursor_codec` registers it, and raises
   `ConfigError` when a different codec is already registered: two codecs
-  would sign with different keys and refuse each other's tokens.
+  would sign with different keys and refuse each other's tokens. A codec
+  built in code never meets `loom.cursors.E001`, so registering one applies
+  its rule: in the deployed environment the container resolves, an
+  `ephemeral` or `unsigned` codec is refused unless `CursorCodec.from_context`
+  built it from a configuration that silences the check.
 - An empty `cursor` is an invalid token on both backends (400), not a first
   page.
 - The public surface is `CursorCodec`, its configuration (`CursorConfig`,

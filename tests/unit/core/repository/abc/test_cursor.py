@@ -5,16 +5,18 @@ import secrets
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import msgspec
 import pytest
 
-from loom.core.config import ConfigError
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
+from loom.core.environment import Environment
 from loom.core.errors.codes import ErrorCode
 from loom.core.repository.abc import (
+    CURSOR_SIGNING_CHECK,
     Cursor,
     CursorCodec,
     FilterGroup,
@@ -619,6 +621,46 @@ class TestOneCodecPerProcess:
 
         with pytest.raises(ConfigError, match="one codec per process"):
             register_cursor_codec(container, CursorCodec(signing="ephemeral"))
+
+
+class TestOptOutsInADeployedEnvironment:
+    """A codec built in code skips loom.cursors.E001, so registering it checks the same rule."""
+
+    @staticmethod
+    def _container(environment: Environment) -> LoomContainer:
+        container = LoomContainer()
+        container.register_instance(Environment, environment)
+        return container
+
+    @pytest.mark.parametrize("signing", ["unsigned", "ephemeral"])
+    def test_an_opt_out_built_in_code_is_refused(
+        self, signing: Literal["unsigned", "ephemeral"]
+    ) -> None:
+        container = self._container(Environment.PRODUCTION)
+
+        with pytest.raises(ConfigError, match=r"loom\.cursors\.E001"):
+            register_cursor_codec(container, CursorCodec(signing=signing))
+
+    def test_an_opt_out_whose_configuration_silences_the_check_registers(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {
+                "checks": {"silenced": [CURSOR_SIGNING_CHECK]},
+                "persistence": {"cursors": {"signing": "ephemeral"}},
+            }
+        )
+        container = self._container(Environment.STAGING)
+        codec = CursorCodec.from_context(ctx)
+
+        register_cursor_codec(container, codec)
+
+        assert container.resolve(CursorCodec) is codec
+
+    def test_an_opt_out_registers_outside_a_deployed_environment(self) -> None:
+        container = self._container(Environment.DEVELOPMENT)
+
+        register_cursor_codec(container, CursorCodec(signing="unsigned"))
+
+        assert container.resolve(CursorCodec).signing == "unsigned"
 
 
 class TestModes:

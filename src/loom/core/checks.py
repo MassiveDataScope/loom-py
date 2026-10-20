@@ -221,7 +221,7 @@ def run_deploy_checks(
     """
     section = _checks_section(config)
     _import_modules(section.modules)
-    silenced = _silenced(section.silenced)
+    silenced = silenced_checks(config)
     results = tuple(
         CheckResult(id=check_id, message=finding.message, hint=finding.hint)
         for check_id, check in registry.items()
@@ -229,6 +229,15 @@ def run_deploy_checks(
         if (finding := check(config)) is not None
     )
     return DeployReport(results=results, silenced=silenced)
+
+
+def silenced_checks(config: ConfigContext) -> tuple[str, ...]:
+    """Return the ids ``checks.silenced`` lists, as the runner reads them.
+
+    Raises:
+        ConfigError: As :func:`run_deploy_checks` for the ``checks`` section.
+    """
+    return _silenced(_checks_section(config).silenced)
 
 
 def enforce_deploy_checks(
@@ -330,6 +339,7 @@ __all__ = [
     "MODULES_KEY",
     "REST_CHECKS",
     "SILENCED_KEY",
+    "silenced_checks",
     "CheckLevel",
     "CheckResult",
     "DeployCheck",

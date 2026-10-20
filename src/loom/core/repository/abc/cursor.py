@@ -44,9 +44,10 @@ from uuid import UUID
 
 import msgspec
 
+from loom.core.checks import silenced_checks
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
-from loom.core.environment import configured_variable
+from loom.core.environment import Environment, configured_variable
 from loom.core.model.struct import LoomFrozenStruct
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import FilterSpec, QuerySpec
@@ -62,6 +63,9 @@ _SIGNED: Final = "signed"
 _EPHEMERAL: Final = "ephemeral"
 _UNSIGNED: Final = "unsigned"
 _SIGNING_MODES: Final = frozenset({_SIGNED, _EPHEMERAL, _UNSIGNED})
+
+CURSOR_SIGNING_CHECK: Final = "loom.cursors.E001"
+"""Id of the deploy check refusing cursors not signed with a configured key."""
 
 MIN_KEY_BYTES: Final = 32
 """Shortest accepted HMAC-SHA256 key: the hash output length (NIST SP 800-107)."""
@@ -210,7 +214,7 @@ class CursorCodec:
         )
     """
 
-    __slots__ = ("_current", "_keys", "_signing")
+    __slots__ = ("_current", "_keys", "_opt_out_silenced", "_signing")
 
     def __init__(
         self,
@@ -222,6 +226,7 @@ class CursorCodec:
         if signing not in _SIGNING_MODES:
             raise ConfigError(f"persistence.cursors.signing {signing!r} is not a signing mode")
         self._signing = signing
+        self._opt_out_silenced = False
         if signing == _SIGNED:
             self._keys, self._current = _keyring(keys or {}, current_key_id)
         elif signing == _EPHEMERAL:
@@ -248,14 +253,25 @@ class CursorCodec:
             ctx: Application configuration; the section may be absent.
 
         Returns:
-            The codec, built as :meth:`from_config` builds it.
+            The codec, built as :meth:`from_config` builds it. An opt-out
+            built from a configuration that lists
+            :data:`CURSOR_SIGNING_CHECK` under ``checks.silenced`` may be
+            registered in a deployed environment.
 
         Raises:
-            ConfigError: As :meth:`from_config`, or when the section is invalid.
+            ConfigError: As :meth:`from_config`, or when the section, or the
+                ``checks`` section, is invalid.
         """
-        return cls.from_config(
+        codec = cls.from_config(
             ctx.section_or_default(ConfigKey.PERSISTENCE_CURSORS, CursorConfig, CursorConfig())
         )
+        codec._opt_out_silenced = CURSOR_SIGNING_CHECK in silenced_checks(ctx)
+        return codec
+
+    @property
+    def signing(self) -> str:
+        """The signing mode: ``signed``, ``ephemeral`` or ``unsigned``."""
+        return self._signing
 
     @classmethod
     def from_config(cls, config: CursorConfig) -> CursorCodec:
@@ -579,11 +595,28 @@ def require_cursor_sort(
 def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
     """Register ``codec`` as the process's one ``CursorCodec``.
 
+    A codec built in code never meets :data:`CURSOR_SIGNING_CHECK`, so the same
+    rule applies here: in the deployed environment the container resolves,
+    an ``ephemeral`` or ``unsigned`` codec is refused unless it was built by
+    :meth:`CursorCodec.from_context` from a configuration that silences the
+    check. Without a registered ``Environment`` nothing is refused.
+
     Raises:
         ConfigError: When another codec is already registered: two codecs
             would sign with different keys, and each would refuse the other's
-            tokens.
+            tokens; or when the deployed environment refuses an opt-out.
     """
+    if codec.signing != _SIGNED and not codec._opt_out_silenced:
+        environment = (
+            container.resolve(Environment) if container.is_registered(Environment) else None
+        )
+        if environment is not None and environment.is_deployed:
+            raise ConfigError(
+                f"{CURSOR_SIGNING_CHECK}: a CursorCodec in {codec.signing} mode cannot serve "
+                f"the {str(environment)!r} environment; configure persistence.cursors keys, "
+                f"or list {CURSOR_SIGNING_CHECK} under checks.silenced and build the codec "
+                "with CursorCodec.from_context"
+            )
     if not container.is_registered(CursorCodec):
         container.register_instance(CursorCodec, codec)
     elif container.resolve(CursorCodec) is not codec:
@@ -635,6 +668,7 @@ def _b64decode(text: str) -> bytes | None:
 
 
 __all__ = [
+    "CURSOR_SIGNING_CHECK",
     "MIN_KEY_BYTES",
     "Cursor",
     "CursorCodec",
