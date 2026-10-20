@@ -783,7 +783,6 @@ _WRONG_ON_MASTER = {
     "router_unmatched": "an unmatched message with no output never completes",
     "router_into_table_branch": "a Router branch storage sink writes nothing",
     "into_table": "a storage sink never completes",
-    "decode_error_without_wire_route": "an unrouted decode error never completes",
 }
 
 

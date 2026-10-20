@@ -367,12 +367,11 @@ class _BuildContext:
                 raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
 
     def wire_decode_error(self, stream: Any, plan: CompiledPlan) -> None:
+        """Route undecodable records to the WIRE error sink, else complete them at a drop sink."""
         del plan
-        if self.error_sinks.get(ErrorKind.WIRE) is not None:
-            self.wire_node_error(ErrorKind.WIRE, "decode", stream)
-            return
-        if ErrorKind.WIRE in self.plan.error_routes:
+        if ErrorKind.WIRE in self.plan.error_routes and ErrorKind.WIRE not in self.error_sinks:
             raise RuntimeError("Bytewax sink is required for WIRE error routing.")
+        self.wire_node_error(ErrorKind.WIRE, "decode", stream)
 
     def inline_sink_partition_for(
         self,
