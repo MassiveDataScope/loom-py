@@ -490,12 +490,14 @@
   `celery` section that fails validation now stops startup instead.
 - **core:** a `LOOM__*` override sets one leaf value. A variable naming no
   known section, with a malformed level, whose value is or holds a mapping,
-  whose target the files declare as a mapping, naming a reviewed key (at or
-  under `checks` and `app.rest.auth`, or `app.rest.docs_url`, `redoc_url`,
-  `openapi_url` and `observability.prometheus.config.path`), holding `${`
-  however it is written, reaching inside an interpolated key, failing to
-  parse, or colliding with another variable stops startup naming the
-  variable, never the value. A placeholder in the `checks` section is a
+  whose target the files declare as a mapping or a list of mappings, naming
+  `config`, holding `${` however it is written, reaching inside an
+  interpolated key, failing to parse, or colliding with another variable
+  stops startup naming the variable, never the value. In production and
+  staging an override may set only an allowlisted key: loom's operational
+  keys (`loom.core.config.overrides.OVERRIDABLE`: log levels, Celery and
+  streaming worker counts and timeouts, SQL pool sizes and timeouts) and the
+  keys the reviewed files list under `config.overridable`. A placeholder in the `checks` section is a
   `ConfigError`. A per-flow Prefect YAML is read without overrides.
   `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by nothing, are removed.
 - **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
@@ -862,12 +864,12 @@
 - **core:** one place tells every loom process its environment and
   configuration (ADR 0005). `LOOM__SECTION__KEY` variables override any
   configuration key as the last layer (code defaults < `base.yaml` <
-  `<LOOM_ENV>.yaml` < `LOOM__*`), merged as an OmegaConf dotlist; levels
+  `<LOOM_ENV>.yaml` < `LOOM__*`, allowlisted keys only in production and
+  staging), merged as an OmegaConf dotlist; levels
   match declared keys case-insensitively, a first level naming no known
   section is a `ConfigError` naming the variable, values are parsed literals
-  (no `${` anywhere in them), `checks` and `app.rest.auth` are declared only
-  in the files, and one WARNING line names the overridden keys without their
-  values.
+  (no `${` anywhere in them), an override sets one leaf, and one WARNING
+  line names the overridden keys without their values.
   `loom.core.config.overrides.load_application_config` is the one loader
   behind REST and Celery `create_app`, `bootstrap_worker`,
   `loom check --deploy`, `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`,

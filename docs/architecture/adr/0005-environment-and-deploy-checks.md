@@ -145,17 +145,45 @@ Within any file, its own values win over its `includes`.
   decoded in part by several readers and accept keys another reader owns;
   `ai` keeps its own validation.
 - An override sets one leaf value. A value that is or holds a mapping is
-  refused, and so is a target the files declare as a mapping, whatever the
-  new value (null, a scalar or a list): an override cannot replace a
-  structure. Lists of scalars are leaves. This one rule closes every bypass
-  that wrote a whole mapping or a null over a declared structure.
-- Reviewed keys cannot be overridden, compared case-insensitively: everything
-  at or under `checks` and `app.rest.auth`, and the four keys that feed the
-  authentication exclusion list (`app.rest.docs_url`, `redoc_url`,
-  `openapi_url`, `observability.prometheus.config.path`). They are declared
-  only in the versioned files, where they are reviewed. The `checks` section
-  is also read as written, and a placeholder anywhere in it is a
-  `ConfigError`.
+  refused, and so is a target the files declare as a mapping or as a list
+  holding mappings (`app.rest.disable_routes`), whatever the new value: an
+  override cannot replace a structure. Lists of scalars are leaves.
+- In production and staging an override may set only an allowlisted key.
+  A denylist of reviewed keys kept missing paths (a placeholder pointing a
+  reviewed key at an overridable one, `prometheus.enabled`, the REST
+  interfaces, `code_path`); an allowlist closes the whole class. loom ships
+  `loom.core.config.overrides.OVERRIDABLE`, below, and an application extends
+  it only in its reviewed files, under `config.overridable`: a literal list
+  of dotted keys, `*` standing for one level. `config` can never be
+  overridden, in any environment. Keys match case-insensitively and exactly;
+  an entry covers no sibling or child. In development and test any leaf may
+  be overridden. The `checks` section is also read as written, and a
+  placeholder anywhere in it is a `ConfigError`.
+
+| Key | Why it is safe to change per deploy |
+|---|---|
+| `observability.log.config.level` | Verbosity only; what is logged does not change, how much does. |
+| `observability.log.config.named_levels.*` | The same, per stdlib logger (a noisy library). |
+| `celery.worker_concurrency` | Capacity of a worker; tasks and their routing do not change. |
+| `celery.worker_max_tasks_per_child` | Process recycling; a resource limit. |
+| `celery.worker_prefetch_multiplier` | Queue fairness against throughput; a capacity knob. |
+| `celery.runtime.shutdown_timeout_ms` | How long shutdown waits for in-flight work. |
+| `streaming.runtime.workers_per_process` | Capacity of a streaming process. |
+| `streaming.runtime.epoch_interval_ms` | Snapshot cadence; a throughput and recovery trade-off. |
+| `streaming.runtime.force_shutdown_timeout_ms` | How long shutdown waits for in-flight work. |
+| `sql.connections.*.pool_size` | Connection pool capacity. |
+| `sql.connections.*.executor_threads` | Executor capacity. |
+| `sql.connections.*.connect_timeout` | Network timeout. |
+| `sql.connections.*.send_receive_timeout` | Network timeout. |
+| `sql.connections.*.max_execution_time` | Per-query time limit. |
+
+Left off on purpose: anything that changes where data goes or who may reach
+it (broker and result URLs, the OTel endpoint, CORS origins, documentation
+and metrics paths, authentication, `checks`), the structure of the
+application (discovery, interfaces, routes, `code_path`) and any key a
+placeholder elsewhere points at, which would let one variable steer a
+reviewed key indirectly.
+
 - Values are literals: each value is parsed first and any string in it
   holding `${` is refused, so a quoted, `\x24`-escaped or nested placeholder
   cannot slip through; a variable reaching inside an interpolated key is
@@ -166,10 +194,9 @@ Within any file, its own values win over its `includes`.
   this module never logs or raises with an override's value.
 - One WARNING line names the keys that came from variables, never their
   values. WARNING because it is written before the logger is configured.
-- What belongs in `LOOM__*`: per-deployment tuning such as log level, pool
-  sizes and timeouts, the OTel endpoint, CORS origins and the public URL.
-  What does not: secrets and application structure (discovery, routes, the
-  authentication mechanism).
+- What belongs in `LOOM__*`: per-deployment tuning, the allowlist above and
+  whatever the application adds to it. What does not: secrets and
+  application structure.
 - Secrets: on ECS, the task definition's `secrets` (`valueFrom` with a
   Secrets Manager or SSM ARN) inject them as variables, and the YAML reads
   them with `${oc.env:...}`. On other platforms `${secrets:...}` and
@@ -185,7 +212,7 @@ Example on ECS (one container definition of the task definition):
   "environment": [
     {"name": "LOOM_ENV", "value": "production"},
     {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
-    {"name": "LOOM__APP__REST__CORS__ALLOW_ORIGINS", "value": "[https://shop.example]"}
+    {"name": "LOOM__CELERY__WORKER_CONCURRENCY", "value": "8"}
   ],
   "secrets": [
     {
@@ -321,11 +348,25 @@ passing, the error then listing the cursor finding too, and the
 `loom check --deploy` tests declare no repository backend.
 
 The four need the cursor setting in their configurations, or the id under
-`checks.silenced`. The guide's overlay examples need the same setting. A
-cursor signing key in any example is read from a variable named like
-`CURSOR_KEY_...`, never `LOOM_*`: `LOOM_` names belong to
-`loom.core.environment`, and `LOOM__` ones are configuration overrides,
-which secrets do not go through.
+`checks.silenced`. The guide's overlay examples need the same setting.
+
+When #371 rebases on this branch it must also:
+
+- rename the cursor key example variables, which carry the `LOOM_` prefix
+  in `docs/rest/persistence-backends.md` and
+  `src/loom/core/repository/abc/cursor.py`, to `CURSOR_KEY_...`. `LOOM_`
+  names belong to `loom.core.environment`, and the containment test fails on
+  a `LOOM_*` name loom does not own;
+- route the `os.environ` default of the cursor key sources (`environ=` in
+  `abc/cursor.py`) through `loom.core.environment`, or add that file to the
+  containment test's dynamic readers with its reason: the closed-world rule
+  refuses a bare `os.environ` outside the environment module;
+- keep `persistence.cursors.*` off the override allowlist. In production and
+  staging `LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` then fails at
+  startup as a key off the allowlist, before any deploy check runs;
+- make its cursor configuration struct forbid unknown fields if
+  `persistence.cursors` has a single reader, like the other single-reader
+  sections.
 
 ## Consequences
 
@@ -337,7 +378,8 @@ which secrets do not go through.
   `local` must be renamed.
 - An unknown key under a single-reader section, a malformed `observability`
   section, or a `LOOM__` variable that names no known section, sets a
-  mapping, replaces a declared mapping, names a reviewed key or holds `${`
+  mapping, replaces a declared structure, names `config`, names a key off
+  the allowlist in production or staging, or holds `${`
   stops startup.
 - A consumer's test suite must set `LOOM_ENV=test`, or every application it
   builds starts as production and runs the deploy checks.

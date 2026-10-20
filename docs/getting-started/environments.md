@@ -174,7 +174,7 @@ pydantic-settings:
 ```bash
 LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
 LOOM__SQL__CONNECTIONS__ANALYTICS__POOL_SIZE=20   # sql.connections.analytics.pool_size
-LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.example]'
+LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
 ```
 
 - A level is letters, digits and underscores; a `.` or `[` in a level stops
@@ -193,11 +193,23 @@ LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.examp
   (`{a: 1}`, `[1, {a: 2}]`) is refused, and so is a target the files declare
   as a mapping, whether the new value is null, a scalar or a list: an
   override cannot replace a structure. A list of scalars is a leaf.
-- Reviewed keys cannot be overridden, whatever their case: everything at or
-  under `checks` and `app.rest.auth`, and `app.rest.docs_url`,
-  `app.rest.redoc_url`, `app.rest.openapi_url` and
-  `observability.prometheus.config.path`, which decide what is served
-  without authentication. They are declared only in the files.
+- In production and staging an override may set only an allowlisted key:
+  the operational keys loom ships (log levels, Celery and streaming worker
+  counts and timeouts, SQL pool sizes and timeouts; the full list and the
+  reason for each are in ADR 0005), plus the keys your reviewed files list:
+
+  ```yaml
+  # config/base.yaml
+  config:
+    overridable:
+      - app.rest.version
+      - sql.connections.*.default_limit   # '*' stands for one level
+  ```
+
+  Any other key stops startup naming the variable; that includes the
+  authentication settings, the deploy checks, the documentation and metrics
+  paths, and any key a placeholder elsewhere points at. `config` itself can
+  never be overridden. In development and test any leaf may be overridden.
 - Values are literals. The value is parsed first and any string in it
   holding `${` is refused, however it is written (quoted, escaped as `\x24`,
   inside a list), so an override cannot reach another variable or a secret.
@@ -211,15 +223,15 @@ LOOM__APP__REST__CORS__ALLOW_ORIGINS='[https://shop.example, https://admin.examp
   octal, an empty value is null, ` #` starts a comment and `a: b` is a
   mapping, and so refused. A value that does not parse, a YAML tag that fails
   to construct included, stops startup naming the variable, never the
-  value. Quote a value to keep it a string:
-  `LOOM__APP__REST__VERSION='"1.10"'` sets the API version published in the
-  OpenAPI document to the string `1.10`.
+  value. Quote a value to keep it a string: with `app.rest.version` listed
+  under `config.overridable`, `LOOM__APP__REST__VERSION='"1.10"'` sets the
+  API version published in the OpenAPI document to the string `1.10`.
 - At startup one WARNING line names the keys that came from variables. Their
   values are never logged.
 
 What belongs in `LOOM__*`: operational tuning that changes per deployment
-without changing the application, such as the log level, pool sizes and
-timeouts, the OpenTelemetry endpoint, CORS origins or the public URL.
+without changing the application: loom's allowlist, and what you add to it
+for your own operational keys.
 
 What does not: secrets, and the structure of the application (discovery,
 routes, authentication mechanism), which belongs in the reviewed files. Do
@@ -245,7 +257,7 @@ injects them as variables, and the YAML references them with
       "environment": [
         {"name": "LOOM_ENV", "value": "production"},
         {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
-        {"name": "LOOM__OBSERVABILITY__OTEL__CONFIG__ENDPOINT", "value": "http://otel:4318"}
+        {"name": "LOOM__CELERY__WORKER_CONCURRENCY", "value": "8"}
       ],
       "secrets": [
         {
