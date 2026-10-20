@@ -772,9 +772,11 @@
   the branch ran.
 - **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
   many of the oldest events not yet reported durable they made durable, `0`
-  when they only buffered. A custom `IntoSink` partition must report it; one
-  that returns anything else, a `bool` included, fails with `TypeError`. After
-  a call raised, later counts complete nothing. A storage sink's
+  when they only buffered. A custom `IntoSink` partition must report it: a
+  `write_batch` that returns anything else, a `bool` included, fails with
+  `TypeError`, and a bad count from `close()` is logged as
+  `storage_sink_close_count_invalid` and completes nothing. After a call
+  raised or returned a refused count, later counts complete nothing. A storage sink's
   `terminal:sink_write` spans are emitted for the events a call made durable,
   not for every event handed to it. A buffering partition migrates like this:
 
@@ -810,9 +812,19 @@
   goes to the flow `output`. A branch that ends without a sink no longer logs
   `unrouted_branch_drop_sink`.
 - **streaming:** a failed send or flush to a Kafka sink's DLQ topic fails the
-  run (inside `WithAsync`, the message becomes an error envelope). It used to
-  be logged as `dlq_send_failed` and the batch's offsets were committed. The
-  fix is under Fixes.
+  run (inside `With` or `WithAsync`, the message becomes an error envelope). It
+  used to be logged as `dlq_send_failed` and the batch's offsets were
+  committed. The fix is under Fixes.
+- **streaming:** a DLQ record is built from the same send request as the sink
+  record: it keeps the message key (and with it the partition and order), the
+  message type and the headers of the sink record, error envelopes now carry
+  `x-error-reason` and follow the sink's partition policy, and `x-dlq-error`
+  is added. A diverted message keeps its own trace id and parent trace id; an
+  error envelope without an original message gets a new trace id, as on the
+  sink, instead of none.
+- **streaming:** a sync `With(process=...)` hands on one message at a time, as
+  `WithAsync` does. After a `CollectBatch` it handed on whole batches, so as
+  the last node of a flow without `output` its messages never completed.
 
 ## 🐛 Fixes
 
@@ -1081,10 +1093,7 @@
   its path ends. A storage sink completes the offsets of the events its flush
   wrote, so events still buffered when a worker dies are consumed again.
 - **streaming:** a sync `With(process=...)` runs on a record stream. It
-  accepted only batches and raised `TypeError` for every message, and it
-  handed on whole batches, so as the last node of a flow without `output` its
-  messages never completed. It now hands on one message at a time, as
-  `WithAsync` does.
+  accepted only batches and raised `TypeError` for every message.
 - **streaming:** a Kafka sink batch diverted to its DLQ topic commits its
   offsets only once the DLQ topic received every record. The diversion sent
   each record without flushing, logged and swallowed per-record failures, and
@@ -1094,14 +1103,8 @@
   step observed as its cause. The batch is not committed and is handled like a failed batch on a
   sink without a DLQ topic: the run fails and, on restart, the batch is
   consumed again from the recovery snapshot or, without one, from the last
-  committed offset; inside `WithAsync` the message becomes an error envelope.
-- **streaming:** a DLQ record is built from the same send request as the sink
-  record: it keeps the message key (and with it the partition and order), the
-  message type and the headers of the sink record, error envelopes now carry
-  `x-error-reason` and follow the sink's partition policy, and `x-dlq-error`
-  is added. A diverted message keeps its own trace id and parent trace id; an
-  error envelope without an original message gets a new trace id, as on the
-  sink, instead of none.
+  committed offset; inside `With` or `WithAsync` the message becomes an error
+  envelope.
 
 ### prefect
 
