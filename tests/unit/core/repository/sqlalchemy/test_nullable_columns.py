@@ -9,6 +9,7 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -49,7 +50,9 @@ async def test_an_optional_field_left_as_none_is_stored_and_read_back(
     session_manager: SessionManager,
 ) -> None:
     repo: RepositorySQLAlchemy[_Gauge, int] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Gauge
+        session_manager=session_manager,
+        model=_Gauge,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     created = await repo.create(_CreateGauge(label="idle"))

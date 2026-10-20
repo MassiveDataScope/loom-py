@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -53,7 +54,9 @@ async def test_an_optional_field_left_as_none_is_stored_and_read_back(
     manager: SessionManager,
 ) -> None:
     repo: RepositorySQLAlchemy[Gauge, int] = RepositorySQLAlchemy(
-        session_manager=manager, model=Gauge
+        session_manager=manager,
+        model=Gauge,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     created = await repo.create(CreateGauge(label="idle"))
