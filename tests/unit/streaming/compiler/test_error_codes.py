@@ -244,6 +244,11 @@ def _expand_routes(*nodes: Any) -> ExpandRoutes[Order]:
     return ExpandRoutes(expander=_Expander, routes={Result: Process(*nodes)})  # type: ignore[arg-type]
 
 
+def _terminal_router() -> Router[Order, Any]:
+    """A Router with a default whose every branch ends the path of its messages."""
+    return Router.by(msg.payload.order_id, routes={"a": Process(_out())}, default=Process(_out()))
+
+
 def _router(*nodes: Any) -> Router[Order, Any]:
     return Router.when([Route(when=msg.payload.order_id == "a", process=Process(*nodes))])
 
@@ -338,6 +343,34 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "With with scope=BATCH cannot use direct context manager instances: db. "
         "Use ContextFactory for batch-scoped resources.",
         "With",
+        None,
+    ),
+    "router that ends every path followed by a step": (
+        lambda: _flow(_terminal_router(), FakeStep(), _out()),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "Router must be the last node in a process",
+        "Router",
+        None,
+    ),
+    "router that ends every path followed by an IntoTopic": (
+        lambda: _flow(_terminal_router(), _out()),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "Router must be the last node in a process",
+        "Router",
+        None,
+    ),
+    "router that ends every path inside a broadcast route, followed by a step": (
+        lambda: _flow(
+            Broadcast(
+                BroadcastRoute(process=Process(_terminal_router(), FakeStep()), output=_out())
+            )
+        ),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "broadcast branch 0: Router must be the last node in a process",
+        "broadcast branch 0 > Router",
         None,
     ),
     "terminal followed by a step": (
@@ -476,6 +509,125 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         StreamingErrorCode.OUTPUT_WITH_BROADCAST,
         "flow.output cannot be combined with Broadcast: branches must be terminal",
         "flow.output",
+        "output",
+    ),
+    "flow output after a process that ends in IntoTopic": (
+        lambda: _flow(FakeStep(), _out(), output=_out()),
+        {},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in IntoTopic, which ends the path "
+        "of every message it receives. Remove the output or the IntoTopic.",
+        "flow.output",
+        "output",
+    ),
+    "flow output after an ExpandRoutes": (
+        lambda: _flow(_expand_routes(_out()), output=_out()),
+        {},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in ExpandRoutes, which ends the path "
+        "of every message it receives. Remove the output or the ExpandRoutes.",
+        "flow.output",
+        "output",
+    ),
+    "flow output after a process that ends in IntoSink": (
+        lambda: _flow(
+            FakeStep(),
+            IntoTable(payload=Result, table="t", backend=Backend.DELTA, name="results"),
+            output=_out(),
+        ),
+        {"streaming": {"sinks": {"results": {"uri": "memory://results"}}}},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in IntoTable, which ends the path "
+        "of every message it receives. Remove the output or the IntoTable.",
+        "flow.output",
+        "output",
+    ),
+    "flow output after a process that ends in Drain": (
+        lambda: _flow(FakeStep(), Drain(), output=_out()),
+        {},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in Drain, which ends the path "
+        "of every message it receives. Remove the output or the Drain.",
+        "flow.output",
+        "output",
+    ),
+    "broadcast route output after an ExpandRoutes": (
+        lambda: _flow(
+            Broadcast(BroadcastRoute(process=Process(_expand_routes(_out())), output=_out()))
+        ),
+        {},
+        StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END,
+        "broadcast branch 0: its output is never written: the route's process ends in "
+        "ExpandRoutes, which ends the path of every message it receives. Remove the output "
+        "or the ExpandRoutes.",
+        "broadcast branch 0",
+        "output",
+    ),
+    "broadcast route output after a Fork with a default": (
+        lambda: _flow(
+            Broadcast(
+                BroadcastRoute(
+                    process=Process(
+                        Fork.when(
+                            [ForkRoute(when=msg.payload.order_id == "a", process=Process(_out()))],
+                            default=Process(_out()),
+                        )
+                    ),
+                    output=_out(),
+                )
+            )
+        ),
+        {},
+        StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END,
+        "broadcast branch 0: its output is never written: the route's process ends in "
+        "Fork, which ends the path of every message it receives. Remove the output "
+        "or the Fork.",
+        "broadcast branch 0",
+        "output",
+    ),
+    "flow output after a Router whose branches all end": (
+        lambda: _flow(
+            Router.by(msg.payload.order_id, routes={"a": Process(_out())}, default=Process(_out())),
+            output=_out(),
+        ),
+        {},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in Router, which ends the path "
+        "of every message it receives. Remove the output or the Router.",
+        "flow.output",
+        "output",
+    ),
+    "broadcast route output after a Router whose branches all end": (
+        lambda: _flow(
+            Broadcast(
+                BroadcastRoute(
+                    process=Process(
+                        Router.by(
+                            msg.payload.order_id,
+                            routes={"a": Process(_out())},
+                            default=Process(_out()),
+                        )
+                    ),
+                    output=_out(),
+                )
+            )
+        ),
+        {},
+        StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END,
+        "broadcast branch 0: its output is never written: the route's process ends in "
+        "Router, which ends the path of every message it receives. Remove the output "
+        "or the Router.",
+        "broadcast branch 0",
+        "output",
+    ),
+    "broadcast route output after a terminal": (
+        lambda: _flow(_broadcast(_out())),
+        {},
+        StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END,
+        "broadcast branch 0: its output is never written: the route's process ends in "
+        "IntoTopic, which ends the path of every message it receives. Remove the output "
+        "or the IntoTopic.",
+        "broadcast branch 0",
         "output",
     ),
     "bare ErrorEnvelope among the payloads": (

@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 from uuid import UUID
 
@@ -148,6 +149,23 @@ class CounterCreate(BaseModel):
     id: int | None = None
 
 
+class Shade(Enum):
+    DARK = "dark"
+
+
+class Swatch(BaseModel):
+    """A plain enum field with no declared column type: a SQL-only concern."""
+
+    __tablename__ = "swatches"
+
+    shade: Shade
+    id: str = ColumnField(primary_key=True, server_default=ServerDefault.UUID4)
+
+
+class SwatchCreate(BaseModel):
+    shade: Shade
+
+
 @pytest.fixture
 def collection() -> FakeCollection:
     return FakeCollection()
@@ -217,6 +235,16 @@ class TestPrimaryKeyMapping:
 
 
 class TestStorageForm:
+    async def test_a_plain_enum_field_needs_no_declared_column_type(
+        self, collection: FakeCollection
+    ) -> None:
+        repo: RepositoryMongo[Swatch, str] = RepositoryMongo(Swatch, collection)
+
+        created = await repo.create(SwatchCreate(shade=Shade.DARK))
+
+        assert collection.documents[created.id]["shade"] == "dark"
+        assert await repo.get_by_id(created.id) == created
+
     async def test_only_model_columns_are_persisted(self, collection: FakeCollection) -> None:
         await _articles(collection).create(ArticleWithExtra(slug="a", title="A", extra="x"))
 

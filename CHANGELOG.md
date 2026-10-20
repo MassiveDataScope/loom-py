@@ -459,6 +459,10 @@
 
 ### core
 
+- **core:** `sql_endpoint.auth` admits only `identity` and `external`;
+  `auth: jwt` is refused when the config is loaded, and the alias and its
+  `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
+  `auth: identity`.
 - **core:** with no `LOOM_ENV` and no `environment=`, a process starts as
   `production` and runs the deploy checks; an API without authentication now
   fails at startup with `loom.rest.E001` until it configures
@@ -642,6 +646,36 @@
   it. A `@cache_query` argument that is a pydantic instance now contributes
   its builtins rendering to the cache key rather than the instance's own
   `repr`, a one-time key change.
+- **core:** a model field annotated with an enum and no declared column type
+  takes the column type of the scalar the enum is mixed with, the first class
+  of its MRO with a column rule, as that class itself would: a `StrEnum` (any
+  `str` enum) becomes `String`, honouring `length=`, an `IntEnum` or `IntFlag`
+  becomes `Integer`, a `float` enum `Float`, a `Decimal` enum `Numeric`,
+  instead of `JSON`. The value is stored as a plain string or integer, not
+  JSON-encoded, so the column can be filtered by equality; `Optional` of such
+  an enum behaves the same. An existing table with such a column needs a
+  migration that converts the data with a `USING` clause, which Alembic's
+  autogenerate does not write: on Postgres,
+  `ALTER TABLE t ALTER COLUMN c TYPE varchar USING c #>> '{}'` and
+  `ALTER TABLE t ALTER COLUMN c TYPE integer USING (c #>> '{}')::integer`. On
+  SQLAlchemy models, a plain `Enum` (mixed with no scalar) or a `Literal[...]`
+  field with no declared column type now fails model compilation with a
+  `ValueError` naming the model and the field, instead of becoming a `JSON`
+  column; loom does not infer a type from the values. Declare the column, for
+  example `colour: Colour = ColumnField(String(20))`. Mongo and DynamoDB
+  models keep such fields as they are. Declared column types are unchanged,
+  and an `Annotated[...]` column type or `Field` is now read also when the
+  `Annotated` sits inside `Optional` (`Annotated[T, String(1)] | None`), and
+  is used when a `ColumnField(...)` on the field declares no column type.
+  `ColumnFieldInfo` gains `needs_declared_type`.
+- **core:** an `Optional` inside `Annotated` whose metadata carries no column
+  type, such as `Annotated[int | None, msgspec.Meta(ge=0)]`, now takes the
+  column of its scalar type (`Integer` here) instead of `JSON`; an existing
+  table needs the same `USING` migration as above. A `Field(...)` inside
+  `Annotated` with no column type is now read instead of being dropped, so its
+  settings take effect: `primary_key=True` adds the column to the primary key,
+  which can turn a model's key composite, and `nullable=True` makes the column
+  nullable. Review such fields before upgrading.
 
 ### ai
 
@@ -757,8 +791,8 @@
   the route at startup. Only scalar columns of the use case's own model
   (`UseCase[Model, ...]`) qualify. A related model's column (`warehouse.code`)
   is refused, and so are JSON, array and text-search columns; lists, dicts
-  and structs, and an `Enum` or `Literal` declared without a column type, are
-  JSON. `InterfaceCompilationError` names the route and the field. It is also
+  and structs are JSON. A `StrEnum` or `IntEnum` column is scalar; a plain
+  `Enum` or a `Literal` needs a declared column type. `InterfaceCompilationError` names the route and the field. It is also
   raised for a declaration on a use case with no model, and for a route-level
   declaration on a route without a `QuerySpec`; an inherited one is ignored.
   `exists` and `not_exists` answer `400 unsupported_query`, and so do `like`
@@ -939,6 +973,80 @@
   `BROADCAST_NOT_LAST` with component `broadcast`, at the top level, in a
   branch and in a Router branch. It used to report `TERMINAL_NOT_LAST` with
   component `Broadcast`.
+- **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
+  `IntoSink`) or `Drain` hands the message to that terminal. The branch's
+  terminal was skipped: with a flow `output` the message went to the output
+  instead, without one it was not written.
+- **streaming:** `With`, `WithAsync`, `Router`, `CollectBatch`, `ForEach` and
+  `Explode` inside a Router branch fail compilation with
+  `ROUTER_BRANCH_UNSAFE_NODE`. Such flows compiled and raised `TypeError` when
+  the branch ran.
+- **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
+  many of the oldest events not yet reported durable they made durable, `0`
+  when they only buffered. A custom `IntoSink` partition must report it: a
+  `write_batch` that returns anything else, a `bool` included, fails with
+  `TypeError`, and a bad count from `close()` is logged as
+  `storage_sink_close_count_invalid` and completes nothing. After a call
+  raised or returned a refused count, later counts complete nothing. A storage sink's
+  `terminal:sink_write` spans are emitted for the events a call made durable,
+  not for every event handed to it. A buffering partition migrates like this:
+
+  ```python
+  # before
+  def write_batch(self, items):
+      self._buffer.extend(items)
+
+  def close(self):
+      flush(self._path, self._buffer)
+
+  # after
+  def write_batch(self, items) -> int:
+      self._buffer.extend(items)
+      return 0  # buffered, nothing durable yet
+
+  def close(self) -> int:
+      flush(self._path, self._buffer)
+      flushed, self._buffer = len(self._buffer), []
+      return flushed  # durable now
+  ```
+- **streaming:** under at-least-once delivery, a caller-supplied terminal sink
+  written inline by `With(process=...)` or `WithAsync(process=...)` must expose
+  `build_inline_partition()`, which returns a partition that completes no
+  offset and records no death; without it the flow fails at assembly with
+  `RuntimeConfigurationError` (`INLINE_SINK_CANNOT_SKIP_COMMITS`). Its
+  partitions completed offsets at the inline write.
+- **streaming:** a Delta `IntoTable` whose payload type has no fields fails
+  with `ValueError` when its partition is built. Its items wrote no row.
+- **streaming:** an output declared after a node that ends every path fails
+  compilation. A flow `output` after a process that ends in `IntoTopic`,
+  `IntoSink`, `Drain`, `ExpandRoutes`, or a `Router` with a `default` whose
+  branches all end in one of `IntoTopic`, `IntoSink`, `Drain`, fails with
+  `OUTPUT_AFTER_PATH_END`. A Broadcast route `output` after a process that ends
+  in any of those, in a `Broadcast`, or in a `Fork` with a `default` fails
+  with `BROADCAST_OUTPUT_AFTER_PATH_END`. Such flows compiled and wrote the
+  message twice, handed the expanded payload of an `ExpandRoutes` to the
+  output, or never wrote the output. A step or an `IntoTopic` after such a
+  `Router` fails with `TERMINAL_NOT_LAST`, the code an `IntoTopic`, `IntoSink`
+  or `Drain` followed by a node reports. A
+  branch that ends without a sink no longer logs `unrouted_branch_drop_sink`.
+- **streaming:** a `terminal_sinks` override passed to `build_dataflow` must
+  cover every compiled `IntoTopic` path; a missing one fails with
+  `RuntimeConfigurationError` (`TERMINAL_SINK_MISSING`). The path fell back to
+  a drop sink, so its messages completed without being written.
+- **streaming:** a failed send or flush to a Kafka sink's DLQ topic fails the
+  run (inside `With` or `WithAsync`, the message becomes an error envelope). It
+  used to be logged as `dlq_send_failed` and the batch's offsets were
+  committed. The fix is under Fixes.
+- **streaming:** a DLQ record is built from the same send request as the sink
+  record: it keeps the message key (and with it the partition and order), the
+  message type and the headers of the sink record, error envelopes now carry
+  `x-error-reason` and follow the sink's partition policy, and `x-dlq-error`
+  is added. A diverted message keeps its own trace id and parent trace id; an
+  error envelope without an original message gets a new trace id, as on the
+  sink, instead of none.
+- **streaming:** a sync `With(process=...)` hands on one message at a time, as
+  `WithAsync` does. After a `CollectBatch` it handed on whole batches, so as
+  the last node of a flow without `output` its messages never completed.
 
 ## 🐛 Fixes
 
@@ -1276,6 +1384,41 @@
   follows. Each route is now checked on the record stream it receives, with
   issues scoped under `expand_routes branch <type>`, and a node after an
   `ExpandRoutes` fails with `TERMINAL_NOT_LAST`; such flows used to compile.
+- **streaming:** under at-least-once delivery each source offset completes
+  once per fork share, and not before the writes on its path are flushed.
+  These shapes broke it:
+  - an inline `IntoTopic` in `With(process=...)` or `WithAsync(process=...)`
+    followed by a flow `output` completed the offset at the inline write,
+    before the output write, and again at the output;
+  - an `ExpandRoutes` route ending in a scope completed at a drop sink wired
+    beside the route's process, which does not wait for the inline write, and
+    again at the inline write;
+  - an `IntoTopic` ending an `ExpandRoutes` route, or a Broadcast route
+    without `output`, completed at its sink and again at a drop sink;
+  - a Router branch terminal, and a Router's unmatched messages with nothing
+    after them, never completed;
+  - a storage sink (`IntoTable`, any `IntoSink`) never completed;
+  - an undecodable record with no `WIRE` error route never completed;
+  - a batch diverted to a DLQ topic completed before the DLQ records were
+    flushed.
+
+  A Router keeps the source order of the messages that continue after it, and
+  an inline write no longer completes an offset: the message completes where
+  its path ends. A storage sink completes the offsets of the events its flush
+  wrote, so events still buffered when a worker dies are consumed again.
+- **streaming:** a sync `With(process=...)` runs on a record stream. It
+  accepted only batches and raised `TypeError` for every message.
+- **streaming:** a Kafka sink batch diverted to its DLQ topic commits its
+  offsets only once the DLQ topic received every record. The diversion sent
+  each record without flushing, logged and swallowed per-record failures, and
+  committed anyway, so a batch the DLQ topic never received was lost. The
+  producer is now flushed after the diversion, and a failed DLQ send or flush
+  raises `KafkaDeliveryError` naming the DLQ topic, with the failure the DLQ
+  step observed as its cause. The batch is not committed and is handled like a failed batch on a
+  sink without a DLQ topic: the run fails and, on restart, the batch is
+  consumed again from the recovery snapshot or, without one, from the last
+  committed offset; inside `With` or `WithAsync` the message becomes an error
+  envelope.
 
 ### prefect
 

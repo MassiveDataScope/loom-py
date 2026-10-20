@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import typing
-from typing import Annotated, Any, Generic, TypeVar
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum, IntEnum, IntFlag, StrEnum
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import msgspec
+import pytest
 
-from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, Postgres, RelationField
+from loom.core.model import (
+    JSON,
+    BaseModel,
+    Cardinality,
+    ColumnField,
+    Field,
+    Postgres,
+    RelationField,
+)
+from loom.core.model.field import ColumnType
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
@@ -17,7 +30,7 @@ from loom.core.model.introspection import (
     resolve_type_hints,
     scalar_column_annotations,
 )
-from loom.core.model.types import Integer, String
+from loom.core.model.types import Bytes, DateTime, Float, Integer, Numeric, String
 
 
 class _Note:
@@ -143,6 +156,171 @@ class TestOptionalColumnTypes:
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
+
+
+class _Status(StrEnum):
+    PAID = "paid"
+
+
+class _Priority(IntEnum):
+    HIGH = 1
+
+
+class _Colour(Enum):
+    RED = "red"
+
+
+class _Mask(IntFlag):
+    READ = 1
+
+
+class _Ratio(float, Enum):
+    HALF = 0.5
+
+
+class _Amount(Decimal, Enum):
+    ONE = Decimal("1")
+
+
+class _Day(date, Enum):
+    FIRST = (2026, 1, 1)
+
+
+class _Moment(datetime, Enum):
+    EPOCH = (2026, 1, 1, 0, 0)
+
+
+class _Hour(time, Enum):
+    NOON = (12, 0)
+
+
+class _Tag(bytes, Enum):
+    RAW = b"raw"
+
+
+class _Enums(BaseModel):
+    __tablename__ = "enums"
+    status: _Status
+    sized: _Status = ColumnField(length=12)
+    maybe: _Status | None = None
+    priority: _Priority = _Priority.HIGH
+    colour: _Colour = ColumnField(String(8), default=_Colour.RED)
+    mode: Annotated[Literal["a", "b"], String(1)] = "a"
+    maybe_mode: Annotated[Literal["a", "b"], String(1)] | None = None
+    annotated_maybe: Annotated[_Status | None, Field(length=12)] = None
+    declared_mode: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
+
+
+class _MixedEnums(BaseModel):
+    __tablename__ = "mixed_enums"
+    status: _Status
+    priority: _Priority
+    mask: _Mask
+    ratio: _Ratio
+    amount: _Amount
+    day: _Day
+    moment: _Moment
+    hour: _Hour
+    tag: _Tag
+
+
+class _AnnotatedFields(BaseModel):
+    __tablename__ = "annotated_fields"
+    key: Annotated[int, Field(primary_key=True)]
+    count: Annotated[int | None, msgspec.Meta(ge=0)] = None
+    note: Annotated[str | None, Field(nullable=True)] = None
+
+
+class _PlainEnum(BaseModel):
+    __tablename__ = "plain_enums"
+    colour: _Colour
+
+
+class _Literal(BaseModel):
+    __tablename__ = "literals"
+    mode: Literal["a", "b"] | None = ColumnField(nullable=True)
+
+
+class _AnnotatedLiteral(BaseModel):
+    __tablename__ = "annotated_literals"
+    mode: Annotated[Literal["a", "b"], "a note"] = "a"
+
+
+class TestEnumColumnTypes:
+    def test_a_str_enum_follows_the_str_rule(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["status"].column_type == String()
+        assert fields["sized"].column_type == String(12)
+
+    def test_an_optional_str_enum_follows_the_str_rule(self) -> None:
+        assert get_column_fields(_Enums)["maybe"].column_type == String()
+
+    def test_an_int_enum_follows_the_int_rule(self) -> None:
+        assert get_column_fields(_Enums)["priority"].column_type == Integer
+
+    def test_a_declared_column_type_wins(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["colour"].column_type == String(8)
+        assert fields["mode"].column_type == String(1)
+
+    def test_annotated_metadata_inside_optional_or_around_it_is_honoured(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["maybe_mode"].column_type == String(1)
+        assert fields["annotated_maybe"].column_type == String(12)
+
+    def test_a_column_field_without_a_type_takes_the_annotated_column_type(self) -> None:
+        info = get_column_fields(_Enums)["declared_mode"]
+
+        assert (info.column_type, info.field.nullable) == (String(1), True)
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("status", String()),
+            ("priority", Integer),
+            ("mask", Integer),
+            ("ratio", Float),
+            ("amount", Numeric()),
+            ("day", String(None)),
+            ("moment", DateTime(tz=True)),
+            ("hour", String(None)),
+            ("tag", Bytes),
+        ],
+    )
+    def test_an_enum_follows_the_scalar_type_it_is_mixed_with(
+        self, field: str, expected: ColumnType
+    ) -> None:
+        info = get_column_fields(_MixedEnums)[field]
+
+        assert (info.column_type, info.needs_declared_type) == (expected, False)
+
+    @pytest.mark.parametrize(
+        ("model", "field"),
+        [(_PlainEnum, "colour"), (_Literal, "mode"), (_AnnotatedLiteral, "mode")],
+    )
+    def test_a_plain_enum_or_literal_without_a_column_type_needs_one_declared(
+        self, model: type, field: str
+    ) -> None:
+        info = get_column_fields(model)[field]
+
+        assert (info.column_type, info.needs_declared_type) == (JSON, True)
+
+    def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
+        assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())
+
+
+class TestAnnotatedColumnFields:
+    def test_a_field_in_annotated_without_a_column_type_takes_effect(self) -> None:
+        fields = get_column_fields(_AnnotatedFields)
+
+        assert (fields["key"].field.primary_key, fields["key"].column_type) == (True, Integer)
+        assert (fields["note"].field.nullable, fields["note"].column_type) == (True, String())
+
+    def test_an_optional_inside_annotated_follows_its_scalar_type(self) -> None:
+        assert get_column_fields(_AnnotatedFields)["count"].column_type == Integer
 
 
 class _Shelf(BaseModel):

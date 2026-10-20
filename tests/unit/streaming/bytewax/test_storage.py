@@ -26,11 +26,11 @@ pytestmark = pytest.mark.bytewax
 
 
 class _Partition:
-    def write_batch(self, items: Sequence[Any]) -> None:
-        del items
+    def write_batch(self, items: Sequence[Any]) -> int:
+        return len(items)
 
-    def close(self) -> None:
-        return None
+    def close(self) -> int:
+        return 0
 
 
 class _FakeCtx:
@@ -39,6 +39,7 @@ class _FakeCtx:
         self.bridge = bridge
         self.flow_runtime = ObservabilityRuntime.noop()
         self.flow_run_id = "run-1"
+        self.commit_tracker = None
         self._session_manager = object()
         self.session_manager_calls: list[dict[str, Any]] = []
 

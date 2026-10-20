@@ -158,13 +158,23 @@ def test_repr_never_exposes_the_explicit_password() -> None:
 
 
 def test_fails_when_auth_has_an_unknown_value() -> None:
-    """``auth`` only admits 'jwt' or 'external'; any other value => ConfigError."""
+    """``auth`` only admits 'identity' or 'external'; any other value => ConfigError."""
     connection = _minimal(
         allowed_roles=["role_viz_reader"],
         default_role="role_viz_reader",
         sql_endpoint={"enabled": True, "auth": "basic"},
     )
     with pytest.raises(ConfigError):
+        _parse(connection)
+
+
+def test_refuses_the_removed_jwt_auth_mode_naming_the_field() -> None:
+    """``auth: jwt`` is refused at decode and the error names the field."""
+    connection = _minimal(
+        default_role="role_viz_reader",
+        sql_endpoint={"enabled": True, "auth": "jwt"},
+    )
+    with pytest.raises(ConfigError, match=r"'jwt'.*sql_endpoint\.auth"):
         _parse(connection)
 
 
@@ -178,10 +188,10 @@ def test_parses_an_endpoint_with_an_allowlist_under_identity_bound_auth() -> Non
     conn = _parse(
         _minimal(
             allowed_roles=["role_viz_reader"],
-            sql_endpoint={"enabled": True, "auth": "jwt"},
+            sql_endpoint={"enabled": True, "auth": "identity"},
         )
     ).connections["analytics"]
-    assert (conn.sql_endpoint.enabled, conn.sql_endpoint.auth) == (True, "jwt")
+    assert (conn.sql_endpoint.enabled, conn.sql_endpoint.auth) == (True, "identity")
 
 
 def test_allows_an_enabled_endpoint_with_an_empty_allowlist_and_default_role() -> None:

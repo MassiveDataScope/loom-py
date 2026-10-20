@@ -94,8 +94,10 @@ already shows.
 
 Only scalar columns of the use case's own model qualify; a related model's
 column, a JSON, array or text-search column, and a field reference rooted at
-another model fail compilation. An `Enum` or `Literal` needs a column type
-(e.g. `ColumnField(String(16))`) to be scalar. `ALL` (from `loom.rest`)
+another model fail compilation. An enum mixed with a scalar type, such as a
+`StrEnum` or `IntEnum`, is a scalar column of that type; a plain `Enum` or a
+`Literal` needs a declared column type (e.g. `ColumnField(String(16))`), and
+a SQLAlchemy model refuses one without it. `ALL` (from `loom.rest`)
 declares every scalar column and logs a warning naming the route at startup.
 
 In `app.rest.interfaces`, both take column names, or `all`:

@@ -134,6 +134,25 @@ class StreamingErrorCode(IssueCode):
             field=_OUTPUT,
         ),
     )
+    OUTPUT_AFTER_PATH_END = (
+        "OUTPUT_AFTER_PATH_END",
+        Template(
+            "flow.output is never written: the process ends in {node}, which ends the path "
+            "of every message it receives. Remove the output or the {node}.",
+            component="flow.output",
+            field=_OUTPUT,
+        ),
+    )
+    BROADCAST_OUTPUT_AFTER_PATH_END = (
+        "BROADCAST_OUTPUT_AFTER_PATH_END",
+        Template(
+            "broadcast branch {label}: its output is never written: the route's process "
+            "ends in {node}, which ends the path of every message it receives. Remove the "
+            "output or the {node}.",
+            component="broadcast branch {label}",
+            field=_OUTPUT,
+        ),
+    )
     MISSING_TERMINAL_OUTPUT = (
         "MISSING_TERMINAL_OUTPUT",
         Template(
@@ -220,14 +239,33 @@ class StreamingErrorCode(IssueCode):
             field="streaming.delivery",
         ),
     )
-    # Under at-least-once delivery a dropped message that never completes
-    # freezes the partition's commit watermark forever.
+    INLINE_SINK_CANNOT_SKIP_COMMITS = (
+        "INLINE_SINK_CANNOT_SKIP_COMMITS",
+        Template(
+            "delivery=at_least_once: {component} is written inline by "
+            "With/WithAsync(process=...) but exposes no build_inline_partition method, so "
+            "its partitions would complete the offsets of messages that go on after the "
+            "inline write. Add build_inline_partition() to the sink, or declare "
+            "delivery=at_most_once.",
+            field="streaming.delivery",
+        ),
+    )
+    # Under at-least-once delivery no message is discarded unless the flow says so.
+    TERMINAL_SINK_MISSING = (
+        "TERMINAL_SINK_MISSING",
+        Template(
+            "no runtime sink for the IntoTopic compiled at path {path} (topic {topic}): a "
+            "terminal_sinks override must cover every compiled IntoTopic path, or its "
+            "messages would complete without being written.",
+            component="IntoTopic",
+        ),
+    )
     FORK_UNMATCHED_UNROUTED = (
         "FORK_UNMATCHED_UNROUTED",
         Template(
-            "fork has no default branch: unmatched messages are dropped without completing "
-            "and freeze the commit watermark under delivery=at_least_once. "
-            "Add default=Process(Drain()).",
+            "fork has no default branch: under delivery=at_least_once a message no branch "
+            "claims would be committed without being written anywhere. Add a default route "
+            "that writes it, or default=Process(Drain()) to discard it explicitly.",
             component=_FORK,
             field="default",
         ),

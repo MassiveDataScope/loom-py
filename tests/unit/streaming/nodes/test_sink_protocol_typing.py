@@ -45,8 +45,11 @@ _THIRD_PARTY_SINK = textwrap.dedent("""
         id: str
 
     class JsonlPartition:
-        def write_batch(self, items: Sequence[Ev]) -> None: ...
-        def close(self) -> None: ...
+        def write_batch(self, items: Sequence[Ev]) -> int:
+            return len(items)
+
+        def close(self) -> int:
+            return 0
 
     @dataclass(frozen=True)
     class IntoJsonl:

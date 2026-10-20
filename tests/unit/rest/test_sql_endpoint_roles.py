@@ -19,7 +19,6 @@ import time
 from typing import Any
 
 import jwt as pyjwt
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -457,15 +456,3 @@ def test_the_span_names_the_default_role_of_a_single_role_connection() -> None:
 
     assert response.status_code == 200
     assert observer.events[0].meta["roles"] == ROLE_A
-
-
-# ---------------------------------------------------------------------------
-# Deprecated auth spelling
-# ---------------------------------------------------------------------------
-
-
-def test_the_jwt_auth_mode_is_a_deprecated_alias_of_identity() -> None:
-    """Existing configs keep working, loudly: 'jwt' still means 'identity'."""
-    with pytest.deprecated_call():
-        endpoint = SqlEndpointConfig(enabled=True, auth="jwt")
-    assert endpoint.binds_identity is True

@@ -32,7 +32,6 @@ from opentelemetry.trace.span import TraceState  # noqa: E402
 from opentelemetry.util.types import Attributes  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.event import EventKind, Scope  # noqa: E402
 from loom.streaming import (  # noqa: E402
     FromTopic,
@@ -60,6 +59,7 @@ from loom.streaming.compiler._plan import CompiledSink  # noqa: E402
 from loom.streaming.kafka._config import ProducerSettings  # noqa: E402
 from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
 from tests.helpers.spans import SpanRecorder, build_recorder, hex_trace  # noqa: E402
+from tests.unit.streaming.bytewax.cases import Item, UpperItem  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -86,22 +86,10 @@ _CONFIG = {
 }
 
 
-class _Item(LoomStruct):
-    value: str
-
-
-class _Upper(RecordStep[_Item, _Item]):
-    """Uppercase the payload."""
-
-    def execute(self, message: Message[_Item], **kwargs: object) -> _Item:
-        del kwargs
-        return _Item(value=message.payload.value.upper())
-
-
-class _Boom(RecordStep[_Item, _Item]):
+class _Boom(RecordStep[Item, Item]):
     """Always fail, so the message becomes an error envelope."""
 
-    def execute(self, message: Message[_Item], **kwargs: object) -> _Item:
+    def execute(self, message: Message[Item], **kwargs: object) -> Item:
         del kwargs, message
         raise RuntimeError("node exploded")
 
@@ -120,6 +108,7 @@ class _FakeConfluentProducer:
         self.calls: list[str] = []
         self.first_produce_ns: int | None = None
         self.flush_error: Exception | None = None
+        self.flush_errors: list[Exception] = []
         self.flush_delay_s: float = 0.0
 
     def produce(
@@ -146,11 +135,16 @@ class _FakeConfluentProducer:
         del timeout
 
     def flush(self, timeout: float | None = None) -> None:
-        """Flush, optionally slowly and optionally failing."""
+        """Flush, optionally slowly and optionally failing.
+
+        Queued ``flush_errors`` are raised one per flush before ``flush_error``.
+        """
         self.calls.append("flush")
         self.flush_calls.append(timeout)
         if self.flush_delay_s:
             sleep(self.flush_delay_s)
+        if self.flush_errors:
+            raise self.flush_errors.pop(0)
         if self.flush_error is not None:
             raise self.flush_error
 
@@ -236,7 +230,7 @@ def _terminal_sink(
 def _messages(count: int = 3) -> list[Message[Any]]:
     return [
         Message(
-            payload=_Item(value=f"row-{index}"),
+            payload=Item(value=f"row-{index}"),
             meta=MessageMeta(
                 message_id=f"msg-{index}",
                 trace_id=_TRACES[index],
@@ -264,7 +258,7 @@ def _attribute(span: ReadableSpan, key: str) -> object:
 
 def _run_flow(
     recorder: SpanRecorder,
-    flow: StreamFlow[_Item, _Item],
+    flow: StreamFlow[Item, Item],
     messages: Sequence[Message[Any]],
     *,
     with_error_sinks: bool = False,
@@ -285,15 +279,15 @@ def _run_flow(
         built.shutdown()
 
 
-def _terminal_flow() -> StreamFlow[_Item, _Item]:
+def _terminal_flow() -> StreamFlow[Item, Item]:
     return StreamFlow(
         name=_FLOW,
-        source=FromTopic("items", payload=_Item),
-        process=Process(_Upper(), IntoTopic(_OUT_TOPIC, payload=_Item)),
+        source=FromTopic("items", payload=Item),
+        process=Process(UpperItem(), IntoTopic(_OUT_TOPIC, payload=Item)),
     )
 
 
-def _inline_then_terminal_flow() -> StreamFlow[_Item, _Item]:
+def _inline_then_terminal_flow() -> StreamFlow[Item, Item]:
     """``WithAsync(process=[step, IntoTopic])`` followed by a real terminal.
 
     ``WithAsync(process=...)`` must be the last node of its process, so the real
@@ -302,18 +296,20 @@ def _inline_then_terminal_flow() -> StreamFlow[_Item, _Item]:
     """
     return StreamFlow(
         name=_FLOW,
-        source=FromTopic("items", payload=_Item),
-        process=Process(WithAsync(process=Process(_Upper(), IntoTopic(_OUT_TOPIC, payload=_Item)))),
-        output=IntoTopic(_OUT_TOPIC, payload=_Item),
+        source=FromTopic("items", payload=Item),
+        process=Process(
+            WithAsync(process=Process(UpperItem(), IntoTopic(_OUT_TOPIC, payload=Item)))
+        ),
+        output=IntoTopic(_OUT_TOPIC, payload=Item),
     )
 
 
-def _error_route_flow() -> StreamFlow[_Item, _Item]:
+def _error_route_flow() -> StreamFlow[Item, Item]:
     return StreamFlow(
         name=_FLOW,
-        source=FromTopic("items", payload=_Item),
-        process=Process(_Boom(), IntoTopic(_OUT_TOPIC, payload=_Item)),
-        errors=IntoTopic(_ERR_TOPIC, payload=_Item),
+        source=FromTopic("items", payload=Item),
+        process=Process(_Boom(), IntoTopic(_OUT_TOPIC, payload=Item)),
+        errors=IntoTopic(_ERR_TOPIC, payload=Item),
     )
 
 
@@ -438,22 +434,6 @@ class TestInlineIntoTopicDoesNotKillTheMessage:
         )
         assert sorted(event.trace_id or "" for event in starts) == sorted(_TRACES)
 
-    def test_binding_tracing_after_an_inline_partition_is_refused(self) -> None:
-        sink = _terminal_sink(None)
-        sink.mark_inline_partition()
-
-        runtime = build_recorder().runtime
-
-        with pytest.raises(RuntimeError, match="inline WithAsync partition was already built"):
-            sink.bind_terminal_tracing(runtime, _FLOW, "run-1")
-
-    def test_an_inline_partition_from_a_traced_sink_is_refused(self) -> None:
-        """Nothing fixes the order of the two wiring sites, so both directions guard."""
-        sink = _terminal_sink(build_recorder())
-
-        with pytest.raises(RuntimeError, match="terminal tracing is already bound"):
-            sink.mark_inline_partition()
-
 
 class TestErrorSinksEmitNoTerminalSpan:
     """AC5: the envelope travels in the inherited trace; it must not die twice."""
@@ -524,14 +504,14 @@ class TestReRaiseExit:
 
 
 class TestDivertedExit:
-    """AC7: delivery failed, a DLQ topic is declared, the batch commits anyway."""
+    """AC7: delivery failed, a DLQ topic is declared, the batch commits once it lands there."""
 
     def test_diverted_batches_close_failed_and_still_commit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The diversion never flushes, so the DLQ landing is unverified here."""
+        """The batch never reached its outbound topic, so the diversion is a failure."""
         fake = install_fake_producer(monkeypatch)
-        fake.flush_error = RuntimeError("broker down")
+        fake.flush_errors = [RuntimeError("broker down")]
         recorder = build_recorder()
         tracker = _RecordingTracker()
         sink = _terminal_sink(recorder, dlq_topic=_DLQ_TOPIC, tracker=tracker)
@@ -542,7 +522,7 @@ class TestDivertedExit:
         assert len(deaths) == 3
         for span in deaths:
             assert span.status.status_code is StatusCode.ERROR, (
-                "a diversion whose landing was never flushed is not a success"
+                "a batch diverted away from its outbound topic is not a success"
             )
             assert _attribute(span, "terminal.dlq_topic") == _DLQ_TOPIC
             assert _attribute(span, "terminal.failure_scope") == "batch"
@@ -554,7 +534,7 @@ class TestDivertedExit:
     ) -> None:
         """A wrapper cannot see a swallowed failure; the return value carries it."""
         fake = install_fake_producer(monkeypatch)
-        fake.flush_error = RuntimeError("broker down")
+        fake.flush_errors = [RuntimeError("broker down")]
         partition = _terminal_sink(None, dlq_topic=_DLQ_TOPIC).build("step", 0, 1)
         assert isinstance(partition, _KafkaMessageSinkPartition)
 
