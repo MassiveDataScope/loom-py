@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Any
 
@@ -870,25 +871,27 @@ class _ListAnything(UseCase[Any, str]):
         return "ok"
 
 
-class TestFilterable:
-    @staticmethod
-    def _compile(*interfaces: type[RestInterface[Any]]) -> list[Any]:
-        compiler = UseCaseCompiler()
-        compiler.compile(_ListBooks)
-        compiler.compile(_ListAnything)
-        compiler.compile(CreateUserUseCase)
-        rest = RestInterfaceCompiler(compiler)
-        return [route for interface in interfaces for route in rest.compile(interface)]
+def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
+    compiler = UseCaseCompiler()
+    for interface in interfaces:
+        for route in interface.routes:
+            compiler.compile(route.use_case)
+    rest = RestInterfaceCompiler(compiler)
+    return [route for interface in interfaces for route in rest.compile(interface)]
 
-    def test_a_field_ref_and_a_dotted_string_resolve_to_the_same_typed_paths(self) -> None:
+
+class TestDeclaredColumns:
+    def test_a_field_ref_and_a_column_name_resolve_alike(self) -> None:
         class IFace(RestInterface[_Book]):
             prefix = "/books"
-            filterable = (F(_Book).pages, "shelf.label")
+            filterable = (F(_Book).pages, "title")
+            sortable = ("title", F(_Book).pages)
             routes = (RestRoute(use_case=_ListBooks, method="GET", path="/"),)
 
-        (route,) = self._compile(IFace)
+        (route,) = _compile_columns(IFace)
 
-        assert route.filter_fields == (("pages", int), ("shelf.label", str))
+        assert route.filter_fields == (("pages", int), ("title", str))
+        assert route.sort_fields == ("title", "pages", "id")
 
     def test_a_route_declaration_overrides_its_interface(self) -> None:
         class IFace(RestInterface[_Book]):
@@ -900,7 +903,7 @@ class TestFilterable:
                 RestRoute(use_case=_ListBooks, method="GET", path="/plain", filterable=()),
             )
 
-        routes = self._compile(IFace)
+        routes = _compile_columns(IFace)
 
         assert [route.filter_fields for route in routes] == [
             (("pages", int),),
@@ -914,46 +917,49 @@ class TestFilterable:
             auto = True
             include = ("list",)
             filterable = ("title",)
+            sortable = ("pages",)
 
-        compiler = UseCaseCompiler()
-        for route in IFace.routes:
-            compiler.compile(route.use_case)
-        (route,) = RestInterfaceCompiler(compiler).compile(IFace)
+        (route,) = _compile_columns(IFace)
 
-        assert route.filter_fields == (("title", str),)
+        assert (route.filter_fields, route.sort_fields) == ((("title", str),), ("pages", "id"))
 
-    def test_a_route_without_a_query_spec_ignores_its_interface_declaration(self) -> None:
+    def test_a_route_without_a_query_spec_ignores_an_inherited_declaration(self) -> None:
         class IFace(RestInterface[_Book]):
             prefix = "/books"
             filterable = ("title",)
+            sortable = ("title",)
             routes = (RestRoute(use_case=CreateUserUseCase, method="POST", path="/"),)
 
-        (route,) = self._compile(IFace)
+        (route,) = _compile_columns(IFace)
 
-        assert route.filter_fields == ()
+        assert (route.filter_fields, route.sort_fields) == ((), ())
+
+    @pytest.mark.parametrize("kind", ["filterable", "sortable"])
+    def test_a_route_without_a_query_spec_cannot_declare_columns(self, kind: str) -> None:
+        route = RestRoute(use_case=CreateUserUseCase, method="POST", path="/")
+
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (dataclasses.replace(route, **{kind: ("title",)}),)
+
+        with pytest.raises(InterfaceCompilationError, match=f"declares {kind}.*no QuerySpec"):
+            _compile_columns(IFace)
 
     @pytest.mark.parametrize(
-        ("filterable", "field"),
-        [
-            ((F(_Shelf).label,), "label"),
-            (("missing",), "missing"),
-            (("notes",), "notes"),
-            (("shelf.label.code",), "shelf.label.code"),
-        ],
+        ("declared", "field"),
+        [((F(_Shelf).label,), "label"), (("shelf.label",), "shelf.label")],
     )
-    def test_a_field_the_route_cannot_filter_fails_compilation(
-        self, filterable: tuple[Any, ...], field: str
+    def test_a_column_the_route_cannot_use_fails_compilation(
+        self, declared: tuple[Any, ...], field: str
     ) -> None:
         class IFace(RestInterface[_Book]):
             prefix = "/books"
-            routes = (
-                RestRoute(use_case=_ListBooks, method="GET", path="/", filterable=filterable),
-            )
+            routes = (RestRoute(use_case=_ListBooks, method="GET", path="/", sortable=declared),)
 
-        with pytest.raises(InterfaceCompilationError, match=r"\(GET, '/'\).*" + field):
-            self._compile(IFace)
+        with pytest.raises(InterfaceCompilationError, match=rf"\(GET, '/'\).*'{field}'"):
+            _compile_columns(IFace)
 
-    def test_a_use_case_without_a_model_cannot_declare_filterable_fields(self) -> None:
+    def test_a_use_case_without_a_model_cannot_declare_columns(self) -> None:
         class IFace(RestInterface[_Book]):
             prefix = "/books"
             routes = (
@@ -961,9 +967,9 @@ class TestFilterable:
             )
 
         with pytest.raises(InterfaceCompilationError, match="declares no model"):
-            self._compile(IFace)
+            _compile_columns(IFace)
 
-    def test_all_resolves_every_scalar_field_and_warns_naming_the_route(
+    def test_all_resolves_the_root_scalar_columns_and_warns_naming_the_route(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         class IFace(RestInterface[_Book]):
@@ -972,16 +978,9 @@ class TestFilterable:
             routes = (RestRoute(use_case=_ListBooks, method="GET", path="/"),)
 
         with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
-            (route,) = self._compile(IFace)
+            (route,) = _compile_columns(IFace)
 
-        assert dict(route.filter_fields) == {
-            "id": int,
-            "title": str,
-            "pages": int,
-            "shelf_id": int,
-            "shelf.id": int,
-            "shelf.label": str,
-        }
+        assert dict(route.filter_fields) == {"id": int, "title": str, "pages": int, "shelf_id": int}
         (record,) = caplog.records
         assert record.levelno == logging.WARNING
         assert "IFace: route (GET, '/')" in record.getMessage()

@@ -38,7 +38,7 @@ from loom.core.repository.abc.query import PaginationMode
 from loom.core.symbols import import_symbol
 from loom.core.use_case.constants import CrudOp
 from loom.core.use_case.use_case import UseCase
-from loom.rest.model import ALL, Filterable, RestInterface, RestRoute
+from loom.rest.model import ALL, DeclaredFields, RestInterface, RestRoute
 
 __all__ = [
     "DisableRouteConfig",
@@ -89,8 +89,9 @@ class RestRouteConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
         allowed_profiles: Profiles callers may request.
         expose_profile: Whether ``?profile=`` is publicly accepted.
         requires_roles: Roles that grant access to this route.
-        filterable: Dotted paths of the fields callers may filter on, or
-            ``all`` for :data:`~loom.rest.model.ALL`.
+        filterable: Columns callers may filter on, or ``all`` for
+            :data:`~loom.rest.model.ALL`.
+        sortable: Columns callers may sort by, or ``all``.
     """
 
     use_case: str
@@ -106,6 +107,7 @@ class RestRouteConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
     filterable: tuple[str, ...] | Literal["all"] | None = None
+    sortable: tuple[str, ...] | Literal["all"] | None = None
 
 
 class RestInterfaceConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
@@ -137,8 +139,9 @@ class RestInterfaceConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=Tr
         allowed_profiles: Profiles available to callers of this interface.
         expose_profile: Whether ``?profile=`` is publicly accepted by default.
         requires_roles: Roles granting access to every route of this interface.
-        filterable: Dotted paths of the fields callers may filter the
-            interface's routes on, or ``all`` for :data:`~loom.rest.model.ALL`.
+        filterable: Columns callers may filter the interface's routes on, or
+            ``all`` for :data:`~loom.rest.model.ALL`.
+        sortable: Columns callers may sort the interface's routes by, or ``all``.
     """
 
     prefix: str = ""
@@ -154,6 +157,7 @@ class RestInterfaceConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=Tr
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
     filterable: tuple[str, ...] | Literal["all"] | None = None
+    sortable: tuple[str, ...] | Literal["all"] | None = None
 
 
 class DisableRouteConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
@@ -220,11 +224,12 @@ def _build_route(interface_name: str, route_cfg: RestRouteConfig) -> RestRoute:
         allowed_profiles=route_cfg.allowed_profiles,
         expose_profile=route_cfg.expose_profile,
         requires_roles=route_cfg.requires_roles,
-        filterable=_filterable(route_cfg.filterable),
+        filterable=_declared_fields(route_cfg.filterable),
+        sortable=_declared_fields(route_cfg.sortable),
     )
 
 
-def _filterable(value: tuple[str, ...] | Literal["all"] | None) -> Filterable | None:
+def _declared_fields(value: tuple[str, ...] | Literal["all"] | None) -> DeclaredFields | None:
     """Map the YAML ``all`` spelling to :data:`~loom.rest.model.ALL`."""
     return ALL if isinstance(value, str) else value
 
@@ -320,7 +325,8 @@ def _build_interface_class(
         "allowed_profiles": cfg.allowed_profiles,
         "expose_profile": cfg.expose_profile,
         "requires_roles": cfg.requires_roles,
-        "filterable": _filterable(cfg.filterable),
+        "filterable": _declared_fields(cfg.filterable),
+        "sortable": _declared_fields(cfg.sortable),
         # types.new_class defaults __module__ to this function's caller frame
         # (typically "types" itself, via __set_name__ machinery), which would
         # make every traceback, repr, and log line naming this class point at

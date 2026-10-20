@@ -54,12 +54,13 @@ class ProductInterface(RestInterface[Product]):
 
 Valid values: `"get"`, `"list"`, `"create"`, `"update"`, `"delete"`.
 
-## Filter list routes
+## Filter and sort list routes
 
-A list route filters only the fields it declares `filterable`. Declare them
-on the interface (its auto-CRUD `list` route included) or on a `RestRoute`,
-which overrides the interface. A field reference rooted at the model is the
-primary form; a dotted path names the same field:
+A list route filters and sorts only on the columns it declares `filterable`
+and `sortable`. Declare them on the interface (its auto-CRUD `list` route
+included) or on a `RestRoute`, which overrides the interface. A field
+reference rooted at the model is the primary form; the column name is the
+same column:
 
 ```python
 from loom.core.use_case.field_ref import F
@@ -69,31 +70,33 @@ class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     auto = True
     filterable = (F(Product).sku, F(Product).price_cents, "stock")
+    sortable = (F(Product).price_cents,)
 ```
 
 Callers filter with `field=value` or `field__op=value`, the operator one of
-`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like`,
-`ilike` and `is_null`; a camelCase name reads as snake_case, and a field of a
-related model one level down is `relation__field` (`F(Product).relation.field`):
+`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like` and
+`ilike` (on `str` columns) and `is_null`, and sort with `sort=` and
+`direction=`; a camelCase name reads as snake_case:
 
 ```
-GET /products?price_cents__lte=500&sku__in=A-01,A-02
+GET /products?price_cents__lte=500&sku__in=A-01,A-02&sort=price_cents&direction=DESC
 ```
 
-Each value is converted by its field's type with the strict grammar of
+Each value is converted by its column's type with the strict grammar of
 `Query()` (a boolean is `true` or `false`, a number follows the JSON number
-grammar, a `str` field keeps the text as sent). A value the type refuses
-answers `400 query_validation`; a field the route does not declare answers
-`400 unsupported_query`. A route with no declaration accepts no filter.
+grammar, a `str` column keeps the text as sent). A value the type refuses
+answers `400 query_validation`. A column the route does not declare answers
+`400 unsupported_query`, the same answer whether or not the column exists.
+The primary key, the route's default order, is always sortable, and a cursor
+carries only sortable columns' values.
 
-Compilation refuses a field that is not a scalar column of the use case's
-model or of a model related to it one level down (JSON, list, dict and
-struct columns, which includes an `Enum` or `Literal` field declared without
-a column type), and a field reference rooted at another model.
-`filterable = ALL` (from `loom.rest`) makes every scalar field filterable and
-logs a warning naming the route at startup.
+Only scalar columns of the use case's own model qualify; a related model's
+column, a JSON, array or text-search column, and a field reference rooted at
+another model fail compilation. An `Enum` or `Literal` needs a column type
+(e.g. `ColumnField(String(16))`) to be scalar. `ALL` (from `loom.rest`)
+declares every scalar column and logs a warning naming the route at startup.
 
-In `app.rest.interfaces`, `filterable` takes dotted paths, or `all`:
+In `app.rest.interfaces`, both take column names, or `all`:
 
 ```yaml
 app:
@@ -104,6 +107,7 @@ app:
         auto: true
         model: app.product.model:Product
         filterable: [sku, price_cents, stock]
+        sortable: [price_cents]
 ```
 
 ## Multiple read profiles

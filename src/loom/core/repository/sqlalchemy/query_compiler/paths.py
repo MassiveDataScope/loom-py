@@ -15,9 +15,7 @@ def resolve_column(sa_model: type[Any], path: str) -> Any:
     """Resolve a dot-separated field path to a SQLAlchemy column attribute.
 
     Supports single-level paths (``"price"``) and one-level relation traversal
-    (``"category.name"``).  Deeper nesting is not supported in v1; the same
-    depth bounds the paths a REST route may declare filterable
-    (:func:`loom.core.model.introspection.filter_field_annotations`).
+    (``"category.name"``).  Deeper nesting is not supported in v1.
 
     Args:
         sa_model: Root SQLAlchemy mapped model class.

@@ -533,17 +533,19 @@ def _interface_field_names() -> frozenset[str]:
     )
 
 
-class TestFilterable:
-    def test_dotted_paths_and_all_reach_the_interface_and_route(self) -> None:
+class TestDeclaredColumns:
+    def test_column_names_and_all_reach_the_interface_and_route(self) -> None:
         raw = {
             "prefix": "/pings",
-            "filterable": ["title", "owner.name"],
+            "filterable": ["title"],
+            "sortable": "all",
             "routes": [
                 {
                     "use_case": f"{_MODULE}:PingUseCase",
                     "method": "GET",
                     "path": "/",
                     "filterable": "all",
+                    "sortable": ["title"],
                 }
             ],
         }
@@ -551,6 +553,7 @@ class TestFilterable:
         (interface,) = build_interfaces_from_config(
             {"pings": msgspec.convert(raw, RestInterfaceConfig)}
         )
+        (route,) = interface.routes
 
-        assert interface.filterable == ("title", "owner.name")
-        assert interface.routes[0].filterable is ALL
+        assert (interface.filterable, interface.sortable) == (("title",), ALL)
+        assert (route.filterable, route.sortable) == (ALL, ("title",))

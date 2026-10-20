@@ -134,10 +134,6 @@ class QuerySpec(LoomFrozenStruct, frozen=True):
     representation.  The repository implementation compiles this into
     backend-specific clauses at query time.
 
-    Over REST, a ``QuerySpec`` route filters its use case's model (the
-    ``Model`` of ``UseCase[Model, ...]``), on the fields the route declares
-    ``filterable`` only.
-
     Args:
         filters: Optional filter group applied to the query.
         sort: Ordered tuple of sort directives.

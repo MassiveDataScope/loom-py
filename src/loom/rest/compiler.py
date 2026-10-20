@@ -21,10 +21,10 @@ Compilation steps per interface:
    - Read the fields of a ``Query()`` parameter, refusing a non-scalar field,
      a name shared with a path parameter or ``profile``, or a ``QuerySpec``
      parameter next to it.
-   - Resolve the filterable fields of a ``QuerySpec`` route (route →
-     interface) against its use case's model, refusing a field reference
-     rooted elsewhere and a path that names no scalar column of that model or
-     of a model related to it one level down.
+   - Resolve the filterable and sortable columns of a ``QuerySpec`` route
+     (route → interface) against its use case's model, refusing a field
+     reference rooted elsewhere, a name that is not a scalar column of that
+     model, and a route-level declaration on a route without a ``QuerySpec``.
    - Refuse ``expose_profile`` without ``allowed_profiles``.
 """
 
@@ -45,13 +45,21 @@ from typing import Any, NamedTuple
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import filter_field_annotations, loom_type
+from loom.core.model import get_column_fields, loom_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
+from loom.core.model.introspection import scalar_column_annotations
 from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
-from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
+from loom.rest.model import (
+    ALL,
+    DeclaredFields,
+    PaginationMode,
+    RestApiDefaults,
+    RestInterface,
+    RestRoute,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -341,9 +349,11 @@ class CompiledRoute:
             parameter of this route.
         query_fields: Parameters the route's ``Query()`` declares; empty
             when the use case declares none.
-        filter_fields: ``(path, annotation)`` of each field a client may
+        filter_fields: ``(column, annotation)`` of each column a client may
             filter the route's ``QuerySpec`` on, the annotation without its
             ``Annotated`` metadata; empty when the route filters nothing.
+        sort_fields: Columns a client may sort the route's ``QuerySpec`` by:
+            the declared ``sortable`` ones and the primary key.
         result_type: Result type of ``execute`` without its ``Created``
             member, answered with the route's ``status_code``.
         created_type: Type a ``Created`` result wraps, answered with ``201``;
@@ -368,68 +378,85 @@ class CompiledRoute:
     effective_max_limit: int = 1000
     query_fields: tuple[QueryField, ...] = ()
     filter_fields: tuple[tuple[str, Any], ...] = ()
+    sort_fields: tuple[str, ...] = ()
     result_type: Any = Any
     created_type: Any = None
 
 
-def _resolve_filter_fields(
-    iface_name: str,
-    route: RestRoute,
-    interface: type[RestInterface[Any]],
-    plan: ExecutionPlan,
-) -> tuple[tuple[str, Any], ...]:
-    """Resolve the fields a ``QuerySpec`` route lets a client filter on (route → interface).
+@dataclass(frozen=True)
+class _ColumnPolicy:
+    """Resolves the columns a route lets a client filter or sort on (route → interface).
 
-    A route without a ``QuerySpec`` parameter filters nothing, whatever its
-    interface declares.
-
-    Raises:
-        InterfaceCompilationError: The use case declares no model, a field
-            reference is rooted at another model, or a path names no scalar
-            column of the model or of a model related to it one level down.
+    Args:
+        where: Route label used in compilation errors and warnings.
+        model: The use case's model, ``None`` when it declares none.
+        takes_query_spec: Whether the use case takes a ``QuerySpec``.
     """
-    declared = route.filterable if route.filterable is not None else interface.filterable
-    takes_query_spec = any(names_query_spec(pb.annotation) for pb in plan.param_bindings)
-    if not declared or not takes_query_spec:
-        return ()
-    where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
-    model = route.use_case.describe_main_repo()[0]
-    if model is None:
-        raise InterfaceCompilationError(
-            f"{where} declares filterable fields, but {route.use_case.__qualname__} declares "
-            "no model to filter; declare it as UseCase[Model, ...]."
-        )
-    paths: tuple[str, ...] | None = None
-    if declared is ALL:
-        _logger.warning(
-            "%s lets clients filter on every scalar field of %s (filterable=ALL); "
-            "declare the fields it filters instead.",
-            where,
-            model.__name__,
-        )
-    else:
-        paths = _filter_paths(where, model, declared)
-    try:
-        return tuple(filter_field_annotations(model, paths).items())
-    except ValueError as exc:
-        raise InterfaceCompilationError(f"{where}: filterable field {exc}") from exc
 
+    where: str
+    model: type[Any] | None
+    takes_query_spec: bool
 
-def _filter_paths(
-    where: str, model: type[Any], declared: tuple[FieldRef | str, ...]
-) -> tuple[str, ...]:
-    """Normalise each declared field, a field reference or a dotted string, to its dotted path."""
-    paths: list[str] = []
-    for entry in declared:
-        if isinstance(entry, FieldRef):
-            if entry.root is not model:
+    def resolve(
+        self, kind: str, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
+    ) -> dict[str, Any]:
+        """Return ``{column: annotation}`` for the declared *kind* (``filterable``/``sortable``).
+
+        A declaration inherited by a route without a ``QuerySpec`` is ignored.
+
+        Raises:
+            InterfaceCompilationError: The route itself declares *kind* but
+                takes no ``QuerySpec``, the use case declares no model, or an
+                entry is not a scalar column of the route's model.
+        """
+        if on_route is not None and not self.takes_query_spec:
+            raise InterfaceCompilationError(
+                f"{self.where} declares {kind} fields, but its use case takes no QuerySpec."
+            )
+        declared = on_route if on_route is not None else on_interface
+        if not declared or not self.takes_query_spec:
+            return {}
+        if self.model is None:
+            raise InterfaceCompilationError(
+                f"{self.where} declares {kind} fields, but its use case declares no model; "
+                "declare it as UseCase[Model, ...]."
+            )
+        columns = scalar_column_annotations(self.model)
+        if declared is ALL:
+            _logger.warning(
+                "%s makes every scalar column of %s %s (ALL); declare the columns instead.",
+                self.where,
+                self.model.__name__,
+                kind,
+            )
+            return columns
+        resolved: dict[str, Any] = {}
+        for entry in declared:
+            name = self._column_name(kind, entry)
+            if name not in columns:
                 raise InterfaceCompilationError(
-                    f"{where}: filterable field {'.'.join(entry.path)!r} is rooted at "
-                    f"{entry.root!r}, not at the route's model {model.__name__}."
+                    f"{self.where}: {kind} field {name!r} is not a scalar column of "
+                    f"{self.model.__name__}."
                 )
-            entry = ".".join(entry.path)
-        paths.append(entry)
-    return tuple(paths)
+            resolved[name] = columns[name]
+        return resolved
+
+    def default_order(self) -> tuple[str, ...]:
+        """Primary-key columns, the order the route applies when the client names none."""
+        if self.model is None or not self.takes_query_spec:
+            return ()
+        fields = get_column_fields(self.model)
+        return tuple(name for name, info in fields.items() if info.field.primary_key)
+
+    def _column_name(self, kind: str, entry: FieldRef | str) -> str:
+        if not isinstance(entry, FieldRef):
+            return entry
+        if entry.root is not self.model:
+            raise InterfaceCompilationError(
+                f"{self.where}: {kind} field {'.'.join(entry.path)!r} is rooted at "
+                f"{entry.root!r}, not at the route's model."
+            )
+        return ".".join(entry.path)
 
 
 class RestInterfaceCompiler:
@@ -581,6 +608,11 @@ class RestInterfaceCompiler:
             seen[key] = route
 
             full_path = f"{prefix}{route.path}" if route.path else prefix or "/"
+            columns = _ColumnPolicy(
+                where=f"{iface_name}: route ({route.method.upper()}, {route.path!r})",
+                model=route.use_case.describe_main_repo()[0],
+                takes_query_spec=any(names_query_spec(pb.annotation) for pb in plan.param_bindings),
+            )
 
             compiled.append(
                 CompiledRoute(
@@ -600,7 +632,15 @@ class RestInterfaceCompiler:
                     effective_requires_roles=self._resolve_requires_roles(route, interface),
                     effective_max_limit=self._defaults.max_limit,
                     query_fields=self._resolve_query_fields(iface_name, route, plan),
-                    filter_fields=_resolve_filter_fields(iface_name, route, interface, plan),
+                    filter_fields=tuple(
+                        columns.resolve(
+                            "filterable", route.filterable, interface.filterable
+                        ).items()
+                    ),
+                    sort_fields=(
+                        *columns.resolve("sortable", route.sortable, interface.sortable),
+                        *columns.default_order(),
+                    ),
                     result_type=result_type,
                     created_type=created_type,
                 )

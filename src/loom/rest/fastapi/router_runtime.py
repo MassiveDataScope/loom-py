@@ -33,7 +33,7 @@ import logging
 import re
 import types
 import typing
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -184,53 +184,69 @@ def _query_validation(exc: BoundaryValidationError) -> BoundaryValidationError:
 
 @dataclass(frozen=True, slots=True)
 class _FilterValues:
-    """Refuses undeclared filter fields and types the values of declared ones.
+    """Refuses filters the route does not allow and types the values of the others.
 
-    ``attributes`` maps each field the route declares filterable
-    (``"rank"``, ``"section.rank"``) to its attribute on ``decoder``'s
-    struct, whose encoded names are those paths.
+    ``decoder`` is a struct with one field per column the route declares
+    filterable; ``text_columns`` are those of them annotated ``str``.
     """
 
     decoder: LoomType
-    attributes: Mapping[str, str]
+    columns: frozenset[str]
+    text_columns: frozenset[str]
 
     def convert(self, field: str, op: FilterOp, raw: str) -> Any:
         """Return the filter value of *op* on *field*, typed by the field.
 
         Raises:
             LoomError: ``unsupported_query`` when the route does not declare
-                *field* filterable.
+                *field* filterable, for ``exists`` and ``not_exists``, and for
+                ``like`` or ``ilike`` on a column that is not text.
             BoundaryValidationError: ``query_validation`` when a value does
                 not satisfy the field's type.
         """
-        attribute = self.attributes.get(field)
-        if attribute is None:
-            raise LoomError(
-                f"Filtering on field {field!r} is not allowed by this route.",
-                code=ErrorCode.UNSUPPORTED_QUERY,
-            )
+        if field not in self.columns:
+            raise _unsupported_query(f"Filtering on field {field!r} is not allowed by this route.")
+        if op in _RELATION_OPS:
+            raise _unsupported_query(f"Operator {op.value!r} is not supported by this route.")
+        if op in _PATTERN_OPS and field not in self.text_columns:
+            raise _unsupported_query(f"Operator {op.value!r} applies to text fields only.")
         if op not in FIELD_TYPED_OPS:
             return raw
         if op is FilterOp.IN:
-            return [self._typed(field, attribute, item) for item in raw.split(",") if item != ""]
-        return self._typed(field, attribute, raw)
+            return [self._typed(field, item) for item in raw.split(",") if item != ""]
+        return self._typed(field, raw)
 
-    def _typed(self, field: str, attribute: str, text: str) -> Any:
+    def _typed(self, field: str, text: str) -> Any:
         try:
-            return getattr(self.decoder.from_query({field: text}), attribute)
+            return getattr(self.decoder.from_query({field: text}), field)
         except BoundaryValidationError as exc:
             raise _query_validation(exc) from exc
 
 
+_RELATION_OPS = frozenset((FilterOp.EXISTS, FilterOp.NOT_EXISTS))
+_PATTERN_OPS = frozenset((FilterOp.LIKE, FilterOp.ILIKE))
+
+
+def _unsupported_query(message: str) -> LoomError:
+    return LoomError(message, code=ErrorCode.UNSUPPORTED_QUERY)
+
+
+def _is_text(annotation: Any) -> bool:
+    union = typing.get_origin(annotation) in (typing.Union, types.UnionType)
+    members = typing.get_args(annotation) if union else (annotation,)
+    return [member for member in members if member is not type(None)] == [str]
+
+
 def _filter_values(fields: Sequence[tuple[str, Any]]) -> _FilterValues:
-    """Compile the filter value decoder of a route from its declared ``(path, annotation)``."""
-    attributes = {path: f"f{index}" for index, (path, _) in enumerate(fields)}
+    """Compile the filter value decoder of a route from its declared ``(column, annotation)``."""
     struct = msgspec.defstruct(
-        "FilterValues",
-        [(attributes[path], annotation, None) for path, annotation in fields],
-        rename={attribute: path for path, attribute in attributes.items()},
+        "FilterValues", [(column, annotation, None) for column, annotation in fields]
     )
-    return _FilterValues(decoder=msgspec_type(struct), attributes=attributes)
+    return _FilterValues(
+        decoder=msgspec_type(struct),
+        columns=frozenset(column for column, _ in fields),
+        text_columns=frozenset(column for column, annotation in fields if _is_text(annotation)),
+    )
 
 
 def _parse_filter_op(op: str) -> FilterOp:
@@ -278,15 +294,23 @@ def _parse_pagination_mode(
         ) from exc
 
 
-def _parse_sort(sort_field: str | None, direction_raw: str) -> tuple[SortSpec, ...]:
+def _parse_sort(
+    sort_field: str | None, direction_raw: str, sortable: Collection[str]
+) -> tuple[SortSpec, ...]:
+    """Read ``sort`` and ``direction``, refusing a column the route does not let clients sort by.
+
+    The refusal is the same whether or not the column exists, so it does not
+    reveal the model's columns.
+    """
     direction = direction_raw.upper()
     if direction not in {"ASC", "DESC"}:
         raise HTTPException(status_code=400, detail="direction must be 'ASC' or 'DESC'.")
-    requested_fields = (sort_field,) if sort_field else ()
-    return tuple(
-        SortSpec(field=_normalize_field_name(field), direction=typing.cast(Any, direction))
-        for field in requested_fields
-    )
+    if not sort_field:
+        return ()
+    field = _normalize_field_name(sort_field)
+    if field not in sortable:
+        raise _unsupported_query(f"Sorting on field {sort_field!r} is not allowed by this route.")
+    return (SortSpec(field=field, direction=typing.cast(Any, direction)),)
 
 
 def _parse_filter_specs(
@@ -349,6 +373,7 @@ def _build_query_spec(
     allow_pagination_override: bool,
     max_limit: int,
     filter_values: _FilterValues,
+    sortable: Collection[str],
 ) -> QuerySpec:
     query_params = request.query_params
     page = _positive_int(query_params, QueryParam.PAGE, _DEFAULT_PAGE)
@@ -365,6 +390,7 @@ def _build_query_spec(
     sort = _parse_sort(
         query_params.get(QueryParam.SORT),
         query_params.get(QueryParam.DIRECTION, "ASC"),
+        sortable,
     )
     filters = _parse_filter_specs(query_params, filter_values)
     filter_group = FilterGroup(filters=tuple(filters)) if filters else None
@@ -531,6 +557,7 @@ def _build_execution_params(
             allow_pagination_override=compiled_route.effective_allow_pagination_override,
             max_limit=compiled_route.effective_max_limit,
             filter_values=runtime.filter_values,
+            sortable=compiled_route.sort_fields,
         )
     return params
 

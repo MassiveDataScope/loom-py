@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import re
 import typing
 from typing import Annotated, Any, Generic, TypeVar
 
 import msgspec
-import pytest
 
-from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField
+from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, Postgres, RelationField
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
-    filter_field_annotations,
     generic_type_arg,
     get_column_fields,
     list_element_type,
     resolve_type_hints,
+    scalar_column_annotations,
 )
 from loom.core.model.types import Integer, String
 
@@ -153,6 +151,8 @@ class _Shelf(BaseModel):
     id: int = ColumnField(primary_key=True)
     label: str = ColumnField(length=2)
     tags: list[str] = ColumnField()
+    words: str = ColumnField(Postgres.TSVECTOR)
+    marks: list[int] = ColumnField(Postgres.ARRAY(Integer))
 
 
 class _Book(BaseModel):
@@ -167,25 +167,9 @@ class _Book(BaseModel):
     )
 
 
-class TestFilterFieldAnnotations:
-    def test_declared_paths_resolve_to_their_annotation_without_metadata(self) -> None:
-        annotations = filter_field_annotations(_Book, ("rank", "shelf.label"))
+class TestScalarColumnAnnotations:
+    def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
+        assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
 
-        assert annotations == {"rank": int | None, "shelf.label": str}
-
-    def test_without_paths_every_scalar_column_one_relation_down_is_filterable(self) -> None:
-        assert set(filter_field_annotations(_Book)) == {
-            "id",
-            "rank",
-            "shelf_id",
-            "shelf.id",
-            "shelf.label",
-        }
-
-    @pytest.mark.parametrize(
-        "path",
-        ["missing", "settings", "shelf.tags", "shelf", "shelf.label.code", "shelf.missing"],
-    )
-    def test_a_path_that_is_not_a_scalar_column_is_refused(self, path: str) -> None:
-        with pytest.raises(ValueError, match=re.escape(repr(path))):
-            filter_field_annotations(_Book, (path,))
+    def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
+        assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}

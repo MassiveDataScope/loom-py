@@ -205,7 +205,12 @@ class TestRelatedStructs:
 class TestFilterValues:
     @pytest.mark.parametrize(
         ("op", "value"),
-        [(FilterOp.EQ, _Shade.DARK), (FilterOp.IN, [_Shade.DARK])],
+        [
+            (FilterOp.EQ, _Shade.DARK),
+            (FilterOp.IN, [_Shade.DARK]),
+            (FilterOp.IN, (_Shade.DARK,)),
+            (FilterOp.IN, {_Shade.DARK}),
+        ],
     )
     async def test_a_plain_enum_filter_value_matches_what_the_write_stored(
         self, session_manager: SessionManager, op: FilterOp, value: Any

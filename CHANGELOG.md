@@ -602,32 +602,37 @@
 
 ### rest
 
-- **rest:** a `QuerySpec` route filters only the fields it declares. A query
-  parameter that filters a field the route does not declare `filterable`
-  answers `400 unsupported_query` naming the field; before, every field the
-  repository could resolve was filterable. Declare the fields on the
-  interface, which also covers its auto-CRUD `list` route, or on the route,
-  which overrides it, as field references or dotted paths:
+- **rest:** a `QuerySpec` route filters and sorts only on the columns it
+  declares. Before, a client could filter or sort on any field the repository
+  could resolve. Now a filter on an undeclared column answers
+  `400 unsupported_query` naming the field, and so does a sort on one, with the
+  same answer whether or not the column exists. The primary key, which the
+  route orders by when the client names no sort, needs no declaration.
+  Declare `filterable` and `sortable` on the interface (its auto-CRUD `list`
+  route included) or on a route, which overrides it, as field references or
+  column names:
 
   ```python
   class OrderRestInterface(RestInterface[Order]):
       prefix = "/orders"
       auto = True
-      filterable = (F(Order).status, F(Order).total, F(Order).warehouse.code)
+      filterable = (F(Order).status, F(Order).total)
+      sortable = (F(Order).created_at,)
   ```
 
-  In `app.rest.interfaces`, `filterable` takes the dotted paths
-  (`[status, warehouse.code]`). `filterable = ALL` (`all` in YAML) keeps
-  every scalar field filterable and logs a warning naming the route at
-  startup. A field must be a column of the use case's model
-  (`UseCase[Model, ...]`) or of a model related to it one level down, and
-  scalar: JSON, list, dict and struct columns, which includes an `Enum` or
-  `Literal` field declared without a column type, cannot be filtered;
-  `InterfaceCompilationError` names the route and the field otherwise. A use
-  case that declares no model cannot declare `filterable`, so its route
-  accepts no filter. `EXISTS` and `NOT_EXISTS` name a relation, never a
-  column, so no route accepts them. The repository's `allowed_filter_fields`
-  is unchanged: programmatic callers are not restricted.
+  In `app.rest.interfaces` both take column names (`[status, total]`).
+  `ALL` (`all` in YAML) keeps every scalar column and logs a warning naming
+  the route at startup. Only scalar columns of the use case's own model
+  (`UseCase[Model, ...]`) qualify. A related model's column (`warehouse.code`)
+  is refused, and so are JSON, array and text-search columns; lists, dicts
+  and structs, and an `Enum` or `Literal` declared without a column type, are
+  JSON. `InterfaceCompilationError` names the route and the field. It is also
+  raised for a declaration on a use case with no model, and for a route-level
+  declaration on a route without a `QuerySpec`; an inherited one is ignored.
+  `exists` and `not_exists` answer `400 unsupported_query`, and so do `like`
+  and `ilike` on a column that is not `str`. The repository's
+  `allowed_filter_fields` is unchanged: programmatic callers are not
+  restricted.
 - **rest:** every route now resolves its request parameters and decodes its
   body before the use case is built, so a request refused at that point
   never runs the use case's constructor.
@@ -985,6 +990,14 @@
 
 ### rest
 
+- **rest:** `?sort=` accepted any column. A cursor page put the sort
+  column's raw value of its last row in `nextCursor` (base64 JSON), so any
+  column, a secret one included, could be read through it, and a forged
+  cursor could range-probe it. Offset pages leaked its order, and an unknown
+  column answered `400` while a known one answered `200`, so the model's
+  columns could be enumerated. A route now sorts only by its declared
+  `sortable` columns and its primary key, so a cursor carries only those
+  values.
 - **rest:** a `QuerySpec` filter value was typed by its spelling: `true` and
   `false` became booleans, text with a `.` a float and digits an integer,
   whatever the filtered field declared. `?code=0123` on a `str` field compared

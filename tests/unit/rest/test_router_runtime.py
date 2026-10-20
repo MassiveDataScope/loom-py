@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import msgspec
 import pydantic
@@ -25,7 +25,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.model import BaseModel, Cardinality, ColumnField, LoomStruct, RelationField, String
+from loom.core.model import BaseModel, ColumnField, LoomStruct, String
 from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
@@ -186,14 +186,6 @@ class IdOnlyFilterUseCase(CompiledFilterUseCase):
     allowed_fields = frozenset({"id"})
 
 
-class _Section(BaseModel):
-    __tablename__ = "router_runtime_sections"
-
-    id: int = ColumnField(primary_key=True)
-    position: int = ColumnField()
-    sort_order: int = ColumnField()
-
-
 class _Tone(Enum):
     LIGHT = "light"
     DARK = "dark"
@@ -206,14 +198,11 @@ class _Entry(BaseModel):
     code: str = ColumnField()
     rank: Annotated[int, msgspec.Meta(ge=1)] = ColumnField()
     quota: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
-    grade: Literal["low", "high"] = ColumnField(String(4))
     active: bool = ColumnField()
     tone: _Tone = ColumnField(String(5))
     due: date = ColumnField()
     seen_at: datetime = ColumnField()
-    section: _Section | None = RelationField(
-        foreign_key="section_id", cardinality=Cardinality.MANY_TO_ONE
-    )
+    sort_order: int = ColumnField()
 
 
 class EntryFilterValuesUseCase(UseCase[_Entry, dict[str, Any]]):
@@ -230,6 +219,15 @@ class EntryFilterTypesUseCase(EntryFilterValuesUseCase):
     async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
         values = await super().execute(query, **kwargs)
         return {field: type(value).__name__ for field, value in values.items()}
+
+
+class EntrySortUseCase(UseCase[_Entry, list[list[str]]]):
+    def __init__(self) -> None:
+        super().__init__()
+
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> list[list[str]]:
+        await asyncio.sleep(0)
+        return [[spec.field, spec.direction] for spec in query.sort]
 
 
 class DocUseCase(UseCase[Any, str]):
@@ -528,7 +526,7 @@ def test_bind_interfaces_builds_query_spec_from_offset_url_params() -> None:
     routes = _compile_routes(IFace)
     app = _make_app(*routes)
     client = TestClient(app)
-    response = client.get("/items/?page=2&limit=10&sort=id&direction=DESC")
+    response = client.get("/items/?page=2&limit=10")
     assert response.status_code == 200
     assert response.json() == {
         "pagination": PaginationMode.OFFSET.value,
@@ -538,8 +536,8 @@ def test_bind_interfaces_builds_query_spec_from_offset_url_params() -> None:
         "filter_field": None,
         "filter_op": None,
         "filter_value": None,
-        "sort_field": "id",
-        "sort_direction": "DESC",
+        "sort_field": None,
+        "sort_direction": None,
     }
 
 
@@ -595,64 +593,24 @@ def test_bind_interfaces_rejects_pagination_override_when_disabled() -> None:
     assert "cannot override" in response.json()["detail"]
 
 
-def test_bind_interfaces_normalizes_camelcase_query_fields() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?sort=createdAt")
-    assert response.status_code == 200
-    assert response.json()["sort_field"] == "created_at"
-
-
-@pytest.mark.parametrize("query", ["price__gte=s3cr3t", "reviews__exists=s3cr3t"])
-def test_bind_interfaces_answers_400_to_a_filter_on_an_undeclared_field(query: str) -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
-
-    response = client.get(f"/items/?{query}")
-
-    assert response.status_code == 400
-    body = response.json()["detail"]
-    assert body["code"] == "unsupported_query"
-    assert query.split("__")[0] in body["message"]
-    assert "s3cr3t" not in response.text
-
-
-@pytest.mark.parametrize(
-    ("use_case", "url", "field"),
-    [
-        (CompiledFilterUseCase, "/rows/?no_such_field=s3cr3t", "no_such_field"),
-        (IdOnlyFilterUseCase, "/rows/?rank=7", "rank"),
-    ],
-)
-def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
-    use_case: type[CompiledFilterUseCase], url: str, field: str
-) -> None:
+def test_bind_interfaces_answers_400_when_the_repository_refuses_a_filter_field() -> None:
     class IFace(RestInterface[str]):
         prefix = "/rows"
         filterable = ALL
-        routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
+        routes = (RestRoute(use_case=IdOnlyFilterUseCase, method="GET", path="/"),)
 
     client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
 
-    response = client.get(url)
+    response = client.get("/rows/?rank=7")
 
     assert response.status_code == 400
     body = response.json()["detail"]
     assert body["code"] == "unsupported_query"
-    assert field in body["message"]
-    assert "s3cr3t" not in body["message"]
+    assert "rank" in body["message"]
 
 
-def _entry_filter_client(
-    use_case: type[EntryFilterValuesUseCase] = EntryFilterValuesUseCase,
+def _entry_client(
+    use_case: type[UseCase[_Entry, Any]] = EntryFilterValuesUseCase,
 ) -> TestClient:
     class IFace(RestInterface[_Entry]):
         prefix = "/entries"
@@ -660,22 +618,77 @@ def _entry_filter_client(
             F(_Entry).code,
             F(_Entry).rank,
             F(_Entry).quota,
-            F(_Entry).section.position,
-            "grade",
             "active",
             "tone",
             "due",
             "seen_at",
-            "section.sort_order",
+            "sort_order",
         )
+        sortable = (F(_Entry).seen_at,)
         routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
 
     return TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
 
 
+def _refusal(response: Any) -> dict[str, Any]:
+    assert response.status_code == 400
+    detail: dict[str, Any] = response.json()["detail"]
+    assert detail["code"] == "unsupported_query"
+    return {key: value for key, value in detail.items() if key != "trace_id"}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("sort=seenAt", [["seen_at", "ASC"]]),
+        ("sort=id&direction=DESC", [["id", "DESC"]]),
+    ],
+)
+def test_bind_interfaces_sorts_by_a_declared_column_or_the_primary_key(
+    query: str, expected: list[list[str]]
+) -> None:
+    response = _entry_client(EntrySortUseCase).get(f"/entries/?{query}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_bind_interfaces_refuses_a_sort_on_any_undeclared_column_alike() -> None:
+    client = _entry_client(EntrySortUseCase)
+
+    existing = _refusal(client.get("/entries/?sort=code"))
+    missing = _refusal(client.get("/entries/?sort=nope"))
+
+    assert existing["message"].replace("'code'", "'nope'") == missing["message"]
+
+
+@pytest.mark.parametrize("query", ["id=1", "id__like=1%25", "id__is_null=true"])
+def test_bind_interfaces_refuses_a_filter_on_an_undeclared_field_for_every_operator(
+    query: str,
+) -> None:
+    detail = _refusal(_entry_client().get(f"/entries/?{query}"))
+
+    assert detail["message"] == "Filtering on field 'id' is not allowed by this route."
+
+
+@pytest.mark.parametrize(
+    ("query", "message"),
+    [
+        ("code__exists=true", "Operator 'exists' is not supported by this route."),
+        ("code__not_exists=true", "Operator 'not_exists' is not supported by this route."),
+        ("rank__like=1%25", "Operator 'like' applies to text fields only."),
+        ("rank__ilike=1%25", "Operator 'ilike' applies to text fields only."),
+    ],
+)
+def test_bind_interfaces_refuses_an_operator_the_declared_field_cannot_take(
+    query: str, message: str
+) -> None:
+    assert _refusal(_entry_client().get(f"/entries/?{query}"))["message"] == message
+
+
 @pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
 def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> None:
-    response = _entry_filter_client().get(f"/entries/?code={raw}")
+    response = _entry_client().get(f"/entries/?code={raw}")
 
     assert response.status_code == 200
     assert response.json() == {"code": raw}
@@ -685,26 +698,22 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
     ("query", "expected"),
     [
         ("rank=7", {"rank": 7}),
-        ("active=false", {"active": False}),
-        ("section__position=2", {"section.position": 2}),
-        ("section__sortOrder=4", {"section.sort_order": 4}),
-        ("rank__gt=0", {"rank": 0}),
+        ("sortOrder=4", {"sort_order": 4}),
         ("quota__gt=0", {"quota": 0}),
-        ("grade=high", {"grade": "high"}),
-        ("rank__like=1%25", {"rank": "1%"}),
+        ("code__like=01%25", {"code": "01%"}),
     ],
 )
 def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
     query: str, expected: dict[str, Any]
 ) -> None:
-    response = _entry_filter_client().get(f"/entries/?{query}")
+    response = _entry_client().get(f"/entries/?{query}")
 
     assert response.status_code == 200
     assert response.json() == expected
 
 
 def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
-    client = _entry_filter_client(EntryFilterTypesUseCase)
+    client = _entry_client(EntryFilterTypesUseCase)
 
     response = client.get("/entries/?tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z")
 
@@ -714,21 +723,12 @@ def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
 
 @pytest.mark.parametrize(
     ("query", "field"),
-    [
-        ("rank=s3cr3t", "rank"),
-        ("rank=1.5", "rank"),
-        ("active=1", "active"),
-        ("rank__in=1,s3cr3t", "rank"),
-        ("section__position=s3cr3t", "section.position"),
-        ("tone=s3cr3t", "tone"),
-        ("grade=s3cr3t", "grade"),
-        ("due=s3cr3t", "due"),
-    ],
+    [("rank=s3cr3t", "rank"), ("active=1", "active"), ("rank__in=1,s3cr3t", "rank")],
 )
 def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
     query: str, field: str
 ) -> None:
-    response = _entry_filter_client().get(f"/entries/?{query}")
+    response = _entry_client().get(f"/entries/?{query}")
 
     assert response.status_code == 400
     body = response.json()["detail"]
@@ -747,7 +747,7 @@ def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
 def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
     query: str, expected: dict[str, Any]
 ) -> None:
-    response = _entry_filter_client().get(f"/entries/?{query}")
+    response = _entry_client().get(f"/entries/?{query}")
 
     assert response.status_code == 200
     assert response.json() == expected

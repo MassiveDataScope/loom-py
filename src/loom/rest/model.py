@@ -39,7 +39,7 @@ T = TypeVar("T")
 
 __all__ = [
     "ALL",
-    "Filterable",
+    "DeclaredFields",
     "PaginationMode",
     "RestApiDefaults",
     "RestInterface",
@@ -52,18 +52,18 @@ class _AllFields(Enum):
 
 
 ALL = _AllFields.ALL
-"""Escape hatch for ``filterable``: every scalar field of the route's model.
+"""Escape hatch for ``filterable`` and ``sortable``: every scalar column of the route's model.
 
 Compiling a route that uses it logs a warning naming the route: a client may
-then filter on any column, a field added later included.
+then filter or sort on any column, one added later included.
 """
 
-Filterable: TypeAlias = tuple[FieldRef | str, ...] | Literal[_AllFields.ALL]
-"""Fields a ``QuerySpec`` route lets a client filter on.
+DeclaredFields: TypeAlias = tuple[FieldRef | str, ...] | Literal[_AllFields.ALL]
+"""Columns a ``QuerySpec`` route lets a client filter or sort on.
 
 Each entry is a field reference rooted at the route's model
-(``F(Order).warehouse.code``) or the same path as a dotted string
-(``"warehouse.code"``), or :data:`ALL`.
+(``F(Order).status``) or the column name as a string (``"status"``), or
+:data:`ALL`. Only scalar columns of the route's own model qualify.
 """
 
 
@@ -98,10 +98,13 @@ class RestRoute:
             the use case is constructed.  Empty inherits the interface
             declaration, and an empty interface declaration leaves the route
             open.
-        filterable: Fields a client may filter this route's ``QuerySpec``
-            on (see :data:`Filterable`).  ``None`` inherits the interface
+        filterable: Columns a client may filter this route's ``QuerySpec``
+            on (see :data:`DeclaredFields`).  ``None`` inherits the interface
             declaration; a route that declares none, here or on its
             interface, answers ``400 unsupported_query`` to any filter.
+        sortable: Columns a client may sort this route's ``QuerySpec`` by,
+            declared and inherited like ``filterable``.  The primary key, the
+            route's default order, needs no declaration.
 
     Example::
 
@@ -127,7 +130,8 @@ class RestRoute:
     allowed_profiles: tuple[str, ...] = ()
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
-    filterable: Filterable | None = None
+    filterable: DeclaredFields | None = None
+    sortable: DeclaredFields | None = None
 
 
 def _extract_model_type(cls: type[Any]) -> type[Any] | None:
@@ -184,9 +188,11 @@ class RestInterface(Generic[T]):
         requires_roles: Roles granting access to every route of this
             interface.  Overridden per-route by
             :attr:`RestRoute.requires_roles`.
-        filterable: Fields a client may filter the ``QuerySpec`` routes of
+        filterable: Columns a client may filter the ``QuerySpec`` routes of
             this interface on, auto-CRUD ``list`` included.  Overridden
             per-route by :attr:`RestRoute.filterable`.
+        sortable: Columns a client may sort the ``QuerySpec`` routes of this
+            interface by.  Overridden per-route by :attr:`RestRoute.sortable`.
 
     Example::
 
@@ -214,7 +220,8 @@ class RestInterface(Generic[T]):
     allowed_profiles: tuple[str, ...] = ()
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
-    filterable: Filterable | None = None
+    filterable: DeclaredFields | None = None
+    sortable: DeclaredFields | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Auto-populate routes when ``auto=True`` and no routes are declared.
