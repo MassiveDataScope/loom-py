@@ -24,6 +24,9 @@ from uuid import UUID
 import msgspec
 from sqlalchemy import JSON
 
+from loom.core.errors.codes import ErrorCode
+from loom.core.model import BoundaryValidationError
+
 # Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
 _NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
 
@@ -44,22 +47,30 @@ def to_column_value(value: object, *, json: bool = False) -> Any:
     return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)
 
 
-def refuse_aware_time(column: str, value: object) -> None:
+def refuse_aware_time(
+    column: str, value: object, *, code: str = ErrorCode.BOUNDARY_VALIDATION
+) -> None:
     """Raise when *value* is a ``time`` with a UTC offset bound to *column*.
+
+    The message names the column, not the value.
 
     Args:
         column: The name of the column the value is bound to.
         value: A value about to be bound to a column other than JSON.
+        code: The error code: ``boundary_validation`` for a written value,
+            ``query_validation`` for a filter value.
 
     Raises:
-        ValueError: If *value* is a ``time`` whose ``tzinfo`` is set.
+        BoundaryValidationError: If *value* is a ``time`` whose ``tzinfo`` is
+            set.
     """
     if isinstance(value, time) and value.tzinfo is not None:
-        raise ValueError(
-            f"{column}: a Time column stores naive times and would drop the offset of "
-            f"{value.isoformat()}; pass a naive time, or declare a datetime field "
-            "(DateTime(tz=True)) or a JSON column to keep the offset"
+        reason = (
+            "a Time column stores naive times and would drop the UTC offset; pass a "
+            "naive time, or declare a datetime field (DateTime(tz=True)) or a JSON "
+            "column to keep the offset"
         )
+        raise BoundaryValidationError(f"{column}: {reason}", ((column, reason),), code=code)
 
 
 def is_json_column(column: object) -> bool:

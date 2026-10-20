@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import and_, or_
 from sqlalchemy.sql.expression import ClauseElement
 
+from loom.core.errors.codes import ErrorCode
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
@@ -101,5 +102,5 @@ def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
 def _bound_value(col: Any, value: Any, *, json: bool) -> Any:
     """Convert a filter value as the write path does, refusing what the write refuses."""
     if not json:
-        refuse_aware_time(col.key, value)
+        refuse_aware_time(col.key, value, code=ErrorCode.QUERY_VALIDATION)
     return to_column_value(value, json=json)

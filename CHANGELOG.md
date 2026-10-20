@@ -625,9 +625,11 @@
   `date` or `time` follows to `Date` or `Time`. The SQLAlchemy repository
   binds `date` and `time` values natively, so on Postgres with asyncpg writing
   either field failed (`expected str, got date`, and the same for `time`).
-  The SQLAlchemy repository now refuses, with a `ValueError` naming the
-  column, a `time` that carries a UTC offset when it is written to or used as
-  a filter value on any column other than JSON: SQL `TIME` keeps no offset,
+  The SQLAlchemy repository now refuses a `time` that carries a UTC offset
+  when it is written to or used as a filter value on any column other than
+  JSON, with a `BoundaryValidationError` (a `ValueError`) naming the column
+  and not the value: `boundary_validation` for a write (REST answers `422`),
+  `query_validation` for a filter value (`400`). SQL `TIME` keeps no offset,
   so Postgres and SQLite stored `08:30+02:00` as `08:30` and an aware filter
   value matched the stored local time. Pass a naive `time`, or declare a
   `datetime` field (`DateTime(tz=True)`) or a JSON column to keep the offset.
