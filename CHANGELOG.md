@@ -1226,6 +1226,14 @@
 
 ### core
 
+- **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
+  primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
+  handed the raw key to boto3's `TypeSerializer`, which raised
+  `TypeError: Unsupported type "<class 'uuid.UUID'>"`; `create` already stored
+  the key as a string through `msgspec.to_builtins`. The key is now encoded
+  with that same conversion, so it matches its stored form and round-trips.
+  `update` keeps the key as stored instead of rewriting it from the argument.
+  Attribute values are encoded as before.
 - **cache:** security: the repository cache keeps each caller's entries apart.
   The entity key (`get_by_id`, and the rows behind a cached page), the
   `list_paginated` index key, the `list_with_query` key and the key of a

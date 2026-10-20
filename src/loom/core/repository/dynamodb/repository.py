@@ -182,7 +182,7 @@ class RepositoryDynamoDB(
             return None
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
-        merged = {**self._decode_item(existing), **changes, self._id_attr: obj_id}
+        merged = {**self._decode_item(existing), **changes}
         try:
             await asyncio.to_thread(
                 self._client.put_item,
@@ -260,8 +260,12 @@ class RepositoryDynamoDB(
         return {key: self._decode_value(value) for key, value in item.items()}
 
     def _encode_key(self, obj_id: Any) -> dict[str, Any]:
-        """Build the low-level ``Key`` dict for the partition key."""
-        return {self._id_attr: self._encode_value(obj_id)}
+        """Build the low-level ``Key`` dict for the partition key.
+
+        The key is converted with :func:`msgspec.to_builtins`, as ``create``
+        stores it, so a key such as a ``UUID`` matches its stored form.
+        """
+        return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
 
 
 def _single_id_attribute(model: type) -> str:
