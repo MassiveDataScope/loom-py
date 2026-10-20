@@ -97,7 +97,7 @@ def _apply_broadcast(
     raw: object,
     idx: int,
     ctx: _BuildContextProtocol,
-) -> Stream:
+) -> None:
     if not isinstance(raw, Broadcast):
         raise UnsupportedNodeError(f"Unsupported broadcast node {type(raw).__name__}.")
     node = raw
@@ -118,8 +118,6 @@ def _apply_broadcast(
             branch_stream,
             branch_path,
         )
-
-    return stream
 
 
 def _row_extractor(
@@ -183,7 +181,7 @@ def _apply_expand_routes(
     raw: object,
     idx: int,
     ctx: _BuildContextProtocol,
-) -> Stream:
+) -> None:
     if not isinstance(raw, ExpandRoutes):
         raise UnsupportedNodeError(f"Unsupported expand_routes node {type(raw).__name__}.")
     node = raw
@@ -213,33 +211,25 @@ def _apply_expand_routes(
             expanded_stream,
             _row_extractor(node, output_type),
         )
-        ctx.wire_process(route_stream, branch.nodes, path_prefix=branch_path)
         ctx.wire_branch_terminal(
             f"expand_routes_{idx}_out_{branch.index}",
-            route_stream,
+            ctx.wire_process(route_stream, branch.nodes, path_prefix=branch_path),
             branch_path,
         )
 
-    return expanded_stream
-
 
 def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+    """Split *stream* into the fork's branches and end each branch's live stream.
+
+    Returns the messages no branch claimed, or ``None`` when a default branch
+    took them.
+    """
     if not isinstance(raw, Fork):
         raise UnsupportedNodeError(f"Unsupported fork node {type(raw).__name__}.")
     fork = raw
-    if fork.kind is ForkKind.KEYED:
-        return _apply_fork_by(stream, fork, idx, ctx)
-    return _apply_fork_when(stream, fork, idx, ctx)
-
-
-def _apply_fork_by(
-    stream: Stream,
-    fork: Fork[Any],
-    idx: int,
-    ctx: _BuildContextProtocol,
-) -> Stream:
     selector = fork.selector
-    if selector is None:
+    keyed = fork.kind is ForkKind.KEYED
+    if keyed and selector is None:
         raise UnsupportedNodeError("Fork.by requires a selector.")
     remaining = stream
     fork_path = ctx.current_path
@@ -247,46 +237,27 @@ def _apply_fork_by(
     for branch in iter_branches(fork):
         branch_path = fork_path + (branch.index,)
         if branch.is_default:
-            ctx.wire_process(remaining, branch.nodes, path_prefix=branch_path)
-            continue
-        branch_name = _step_id(f"fork_{idx}_by_{branch.index}", ctx)
+            claimed = remaining
+        else:
 
-        def predicate(message: Any, *, expected: object = branch.key) -> bool:
-            runtime_message = _require_message(message)
-            return select_value(selector, runtime_message) == expected
+            def predicate(message: Any, *, current: Branch = branch) -> bool:
+                runtime_message = _require_message(message)
+                if keyed:
+                    return select_value(cast(Any, selector), runtime_message) == current.key
+                return evaluate_predicate(cast(Any, current.when), runtime_message)
 
-        split = bw_branch(branch_name, remaining, predicate)
-        ctx.wire_process(split.trues, branch.nodes, path_prefix=branch_path)
-        remaining = split.falses
+            kind = "by" if keyed else "when"
+            split = bw_branch(
+                _step_id(f"fork_{idx}_{kind}_{branch.index}", ctx), remaining, predicate
+            )
+            claimed, remaining = split.trues, split.falses
+        ctx.wire_branch_terminal(
+            f"fork_{idx}_out_{branch.index}",
+            ctx.wire_process(claimed, branch.nodes, path_prefix=branch_path),
+            branch_path,
+        )
 
-    return remaining
-
-
-def _apply_fork_when(
-    stream: Stream,
-    fork: Fork[Any],
-    idx: int,
-    ctx: _BuildContextProtocol,
-) -> Stream:
-    remaining = stream
-    fork_path = ctx.current_path
-
-    for branch in iter_branches(fork):
-        branch_path = fork_path + (branch.index,)
-        if branch.is_default:
-            ctx.wire_process(remaining, branch.nodes, path_prefix=branch_path)
-            continue
-        branch_name = _step_id(f"fork_{idx}_when_{branch.index}", ctx)
-
-        def predicate(message: Any, *, when: Any = branch.when) -> bool:
-            runtime_message = _require_message(message)
-            return evaluate_predicate(when, runtime_message)
-
-        split = bw_branch(branch_name, remaining, predicate)
-        ctx.wire_process(split.trues, branch.nodes, path_prefix=branch_path)
-        remaining = split.falses
-
-    return remaining
+    return None if fork.default is not None else remaining
 
 
 def _execute_router(router: Router[Any, Any], branches: Sequence[Branch], message: Any) -> Any:

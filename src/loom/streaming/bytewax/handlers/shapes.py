@@ -9,7 +9,6 @@ from bytewax.operators import collect, flat_map, key_on, key_rm
 
 from loom.streaming.bytewax.handlers._shared import (
     _BuildContextProtocol,
-    _empty,
     _identity,
     _is_message,
     _step_id,
@@ -70,14 +69,14 @@ def _apply_for_each(stream: Stream, _raw: object, idx: int, ctx: _BuildContextPr
     return flat_map(_step_id(f"foreach_{idx}", ctx), stream, _identity)
 
 
-def _apply_drain(stream: Stream, _raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+def _apply_drain(stream: Stream, _raw: object, idx: int, ctx: _BuildContextProtocol) -> None:
     tracker = ctx.commit_tracker
     if tracker is None:
-        return flat_map(_step_id(f"drain_{idx}", ctx), stream, _empty)
+        return
 
     def drop_and_commit(item: Any) -> tuple[()]:
         from loom.streaming.bytewax.handlers._shared import _drop_and_commit
 
         return _drop_and_commit(item, tracker)
 
-    return flat_map(_step_id(f"drain_{idx}", ctx), stream, drop_and_commit)
+    flat_map(_step_id(f"drain_{idx}", ctx), stream, drop_and_commit)

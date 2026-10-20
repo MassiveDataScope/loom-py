@@ -1027,7 +1027,7 @@ def test_apply_broadcast_increments_commit_tracker_for_fanout(
 
     result = _routing._apply_broadcast("input-stream", node, 5, ctx)
 
-    assert result == "tracked-stream"
+    assert result is None, "a Broadcast ends the path; each route's stream ends on its own"
     assert tracker.forks == [("t", 0, 0, 1)]
     assert [call[0] for call in wire_process_calls] == ["tracked-stream", "tracked-stream"]
     assert [call[2] for call in wire_process_calls] == [(1, 0), (1, 1)]
@@ -1058,7 +1058,7 @@ def test_apply_drain_completes_commit_tracker(
         cast(Any, SimpleNamespace(current_path=(), commit_tracker=tracker)),
     )
 
-    assert result == "dropped-stream"
+    assert result is None, "a Drain ends the path; nothing continues after it"
     assert tracker.completes == [("t", 0, 0)]
 
 

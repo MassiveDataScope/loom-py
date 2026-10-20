@@ -3,6 +3,17 @@
 Translates a :class:`CompiledPlan` into a Bytewax :class:`Dataflow`,
 wiring decode, node dispatch, encode, and output routing operators.
 
+Offset completion invariant: for every flow that compiles, each source offset,
+or each share of it a fan-out node forked, completes exactly once, at the end
+of the path it travels and after that path's last durable write. A node
+handler returns the stream that is still live after it, or ``None`` when it
+ended the path in a sink that completes what it writes. Each live end goes
+through one place: :meth:`_BuildContext.wire_branch_terminal` for a branch,
+:meth:`_BuildContext.wire_flow_output` for the flow, which write it to its
+compiled sink or else complete it at a drop sink. A Bytewax output has no
+downstream, so no completion relies on the order of sibling operators: it
+happens inside the sink that writes, or downstream of an inline write.
+
 Requires ``bytewax`` to be installed.
 """
 
@@ -287,17 +298,22 @@ class _BuildContext:
         self._bind_terminal_tracing(self.sink)
         bw_output(step_id, stream, self.sink)
 
-    def wire_branch_terminal(self, step_id: str, stream: Any, path: tuple[int, ...]) -> None:
+    def wire_branch_terminal(self, step_id: str, stream: Any | None, path: tuple[int, ...]) -> None:
+        """End one branch's live stream at the sink compiled for *path*, else a drop sink.
+
+        ``None`` means the branch already ended in a sink, which completes what
+        it writes; wiring anything more would complete those offsets twice.
+        """
+        if stream is None:
+            return
         sink = self.terminal_sinks.get(path)
         if sink is not None:
             self._bind_terminal_tracing(sink)
             bw_output(_qualified_step_id(step_id, path), stream, sink)
             return
-        # A branch without a terminal still owes its record a completion: the
-        # broadcast that created it already forked the offset once per branch.
-        # Discarding the stream silently left that fork outstanding forever and
-        # froze the partition's watermark. Unrouted error branches already fall
-        # back to a drop sink for exactly this reason; branches now do too.
+        # A live branch end with no sink still owes each record a completion;
+        # discarding it would leave the offset, or its fork share, outstanding
+        # and freeze the partition's watermark.
         logger.warning(
             "unrouted_branch_drop_sink",
             flow=self.plan.name,
@@ -338,11 +354,14 @@ class _BuildContext:
         )
         bw_output(f"{step_id}_{kind.value}_dropped", stream, _DropSink(self.commit_tracker))
 
-    def wire_flow_output(self, stream: Any, plan: CompiledPlan) -> None:
+    def wire_flow_output(self, stream: Any | None, plan: CompiledPlan) -> None:
+        """End the flow's live stream at the output sink, else complete it at a drop sink."""
         if self.sink is None and plan.output is not None:
             raise RuntimeError("Bytewax sink is required for terminal output wiring.")
-        if self.sink is not None:
+        if stream is not None and self.sink is not None:
             self.wire_terminal("output", stream)
+        elif stream is not None:
+            bw_output("output_dropped", stream, _DropSink(self.commit_tracker))
         for kind in plan.error_routes:
             if kind not in self.error_sinks:
                 raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
@@ -461,7 +480,7 @@ def _split_decode_results(stream: Stream, step_id: str) -> Any:
     return branch(f"{step_id}_is_ok", stream, _is_decode_ok)
 
 
-def _wire_output(stream: Any, ctx: _BuildContext) -> None:
+def _wire_output(stream: Any | None, ctx: _BuildContext) -> None:
     """Wire the output sink and error routes."""
     ctx.wire_flow_output(stream, ctx.plan)
 

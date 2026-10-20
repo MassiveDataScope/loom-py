@@ -325,11 +325,6 @@ def _replace_payloads(
     ]
 
 
-def _empty(_item: Any) -> tuple[()]:
-    """Drop one item from a stream."""
-    return ()
-
-
 def _commit_key(item: Any) -> tuple[str, int, int] | None:
     """Resolve the source offset one runtime item is accountable for.
 

@@ -227,7 +227,7 @@ def _apply_into_sink(
     raw: object,
     idx: int,
     ctx: _BuildContextProtocol,
-) -> Stream:
+) -> None:
     """Wire an IntoSink terminal node to a Bytewax output operator.
 
     Looks up the pre-compiled storage sink for the current path and registers
@@ -242,9 +242,6 @@ def _apply_into_sink(
         raw:    DSL node, expected to satisfy ``IntoSink``.
         idx:    Position of this node in the process.
         ctx:    Adapter build context.
-
-    Returns:
-        The input stream unchanged (terminal wiring is a side effect).
 
     Raises:
         UnsupportedNodeError: If *raw* does not satisfy ``IntoSink``.
@@ -261,4 +258,3 @@ def _apply_into_sink(
         )
     sid = _step_id(f"storage_sink_{idx}", ctx)
     bw_output(sid, stream, _StorageDynamicSink(compiled, ctx))
-    return stream

@@ -778,14 +778,9 @@ _PATH_CASES = {
 }
 
 _WRONG_ON_MASTER = {
-    "inline_then_output": "the inline write completes the offset before the output write",
-    "expand_routes_route_ending_in_scope": "the route's drop sink completes beside the write",
-    "expand_routes_route_ending_in_into_topic": "the terminal and a drop sink both complete",
-    "broadcast_routes_without_output": "the terminal and a drop sink both complete",
     "router_terminal_branch": "a Router branch terminal writes nothing",
     "router_terminal_branch_with_output": "a Router branch terminal falls to the flow output",
     "router_unmatched": "an unmatched message with no output never completes",
-    "router_drain_branch": "a Router branch Drain never completes",
     "router_into_table_branch": "a Router branch storage sink writes nothing",
     "into_table": "a storage sink never completes",
     "decode_error_without_wire_route": "an unrouted decode error never completes",

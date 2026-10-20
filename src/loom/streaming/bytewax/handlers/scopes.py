@@ -196,12 +196,9 @@ async def _execute_inner_process(
         current = _replace_payload(current, result)
     if sink_partition is not None:
         sink_partition.write_batch([current])
-    # Deliberately no tracker.complete() here. The message is returned into the
-    # stream and continues to its real terminal, which is what completes the
-    # offset. Completing at an inline sink released the record while it was
-    # still in flight — a data-loss window on any intermediate WithAsync. The
-    # synchronous sibling (_execute_with_step) never completed either; this
-    # removes the asymmetry.
+    # No offset completes here: an inline partition is built without the commit
+    # tracker. The message is returned into the stream and completes where its
+    # path ends, after this write.
     return current
 
 

@@ -745,7 +745,9 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
             The bare Kafka partition, or one wrapped to emit terminal spans.
         """
         del step_id, worker_index, worker_count
-        partition = _KafkaMessageSinkPartition(self._sink, self._commit_tracker)
+        # An inline write does not end the message's path, so it completes nothing.
+        tracker = None if self._built_inline_partition else self._commit_tracker
+        partition = _KafkaMessageSinkPartition(self._sink, tracker)
         if self._terminal_tracing is None:
             return partition
         return _TracedMessageSinkPartition(
