@@ -33,6 +33,8 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+import bytewax.operators as op  # noqa: E402
+from bytewax.dataflow import Dataflow  # noqa: E402
 from bytewax.run import cli_main  # noqa: E402
 from bytewax.testing import TestingSink, TestingSource  # noqa: E402
 
@@ -472,6 +474,22 @@ class TestWiringGuards:
                 lambda: _adapter._wire_process(object(), (Drain(), UpperItem()), _guard_context()),
                 "Drain ended every path, so UpperItem after it would receive nothing",
                 id="node after a path end",
+            ),
+            pytest.param(
+                lambda: _adapter._wire_process(
+                    op.input("in", Dataflow("guard"), TestingSource([])),
+                    (
+                        Router.by(
+                            msg.payload.value,
+                            routes={"item-0": Process(Drain())},
+                            default=Process(Drain()),
+                        ),
+                        UpperItem(),
+                    ),
+                    _guard_context(),
+                ),
+                "Router ended every path, so UpperItem after it would receive nothing",
+                id="node after a router that ends every path",
             ),
         ],
     )

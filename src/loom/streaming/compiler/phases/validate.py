@@ -20,7 +20,12 @@ from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import ConsumerSettings, KafkaSettings
 from loom.streaming.mongo import MongoConfig
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
-from loom.streaming.nodes._branches import PATH_END_NODE_TYPES, is_branching_node, iter_branches
+from loom.streaming.nodes._branches import (
+    PATH_END_NODE_TYPES,
+    is_branching_node,
+    iter_branches,
+    router_ends_every_path,
+)
 from loom.streaming.nodes._broadcast import Broadcast
 from loom.streaming.nodes._capabilities import RouterBranchSafe
 from loom.streaming.nodes._decompose import Explode
@@ -346,6 +351,10 @@ def _validate_shape_node(
         return _validate_expand_routes_node(node, idx, node_list)
     if isinstance(node, Router):
         router_errors, next_shape = _validate_router_shapes(node, current_shape)
+        if router_ends_every_path(node):
+            not_last = StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
+            router_errors.extend(_must_be_last_errors(idx, node_list, not_last))
+            return router_errors, StreamShape.NONE, True
         return router_errors, next_shape, False
     return [], _node_output_shape(node, current_shape), False
 
@@ -567,13 +576,7 @@ def _path_end(nodes: tuple[object, ...]) -> object | None:
         return last
     if isinstance(last, Fork) and last.default is not None:
         return last
-    if (
-        isinstance(last, Router)
-        and last.default is not None
-        and all(
-            branch.nodes and _is_leaf_terminal(branch.nodes[-1]) for branch in iter_branches(last)
-        )
-    ):
+    if isinstance(last, Router) and router_ends_every_path(last):
         return last
     return None
 

@@ -32,7 +32,12 @@ from loom.streaming.bytewax.handlers._shared import (
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message
-from loom.streaming.nodes._branches import PATH_END_NODE_TYPES, Branch, iter_branches
+from loom.streaming.nodes._branches import (
+    PATH_END_NODE_TYPES,
+    Branch,
+    iter_branches,
+    router_ends_every_path,
+)
 from loom.streaming.nodes._broadcast import Broadcast
 from loom.streaming.nodes._expand_routes import ExpandRoutes
 from loom.streaming.nodes._fork import Fork, ForkKind
@@ -45,13 +50,19 @@ _NO_KEY: Final = object()
 """Sentinel for a router without a selector, which no keyed branch can match."""
 
 
-def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+def _apply_router(
+    stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol
+) -> Stream | None:
     """Route each message once, inline, and end the branches that end in a terminal.
 
     One map selects the branch and runs its nodes up to the terminal, so the
     messages that continue keep their order. A message whose branch ends in a
     terminal leaves the map tagged with the branch index and is written by
     that terminal's own handler at its compiled path.
+
+    Returns the messages that continue after the router, or ``None`` when it
+    ends every path (:func:`router_ends_every_path`), so nothing can be wired
+    after it.
     """
     if not isinstance(raw, Router):
         raise UnsupportedNodeError(f"Unsupported router node {type(raw).__name__}.")
@@ -87,7 +98,8 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
                 start=len(branch.nodes) - 1,
             )
     continuing = bw_flat_map(_step_id(f"router_{idx}_continue", ctx), routed, _routed_to(None))
-    return _split_node_result(continuing, sid, ctx, ErrorKind.ROUTING)
+    live = _split_node_result(continuing, sid, ctx, ErrorKind.ROUTING)
+    return None if router_ends_every_path(router) else live
 
 
 class _Routed(NamedTuple):

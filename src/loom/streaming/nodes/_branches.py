@@ -62,6 +62,18 @@ PATH_END_NODE_TYPES: Final = (IntoTopic, IntoSink, Drain, Broadcast)
 _DEFAULT_LABEL: Final = "default"
 
 
+def router_ends_every_path(router: Router[Any, Any]) -> bool:
+    """Return whether *router* ends the path of every message it receives.
+
+    It does when it has a default branch, so every message takes a branch, and
+    every branch ends in a node of :data:`PATH_END_NODE_TYPES`.
+    """
+    return router.default is not None and all(
+        branch.nodes and isinstance(branch.nodes[-1], PATH_END_NODE_TYPES)
+        for branch in iter_branches(router)
+    )
+
+
 def is_branching_node(node: object) -> bool:
     """Return whether *node* splits its stream into indexed branches."""
     return isinstance(node, BRANCHING_NODE_TYPES)
@@ -152,4 +164,5 @@ __all__ = [
     "Branch",
     "is_branching_node",
     "iter_branches",
+    "router_ends_every_path",
 ]

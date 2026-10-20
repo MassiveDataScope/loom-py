@@ -244,6 +244,11 @@ def _expand_routes(*nodes: Any) -> ExpandRoutes[Order]:
     return ExpandRoutes(expander=_Expander, routes={Result: Process(*nodes)})  # type: ignore[arg-type]
 
 
+def _terminal_router() -> Router[Order, Any]:
+    """A Router with a default whose every branch ends the path of its messages."""
+    return Router.by(msg.payload.order_id, routes={"a": Process(_out())}, default=Process(_out()))
+
+
 def _router(*nodes: Any) -> Router[Order, Any]:
     return Router.when([Route(when=msg.payload.order_id == "a", process=Process(*nodes))])
 
@@ -338,6 +343,34 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "With with scope=BATCH cannot use direct context manager instances: db. "
         "Use ContextFactory for batch-scoped resources.",
         "With",
+        None,
+    ),
+    "router that ends every path followed by a step": (
+        lambda: _flow(_terminal_router(), FakeStep(), _out()),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "Router must be the last node in a process",
+        "Router",
+        None,
+    ),
+    "router that ends every path followed by an IntoTopic": (
+        lambda: _flow(_terminal_router(), _out()),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "Router must be the last node in a process",
+        "Router",
+        None,
+    ),
+    "router that ends every path inside a broadcast route, followed by a step": (
+        lambda: _flow(
+            Broadcast(
+                BroadcastRoute(process=Process(_terminal_router(), FakeStep()), output=_out())
+            )
+        ),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "broadcast branch 0: Router must be the last node in a process",
+        "broadcast branch 0 > Router",
         None,
     ),
     "terminal followed by a step": (
