@@ -18,6 +18,7 @@ from loom.core.repository.abc import (
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.testing import RepositoryIntegrationHarness, ScenarioDict
 from tests.integration.fake_repo.product.model import Product
+from tests.integration.fake_repo.product.review.schemas import CreateProductReview
 from tests.integration.fake_repo.product.schemas import CreateProduct, UpdateProduct
 
 
@@ -274,3 +275,39 @@ class TestRepositorySQLAlchemyIntegration:
 
         ids = await custom_repo.list_ids_with_price_gt(min_price=15.0)
         assert ids == [2, 3]
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "A filter on a related model's column compiles without a join, so each "
+        "matching related row multiplies every root row; relation filtering is a "
+        "follow-up feature."
+    ),
+)
+async def test_a_filter_on_a_related_column_selects_each_matching_row_once(
+    integration_context: RepositoryIntegrationHarness,
+) -> None:
+    await integration_context.load(
+        {
+            "product": [CreateProduct(name="a", price=1.0), CreateProduct(name="b", price=2.0)],
+            "review": [
+                CreateProductReview(product_id=1, rating=5, comment="x"),
+                CreateProductReview(product_id=1, rating=4, comment="y"),
+                CreateProductReview(product_id=2, rating=5, comment="z"),
+            ],
+        }
+    )
+
+    page = await integration_context.product.repository.list_with_query(
+        QuerySpec(
+            filters=FilterGroup(
+                filters=(FilterSpec(field="reviews.rating", op=FilterOp.EQ, value=5),)
+            ),
+            sort=(SortSpec(field="id", direction="ASC"),),
+        )
+    )
+
+    assert [item.name for item in page.items] == ["a", "b"]
+    assert page.total_count == 2
