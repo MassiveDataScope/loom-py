@@ -290,12 +290,7 @@ def test_config_overridable_must_be_a_literal_list_of_dotted_keys_in_any_environ
         "checks.silenced",
         "CHECKS.modules",
         "config.overridable",
-        "app.code_path",
-        "app.*",
-        "app.rest.auth",
-        "app.rest.auth.custom",
-        "app.rest.*.jwt",
-        "app.rest.auth.jwt.audience",
+        "config.*",
     ],
 )
 def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
@@ -306,6 +301,19 @@ def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
 
     with pytest.raises(ConfigError, match=f"config.overridable entry {re.escape(repr(entry))}"):
         load_application_config(path, environment=Environment.DEVELOPMENT)
+
+
+@pytest.mark.parametrize("entry", ["app.code_path", "app.*", "app.rest.auth.custom"])
+def test_config_overridable_takes_keys_the_files_could_route_to_the_environment_anyway(
+    tmp_path: Path, entry: str
+) -> None:
+    document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": [entry]}}
+
+    context = load_application_config(
+        _write_document(tmp_path, document), environment=Environment.PRODUCTION
+    )
+
+    assert context.raw("config.overridable") == [entry]
 
 
 @pytest.mark.parametrize("environment", list(Environment))

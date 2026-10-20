@@ -25,9 +25,10 @@ operational keys loom lists in :data:`OVERRIDABLE` (log levels, worker and
 pool sizes, driver timeouts), plus the keys the reviewed files list under
 ``config.overridable``. Every other key is a startup error naming the
 variable. An entry is a dotted key; ``*`` stands for one level but never the
-first, and an entry matching ``checks``, ``config``, ``app.code_path`` or
-``app.rest.auth``, or a key inside them, is refused. The entries are checked
-at every load, in any environment and with or without a variable. In
+first, and an entry inside ``checks`` or ``config`` is refused: both are read
+as written, so the files could not route them to the environment otherwise.
+The entries are checked at every load, in any environment and with or
+without a variable. In
 development and test any leaf may be overridden. ``config`` itself can never
 be overridden, in any environment.
 
@@ -82,13 +83,9 @@ _ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
 _ALLOWLIST_SECTION: Final = "config"
 _ALLOWLIST_FIELD: Final = "overridable"
 _ALLOWLIST_KEY: Final = f"{_ALLOWLIST_SECTION}.{_ALLOWLIST_FIELD}"
-_PROTECTED: Final = (
-    (_ALLOWLIST_SECTION,),
-    ("checks",),
-    ("app", "code_path"),
-    ("app", "rest", "auth"),
-)
-"""Keys no ``config.overridable`` entry may open, at any depth."""
+_PROTECTED: Final = frozenset({_ALLOWLIST_SECTION, "checks"})
+"""Sections no ``config.overridable`` entry may open: the files cannot route them to
+the environment any other way, since both are read as written."""
 
 OVERRIDABLE: Final = (
     "observability.log.config.level",
@@ -283,17 +280,12 @@ def _declared_allowlist(written: Any) -> tuple[str, ...]:
 
 
 def _refuse_protected(entry: str) -> None:
-    """Refuse an entry with ``*`` first, or one matching a protected key or a key inside it."""
-    parts = entry.casefold().split(".")
-    opens = parts[0] == "*" or any(
-        len(parts) >= len(protected)
-        and all(part in ("*", level) for part, level in zip(parts, protected, strict=False))
-        for protected in _PROTECTED
-    )
-    if opens:
+    """Refuse an entry with ``*`` first, or one inside a protected section."""
+    section = entry.split(".", 1)[0].casefold()
+    if section == "*" or section in _PROTECTED:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
-            "first level, checks, config, app.code_path or app.rest.auth"
+            "first level, checks or config"
         )
 
 
