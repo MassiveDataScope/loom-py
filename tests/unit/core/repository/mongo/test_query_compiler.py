@@ -256,14 +256,19 @@ class TestStorageValues:
         with pytest.raises(UnsupportedQuery, match="'amount'.*Decimal"):
             ledger.compile_sort(sort)
 
-    def test_an_unset_decimal_range_and_sort_are_unsupported_like_a_decimal(self) -> None:
+    def test_an_unset_decimal_range_is_unsupported_like_a_decimal(self) -> None:
         compiler = MongoQueryCompiler(_Pending, "id")
         group = _single(FilterSpec("amount", FilterOp.GT, Decimal("1")))
 
         with pytest.raises(UnsupportedQuery, match="'amount'.*Decimal"):
             compiler.compile_filter(group)
+
+    def test_an_unset_decimal_sort_is_unsupported_like_a_decimal(self) -> None:
+        compiler = MongoQueryCompiler(_Pending, "id")
+        sort = (SortSpec("amount"),)
+
         with pytest.raises(UnsupportedQuery, match="'amount'.*Decimal"):
-            compiler.compile_sort((SortSpec("amount"),))
+            compiler.compile_sort(sort)
 
 
 class TestGroups:
