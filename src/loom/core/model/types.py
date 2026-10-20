@@ -27,7 +27,14 @@ def DateTime(*, tz: bool = True) -> ColumnType:
 
 
 def Numeric(*, precision: int | None = None, scale: int | None = None) -> ColumnType:
-    """A ``NUMERIC`` column; with no precision it is unbounded."""
+    """A ``NUMERIC`` column; with no precision it is unbounded.
+
+    Raises:
+        ValueError: A scale is given without a precision; SQLAlchemy would
+            ignore it.
+    """
+    if scale is not None and precision is None:
+        raise ValueError("Numeric: a scale needs a precision")
     return ColumnType("Numeric", kwargs={"precision": precision, "scale": scale})
 
 

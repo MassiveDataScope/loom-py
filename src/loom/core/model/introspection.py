@@ -56,8 +56,8 @@ class ColumnFieldInfo:
 
     ``needs_declared_type`` marks a field whose column type was not declared
     and is not inferred: ``column_type`` is then a placeholder, an unbounded
-    ``Numeric`` for a ``Decimal``, whose precision and scale are declared, and
-    JSON for a plain enum or a ``Literal``.
+    ``Numeric`` for a ``Decimal``, whose precision and scale must be declared,
+    and JSON for a plain enum or a ``Literal``.
     """
 
     name: str

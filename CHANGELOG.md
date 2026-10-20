@@ -466,7 +466,9 @@
   past that precision. Migration: declare it, e.g.
   `Annotated[Decimal, Numeric(precision=20, scale=6)]` or
   `ColumnField(Numeric(precision=20, scale=6))`; `Numeric()` with no
-  precision is now an unbounded `NUMERIC` instead of `NUMERIC(10, 2)`.
+  precision is now an unbounded `NUMERIC` instead of `NUMERIC(10, 2)`, and
+  `Numeric(scale=...)` without a precision raises `ValueError`, as SQLAlchemy
+  would drop the scale.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
