@@ -1,5 +1,10 @@
 # Unreleased
 
+# 🚀 Releases 2.1.3 to 9.0.0
+
+Entries from 2.1.3 to 9.0.0 were kept under one heading and are not split
+by version; each release's own list is in its GitHub Release notes.
+
 ## ✨ Features
 
 ### core
