@@ -30,8 +30,9 @@ def test_invalid_stage_error_takes_the_names_as_unknown() -> None:
 
 
 def test_the_include_keyword_is_refused() -> None:
+    names = frozenset({"MissingStep"})
     with pytest.raises(TypeError, match="include"):
-        InvalidStageError(include=frozenset({"MissingStep"}))  # type: ignore[call-arg]
+        InvalidStageError(include=names)  # type: ignore[call-arg]
 
 
 def test_the_unknown_names_are_required() -> None:
