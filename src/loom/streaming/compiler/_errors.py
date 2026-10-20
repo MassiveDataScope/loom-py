@@ -116,7 +116,10 @@ class StreamingErrorCode(IssueCode):
     )
     ROUTER_BRANCH_SHAPE_DIVERGENCE = (
         "ROUTER_BRANCH_SHAPE_DIVERGENCE",
-        Template("router branches produce different shapes: {shapes}", component="router"),
+        Template(
+            "messages continuing after the router have different shapes: {shapes}",
+            component="router",
+        ),
     )
     OUTPUT_WITH_FORK = (
         "OUTPUT_WITH_FORK",

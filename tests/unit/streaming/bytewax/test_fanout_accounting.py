@@ -1288,6 +1288,16 @@ _PATH_CASES = {
         lambda: Process(Router.by(msg.payload.value, routes={"item-0": Process(Drain())})),
         (),
     ),
+    "router_into_topic_branch_with_drain_default": _PathCase(
+        lambda: Process(
+            Router.by(
+                msg.payload.value,
+                routes={"item-0": Process(_topic("t.a"))},
+                default=Process(Drain()),
+            )
+        ),
+        _each("t.a", 0),
+    ),
     "router_into_table_branch": _PathCase(
         lambda: Process(
             Router.by(
