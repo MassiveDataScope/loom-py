@@ -42,7 +42,10 @@ from loom.core.repository.abc.repository import (
     RepositoryWrite,
     UpdateT,
 )
-from loom.core.repository.abc.session_scope import SupportsCallerScopedSession, SupportsCursorScope
+from loom.core.repository.abc.session_scope import (
+    SupportsCacheScope,
+    SupportsCallerScopedSession,
+)
 
 __all__ = [
     "CURSOR_SIGNING_CHECK",
@@ -75,8 +78,8 @@ __all__ = [
     "RepositoryRead",
     "RepositoryWrite",
     "SortSpec",
+    "SupportsCacheScope",
     "SupportsCallerScopedSession",
-    "SupportsCursorScope",
     "UnsupportedQuery",
     "UpdateT",
     "build_page_result",

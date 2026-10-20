@@ -1,4 +1,4 @@
-"""The query cache key carries the scope the wrapped repository binds cursor tokens to.
+"""The query cache key carries the wrapped repository's cache scope.
 
 A first cursor page and its token are valid only in the scope that issued
 them, so the same ``QuerySpec`` from another scope must miss the cache.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.cache import CacheConfig
-from loom.core.repository.abc import SupportsCursorScope
+from loom.core.repository.abc import SupportsCacheScope
 from loom.core.repository.abc.query import PaginationMode, QuerySpec
 
 from ._doubles import CountingRepository, Widget, wrap_with_cache
@@ -25,7 +25,7 @@ class _ScopedRepository(CountingRepository[Widget]):
         super().__init__(_ROWS, Widget)
         self.scope = ""
 
-    def cursor_scope(self) -> str:
+    def cache_scope(self) -> str:
         return self.scope
 
 
@@ -34,7 +34,7 @@ async def test_the_same_query_in_two_scopes_is_cached_under_two_keys(
     cache_config: CacheConfig,
 ) -> None:
     repository = _ScopedRepository()
-    assert isinstance(repository, SupportsCursorScope)
+    assert isinstance(repository, SupportsCacheScope)
     wrapper = wrap_with_cache(repository, cache_config).wrapper
 
     for scope in ("tenant-a", "tenant-b", "tenant-a"):
@@ -45,11 +45,11 @@ async def test_the_same_query_in_two_scopes_is_cached_under_two_keys(
 
 
 @pytest.mark.asyncio
-async def test_a_repository_without_a_cursor_scope_shares_one_key(
+async def test_a_repository_without_a_cache_scope_shares_one_key(
     cache_config: CacheConfig,
 ) -> None:
     repository = CountingRepository(_ROWS, Widget)
-    assert not isinstance(repository, SupportsCursorScope)
+    assert not isinstance(repository, SupportsCacheScope)
     wrapper = wrap_with_cache(repository, cache_config).wrapper
 
     await wrapper.list_with_query(_QUERY)

@@ -328,7 +328,7 @@ class TestCachedIndexRefillIntegration:
             tags.extend(cached_repo._entity_dependency_tags(entity_id))
             fingerprint = await resolver.fingerprint(tags)
             await cache.delete(
-                entity_key(cached_repo.entity_name, entity_id, "default", fingerprint)
+                entity_key(cached_repo.entity_name, entity_id, "default", fingerprint, scope="")
             )
 
     @pytest.mark.asyncio

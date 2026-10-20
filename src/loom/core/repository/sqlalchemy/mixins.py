@@ -532,7 +532,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 backend=self.backend_name,
                 model=self.model,
                 cursor_codec=self.cursor_codec,
-                scope=self.cursor_scope(),
+                scope=self._cursor_scope(),
                 columns=self._cursor_columns,
             )
             core_model = self._effective_core_model
@@ -554,14 +554,20 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 core_model=core_model,
             )
 
-    def cursor_scope(self) -> str:
-        """The row-level-security scope values cursors are bound to; ``""`` when unscoped.
+    def cache_scope(self) -> str:
+        """Every session setting the caller's transactions start with; ``""`` when none.
 
-        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`.
+        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
+        A row-level policy may read any setting, not only ``loom.scope.*``, so
+        all of them partition the cache; the ``loom.scope.*`` ones are among
+        them, so this tells apart every caller the cursor tokens do.
         """
+        return _encode_settings(self.session_manager.current_settings())
+
+    def _cursor_scope(self) -> str:
+        """The row-level-security scope values cursors are bound to; ``""`` when unscoped."""
         settings = self.session_manager.current_settings()
-        scoped = sorted(item for item in settings.items() if item[0].startswith(SCOPE_PREFIX))
-        return msgspec.json.encode(scoped).decode() if scoped else ""
+        return _encode_settings({k: v for k, v in settings.items() if k.startswith(SCOPE_PREFIX)})
 
     async def _list_with_query_cursor(
         self,
@@ -731,3 +737,8 @@ def _to_internal_field_names(
         for field in msgspec.structs.fields(struct_type)
     }
     return {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+
+
+def _encode_settings(settings: Mapping[str, str]) -> str:
+    """Encode *settings* as a canonical string, sorted JSON pairs; ``""`` when empty."""
+    return msgspec.json.encode(sorted(settings.items())).decode() if settings else ""
