@@ -5,8 +5,19 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
+from enum import Enum
 from types import UnionType
-from typing import Any, ClassVar, Union, cast, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Literal,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import msgspec
 
@@ -71,6 +82,7 @@ def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
         if name in non_columns or _is_classvar(annotation):
             continue
         result[name] = _resolve_column_field(
+            f"{cls.__name__}.{name}",
             name,
             annotation,
             struct_default=struct_field.default,
@@ -80,6 +92,7 @@ def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
 
 
 def _resolve_column_field(
+    owner: str,
     name: str,
     annotation: Any,
     *,
@@ -93,7 +106,7 @@ def _resolve_column_field(
             name=name,
             python_type=python_type,
             column_type=declared.column_type
-            or _infer_column_type(annotation, field=declared.field),
+            or _infer_column_type(annotation, field=declared.field, owner=owner),
             field=_with_struct_default(declared.field, struct_default),
         )
 
@@ -110,7 +123,7 @@ def _resolve_column_field(
     return ColumnFieldInfo(
         name=name,
         python_type=python_type,
-        column_type=_infer_column_type(annotation, field=inferred_field),
+        column_type=_infer_column_type(annotation, field=inferred_field, owner=owner),
         field=inferred_field,
     )
 
@@ -361,16 +374,39 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
 }
 
 
-def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType:
+def _infer_column_type(annotation: Any, *, field: Field, owner: str) -> ColumnType:
+    """Infer the column type of ``owner`` (``Model.field``) from its annotation.
+
+    A ``str`` or ``int`` enum takes the rule of that base class. A plain enum
+    or a ``Literal`` has no base class to follow, so it is refused rather than
+    guessed from its values.
+
+    Raises:
+        ValueError: If the annotation is a plain enum or a ``Literal``.
+    """
     base = _unwrap_optional(annotation)
     if get_origin(base) in (list, tuple, set, dict):
         return JSON
     python_type = _extract_origin_type(base)
+    is_enum = issubclass(python_type, Enum)
+    if _is_literal(base) or (is_enum and not issubclass(python_type, (str, int))):
+        raise ValueError(
+            f"{owner}: no column type can be inferred from {base!r}; declare it, "
+            "e.g. `ColumnField(String(20))`"
+        )
+    if is_enum:
+        python_type = str if issubclass(python_type, str) else int
     if python_type is str:
         return String(field.length)
     if python_type in (date, time):
         return String(None)
     return _SCALAR_TYPE_MAP.get(python_type, JSON)
+
+
+def _is_literal(annotation: Any) -> bool:
+    if get_origin(annotation) is Annotated:
+        annotation = _unwrap_optional(get_args(annotation)[0])
+    return get_origin(annotation) is Literal
 
 
 _SCOPE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")

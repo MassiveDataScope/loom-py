@@ -510,6 +510,20 @@
   it. A `@cache_query` argument that is a pydantic instance now contributes
   its builtins rendering to the cache key rather than the instance's own
   `repr`, a one-time key change.
+- **core:** a model field annotated with an enum and no declared column type
+  takes the column type of the enum's base class, as the base class itself
+  would: a `StrEnum` (any `str` enum) becomes `String`, honouring `length=`,
+  and an `IntEnum` (any `int` enum) becomes `Integer`, instead of `JSON`. The
+  value is stored, not the name (`'paid'`, not `'"paid"'`), so the column can
+  be filtered by equality; `Optional` of either behaves the same. An existing
+  table with such a column needs a migration from `JSON` to the new type. A
+  plain `Enum` (neither `str` nor `int`) or a `Literal[...]` field with no
+  declared column type now raises `ValueError` naming the model and the field
+  wherever loom reads the model's columns (model compilation, repository
+  set-up), instead of falling back to `JSON`; loom does not infer a type from
+  the values. Declare the column, for example
+  `colour: Colour = ColumnField(String(20))`. Declared column types are
+  unchanged.
 
 ### ai
 

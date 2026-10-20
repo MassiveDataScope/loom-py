@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import typing
-from typing import Annotated, Any, Generic, TypeVar
+from enum import Enum, IntEnum, StrEnum
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import msgspec
+import pytest
 
+from loom.core.model import BaseModel, ColumnField
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
@@ -141,3 +144,71 @@ class TestOptionalColumnTypes:
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
+
+
+class _Status(StrEnum):
+    PAID = "paid"
+
+
+class _Priority(IntEnum):
+    HIGH = 1
+
+
+class _Colour(Enum):
+    RED = "red"
+
+
+class _Enums(BaseModel):
+    __tablename__ = "enums"
+    status: _Status
+    sized: _Status = ColumnField(length=12)
+    maybe: _Status | None = None
+    priority: _Priority = _Priority.HIGH
+    colour: _Colour = ColumnField(String(8), default=_Colour.RED)
+    mode: Annotated[Literal["a", "b"], String(1)] = "a"
+
+
+class _PlainEnum(BaseModel):
+    __tablename__ = "plain_enums"
+    colour: _Colour
+
+
+class _Literal(BaseModel):
+    __tablename__ = "literals"
+    mode: Literal["a", "b"] | None = ColumnField(nullable=True)
+
+
+class _AnnotatedLiteral(BaseModel):
+    __tablename__ = "annotated_literals"
+    mode: Annotated[Literal["a", "b"], "a note"] = "a"
+
+
+class TestEnumColumnTypes:
+    def test_a_str_enum_follows_the_str_rule(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["status"].column_type == String()
+        assert fields["sized"].column_type == String(12)
+
+    def test_an_optional_str_enum_follows_the_str_rule(self) -> None:
+        assert get_column_fields(_Enums)["maybe"].column_type == String()
+
+    def test_an_int_enum_follows_the_int_rule(self) -> None:
+        assert get_column_fields(_Enums)["priority"].column_type == Integer
+
+    def test_a_declared_column_type_wins(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["colour"].column_type == String(8)
+        assert fields["mode"].column_type == String(1)
+
+    def test_a_plain_enum_without_a_column_type_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"_PlainEnum\.colour: .*ColumnField\(String\(20\)\)"):
+            get_column_fields(_PlainEnum)
+
+    @pytest.mark.parametrize("model", [_Literal, _AnnotatedLiteral])
+    def test_a_literal_without_a_column_type_is_refused(self, model: type) -> None:
+        with pytest.raises(
+            ValueError, match=rf"{model.__name__}\.mode: .*ColumnField\(String\(20\)\)"
+        ):
+            get_column_fields(model)
