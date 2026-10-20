@@ -23,4 +23,6 @@ def test_a_loom_override_reaches_the_kafka_settings(
     path.write_text(yaml.safe_dump(document), encoding="utf-8")
     monkeypatch.setenv("LOOM__KAFKA__CONSUMER__GROUP_ID", "overridden")
 
-    assert load_kafka_settings(str(path)).consumer.group_id == "overridden"
+    consumer = load_kafka_settings(str(path)).consumer
+    assert consumer is not None
+    assert consumer.group_id == "overridden"
