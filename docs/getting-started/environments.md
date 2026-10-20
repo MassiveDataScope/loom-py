@@ -209,13 +209,17 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
       - sql.connections.*.default_limit   # '*' stands for one level
   ```
 
+  `config` is a reserved top-level section: loom reads it, so do not put
+  your own keys under it.
+
   Any other key stops startup naming the variable; that includes the
   authentication settings, the deploy checks, the documentation and metrics
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
-  matching `checks`, `config`, `app.code_path` or `app.rest.auth`, or a key
-  inside them (`app.*` matches `app.code_path`), stops startup naming the
-  entry; the entries are checked at every load, in every environment.
+  inside `checks` or `config` stops startup naming the entry; the entries
+  are checked at every load, in every environment. Any other key you list
+  is a reviewed choice, much like setting it from `${oc.env:...}` in the
+  files; the deploy checks still judge the merged value.
 - An allowlisted key also changes every `${...}` placeholder in the files
   that references it: overriding `shared.timeout` changes each key set to
   `${shared.timeout}`. loom does not trace those references, so review them
@@ -239,10 +243,11 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   API version published in the OpenAPI document to the string `1.10`.
 - At startup one WARNING line names the keys that came from variables. Their
   values are never logged.
-- In production and staging a log level cannot hide the deploy checks: the
-  `loom.core.checks` logger and loom's handlers keep a WARNING floor, so
+- A log level on a parent cannot hide the deploy checks: the
+  `loom.core.checks` logger sets its own WARNING level, so
   `LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=CRITICAL` still shows a check's
-  warning and the silenced ids.
+  warning and the silenced ids. To quiet them on purpose, name the logger:
+  `named_levels: {loom.core.checks: ERROR}`.
 
 What belongs in `LOOM__*`: operational tuning that changes per deployment
 without changing the application: loom's allowlist, and what you add to it

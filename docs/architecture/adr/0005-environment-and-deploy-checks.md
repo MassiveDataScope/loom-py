@@ -154,9 +154,12 @@ Within any file, its own values win over its `includes`.
   of the keys forgotten. loom ships `loom.core.config.overrides.OVERRIDABLE`,
   below, and an application extends it only in its reviewed files, under
   `config.overridable`: a literal list of dotted keys, `*` standing for one
-  level but never the first. An entry matching `checks`, `config`,
-  `app.code_path` or `app.rest.auth`, or a key inside them (`app.*` matches
-  `app.code_path`), is a startup error naming the entry. The entries are
+  level but never the first. An entry inside `checks` or `config` is a
+  startup error naming the entry: both are read as written, so the files
+  could not route them to the environment any other way. Most other keys
+  (`app.rest.auth.jwt.audience`, say) the files could already set from
+  `${oc.env:...}`, so listing them is the same reviewed choice; a deploy
+  check still judges the merged value. The entries are
   checked at every load, in every environment and with or without a
   variable, so a bad entry fails in development first. `config` can never be
   overridden, in any environment. Keys match case-insensitively and exactly;
@@ -186,7 +189,8 @@ Within any file, its own values win over its `includes`.
 | `sql.connections.*.connect_timeout` | Network timeout. |
 | `sql.connections.*.send_receive_timeout` | Network timeout. |
 
-The SQL timeouts must be above zero; a `0` fails when the section decodes.
+The allowlisted sizes and timeouts must be above zero; a `0` fails when the
+section decodes.
 
 Left off on purpose: anything that changes where data goes or who may reach
 it (broker and result URLs, the OTel endpoint, CORS origins, documentation
@@ -273,12 +277,14 @@ falling back to defaults.
   `SILENCED_SYSTEM_CHECKS`. The list is visible in the file of the environment
   that accepts the exception, and every deployed startup logs a warning naming
   the silenced ids.
-- In a deployed environment `configure_logging` keeps a WARNING floor on the
-  `loom.core.checks` logger and on the handlers it attaches, so an
-  allowlisted level (`CRITICAL`, top-level or under `named_levels`) cannot
-  hide a check's warning or the silenced ids. A floor rather than running the
-  checks before logging is configured, because every entry point then writes
-  them through the configured handlers whatever order it builds things in.
+- The `loom.core.checks` logger sets its own WARNING level, and the handlers
+  `configure_logging` attaches pass every record, so a parent at `CRITICAL`
+  (the top-level level or `named_levels.loom`) cannot hide a check's warning
+  or the silenced ids, in any environment; a named level on
+  `loom.core.checks` itself is the explicit way to quiet them. A level on the
+  logger rather than running the checks before logging is configured,
+  because every entry point then writes them through the configured handlers
+  whatever order it builds things in.
 - `checks.modules: [dotted.module]` names the modules registering the
   application's own checks. Every run imports them first, so they run at
   startup and in CI alike. `create_app` and the CLI run the checks once
@@ -402,10 +408,13 @@ When #371 rebases on this branch it must also:
   section, or a `LOOM__` variable that names no known section, sets a
   mapping, replaces a declared structure, names `config`, names a key off
   the allowlist in production or staging, or holds `${`
-  stops startup, as does a `config.overridable` entry that is malformed or
-  opens a protected key.
-- `sql.connections.*.max_execution_time`, `connect_timeout` and
-  `send_receive_timeout` must be above zero.
+  stops startup, as does a `config.overridable` entry that is malformed,
+  starts with `*`, or lies inside `checks` or `config`.
+- The SQL timeouts, `pool_size` and `executor_threads`, the Celery
+  `runtime.shutdown_timeout_ms` and the streaming runtime's
+  `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero.
+- The handlers `configure_logging` attaches pass every record, so a named
+  level below the top-level level now takes effect.
 - A consumer's test suite must set `LOOM_ENV=test`, or every application it
   builds starts as production and runs the deploy checks.
 - The migration locator resolves `LOOM_ENV`, applies the `LOOM__*` variables

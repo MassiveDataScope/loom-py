@@ -498,17 +498,21 @@
   keys (`loom.core.config.overrides.OVERRIDABLE`: log levels, Celery and
   streaming worker counts and timeouts, SQL pool sizes and driver timeouts)
   and the keys the reviewed files list under `config.overridable`. A
-  `config.overridable` entry starting with `*`, or matching `checks`,
-  `config`, `app.code_path` or `app.rest.auth` or a key inside them, stops
-  every load. A placeholder in the `checks` section is a `ConfigError`. A
-  per-flow Prefect YAML is read without overrides.
-- **core:** `sql.connections.*.max_execution_time`, `connect_timeout` and
-  `send_receive_timeout` must be above zero; `0`, which disables the limit,
-  fails when the section decodes.
-- **core:** in production and staging the `loom.core.checks` logger and the
-  handlers `configure_logging` attaches keep a WARNING floor, so a configured
-  log level cannot hide a deploy check's warning or the silenced ids.
+  `config.overridable` entry starting with `*`, or inside `checks` or
+  `config`, stops every load. A placeholder in the `checks` section is a
+  `ConfigError`. A per-flow Prefect YAML is read without overrides.
   `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by nothing, are removed.
+- **core:** the SQL `max_execution_time`, `connect_timeout`,
+  `send_receive_timeout`, `pool_size` and `executor_threads`, the Celery
+  `runtime.shutdown_timeout_ms` and the streaming runtime's
+  `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero; a
+  `0` fails when the section decodes.
+- **core:** the `loom.core.checks` logger sets its own WARNING level, so a
+  parent level (`CRITICAL`, top-level or `named_levels.loom`) cannot hide a
+  deploy check's warning or the silenced ids; name `loom.core.checks` under
+  `named_levels` to quiet it. The handlers `configure_logging` attaches no
+  longer filter by level, so a named level below the top-level level takes
+  effect.
 - **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
   sets it in `tests/conftest.py`), or every application it builds starts as
   production and runs the deploy checks.
