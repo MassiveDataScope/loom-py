@@ -13,10 +13,10 @@ logged. A check returns a :class:`Finding` when the configuration is unsafe,
         return Finding(message="billing uses the sandbox gateway", hint="set billing.gateway")
 
 A check registers when the module defining it is imported. loom's own checks
-live in packages the entry points import anyway (``loom.core.logger`` and
-``loom.rest``); an application lists the modules holding its checks under
-``checks.modules``, which every run imports first, so the same checks run at
-startup and in ``loom check --deploy``.
+live in packages the entry points import anyway (``loom.core.logger``,
+``loom.core.repository.abc`` and ``loom.rest``); an application lists the
+modules holding its checks under ``checks.modules``, which every run imports
+first, so the same checks run at startup and in ``loom check --deploy``.
 
 The application factories call :func:`enforce_deploy_checks`, which runs the
 checks only in production and staging. ``loom check --deploy`` calls
@@ -231,6 +231,15 @@ def run_deploy_checks(
     return DeployReport(results=results, silenced=silenced)
 
 
+def silenced_checks(config: ConfigContext) -> tuple[str, ...]:
+    """Return the ids ``checks.silenced`` lists, as the runner reads them.
+
+    Raises:
+        ConfigError: As :func:`run_deploy_checks` for the ``checks`` section.
+    """
+    return _silenced(_checks_section(config).silenced)
+
+
 def enforce_deploy_checks(
     config: ConfigContext,
     environment: Environment,
@@ -330,6 +339,7 @@ __all__ = [
     "MODULES_KEY",
     "REST_CHECKS",
     "SILENCED_KEY",
+    "silenced_checks",
     "CheckLevel",
     "CheckResult",
     "DeployCheck",

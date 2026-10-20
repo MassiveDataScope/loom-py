@@ -29,6 +29,7 @@ import pytest
 from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
 
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWork, active_session
 from loom.core.repository.registration import capabilities_of
@@ -103,7 +104,12 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
 
     @asynccontextmanager
     async def open_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
-        yield RepositoryMongo(Order, collection, session_provider=active_session)
+        yield RepositoryMongo(
+            Order,
+            collection,
+            session_provider=active_session,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
 
     return BackendCase(
         name="mongo",

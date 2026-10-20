@@ -59,7 +59,10 @@ harness.force_error(Product, "get_by_id", NotFound("not found"))
 ## Integration tests
 
 `RepositoryIntegrationHarness` (via `build_repository_harness`) seeds real
-SQLAlchemy repositories with declarative scenarios.
+SQLAlchemy repositories with declarative scenarios. It takes the `CursorCodec`
+its repositories issue cursors with; `CursorCodec(signing="ephemeral")` suits
+most tests, and `CursorCodec(signing="unsigned")` lets a test write a token by
+hand.
 
 ## Snapshot testing
 

@@ -43,6 +43,7 @@ def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
                 "naming_convention": naming_convention,
             },
         },
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     path = tmp_path / "loom.yaml"
     path.write_text(yaml.safe_dump(config))
@@ -102,6 +103,7 @@ async def test_the_lifespan_teardown_restores_the_default_convention() -> None:
                 "url": "sqlite+aiosqlite:///",
                 "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
             },
+            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
     wiring = SQLAlchemyBackend().build(ctx, ())

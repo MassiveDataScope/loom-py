@@ -117,6 +117,7 @@ def _write_project(
             },
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     auth: dict[str, Any] = {}
     if jwt_section is not None:

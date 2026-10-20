@@ -103,11 +103,14 @@ class RestRoute:
             declaration; a route that declares none, here or on its
             interface, answers ``400 unsupported_query`` to any filter.
         sortable: Columns a client may sort this route's ``QuerySpec`` by,
-            declared and inherited like ``filterable``.  The primary key, the
-            route's default order, needs no declaration.  A cursor page
-            carries the sort column's value, and a forged cursor can
-            range-probe it: declare only columns whose values the response
-            already shows.
+            declared and inherited like ``filterable``; each must be a field
+            the response shows, or compilation fails (:data:`ALL` opens every
+            column, with a warning).  The primary key, the route's default
+            order, needs no declaration; a route that can serve cursor pages,
+            whose tokens carry it, must show it too, and it must be a scalar
+            column of a type a token can carry, or the route serves offset
+            pages only (``pagination_mode`` offset and
+            ``allow_pagination_override=False``).
 
     Example::
 

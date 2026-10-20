@@ -1,4 +1,13 @@
-from loom.core.repository.abc.cursor import Cursor, decode_cursor, encode_cursor
+from loom.core.repository.abc import checks as checks  # registers loom.cursors.E001
+from loom.core.repository.abc.cursor import (
+    CURSOR_SIGNING_CHECK,
+    Cursor,
+    CursorCodec,
+    CursorConfig,
+    CursorKeySource,
+    register_cursor_codec,
+    require_cursor_sort,
+)
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import (
     CursorResult,
@@ -33,11 +42,15 @@ from loom.core.repository.abc.repository import (
     RepositoryWrite,
     UpdateT,
 )
-from loom.core.repository.abc.session_scope import SupportsCallerScopedSession
+from loom.core.repository.abc.session_scope import SupportsCallerScopedSession, SupportsCursorScope
 
 __all__ = [
+    "CURSOR_SIGNING_CHECK",
     "CreateT",
     "Cursor",
+    "CursorCodec",
+    "CursorConfig",
+    "CursorKeySource",
     "CursorResult",
     "FilterGroup",
     "FilterOp",
@@ -63,9 +76,10 @@ __all__ = [
     "RepositoryWrite",
     "SortSpec",
     "SupportsCallerScopedSession",
+    "SupportsCursorScope",
     "UnsupportedQuery",
     "UpdateT",
     "build_page_result",
-    "decode_cursor",
-    "encode_cursor",
+    "register_cursor_codec",
+    "require_cursor_sort",
 ]

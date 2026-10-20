@@ -87,10 +87,18 @@ Each value is converted by its column's type with the strict grammar of
 grammar, a `str` column keeps the text as sent). A value the type refuses
 answers `400 query_validation`. A column the route does not declare answers
 `400 unsupported_query`, the same answer whether or not the column exists.
-The primary key, the route's default order, is always sortable. A cursor
-carries the values of the columns it sorts by, and a forged cursor can
-range-probe them, so declare sortable only columns whose values the response
-already shows.
+The primary key, the route's default order, is always sortable. Ordering by
+a column reveals its values, through the order of the rows and through the
+cursor token, which carries them; so a `sortable` column must be a field of
+the items the route answers with (`PageResult[T]`, `CursorResult[T]` or
+`list[T]`), and compilation fails naming the route and the field otherwise.
+In cursor mode a sort column must also hold no null. A `filterable` column
+follows the same rule, since the rows a filter keeps reveal its values too.
+"Shown" is decided by field name; a pydantic field declared `exclude=True`
+is the only one treated as hidden. A route that can serve cursor pages must
+also show its primary key, which every token carries, and the key must be a
+scalar column of a type a token can carry; otherwise the route serves offset
+pages only (`pagination_mode` offset and `allow_pagination_override=False`).
 
 Only scalar columns of the use case's own model qualify; a related model's
 column, a JSON, array or text-search column, and a field reference rooted at
@@ -98,7 +106,8 @@ another model fail compilation. An enum mixed with a scalar type, such as a
 `StrEnum` or `IntEnum`, is a scalar column of that type; a plain `Enum` or a
 `Literal` needs a declared column type (e.g. `ColumnField(String(16))`), and
 a SQLAlchemy model refuses one without it. `ALL` (from `loom.rest`)
-declares every scalar column and logs a warning naming the route at startup.
+declares every scalar column, those the response does not show included, and
+logs a warning naming the route at startup.
 
 A `date` or `time` field is a `Date` or `Time` column on a SQLAlchemy model
 and takes ISO 8601 text. The inferred `Time` column has no time zone and
@@ -204,6 +213,10 @@ app:
     backend: fastapi
     title: My Store API
     version: 0.1.0
+
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
 
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}

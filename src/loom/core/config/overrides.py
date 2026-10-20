@@ -83,9 +83,12 @@ _ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
 _ALLOWLIST_SECTION: Final = "config"
 _ALLOWLIST_FIELD: Final = "overridable"
 _ALLOWLIST_KEY: Final = f"{_ALLOWLIST_SECTION}.{_ALLOWLIST_FIELD}"
-_PROTECTED: Final = frozenset({_ALLOWLIST_SECTION, "checks"})
-"""Sections no ``config.overridable`` entry may open: the files cannot route them to
-the environment any other way, since both are read as written."""
+_PROTECTED: Final = ((_ALLOWLIST_SECTION,), ("checks",), ("persistence", "cursors"))
+"""Keys no ``config.overridable`` entry may open, with everything below them.
+
+``config`` and ``checks`` are read as written, so the files cannot route them to
+the environment any other way. ``persistence.cursors`` decides whether, and with
+which key, cursor tokens are signed, which no per-deploy variable may change."""
 
 OVERRIDABLE: Final = (
     "observability.log.config.level",
@@ -280,12 +283,17 @@ def _declared_allowlist(written: Any) -> tuple[str, ...]:
 
 
 def _refuse_protected(entry: str) -> None:
-    """Refuse an entry with ``*`` first, or one inside a protected section."""
-    section = entry.split(".", 1)[0].casefold()
-    if section == "*" or section in _PROTECTED:
+    """Refuse an entry with ``*`` first, or one that can match a key under a protected one."""
+    levels = entry.casefold().split(".")
+    opens_protected = any(
+        len(levels) >= len(protected)
+        and all(level in ("*", part) for level, part in zip(levels, protected, strict=False))
+        for protected in _PROTECTED
+    )
+    if levels[0] == "*" or opens_protected:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
-            "first level, checks or config"
+            "first level, checks, config or persistence.cursors"
         )
 
 

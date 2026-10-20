@@ -8,11 +8,12 @@ from typing import Any
 from uuid import UUID
 
 import msgspec
+import pydantic
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField, String
-from loom.core.repository.abc.query import QuerySpec
+from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case import Created, Query
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
@@ -862,9 +863,26 @@ class _Book(BaseModel):
     )
 
 
-class _ListBooks(UseCase[_Book, str]):
-    async def execute(self, query: QuerySpec) -> str:
-        return "ok"
+class _ListBooks(UseCase[_Book, PageResult[_Book] | CursorResult[_Book]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_Book] | CursorResult[_Book]:
+        raise NotImplementedError
+
+
+class _BookCard(msgspec.Struct):
+    """What a listing shows of a book: no page count."""
+
+    id: int
+    title: str
+
+
+class _ListBookCards(UseCase[_Book, PageResult[_BookCard]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_BookCard]:
+        raise NotImplementedError
+
+
+class _CountBooks(UseCase[_Book, int]):
+    async def execute(self, query: QuerySpec) -> int:
+        raise NotImplementedError
 
 
 class _ListAnything(UseCase[Any, str]):
@@ -888,6 +906,56 @@ class _ListOpaque(UseCase[_Opaque, str]):
         return "ok"
 
 
+class _BookTitle(msgspec.Struct):
+    """A listing that hides the primary key."""
+
+    title: str
+
+
+class _ListBookTitles(UseCase[_Book, PageResult[_BookTitle]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_BookTitle]:
+        raise NotImplementedError
+
+
+class _BookView(pydantic.BaseModel):
+    """A pydantic listing whose page count is excluded from the output."""
+
+    id: int
+    title: str
+    pages: int = pydantic.Field(exclude=True)
+
+
+class _ListBookViews(UseCase[_Book, list[_BookView]]):
+    async def execute(self, query: QuerySpec) -> list[_BookView]:
+        raise NotImplementedError
+
+
+class _Blobbed(BaseModel):
+    __tablename__ = "rest_compiler_blobbed"
+
+    id: bytes = ColumnField(primary_key=True)
+    label: str = ColumnField(length=8)
+
+
+class _ListBlobbed(UseCase[_Blobbed, PageResult[_Blobbed]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_Blobbed]:
+        raise NotImplementedError
+
+
+class _JsonKeyed(BaseModel):
+    """A key in a JSON column, which no keyset can order."""
+
+    __tablename__ = "rest_compiler_json_keyed"
+
+    id: str = ColumnField(JSON, primary_key=True)
+    label: str = ColumnField(length=8)
+
+
+class _ListJsonKeyed(UseCase[_JsonKeyed, PageResult[_JsonKeyed]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_JsonKeyed]:
+        raise NotImplementedError
+
+
 class _Pass(BaseModel):
     __tablename__ = "rest_compiler_passes"
 
@@ -895,9 +963,23 @@ class _Pass(BaseModel):
     ref: UUID
 
 
-class _ListPasses(UseCase[_Pass, str]):
-    async def execute(self, query: QuerySpec) -> str:
-        return "ok"
+class _ListPasses(UseCase[_Pass, PageResult[_Pass]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_Pass]:
+        raise NotImplementedError
+
+
+class _UuidKeyed(BaseModel):
+    """A bare ``UUID`` key: a scalar ``Uuid`` column, which a keyset orders."""
+
+    __tablename__ = "rest_compiler_uuid_keyed"
+
+    id: UUID = ColumnField(primary_key=True)
+    label: str = ColumnField(length=8)
+
+
+class _ListUuidKeyed(UseCase[_UuidKeyed, PageResult[_UuidKeyed]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_UuidKeyed]:
+        raise NotImplementedError
 
 
 def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
@@ -1015,6 +1097,72 @@ class TestDeclaredColumns:
         with pytest.raises(InterfaceCompilationError, match=r"\(GET, '/'\).*'blob'"):
             _compile_columns(IFace)
 
+    @pytest.mark.parametrize("use_case", [_ListBookCards, _CountBooks], ids=["hidden", "untyped"])
+    def test_a_sortable_column_the_response_does_not_show_fails_compilation(
+        self, use_case: type[UseCase[Any, Any]]
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=use_case, method="GET", path="/", sortable=("pages",)),)
+
+        with pytest.raises(
+            InterfaceCompilationError, match=r"\(GET, '/'\): sortable field 'pages'.*sortable=ALL"
+        ):
+            _compile_columns(IFace)
+
+    @pytest.mark.parametrize("use_case", [_ListBookCards, _CountBooks], ids=["hidden", "untyped"])
+    def test_a_filterable_column_the_response_does_not_show_fails_compilation(
+        self, use_case: type[UseCase[Any, Any]]
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=use_case, method="GET", path="/", filterable=("pages",)),)
+
+        with pytest.raises(
+            InterfaceCompilationError,
+            match=r"\(GET, '/'\): filterable field 'pages'.*filterable=ALL",
+        ):
+            _compile_columns(IFace)
+
+    def test_filterable_all_opens_hidden_columns_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBookCards, method="GET", path="/", filterable=ALL),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = _compile_columns(IFace)
+
+        assert "pages" in dict(route.filter_fields)
+        (record,) = caplog.records
+        assert "does not show" in record.getMessage()
+
+    def test_a_sortable_column_the_response_shows_compiles(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListBookCards, method="GET", path="/", sortable=("title",)),
+            )
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.sort_fields == ("title", "id")
+
+    def test_sortable_all_opens_hidden_columns_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBookCards, method="GET", path="/", sortable=ALL),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = _compile_columns(IFace)
+
+        assert "pages" in route.sort_fields
+        (record,) = caplog.records
+        assert "does not show" in record.getMessage()
+
     def test_all_resolves_the_root_scalar_columns_and_warns_naming_the_route(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1049,3 +1197,90 @@ class TestDeclaredColumns:
         assert (declared.filter_fields, declared.sort_fields) == ((("ref", UUID),), ("ref", "id"))
         assert dict(everything.filter_fields) == {"id": int, "ref": UUID}
         assert set(everything.sort_fields) == {"id", "ref"}
+
+
+class TestCursorCapableRoutes:
+    """A route that can serve cursor pages carries its primary key in every token."""
+
+    def test_a_response_hiding_the_primary_key_fails_compilation(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBookTitles, method="GET", path="/"),)
+
+        with pytest.raises(
+            InterfaceCompilationError, match=r"\(GET, '/'\): .*primary key 'id'.*sortable=ALL"
+        ):
+            _compile_columns(IFace)
+
+    def test_offset_only_pages_may_hide_the_primary_key(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            allow_pagination_override = False
+            routes = (RestRoute(use_case=_ListBookTitles, method="GET", path="/"),)
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.sort_fields == ("id",)
+
+    def test_sortable_all_opens_a_hidden_primary_key_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBookTitles, method="GET", path="/", sortable=ALL),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = _compile_columns(IFace)
+
+        assert "id" in route.sort_fields
+        (record,) = caplog.records
+        assert "(ALL), columns its response does not show included" in record.getMessage()
+
+    def test_a_primary_key_a_token_cannot_carry_fails_compilation(self) -> None:
+        class IFace(RestInterface[_Blobbed]):
+            prefix = "/blobs"
+            routes = (RestRoute(use_case=_ListBlobbed, method="GET", path="/"),)
+
+        with pytest.raises(InterfaceCompilationError, match=r"primary key 'id'.*cursor"):
+            _compile_columns(IFace)
+
+    def test_a_bare_uuid_primary_key_compiles_on_a_cursor_capable_route(self) -> None:
+        class IFace(RestInterface[_UuidKeyed]):
+            prefix = "/uuid-keyed"
+            routes = (RestRoute(use_case=_ListUuidKeyed, method="GET", path="/"),)
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.effective_allow_pagination_override is True
+        assert route.sort_fields == ("id",)
+
+    def test_a_primary_key_in_a_json_column_fails_compilation(self) -> None:
+        class IFace(RestInterface[_JsonKeyed]):
+            prefix = "/keyed"
+            routes = (RestRoute(use_case=_ListJsonKeyed, method="GET", path="/"),)
+
+        with pytest.raises(InterfaceCompilationError, match=r"primary key 'id'.*cursor"):
+            _compile_columns(IFace)
+
+
+class TestPydanticResponses:
+    def test_a_field_excluded_from_the_output_is_not_shown(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListBookViews, method="GET", path="/", sortable=("pages",)),
+            )
+
+        with pytest.raises(InterfaceCompilationError, match="sortable field 'pages'"):
+            _compile_columns(IFace)
+
+    def test_a_field_in_the_output_is_shown(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListBookViews, method="GET", path="/", sortable=("title",)),
+            )
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.sort_fields == ("title", "id")

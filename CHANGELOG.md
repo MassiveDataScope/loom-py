@@ -579,6 +579,81 @@
   or `RuleViolation` it returns no longer fails the rule. Migrate
   `Rule.check(F(Order).total, via=lambda v: v <= 0, message="total must be > 0")`
   to `Rule.check(F(Order).total, via=lambda v: "total must be > 0" if v <= 0 else None)`.
+- **core:** cursor signing keys are required (ADR 0004). An application whose
+  persistence backend serves repositories (`sqlalchemy`, `mongo`), and a
+  Celery worker that registers repositories, read `persistence.cursors` at
+  startup and fail with a `ConfigError` without a key:
+
+  ```yaml
+  persistence:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: CURSOR_KEY_2026_10}   # or {path: /run/secrets/...}
+  ```
+
+  Keys are read from a file or an environment variable, never written in the
+  configuration, as standard base64 decoding to at least 32 random bytes
+  (`openssl rand -base64 32`); a passphrase is refused. Older key ids stay in
+  `keys` to verify the tokens they signed during a rotation.
+  The default is `signed` in every environment; `signing: ephemeral` (a
+  random per-process key, for `development.yaml`) and `signing: unsigned`
+  (for `test.yaml`) are explicit opt-outs, and both log a WARNING at
+  startup. In production and staging the deploy check `loom.cursors.E001`
+  fails startup, and `loom check --deploy` fails, when a `database` or
+  `persistence.mongo` section is set and `signing` is not `signed` or
+  `current_key_id` names no entry of `keys`. No `config.overridable` entry
+  may open a key under `persistence.cursors`. A key's `env` source must not
+  name a `LOOM_*` variable. Tokens issued before this release are refused:
+  clients restart from the first page.
+- **core:** a cursor page orders only by non-null columns of a type a token
+  carries; a dotted path, a JSON, `bytes` or optional column answers
+  `400 unsupported_query` before the query runs (`require_cursor_sort`), and
+  a page whose last row holds a non-finite number or a value the token
+  cannot carry answers 400 instead of 500. An empty cursor is an invalid
+  token on SQLAlchemy as on Mongo. Tokens bind the model as
+  `module.qualname`; `UnsupportedQuery` and the client's 400 name it by its
+  qualified name alone. `CursorCodec.encode`/`decode`, `require_cursor_sort`
+  and `QuerySpecCompiler(model=...)` take the model class (or a name). Mongo
+  issues the next token in the model's types, so a page sorted by a date or
+  UUID column, or keyed by a UUID, reaches the next page.
+- **core:** one `CursorCodec` per process: the registration modules register
+  it with `register_cursor_codec`, which raises `ConfigError` when a
+  different codec is already registered, and, in a deployed environment,
+  for an `ephemeral` or `unsigned` codec unless `CursorCodec.from_context`
+  built it from a configuration silencing `loom.cursors.E001`. Without a
+  registered `Environment` the process environment decides (`LOOM_ENV`, else
+  production).
+- **core:** `loom.core.checks.silenced_checks(config)` returns the ids
+  `checks.silenced` lists, as the deploy-check runner reads them.
+- **core:** the unsigned module functions `encode_cursor` and
+  `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
+  `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
+  verifies tokens: `encode(cursor, *, model, query, scope)` and
+  `decode(token, *, backend, model, query, scope, columns, primary_key)`,
+  where `scope` is required and `""` binds a token to no tenant, `columns`
+  maps each column name to its annotation and `primary_key` names the key
+  columns in order. A sort key or primary-key value whose type is not its
+  column's is refused (`400 unsupported_query`), as is a sort field missing
+  from `columns`. The backends
+  register the codec they build in DI, so a service paginating by hand
+  resolves it with `container.resolve(CursorCodec)`. A decoded datetime key
+  is always aware. A `time` sort key is carried too, with the offset it was
+  issued with; before, a page sorted by a column holding `time` values
+  raised `TypeError` when it issued the next cursor.
+- **core:** `RepositorySQLAlchemy`, `RepositoryMongo`, `QuerySpecCompiler`
+  (with a required `scope` and `columns` too), `SQLAlchemyDefaultRepositoryBuilder`,
+  `MongoDefaultRepositoryBuilder`, `build_sqlalchemy_repository_registration_module`,
+  `build_mongo_repository_registration_module` and
+  `loom.testing.build_repository_harness` take a required keyword-only
+  `cursor_codec`. A custom repository `builder` passes
+  `context.container.resolve(CursorCodec)`. `extract_next_cursor` returns the
+  next `Cursor` position instead of a token, and `SessionManager` gains
+  `current_settings()`. SQLAlchemy repositories bind cursors to the caller's
+  `loom.scope.*` session values. `loom.core.environment` gains
+  `configured_variable(name)`, which reads a variable a configuration names
+  and refuses a `LOOM_*` name.
+
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number
   grammar and must be finite, an integer its integer subset within
@@ -596,8 +671,7 @@
   takes the tuple as its first argument and raises `TypeError` for anything
   else. A cursor token issued for such a model before this release is refused with
   `UnsupportedQuery`, `400 unsupported_query`; clients restart from the first
-  page. `decode_cursor` takes `id_count`, the number of key columns, and
-  `get_id_attributes` returns every key column name.
+  page. `get_id_attributes` returns every key column name.
 
 - **core:** `compile_all` raises `ValueError` for a model with a composite
   primary key that declares a relation or a projection whose loader runs
@@ -781,6 +855,9 @@
   declares both a pydantic `type_ref` output and `output_check` serialises
   an accepted answer twice per attempt — once for the check's own builtins
   projection, once for the wire — accepted rather than optimised away.
+- **ai:** a provider's `credentials_ref` is read through
+  `loom.core.environment.configured_variable` and may not name a `LOOM_*`
+  variable.
 
 ### rest
 
@@ -843,6 +920,33 @@
   `msgspec.ValidationError`. The root `title` is dropped on pydantic
   OpenAPI schemas for request bodies and responses alike, matching the
   untitled document a Struct always produced.
+- **rest:** a `sortable` column must be a field of the items the route
+  answers with (`PageResult[T]`, `CursorResult[T]` or `list[T]`); a column
+  the response does not show, or a result type that does not say, fails
+  compilation naming the route and the field, since ordering by it reveals
+  its values. `sortable=ALL` opens every scalar column, hidden ones included,
+  and its startup warning says so. `filterable` follows the same rule, with
+  `filterable=ALL` as its escape hatch. "Shown" is decided by field name; a
+  pydantic field declared `exclude=True` is not shown.
+- **rest:** breaking: a `QuerySpec` route that can serve cursor pages (cursor
+  mode, or the default `allow_pagination_override=True`) must answer with
+  items that show its primary key, which every cursor token carries. A route
+  whose response hides the key, or whose result type is untyped (`str`,
+  `dict[str, Any]`, ...), now fails compilation naming the route and the key.
+  `sortable=ALL` opens it with a warning; a route that must hide its keys
+  serves offset pages only (`pagination_mode` offset and
+  `allow_pagination_override=False`). On such a route the key must also be of
+  a type a token carries, in a scalar column: a key declared in a JSON or
+  array column, which a SQL keyset cannot order, fails compilation instead
+  of on the first cursor request. A bare `UUID` key, a scalar `Uuid` column,
+  compiles and pages on SQLAlchemy and Mongo alike.
+
+### cache
+
+- **cache:** the query cache key carries the caller's cursor scope
+  (`SupportsCursorScope`, `RepositorySQLAlchemy.cursor_scope()`), so a first
+  page and its next cursor cached under one row-level-security scope are not
+  served to another.
 
 ### prefect
 
@@ -1166,6 +1270,21 @@
   both): an `Enum` member is bound as its value, a JSON column's value is
   reduced to builtins. A plain `Enum` member as the value of a filter on a
   string column failed to bind.
+- **core:** pagination cursors are signed and decoded strictly (ADR 0004).
+  A cursor token was base64url JSON with no integrity, and a datetime key
+  decoded without a time zone, so a client could forge a position and a
+  consumer comparing it with aware datetimes raised `TypeError` (a 500). A
+  token is now `base64url(payload).base64url(tag)`, the tag an HMAC-SHA256
+  over a domain-separated input bound to the model, the normalised filters,
+  the sort and the caller's scope, verified with `hmac.compare_digest` before
+  the payload is parsed. A malformed, unsigned, forged or rebound token, a
+  key signed by an unknown key id, a datetime key without a time zone, a key
+  of an unknown type, the wrong number of keys or the wrong backend is
+  `UnsupportedQuery` (`400 unsupported_query`), and the message never echoes
+  the token. A naive datetime key, such as a `DateTime(tz=False)` column, is
+  issued as UTC with an explicit offset and compared as naive UTC against
+  that column, on SQLite and Postgres alike.
+
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become
@@ -1194,8 +1313,9 @@
   column only. The cursor now orders and compares on
   every key column after the sort keys and carries every key value in the
   token; offset pages and `list_paginated` order by every key column too.
-  Tokens of single-column keys are unchanged. A cached repository over such a
-  model keyed its entries by the first key column too, so a warm
+  That fix leaves tokens of single-column keys as they were. A cached
+  repository over such a model keyed its entries by the first key column
+  too, so a warm
   `list_paginated` or first cursor page served the rows sharing a first key
   value as copies of one of them; it now caches and reloads every row by its
   full key, one `get_by_id` per missing row.

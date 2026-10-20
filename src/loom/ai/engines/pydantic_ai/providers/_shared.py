@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Protocol, cast, runtime_checkable
 
 from pydantic_ai.models import Model
@@ -10,6 +9,7 @@ from pydantic_ai.settings import ModelSettings
 
 from loom.ai.inference import InferenceTarget
 from loom.ai.registry import require_provider_setting
+from loom.core.environment import configured_variable
 
 
 @runtime_checkable
@@ -49,10 +49,11 @@ def api_key(target: InferenceTarget) -> str | None:
     Raises:
         AgentCompilationError: With ``PROVIDER_SETTING_MISSING`` when the named
             variable is unset or empty.
+        ConfigError: When ``credentials_ref`` names a ``LOOM_*`` variable.
     """
     reference = target.credentials_ref
     if reference is None:
         return None
-    value = os.environ.get(reference)
+    value = configured_variable(reference)
     require_provider_setting(target.provider, f"credentials_ref ({reference})", value)
     return value

@@ -6,6 +6,7 @@ import pytest
 
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 
 from ._fake import FakeCollection
@@ -20,4 +21,4 @@ class _Line(BaseModel):
 def test_a_composite_primary_key_is_refused() -> None:
     collection = FakeCollection()
     with pytest.raises(ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"):
-        RepositoryMongo(_Line, collection)
+        RepositoryMongo(_Line, collection, cursor_codec=CursorCodec(signing="ephemeral"))

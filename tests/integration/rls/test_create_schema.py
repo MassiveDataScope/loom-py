@@ -86,6 +86,7 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
                     "guard": "loom_guard_notes_wired",
                 },
             },
+            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         return SQLAlchemyBackend().build(ConfigContext.from_dict(config), notes.MODELS)
 
@@ -147,6 +148,7 @@ async def test_external_mode_refuses_a_bypass_connection_without_scoped_tables(
     config = {
         "app": {"name": "plain"},
         "database": {"url": database.bypass, "schema": {"mode": "external"}},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     wiring = SQLAlchemyBackend().build(ConfigContext.from_dict(config), (Widget,))
     wiring.prepare_models((Widget,))

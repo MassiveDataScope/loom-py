@@ -31,6 +31,7 @@ class ProductRestInterface(RestInterface[Product]):
             path="/",
             expose_profile=True,
             filterable=(F(Product).name, F(Product).price),
+            sortable=(F(Product).price,),
         ),
         RestRoute(
             use_case=FindProductByNameUseCase,

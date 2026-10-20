@@ -394,6 +394,7 @@ async def test_startup_refuses_a_tampered_guard_as_the_application_user(
                 "guard": installed.guard,
             },
         },
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     register_scope_source("editor", lambda: None)
     try:

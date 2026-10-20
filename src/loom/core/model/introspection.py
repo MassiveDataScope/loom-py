@@ -330,6 +330,19 @@ _NON_SCALAR_COLUMN_TYPES = frozenset(
 )
 
 
+def column_annotations(model: type) -> dict[str, Any]:
+    """Return the annotation of every column of *model*, ``Annotated`` metadata removed.
+
+    Args:
+        model: Model whose columns are read.
+
+    Returns:
+        Mapping of column name to its annotation, in declaration order.
+    """
+    hints = get_type_hints(model)
+    return {name: hints[name] for name in get_column_fields(model)}
+
+
 def scalar_column_annotations(model: type) -> dict[str, Any]:
     """Return the annotation of each scalar column of *model*, ``Annotated`` metadata removed.
 
@@ -345,11 +358,11 @@ def scalar_column_annotations(model: type) -> dict[str, Any]:
     Returns:
         Mapping of column name to its annotation, in declaration order.
     """
-    hints = get_type_hints(model)
+    fields = get_column_fields(model)
     return {
-        name: hints[name]
-        for name, info in get_column_fields(model).items()
-        if info.column_type.type_name not in _NON_SCALAR_COLUMN_TYPES
+        name: annotation
+        for name, annotation in column_annotations(model).items()
+        if fields[name].column_type.type_name not in _NON_SCALAR_COLUMN_TYPES
     }
 
 

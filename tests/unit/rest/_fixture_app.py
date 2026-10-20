@@ -78,6 +78,7 @@ _CACHED_MODEL_SOURCE = '''
 
 from loom.core.cache import cached
 from loom.core.repository import RepositoryBuildContext, repository_for
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy, SessionManager
 from tests.unit.rest._fixture_app import CACHED_READS
 
@@ -91,7 +92,11 @@ class CachedRecord(BaseModel):
 
 def _build_cached_record_repository(context: RepositoryBuildContext) -> Any:
     assert context.container is not None
-    return CachedRecordRepository(context.container.resolve(SessionManager), CachedRecord)
+    return CachedRecordRepository(
+        context.container.resolve(SessionManager),
+        CachedRecord,
+        cursor_codec=context.container.resolve(CursorCodec),
+    )
 
 
 @cached
@@ -131,7 +136,8 @@ def write_project(
         rest: Contents of the ``app.rest`` section.
         sql: Contents of the ``sql`` section.
         observability: Contents of the ``observability`` section.
-        persistence: Contents of the ``persistence`` section.
+        persistence: Contents of the ``persistence`` section, on top of an
+            explicit ``cursors.signing: ephemeral``.
         database: Contents of the ``database`` section; ``None`` omits it.
         cache: Contents of the ``cache`` section; ``None`` omits it.
         prefix: Prefix of the generated REST interface.
@@ -171,8 +177,8 @@ def write_project(
         config["sql"] = sql
     if observability is not None:
         config["observability"] = observability
-    if persistence is not None:
-        config["persistence"] = persistence
+    # Every fixture app opts out of cursor signing keys explicitly.
+    config["persistence"] = {"cursors": {"signing": "ephemeral"}, **(persistence or {})}
     config_path = tmp_path / "app.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return str(config_path)
