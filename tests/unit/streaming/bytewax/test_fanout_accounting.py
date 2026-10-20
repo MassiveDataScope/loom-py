@@ -38,12 +38,19 @@ from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
 from loom.streaming import (  # noqa: E402
     Backend,
+    BatchExpandStep,
+    BatchStep,
     Broadcast,
     BroadcastRoute,
+    CollectBatch,
     Drain,
     ExpandRoutes,
+    ExpandStep,
+    Explode,
+    ForEach,
     Fork,
     ForkRoute,
+    FromMultiTypeTopic,
     FromTopic,
     IntoTable,
     IntoTopic,
@@ -51,6 +58,7 @@ from loom.streaming import (  # noqa: E402
     RecordStep,
     Route,
     Router,
+    Selector,
     StreamFlow,
     With,
     WithAsync,
@@ -68,6 +76,7 @@ from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import StreamingErrorCode, compile_flow  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
+from loom.streaming.kafka import MessageDescriptor, MsgspecCodec, build_message  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import Item, Order, Result, UpperItem  # noqa: E402
 from tests.unit.streaming.kafka.fakes import ProducerBackendStub  # noqa: E402
@@ -474,12 +483,14 @@ class TestCommitKeyGuards:
         )
 
 
-# --- Every path a message can travel ends in exactly one completion -------------
+# --- Each listed path shape ends in exactly one completion per share -------------
 #
 # The flows below run on the real Bytewax runtime with the real adapter, the real
 # Kafka sinks and the real codec; only the confluent producer and the storage
 # partition are faked, and both write into one ordered log next to every fork
-# and completion the commit tracker receives.
+# and completion the commit tracker receives. They compile under
+# delivery=at_least_once, except the one row that pins what an at-least-once
+# compile rule refuses. _PATH_CASES is the list of shapes covered.
 
 _PATH_CONFIG = {
     "kafka": {
@@ -511,6 +522,37 @@ class _FailOnItem1(RecordStep[Item, Item]):
         if message.payload.value == "item-1":
             raise RuntimeError("item-1 is rejected")
         return message.payload
+
+
+class _PayloadType(Selector[Any]):
+    """Select the payload type, for type-keyed routing."""
+
+    def select(self, message: Message[Any]) -> object:
+        return type(message.payload)
+
+
+class _TwiceExceptItem1(ExpandStep[Item, Item]):
+    """Expand every item into two, except item 1, which expands into none."""
+
+    def execute(self, message: Message[Item], **kwargs: object) -> list[Item]:
+        del kwargs
+        return [] if message.payload.value == "item-1" else [message.payload] * 2
+
+
+class _UpperBatch(BatchStep[Item, Item]):
+    """Uppercase every item of a batch."""
+
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[Item]:
+        del kwargs
+        return [Item(value=message.payload.value.upper()) for message in messages]
+
+
+class _TwiceEachInBatch(BatchExpandStep[Item, Item]):
+    """Expand every message of a batch into two that keep its metadata."""
+
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[Message[Item]]:
+        del kwargs
+        return [copy for message in messages for copy in (message, message)]
 
 
 class _TwoRows:
@@ -631,6 +673,16 @@ def _item(offset: int) -> Message[Item]:
     )
 
 
+def _encoded(payload: Item | _Other, offset: int) -> KafkaRecord[bytes]:
+    """Encode *payload* the way a producer writes it, with its own message type."""
+    descriptor = MessageDescriptor(
+        message_type=type(payload).loom_message_type(), message_version=1
+    )
+    codec: MsgspecCodec[Any] = MsgspecCodec()
+    value = codec.encode(build_message(payload, descriptor, produced_at_ms=1000))
+    return KafkaRecord(topic="items", key=None, value=value, partition=0, offset=offset)
+
+
 def _undecodable(offset: int) -> KafkaRecord[bytes]:
     value = f"item-{offset} is not an envelope".encode()
     return KafkaRecord(topic="items", key=None, value=value, partition=0, offset=offset)
@@ -643,6 +695,8 @@ def _run_paths(
     *,
     output: IntoTopic[Any] | None = None,
     errors: IntoTopic[Any] | None = None,
+    source: Any = None,
+    delivery: str = "at_least_once",
 ) -> list[Event]:
     """Run one flow and return the ordered log of its writes and completions."""
     log: list[Event] = []
@@ -654,12 +708,14 @@ def _run_paths(
     )
     flow: StreamFlow[Any, Any] = StreamFlow(
         name="paths",
-        source=FromTopic("items", payload=Item),
+        source=source if source is not None else FromTopic("items", payload=Item),
         process=process,
         output=output,
         errors=errors,
     )
-    plan = compile_flow(flow, config=ConfigContext.from_dict(_PATH_CONFIG))
+    config = {**_PATH_CONFIG, "kafka": {**_PATH_CONFIG["kafka"]}}
+    config["kafka"]["consumer"] = {**_PATH_CONFIG["kafka"]["consumer"], "delivery": delivery}
+    plan = compile_flow(flow, config=ConfigContext.from_dict(config))
     built = _adapter.build_dataflow_with_shutdown(
         plan,
         source=_TrackedTestingSource(list(items)),
@@ -695,6 +751,8 @@ class _PathCase:
         output: Flow output, when the shape has one.
         errors: Flow error route, when the shape has one.
         items: Source items; three plain items unless the shape needs others.
+        source: Flow source; ``FromTopic`` of ``Item`` unless the shape needs another.
+        delivery: Consumer delivery the flow compiles under.
     """
 
     process: Callable[[], Process[Any, Any]]
@@ -703,6 +761,8 @@ class _PathCase:
     output: str | None = None
     errors: str | None = None
     items: Callable[[], list[object]] = lambda: [_item(offset) for offset in range(3)]
+    source: Callable[[], Any] | None = None
+    delivery: str = "at_least_once"
 
 
 def _each(topic: str, *offsets: int) -> tuple[tuple[str, int], ...]:
@@ -861,6 +921,98 @@ _PATH_CASES = {
             )
         ),
         _each("t.a", 0),
+        # At least once refuses this shape (FORK_UNMATCHED_UNROUTED); the row pins
+        # what that rule prevents: unmatched messages complete without a write.
+        delivery="at_most_once",
+    ),
+    "fork_with_drain_default": _PathCase(
+        lambda: Process(
+            Fork.when(
+                [ForkRoute(when=msg.payload.value == "item-0", process=Process(_topic("t.a")))],
+                default=Process(Drain()),
+            )
+        ),
+        _each("t.a", 0),
+    ),
+    "fork_nested_in_a_fork_branch": _PathCase(
+        lambda: Process(
+            Fork.when(
+                [
+                    ForkRoute(
+                        when=msg.payload.value != "item-2",
+                        process=Process(
+                            Fork.when(
+                                [
+                                    ForkRoute(
+                                        when=msg.payload.value == "item-0",
+                                        process=Process(_topic("t.a")),
+                                    )
+                                ],
+                                default=Process(_topic("t.b")),
+                            )
+                        ),
+                    )
+                ],
+                default=Process(_topic("t.c")),
+            )
+        ),
+        _each("t.a", 0) + _each("t.b", 1) + _each("t.c", 2),
+    ),
+    "expand_step": _PathCase(
+        lambda: Process(_TwiceExceptItem1(), _topic("t.a")),
+        _each("t.a", 0, 0, 2, 2),
+        shares={0: 2, 1: 1, 2: 2},
+    ),
+    "collect_batch_batch_step_for_each": _PathCase(
+        lambda: Process(
+            CollectBatch(max_records=3, timeout_ms=50), _UpperBatch(), ForEach(), _topic("t.a")
+        ),
+        _each("t.a", 0, 1, 2),
+    ),
+    "collect_batch_into_sync_with": _PathCase(
+        lambda: Process(
+            CollectBatch(max_records=3, timeout_ms=50),
+            With(process=Process(UpperItem(), _topic("t.inline"))),
+        ),
+        _each("t.inline", 0, 1, 2),
+    ),
+    "batch_expand_step": _PathCase(
+        lambda: Process(
+            CollectBatch(max_records=3, timeout_ms=50), _TwiceEachInBatch(), _topic("t.a")
+        ),
+        _each("t.a", 0, 0, 1, 1, 2, 2),
+        shares=2,
+    ),
+    "explode_then_router": _PathCase(
+        lambda: Process(
+            cast(Any, Explode(_TwoRows)),  # Process does not type Explode
+            Router.by(_PayloadType(), routes={_Row: Process(IntoTopic("t.a", payload=_Row))}),
+        ),
+        _each("t.a", 0, 0, 1, 1, 2, 2),
+        shares=2,
+    ),
+    "multi_type_source": _PathCase(
+        lambda: Process(
+            Router.by(
+                _PayloadType(),
+                routes={
+                    Item: Process(_topic("t.a")),
+                    _Other: Process(IntoTopic("t.b", payload=_Other)),
+                },
+            )
+        ),
+        _each("t.a", 0, 2) + _each("t.b", 1),
+        source=lambda: FromMultiTypeTopic("items", payloads=(Item, _Other)),
+        items=lambda: [
+            _encoded(Item(value="item-0"), 0),
+            _encoded(_Other(value="item-1"), 1),
+            _encoded(Item(value="item-2"), 2),
+        ],
+    ),
+    "with_async_inline_step_fails": _PathCase(
+        lambda: Process(WithAsync(process=Process(_FailOnItem1(), _topic("t.inline")))),
+        _each("t.inline", 0, 2) + _each("t.err", 1),
+        errors="t.err",
     ),
     "fork_branch_into_table": _PathCase(
         lambda: Process(
@@ -1004,10 +1156,35 @@ def _assert_each_offset_completes_once_after_its_writes(
                 )
 
 
+_WRONG_TODAY = {
+    "collect_batch_batch_step_for_each": (
+        "ForEach after a BatchStep fails compilation: ForEach expects shape many, a "
+        "BatchStep produces batch"
+    ),
+    "batch_expand_step": (
+        "a BatchExpandStep must return as many outputs as it received, so it cannot expand"
+    ),
+}
+"""Shapes outside the completion invariant that fail before any offset is written."""
+
+
+def _path_case_params() -> list[Any]:
+    return [
+        pytest.param(
+            case,
+            id=name,
+            marks=[pytest.mark.xfail(strict=True, reason=_WRONG_TODAY[name])]
+            if name in _WRONG_TODAY
+            else [],
+        )
+        for name, case in _PATH_CASES.items()
+    ]
+
+
 class TestEveryPathCompletesOnce:
     """Each offset completes once per share, and only after its writes are flushed."""
 
-    @pytest.mark.parametrize("case", list(_PATH_CASES.values()), ids=list(_PATH_CASES))
+    @pytest.mark.parametrize("case", _path_case_params())
     def test_each_offset_completes_once_per_share_after_its_last_flush(
         self, case: _PathCase, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1017,6 +1194,8 @@ class TestEveryPathCompletesOnce:
             monkeypatch,
             output=_topic(case.output) if case.output is not None else None,
             errors=_topic(case.errors) if case.errors is not None else None,
+            source=case.source() if case.source is not None else None,
+            delivery=case.delivery,
         )
 
         _assert_each_offset_completes_once_after_its_writes(log, case.writes, case.shares, range(3))
