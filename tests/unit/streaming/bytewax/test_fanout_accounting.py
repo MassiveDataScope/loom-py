@@ -49,14 +49,19 @@ from loom.streaming import (  # noqa: E402
     IntoTopic,
     Process,
     RecordStep,
+    Route,
     Router,
     StreamFlow,
+    With,
     WithAsync,
     msg,
 )
 from loom.streaming.bytewax import RuntimeConfigurationError, _adapter  # noqa: E402
 from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E402
-from loom.streaming.bytewax._runtime_io import build_runtime_sink  # noqa: E402
+from loom.streaming.bytewax._runtime_io import (  # noqa: E402
+    build_runtime_error_sinks,
+    build_runtime_sink,
+)
 from loom.streaming.bytewax.handlers import _shared  # noqa: E402
 from loom.streaming.bytewax.handlers import routing as _routing  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
@@ -64,7 +69,7 @@ from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import StreamingErrorCode, compile_flow  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
-from tests.unit.streaming.bytewax.cases import Order, Result  # noqa: E402
+from tests.unit.streaming.bytewax.cases import Item, Order, Result, UpperItem  # noqa: E402
 from tests.unit.streaming.kafka.fakes import ProducerBackendStub  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
@@ -113,8 +118,6 @@ def _complete(tracker: KafkaCommitTracker, results: list[Any]) -> None:
 
 
 def _ctx(tracker: KafkaCommitTracker | None) -> Any:
-    from loom.core.observability.runtime import ObservabilityRuntime
-
     return SimpleNamespace(
         plan=SimpleNamespace(name="orders"),
         current_path=(),
@@ -408,8 +411,6 @@ class TestExpandRoutesWiring:
     ) -> None:
         """Order matters: the fork must be registered before any row can complete."""
 
-        from loom.streaming.nodes._expand_routes import ExpandRoutes
-
         class _Expander:
             @staticmethod
             def expand(payload: Order) -> dict[type, list[Any]]:
@@ -494,20 +495,22 @@ Event = tuple[str, object, int | None]
 """``(kind, where, offset)``: produce, flush, write, fork or complete."""
 
 
-class _Item(LoomStruct):
-    value: str
-
-
 class _Row(LoomStruct):
     value: str
 
 
-class _Upper(RecordStep[_Item, _Item]):
-    """Uppercase the payload."""
+class _Other(LoomStruct):
+    value: str
 
-    def execute(self, message: Message[_Item], **kwargs: object) -> _Item:
+
+class _FailOnItem1(RecordStep[Item, Item]):
+    """Fail on the item at offset 1 and pass the others through."""
+
+    def execute(self, message: Message[Item], **kwargs: object) -> Item:
         del kwargs
-        return _Item(value=message.payload.value.upper())
+        if message.payload.value == "item-1":
+            raise RuntimeError("item-1 is rejected")
+        return message.payload
 
 
 class _TwoRows:
@@ -516,8 +519,22 @@ class _TwoRows:
     outputs: ClassVar[tuple[type, ...]] = (_Row,)
 
     @classmethod
-    def expand(cls, event: _Item) -> dict[type, list[Any]]:
+    def expand(cls, event: Item) -> dict[type, list[Any]]:
         return {_Row: [_Row(value=event.value), _Row(value=event.value)]}
+
+
+class _RowsByOffset:
+    """Item 0 expands to a routed and an unrouted row, item 1 to none, item 2 to an unrouted one."""
+
+    outputs: ClassVar[tuple[type, ...]] = (_Row, _Other)
+
+    @classmethod
+    def expand(cls, event: Item) -> dict[type, list[Any]]:
+        if event.value == "item-0":
+            return {_Row: [_Row(value=event.value)], _Other: [_Other(value=event.value)]}
+        if event.value == "item-2":
+            return {_Other: [_Other(value=event.value)]}
+        return {}
 
 
 def _offset_in(value: bytes | str) -> int:
@@ -607,17 +624,16 @@ class _TrackedTestingSource(TestingSource):
         del tracker
 
 
-def _item(offset: int) -> Message[_Item]:
+def _item(offset: int) -> Message[Item]:
     return Message(
-        payload=_Item(value=f"item-{offset}"),
+        payload=Item(value=f"item-{offset}"),
         meta=MessageMeta(message_id=f"m-{offset}", topic="items", partition=0, offset=offset),
     )
 
 
 def _undecodable(offset: int) -> KafkaRecord[bytes]:
-    return KafkaRecord(
-        topic="items", key=None, value=b"not-an-envelope", partition=0, offset=offset
-    )
+    value = f"item-{offset} is not an envelope".encode()
+    return KafkaRecord(topic="items", key=None, value=value, partition=0, offset=offset)
 
 
 def _run_paths(
@@ -626,6 +642,7 @@ def _run_paths(
     monkeypatch: pytest.MonkeyPatch,
     *,
     output: IntoTopic[Any] | None = None,
+    errors: IntoTopic[Any] | None = None,
 ) -> list[Event]:
     """Run one flow and return the ordered log of its writes and completions."""
     log: list[Event] = []
@@ -636,13 +653,18 @@ def _run_paths(
         IntoTable, "build_partition", lambda self, *args, **kwargs: _LoggingTablePartition(log)
     )
     flow: StreamFlow[Any, Any] = StreamFlow(
-        name="paths", source=FromTopic("items", payload=_Item), process=process, output=output
+        name="paths",
+        source=FromTopic("items", payload=Item),
+        process=process,
+        output=output,
+        errors=errors,
     )
     plan = compile_flow(flow, config=ConfigContext.from_dict(_PATH_CONFIG))
     built = _adapter.build_dataflow_with_shutdown(
         plan,
         source=_TrackedTestingSource(list(items)),
         sink=build_runtime_sink(plan.output) if plan.output is not None else None,
+        error_sinks=build_runtime_error_sinks(plan.error_routes),
         commit_tracker=cast(Any, _LoggingTracker(log)),
     )
     try:
@@ -653,12 +675,12 @@ def _run_paths(
 
 
 def _topic(name: str) -> IntoTopic[Any]:
-    return IntoTopic(name, payload=_Item)
+    return IntoTopic(name, payload=Item)
 
 
-def _table() -> Any:
+def _table(payload: type[Any] = Item) -> Any:
     """Build the table sink; ``Process`` does not type ``IntoSink`` nodes."""
-    return IntoTable(payload=_Item, table="items", backend=Backend.DELTA, name="items_table")
+    return IntoTable(payload=payload, table="items", backend=Backend.DELTA, name="items_table")
 
 
 @dataclass(frozen=True)
@@ -668,15 +690,18 @@ class _PathCase:
     Args:
         process: Process of the flow under test.
         writes: Every ``(topic or table, offset)`` the run must write, as a multiset.
-        shares: Completions each offset owes: one, plus one per extra fork share.
+        shares: Completions each offset owes: one, plus one per extra fork share;
+            per offset when the offsets differ.
         output: Flow output, when the shape has one.
+        errors: Flow error route, when the shape has one.
         items: Source items; three plain items unless the shape needs others.
     """
 
     process: Callable[[], Process[Any, Any]]
     writes: tuple[tuple[str, int], ...]
-    shares: int = 1
+    shares: int | dict[int, int] = 1
     output: str | None = None
+    errors: str | None = None
     items: Callable[[], list[object]] = lambda: [_item(offset) for offset in range(3)]
 
 
@@ -686,25 +711,25 @@ def _each(topic: str, *offsets: int) -> tuple[tuple[str, int], ...]:
 
 _PATH_CASES = {
     "into_topic": _PathCase(
-        lambda: Process(_Upper(), _topic("t.a")),
+        lambda: Process(UpperItem(), _topic("t.a")),
         _each("t.a", 0, 1, 2),
     ),
     "into_topic_with_output": _PathCase(
-        lambda: Process(_Upper(), _topic("t.a")),
+        lambda: Process(UpperItem(), _topic("t.a")),
         _each("t.a", 0, 1, 2),
         output="t.out",
     ),
     "dlq_diversion": _PathCase(
-        lambda: Process(IntoTopic("t.unreachable", payload=_Item, dlq="t.dlq")),
+        lambda: Process(IntoTopic("t.unreachable", payload=Item, dlq="t.dlq")),
         _each("t.unreachable", 0, 1, 2) + _each("t.dlq", 0, 1, 2),
     ),
     "inline_then_output": _PathCase(
-        lambda: Process(WithAsync(process=Process(_Upper(), _topic("t.inline")))),
+        lambda: Process(WithAsync(process=Process(UpperItem(), _topic("t.inline")))),
         _each("t.inline", 0, 1, 2) + _each("t.out", 0, 1, 2),
         output="t.out",
     ),
     "inline_only": _PathCase(
-        lambda: Process(WithAsync(process=Process(_Upper(), _topic("t.inline")))),
+        lambda: Process(WithAsync(process=Process(UpperItem(), _topic("t.inline")))),
         _each("t.inline", 0, 1, 2),
     ),
     "fork_branch_ending_in_scope": _PathCase(
@@ -751,8 +776,8 @@ _PATH_CASES = {
     "broadcast_routes_with_output": _PathCase(
         lambda: Process(
             Broadcast(
-                BroadcastRoute(process=Process(_Upper()), output=_topic("t.a")),
-                BroadcastRoute(process=Process(_Upper()), output=_topic("t.b")),
+                BroadcastRoute(process=Process(UpperItem()), output=_topic("t.a")),
+                BroadcastRoute(process=Process(UpperItem()), output=_topic("t.b")),
             )
         ),
         _each("t.a", 0, 1, 2) + _each("t.b", 0, 1, 2),
@@ -762,7 +787,7 @@ _PATH_CASES = {
         lambda: Process(
             Broadcast(
                 BroadcastRoute(process=Process(_topic("t.a")), output=_topic("t.b")),
-                BroadcastRoute(process=Process(_Upper()), output=_topic("t.b")),
+                BroadcastRoute(process=Process(UpperItem()), output=_topic("t.b")),
             )
         ),
         _each("t.a", 0, 1, 2) + _each("t.b", 0, 1, 2),
@@ -772,7 +797,7 @@ _PATH_CASES = {
         lambda: Process(
             Broadcast(
                 BroadcastRoute(process=Process(_topic("t.a"))),
-                BroadcastRoute(process=Process(_Upper(), _topic("t.b"))),
+                BroadcastRoute(process=Process(UpperItem(), _topic("t.b"))),
             )
         ),
         _each("t.a", 0, 1, 2) + _each("t.b", 0, 1, 2),
@@ -782,7 +807,7 @@ _PATH_CASES = {
         lambda: Process(
             Router.by(
                 msg.payload.value,
-                routes={"item-0": Process(_Upper(), _topic("t.a"))},
+                routes={"item-0": Process(UpperItem(), _topic("t.a"))},
                 default=Process(_topic("t.b")),
             )
         ),
@@ -793,22 +818,121 @@ _PATH_CASES = {
             Router.by(
                 msg.payload.value,
                 routes={"item-0": Process(_topic("t.a"))},
-                default=Process(_Upper()),
+                default=Process(UpperItem()),
             )
         ),
         _each("t.a", 0) + _each("t.out", 1, 2),
         output="t.out",
     ),
-    "router_non_terminal_branch": _PathCase(
+    "sync_with_inline_only": _PathCase(
+        lambda: Process(With(process=Process(UpperItem(), _topic("t.inline")))),
+        _each("t.inline", 0, 1, 2),
+    ),
+    "drain": _PathCase(lambda: Process(Drain()), ()),
+    "error_route": _PathCase(
+        lambda: Process(_FailOnItem1(), _topic("t.a")),
+        _each("t.a", 0, 2) + _each("t.err", 1),
+        errors="t.err",
+    ),
+    "error_without_route": _PathCase(
+        lambda: Process(_FailOnItem1(), _topic("t.a")),
+        _each("t.a", 0, 2),
+    ),
+    "decode_error_with_wire_route": _PathCase(
+        lambda: Process(_topic("t.a")),
+        _each("t.a", 0, 1) + _each("t.err", 2),
+        errors="t.err",
+        items=lambda: [_item(0), _item(1), _undecodable(2)],
+    ),
+    "fork_by": _PathCase(
+        lambda: Process(
+            Fork.by(
+                msg.payload.value,
+                {"item-0": Process(_topic("t.a"))},
+                default=Process(_topic("t.b")),
+            )
+        ),
+        _each("t.a", 0) + _each("t.b", 1, 2),
+    ),
+    "fork_without_default": _PathCase(
+        lambda: Process(
+            Fork.when(
+                [ForkRoute(when=msg.payload.value == "item-0", process=Process(_topic("t.a")))]
+            )
+        ),
+        _each("t.a", 0),
+    ),
+    "fork_branch_into_table": _PathCase(
+        lambda: Process(
+            Fork.when(
+                [ForkRoute(when=msg.payload.value == "item-0", process=Process(_table()))],
+                default=Process(_topic("t.a")),
+            )
+        ),
+        _each("items_table", 0) + _each("t.a", 1, 2),
+    ),
+    "router_nested_in_a_fork_branch": _PathCase(
+        lambda: Process(
+            Fork.when(
+                [
+                    ForkRoute(
+                        when=msg.payload.value != "item-2",
+                        process=Process(
+                            Router.by(msg.payload.value, routes={"item-0": Process(_topic("t.a"))})
+                        ),
+                    )
+                ],
+                default=Process(_topic("t.b")),
+            )
+        ),
+        _each("t.a", 0) + _each("t.b", 2),
+    ),
+    "broadcast_discard_route_and_drain": _PathCase(
+        lambda: Process(
+            Broadcast(
+                BroadcastRoute(process=Process(UpperItem())),
+                BroadcastRoute(process=Process(Drain())),
+                BroadcastRoute(process=Process(_topic("t.a"))),
+            )
+        ),
+        _each("t.a", 0, 1, 2),
+        shares=3,
+    ),
+    "expand_routes_default_route_and_zero_rows": _PathCase(
+        lambda: Process(
+            ExpandRoutes(
+                expander=_RowsByOffset,
+                routes={_Row: Process(IntoTopic("t.a", payload=_Row))},
+                default=Process(IntoTopic("t.b", payload=_Other)),
+            )
+        ),
+        _each("t.a", 0) + _each("t.b", 0, 2),
+        shares={0: 2, 1: 1, 2: 1},
+    ),
+    "expand_routes_route_into_table": _PathCase(
+        lambda: Process(ExpandRoutes(expander=_TwoRows, routes={_Row: Process(_table(_Row))})),
+        _each("items_table", 0, 0, 1, 1, 2, 2),
+        shares=2,
+    ),
+    "router_when": _PathCase(
+        lambda: Process(
+            Router.when(
+                [Route(when=msg.payload.value == "item-0", process=Process(_topic("t.a")))],
+                default=Process(_topic("t.b")),
+            )
+        ),
+        _each("t.a", 0) + _each("t.b", 1, 2),
+    ),
+    "router_branch_step_fails": _PathCase(
         lambda: Process(
             Router.by(
                 msg.payload.value,
-                routes={"item-0": Process(_Upper())},
-                default=Process(_Upper()),
+                routes={"item-1": Process(_FailOnItem1(), _topic("t.b"))},
+                default=Process(_topic("t.a")),
             )
         ),
-        _each("t.out", 0, 1, 2),
-        output="t.out",
+        _each("t.a", 0, 2) + _each("t.err", 1),
+        errors="t.err",
     ),
     "router_unmatched": _PathCase(
         lambda: Process(Router.by(msg.payload.value, routes={"item-0": Process(_topic("t.a"))})),
@@ -822,14 +946,14 @@ _PATH_CASES = {
         lambda: Process(
             Router.by(
                 msg.payload.value,
-                routes={"item-0": Process(_Upper(), _table())},
+                routes={"item-0": Process(UpperItem(), _table())},
                 default=Process(_table()),
             )
         ),
         _each("items_table", 0, 1, 2),
     ),
     "into_table": _PathCase(
-        lambda: Process(_Upper(), _table()),
+        lambda: Process(UpperItem(), _table()),
         _each("items_table", 0, 1, 2),
     ),
     "decode_error_without_wire_route": _PathCase(
@@ -840,6 +964,46 @@ _PATH_CASES = {
 }
 
 
+def _assert_each_offset_completes_once_after_its_writes(
+    log: list[Event],
+    writes: Sequence[tuple[str, int]],
+    shares: int | dict[int, int],
+    offsets: range,
+) -> None:
+    """Assert the writes, the completions per share, and that none precedes a flush."""
+    written = Counter(
+        (cast(tuple[int, str], where)[1] if kind == "produce" else where, offset)
+        for kind, where, offset in log
+        if kind in ("produce", "write")
+    )
+    assert written == Counter(writes), "the messages were written somewhere else"
+
+    completed = Counter(offset for kind, _, offset in log if kind == "complete")
+    forked = Counter[int | None]()
+    for kind, extra, offset in log:
+        if kind == "fork":
+            forked[offset] += cast(int, extra)
+    expected = shares if isinstance(shares, dict) else dict.fromkeys(offsets, shares)
+    assert completed == expected, "completions per offset"
+    assert all(completed[offset] == 1 + forked[offset] for offset in offsets), (
+        "every fork share completes exactly once"
+    )
+
+    for offset in offsets:
+        released = max(
+            i for i, (kind, _, o) in enumerate(log) if kind == "complete" and o == offset
+        )
+        for i, (kind, where, o) in enumerate(log):
+            if o != offset or kind not in ("produce", "write"):
+                continue
+            assert i < released, f"offset {offset} was released before a write"
+            if kind == "produce":
+                producer = cast(tuple[int, str], where)[0]
+                assert ("flush", producer, None) in log[i:released], (
+                    f"offset {offset} was released before its write was flushed"
+                )
+
+
 class TestEveryPathCompletesOnce:
     """Each offset completes once per share, and only after its writes are flushed."""
 
@@ -847,55 +1011,33 @@ class TestEveryPathCompletesOnce:
     def test_each_offset_completes_once_per_share_after_its_last_flush(
         self, case: _PathCase, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        output = _topic(case.output) if case.output is not None else None
-        log = _run_paths(case.process(), case.items(), monkeypatch, output=output)
-
-        written = Counter(
-            (cast(tuple[int, str], where)[1] if kind == "produce" else where, offset)
-            for kind, where, offset in log
-            if kind in ("produce", "write")
-        )
-        assert written == Counter(case.writes), "the messages were written somewhere else"
-
-        completed = Counter(offset for kind, _, offset in log if kind == "complete")
-        forked = Counter[int | None]()
-        for kind, extra, offset in log:
-            if kind == "fork":
-                forked[offset] += cast(int, extra)
-        offsets = {offset for _, offset in case.writes} | set(range(3))
-        assert completed == dict.fromkeys(offsets, case.shares), "completions per offset"
-        assert all(completed[offset] == 1 + forked[offset] for offset in offsets), (
-            "every fork share completes exactly once"
+        log = _run_paths(
+            case.process(),
+            case.items(),
+            monkeypatch,
+            output=_topic(case.output) if case.output is not None else None,
+            errors=_topic(case.errors) if case.errors is not None else None,
         )
 
-        for offset in offsets:
-            released = max(
-                i for i, (kind, _, o) in enumerate(log) if kind == "complete" and o == offset
-            )
-            for i, (kind, where, o) in enumerate(log):
-                if o != offset or kind not in ("produce", "write"):
-                    continue
-                assert i < released, f"offset {offset} was released before a write"
-                if kind == "produce":
-                    producer = cast(tuple[int, str], where)[0]
-                    assert ("flush", producer, None) in log[i:released], (
-                        f"offset {offset} was released before its write was flushed"
-                    )
+        _assert_each_offset_completes_once_after_its_writes(log, case.writes, case.shares, range(3))
 
-    def test_a_router_keeps_the_source_order_of_one_partition(
+    def test_a_router_keeps_the_source_order_of_the_messages_that_continue(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         even: dict[object, Process[Any, Any]] = {
-            f"item-{offset}": Process(_Upper()) for offset in range(0, 8, 2)
+            f"item-{offset}": Process(UpperItem()) for offset in range(0, 8, 2)
         }
         log = _run_paths(
-            Process(Router.by(msg.payload.value, routes=even, default=Process(_Upper()))),
+            Process(Router.by(msg.payload.value, routes=even, default=Process(UpperItem()))),
             [_item(offset) for offset in range(8)],
             monkeypatch,
             output=_topic("t.out"),
         )
 
         assert [offset for kind, _, offset in log if kind == "produce"] == list(range(8))
+        _assert_each_offset_completes_once_after_its_writes(
+            log, _each("t.out", *range(8)), 1, range(8)
+        )
 
 
 class _BufferingPartition:

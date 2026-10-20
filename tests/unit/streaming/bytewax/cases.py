@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from loom.core.model import LoomFrozenStruct
+from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.streaming import IntoTopic
 from loom.streaming.compiler import (
     CompiledNode,
@@ -41,6 +41,20 @@ class DoubleStep(RecordStep[Order, Result]):
     def execute(self, message: Message[Order], **kwargs: object) -> Result:
         del kwargs
         return Result(value=message.payload.order_id * 2)
+
+
+class Item(LoomStruct):
+    """Payload of the end-to-end runtime tests."""
+
+    value: str
+
+
+class UpperItem(RecordStep[Item, Item]):
+    """Uppercase the payload."""
+
+    def execute(self, message: Message[Item], **kwargs: object) -> Item:
+        del kwargs
+        return Item(value=message.payload.value.upper())
 
 
 class SuffixStep(RecordStep[Result, Result]):

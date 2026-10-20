@@ -32,7 +32,6 @@ from opentelemetry.trace.span import TraceState  # noqa: E402
 from opentelemetry.util.types import Attributes  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.model import LoomStruct  # noqa: E402
 from loom.core.observability.event import EventKind, Scope  # noqa: E402
 from loom.streaming import (  # noqa: E402
     FromTopic,
@@ -60,6 +59,7 @@ from loom.streaming.compiler._plan import CompiledSink  # noqa: E402
 from loom.streaming.kafka._config import ProducerSettings  # noqa: E402
 from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
 from tests.helpers.spans import SpanRecorder, build_recorder, hex_trace  # noqa: E402
+from tests.unit.streaming.bytewax.cases import Item, UpperItem  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
@@ -86,22 +86,10 @@ _CONFIG = {
 }
 
 
-class _Item(LoomStruct):
-    value: str
-
-
-class _Upper(RecordStep[_Item, _Item]):
-    """Uppercase the payload."""
-
-    def execute(self, message: Message[_Item], **kwargs: object) -> _Item:
-        del kwargs
-        return _Item(value=message.payload.value.upper())
-
-
-class _Boom(RecordStep[_Item, _Item]):
+class _Boom(RecordStep[Item, Item]):
     """Always fail, so the message becomes an error envelope."""
 
-    def execute(self, message: Message[_Item], **kwargs: object) -> _Item:
+    def execute(self, message: Message[Item], **kwargs: object) -> Item:
         del kwargs, message
         raise RuntimeError("node exploded")
 
@@ -242,7 +230,7 @@ def _terminal_sink(
 def _messages(count: int = 3) -> list[Message[Any]]:
     return [
         Message(
-            payload=_Item(value=f"row-{index}"),
+            payload=Item(value=f"row-{index}"),
             meta=MessageMeta(
                 message_id=f"msg-{index}",
                 trace_id=_TRACES[index],
@@ -270,7 +258,7 @@ def _attribute(span: ReadableSpan, key: str) -> object:
 
 def _run_flow(
     recorder: SpanRecorder,
-    flow: StreamFlow[_Item, _Item],
+    flow: StreamFlow[Item, Item],
     messages: Sequence[Message[Any]],
     *,
     with_error_sinks: bool = False,
@@ -291,15 +279,15 @@ def _run_flow(
         built.shutdown()
 
 
-def _terminal_flow() -> StreamFlow[_Item, _Item]:
+def _terminal_flow() -> StreamFlow[Item, Item]:
     return StreamFlow(
         name=_FLOW,
-        source=FromTopic("items", payload=_Item),
-        process=Process(_Upper(), IntoTopic(_OUT_TOPIC, payload=_Item)),
+        source=FromTopic("items", payload=Item),
+        process=Process(UpperItem(), IntoTopic(_OUT_TOPIC, payload=Item)),
     )
 
 
-def _inline_then_terminal_flow() -> StreamFlow[_Item, _Item]:
+def _inline_then_terminal_flow() -> StreamFlow[Item, Item]:
     """``WithAsync(process=[step, IntoTopic])`` followed by a real terminal.
 
     ``WithAsync(process=...)`` must be the last node of its process, so the real
@@ -308,18 +296,20 @@ def _inline_then_terminal_flow() -> StreamFlow[_Item, _Item]:
     """
     return StreamFlow(
         name=_FLOW,
-        source=FromTopic("items", payload=_Item),
-        process=Process(WithAsync(process=Process(_Upper(), IntoTopic(_OUT_TOPIC, payload=_Item)))),
-        output=IntoTopic(_OUT_TOPIC, payload=_Item),
+        source=FromTopic("items", payload=Item),
+        process=Process(
+            WithAsync(process=Process(UpperItem(), IntoTopic(_OUT_TOPIC, payload=Item)))
+        ),
+        output=IntoTopic(_OUT_TOPIC, payload=Item),
     )
 
 
-def _error_route_flow() -> StreamFlow[_Item, _Item]:
+def _error_route_flow() -> StreamFlow[Item, Item]:
     return StreamFlow(
         name=_FLOW,
-        source=FromTopic("items", payload=_Item),
-        process=Process(_Boom(), IntoTopic(_OUT_TOPIC, payload=_Item)),
-        errors=IntoTopic(_ERR_TOPIC, payload=_Item),
+        source=FromTopic("items", payload=Item),
+        process=Process(_Boom(), IntoTopic(_OUT_TOPIC, payload=Item)),
+        errors=IntoTopic(_ERR_TOPIC, payload=Item),
     )
 
 
