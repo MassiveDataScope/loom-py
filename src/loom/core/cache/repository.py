@@ -1078,8 +1078,7 @@ class CachedRepository(
     def _list_dependency_tags(self) -> list[str]:
         tags: list[str] = []
         for dependency in self._depends_on:
-            tags.append(dependency.entity)
-            tags.append(f"{dependency.entity}:list")
+            tags.extend((dependency.entity, f"{dependency.entity}:list"))
         return tags
 
     def _entity_dependency_tags(self, obj_id: object) -> list[str]:

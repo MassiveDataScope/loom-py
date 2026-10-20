@@ -196,8 +196,8 @@ def _loaded_module_name(source_file: str) -> str | None:
     a symlinked directory matches the file it resolves to.
     """
     source = os.path.realpath(source_file)
-    # Iterates a copy: an import from another thread, or from a module-level
-    # ``__getattr__`` run by the lookup below, changes ``sys.modules``.
+    # Iterates a copy: another thread can import while this loop runs, and so
+    # can reading ``__file__`` on a lazily loaded module.
     for name, module in sys.modules.copy().items():
         module_file = getattr(module, "__file__", None)
         if module_file is not None and os.path.realpath(module_file) == source:
