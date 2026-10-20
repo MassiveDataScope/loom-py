@@ -10,10 +10,11 @@ silent fallback.
 This is the only loom module that names or reads loom's process variables:
 the selector, the ``LOOM__SECTION__KEY`` configuration overrides (see
 :mod:`loom.core.config.overrides`) and every other ``LOOM_*`` variable, which
-the rest of loom reads through :func:`loom_variable`. A containment test
-enforces it. Every other module receives the resolved :class:`Environment`
-through configuration or the container; the entry points resolve it once
-and pass it on.
+the rest of loom reads through :func:`loom_variable`. It also reads, through
+:func:`configured_variable`, a variable a configuration names to hold a
+value. A containment test enforces it. Every other module receives the
+resolved :class:`Environment` through configuration or the container; the
+entry points resolve it once and pass it on.
 
 The environment also picks the configuration overlay of a config directory:
 ``base.yaml`` first, then ``<environment>.yaml`` when it exists.
@@ -164,6 +165,21 @@ def loom_variable(name: str) -> str | None:
     return os.environ.get(name)
 
 
+def configured_variable(name: str) -> str | None:
+    """Return the value of the variable a configuration names, or ``None`` when unset.
+
+    For a value the configuration points at instead of holding, such as a
+    secret a container platform injects as a variable.
+
+    Raises:
+        ConfigError: When *name* is a ``LOOM_*`` variable: those are loom's
+            own and are read through :func:`loom_variable`.
+    """
+    if name.startswith("LOOM_"):
+        raise ConfigError(f"{name} is a loom variable and cannot hold a configured value")
+    return os.environ.get(name)
+
+
 @contextmanager
 def scoped_loom_variable(name: str, value: str) -> Iterator[None]:
     """Set the ``LOOM_*`` variable *name* to *value* inside the block, then restore it.
@@ -282,6 +298,7 @@ __all__ = [
     "STORAGE_CONFIG_VARIABLE",
     "Environment",
     "config_source_paths",
+    "configured_variable",
     "confirm_environment",
     "environment_config_paths",
     "loom_variable",

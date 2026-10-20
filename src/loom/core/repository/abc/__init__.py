@@ -1,3 +1,4 @@
+from loom.core.repository.abc.checks import CURSOR_SIGNING_CHECK
 from loom.core.repository.abc.cursor import Cursor, CursorCodec, CursorConfig, CursorKeySource
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import (
@@ -36,6 +37,7 @@ from loom.core.repository.abc.repository import (
 from loom.core.repository.abc.session_scope import SupportsCallerScopedSession
 
 __all__ = [
+    "CURSOR_SIGNING_CHECK",
     "CreateT",
     "Cursor",
     "CursorCodec",

@@ -13,8 +13,7 @@ base64url form of a msgspec JSON record `{"b": backend, "k": keys, "id":
 tie_breaker}` (`encode_cursor`, `decode_cursor`). Two defects followed.
 
 1. **No integrity.** Anyone could write a token that decoded. Every consumer
-   paginating by hand (periplo-cloud's access views, for one) had to
-   re-validate every field itself, and a forged token reached the keyset
+   paginating by hand had to re-validate every field itself, and a forged token reached the keyset
    predicate with values the server never issued.
 2. **Lenient decoding.** `_DateTimeKey.v: datetime` accepted a naive ISO
    string. A consumer comparing the decoded key with an aware datetime raised
@@ -119,13 +118,28 @@ There is no environment logic in the codec. With `signing` absent the mode is
 at startup without a key, with a `ConfigError` that names the
 `persistence.cursors.signing: ephemeral` opt-out for `development.yaml`.
 
-A deploy check, `loom.cursors.E001` ("cursors are not signed"), will refuse
-a deployment that runs with `ephemeral` or `unsigned`. It is registered
-through the deploy-check registry that `hotfix/central-environment` builds;
-this change builds no registry of its own. Whichever lands second wires the
-check: if this change merges first, a follow-up registers it once the
-registry exists; if the registry merges first, this change is rebased and
-registers it.
+A deploy check, `loom.cursors.E001`, registered with `@deploy_check` from
+the deploy-check registry of ADR 0005, refuses a deployment that serves
+repositories without signing its cursors with a configured key. It lives in
+`loom.core.repository.abc.checks`, which `loom.core.repository.abc` imports,
+and `loom check --deploy` imports that package. It applies when the
+configuration has a `database` section (SQLAlchemy, and the Celery worker)
+or a `persistence.mongo` section, and finds:
+
+- `persistence.cursors.signing` set to anything but the literal `signed`
+  (absent means `signed`): `ephemeral` and `unsigned` are for development
+  and tests;
+- a `current_key_id` that is not a literal entry of `keys`. Startup fails on
+  it anyway when the codec is built; the check reports it in CI too.
+
+Like the other checks it reads the keys as written and resolves no
+placeholder, so it runs without the key material, and it runs only in
+production and staging (ADR 0005). `persistence.cursors.*` is not on the
+`LOOM__*` override allowlist, so in production and staging
+`LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` fails at startup before any
+check runs. A key's `env` source names the variable holding it; loom reads
+it through `loom.core.environment.configured_variable`, which refuses a
+`LOOM_*` name, since those are loom's own.
 
 ### Wiring and public surface
 

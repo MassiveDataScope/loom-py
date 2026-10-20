@@ -227,7 +227,9 @@ class TestFilterValues:
         self, session_manager: SessionManager, op: FilterOp, value: Any
     ) -> None:
         repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Swatch
+            session_manager=session_manager,
+            model=_Swatch,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         await repo.create(_CreateSwatch(shade=_Shade.LIGHT))
         dark = await repo.create(_CreateSwatch(shade=_Shade.DARK))
@@ -243,7 +245,9 @@ class TestFilterValues:
         self, session_manager: SessionManager, field: str, value: Any
     ) -> None:
         repo: RepositorySQLAlchemy[_Mark, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Mark
+            session_manager=session_manager,
+            model=_Mark,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         written = repo._serialize_input(_CreateMark(shade=_Shade.DARK, noted_at=_STAMP))[field]
 

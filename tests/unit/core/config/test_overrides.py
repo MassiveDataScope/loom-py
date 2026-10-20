@@ -227,6 +227,7 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         ("LOOM__SQL__CONNECTIONS__ANALYTICS__MAX_EXECUTION_TIME", "0"),
         ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
         ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),
+        ("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned"),
     ],
     ids=[
         "a key a reviewed key references, off the allowlist",
@@ -240,6 +241,7 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         "the query time limit",
         "the columns a list route filters on",
         "the columns a list route sorts by",
+        "cursor signing",
     ],
 )
 def test_a_deployed_environment_refuses_every_key_off_the_allowlist(

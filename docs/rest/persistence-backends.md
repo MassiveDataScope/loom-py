@@ -212,8 +212,8 @@ persistence:
   cursors:
     current_key_id: "2026-10"          # signs new tokens
     keys:                              # every key that still verifies
-      "2026-10": {env: LOOM_CURSOR_KEY_2026_10}
-      "2026-07": {env: LOOM_CURSOR_KEY_2026_07}
+      "2026-10": {env: CURSOR_KEY_2026_10}
+      "2026-07": {env: CURSOR_KEY_2026_07}
 ```
 
 ```yaml
@@ -251,7 +251,17 @@ the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
 - `signing: unsigned` signs nothing, so a token can be read and written by
   hand. For `test.yaml` and debugging only.
 
-Production uses `signed`. Decoding is strict in every mode: a token that is not
+Production uses `signed`. In production and staging the deploy check
+`loom.cursors.E001` fails startup, and `loom check --deploy` fails, when a
+`database` or `persistence.mongo` section is set and `signing` is anything but
+`signed` or `current_key_id` names no entry of `keys` (see
+[Environments](../getting-started/environments.md#deploy-checks)).
+`persistence.cursors` cannot be set from a `LOOM__*` variable in those
+environments: it is not on the override allowlist. A key's `env` source names
+the variable holding the key, which must not start with `LOOM_`; on ECS it is
+a `secrets` entry of the task definition.
+
+Decoding is strict in every mode: a token that is not
 unpadded base64url, a payload that is not the token record, a datetime key
 without a time zone, a key of an unknown type, a token of another backend, or
 one whose key count differs from the sort or the primary key is refused. Every

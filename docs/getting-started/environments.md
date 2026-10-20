@@ -133,12 +133,18 @@ database:
 # config/development.yaml
 database:
   url: sqlite+aiosqlite:///store.db
+persistence:
+  cursors:
+    signing: ephemeral   # a random key per process; see the persistence guide
 ```
 
 ```yaml
 # config/test.yaml
 database:
   url: sqlite+aiosqlite:///
+persistence:
+  cursors:
+    signing: unsigned
 ```
 
 ```yaml
@@ -153,6 +159,11 @@ app:
         secret_path: /run/secrets/jwt
         algorithms: [HS256]
         audience: my-store
+persistence:
+  cursors:
+    current_key_id: "2026-10"
+    keys:
+      "2026-10": {path: /run/secrets/cursor-2026-10}
 ```
 
 ```bash
@@ -293,6 +304,10 @@ injects them as variables, and the YAML references them with
         {
           "name": "PAYMENTS_API_KEY",
           "valueFrom": "arn:aws:ssm:eu-west-1:123456789012:parameter/store/payments-api-key"
+        },
+        {
+          "name": "CURSOR_KEY_2026_10",
+          "valueFrom": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:store/cursor-2026-10"
         }
       ]
     }
@@ -306,6 +321,11 @@ database:
   url: ${oc.env:DATABASE_URL}
 payments:
   api_key: ${oc.env:PAYMENTS_API_KEY}
+persistence:
+  cursors:
+    current_key_id: "2026-10"
+    keys:
+      "2026-10": {env: CURSOR_KEY_2026_10}   # the variable is named, never interpolated
 ```
 
 On other platforms, the `${secrets:...}` and `${ssm:...}` resolvers read
@@ -356,6 +376,7 @@ check fails startup, a `W` check logs a warning.
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
+| `loom.cursors.E001` | A `database` or `persistence.mongo` section is set and pagination cursors are not signed with a configured key: `persistence.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 
 Processes that serve no HTTP (the worker and the runners) skip the
 `loom.rest` checks. A runner built from a whole configuration (a file, a

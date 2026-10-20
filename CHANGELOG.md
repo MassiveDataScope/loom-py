@@ -556,7 +556,7 @@
     cursors:
       current_key_id: "2026-10"
       keys:
-        "2026-10": {env: LOOM_CURSOR_KEY_2026_10}   # or {path: /run/secrets/...}
+        "2026-10": {env: CURSOR_KEY_2026_10}   # or {path: /run/secrets/...}
   ```
 
   Keys are read from a file or an environment variable, never written in the
@@ -565,8 +565,12 @@
   The default is `signed` in every environment; `signing: ephemeral` (a
   random per-process key, for `development.yaml`) and `signing: unsigned`
   (for `test.yaml`) are explicit opt-outs, and both log a WARNING at
-  startup. Tokens issued before this release are refused: clients restart
-  from the first page.
+  startup. In production and staging the deploy check `loom.cursors.E001`
+  fails startup, and `loom check --deploy` fails, when a `database` or
+  `persistence.mongo` section is set and `signing` is not `signed` or
+  `current_key_id` names no entry of `keys`. A key's `env` source must not
+  name a `LOOM_*` variable. Tokens issued before this release are refused:
+  clients restart from the first page.
 - **core:** the unsigned module functions `encode_cursor` and
   `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
   `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
@@ -585,7 +589,9 @@
   `context.container.resolve(CursorCodec)`. `extract_next_cursor` returns the
   next `Cursor` position instead of a token, and `SessionManager` gains
   `current_settings()`. SQLAlchemy repositories bind cursors to the caller's
-  `loom.scope.*` session values.
+  `loom.scope.*` session values. `loom.core.environment` gains
+  `configured_variable(name)`, which reads a variable a configuration names
+  and refuses a `LOOM_*` name.
 
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number

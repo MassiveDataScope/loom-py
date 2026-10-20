@@ -31,7 +31,6 @@ import binascii
 import hashlib
 import hmac
 import logging
-import os
 import re
 import secrets
 from collections.abc import Mapping
@@ -46,6 +45,7 @@ import msgspec
 
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
+from loom.core.environment import configured_variable
 from loom.core.model.struct import LoomFrozenStruct
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import FilterSpec, QuerySpec
@@ -130,7 +130,7 @@ class CursorConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_f
           cursors:
             current_key_id: "2026-10"
             keys:
-              "2026-10": {env: LOOM_CURSOR_KEY_2026_10}
+              "2026-10": {env: CURSOR_KEY_2026_10}
               "2026-07": {path: /run/secrets/cursor-2026-07}
     """
 
@@ -240,14 +240,11 @@ class CursorCodec:
         )
 
     @classmethod
-    def from_config(
-        cls, config: CursorConfig, *, environ: Mapping[str, str] | None = None
-    ) -> CursorCodec:
+    def from_config(cls, config: CursorConfig) -> CursorCodec:
         """Build the codec of a ``persistence.cursors`` section, reading its keys.
 
         Args:
             config: The section, or ``CursorConfig()`` when it is absent.
-            environ: Environment the ``env`` sources read; ``os.environ`` by default.
 
         Returns:
             The codec for the resolved signing mode.
@@ -258,8 +255,7 @@ class CursorCodec:
         """
         if config.signing != _SIGNED:
             return cls(signing=config.signing)
-        source = os.environ if environ is None else environ
-        keys = {key_id: _read_key(key_id, spec, source) for key_id, spec in config.keys.items()}
+        keys = {key_id: _read_key(key_id, spec) for key_id, spec in config.keys.items()}
         return cls(signing=_SIGNED, keys=keys, current_key_id=config.current_key_id)
 
     def encode(self, cursor: Cursor, *, model: str, query: QuerySpec, scope: str) -> str:
@@ -372,10 +368,10 @@ def _keyring(
     return {key_id.encode(): key for key_id, key in keys.items()}, current_key_id.encode()
 
 
-def _read_key(key_id: str, spec: CursorKeySource, environ: Mapping[str, str]) -> bytes:
+def _read_key(key_id: str, spec: CursorKeySource) -> bytes:
     """Read one key; errors name the key id and never the material or the path."""
     if spec.env is not None:
-        text = environ.get(spec.env)
+        text = configured_variable(spec.env)
         if text is None:
             raise ConfigError(f"cursor key {key_id!r}: environment variable {spec.env} is not set")
     else:

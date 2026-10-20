@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import secrets
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -142,7 +143,12 @@ class TestBootstrapWorkerResult:
                 "task_always_eager": True,
             },
             "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+            # A deployed worker with a database signs its cursors (loom.cursors.E001).
+            "persistence": {
+                "cursors": {"current_key_id": "k1", "keys": {"k1": {"env": "CURSOR_KEY_WORKER"}}}
+            },
         }
+        monkeypatch.setenv("CURSOR_KEY_WORKER", secrets.token_urlsafe(32))
         config_file = tmp_path / "worker_observability.yaml"
         config_file.write_text(yaml.dump(cfg))
 

@@ -19,7 +19,7 @@ from loom.core.repository.abc import (
 
 _QUERY = QuerySpec(pagination=PaginationMode.CURSOR)
 _POSITION = Cursor(backend="sqlalchemy", keys=(), tie_breaker=1)
-_ENV = "LOOM_TEST_CURSOR_KEY"
+_ENV = "CURSOR_KEY_TEST"
 
 
 def _round_trip(issuer: CursorCodec, verifier: CursorCodec) -> Cursor:
@@ -100,6 +100,15 @@ class TestKeySources:
         config = CursorConfig(current_key_id="k1", keys={"k1": CursorKeySource(env=_ENV)})
 
         with pytest.raises(ConfigError, match=_ENV):
+            CursorCodec.from_config(config)
+
+    def test_a_loom_variable_cannot_hold_a_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LOOM_CURSOR_KEY", secrets.token_urlsafe(32))
+        config = CursorConfig(
+            current_key_id="k1", keys={"k1": CursorKeySource(env="LOOM_CURSOR_KEY")}
+        )
+
+        with pytest.raises(ConfigError, match="loom variable"):
             CursorCodec.from_config(config)
 
     def test_an_empty_variable_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:

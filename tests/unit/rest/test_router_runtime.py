@@ -31,7 +31,7 @@ from loom.core.observability.event import LifecycleEvent as ObservabilityLifecyc
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
+from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.field_ref import F

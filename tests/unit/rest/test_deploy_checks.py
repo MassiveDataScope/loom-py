@@ -10,6 +10,7 @@ staging, and hands the environment to the use cases through the container.
 from __future__ import annotations
 
 import logging
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,14 @@ class _HeaderAuthenticator:
     async def authenticate(self, credentials: RequestCredentials) -> Identity | None:
         subject = credentials.header("x-subject")
         return None if subject is None else Identity(subject=subject, mechanism=self.name)
+
+
+def _signed_cursors(tmp_path: Path) -> dict[str, Any]:
+    """A ``persistence`` section signing cursors with a mounted key, as a deployment does."""
+    key = tmp_path / "cursor.key"
+    key.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+    keys = {"k1": {"path": str(key)}}
+    return {"cursors": {"signing": "signed", "current_key_id": "k1", "keys": keys}}
 
 
 def _rest_ids(app: dict[str, Any]) -> list[str]:
@@ -131,7 +140,7 @@ class TestCreateAppInADeployedEnvironment:
         assert app.title == "Loom API"
 
     def test_an_authenticator_declared_as_custom_starts_in_production(self, tmp_path: Path) -> None:
-        config = write_project(tmp_path, rest=_CUSTOM_AUTH)
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH, persistence=_signed_cursors(tmp_path))
 
         app = create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
 
@@ -140,7 +149,9 @@ class TestCreateAppInADeployedEnvironment:
     def test_a_warning_is_logged_and_the_app_starts(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = write_project(tmp_path, rest={"auth": {"custom": True}})
+        config = write_project(
+            tmp_path, rest={"auth": {"custom": True}}, persistence=_signed_cursors(tmp_path)
+        )
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment="staging", authenticator=_HeaderAuthenticator())
@@ -150,7 +161,7 @@ class TestCreateAppInADeployedEnvironment:
     def test_a_silenced_error_lets_the_app_start_and_is_logged(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = write_project(tmp_path, rest=_NO_DOCS)
+        config = write_project(tmp_path, rest=_NO_DOCS, persistence=_signed_cursors(tmp_path))
         _merge_yaml(Path(config), {"checks": {"silenced": [AUTHENTICATION_CHECK]}})
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
@@ -312,8 +323,8 @@ def test_a_use_case_injects_the_resolved_environment(tmp_path: Path) -> None:
                     },
                 },
                 "database": {"url": "sqlite+aiosqlite:///"},
-                # Explicit about cursors ahead of #371, whose default "signed"
-                # needs a key. In development no deploy check runs.
+                # The default "signed" needs a key; in development no deploy
+                # check runs.
                 "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         ),
