@@ -943,16 +943,42 @@ class _ListBlobbed(UseCase[_Blobbed, PageResult[_Blobbed]]):
 
 
 class _JsonKeyed(BaseModel):
-    """A bare ``UUID`` key is inferred as a JSON column, which SQL keysets cannot order."""
+    """A key in a JSON column, which no keyset can order."""
 
     __tablename__ = "rest_compiler_json_keyed"
 
-    id: UUID = ColumnField(primary_key=True)
+    id: str = ColumnField(JSON, primary_key=True)
     label: str = ColumnField(length=8)
 
 
 class _ListJsonKeyed(UseCase[_JsonKeyed, PageResult[_JsonKeyed]]):
     async def execute(self, query: QuerySpec) -> PageResult[_JsonKeyed]:
+        raise NotImplementedError
+
+
+class _Pass(BaseModel):
+    __tablename__ = "rest_compiler_passes"
+
+    id: int = ColumnField(primary_key=True)
+    ref: UUID
+
+
+class _ListPasses(UseCase[_Pass, PageResult[_Pass]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_Pass]:
+        raise NotImplementedError
+
+
+class _UuidKeyed(BaseModel):
+    """A bare ``UUID`` key: a scalar ``Uuid`` column, which a keyset orders."""
+
+    __tablename__ = "rest_compiler_uuid_keyed"
+
+    id: UUID = ColumnField(primary_key=True)
+    label: str = ColumnField(length=8)
+
+
+class _ListUuidKeyed(UseCase[_UuidKeyed, PageResult[_UuidKeyed]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_UuidKeyed]:
         raise NotImplementedError
 
 
@@ -1153,6 +1179,25 @@ class TestDeclaredColumns:
         assert record.levelno == logging.WARNING
         assert "IFace: route (GET, '/')" in record.getMessage()
 
+    def test_a_uuid_column_is_filterable_sortable_and_in_all(self) -> None:
+        class Declared(RestInterface[_Pass]):
+            prefix = "/passes"
+            filterable = ("ref",)
+            sortable = ("ref",)
+            routes = (RestRoute(use_case=_ListPasses, method="GET", path="/"),)
+
+        class Everything(RestInterface[_Pass]):
+            prefix = "/all-passes"
+            filterable = ALL
+            sortable = ALL
+            routes = (RestRoute(use_case=_ListPasses, method="GET", path="/"),)
+
+        declared, everything = _compile_columns(Declared, Everything)
+
+        assert (declared.filter_fields, declared.sort_fields) == ((("ref", UUID),), ("ref", "id"))
+        assert dict(everything.filter_fields) == {"id": int, "ref": UUID}
+        assert set(everything.sort_fields) == {"id", "ref"}
+
 
 class TestCursorCapableRoutes:
     """A route that can serve cursor pages carries its primary key in every token."""
@@ -1198,6 +1243,16 @@ class TestCursorCapableRoutes:
 
         with pytest.raises(InterfaceCompilationError, match=r"primary key 'id'.*cursor"):
             _compile_columns(IFace)
+
+    def test_a_bare_uuid_primary_key_compiles_on_a_cursor_capable_route(self) -> None:
+        class IFace(RestInterface[_UuidKeyed]):
+            prefix = "/uuid-keyed"
+            routes = (RestRoute(use_case=_ListUuidKeyed, method="GET", path="/"),)
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.effective_allow_pagination_override is True
+        assert route.sort_fields == ("id",)
 
     def test_a_primary_key_in_a_json_column_fails_compilation(self) -> None:
         class IFace(RestInterface[_JsonKeyed]):

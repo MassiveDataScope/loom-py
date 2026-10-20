@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import datetime, time, timedelta, timezone
 from enum import Enum
+from uuid import UUID
 
 import pytest
 
@@ -293,3 +294,49 @@ async def test_a_forged_aware_time_for_a_naive_time_column_is_refused(
         await repo.list_with_query(forged)
 
     assert excinfo.value.code == ErrorCode.QUERY_VALIDATION
+
+
+class _Ticket(BaseModel):
+    __tablename__ = "cursor_uuid_tickets"
+
+    id: UUID = ColumnField(primary_key=True)
+    rank: int = ColumnField()
+
+
+class _CreateTicket(Command, frozen=True):
+    id: UUID
+    rank: int
+
+
+async def test_a_uuid_primary_key_breaks_ties_across_every_page(
+    session_manager: SessionManager,
+) -> None:
+    """The tie-breaker is a bare ``UUID`` key, a ``Uuid`` column, on every page."""
+    compile_all(_Ticket)
+    compiled = get_compiled(_Ticket)
+    assert compiled is not None
+    async with session_manager.engine.begin() as connection:
+        await connection.run_sync(compiled.metadata.create_all)
+    repo: RepositorySQLAlchemy[_Ticket, UUID] = RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Ticket, cursor_codec=_CODEC
+    )
+    keys = [UUID(int=n) for n in (5, 2, 7, 1, 6, 3, 4)]
+    await repo.create_many([_CreateTicket(id=key, rank=1) for key in keys])
+    sort = (SortSpec("rank"),)
+
+    walked: list[UUID] = []
+    pages = 0
+    cursor: str | None = None
+    while True:
+        page = await repo.list_with_query(
+            QuerySpec(sort=sort, pagination=PaginationMode.CURSOR, limit=2, cursor=cursor)
+        )
+        assert isinstance(page, CursorResult)
+        pages += 1
+        walked.extend(item.id for item in page.items)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+
+    assert pages == 4
+    assert walked == sorted(keys)

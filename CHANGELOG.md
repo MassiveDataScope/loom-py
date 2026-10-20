@@ -459,6 +459,35 @@
 
 ### core
 
+- **core:** a `uuid.UUID` field without a declared column type is now a
+  `Uuid` column (`loom.core.model.Uuid`, SQLAlchemy `Uuid`) instead of
+  `JSON`: `UUID` on Postgres, `CHAR(32)` holding the hex form on dialects
+  without a native UUID type, such as SQLite. Such a field is now a scalar
+  column, so REST `filterable`, `sortable` and `ALL` accept it on every
+  backend, `mongo` included; on SQLite a cursor walk sorted by it pages in
+  UUID order and an equality filter on it matches. Streaming `IntoTable` with the
+  SQLAlchemy backend binds a `UUID` field the same way instead of failing to
+  serialise it as JSON. Migration: an existing table with such a column needs
+  a revision changing its type; Alembic autogenerate reports it as a type
+  change from `JSON` to `Uuid`. Postgres does not cast `json` to `uuid`, so
+  the revision needs `postgresql_using="(<column> #>> '{}')::uuid"`. On a
+  dialect without a native UUID type the old rows hold JSON text (the quoted
+  UUID with dashes), which the `Uuid` column cannot read, so after the type
+  change the revision rewrites each value to its 32-character hex. On
+  SQLite: `op.batch_alter_table` for the type change, then
+  `UPDATE <table> SET <column> = replace(json_extract(<column>, '$'), '-', '')`.
+  Rewriting before the type change loses values on SQLite: a hex form made
+  only of digits is stored as a number in the `JSON` column.
+- **core:** a `Decimal` field, plain or optional, declares its column type: a
+  SQLAlchemy model with an undeclared one is refused when it is compiled,
+  naming the field. loom inferred `NUMERIC(10, 2)`, and Postgres silently
+  rounds a value to that scale (`1.2345` is stored as `1.23`) and refuses one
+  past that precision. Migration: declare it, e.g.
+  `Annotated[Decimal, Numeric(precision=20, scale=6)]` or
+  `ColumnField(Numeric(precision=20, scale=6))`; `Numeric()` with no
+  precision is now an unbounded `NUMERIC` instead of `NUMERIC(10, 2)`, and
+  `Numeric(scale=...)` without a precision raises `ValueError`, as SQLAlchemy
+  would drop the scale.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
@@ -907,10 +936,10 @@
   `sortable=ALL` opens it with a warning; a route that must hide its keys
   serves offset pages only (`pagination_mode` offset and
   `allow_pagination_override=False`). On such a route the key must also be of
-  a type a token carries and not in a JSON or array column; a bare `UUID`
-  annotation, inferred as JSON, fails compilation instead of on the first
-  cursor request: declare its column type (`Postgres.UUID`) or serve offset
-  pages only.
+  a type a token carries, in a scalar column: a key declared in a JSON or
+  array column, which a SQL keyset cannot order, fails compilation instead
+  of on the first cursor request. A bare `UUID` key, a scalar `Uuid` column,
+  compiles and pages on SQLAlchemy and Mongo alike.
 
 ### prefect
 
@@ -1046,6 +1075,40 @@
 
 ### streaming
 
+- **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
+  `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
+  and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
+  is removed. The runtime never read a declared shape: every source emits one
+  record per message, so a source declared `BATCH` was shape-checked as
+  batches while its nodes received records, and an `IntoTopic` writes one
+  record per message whatever it declared. Every flow now starts as a record
+  stream, and an `IntoTopic` ends its path (shape `none`). Migration: drop
+  `shape=`; to work on batches, use `CollectBatch` and, back to records,
+  `ForEach`.
+- **streaming:** a batch reaching a `Drain` or a `Broadcast` fails compilation
+  with `SHAPE_MISMATCH`, whatever the delivery. Under at-most-once delivery
+  `CollectBatch → Drain` compiled and dropped the batch; under at-least-once
+  the batch's offsets never completed. Under at-least-once a `Broadcast` with
+  more than one route raised `TypeError` (`Expected Message, got list`) on a
+  batch. Put a `ForEach` before the node.
+- **streaming:** `BatchExpandStep.execute` returns one list of payloads per
+  message of its batch, in batch order, instead of one flat list. List `i`
+  holds what `messages[i]` expands into; each output takes that message's
+  metadata, and an empty list filters the message out. A result whose length
+  differs from the batch, a flat list of payloads, a `Message` among the
+  outputs, or a `str`, `bytes`, `bytearray` or mapping in place of the result
+  or of one of its lists raises `TypeError`, and the batch becomes error
+  envelopes.
+
+  ```python
+  # before
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
+      return [Score(value=m.payload.amount) for m in messages]
+
+  # after
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
+      return [[Score(value=m.payload.amount)] for m in messages]
+  ```
 - **streaming:** compile issues come from the code catalogue
   (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
   factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
@@ -1054,9 +1117,11 @@
   `CompileIssue` instead), `loom_message_type()` is gone, and
   `CompilationIssue.prefixed()` is removed. Messages keep their text.
 - **streaming:** a `Broadcast` followed by another node reports
-  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level, in a
-  branch and in a Router branch. It used to report `TERMINAL_NOT_LAST` with
-  component `Broadcast`.
+  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level and in a
+  branch. It used to report `TERMINAL_NOT_LAST` with component `Broadcast`. In
+  a Router branch a `Broadcast` reports `ROUTER_BRANCH_UNSAFE_NODE`, and one
+  followed by another node also `TERMINAL_NOT_LAST` with component
+  `router branch <label> > Broadcast`.
 - **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
   `IntoSink`) or `Drain` hands the message to that terminal. The branch's
   terminal was skipped: with a flow `output` the message went to the output
@@ -1275,8 +1340,9 @@
   column only. The cursor now orders and compares on
   every key column after the sort keys and carries every key value in the
   token; offset pages and `list_paginated` order by every key column too.
-  Tokens of single-column keys are unchanged. A cached repository over such a
-  model keyed its entries by the first key column too, so a warm
+  That fix leaves tokens of single-column keys as they were. A cached
+  repository over such a model keyed its entries by the first key column
+  too, so a warm
   `list_paginated` or first cursor page served the rows sharing a first key
   value as copies of one of them; it now caches and reloads every row by its
   full key, one `get_by_id` per missing row.
@@ -1492,6 +1558,27 @@
 
 ### streaming
 
+- **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
+  `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
+  `shape mismatch: expected many but got batch before ForEach`. Under
+  at-least-once delivery each offset completes once, after its write is
+  flushed.
+- **streaming:** a batch reaching a node that takes records fails compilation
+  with `SHAPE_MISMATCH`: `IntoTopic`, `IntoTable` (any `IntoSink`), `Fork`,
+  `ExpandRoutes`, `CollectBatch` (it groups records), the flow `output`
+  (component `flow.output`, field `output`)
+  and a Broadcast route `output` (component `broadcast branch <n> > output`,
+  field `output`). Such flows used to compile. `CollectBatch → BatchStep →
+  IntoTopic` raised `'list' object has no attribute 'meta'` at runtime. Put a
+  `ForEach` before the node. `Drain` and `Broadcast` are under Behaviour
+  changes.
+- **streaming:** a `BatchExpandStep` subclass outputs records to the shape
+  check. The compiler matched step output shapes by exact type, so every step
+  subclass kept the incoming shape and a record step after a
+  `BatchExpandStep` failed with `expected record but got batch`. The shape
+  check reads a step's `input_shape` and `output_shape` from its class,
+  except in a Router branch: there a `BatchStep` runs one record at a time,
+  on a one-message batch, so it is record to record.
 - **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
   treated it as a plain terminal, so the nodes of its branches were never
   shape-checked. A branch with a shape mismatch, such as a record step after
@@ -1553,6 +1640,14 @@
   `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a step
   after a `Router` without a default whose branches all end their path failed
   with `SHAPE_MISMATCH`; both compile now.
+- **streaming:** a `BatchExpandStep` expands. Every output had to pair with
+  one input message, so a step returning more or fewer outputs than its batch
+  raised and each message of the batch became an error envelope. Under
+  at-least-once delivery each source offset now completes once per output,
+  after that output's write, and a message with no output completes its
+  offset at the step, also when the batch holds several messages of one
+  offset that an earlier expanding node produced. The new return type is under
+  Behaviour changes.
 
 ### prefect
 

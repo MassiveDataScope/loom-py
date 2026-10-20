@@ -121,6 +121,11 @@ dialect) and takes only a `time` with an offset, answering the same `400` or
 Postgres (`timestamptz`) and MongoDB, a `datetime` field keeps the instant,
 read back in UTC, not the written offset.
 
+A `uuid.UUID` field is a `Uuid` column on a SQLAlchemy model: `uuid` on
+Postgres, `CHAR(32)` holding the hex form on a dialect without a native UUID
+type, such as SQLite. It is a scalar column, so `filterable`, `sortable` and
+`ALL` take it.
+
 In `app.rest.interfaces`, both take column names, or `all`:
 
 ```yaml
