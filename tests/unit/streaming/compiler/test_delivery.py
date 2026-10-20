@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from loom.core.config import ConfigContext
 from loom.streaming import Drain, Fork, ForkRoute, FromTopic, IntoTopic, Process, StreamFlow, msg
 from loom.streaming.compiler import CompilationError, StreamingErrorCode, compile_flow
+from loom.streaming.compiler._plan import CompiledSingleSource
 from loom.streaming.compiler.phases.validate import validate_delivery
 from tests.unit.streaming.compiler.cases import FakeStep, Order, Result
 
@@ -112,3 +113,26 @@ class TestUnroutedForkUnderAtLeastOnce:
         plan = compile_flow(self._flow_with_fork(default=None), config=streaming_kafka_config)
 
         assert plan.name == "test"
+
+
+class TestConsumerSettingsKey:
+    """The compiled source records which consumer section its settings came from."""
+
+    def test_a_source_bound_through_the_default_consumer(self) -> None:
+        config = OmegaConf.create(_kafka_config({"delivery": "at_most_once"}))
+
+        plan = compile_flow(_flow(), config=config)
+
+        assert isinstance(plan.source, CompiledSingleSource)
+        assert plan.source.settings_key == "kafka.consumer"
+
+    def test_a_source_bound_through_a_named_consumer(self) -> None:
+        config = _kafka_config({"delivery": "at_most_once"})
+        kafka = config["kafka"]
+        assert isinstance(kafka, dict)
+        kafka["consumers"] = {"in": kafka.pop("consumer")}
+
+        plan = compile_flow(_flow(), config=OmegaConf.create(config))
+
+        assert isinstance(plan.source, CompiledSingleSource)
+        assert plan.source.settings_key == "kafka.consumers.in"

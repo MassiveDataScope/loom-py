@@ -105,6 +105,7 @@ def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Comp
         topics=consumer.topics,
         payload_type=source.payload,
         decode_strategy=decode_strategy,
+        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
@@ -121,6 +122,7 @@ def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         topics=consumer.topics,
         dispatch=dispatch,
         decode_strategy=decode_strategy,
+        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 

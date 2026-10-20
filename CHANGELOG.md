@@ -1114,12 +1114,20 @@
   removed. Build an issue from a `StreamingErrorCode` member with `.issue()`.
 - **streaming:** `CompilationError.errors` is removed. Read the messages from
   `CompilationError.issues` (`[issue.message for issue in error.issues]`).
-- **streaming:** a Delta `IntoTable` sink config that sets `part_max_records`
-  is refused with `SINK_CONFIG_INVALID`; it was an alias of
-  `writer_properties.max_row_group_size`. Set
-  `writer_properties.max_row_group_size` instead. Without `writer_properties`
-  the row groups still hold at most 10 000 rows. `DeltaSinkConfig` has no
-  `part_max_records` attribute.
+- **streaming:** an `IntoTable` sink section (`streaming.sinks.<name>`) with a
+  key its backend does not read fails at compile with `SINK_CONFIG_INVALID`,
+  naming every unknown key; on Delta this covers the keys under `staging`
+  too. Before, such a key was ignored. A SQLAlchemy sink that references a
+  shared `database` reads no pool keys (`pool_size`, `echo`, ...) from its own
+  section, so they are refused there; set them under `database.<name>`.
+  Delta's `part_max_records` is removed and therefore refused: it was an alias
+  of `writer_properties.max_row_group_size`, which is the key to set. Without
+  `writer_properties` the row groups still hold at most 10 000 rows.
+  `DeltaSinkConfig` has no `part_max_records` attribute.
+- **streaming:** `CompiledSingleSource` and `CompiledMultiSource` take a
+  required `settings_key`, the config key their consumer settings were
+  resolved from (`kafka.consumer` or `kafka.consumers.<ref>`);
+  `KafkaSettings.consumer_key_for(ref)` names it.
 - **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
   `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
   and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
@@ -1604,9 +1612,10 @@
 ### streaming
 
 - **streaming:** `SINK_CANNOT_TRACK_COMMITS` and
-  `INLINE_SINK_CANNOT_SKIP_COMMITS` point their `field` at
-  `kafka.consumer.delivery`, the key that sets delivery, instead of
-  `streaming.delivery`, which no config reads.
+  `INLINE_SINK_CANNOT_SKIP_COMMITS` point their `field` at the `delivery` of
+  the consumer the source was bound through, `kafka.consumer.delivery` or
+  `kafka.consumers.<ref>.delivery`, instead of `streaming.delivery`, which no
+  config reads.
 - **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
   `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
   `shape mismatch: expected many but got batch before ForEach`. Under

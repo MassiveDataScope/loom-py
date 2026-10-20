@@ -24,7 +24,16 @@ from loom.streaming.nodes._table.common import (
 
 @dataclass(frozen=True)
 class CompiledSingleSource:
-    """Resolved Kafka source with a single payload type and decode strategy."""
+    """Resolved Kafka source with a single payload type and decode strategy.
+
+    Args:
+        settings: Resolved Kafka consumer settings.
+        topics: Kafka topic names to subscribe to.
+        payload_type: Struct every record decodes into.
+        decode_strategy: Whether to decode records individually or in batches.
+        settings_key: Config key *settings* were resolved from:
+            ``kafka.consumer`` or ``kafka.consumers.<ref>``.
+    """
 
     needs_decode: ClassVar[bool] = True
 
@@ -32,6 +41,7 @@ class CompiledSingleSource:
     topics: tuple[str, ...]
     payload_type: type[LoomStruct | LoomFrozenStruct]
     decode_strategy: Literal["record", "batch"]
+    settings_key: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,8 @@ class CompiledMultiSource:
             ``payload_type`` strings to their concrete Python types, plus
             explicit wire-error payload types.
         decode_strategy: Whether to decode records individually or in batches.
+        settings_key: Config key *settings* were resolved from:
+            ``kafka.consumer`` or ``kafka.consumers.<ref>``.
     """
 
     needs_decode: ClassVar[bool] = True
@@ -53,6 +65,7 @@ class CompiledMultiSource:
     topics: tuple[str, ...]
     dispatch: DispatchTable
     decode_strategy: Literal["record", "batch"]
+    settings_key: str
 
 
 @dataclass(frozen=True)

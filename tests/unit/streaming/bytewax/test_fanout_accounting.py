@@ -92,6 +92,7 @@ from tests.unit.streaming.bytewax.cases import (  # noqa: E402
     Result,
     UpperItem,
     build_compiled_plan,
+    build_compiled_source,
 )
 from tests.unit.streaming.kafka.fakes import ProducerBackendStub  # noqa: E402
 
@@ -347,25 +348,27 @@ class TestExpandRoutesAccounting:
 class TestSinkTrackingContract:
     """A sink that cannot receive the tracker must stop the flow, not the commits."""
 
-    def test_untrackable_sink_is_rejected_at_assembly(self) -> None:
+    @pytest.mark.parametrize("settings_key", ["kafka.consumer", "kafka.consumers.orders"])
+    def test_untrackable_sink_is_rejected_at_assembly(self, settings_key: str) -> None:
         class _UserSink:
             """A sink a user wrote without knowing about commit tracking."""
 
         tracker, _ = _tracker()
         sink = _UserSink()
+        source = build_compiled_source(delivery="at_least_once", settings_key=settings_key)
 
         with pytest.raises(RuntimeConfigurationError, match="bind_commit_tracker") as exc_info:
-            _adapter._bind_commit_tracker_object(sink, tracker)
+            _adapter._bind_commit_tracker_object(sink, tracker, source)
 
         issue = exc_info.value.issues[0]
         assert issue.code is StreamingErrorCode.SINK_CANNOT_TRACK_COMMITS
-        assert (issue.component, issue.field) == ("_UserSink", "kafka.consumer.delivery")
+        assert (issue.component, issue.field) == ("_UserSink", f"{settings_key}.delivery")
 
     def test_untrackable_sink_is_fine_under_at_most_once(self) -> None:
         class _UserSink:
             """No tracker means nothing to bind and nothing to guarantee."""
 
-        _adapter._bind_commit_tracker_object(_UserSink(), None)
+        _adapter._bind_commit_tracker_object(_UserSink(), None, build_compiled_source())
 
     def test_a_compiled_into_topic_without_a_runtime_sink_is_refused(self) -> None:
         """A partial terminal_sinks override must not turn an IntoTopic into a drop sink."""
@@ -409,15 +412,17 @@ class TestSinkTrackingContract:
 
         assert exc_info.value.issues[0].code is StreamingErrorCode.TERMINAL_SINK_MISSING
 
-    def test_an_inline_sink_that_cannot_skip_commits_is_rejected(self) -> None:
+    @pytest.mark.parametrize("settings_key", ["kafka.consumer", "kafka.consumers.orders"])
+    def test_an_inline_sink_that_cannot_skip_commits_is_rejected(self, settings_key: str) -> None:
         """Its partitions would complete offsets of messages that go on after the write."""
 
         class _UserSink:
             """A tracker-aware sink that cannot be told its partitions write inline."""
 
         tracker, _ = _tracker()
+        source = build_compiled_source(delivery="at_least_once", settings_key=settings_key)
         ctx = _adapter._BuildContext(
-            plan=cast(Any, SimpleNamespace(name="orders", terminal_sinks={})),
+            plan=cast(Any, SimpleNamespace(name="orders", terminal_sinks={}, source=source)),
             bridge=None,
             flow_runtime=ObservabilityRuntime.noop(),
             flow_run_id="run-1",
@@ -429,7 +434,7 @@ class TestSinkTrackingContract:
             ctx.inline_sink_partition_for((0, 1))
 
         assert exc_info.value.issues[0].code is StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS
-        assert exc_info.value.issues[0].field == "kafka.consumer.delivery"
+        assert exc_info.value.issues[0].field == f"{settings_key}.delivery"
 
 
 def _guard_context(**plan_parts: Any) -> _adapter._BuildContext:

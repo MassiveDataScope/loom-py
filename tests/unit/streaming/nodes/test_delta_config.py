@@ -43,7 +43,15 @@ def test_delta_sink_config_defaults_the_row_group_size() -> None:
 
 
 def test_delta_sink_config_refuses_part_max_records() -> None:
-    with pytest.raises(ValueError, match=r"writer_properties\.max_row_group_size"):
+    with pytest.raises(ValueError, match="unknown key 'part_max_records'"):
         DeltaSinkConfig.from_config(
             {"uri": "s3://lake/events", "part_max_records": 128}, default_table="events"
+        )
+
+
+def test_delta_sink_config_refuses_an_unknown_staging_key() -> None:
+    with pytest.raises(ValueError, match="unknown key 'staging.compresion'"):
+        DeltaSinkConfig.from_config(
+            {"uri": "s3://lake/events", "staging": {"compresion": "zstd"}},
+            default_table="events",
         )

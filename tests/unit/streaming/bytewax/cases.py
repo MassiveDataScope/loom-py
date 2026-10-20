@@ -105,6 +105,7 @@ def build_compiled_plan(
             topics=("in",),
             payload_type=Order,
             decode_strategy="record",
+            settings_key="kafka.consumer",
         ),
         nodes=tuple(compiled_nodes),
         output=compiled_output,
@@ -120,6 +121,7 @@ def build_compiled_source(
     auto_offset_reset: Literal["earliest", "latest"] = "earliest",
     commit_keepalive_ms: int = 1_800_000,
     topics: tuple[str, ...] | None = None,
+    settings_key: str = "kafka.consumer",
 ) -> CompiledSingleSource:
     """Build a reusable compiled source for Bytewax adapter tests."""
     return CompiledSingleSource(
@@ -134,6 +136,7 @@ def build_compiled_source(
         topics=topics or (_ORDERS_IN_TOPIC,),
         payload_type=Order,
         decode_strategy="record",
+        settings_key=settings_key,
     )
 
 

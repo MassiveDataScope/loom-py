@@ -10,7 +10,7 @@ import msgspec
 from loom.core.config import ConfigResolver
 from loom.core.config.overrides import load_application_config
 from loom.core.model import LoomFrozenStruct
-from loom.core.routing import DefaultingRouteResolver, LogicalRef
+from loom.core.routing import DefaultingRouteResolver, LogicalRef, as_logical_ref
 
 KafkaConfigValue: TypeAlias = str | int | float | bool
 
@@ -216,6 +216,19 @@ class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
             kind="Kafka consumer config",
         )
         return resolver.resolve(ref)
+
+    def consumer_key_for(self, ref: str | LogicalRef) -> str:
+        """Name the field :meth:`consumer_for` resolves *ref* from.
+
+        Args:
+            ref: Logical input reference.
+
+        Returns:
+            ``"consumers.<ref>"`` when a specific consumer is configured for
+            *ref*, otherwise ``"consumer"``; both relative to this section.
+        """
+        logical = as_logical_ref(ref).ref
+        return f"consumers.{logical}" if logical in self.consumers else "consumer"
 
 
 def resolve_producer_topic(ref: str | LogicalRef, settings: ProducerSettings) -> str:

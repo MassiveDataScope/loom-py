@@ -414,6 +414,57 @@ class SqlAlchemyDatabaseConfig:
         }
 
 
+_BUFFER_KEYS: frozenset[str] = frozenset(
+    {"buffer_max_records", "buffer_max_bytes", "buffer_max_age_s", "flush_on_shutdown"}
+)
+_SQLALCHEMY_POOL_KEYS: frozenset[str] = frozenset(
+    {
+        "echo",
+        "pool_pre_ping",
+        "pool_size",
+        "max_overflow",
+        "pool_timeout",
+        "pool_recycle",
+        "connect_args",
+    }
+)
+_SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "database", "url", "chunk_size"}
+_DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
+    "table",
+    "uri",
+    "mode",
+    "storage_options",
+    "partition_by",
+    "target_file_size",
+    "spool_max_bytes",
+    "staging",
+    "writer_properties",
+}
+_DELTA_STAGING_KEYS: frozenset[str] = frozenset({"compression", "mini_batch_size"})
+_CLICKHOUSE_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
+    "table",
+    "database",
+    "url",
+    "insert_timeout",
+}
+
+
+def _refuse_unknown_keys(
+    config: Mapping[str, Any], known: frozenset[str], *, sink: str, prefix: str = ""
+) -> None:
+    """Raise when *config* carries a key the sink does not read.
+
+    Raises:
+        ValueError: Naming every unknown key, sorted.
+    """
+    unknown = sorted(f"{prefix}{key}" for key in config if key not in known)
+    if not unknown:
+        return
+    noun = "key" if len(unknown) == 1 else "keys"
+    names = ", ".join(repr(key) for key in unknown)
+    raise ValueError(f"{sink} sink config has unknown {noun} {names}.")
+
+
 @dataclass(frozen=True, slots=True)
 class SqlAlchemySinkConfig:
     """Resolved ``IntoTable`` settings for the SQLAlchemy backend.
@@ -439,6 +490,8 @@ class SqlAlchemySinkConfig:
         table = str(config.get("table") or default_table).strip()
         database = str(config.get("database") or "").strip()
         url = str(config.get("url") or "").strip()
+        known = _SQLALCHEMY_SINK_KEYS if database else _SQLALCHEMY_SINK_KEYS | _SQLALCHEMY_POOL_KEYS
+        _refuse_unknown_keys(config, known, sink="SQLAlchemy")
         if not table:
             raise ValueError("SQLAlchemy sink config requires a non-empty table name.")
         return cls(
@@ -491,20 +544,17 @@ class DeltaSinkConfig:
 
         Raises:
             ValueError: If ``uri`` is empty, a value is invalid, or the config
-                sets ``part_max_records``.
+                or its ``staging`` carries a key the sink does not read.
         """
+        _refuse_unknown_keys(config, _DELTA_SINK_KEYS, sink="Delta")
         table = str(config.get("table") or default_table).strip()
         uri = str(config.get("uri") or "").strip()
         if not uri:
             raise ValueError("Delta sink config requires a non-empty 'uri'.")
-        if "part_max_records" in config:
-            raise ValueError(
-                "Delta sink config has no 'part_max_records'; set "
-                "'writer_properties.max_row_group_size' instead."
-            )
         raw_partition_by = config.get("partition_by") or []
         raw_staging = config.get("staging")
         staging_config: Mapping[str, Any] = raw_staging if isinstance(raw_staging, Mapping) else {}
+        _refuse_unknown_keys(staging_config, _DELTA_STAGING_KEYS, sink="Delta", prefix="staging.")
         staging_compression = _validate_ipc_compression(staging_config.get("compression"))
         writer_properties = _build_writer_properties(
             config.get("writer_properties")
@@ -558,7 +608,13 @@ class ClickHouseSinkConfig:
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], *, default_table: str) -> Self:
-        """Build ClickHouse sink settings from a resolved sink + database config."""
+        """Build ClickHouse sink settings from a resolved sink + database config.
+
+        Raises:
+            ValueError: If the table or the url is empty, or the config carries
+                a key the sink does not read.
+        """
+        _refuse_unknown_keys(config, _CLICKHOUSE_SINK_KEYS, sink="ClickHouse")
         table = str(config.get("table") or default_table).strip()
         url = str(config.get("url") or "").strip()
         if not table:

@@ -169,6 +169,7 @@ def make_multi_source(bootstrap: str) -> Callable[..., CompiledMultiSource]:
             topics=(topic,),
             dispatch=DispatchTable(plain={"it": ItPayload}, error={}, wire={}),
             decode_strategy="record",
+            settings_key="kafka.consumer",
         )
 
     return build
@@ -197,6 +198,7 @@ def make_source(bootstrap: str) -> Callable[..., CompiledSingleSource]:
             topics=(topic,),
             payload_type=ItPayload,
             decode_strategy="record",
+            settings_key="kafka.consumer",
         )
 
     return build
