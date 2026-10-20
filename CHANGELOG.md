@@ -995,7 +995,7 @@
   branch. It used to report `TERMINAL_NOT_LAST` with component `Broadcast`. In
   a Router branch a `Broadcast` reports `ROUTER_BRANCH_UNSAFE_NODE`, and one
   followed by another node also `TERMINAL_NOT_LAST` with component
-  `Broadcast`.
+  `router branch <label> > Broadcast`.
 - **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
   `IntoSink`) or `Drain` hands the message to that terminal. The branch's
   terminal was skipped: with a flow `output` the message went to the output
@@ -1389,7 +1389,8 @@
   flushed.
 - **streaming:** a batch reaching a node that takes records fails compilation
   with `SHAPE_MISMATCH`: `IntoTopic`, `IntoTable` (any `IntoSink`), `Fork`,
-  `ExpandRoutes`, `CollectBatch` (it groups records), the flow `output` (component `flow.output`, field `output`)
+  `ExpandRoutes`, `CollectBatch` (it groups records), the flow `output`
+  (component `flow.output`, field `output`)
   and a Broadcast route `output` (component `broadcast branch <n> > output`,
   field `output`). Such flows used to compile. `CollectBatch → BatchStep →
   IntoTopic` raised `'list' object has no attribute 'meta'` at runtime. Put a
