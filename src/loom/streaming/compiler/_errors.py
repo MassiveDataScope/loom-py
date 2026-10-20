@@ -243,9 +243,9 @@ class StreamingErrorCode(IssueCode):
         "INLINE_SINK_CANNOT_SKIP_COMMITS",
         Template(
             "delivery=at_least_once: {component} is written inline by "
-            "With/WithAsync(process=...) but exposes no mark_inline_partition method, so "
+            "With/WithAsync(process=...) but exposes no build_inline_partition method, so "
             "its partitions would complete the offsets of messages that go on after the "
-            "inline write. Add mark_inline_partition() to the sink, or declare "
+            "inline write. Add build_inline_partition() to the sink, or declare "
             "delivery=at_most_once.",
             field="streaming.delivery",
         ),

@@ -924,7 +924,8 @@
   ```
 - **streaming:** under at-least-once delivery, a caller-supplied terminal sink
   written inline by `With(process=...)` or `WithAsync(process=...)` must expose
-  `mark_inline_partition()`; without it the flow fails at assembly with
+  `build_inline_partition()`, which returns a partition that completes no
+  offset and records no death; without it the flow fails at assembly with
   `RuntimeConfigurationError` (`INLINE_SINK_CANNOT_SKIP_COMMITS`). Its
   partitions completed offsets at the inline write.
 - **streaming:** a Delta `IntoTable` whose payload type has no fields fails

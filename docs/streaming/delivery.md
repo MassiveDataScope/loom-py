@@ -68,7 +68,7 @@ can see.
   branch claims continues after the Router.
 - An inline `IntoTopic` inside `With(process=...)` or `WithAsync(process=...)`
   completes nothing: the message goes on and completes where its path ends.
-  A caller-supplied sink written inline must expose `mark_inline_partition()`,
+  A caller-supplied sink written inline must expose `build_inline_partition()`,
   or the flow is rejected at assembly (`INLINE_SINK_CANNOT_SKIP_COMMITS`).
 - A storage partition reports from `write_batch` and `close` how many buffered
   events it made durable, and only those complete. Events still buffered when

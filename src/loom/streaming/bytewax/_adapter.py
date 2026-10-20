@@ -199,10 +199,11 @@ class _SupportsTerminalTracing(Protocol):
 
 @runtime_checkable
 class _SupportsInlinePartition(Protocol):
-    """Runtime sink whose partitions can be built for an inline, non-terminal write."""
+    """Runtime sink that can build a partition for an inline, non-terminal write."""
 
-    def mark_inline_partition(self) -> None:
-        """Record that partitions built from now on write inline and complete nothing."""
+    def build_inline_partition(self) -> StatelessSinkPartition[Any]:
+        """Build a partition that completes no offset and records no death."""
+        ...
 
 
 def _bind_commit_tracker_object(
@@ -340,10 +341,8 @@ class _BuildContext:
         """Give one real terminal sink the runtime its death spans open on.
 
         Called only from the two wiring sites that run for a genuine terminal.
-        ``_BuildContext.inline_sink_partition_for`` builds from the *same*
-        ``terminal_sinks`` mapping for ``WithAsync(process=[..., IntoTopic])``,
-        where the message explicitly does not die; binding any earlier would
-        emit a death span for a message that goes on living.
+        An inline partition comes from ``build_inline_partition``, which never
+        applies tracing, because the message goes on after an inline write.
 
         Sinks that cannot record a death — storage sinks, drop sinks, test
         doubles — are left untouched.
@@ -406,25 +405,24 @@ class _BuildContext:
             sink is registered for *path*.
 
         Raises:
-            RuntimeError: If the sink for *path* already carries terminal
-                tracing, meaning an inline and a terminal wiring path collided
-                on one compiled sink.
             RuntimeConfigurationError: If a commit tracker is bound and the sink
-                cannot be marked inline, so its partitions would complete
-                offsets at the inline write.
+                cannot build an inline partition, so its partitions would
+                complete offsets at the inline write.
         """
         sink = self._runtime_sink_for(path)
         if sink is None:
             return None
         if isinstance(sink, _SupportsInlinePartition):
-            sink.mark_inline_partition()
-        elif self.commit_tracker is not None:
+            return sink.build_inline_partition()
+        if self.commit_tracker is not None:
             issue = StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS.issue(
                 component=type(sink).__name__
             )
             raise RuntimeConfigurationError([issue])
-        step_id = "inline_" + "_".join(str(p) for p in path)
-        return cast(StatelessSinkPartition[Any], cast(Any, sink).build(step_id, 0, 1))
+        partition: StatelessSinkPartition[Any] = sink.build(
+            "inline_" + "_".join(str(p) for p in path), 0, 1
+        )
+        return partition
 
     def manager_for(
         self,

@@ -434,22 +434,6 @@ class TestInlineIntoTopicDoesNotKillTheMessage:
         )
         assert sorted(event.trace_id or "" for event in starts) == sorted(_TRACES)
 
-    def test_binding_tracing_after_an_inline_partition_is_refused(self) -> None:
-        sink = _terminal_sink(None)
-        sink.mark_inline_partition()
-
-        runtime = build_recorder().runtime
-
-        with pytest.raises(RuntimeError, match="inline WithAsync partition was already built"):
-            sink.bind_terminal_tracing(runtime, _FLOW, "run-1")
-
-    def test_an_inline_partition_from_a_traced_sink_is_refused(self) -> None:
-        """Nothing fixes the order of the two wiring sites, so both directions guard."""
-        sink = _terminal_sink(build_recorder())
-
-        with pytest.raises(RuntimeError, match="terminal tracing is already bound"):
-            sink.mark_inline_partition()
-
 
 class TestErrorSinksEmitNoTerminalSpan:
     """AC5: the envelope travels in the inherited trace; it must not die twice."""

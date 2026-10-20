@@ -395,7 +395,7 @@ class TestSinkTrackingContract:
             commit_tracker=tracker,
         )
 
-        with pytest.raises(RuntimeConfigurationError, match="mark_inline_partition") as exc_info:
+        with pytest.raises(RuntimeConfigurationError, match="build_inline_partition") as exc_info:
             ctx.inline_sink_partition_for((0, 1))
 
         assert exc_info.value.issues[0].code is StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS

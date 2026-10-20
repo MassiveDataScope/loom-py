@@ -699,7 +699,7 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
     Terminal tracing is optional and off by default. The adapter binds it only
     at the wiring sites that run for a real terminal, so this sink is the only
     one that can emit a death span: the error sinks structurally cannot receive
-    the binding, and an inline ``WithAsync`` sink is refused it.
+    the binding, and :meth:`build_inline_partition` never applies it.
 
     Args:
         sink: Compiled Kafka sink configuration.
@@ -708,7 +708,6 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
     def __init__(self, sink: CompiledSink) -> None:
         super().__init__(sink)
         self._terminal_tracing: _TerminalTracing | None = None
-        self._built_inline_partition = False
 
     def bind_terminal_tracing(
         self,
@@ -722,38 +721,18 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
             observer: Runtime the terminal and batch spans are opened on.
             flow: Name of the enclosing flow.
             flow_run_id: Identifier of the flow run.
-
-        Raises:
-            RuntimeError: If an inline ``WithAsync`` partition was already built
-                from this sink, which would make it report a death that a still
-                living message never had.
         """
-        if self._built_inline_partition:
-            raise RuntimeError(
-                f"cannot bind terminal tracing to the sink for topic '{self._sink.topic}': "
-                "an inline WithAsync partition was already built from it. A message written "
-                "by an inline IntoTopic goes on living, so a terminal span there would "
-                "report a death that never happened."
-            )
         self._terminal_tracing = _TerminalTracing(
             observer=observer, flow=flow, flow_run_id=flow_run_id
         )
 
-    def mark_inline_partition(self) -> None:
-        """Record that an inline, non-terminal partition is built from this sink.
+    def build_inline_partition(self) -> _KafkaMessageSinkPartition:
+        """Build a partition for an inline write: no commit tracker, no terminal tracing.
 
-        Raises:
-            RuntimeError: If terminal tracing is already bound. Nothing fixes
-                the order the two wiring sites run in, so the collision is
-                refused from both directions.
+        The message goes on after an inline write, so the write neither completes
+        its offset nor records its death.
         """
-        if self._terminal_tracing is not None:
-            raise RuntimeError(
-                f"cannot build an inline WithAsync partition from the sink for topic "
-                f"'{self._sink.topic}': terminal tracing is already bound to it, so the "
-                "inline and terminal wiring paths collided on one compiled sink."
-            )
-        self._built_inline_partition = True
+        return _KafkaMessageSinkPartition(self._sink, None)
 
     def build(
         self,
@@ -772,9 +751,7 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
             The bare Kafka partition, or one wrapped to emit terminal spans.
         """
         del step_id, worker_index, worker_count
-        # An inline write does not end the message's path, so it completes nothing.
-        tracker = None if self._built_inline_partition else self._commit_tracker
-        partition = _KafkaMessageSinkPartition(self._sink, tracker)
+        partition = _KafkaMessageSinkPartition(self._sink, self._commit_tracker)
         if self._terminal_tracing is None:
             return partition
         return _TracedMessageSinkPartition(
