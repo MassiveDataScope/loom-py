@@ -1190,6 +1190,11 @@ _PATH_CASES = {
         _each("t.a", 0, 2) + _each("t.err", 1),
         errors="t.err",
     ),
+    "router_without_default_unmatched_to_output": _PathCase(
+        lambda: Process(Router.by(msg.payload.value, routes={"item-0": Process(_topic("t.a"))})),
+        _each("t.a", 0) + _each("t.out", 1, 2),
+        output="t.out",
+    ),
     "router_unmatched": _PathCase(
         lambda: Process(Router.by(msg.payload.value, routes={"item-0": Process(_topic("t.a"))})),
         _each("t.a", 0),
