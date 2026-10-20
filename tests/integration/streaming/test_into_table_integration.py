@@ -529,9 +529,10 @@ class TestIntoTableSQLAlchemyIntegration:
         node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.DELTA)
         config = DeltaSinkConfig.from_config({"uri": uri}, default_table="notes")
         partition = node.build_partition(config, worker_index=0, worker_count=1)
+        batch = [_NoteRow(note_id=1)]
 
         with pytest.raises(BoundaryValidationError) as raised:
-            partition.write_batch([_NoteRow(note_id=1)])
+            partition.write_batch(batch)
 
         assert raised.value.code == ErrorCode.BOUNDARY_VALIDATION
         assert raised.value.violations == (
@@ -717,9 +718,10 @@ class TestIntoTableClickHouseUnit:
     ) -> None:
         node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.CLICKHOUSE)
         partition = node.build_partition(_ch_config("notes"), worker_index=0, worker_count=1)
+        batch = [_NoteRow(note_id=1)]
 
         with pytest.raises(BoundaryValidationError) as raised:
-            partition.write_batch([_NoteRow(note_id=1)])
+            partition.write_batch(batch)
 
         assert raised.value.code == ErrorCode.BOUNDARY_VALIDATION
         assert raised.value.violations == (

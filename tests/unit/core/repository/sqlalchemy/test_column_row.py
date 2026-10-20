@@ -141,10 +141,11 @@ def test_an_unset_value_leaves_its_column_out_of_the_row() -> None:
 
 
 def test_a_time_whose_offset_its_column_cannot_take_is_refused() -> None:
-    aware = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
+    reading = _reading(opens_at=time(8, 30, tzinfo=timezone(timedelta(hours=2))))
+    columns = _reading_table().columns
 
     with pytest.raises(BoundaryValidationError) as refused:
-        to_column_row(_reading(opens_at=aware), _reading_table().columns)
+        to_column_row(reading, columns)
 
     assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
     assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)
