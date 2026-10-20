@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Mapping
 from time import time_ns
-from typing import Any
+from typing import Any, TypeGuard
 
 from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
@@ -41,6 +41,7 @@ from loom.streaming.nodes._sink import IntoSink, SinkPartition
 from loom.streaming.nodes._table import Backend, IntoTable
 
 Stream = Any
+logger = get_logger(__name__)
 
 
 class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
@@ -116,11 +117,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         if self._failed:
             self._pending.clear()
             return
-        if (
-            isinstance(durable, bool)
-            or not isinstance(durable, int)
-            or not 0 <= durable <= len(self._pending)
-        ):
+        if not self._is_durable_count(durable):
             raise TypeError(
                 f"{self._node_name}: SinkPartition.write_batch and close must return how "
                 f"many of the {len(self._pending)} pending items they made durable; "
@@ -179,10 +176,33 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
             },
         )
 
+    def _is_durable_count(self, durable: object) -> TypeGuard[int]:
+        """Return whether *durable* counts some of the pending messages."""
+        return (
+            isinstance(durable, int)
+            and not isinstance(durable, bool)
+            and 0 <= durable <= len(self._pending)
+        )
+
     def close(self) -> None:
-        """Close the underlying partition and finish what its final flush made durable."""
+        """Close the underlying partition and finish what its final flush made durable.
+
+        close() runs during Bytewax shutdown, so a bad count is logged instead of
+        raised, and nothing completes.
+        """
         started_ns = time_ns()
-        self._finish(self._partition.close(), BatchWindow.since(started_ns))
+        durable = self._partition.close()
+        if self._failed or self._is_durable_count(durable):
+            self._finish(durable, BatchWindow.since(started_ns))
+            return
+        logger.error(
+            "storage_sink_close_count_invalid",
+            sink=self._node_name,
+            flow=self._flow_name,
+            pending=len(self._pending),
+            got=repr(durable),
+        )
+        self._pending.clear()
 
 
 class _StorageDynamicSink(DynamicSink[Message[Any]]):

@@ -1113,6 +1113,31 @@ class TestStorageCompletesAfterItsFlush:
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
 
+    def test_a_bad_count_from_close_completes_nothing_and_does_not_raise(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """close() runs during Bytewax shutdown, so the bad count is logged, not raised."""
+
+        class _BadClose(_BufferingPartition):
+            def close(self) -> int:
+                return cast(int, None)
+
+        tracker, _ = _tracker(0, 1)
+        sink = _storage._StorageSinkPartition(
+            _BadClose(flush_at=10),
+            node_name="table",
+            flow_name="orders",
+            flow_run_id="run-1",
+            observer=ObservabilityRuntime.noop(),
+            commit_tracker=tracker,
+        )
+        sink.write_batch(self._orders(0, 1))
+
+        sink.close()
+
+        assert tracker.flush_partition(TOPIC, PARTITION) == []
+        assert "storage_sink_close_count_invalid" in caplog.text
+
     @pytest.mark.parametrize("count", [None, True])
     def test_a_partition_that_does_not_report_durability_is_refused(self, count: object) -> None:
         class _Silent:
