@@ -1292,6 +1292,28 @@ class TestStorageCompletesAfterItsFlush:
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
 
+    def test_after_a_refused_count_a_later_count_completes_nothing(self) -> None:
+        class _CountsLate(_BufferingPartition):
+            def write_batch(self, items: Sequence[Any]) -> int:
+                super().write_batch(items)
+                return cast(int, None)
+
+        tracker, _ = _tracker(0, 1)
+        sink = _storage._StorageSinkPartition(
+            _CountsLate(flush_at=10),
+            node_name="table",
+            flow_name="orders",
+            flow_run_id="run-1",
+            observer=ObservabilityRuntime.noop(),
+            commit_tracker=tracker,
+        )
+        with pytest.raises(TypeError, match="must return how many"):
+            sink.write_batch(self._orders(0, 1))
+
+        sink.close()
+
+        assert tracker.flush_partition(TOPIC, PARTITION) == []
+
     def test_a_bad_count_from_close_completes_nothing_and_does_not_raise(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

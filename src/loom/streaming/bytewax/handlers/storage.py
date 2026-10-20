@@ -108,8 +108,9 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
     def _finish(self, durable: object, window: BatchWindow) -> None:
         """Emit the terminal spans of, and complete, the *durable* oldest pending messages.
 
-        After a call to the partition raised, nothing completes: a later count
-        cannot say which of the pending messages it covers.
+        After a call to the partition raised, or returned a count that was
+        refused, nothing completes: a later count cannot say which of the pending
+        messages it covers.
 
         Raises:
             TypeError: If the partition did not report a count of its pending items.
@@ -118,6 +119,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
             self._pending.clear()
             return
         if not self._is_durable_count(durable):
+            self._failed = True
             raise TypeError(
                 f"{self._node_name}: SinkPartition.write_batch and close must return how "
                 f"many of the {len(self._pending)} pending items they made durable; "
