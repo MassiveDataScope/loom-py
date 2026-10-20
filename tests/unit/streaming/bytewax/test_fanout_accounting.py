@@ -60,6 +60,7 @@ from loom.streaming.bytewax._runtime_io import build_runtime_sink  # noqa: E402
 from loom.streaming.bytewax.handlers import _shared  # noqa: E402
 from loom.streaming.bytewax.handlers import routing as _routing  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
+from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import StreamingErrorCode, compile_flow  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
@@ -539,17 +540,21 @@ class _LoggingProducer(ProducerBackendStub):
 
 
 class _LoggingTablePartition:
-    """Storage partition whose returned ``write_batch`` is the durable write."""
+    """Storage partition that buffers every item until its final flush at close."""
 
     def __init__(self, log: list[Event]) -> None:
         self._log = log
+        self._buffer: list[Any] = []
 
-    def write_batch(self, items: Sequence[Any]) -> None:
-        for item in items:
+    def write_batch(self, items: Sequence[Any]) -> int:
+        self._buffer.extend(items)
+        return 0
+
+    def close(self) -> int:
+        for item in self._buffer:
             self._log.append(("write", "items_table", _offset_in(item.value)))
-
-    def close(self) -> None:
-        return None
+        flushed, self._buffer = len(self._buffer), []
+        return flushed
 
 
 class _LoggingTracker:
@@ -777,29 +782,11 @@ _PATH_CASES = {
     ),
 }
 
-_WRONG_ON_MASTER = {
-    "router_into_table_branch": "a Router branch storage sink writes nothing",
-    "into_table": "a storage sink never completes",
-}
-
-
-def _path_case_params() -> list[Any]:
-    return [
-        pytest.param(
-            case,
-            id=name,
-            marks=[pytest.mark.xfail(strict=True, reason=_WRONG_ON_MASTER[name])]
-            if name in _WRONG_ON_MASTER
-            else [],
-        )
-        for name, case in _PATH_CASES.items()
-    ]
-
 
 class TestEveryPathCompletesOnce:
     """Each offset completes once per share, and only after its writes are flushed."""
 
-    @pytest.mark.parametrize("case", _path_case_params())
+    @pytest.mark.parametrize("case", list(_PATH_CASES.values()), ids=list(_PATH_CASES))
     def test_each_offset_completes_once_per_share_after_its_last_flush(
         self, case: _PathCase, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -852,3 +839,90 @@ class TestEveryPathCompletesOnce:
         )
 
         assert [offset for kind, _, offset in log if kind == "produce"] == list(range(8))
+
+
+class _BufferingPartition:
+    """Storage partition that buffers until ``flush_at`` items, like the table partitions."""
+
+    def __init__(self, flush_at: int) -> None:
+        self._flush_at = flush_at
+        self._buffered = 0
+
+    def write_batch(self, items: Sequence[Any]) -> int:
+        self._buffered += len(items)
+        if self._buffered < self._flush_at:
+            return 0
+        flushed, self._buffered = self._buffered, 0
+        return flushed
+
+    def close(self) -> int:
+        flushed, self._buffered = self._buffered, 0
+        return flushed
+
+
+class TestStorageCompletesAfterItsFlush:
+    """A storage sink completes an offset only once the flush holding it returned."""
+
+    @staticmethod
+    def _sink(flush_at: int) -> tuple[_storage._StorageSinkPartition, KafkaCommitTracker]:
+        tracker, _ = _tracker(*range(5))
+        sink = _storage._StorageSinkPartition(
+            _BufferingPartition(flush_at),
+            node_name="table",
+            flow_name="orders",
+            flow_run_id="run-1",
+            observer=ObservabilityRuntime.noop(),
+            commit_tracker=tracker,
+        )
+        return sink, tracker
+
+    @staticmethod
+    def _orders(*offsets: int) -> list[Message[Any]]:
+        return [_sourced_message(Order(order_id=str(offset)), offset) for offset in offsets]
+
+    def test_buffered_rows_complete_with_the_flush_that_writes_them(self) -> None:
+        sink, tracker = self._sink(flush_at=3)
+
+        sink.write_batch(self._orders(0, 1))
+        assert tracker.flush_partition(TOPIC, PARTITION) == [], "buffered rows were completed"
+
+        sink.write_batch(self._orders(2))
+        assert tracker.flush_partition(TOPIC, PARTITION) == [TopicPartition(TOPIC, PARTITION, 3)]
+
+    def test_rows_still_buffered_when_the_worker_dies_stay_uncompleted(self) -> None:
+        """No close() is the crash: the rows were never written, so they are consumed again."""
+        sink, tracker = self._sink(flush_at=3)
+
+        sink.write_batch(self._orders(0, 1, 2))
+        sink.write_batch(self._orders(3))
+
+        assert tracker.flush_partition(TOPIC, PARTITION) == [TopicPartition(TOPIC, PARTITION, 3)], (
+            "offset 3 is still buffered, so the commit stops before it"
+        )
+
+    def test_the_final_flush_at_close_completes_the_rest(self) -> None:
+        sink, tracker = self._sink(flush_at=10)
+        sink.write_batch(self._orders(0, 1))
+
+        sink.close()
+
+        assert tracker.flush_partition(TOPIC, PARTITION) == [TopicPartition(TOPIC, PARTITION, 2)]
+
+    def test_a_partition_that_does_not_report_durability_is_refused(self) -> None:
+        class _Silent:
+            def write_batch(self, items: Sequence[Any]) -> None:
+                del items
+
+            def close(self) -> None:
+                return None
+
+        sink = _storage._StorageSinkPartition(
+            cast(Any, _Silent()),
+            node_name="table",
+            flow_name="orders",
+            flow_run_id="run-1",
+            observer=ObservabilityRuntime.noop(),
+        )
+
+        with pytest.raises(TypeError, match="must return how many of the 1 pending items"):
+            sink.write_batch(self._orders(0))

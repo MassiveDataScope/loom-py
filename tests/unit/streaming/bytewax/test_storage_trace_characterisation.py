@@ -48,13 +48,14 @@ class _RecordingPartition:
         self.batches: list[Sequence[Any]] = []
         self._fail = fail
 
-    def write_batch(self, items: Sequence[Any]) -> None:
+    def write_batch(self, items: Sequence[Any]) -> int:
         self.batches.append(list(items))
         if self._fail:
             raise RuntimeError("sink down")
+        return len(items)
 
-    def close(self) -> None:
-        return None
+    def close(self) -> int:
+        return 0
 
 
 def _message(index: int, *, trace_id: str | None = "") -> Message[Result]:

@@ -104,13 +104,13 @@ class TestIntoTableSQLAlchemyIntegration:
         )
 
         try:
-            partition.write_batch(
+            buffered = partition.write_batch(
                 [
                     _OrderRow(order_id=1, amount=99.9, status="shipped"),
                     _OrderRow(order_id=2, amount=49.5, status="pending"),
                 ]
             )
-            partition.close()
+            flushed = partition.close()
         finally:
             bridge.run(session_manager.dispose())
             bridge.shutdown()
@@ -125,6 +125,7 @@ class TestIntoTableSQLAlchemyIntegration:
         assert len(rows) == 2
         assert rows[0] == (1, 99.9, "shipped")
         assert rows[1] == (2, 49.5, "pending")
+        assert (buffered, flushed) == (0, 2), "durable only once the close flush committed"
 
     def test_empty_batch_is_noop(self, tmp_path: Path) -> None:
         path = _make_db(
@@ -382,6 +383,22 @@ class TestIntoTableSQLAlchemyIntegration:
         assert len(write_calls) == 1
         assert ipc_batch_calls == [3]
 
+    def test_delta_partition_reports_rows_durable_only_when_it_writes_them(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("deltalake")
+        node = IntoTable(payload=_OrderRow, table="events", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config(
+            {"uri": str(tmp_path / "events_delta"), "buffer_max_records": 3},
+            default_table="events",
+        )
+        partition = node.build_partition(config, worker_index=0, worker_count=1)
+        rows = [_OrderRow(order_id=i, amount=1.0, status="new") for i in range(4)]
+
+        assert partition.write_batch(rows[:2]) == 0
+        assert partition.write_batch(rows[2:]) == 3
+        assert partition.close() == 1
+
     def test_delta_sink_config_parses_writer_properties_and_staging(
         self,
     ) -> None:
@@ -482,18 +499,15 @@ class TestIntoTableClickHouseUnit:
             worker_count=1,
         )
 
-        partition.write_batch(
-            [
-                _CHRow(event_id="e1", count=1, active=True, tags=["x"], parent_id=None),
-            ]
-        )
+        row = _CHRow(event_id="e1", count=1, active=True, tags=["x"], parent_id=None)
+        assert partition.write_batch([row]) == 0
         assert mock_ch_client.insert.call_count == 0  # buffer retained
 
         time.sleep(0.015)  # exceed max_age_s
-        partition.write_batch([])  # empty epoch — age check fires flush
+        assert partition.write_batch([]) == 1  # empty epoch — age check fires flush
 
         assert mock_ch_client.insert.call_count == 1
-        partition.close()
+        assert partition.close() == 0
         assert mock_ch_client.insert.call_count == 1  # no double-flush
 
     def test_buffer_retained_below_threshold(self, mock_ch_client: MagicMock) -> None:

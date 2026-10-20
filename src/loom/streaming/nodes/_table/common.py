@@ -683,17 +683,21 @@ class _SQLAlchemyTablePartition:
         self._buffer_started_at: float | None = None
         self._closed = False
 
-    def write_batch(self, items: Sequence[Any]) -> None:
-        """Bulk-insert one epoch batch.
+    def write_batch(self, items: Sequence[Any]) -> int:
+        """Buffer one epoch batch and bulk-insert it when a threshold is reached.
 
         Args:
             items: Struct instances to insert.  Empty batches still check
                 for age-based flushes so stale buffers drain on quiet epochs.
+
+        Returns:
+            How many buffered items this call committed to the table.
         """
         if not items:
             if self._buffer and self._should_flush():
-                self._bridge.run(self._flush_async())
-            return
+                return self._bridge.run(self._flush_async())
+            return 0
+        durable = 0
         for item in items:
             row = _to_row_dict(item)
             row_bytes = _row_size_bytes(row)
@@ -703,19 +707,24 @@ class _SQLAlchemyTablePartition:
             self._buffer_records += 1
             self._buffer_bytes += row_bytes
             if self._should_flush():
-                self._bridge.run(self._flush_async())
+                durable += self._bridge.run(self._flush_async())
+        return durable
 
-    def close(self) -> None:
+    def close(self) -> int:
         """Release partition resources.
 
         The shared session manager is owned by the adapter runtime and disposed
         centrally when the Bytewax worker shuts down.
+
+        Returns:
+            How many buffered items the final flush committed to the table.
         """
         if self._closed:
-            return
+            return 0
         self._closed = True
         if self._buffer and self._buffer_policy.flush_on_shutdown:
-            self._bridge.run(self._flush_async())
+            return self._bridge.run(self._flush_async())
+        return 0
 
     def _should_flush(self) -> bool:
         if self._closed or not self._buffer:
@@ -728,7 +737,7 @@ class _SQLAlchemyTablePartition:
             return False
         return monotonic() - self._buffer_started_at >= self._buffer_policy.max_age_s
 
-    async def _flush_async(self) -> None:
+    async def _flush_async(self) -> int:
         statement = _sa_insert(self._table)
         trace_id = uuid4().hex
         correlation_id = uuid4().hex
@@ -761,6 +770,7 @@ class _SQLAlchemyTablePartition:
                 await session.rollback()
                 raise
         self._buffer_started_at = None
+        return n
 
 
 def _to_row_dict(item: Any) -> dict[str, Any]:
@@ -822,6 +832,7 @@ class _DeltaTablePartition:
         self._ipc_writer: Any = None  # pa.ipc.RecordBatchStreamWriter | None
         self._spool: Any = self._new_spool()
         self._staged_records = 0
+        self._rowless_items = 0
         self._staged_bytes = 0
         self._buffer_started_at: float | None = None
         self._closed = False
@@ -834,27 +845,34 @@ class _DeltaTablePartition:
             return None
         return self._staging_compression  # "lz4" | "zstd"
 
-    def write_batch(self, items: Sequence[Any]) -> None:
+    def write_batch(self, items: Sequence[Any]) -> int:
         """Accumulate items into mini-batches and flush when a threshold is reached.
 
         Args:
             items: Struct instances to write.  Empty batches still check
                 for age-based flushes so stale buffers drain on quiet epochs.
+
+        Returns:
+            How many buffered items this call wrote to the Delta table.
         """
         if not items:
             if self._staged_records and self._should_flush():
-                self._flush()
-            return
+                return self._flush()
+            return 0
+        durable = 0
         for item in items:
             if self._staged_records == 0:
                 self._buffer_started_at = monotonic()
             self._stage_item(item)
             if self._should_flush():
-                self._flush()
+                durable += self._flush()
+        return durable
 
     def _stage_item(self, item: Any) -> None:
         row = msgspec.structs.asdict(cast(msgspec.Struct, item))
         if not row:
+            # No row to write; the item is reported durable with the next flush.
+            self._rowless_items += 1
             return
         self._mini_batch.append(row)
         self._staged_records += 1
@@ -905,16 +923,18 @@ class _DeltaTablePartition:
             return False
         return monotonic() - self._buffer_started_at >= self._buffer_policy.max_age_s
 
-    def _flush(self) -> None:
+    def _flush(self) -> int:
         self._commit_mini_batch()
         writer = self._ipc_writer
         if writer is None:
-            return
+            return 0
         n = self._staged_records
+        durable = n + self._rowless_items
         spool = self._spool
         self._spool = self._new_spool()
         self._ipc_writer = None
         self._staged_records = 0
+        self._rowless_items = 0
         self._staged_bytes = 0
         self._buffer_started_at = None
         trace_id = uuid4().hex
@@ -936,6 +956,7 @@ class _DeltaTablePartition:
             raise
         finally:
             spool.close()
+        return durable
 
     def _write_to_delta(
         self,
@@ -974,20 +995,25 @@ class _DeltaTablePartition:
                 duration_ms=round((monotonic() - t0) * 1000, 1),
             )
 
-    def close(self) -> None:
-        """Flush staged records if configured and release all resources."""
+    def close(self) -> int:
+        """Flush staged records if configured and release all resources.
+
+        Returns:
+            How many buffered items the final flush wrote to the Delta table.
+        """
         if self._closed:
-            return
+            return 0
         self._closed = True
         try:
             if self._staged_records and self._buffer_policy.flush_on_shutdown:
-                self._flush()
-            elif self._staged_records and self._logger is not None:
+                return self._flush()
+            if self._staged_records and self._logger is not None:
                 self._logger.warning(
                     "delta_staged_records_discarded_on_close",
                     uri=self._uri,
                     records=self._staged_records,
                 )
+            return 0
         finally:
             if self._ipc_writer is not None:
                 with suppress(Exception):
@@ -1088,17 +1114,21 @@ class _ClickHouseTablePartition:
         self._buffer_started_at: float | None = None
         self._closed = False
 
-    def write_batch(self, items: Sequence[Any]) -> None:
+    def write_batch(self, items: Sequence[Any]) -> int:
         """Buffer items and flush to ClickHouse when a threshold is reached.
 
         Args:
             items: Struct instances to write.  Empty batches still check
                 for age-based flushes so stale buffers drain on quiet epochs.
+
+        Returns:
+            How many buffered items this call inserted into ClickHouse.
         """
         if not items:
             if self._buffer_records and self._should_flush():
-                self._flush()
-            return
+                return self._flush()
+            return 0
+        durable = 0
         for item in items:
             if not self._buffer_records:
                 self._buffer_started_at = monotonic()
@@ -1109,16 +1139,22 @@ class _ClickHouseTablePartition:
             self._buffer_records += 1
             self._buffer_bytes += row_bytes
             if self._should_flush():
-                self._flush()
+                durable += self._flush()
+        return durable
 
-    def close(self) -> None:
-        """Flush remaining buffer and close the ClickHouse client."""
+    def close(self) -> int:
+        """Flush remaining buffer and close the ClickHouse client.
+
+        Returns:
+            How many buffered items the final flush inserted into ClickHouse.
+        """
         if self._closed:
-            return
+            return 0
         self._closed = True
         try:
             if self._buffer_records and self._buffer_policy.flush_on_shutdown:
-                self._flush()
+                return self._flush()
+            return 0
         finally:
             self._client.close()
 
@@ -1133,9 +1169,9 @@ class _ClickHouseTablePartition:
             return False
         return monotonic() - self._buffer_started_at >= self._buffer_policy.max_age_s
 
-    def _flush(self) -> None:
+    def _flush(self) -> int:
         if not self._buffer_records:
-            return
+            return 0
         n = self._buffer_records
         columns = self._buffer
         trace_id = uuid4().hex
@@ -1171,6 +1207,7 @@ class _ClickHouseTablePartition:
                 records=n,
                 duration_ms=round((monotonic() - t0) * 1000, 1),
             )
+        return n
 
 
 __all__ = [
