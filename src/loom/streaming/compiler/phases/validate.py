@@ -130,6 +130,10 @@ def validate_outputs(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
     if flow.output is not None and _contains_broadcast(flow.process.nodes):
         errors.append(StreamingErrorCode.OUTPUT_WITH_BROADCAST.issue())
 
+    last = _path_end(flow.process.nodes)
+    if flow.output is not None and last is not None and not isinstance(last, (Broadcast, Fork)):
+        errors.append(StreamingErrorCode.OUTPUT_AFTER_PATH_END.issue(node=type(last).__name__))
+
     if not has_terminal:
         errors.append(StreamingErrorCode.MISSING_TERMINAL_OUTPUT.issue())
 
@@ -461,6 +465,13 @@ def _validate_broadcast_shapes(
         errors.extend(
             _prefixed(issue, f"broadcast branch {branch.label}") for issue in branch_errors
         )
+        last = _path_end(branch.nodes)
+        if branch.output is not None and last is not None:
+            errors.append(
+                StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END.issue(
+                    label=branch.label, node=type(last).__name__
+                )
+            )
     return errors, StreamShape.NONE
 
 
@@ -541,6 +552,21 @@ def _is_leaf_terminal(node: object) -> bool:
     validators check ``Broadcast`` before this, to validate those branches.
     """
     return isinstance(node, (IntoTopic, Drain, IntoSink, Broadcast))
+
+
+def _path_end(nodes: tuple[object, ...]) -> object | None:
+    """Return the last of *nodes* when it ends the path of every message it receives.
+
+    Nothing runs after such a node, so an output declared after it is never written.
+    A Fork ends the path only with a default branch; without one, the messages no
+    branch claims go on.
+    """
+    last = nodes[-1] if nodes else None
+    if _is_leaf_terminal(last) or isinstance(last, ExpandRoutes):
+        return last
+    if isinstance(last, Fork) and last.default is not None:
+        return last
+    return None
 
 
 def _node_has_terminal_output(node: object) -> bool:

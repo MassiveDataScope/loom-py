@@ -774,11 +774,6 @@ _PATH_CASES = {
         lambda: Process(UpperItem(), _topic("t.a")),
         _each("t.a", 0, 1, 2),
     ),
-    "into_topic_with_output": _PathCase(
-        lambda: Process(UpperItem(), _topic("t.a")),
-        _each("t.a", 0, 1, 2),
-        output="t.out",
-    ),
     "dlq_diversion": _PathCase(
         lambda: Process(IntoTopic("t.unreachable", payload=Item, dlq="t.dlq")),
         _each("t.unreachable", 0, 1, 2) + _each("t.dlq", 0, 1, 2),
@@ -818,14 +813,6 @@ _PATH_CASES = {
         _each("t.inline", 0, 0, 1, 1, 2, 2),
         shares=2,
     ),
-    "expand_routes_with_output": _PathCase(
-        lambda: Process(
-            ExpandRoutes(expander=_TwoRows, routes={_Row: Process(IntoTopic("t.a", payload=_Row))})
-        ),
-        _each("t.a", 0, 0, 1, 1, 2, 2),
-        shares=2,
-        output="t.out",
-    ),
     "expand_routes_route_ending_in_into_topic": _PathCase(
         lambda: Process(
             ExpandRoutes(expander=_TwoRows, routes={_Row: Process(IntoTopic("t.a", payload=_Row))})
@@ -837,16 +824,6 @@ _PATH_CASES = {
         lambda: Process(
             Broadcast(
                 BroadcastRoute(process=Process(UpperItem()), output=_topic("t.a")),
-                BroadcastRoute(process=Process(UpperItem()), output=_topic("t.b")),
-            )
-        ),
-        _each("t.a", 0, 1, 2) + _each("t.b", 0, 1, 2),
-        shares=2,
-    ),
-    "broadcast_route_ending_in_a_terminal_with_output": _PathCase(
-        lambda: Process(
-            Broadcast(
-                BroadcastRoute(process=Process(_topic("t.a")), output=_topic("t.b")),
                 BroadcastRoute(process=Process(UpperItem()), output=_topic("t.b")),
             )
         ),

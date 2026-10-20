@@ -478,6 +478,34 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "flow.output",
         "output",
     ),
+    "flow output after a process that ends in IntoTopic": (
+        lambda: _flow(FakeStep(), _out(), output=_out()),
+        {},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in IntoTopic, which ends the path "
+        "of every message it receives. Remove the output or the IntoTopic.",
+        "flow.output",
+        "output",
+    ),
+    "flow output after an ExpandRoutes": (
+        lambda: _flow(_expand_routes(_out()), output=_out()),
+        {},
+        StreamingErrorCode.OUTPUT_AFTER_PATH_END,
+        "flow.output is never written: the process ends in ExpandRoutes, which ends the path "
+        "of every message it receives. Remove the output or the ExpandRoutes.",
+        "flow.output",
+        "output",
+    ),
+    "broadcast route output after a terminal": (
+        lambda: _flow(_broadcast(_out())),
+        {},
+        StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END,
+        "broadcast branch 0: its output is never written: the route's process ends in "
+        "IntoTopic, which ends the path of every message it receives. Remove the output "
+        "or the IntoTopic.",
+        "broadcast branch 0",
+        "output",
+    ),
     "bare ErrorEnvelope among the payloads": (
         lambda: _flow(Drain(), source=FromMultiTypeTopic("in", payloads=(Order, ErrorEnvelope))),
         {},

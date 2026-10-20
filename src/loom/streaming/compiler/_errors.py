@@ -134,6 +134,25 @@ class StreamingErrorCode(IssueCode):
             field=_OUTPUT,
         ),
     )
+    OUTPUT_AFTER_PATH_END = (
+        "OUTPUT_AFTER_PATH_END",
+        Template(
+            "flow.output is never written: the process ends in {node}, which ends the path "
+            "of every message it receives. Remove the output or the {node}.",
+            component="flow.output",
+            field=_OUTPUT,
+        ),
+    )
+    BROADCAST_OUTPUT_AFTER_PATH_END = (
+        "BROADCAST_OUTPUT_AFTER_PATH_END",
+        Template(
+            "broadcast branch {label}: its output is never written: the route's process "
+            "ends in {node}, which ends the path of every message it receives. Remove the "
+            "output or the {node}.",
+            component="broadcast branch {label}",
+            field=_OUTPUT,
+        ),
+    )
     MISSING_TERMINAL_OUTPUT = (
         "MISSING_TERMINAL_OUTPUT",
         Template(

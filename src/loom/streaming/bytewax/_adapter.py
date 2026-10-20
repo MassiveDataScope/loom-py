@@ -301,9 +301,14 @@ class _BuildContext:
         ``None`` means the branch already ended in a sink, which completes what
         it writes; wiring anything more would complete those offsets twice.
         """
-        if stream is None:
-            return
         sink = self.terminal_sinks.get(path)
+        if stream is None:
+            if sink is not None:
+                raise RuntimeError(
+                    f"the output compiled for path {path} is never written: the branch "
+                    "already ended the path of every message it received."
+                )
+            return
         if sink is not None:
             self._bind_terminal_tracing(sink)
             bw_output(_qualified_step_id(step_id, path), stream, sink)
@@ -349,6 +354,11 @@ class _BuildContext:
         """End the flow's live stream at the output sink, else complete it at a drop sink."""
         if self.sink is None and self.plan.output is not None:
             raise RuntimeError("Bytewax sink is required for terminal output wiring.")
+        if stream is None and self.plan.output is not None:
+            raise RuntimeError(
+                "flow.output is never written: the process already ended the path of every "
+                "message it received."
+            )
         if stream is not None and self.sink is not None:
             self._bind_terminal_tracing(self.sink)
             bw_output("output", stream, self.sink)
