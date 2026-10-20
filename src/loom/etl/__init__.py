@@ -51,6 +51,7 @@ from loom.etl.checkpoint import (
     CheckpointStore,
     FsspecTempCleaner,
 )
+from loom.etl.compiler import InvalidStageError
 from loom.etl.declarative import (
     CsvReadOptions,
     CsvWriteOptions,
@@ -118,7 +119,7 @@ from loom.etl.pipeline import (
     StepSQL,
     params,
 )
-from loom.etl.runner import ETLRunner, InvalidStageError
+from loom.etl.runner import ETLRunner
 from loom.etl.runtime.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,

@@ -1100,9 +1100,9 @@
   `ClickHouseSourceSpec.table_ref.ref`.
 - **etl:** `loom.etl.backends.polars._reader._apply_source_schema` is
   removed. It was a test helper and has no public replacement.
-- **etl:** the module `loom.etl.runner.errors` is removed, and
-  `loom.etl.runner.core` no longer lists `InvalidStageError`; import it from
-  `loom.etl.compiler` (or `loom.etl`).
+- **etl:** the module `loom.etl.runner.errors` is removed, and neither
+  `loom.etl.runner` nor `loom.etl.runner.core` exports `InvalidStageError`;
+  import it from `loom.etl.compiler` (or `loom.etl`).
 - **etl:** `loom.etl.io.sources._clickhouse` no longer re-exports
   `FromClickHouse` and `ClickHouseSourceSpec`; import them from
   `loom.etl.declarative.source` (`FromClickHouse` also from `loom.etl`).
