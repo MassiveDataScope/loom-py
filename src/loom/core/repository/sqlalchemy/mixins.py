@@ -56,7 +56,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None
     _json_column_names: frozenset[str] = frozenset()
-    _cursor_columns: Mapping[str, Any] | None = None
+    _cursor_columns: Mapping[str, Any]
     # Pre-computed at init to avoid per-request/per-object reflection.
     _output_column_keys: tuple[str, ...] | None = None
     _all_sa_column_keys: tuple[str, ...] | None = None
@@ -509,10 +509,10 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 self._id_columns(),
                 self.allowed_filter_fields,
                 backend=self.backend_name,
-                model_name=self.model.__qualname__,
+                model_name=f"{self.model.__module__}.{self.model.__qualname__}",
                 cursor_codec=self.cursor_codec,
                 scope=self._cursor_scope(),
-                columns=self._cursor_columns or {},
+                columns=self._cursor_columns,
             )
             core_model = self._effective_core_model
 

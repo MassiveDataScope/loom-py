@@ -12,6 +12,7 @@ import msgspec
 import pytest
 
 from loom.core.config import ConfigError
+from loom.core.di.container import LoomContainer
 from loom.core.errors.codes import ErrorCode
 from loom.core.repository.abc import (
     Cursor,
@@ -24,6 +25,7 @@ from loom.core.repository.abc import (
     SortSpec,
     UnsupportedQuery,
 )
+from loom.core.repository.abc.cursor import register_cursor_codec
 
 _BACKEND = "sqlalchemy"
 _MODEL = "billing.Invoice"
@@ -553,6 +555,51 @@ class TestBinding:
         larger = QuerySpec(sort=_QUERY.sort, pagination=PaginationMode.CURSOR, limit=200)
 
         assert _decode(codec, token, query=larger) == _at(1)
+
+
+class TestValuesATokenCannotCarry:
+    @pytest.mark.parametrize(
+        "value",
+        [b"raw", float("nan"), float("inf"), Decimal("NaN"), Decimal("-Infinity"), object()],
+        ids=["bytes", "nan", "inf", "decimal-nan", "decimal-inf", "object"],
+    )
+    def test_issuing_the_next_token_is_an_unsupported_query(
+        self, codec: CursorCodec, value: object
+    ) -> None:
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            _encode(codec, _at(value))
+
+        assert excinfo.value.code == ErrorCode.UNSUPPORTED_QUERY
+        assert excinfo.value.backend == _BACKEND
+
+    def test_a_token_with_unused_trailing_bits_is_refused(self, unsigned: CursorCodec) -> None:
+        payload = msgspec.json.encode({"b": _BACKEND, "k": [1], "id": 1})
+        payload += b" " * ((1 - len(payload)) % 3)  # one byte past a group: 4 unused bits
+        token = _b64(payload)
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        variant = token[:-1] + alphabet[alphabet.index(token[-1]) ^ 1]
+        assert _decode(unsigned, token) == _at(1)
+        assert _unb64(variant) == payload
+
+        with pytest.raises(UnsupportedQuery):
+            _decode(unsigned, variant)
+
+
+class TestOneCodecPerProcess:
+    def test_the_same_codec_registers_twice(self, codec: CursorCodec) -> None:
+        container = LoomContainer()
+
+        register_cursor_codec(container, codec)
+        register_cursor_codec(container, codec)
+
+        assert container.resolve(CursorCodec) is codec
+
+    def test_a_second_codec_is_refused(self, codec: CursorCodec) -> None:
+        container = LoomContainer()
+        register_cursor_codec(container, codec)
+
+        with pytest.raises(ConfigError, match="one codec per process"):
+            register_cursor_codec(container, CursorCodec(signing="ephemeral"))
 
 
 class TestModes:

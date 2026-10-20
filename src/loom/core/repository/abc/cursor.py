@@ -31,6 +31,7 @@ import binascii
 import hashlib
 import hmac
 import logging
+import math
 import re
 import secrets
 from collections.abc import Mapping, Sequence
@@ -38,7 +39,7 @@ from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, get_args, get_origin
 from uuid import UUID
 
 import msgspec
@@ -52,6 +53,7 @@ from loom.core.repository.abc.query import FilterSpec, QuerySpec
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
+    from loom.core.di.container import LoomContainer
 
 _logger = logging.getLogger(__name__)
 
@@ -75,6 +77,8 @@ _OPT_OUT: Final = "persistence.cursors.signing: ephemeral in development.yaml"
 # Types a decoded value must already have: msgspec would otherwise parse a
 # string into them, and the keyset predicate would bind that string.
 _CARRIED_TYPES: Final = (datetime, date, time, UUID, Decimal)
+# Column types a token carries a value of; an Enum is carried as its value.
+_SORTABLE_TYPES: Final = (bool, int, float, str, datetime, date, time, UUID, Decimal, Enum)
 
 
 class Cursor(LoomFrozenStruct, frozen=True):
@@ -96,8 +100,9 @@ class CursorKeySource(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknow
     """Where one cursor signing key is read from; exactly one source is set.
 
     The key itself never appears in configuration, so a dump of the config
-    cannot leak it. The key is the UTF-8 text found there with surrounding
-    whitespace removed, at least :data:`MIN_KEY_BYTES` bytes long.
+    cannot leak it. The source holds the key in standard base64 (surrounding
+    whitespace ignored), and the decoded bytes must be at least
+    :data:`MIN_KEY_BYTES` long: ``openssl rand -base64 32`` makes one.
 
     Args:
         path: File holding the key (a mounted secret).
@@ -286,15 +291,22 @@ class CursorCodec:
             URL-safe token.
 
         Raises:
-            TypeError: If a key has a type the token format cannot carry.
+            UnsupportedQuery: If a key has a type the token format cannot
+                carry, or is a non-finite number.
         """
         tie_breaker = cursor.tie_breaker
-        tie: _Key | list[_Key] = (
-            [_wrap(value) for value in tie_breaker]
-            if isinstance(tie_breaker, tuple)
-            else _wrap(tie_breaker)
-        )
-        token = _Token(b=cursor.backend, k=[_wrap(key) for key in cursor.keys], id=tie)
+        try:
+            tie: _Key | list[_Key] = (
+                [_wrap(value) for value in tie_breaker]
+                if isinstance(tie_breaker, tuple)
+                else _wrap(tie_breaker)
+            )
+            keys = [_wrap(key) for key in cursor.keys]
+        except (TypeError, ValueError):
+            raise UnsupportedQuery(
+                cursor.backend, model, "a cursor cannot carry the sort value of the page's last row"
+            ) from None
+        token = _Token(b=cursor.backend, k=keys, id=tie)
         payload = msgspec.json.encode(token)
         if self._signing == _UNSIGNED:
             return _b64encode(payload)
@@ -399,10 +411,10 @@ def _read_key(key_id: str, spec: CursorKeySource) -> bytes:
             text = Path(str(spec.path)).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             raise ConfigError(f"cursor key {key_id!r}: its file could not be read") from None
-    material = text.strip().encode()
-    if not material:
-        raise ConfigError(f"cursor key {key_id!r} is empty")
-    return material
+    try:
+        return base64.b64decode(text.strip(), validate=True)
+    except (binascii.Error, ValueError):
+        raise ConfigError(f"cursor key {key_id!r} is not standard base64") from None
 
 
 def _mac(key: bytes, key_id: bytes, binding: bytes, payload: bytes) -> bytes:
@@ -449,6 +461,8 @@ def _utc(value: object) -> object:
 def _wrap(value: object) -> _Key:
     if isinstance(value, Enum):
         value = value.value
+    if isinstance(value, float | Decimal) and not math.isfinite(value):
+        raise ValueError("a non-finite number cannot position a page")
     if value is None or isinstance(value, int | float | str):
         return value
     if isinstance(value, datetime):
@@ -514,6 +528,64 @@ def _typed_as(values: tuple[object, ...], types: tuple[Any, ...]) -> bool:
     return True
 
 
+def require_cursor_sort(
+    query: QuerySpec,
+    *,
+    backend: str,
+    model: str,
+    columns: Mapping[str, Any],
+    primary_key: Sequence[str],
+) -> None:
+    """Refuse, before the query runs, a cursor page no token could position.
+
+    Every sort field and primary-key column must be a column in ``columns``
+    whose type a token carries and which holds no null: a dotted path, a JSON
+    column or an optional column is refused. A comparison with a null is never
+    true, so the keyset predicate would skip the rows holding one.
+
+    Args:
+        query: The cursor query about to run.
+        backend: Name of the backend serving it.
+        model: Qualified model name, as bound into its tokens.
+        columns: Annotation of each column, by name.
+        primary_key: Primary-key column names in key order.
+
+    Raises:
+        UnsupportedQuery: Naming the first field that does not qualify.
+    """
+    for name in (*(spec.field for spec in query.sort), *primary_key):
+        if not _sortable(columns.get(name)):
+            raise UnsupportedQuery(
+                backend,
+                model,
+                f"cursor pagination cannot order by {name!r}: it must be a non-null column "
+                "of a type a cursor carries",
+            )
+
+
+def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
+    """Register ``codec`` as the process's one ``CursorCodec``.
+
+    Raises:
+        ConfigError: When another codec is already registered: two codecs
+            would sign with different keys, and each would refuse the other's
+            tokens.
+    """
+    if not container.is_registered(CursorCodec):
+        container.register_instance(CursorCodec, codec)
+    elif container.resolve(CursorCodec) is not codec:
+        raise ConfigError(
+            "another CursorCodec is already registered; one codec per process issues and "
+            "verifies every cursor"
+        )
+
+
+def _sortable(annotation: Any) -> bool:
+    if get_origin(annotation) is Literal:
+        return all(isinstance(value, int | str) for value in get_args(annotation))
+    return isinstance(annotation, type) and issubclass(annotation, _SORTABLE_TYPES)
+
+
 def _b64encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -523,9 +595,19 @@ def _b64decode(text: str) -> bytes | None:
     if _BASE64URL.fullmatch(text) is None or len(text) % 4 == 1:
         return None
     try:
-        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
     except (binascii.Error, ValueError):
         return None
+    # Unused trailing bits would let several texts decode to the same bytes.
+    return data if _b64encode(data) == text else None
 
 
-__all__ = ["MIN_KEY_BYTES", "Cursor", "CursorCodec", "CursorConfig", "CursorKeySource"]
+__all__ = [
+    "MIN_KEY_BYTES",
+    "Cursor",
+    "CursorCodec",
+    "CursorConfig",
+    "CursorKeySource",
+    "register_cursor_codec",
+    "require_cursor_sort",
+]

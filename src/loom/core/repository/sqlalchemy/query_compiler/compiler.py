@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.repository.abc.cursor import CursorCodec
+from loom.core.repository.abc.cursor import CursorCodec, require_cursor_sort
 from loom.core.repository.abc.query import (
     FilterGroup,
     PaginationMode,
@@ -148,10 +148,20 @@ class QuerySpecCompiler:
         appended as the tie-breaker, so the keyset predicate is total.
 
         Raises:
-            UnsupportedQuery: If ``query.cursor`` is malformed or forged, was
-                issued for another binding or backend, or does not match
-                ``query.sort`` or the primary key in number or type of values.
+            UnsupportedQuery: If a sort field or key column is not a non-null
+                column a cursor carries, or ``query.cursor`` (an empty one
+                included) is malformed or forged, was issued for another
+                binding or backend, or does not match ``query.sort`` or the
+                primary key in number or type of values.
         """
+        primary_key = [column.key for column in self._id_columns]
+        require_cursor_sort(
+            query,
+            backend=self._backend,
+            model=self._model_name,
+            columns=self._columns,
+            primary_key=primary_key,
+        )
         sa_model = self._sa_model
         stmt = base_stmt if base_stmt is not None else select(sa_model)
 
@@ -159,7 +169,7 @@ class QuerySpecCompiler:
             clause = compile_filter_group(sa_model, query.filters, self._allowed_fields)
             stmt = stmt.where(clause)
 
-        if query.cursor:
+        if query.cursor is not None:
             cursor = self._cursor_codec.decode(
                 query.cursor,
                 backend=self._backend,
@@ -167,7 +177,7 @@ class QuerySpecCompiler:
                 query=query,
                 scope=self._scope,
                 columns=self._columns,
-                primary_key=[column.key for column in self._id_columns],
+                primary_key=primary_key,
             )
             predicate = compile_cursor_predicate(sa_model, cursor, query.sort, self._id_columns)
             stmt = stmt.where(predicate)

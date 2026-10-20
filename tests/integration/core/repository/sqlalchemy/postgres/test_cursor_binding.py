@@ -140,3 +140,16 @@ async def test_a_forged_value_of_another_type_is_refused_before_the_query(
         await unsigned.list_with_query(
             QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=2, cursor=forged)
         )
+
+
+async def test_a_cursor_issued_for_one_sort_is_refused_for_another(
+    repository: RepositorySQLAlchemy[Reading, int],
+) -> None:
+    cursor = (await _page(repository, None)).next_cursor
+    assert cursor is not None
+    by_id = QuerySpec(
+        sort=(SortSpec(field="id"),), pagination=PaginationMode.CURSOR, limit=2, cursor=cursor
+    )
+
+    with pytest.raises(UnsupportedQuery):
+        await repository.list_with_query(by_id)

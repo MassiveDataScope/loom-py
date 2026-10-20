@@ -39,10 +39,10 @@ from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.introspection import (
+    column_annotations,
     get_column_fields,
     get_id_attributes,
     get_table_name,
-    scalar_column_annotations,
 )
 from loom.core.repository.abc import (
     BulkCreatable,
@@ -68,6 +68,7 @@ from loom.core.repository.abc import (
     Updatable,
     build_page_result,
 )
+from loom.core.repository.abc.cursor import require_cursor_sort
 from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
@@ -219,7 +220,9 @@ class RepositoryMongo(
         self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
-        self._cursor_columns = scalar_column_annotations(model)
+        # Documents order any column; the sort check keeps the types a token carries.
+        self._cursor_columns = column_annotations(model)
+        self._cursor_model = f"{model.__module__}.{model.__qualname__}"
         self._naive_datetime_fields = frozenset(
             name
             for name, info in column_fields.items()
@@ -432,6 +435,13 @@ class RepositoryMongo(
         return build_page_result(items, total, page_params)
 
     async def _list_cursor(self, query: QuerySpec) -> CursorResult[OutputT]:
+        require_cursor_sort(
+            query,
+            backend=self.backend_name,
+            model=self._cursor_model,
+            columns=self._cursor_columns,
+            primary_key=(self._id_attr,),
+        )
         mongo_filter = self._query_filter(query)
         if query.cursor is not None:
             cursor = self._decode(query.cursor, query)
@@ -444,13 +454,9 @@ class RepositoryMongo(
             .to_list()
         )
         has_next = len(documents) > query.limit
-        page = documents[: query.limit]
-        next_cursor = self._encode(page[-1], query) if has_next else None
-        return CursorResult(
-            items=tuple(self._to_output(document) for document in page),
-            next_cursor=next_cursor,
-            has_next=has_next,
-        )
+        items = tuple(self._to_output(document) for document in documents[: query.limit])
+        next_cursor = self._encode(items[-1], query) if has_next else None
+        return CursorResult(items=items, next_cursor=next_cursor, has_next=has_next)
 
     def _query_filter(self, query: QuerySpec) -> MongoFilter:
         if query.filters is None:
@@ -473,7 +479,7 @@ class RepositoryMongo(
         cursor = self._cursor_codec.decode(
             token,
             backend=self.backend_name,
-            model=self._model.__qualname__,
+            model=self._cursor_model,
             query=query,
             scope="",
             columns=self._cursor_columns,
@@ -489,21 +495,19 @@ class RepositoryMongo(
             tie_breaker=self._compiler.storage_value(self._id_attr, cursor.tie_breaker),
         )
 
-    def _encode(self, document: Document, query: QuerySpec) -> str:
-        """Issue the token for the page after ``document``; ``_id`` keys use the model form."""
+    def _encode(self, item: object, query: QuerySpec) -> str:
+        """Issue the token for the page after ``item``, from its values in the model's types.
+
+        A document holds a date, a decimal or a UUID as text; the output
+        struct holds the model's type, which the token carries and the next
+        page's type check expects.
+        """
         position = Cursor(
             backend=self.backend_name,
-            keys=tuple(self._model_value(document, spec.field) for spec in query.sort),
-            tie_breaker=self._ids.from_storage(document[_ID]),
+            keys=tuple(getattr(item, spec.field) for spec in query.sort),
+            tie_breaker=getattr(item, self._id_attr),
         )
-        return self._cursor_codec.encode(
-            position, model=self._model.__qualname__, query=query, scope=""
-        )
-
-    def _model_value(self, document: Document, field: str) -> object:
-        if field == self._id_attr:
-            return self._ids.from_storage(document[_ID])
-        return document.get(field)
+        return self._cursor_codec.encode(position, model=self._cursor_model, query=query, scope="")
 
     def _key(self, obj_id: object) -> MongoFilter:
         return {_ID: {"$eq": self._compiler.storage_value(self._id_attr, obj_id)}}

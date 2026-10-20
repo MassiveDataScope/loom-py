@@ -1,5 +1,12 @@
 from loom.core.repository.abc.checks import CURSOR_SIGNING_CHECK
-from loom.core.repository.abc.cursor import Cursor, CursorCodec, CursorConfig, CursorKeySource
+from loom.core.repository.abc.cursor import (
+    Cursor,
+    CursorCodec,
+    CursorConfig,
+    CursorKeySource,
+    register_cursor_codec,
+    require_cursor_sort,
+)
 from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import (
     CursorResult,
@@ -71,4 +78,6 @@ __all__ = [
     "UnsupportedQuery",
     "UpdateT",
     "build_page_result",
+    "register_cursor_codec",
+    "require_cursor_sort",
 ]

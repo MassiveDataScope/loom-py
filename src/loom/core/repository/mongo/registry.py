@@ -24,6 +24,7 @@ from loom.core.repository import (
     build_repository_registration_module as build_main_repository_module,
 )
 from loom.core.repository.abc import CursorCodec
+from loom.core.repository.abc.cursor import register_cursor_codec
 from loom.core.repository.mongo.ids import IdPolicy
 from loom.core.repository.mongo.repository import (
     MongoCollection,
@@ -108,9 +109,10 @@ def build_mongo_repository_registration_module(
     The module registers a ``DefaultRepositoryBuilder`` bound to the shared
     database unless one is already registered, so a deployment may swap the
     builder by registering its own before loading the module. It registers
-    ``cursor_codec`` as ``CursorCodec`` too, unless one is already
-    registered, so a custom builder or a service paginating by hand
-    resolves the codec the repositories sign with.
+    ``cursor_codec`` as the process's one ``CursorCodec`` too, raising
+    ``ConfigError`` when another is already registered, so a custom builder
+    or a service paginating by hand resolves the codec the repositories sign
+    with.
 
     Args:
         database: Shared database the collections are taken from.
@@ -153,8 +155,7 @@ def build_mongo_repository_registration_module(
     )
 
     def _register_with_database(container: LoomContainer) -> None:
-        if not container.is_registered(CursorCodec):
-            container.register_instance(CursorCodec, cursor_codec)
+        register_cursor_codec(container, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(DefaultRepositoryBuilder, builder)
         register(container)

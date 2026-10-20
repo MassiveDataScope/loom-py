@@ -117,7 +117,7 @@ class TestCursorPagination:
         first_page = QuerySpec(pagination=PaginationMode.CURSOR, limit=2)
         token = _CODEC.encode(
             Cursor(backend="sqlalchemy", keys=(), tie_breaker=7),
-            model="_Entry",
+            model=f"{_Entry.__module__}._Entry",
             query=first_page,
             scope="",
         )

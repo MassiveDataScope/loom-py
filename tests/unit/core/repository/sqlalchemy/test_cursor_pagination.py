@@ -45,6 +45,15 @@ class _CreateReading(Command, frozen=True):
     taken_at: datetime
 
 
+class _Rated(BaseModel):
+    __tablename__ = "cursor_rated_rows"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    score: int | None = ColumnField(nullable=True, default=None)
+    payload: bytes = ColumnField()
+    tags: list[str] = ColumnField()
+
+
 _CODEC = CursorCodec(signing="ephemeral")
 
 
@@ -101,7 +110,7 @@ class TestRejectedTokens:
         )
 
     def _token(self, cursor: Cursor) -> str:
-        return _CODEC.encode(cursor, model="_Row", query=self._query(), scope="")
+        return _CODEC.encode(cursor, model=f"{_Row.__module__}._Row", query=self._query(), scope="")
 
     async def test_token_from_another_backend(
         self, repository: RepositorySQLAlchemy[_Row, int]
@@ -112,7 +121,7 @@ class TestRejectedTokens:
             await repository.list_with_query(query)
 
         assert excinfo.value.backend == "sqlalchemy"
-        assert excinfo.value.model == "_Row"
+        assert excinfo.value.model == f"{_Row.__module__}._Row"
 
     async def test_token_issued_for_a_different_sort(
         self, repository: RepositorySQLAlchemy[_Row, int]
@@ -130,7 +139,7 @@ class TestRejectedTokens:
         other = CursorCodec(signing="ephemeral")
         token = other.encode(
             Cursor(backend="sqlalchemy", keys=(3,), tie_breaker=1),
-            model="_Row",
+            model=f"{_Row.__module__}._Row",
             query=self._query(),
             scope="",
         )
@@ -170,3 +179,38 @@ class TestNaiveDateTimeSort:
 
         assert seen == sorted(stamps)
         assert all(stamp.tzinfo is None for stamp in seen)
+
+
+class TestSortFieldsACursorCannotCarry:
+    """Refused before the query runs, instead of a first page whose token no page accepts."""
+
+    @pytest.mark.parametrize(
+        "field",
+        ["score", "payload", "tags", "rank.value", "missing"],
+        ids=["nullable", "bytes", "json", "dotted", "unknown"],
+    )
+    async def test_the_first_page_is_refused_naming_the_field(
+        self, session_manager: SessionManager, field: str
+    ) -> None:
+        compile_all(_Rated)
+        repo: RepositorySQLAlchemy[_Rated, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Rated, cursor_codec=_CODEC
+        )
+        query = QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            await repo.list_with_query(query)
+
+        assert f"cannot order by {field!r}" in excinfo.value.reason
+
+    async def test_an_empty_cursor_is_refused_like_any_invalid_token(
+        self, repository: RepositorySQLAlchemy[_Row, int]
+    ) -> None:
+        query = QuerySpec(
+            sort=(SortSpec("rank"),), pagination=PaginationMode.CURSOR, limit=2, cursor=""
+        )
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            await repository.list_with_query(query)
+
+        assert excinfo.value.reason == "cursor token is not valid"

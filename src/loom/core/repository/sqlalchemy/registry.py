@@ -14,6 +14,7 @@ from loom.core.repository import (
     build_repository_registration_module as build_main_repository_module,
 )
 from loom.core.repository.abc import CursorCodec
+from loom.core.repository.abc.cursor import register_cursor_codec
 from loom.core.repository.registry import (
     RepositoryRegistration,
     RepositoryToken,
@@ -77,8 +78,10 @@ def build_sqlalchemy_repository_registration_module(
     ``SessionManager``, ``CursorCodec`` and ``DefaultRepositoryBuilder`` in the
     container so that the bootstrap does not need to know about SQLAlchemy
     internals, and a service paginating by hand resolves the codec the
-    repositories sign with. A custom ``builder`` builds its repository with
-    that codec too: resolve ``CursorCodec`` from ``context.container``.
+    repositories sign with. ``cursor_codec`` is the process's one codec: the
+    module raises ``ConfigError`` when another is already registered. A custom
+    ``builder`` builds its repository with that codec too: resolve
+    ``CursorCodec`` from ``context.container``.
 
     To swap the default builder, register your own ``DefaultRepositoryBuilder``
     in the container *before* loading this module — the module will not
@@ -119,8 +122,7 @@ def build_sqlalchemy_repository_registration_module(
     def _register_with_session(container: LoomContainer) -> None:
         if not container.is_registered(SessionManager):
             container.register_instance(SessionManager, session_manager)
-        if not container.is_registered(CursorCodec):
-            container.register_instance(CursorCodec, cursor_codec)
+        register_cursor_codec(container, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(
                 DefaultRepositoryBuilder,

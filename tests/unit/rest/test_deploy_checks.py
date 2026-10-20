@@ -9,6 +9,7 @@ staging, and hands the environment to the use cases through the container.
 
 from __future__ import annotations
 
+import base64
 import logging
 import secrets
 from pathlib import Path
@@ -24,6 +25,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import ENVIRONMENT_VARIABLE
 from loom.core.identity import Identity
+from loom.core.repository.abc import CURSOR_SIGNING_CHECK
 from loom.rest.auth import RequestCredentials
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.fastapi.auto import create_app
@@ -50,7 +52,7 @@ class _HeaderAuthenticator:
 def _signed_cursors(tmp_path: Path) -> dict[str, Any]:
     """A ``persistence`` section signing cursors with a mounted key, as a deployment does."""
     key = tmp_path / "cursor.key"
-    key.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+    key.write_text(base64.b64encode(secrets.token_bytes(32)).decode(), encoding="utf-8")
     keys = {"k1": {"path": str(key)}}
     return {"cursors": {"signing": "signed", "current_key_id": "k1", "keys": keys}}
 
@@ -169,6 +171,34 @@ class TestCreateAppInADeployedEnvironment:
 
         assert any(
             "silenced" in r.getMessage() and AUTHENTICATION_CHECK in r.getMessage()
+            for r in caplog.records
+        )
+
+
+class TestCursorSigningCheck:
+    """``loom.cursors.E001`` at startup: the fixture app opts out with ``signing: ephemeral``."""
+
+    def test_a_deployed_app_with_ephemeral_cursors_fails_naming_the_check(
+        self, tmp_path: Path
+    ) -> None:
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH)
+
+        with pytest.raises(DeployCheckError) as caught:
+            create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
+
+        assert [result.id for result in caught.value.results] == [CURSOR_SIGNING_CHECK]
+
+    def test_silencing_the_check_lets_the_app_start_and_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH)
+        _merge_yaml(Path(config), {"checks": {"silenced": [CURSOR_SIGNING_CHECK]}})
+
+        with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
+            create_app(config, environment=_PRODUCTION, authenticator=_HeaderAuthenticator())
+
+        assert any(
+            "silenced" in r.getMessage() and CURSOR_SIGNING_CHECK in r.getMessage()
             for r in caplog.records
         )
 

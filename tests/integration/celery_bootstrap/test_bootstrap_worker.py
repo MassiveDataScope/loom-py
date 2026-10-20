@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import secrets
 from pathlib import Path
@@ -18,10 +19,12 @@ from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError
 from loom.celery.bootstrap import WorkerBootstrapResult, bootstrap_worker
 from loom.celery.constants import TASK_JOB_PREFIX
+from loom.core.checks import DeployCheckError
 from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.abc import CURSOR_SIGNING_CHECK
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
 
@@ -148,7 +151,7 @@ class TestBootstrapWorkerResult:
                 "cursors": {"current_key_id": "k1", "keys": {"k1": {"env": "CURSOR_KEY_WORKER"}}}
             },
         }
-        monkeypatch.setenv("CURSOR_KEY_WORKER", secrets.token_urlsafe(32))
+        monkeypatch.setenv("CURSOR_KEY_WORKER", base64.b64encode(secrets.token_bytes(32)).decode())
         config_file = tmp_path / "worker_observability.yaml"
         config_file.write_text(yaml.dump(cfg))
 
@@ -176,6 +179,22 @@ class TestBootstrapWorkerResult:
         assert isinstance(result, WorkerBootstrapResult)
         assert captured["config"].log.enabled is False
         assert captured["environment"] is Environment.STAGING
+
+    def test_a_deployed_worker_with_a_database_and_unsigned_cursors_fails(
+        self, tmp_path: Path
+    ) -> None:
+        cfg: dict[str, Any] = {
+            "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
+            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"},
+            "persistence": {"cursors": {"signing": "unsigned"}},
+        }
+        config_file = tmp_path / "worker_unsigned.yaml"
+        config_file.write_text(yaml.dump(cfg))
+
+        with pytest.raises(DeployCheckError) as caught:
+            bootstrap_worker(str(config_file), jobs=[_DoubleSyncJob], environment="production")
+
+        assert [result.id for result in caught.value.results] == [CURSOR_SIGNING_CHECK]
 
 
 class TestBootstrapWorkerTaskExecution:

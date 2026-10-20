@@ -579,7 +579,9 @@ class TestCursorPagination:
         )
 
     def _token(self, position: Cursor) -> str:
-        return _CODEC.encode(position, model="Article", query=self._query(), scope="")
+        return _CODEC.encode(
+            position, model=f"{Article.__module__}.Article", query=self._query(), scope=""
+        )
 
     async def test_walk_through_duplicate_sort_values(self, collection: FakeCollection) -> None:
         repo = _articles(collection)
@@ -685,6 +687,54 @@ class TestCursorPagination:
         assert isinstance(second, CursorResult)
         assert [item.slug for item in (*first.items, *second.items)] == ["c", "b", "a"]
         assert second.has_next is False
+
+    @pytest.mark.parametrize("field", ["issued_on", "id"])
+    async def test_a_stored_date_or_uuid_key_pages_in_its_model_type(
+        self, collection: FakeCollection, field: str
+    ) -> None:
+        """Documents hold dates and UUIDs as text; the cursor carries the model's types."""
+        repo: RepositoryMongo[Invoice, UUID] = RepositoryMongo(
+            Invoice, collection, cursor_codec=_CODEC
+        )
+        created = [
+            await repo.create(
+                InvoiceCreate(id=UUID(int=n), amount=Decimal("1.00"), issued_on=date(2026, 1, n))
+            )
+            for n in (3, 1, 2)
+        ]
+        query = QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR, limit=2)
+
+        first = await repo.list_with_query(query)
+        assert isinstance(first, CursorResult)
+        assert first.next_cursor is not None
+        second = await repo.list_with_query(
+            QuerySpec(
+                sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor
+            )
+        )
+
+        assert isinstance(second, CursorResult)
+        walked = [getattr(item, field) for item in (*first.items, *second.items)]
+        assert walked == sorted(getattr(invoice, field) for invoice in created)
+        assert second.next_cursor is None
+
+    async def test_an_empty_cursor_is_refused_like_any_invalid_token(
+        self, collection: FakeCollection
+    ) -> None:
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            await _articles(collection).list_with_query(self._query(""))
+
+        assert excinfo.value.reason == "cursor token is not valid"
+
+    async def test_a_dotted_sort_field_is_refused_before_the_query(
+        self, collection: FakeCollection
+    ) -> None:
+        query = QuerySpec(
+            sort=(SortSpec("author.name"),), pagination=PaginationMode.CURSOR, limit=2
+        )
+
+        with pytest.raises(UnsupportedQuery, match="cannot order by 'author.name'"):
+            await _articles(collection).list_with_query(query)
 
     async def test_foreign_token_is_unsupported(self, collection: FakeCollection) -> None:
         token = self._token(Cursor(backend="sqlalchemy", keys=(3,), tie_breaker="a"))

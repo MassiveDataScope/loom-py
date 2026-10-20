@@ -131,7 +131,7 @@ async def test_the_registered_codec_verifies_the_cursors_repositories_issue() ->
     position = container.resolve(CursorCodec).decode(
         page.next_cursor,
         backend="mongo",
-        model="Article",
+        model=f"{Article.__module__}.Article",
         query=query,
         scope="",
         columns=scalar_column_annotations(Article),
