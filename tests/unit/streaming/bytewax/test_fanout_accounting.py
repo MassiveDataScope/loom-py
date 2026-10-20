@@ -659,6 +659,11 @@ _PATH_CASES = {
         lambda: Process(_Upper(), _topic("t.a")),
         _each("t.a", 0, 1, 2),
     ),
+    "into_topic_with_output": _PathCase(
+        lambda: Process(_Upper(), _topic("t.a")),
+        _each("t.a", 0, 1, 2),
+        output="t.out",
+    ),
     "inline_then_output": _PathCase(
         lambda: Process(WithAsync(process=Process(_Upper(), _topic("t.inline")))),
         _each("t.inline", 0, 1, 2) + _each("t.out", 0, 1, 2),
@@ -694,6 +699,14 @@ _PATH_CASES = {
         _each("t.inline", 0, 0, 1, 1, 2, 2),
         shares=2,
     ),
+    "expand_routes_with_output": _PathCase(
+        lambda: Process(
+            ExpandRoutes(expander=_TwoRows, routes={_Row: Process(IntoTopic("t.a", payload=_Row))})
+        ),
+        _each("t.a", 0, 0, 1, 1, 2, 2),
+        shares=2,
+        output="t.out",
+    ),
     "expand_routes_route_ending_in_into_topic": _PathCase(
         lambda: Process(
             ExpandRoutes(expander=_TwoRows, routes={_Row: Process(IntoTopic("t.a", payload=_Row))})
@@ -705,6 +718,16 @@ _PATH_CASES = {
         lambda: Process(
             Broadcast(
                 BroadcastRoute(process=Process(_Upper()), output=_topic("t.a")),
+                BroadcastRoute(process=Process(_Upper()), output=_topic("t.b")),
+            )
+        ),
+        _each("t.a", 0, 1, 2) + _each("t.b", 0, 1, 2),
+        shares=2,
+    ),
+    "broadcast_route_ending_in_a_terminal_with_output": _PathCase(
+        lambda: Process(
+            Broadcast(
+                BroadcastRoute(process=Process(_topic("t.a")), output=_topic("t.b")),
                 BroadcastRoute(process=Process(_Upper()), output=_topic("t.b")),
             )
         ),
