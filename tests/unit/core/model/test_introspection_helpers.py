@@ -18,7 +18,7 @@ from loom.core.model.introspection import (
     list_element_type,
     resolve_type_hints,
 )
-from loom.core.model.types import Integer, String
+from loom.core.model.types import JSON, Integer, String
 
 
 class _Note:
@@ -202,13 +202,16 @@ class TestEnumColumnTypes:
         assert fields["colour"].column_type == String(8)
         assert fields["mode"].column_type == String(1)
 
-    def test_a_plain_enum_without_a_column_type_is_refused(self) -> None:
-        with pytest.raises(ValueError, match=r"_PlainEnum\.colour: .*ColumnField\(String\(20\)\)"):
-            get_column_fields(_PlainEnum)
+    @pytest.mark.parametrize(
+        ("model", "field"),
+        [(_PlainEnum, "colour"), (_Literal, "mode"), (_AnnotatedLiteral, "mode")],
+    )
+    def test_a_plain_enum_or_literal_without_a_column_type_needs_one_declared(
+        self, model: type, field: str
+    ) -> None:
+        info = get_column_fields(model)[field]
 
-    @pytest.mark.parametrize("model", [_Literal, _AnnotatedLiteral])
-    def test_a_literal_without_a_column_type_is_refused(self, model: type) -> None:
-        with pytest.raises(
-            ValueError, match=rf"{model.__name__}\.mode: .*ColumnField\(String\(20\)\)"
-        ):
-            get_column_fields(model)
+        assert (info.column_type, info.needs_declared_type) == (JSON, True)
+
+    def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
+        assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())

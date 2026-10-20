@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import Any, cast
+from enum import Enum
+from typing import Any, Literal, cast
 
 import pytest
+from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import (
     compile_all,
@@ -21,6 +23,7 @@ from loom.core.model import (
     RelationField,
     TimestampedModel,
 )
+from loom.core.model.types import String
 from loom.core.projection.loaders import ExistsLoader
 
 
@@ -119,6 +122,46 @@ def _clean_registry() -> Generator[None, None, None]:
     reset_registry()
     yield
     reset_registry()
+
+
+class _Shade(Enum):
+    DARK = "dark"
+
+
+class _ShadedItem(BaseModel):
+    __tablename__ = "test_shaded_items"
+    shade: _Shade
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
+class _ModedItem(BaseModel):
+    __tablename__ = "test_moded_items"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    mode: Literal["a", "b"] | None = ColumnField(nullable=True, default=None)
+
+
+class _DeclaredShadeItem(BaseModel):
+    __tablename__ = "test_declared_shade_items"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    shade: _Shade = ColumnField(String(8))
+
+
+class TestUndeclaredColumnTypes:
+    @pytest.mark.parametrize(("model", "field"), [(_ShadedItem, "shade"), (_ModedItem, "mode")])
+    def test_a_plain_enum_or_literal_without_a_column_type_is_refused(
+        self, model: type, field: str
+    ) -> None:
+        with pytest.raises(
+            ValueError, match=rf"{model.__name__}\.{field}: .*ColumnField\(String\(20\)\)"
+        ):
+            compile_all(model, metadata=MetaData())
+
+    def test_a_declared_column_type_compiles(self) -> None:
+        metadata = MetaData()
+
+        compile_all(_DeclaredShadeItem, metadata=metadata)
+
+        assert str(metadata.tables["test_declared_shade_items"].c.shade.type) == "VARCHAR(8)"
 
 
 class TestCompileModel:

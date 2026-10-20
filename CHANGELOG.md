@@ -516,14 +516,14 @@
   and an `IntEnum` (any `int` enum) becomes `Integer`, instead of `JSON`. The
   value is stored, not the name (`'paid'`, not `'"paid"'`), so the column can
   be filtered by equality; `Optional` of either behaves the same. An existing
-  table with such a column needs a migration from `JSON` to the new type. A
-  plain `Enum` (neither `str` nor `int`) or a `Literal[...]` field with no
-  declared column type now raises `ValueError` naming the model and the field
-  wherever loom reads the model's columns (model compilation, repository
-  set-up), instead of falling back to `JSON`; loom does not infer a type from
-  the values. Declare the column, for example
-  `colour: Colour = ColumnField(String(20))`. Declared column types are
-  unchanged.
+  table with such a column needs a migration from `JSON` to the new type. On
+  SQLAlchemy models, a plain `Enum` (neither `str` nor `int`) or a
+  `Literal[...]` field with no declared column type now fails model
+  compilation with a `ValueError` naming the model and the field, instead of
+  becoming a `JSON` column; loom does not infer a type from the values.
+  Declare the column, for example `colour: Colour = ColumnField(String(20))`.
+  Mongo and DynamoDB models keep such fields as they are. Declared column
+  types are unchanged. `ColumnFieldInfo` gains `needs_declared_type`.
 
 ### ai
 
