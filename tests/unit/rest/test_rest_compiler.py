@@ -968,6 +968,20 @@ class _ListPasses(UseCase[_Pass, PageResult[_Pass]]):
         raise NotImplementedError
 
 
+class _UuidKeyed(BaseModel):
+    """A bare ``UUID`` key: a scalar ``Uuid`` column, which a keyset orders."""
+
+    __tablename__ = "rest_compiler_uuid_keyed"
+
+    id: UUID = ColumnField(primary_key=True)
+    label: str = ColumnField(length=8)
+
+
+class _ListUuidKeyed(UseCase[_UuidKeyed, PageResult[_UuidKeyed]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_UuidKeyed]:
+        raise NotImplementedError
+
+
 def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
     compiler = UseCaseCompiler()
     for interface in interfaces:
@@ -1229,6 +1243,16 @@ class TestCursorCapableRoutes:
 
         with pytest.raises(InterfaceCompilationError, match=r"primary key 'id'.*cursor"):
             _compile_columns(IFace)
+
+    def test_a_bare_uuid_primary_key_compiles_on_a_cursor_capable_route(self) -> None:
+        class IFace(RestInterface[_UuidKeyed]):
+            prefix = "/uuid-keyed"
+            routes = (RestRoute(use_case=_ListUuidKeyed, method="GET", path="/"),)
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.effective_allow_pagination_override is True
+        assert route.sort_fields == ("id",)
 
     def test_a_primary_key_in_a_json_column_fails_compilation(self) -> None:
         class IFace(RestInterface[_JsonKeyed]):

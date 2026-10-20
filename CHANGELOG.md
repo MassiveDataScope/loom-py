@@ -936,10 +936,10 @@
   `sortable=ALL` opens it with a warning; a route that must hide its keys
   serves offset pages only (`pagination_mode` offset and
   `allow_pagination_override=False`). On such a route the key must also be of
-  a type a token carries and not in a JSON or array column; a bare `UUID`
-  annotation, inferred as JSON, fails compilation instead of on the first
-  cursor request: declare its column type (`Postgres.UUID`) or serve offset
-  pages only.
+  a type a token carries, in a scalar column: a key declared in a JSON or
+  array column, which a SQL keyset cannot order, fails compilation instead
+  of on the first cursor request. A bare `UUID` key, a scalar `Uuid` column,
+  compiles and pages on SQLAlchemy and Mongo alike.
 
 ### cache
 

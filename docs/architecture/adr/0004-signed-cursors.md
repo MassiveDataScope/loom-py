@@ -201,10 +201,15 @@ its values with the order of the rows, and reads them from the token
   does; `sortable=ALL` opens it with the same warning, and a route that must
   hide its keys serves offset pages only (`pagination_mode` offset and
   `allow_pagination_override=False`).
-  A key of a type a token cannot carry, or in a JSON or array column (the
-  columns a SQL keyset orders, as the SQLAlchemy repository checks them at
-  run time), fails compilation on such a route too, instead of on the first
-  cursor request.
+  A key of a type a token cannot carry, or declared in a non-scalar column
+  (JSON, array), which a SQL keyset cannot order, fails compilation on such
+  a route too, instead of on the first cursor request; the compiler reads
+  the scalar columns as the SQLAlchemy repository does at run time. Every
+  scalar key a token carries compiles, a bare `UUID` (a `Uuid` column)
+  included, and pages on both backends: Mongo issues its next token in the
+  model's types (below). A Mongo model that declares its key in a JSON column
+  is refused too, though Mongo stores a scalar there; it declares a scalar
+  column instead.
 - **Repositories, before the query runs.** In cursor mode every sort field
   and primary-key column must be a column whose type a token carries
   (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
