@@ -638,9 +638,10 @@
   (`DateTime(tz=True)`) is the other way to keep it. `get_by`, `exists_by`
   and the `filters` of `list_paginated` now convert their value as a write
   converts it, as `QuerySpec` filters already did, so a plain `Enum` member
-  matches the value the write stored instead of failing to bind; a
-  `list_paginated` filter on a field the model does not have raises
-  `ValueError` naming the field.
+  matches the value the write stored instead of failing to bind. A
+  `list_paginated` filter, `get_by` or `exists_by` on a name that is not a
+  mapped column of the model (a missing field, a relation, an attribute such
+  as `metadata`) raises `ValueError` naming it.
   An existing Postgres table holding these columns as `varchar` needs a
   migration: Alembic autogenerate detects the type change, but Postgres
   refuses it without a cast, so the revision passes

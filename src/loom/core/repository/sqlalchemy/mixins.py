@@ -11,6 +11,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import get_compiled_core
+from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     get_column_fields,
@@ -168,8 +169,10 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
                 raise TypeError("Struct payload must serialize to dict")
             values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
             sa_model = self._effective_sa_model
-            for name, value in values.items():
-                refuse_aware_time(name, getattr(sa_model, name, None), value)
+            for name in (self._column_field_names or frozenset()).intersection(values):
+                refuse_aware_time(
+                    name, getattr(sa_model, name), values[name], code=ErrorCode.BOUNDARY_VALIDATION
+                )
             return values
         return data
 
@@ -183,10 +186,11 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Resolve a model column attribute by field name.
 
         Raises:
-            ValueError: If ``field`` does not exist on the SQLAlchemy model.
+            ValueError: If ``field`` is not a mapped column of the SQLAlchemy
+                model.
         """
         sa_model = self._effective_sa_model
-        if not hasattr(sa_model, field):
+        if field not in inspect(sa_model).column_attrs:
             raise ValueError(f"Unknown field '{field}' for model '{self.model.__name__}'")
         return getattr(sa_model, field)
 

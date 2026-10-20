@@ -365,11 +365,16 @@ Four limits decide what does not travel:
   boot naming model, operation and backend.
 - **A `time` with a UTC offset does not reach a SQL `Time` column.** On
   `sqlalchemy` a `date` field is inferred as a `Date` column and a `time`
-  field as a `Time` column, which holds no offset; the repository refuses a
-  `time` with an offset written to it (`boundary_validation`, REST `422`) or
-  compared with it (`query_validation`, REST `400`). `mongo` stores `time` as
-  ISO 8601 text and keeps the offset. A `datetime` field keeps the offset on
-  both.
+  field as a `Time` column without time zone, which holds no offset; the
+  repository refuses a `time` with an offset written to it
+  (`boundary_validation`, REST `422`) or compared with it
+  (`query_validation`, REST `400`). `mongo` stores `time` as ISO 8601 text
+  and keeps the offset. Where the offset matters, declare one of:
+  - a `datetime` field (`DateTime(tz=True)`), which keeps it on every backend;
+  - a `Time` column with time zone,
+    `ColumnField(ColumnType("Time", kwargs={"timezone": True}))` (Postgres
+    `timetz`);
+  - a JSON column, `ColumnField(JSON)`, which stores the ISO text.
 
 ## Upgrade notes
 

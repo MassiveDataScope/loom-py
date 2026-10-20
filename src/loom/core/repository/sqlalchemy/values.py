@@ -53,9 +53,7 @@ def to_column_value(value: object, *, json: bool = False) -> Any:
 _OFFSET_REFUSAL = "time must not carry a UTC offset"
 
 
-def refuse_aware_time(
-    name: str, column: object, value: object, *, code: str = ErrorCode.BOUNDARY_VALIDATION
-) -> None:
+def refuse_aware_time(name: str, column: object, value: object, *, code: str) -> None:
     """Raise when *value* is a ``time`` with a UTC offset that *column* would drop.
 
     A JSON column and a ``Time(timezone=True)`` column keep the offset and
@@ -88,12 +86,18 @@ def refuse_aware_time(
 def to_comparison_value(column: Any, value: object) -> Any:
     """Return *value* in the form it is compared with *column*.
 
-    Refused as :func:`refuse_aware_time` refuses it, under ``query_validation``,
-    and converted as :func:`to_column_value` converts a written value.
+    Refused as :func:`refuse_aware_time` refuses it, and converted as
+    :func:`to_column_value` converts a written value. A refusal is raised under
+    ``query_validation`` whatever the value's source, so ``get_by`` and
+    ``exists_by`` called with a value from a command body raise it too.
 
     Args:
         column: A SQLAlchemy column or mapped attribute.
         value: A filter or lookup value.
+
+    Raises:
+        BoundaryValidationError: ``query_validation``, for a ``time`` with a
+            UTC offset that *column* would drop.
     """
     refuse_aware_time(column.key, column, value, code=ErrorCode.QUERY_VALIDATION)
     return to_column_value(value, json=is_json_column(column))

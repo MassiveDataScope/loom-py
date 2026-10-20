@@ -18,6 +18,7 @@ from loom.core.model import (
     BaseModel,
     BoundaryValidationError,
     ColumnField,
+    ColumnType,
     LoomStruct,
     String,
 )
@@ -107,11 +108,13 @@ class _Slot(BaseModel):
     id: int = ColumnField(primary_key=True, autoincrement=True)
     opens_at: time = ColumnField()
     noted_at: time = ColumnField(JSON)
+    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
 
 
 class _CreateSlot(Command, frozen=True):
     opens_at: time
     noted_at: time
+    closes_at: time
 
 
 class _CustomerOut(LoomStruct, rename="camel"):
@@ -264,7 +267,9 @@ class TestTimeColumns:
         )
 
         with pytest.raises(BoundaryValidationError) as caught:
-            await repo.create(_CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME))
+            await repo.create(
+                _CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME, closes_at=_NAIVE_TIME)
+            )
 
         assert (caught.value.code, caught.value.violations) == (
             "boundary_validation",
@@ -304,11 +309,41 @@ class TestTimeColumns:
             session_manager=session_manager, model=_Slot
         )
 
-        created = await repo.create(_CreateSlot(opens_at=_NAIVE_TIME, noted_at=_AWARE_TIME))
+        created = await repo.create(
+            _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_AWARE_TIME, closes_at=_NAIVE_TIME)
+        )
         stored = await repo.get_by_id(created.id)
 
         assert stored is not None
         assert (stored.opens_at, stored.noted_at) == (_NAIVE_TIME, _AWARE_TIME)
+
+
+class TestTimeOffsetEscapeHatches:
+    def test_a_time_with_time_zone_column_accepts_an_aware_time_on_write(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        written = repo._serialize_input(
+            _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_NAIVE_TIME, closes_at=_AWARE_TIME)
+        )
+
+        assert written["closes_at"] == _AWARE_TIME
+
+    @pytest.mark.parametrize(
+        ("field", "bound"),
+        [("closes_at", _AWARE_TIME), ("noted_at", _AWARE_TIME.isoformat())],
+    )
+    def test_a_column_that_keeps_the_offset_accepts_an_aware_filter_value(
+        self, session_manager: SessionManager, field: str, bound: object
+    ) -> None:
+        group = FilterGroup(filters=(FilterSpec(field=field, op=FilterOp.EQ, value=_AWARE_TIME),))
+
+        clause = compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert list(clause.compile().params.values()) == [bound]
 
 
 class TestLookupValues:
@@ -324,6 +359,18 @@ class TestLookupValues:
         found = await _lookup(repo, lookup, "shade", _Shade.DARK)
 
         assert found
+
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    @pytest.mark.parametrize("field", ["nope", "metadata"])
+    async def test_a_lookup_on_a_name_that_is_not_a_column_is_refused(
+        self, session_manager: SessionManager, lookup: str, field: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Swatch
+        )
+
+        with pytest.raises(ValueError, match=f"Unknown field '{field}'"):
+            await _lookup(repo, lookup, field, 1)
 
 
 class TestRelatedStructs:
