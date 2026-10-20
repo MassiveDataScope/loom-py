@@ -1467,6 +1467,12 @@
 
 ### etl
 
+- **etl:** the error for a missing destination table names only advice that
+  works under the policy in force. Under `missing_table_policy='error'` it
+  used to suggest `SchemaMode.OVERWRITE`, which that policy ignores; it now
+  suggests `missing_table_policy='create'`, `'schema_mode'` with
+  `SchemaMode.OVERWRITE`, or creating the table first.
+
 - **etl:** `replace(allow_empty=False)` on Spark writes the rows it checked.
   The writer ran `DataFrame.isEmpty()` and then let the write compute the
   frame again, so a source that changed in between, or a nondeterministic
