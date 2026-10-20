@@ -45,7 +45,6 @@ from loom.core.repository.abc.repository import (
 from loom.core.repository.abc.session_scope import (
     SupportsCacheScope,
     SupportsCallerScopedSession,
-    SupportsCursorScope,
 )
 
 __all__ = [
@@ -81,7 +80,6 @@ __all__ = [
     "SortSpec",
     "SupportsCacheScope",
     "SupportsCallerScopedSession",
-    "SupportsCursorScope",
     "UnsupportedQuery",
     "UpdateT",
     "build_page_result",

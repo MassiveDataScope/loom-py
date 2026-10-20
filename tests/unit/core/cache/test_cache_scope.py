@@ -36,20 +36,9 @@ class ScopedRepository(WritableRepository[Widget]):
         self.scope = SCOPE_A
         self.reads = 0
 
-    def cursor_scope(self) -> str:
+    def cache_scope(self) -> str:
         self.reads += 1
         return self.scope
-
-
-class CacheScopedRepository(ScopedRepository):
-    """Double whose cache scope tells apart callers its cursor scope does not."""
-
-    def __init__(self, rows: Sequence[Widget]) -> None:
-        super().__init__(rows)
-        self.cache_partition = "product-a"
-
-    def cache_scope(self) -> str:
-        return f"{self.scope}|{self.cache_partition}"
 
 
 class SwitchingRepository(ScopedRepository):
@@ -277,24 +266,6 @@ class TestTheScopeIsNeverLost:
 
         assert wrapper.cache_scope() == ""
 
-    @pytest.mark.asyncio
-    async def test_the_cache_scope_wins_over_the_cursor_scope(self) -> None:
-        repository = CacheScopedRepository([Widget(id=ROW_A, name="a")])
-        wrapper = _wrap(repository, CountingCacheBackend())
-
-        await wrapper.get_by_id(ROW_A)
-        repository.cache_partition = "product-b"
-        await wrapper.get_by_id(ROW_A)
-
-        assert repository.get_by_id_calls == 2
-
-    def test_a_repository_with_session_settings_and_only_a_cursor_scope_is_refused(self) -> None:
-        repository = SettingsRepository(has_session_settings=True)
-        repository.cursor_scope = lambda: SCOPE_A  # type: ignore[attr-defined]
-
-        with pytest.raises(RuntimeError, match="cache_scope"):
-            _wrap(repository, CountingCacheBackend())
-
 
 class TestAScopeChangeSkipsTheWrite:
     """The scope is read once per operation; a write is skipped if it changed since."""
@@ -338,6 +309,5 @@ class TestAScopeChangeSkipsTheWrite:
 
         await wrapper.list_paginated(PAGE)
 
-        # One read for the keys, one check before the index write and one
-        # before the entity batch write.
-        assert repository.reads == 3
+        # One read for the keys and one check before the writes.
+        assert repository.reads == 2

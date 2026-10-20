@@ -59,7 +59,6 @@ from loom.core.repository.abc.repository import CreateT, IdT, OutputT, UpdateT
 from loom.core.repository.abc.session_scope import (
     SupportsCacheScope,
     SupportsCallerScopedSession,
-    SupportsCursorScope,
 )
 from loom.core.transaction import in_atomic_transaction
 
@@ -273,10 +272,13 @@ class CachedRepository(
         return self._entity_name
 
     def cache_scope(self) -> str:
-        """Forward the scope this wrapper keys its entries by, ``""`` when unscoped.
+        """Forward the wrapped repository's cache scope, ``""`` when it reports none.
 
         Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`,
-        so a wrapper around this one keys its entries by the same scope.
+        so a wrapper around this one keys its entries by the same scope.  It is
+        declared here rather than left to ``__getattr__``: from Python 3.12 a
+        runtime-checkable protocol is matched with ``inspect.getattr_static``,
+        which does not see attributes ``__getattr__`` forwards.
         """
         return self._cache_scope()
 
@@ -1038,7 +1040,7 @@ class CachedRepository(
 
     async def _cache_entity_batch(self, items: Sequence[OutputT], profile: str, scope: str) -> None:
         keyed = self._items_with_key(items)
-        if not keyed or not self._still_in_scope(scope):
+        if not keyed:
             return
         ttl = self._write_ttl(self._config.ttl_for_single(self.entity_name))
         tags_by_id = [
@@ -1176,20 +1178,13 @@ class CachedRepository(
 
         Read once per cache operation, and every key of that operation is
         built from the value read.  It is the wrapped repository's
-        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`;
-        a repository that reports only the
-        :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`
-        its tokens are bound to is kept apart by that one, since a cached
-        first page carries such a token.  The scope stays out of the
-        dependency tags: a write bumps the same generation counters whatever
-        its scope, so the bump reaches the keys of every scope.
+        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
+        The scope stays out of the dependency tags: a write bumps the same
+        generation counters whatever its scope, so the bump reaches the keys
+        of every scope.
         """
         repository = self._repository
-        if isinstance(repository, SupportsCacheScope):
-            return repository.cache_scope()
-        if isinstance(repository, SupportsCursorScope):
-            return repository.cursor_scope()
-        return ""
+        return repository.cache_scope() if isinstance(repository, SupportsCacheScope) else ""
 
     def _still_in_scope(self, scope: str) -> bool:
         """Whether the caller's scope is still *scope*, the one the operation's keys carry.
@@ -1204,7 +1199,7 @@ class CachedRepository(
         return False
 
     def _serialize_query(self, query: QuerySpec, scope: str) -> dict[str, Any]:
-        """The query cache key's payload, scoped like the cursor tokens a page carries."""
+        """The query cache key's payload, under the caller's cache scope."""
         return {
             "scope": scope,
             "pagination": query.pagination.value,
@@ -1303,14 +1298,10 @@ def _require_reported_scope(repository: object) -> None:
     """Refuse a repository whose sessions carry settings but which reports no cache scope.
 
     Every cache key carries the scope the wrapped repository reports through
-    :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`. A
-    repository whose ``session_manager`` applies session settings, such as a
-    decorator around a SQLAlchemy repository that does not forward
-    ``cache_scope``, would key callers apart by at most their cursor scope,
-    which leaves out every setting outside ``loom.scope.*``, so it is refused
-    here instead.  The check reads the ``session_manager`` attribute, so a
-    wrapper exposing neither ``cache_scope`` nor ``session_manager`` is not
-    detected.
+    :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`; a
+    repository whose ``session_manager`` applies session settings but reports
+    none would key every caller under ``""``, so it is refused.  A wrapper
+    exposing neither ``cache_scope`` nor ``session_manager`` is not detected.
 
     Args:
         repository: The instance about to be wrapped.

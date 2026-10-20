@@ -26,6 +26,11 @@ from loom.core.repository import PageParams, Repository
 from loom.core.repository.abc import CursorCodec, PaginationMode, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.session_settings import applied_settings
+from loom.core.repository.sqlalchemy.transactional import (
+    reset_active_session,
+    set_active_session,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -292,3 +297,47 @@ async def test_a_page_cached_for_an_elevated_caller_is_not_served_to_a_plain_one
 
     assert sorted(note.body for note in seen_elevated.items) == ["a1", "a2", "b1"]
     assert sorted(note.body for note in seen_plain.items) == ["a1", "a2"]
+
+
+async def test_a_page_read_in_a_transaction_is_keyed_by_the_settings_it_applied(
+    repository: NoteRepository,
+    cached: CachedRepository[Note, Any, Any, int],
+) -> None:
+    """The provider changes inside an open transaction; Postgres keeps what it applied."""
+    page = PageParams(page=1, limit=10)
+    settings = _settings.set(_tenant("a"))
+    try:
+        async with repository.session_manager.session() as session, session.begin():
+            await session.execute(text("SELECT 1"))
+            active = set_active_session(session)
+            try:
+                _settings.set(_tenant("b"))
+                seen_in_transaction = await cached.list_paginated(page)
+            finally:
+                reset_active_session(active)
+    finally:
+        _settings.reset(settings)
+
+    seen_by_b = await _as_tenant("b", lambda: cached.list_paginated(page))
+
+    assert sorted(note.body for note in seen_in_transaction.items) == ["a1", "a2"]
+    assert [note.body for note in seen_by_b.items] == ["b1"]
+
+
+async def test_the_applied_settings_last_as_long_as_their_transaction(
+    repository: NoteRepository,
+) -> None:
+    settings = _settings.set(_tenant("a"))
+    try:
+        async with repository.session_manager.session() as session:
+            async with session.begin():
+                assert applied_settings(session.sync_session) is None
+                await session.execute(text("SELECT 1"))
+                _settings.set(_tenant("b"))
+                applied_inside = applied_settings(session.sync_session)
+            applied_after = applied_settings(session.sync_session)
+    finally:
+        _settings.reset(settings)
+
+    assert applied_inside == _tenant("a")
+    assert applied_after is None

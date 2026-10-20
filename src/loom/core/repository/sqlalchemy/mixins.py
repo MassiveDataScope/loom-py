@@ -36,7 +36,8 @@ from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
-from loom.core.repository.sqlalchemy.transactional import record_mutation
+from loom.core.repository.sqlalchemy.session_settings import applied_settings
+from loom.core.repository.sqlalchemy.transactional import get_active_session, record_mutation
 from loom.core.repository.sqlalchemy.values import (
     check_time_offsets,
     is_json_column,
@@ -532,7 +533,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 backend=self.backend_name,
                 model=self.model,
                 cursor_codec=self.cursor_codec,
-                scope=self.cursor_scope(),
+                scope=self._cursor_scope(),
                 columns=self._cursor_columns,
             )
             core_model = self._effective_core_model
@@ -554,23 +555,31 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 core_model=core_model,
             )
 
-    def cursor_scope(self) -> str:
-        """The row-level-security scope values cursors are bound to; ``""`` when unscoped.
-
-        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`.
-        """
-        settings = self.session_manager.current_settings()
-        return _encode_settings({k: v for k, v in settings.items() if k.startswith(SCOPE_PREFIX)})
-
     def cache_scope(self) -> str:
-        """Every session setting the caller's transactions start with; ``""`` when none.
+        """Every session setting the caller's reads run under; ``""`` when none.
 
         Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
         A row-level policy may read any setting, not only ``loom.scope.*``, so
         all of them partition the cache; the ``loom.scope.*`` ones are among
-        them, so this tells apart every caller :meth:`cursor_scope` does.
+        them, so this tells apart every caller the cursor tokens do.
         """
-        return _encode_settings(self.session_manager.current_settings())
+        return _encode_settings(self._scope_settings())
+
+    def _cursor_scope(self) -> str:
+        """The row-level-security scope values cursors are bound to; ``""`` when unscoped."""
+        settings = self._scope_settings()
+        return _encode_settings({k: v for k, v in settings.items() if k.startswith(SCOPE_PREFIX)})
+
+    def _scope_settings(self) -> Mapping[str, str]:
+        """The settings the caller's reads run under.
+
+        Inside a caller-owned transaction that has started, the ones it
+        applied, which Postgres keeps until it ends; otherwise the ones the
+        next transaction would start with.
+        """
+        active = get_active_session()
+        applied = None if active is None else applied_settings(active.sync_session)
+        return self.session_manager.current_settings() if applied is None else applied
 
     async def _list_with_query_cursor(
         self,
@@ -743,5 +752,5 @@ def _to_internal_field_names(
 
 
 def _encode_settings(settings: Mapping[str, str]) -> str:
-    """Encode *settings* as sorted JSON pairs, one string per mapping; ``""`` when empty."""
+    """Encode *settings* as a canonical string, sorted JSON pairs; ``""`` when empty."""
     return msgspec.json.encode(sorted(settings.items())).decode() if settings else ""

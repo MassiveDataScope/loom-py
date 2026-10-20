@@ -38,27 +38,6 @@ class SupportsCallerScopedSession(Protocol):
 
 
 @runtime_checkable
-class SupportsCursorScope(Protocol):
-    """Optional capability: the caller scope this repository binds cursor tokens to.
-
-    A token is valid only in the scope it was issued in, so a wrapper that
-    keeps pages, such as the query cache, keys them by this scope too. A
-    repository without it binds its tokens to no scope.
-
-    Only the ``loom.scope.*`` session settings make up this scope, so it
-    binds cursor tokens only; the repository cache keys by
-    :class:`SupportsCacheScope`, which every session setting makes up.
-
-    Like :class:`SupportsCallerScopedSession`, this capability is provisional
-    and is not a stable extension point to build on.
-    """
-
-    def cursor_scope(self) -> str:
-        """Return the caller's scope as cursor tokens bind it; ``""`` when unscoped."""
-        ...
-
-
-@runtime_checkable
 class SupportsCacheScope(Protocol):
     """Optional capability: the caller scope a wrapper keeps this repository's results in.
 
@@ -66,8 +45,11 @@ class SupportsCacheScope(Protocol):
     it depend on the session's settings, so a wrapper that keeps results, such
     as the repository cache, keys them by this scope: a result kept for one
     scope is never served to another. It must tell apart at least the callers
-    :class:`SupportsCursorScope` tells apart, since a kept first page carries
-    a cursor token bound to that scope.
+    the repository's cursor tokens are bound apart for, since a kept first
+    page carries such a token. A repository without it is kept under ``""``.
+
+    The SQLAlchemy repository makes it of every session setting, while it
+    binds cursor tokens to the ``loom.scope.*`` settings only.
 
     Like :class:`SupportsCallerScopedSession`, this capability is provisional
     and is not a stable extension point to build on.

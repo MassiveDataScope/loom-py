@@ -59,7 +59,7 @@ def entity_key(
         entity_id: Primary key of the entity.
         profile: Loading profile name (e.g. ``"default"``).
         deps_fingerprint: Dependency fingerprint for generational invalidation.
-        scope: The caller's row-level-security scope, ``""`` when unscoped;
+        scope: The caller's cache scope, ``""`` when unscoped;
             a row cached for one scope is never served to another.
 
     Returns:
@@ -90,7 +90,7 @@ def list_index_key(
         limit: Maximum number of items per page.
         profile: Loading profile name.
         deps_fingerprint: Dependency fingerprint for generational invalidation.
-        scope: The caller's row-level-security scope, ``""`` when unscoped;
+        scope: The caller's cache scope, ``""`` when unscoped;
             a page of ids cached for one scope is never served to another.
 
     Returns:
@@ -117,7 +117,7 @@ def custom_query_key(
         method_name: Name of the decorated repository method.
         arguments_hash: Hash of the call's arguments.
         deps_fingerprint: Dependency fingerprint for generational invalidation.
-        scope: The caller's row-level-security scope, ``""`` when unscoped;
+        scope: The caller's cache scope, ``""`` when unscoped;
             a result cached for one scope is never served to another.
 
     Returns:

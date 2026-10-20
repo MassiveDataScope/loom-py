@@ -12,8 +12,9 @@ no global is touched.
 ## Declaring
 
 `@cached` goes on the repository class. Every read the wrapper knows about —
-`get_by_id`, `get_by`, the list and cursor reads — is served through the cache
-from then on; writes go straight through and invalidate.
+`get_by_id`, the list and cursor reads — is served through the cache from then
+on; `get_by`, `exists_by` and `count` are not cached, and writes go straight
+through and invalidate.
 
 ```python
 from loom.core.cache import cache_query, cached
@@ -118,7 +119,7 @@ Two kinds of entry are stored on the data alias:
 
 - **Entity reads** — `get_by_id` and every `@cache_query(scope="entity")`
   method — keyed on the entity name, the id and a fingerprint of their tags.
-- **List indexes** — `get_by`, the paginated and cursor reads and every
+- **List indexes** — the paginated and cursor reads and every
   `@cache_query(scope="list")` method — an index of ids plus the entities of
   the page, so a warm index reloads only the rows it is missing, with one
   `<primary key> IN (...)` query.
@@ -138,6 +139,12 @@ settings). The scope is not a tag, so a write still evicts the entry in every
 scope. Visibility that depends on other tables, such as a membership join a
 policy reads, is not in the scope, so a change there reaches a cached entry
 only when its TTL runs out.
+Inside an open transaction the scope is the settings that transaction
+applied, which Postgres keeps until it ends; identity context must not change
+inside an open transaction, since uncached reads there would already run under
+the old settings. A per-request value in `session_settings`, such as a request
+id or an audit value, makes the cache effectively per request: every request
+writes its own entries, and their number grows with the request rate.
 
 Inside a use case or a `@transactional` scope the bump is not applied at the
 write: it is enqueued on the post-commit channel and published **after the
