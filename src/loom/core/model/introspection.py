@@ -146,9 +146,12 @@ def _with_nullable(field: Field, annotation: Any) -> Field:
 
 
 def _admits_none(annotation: Any) -> bool:
-    """Whether ``annotation`` accepts ``None``, through ``Annotated`` and union layers."""
-    if get_origin(annotation) is Annotated:
+    """Whether ``annotation`` accepts ``None``, through ``Annotated``, ``Literal`` and unions."""
+    origin = get_origin(annotation)
+    if origin is Annotated:
         return _admits_none(get_args(annotation)[0])
+    if origin is Literal:
+        return None in get_args(annotation)
     members = _union_members(annotation)
     if members is None:
         return annotation is type(None)

@@ -469,7 +469,9 @@
   annotation) and a declared `True` or `False` still wins. Alembic
   autogenerate will propose `nullable` changes for existing tables whose
   Optional fields were created `NOT NULL`; to keep such a column `NOT NULL`,
-  declare `nullable=False`.
+  declare `nullable=False`. ETL schema contracts keep their own rule (a
+  column is nullable unless declared otherwise), which this change does not
+  touch.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
