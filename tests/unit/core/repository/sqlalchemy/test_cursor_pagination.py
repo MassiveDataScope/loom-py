@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
+from enum import Enum
 
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.model import BaseModel, ColumnField, DateTime
+from loom.core.model import BaseModel, ColumnField, DateTime, String
 from loom.core.repository.abc import (
     Cursor,
     CursorCodec,
@@ -43,6 +44,23 @@ class _Reading(BaseModel):
 
 class _CreateReading(Command, frozen=True):
     taken_at: datetime
+
+
+class _Shade(Enum):
+    DARK = "dark"
+    LIGHT = "light"
+    PALE = "pale"
+
+
+class _Swatch(BaseModel):
+    __tablename__ = "cursor_swatches"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    shade: _Shade = ColumnField(String(8))
+
+
+class _CreateSwatch(Command, frozen=True):
+    shade: _Shade
 
 
 class _Rated(BaseModel):
@@ -214,3 +232,27 @@ class TestSortFieldsACursorCannotCarry:
             await repository.list_with_query(query)
 
         assert excinfo.value.reason == "cursor token is not valid"
+
+
+async def test_a_plain_enum_sort_walks_every_page(session_manager: SessionManager) -> None:
+    """The decoded key is the enum member; the predicate binds what the column stores."""
+    compile_all(_Swatch)
+    compiled = get_compiled(_Swatch)
+    assert compiled is not None
+    async with session_manager.engine.begin() as connection:
+        await connection.run_sync(compiled.metadata.create_all)
+    repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Swatch, cursor_codec=_CODEC
+    )
+    await repo.create_many([_CreateSwatch(shade=shade) for shade in _Shade])
+    query = QuerySpec(sort=(SortSpec("shade"),), pagination=PaginationMode.CURSOR, limit=2)
+
+    first = await repo.list_with_query(query)
+    assert isinstance(first, CursorResult)
+    second = await repo.list_with_query(
+        QuerySpec(sort=query.sort, pagination=query.pagination, limit=2, cursor=first.next_cursor)
+    )
+
+    assert isinstance(second, CursorResult)
+    walked = [item.shade for item in (*first.items, *second.items)]
+    assert walked == sorted(_Shade, key=lambda shade: shade.value)

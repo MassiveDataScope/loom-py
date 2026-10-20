@@ -503,33 +503,42 @@ def _position(
     """
     if record.b != backend:
         raise UnsupportedQuery(backend, model, "cursor token was issued by another backend")
-    keys = tuple(_unwrap(key) for key in record.k)
-    if not _typed_as(keys, sort_types):
+    keys = _typed_as(tuple(_unwrap(key) for key in record.k), sort_types)
+    if keys is None:
         raise UnsupportedQuery(backend, model, "cursor token does not match the sort")
     composite = len(id_types) > 1
     carried = record.id
     ties = (
         tuple(_unwrap(key) for key in carried) if isinstance(carried, list) else (_unwrap(carried),)
     )
-    if isinstance(carried, list) != composite or not _typed_as(ties, id_types):
+    typed_ties = _typed_as(ties, id_types) if isinstance(carried, list) == composite else None
+    if typed_ties is None:
         raise UnsupportedQuery(backend, model, "cursor token does not match the primary key")
-    return Cursor(backend=record.b, keys=keys, tie_breaker=ties if composite else ties[0])
+    return Cursor(
+        backend=record.b, keys=keys, tie_breaker=typed_ties if composite else typed_ties[0]
+    )
 
 
-def _typed_as(values: tuple[object, ...], types: tuple[Any, ...]) -> bool:
-    """Whether ``values`` has one value of each of ``types``, in order.
+def _typed_as(values: tuple[object, ...], types: tuple[Any, ...]) -> tuple[object, ...] | None:
+    """``values`` as one value of each of ``types``, in order, or ``None`` when they are not.
 
-    msgspec checks each value strictly: an ``int`` is not a ``str``, a
+    msgspec converts each value strictly: an ``int`` is not a ``str``, a
     ``bool`` is not an ``int``, ``None`` only matches an optional type, and a
-    string is never parsed into a datetime, date, time, UUID or decimal.
+    string is never parsed into a datetime, date, time, UUID or decimal. An
+    enum column's value comes back as the member, an ``int`` for a ``float``
+    column as a ``float``.
     """
     if len(values) != len(types) or None in types:
-        return False
+        return None
     try:
-        msgspec.convert(values, tuple[types], builtin_types=_CARRIED_TYPES)  # type: ignore[valid-type]
+        typed: tuple[object, ...] = msgspec.convert(
+            values,
+            tuple[types],  # type: ignore[valid-type]
+            builtin_types=_CARRIED_TYPES,
+        )
     except msgspec.ValidationError:
-        return False
-    return True
+        return None
+    return typed
 
 
 def require_cursor_sort(

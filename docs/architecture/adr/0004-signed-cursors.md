@@ -54,7 +54,9 @@ confidentiality.
   carrying a string for an integer key, which an `unsigned` codec accepts
   and a holder of the key can sign, reached the database and answered 500.
   `LoomType.from_builtins` is not used because it parses strings into those
-  five types.
+  five types. The decoded position holds the converted values (an enum
+  column's member, a `float` for a `float` column), and the SQLAlchemy
+  predicate binds each in the form the write path stores.
 - **Signed tokens.** HMAC-SHA256 over the payload and its binding, verified
   before the payload is parsed.
 

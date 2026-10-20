@@ -19,6 +19,7 @@ from sqlalchemy import and_, or_
 from loom.core.repository.abc.cursor import Cursor
 from loom.core.repository.abc.query import SortSpec
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
+from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
 
 
 def compile_cursor_predicate(
@@ -105,10 +106,13 @@ def extract_next_cursor(
 
 
 def _column_value(column: Any, value: object) -> object:
-    """``value`` as ``column`` stores it: naive UTC for a ``timezone=False`` datetime column."""
+    """``value`` as ``column`` stores it, the conversion the write path applies.
+
+    A datetime against a ``timezone=False`` column is compared as naive UTC.
+    """
     if isinstance(value, datetime) and getattr(column.type, "timezone", True) is False:
         return value.astimezone(UTC).replace(tzinfo=None)
-    return value
+    return to_column_value(value, json=is_json_column(column))
 
 
 def _read_path(obj: Any, path: str) -> Any:

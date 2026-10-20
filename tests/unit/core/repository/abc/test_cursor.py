@@ -384,7 +384,7 @@ class TestTypedValues:
         )
 
         assert cursor.keys == (value,)
-        assert type(cursor.keys[0]) is (str if isinstance(value, StrEnum) else type(value))
+        assert type(cursor.keys[0]) is type(value)
 
 
 class TestSignature:
