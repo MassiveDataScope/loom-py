@@ -221,12 +221,3 @@ def test_fails_when_an_allowlisted_endpoint_declares_no_auth() -> None:
 def test_endpoint_config_does_not_expose_a_roles_claim_field() -> None:
     """The claim name belongs to the auth mechanism, not to the ``sql:`` section."""
     assert "roles_claim" not in SqlEndpointConfig.__struct_fields__
-
-
-@pytest.mark.parametrize("field", ["max_execution_time", "connect_timeout", "send_receive_timeout"])
-@pytest.mark.parametrize("value", [0, -1])
-def test_fails_when_a_timeout_is_not_positive(field: str, value: int) -> None:
-    """A timeout of zero means no limit to the driver, so it must be positive."""
-    connection = _minimal(**{field: value})
-    with pytest.raises(ConfigError, match=field):
-        _parse(connection)

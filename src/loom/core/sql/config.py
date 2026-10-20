@@ -10,11 +10,12 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Sequence
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import msgspec
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.types import PositiveInt
 
 # re.ASCII keeps the exact [A-Za-z0-9_] charset: without it \w would also
 # accept Unicode word characters, widening this security allowlist.
@@ -100,10 +101,6 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
         return self.auth in _IDENTITY_BOUND_AUTH_MODES
 
 
-_Seconds = Annotated[int, msgspec.Meta(gt=0)]
-"""A timeout in seconds; zero would disable it."""
-
-
 class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Named SQL connection with role policy, limits and driver tuning.
 
@@ -137,9 +134,10 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
         connect_timeout: Driver connect timeout in seconds, above zero.
         send_receive_timeout: Driver send/receive timeout in seconds, above
             zero.
-        executor_threads: Async client thread pool size (driver default if
+        executor_threads: Async client thread pool size, above zero (driver
+            default if ``None``).
+        pool_size: HTTP connection pool size, above zero (driver default if
             ``None``).
-        pool_size: HTTP connection pool size (driver default if ``None``).
         settings: Extra backend settings handed to the executor at
             construction. They can never override the policy.
         sql_endpoint: Optional REST endpoint settings for this connection.
@@ -161,12 +159,12 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
     readonly: bool = True
     default_limit: int = 1000
     max_limit: int = 10000
-    max_execution_time: _Seconds = 30
+    max_execution_time: PositiveInt = 30
     max_sql_bytes: int = 262144
-    connect_timeout: _Seconds = 10
-    send_receive_timeout: _Seconds = 60
-    executor_threads: int | None = None
-    pool_size: int | None = None
+    connect_timeout: PositiveInt = 10
+    send_receive_timeout: PositiveInt = 60
+    executor_threads: PositiveInt | None = None
+    pool_size: PositiveInt | None = None
     settings: dict[str, Any] = msgspec.field(default_factory=dict)
     sql_endpoint: SqlEndpointConfig = msgspec.field(default_factory=SqlEndpointConfig)
 

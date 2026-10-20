@@ -24,6 +24,7 @@ from loom.core.config import (
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.types import PositiveInt
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -97,7 +98,8 @@ class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=
         workers_per_process: Number of worker threads in this process.
         process_id: Optional cluster process id.
         addresses: Optional cluster address list, including this process.
-        epoch_interval_ms: Optional epoch duration in milliseconds.
+        epoch_interval_ms: Optional epoch duration in milliseconds, above
+            zero.
         recovery: Optional recovery settings.
         async_backend: Anyio backend used for :class:`AsyncBridge` when the
             flow contains :class:`~loom.streaming.WithAsync` nodes.
@@ -107,18 +109,18 @@ class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=
             ``"asyncio"`` and the platform is not Windows.
         force_shutdown_timeout_ms: Maximum milliseconds to wait for in-flight
             async tasks to finish during shutdown.  When exceeded, the portal
-            thread is abandoned and a warning is logged.  ``None`` waits
-            indefinitely (default).
+            thread is abandoned and a warning is logged.  Above zero;
+            ``None`` waits indefinitely (default).
     """
 
     workers_per_process: int = 1
     process_id: int | None = None
     addresses: tuple[str, ...] | None = None
-    epoch_interval_ms: int | None = None
+    epoch_interval_ms: PositiveInt | None = None
     recovery: BytewaxRecoverySettings | None = None
     async_backend: Literal["asyncio", "trio"] = "asyncio"
     use_uvloop: bool = False
-    force_shutdown_timeout_ms: int | None = None
+    force_shutdown_timeout_ms: PositiveInt | None = None
 
 
 class StreamingRunner:

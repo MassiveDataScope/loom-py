@@ -37,6 +37,7 @@ from celery import Celery  # type: ignore[import-untyped]
 from kombu import Queue  # type: ignore[import-untyped]
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.types import PositiveInt
 
 if TYPE_CHECKING:
     from loom.core.job.job import Job
@@ -51,12 +52,13 @@ class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
         use_uvloop: When ``True`` and the backend is ``"asyncio"``, the worker
             uses uvloop on supported platforms.
         shutdown_timeout_ms: Maximum milliseconds to wait for in-flight async
-            work during worker shutdown.  ``None`` waits indefinitely.
+            work during worker shutdown, above zero.  ``None`` waits
+            indefinitely.
     """
 
     backend: Literal["asyncio", "trio"] = "asyncio"
     use_uvloop: bool = False
-    shutdown_timeout_ms: int | None = None
+    shutdown_timeout_ms: PositiveInt | None = None
 
 
 class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
