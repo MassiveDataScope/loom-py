@@ -10,7 +10,8 @@ it. Three rules keep it that way:
   named by a string literal that does not start with ``LOOM_``. A dynamic
   key, iteration, ``.copy()``, ``dict(os.environ)``, a write or a membership
   test fails, unless the file is in a small allowlist with its
-  reason;
+  reason. So does an alias (``import os as o``, ``from os import environ
+  as e``) or ``getattr(os, ...)``, which would hide an access from the rule;
 - no source or document names a ``LOOM_*`` variable that loom does not own.
 """
 
@@ -77,11 +78,28 @@ def _reads_one_literal(node: ast.AST, parent: ast.AST | None, grand: ast.AST | N
     return False
 
 
+def _hides_an_access(node: ast.AST) -> bool:
+    """Whether *node* aliases ``os``, ``os.environ`` or ``os.getenv``, or ``getattr``s ``os``."""
+    if isinstance(node, ast.Import):
+        return any(alias.name == "os" and alias.asname for alias in node.names)
+    if isinstance(node, ast.ImportFrom) and node.module == "os":
+        return any(alias.asname for alias in node.names if alias.name in ("environ", "getenv"))
+    return (
+        isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "getattr"
+        and bool(node.args)
+        and ast.unparse(node.args[0]) == "os"
+    )
+
+
 def _environ_violations(tree: ast.AST) -> list[str]:
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     hits = []
     for node in ast.walk(tree):
         parent = parents.get(node)
+        if _hides_an_access(node):
+            hits.append(f"{getattr(node, 'lineno', 0)}: {ast.unparse(node)}")
+            continue
         if isinstance(node, ast.Call) and ast.unparse(node.func) in _GETENV:
             if not (node.args and _literal_key(node.args[0])):
                 hits.append(f"{node.lineno}: {ast.unparse(node)}")
@@ -123,6 +141,9 @@ _VIOLATIONS = {
     "dict": "import os\nsnapshot = dict(os.environ)\n",
     "membership": "import os\npresent = 'DEBUG' in os.environ\n",
     "write": "import os\nos.environ['HOME'] = '/tmp'\n",
+    "module alias": "import os as o\nvalue = o.environ.get(name)\n",
+    "environ alias": "from os import environ as e\nvalue = e.get(name)\n",
+    "getattr": "import os\nvalue = getattr(os, 'environ').get(name)\n",
 }
 _ALLOWED = (
     "import os\n"
