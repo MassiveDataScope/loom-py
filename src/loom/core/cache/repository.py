@@ -51,7 +51,10 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.repository.abc.repo_for import BulkCreatable
 from loom.core.repository.abc.repository import CreateT, IdT, OutputT, UpdateT
-from loom.core.repository.abc.session_scope import SupportsCallerScopedSession
+from loom.core.repository.abc.session_scope import (
+    SupportsCallerScopedSession,
+    SupportsCursorScope,
+)
 from loom.core.transaction import in_atomic_transaction
 
 LoadT = TypeVar("LoadT")
@@ -1137,7 +1140,11 @@ class CachedRepository(
         return repr(to_payload(filter_params.filters))
 
     def _serialize_query(self, query: QuerySpec) -> dict[str, Any]:
+        """The query cache key's payload, scoped like the cursor tokens a page carries."""
+        repository = self._repository
+        scope = repository.cursor_scope() if isinstance(repository, SupportsCursorScope) else ""
         return {
+            "scope": scope,
             "pagination": query.pagination.value,
             "limit": query.limit,
             "page": query.page,

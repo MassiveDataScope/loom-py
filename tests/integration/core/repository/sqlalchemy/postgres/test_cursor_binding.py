@@ -6,13 +6,22 @@ import base64
 from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar
 from datetime import datetime, timedelta
+from typing import Any, cast
 
 import msgspec
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
+from loom.core.cache import (
+    CacheBackend,
+    CacheConfig,
+    CachedRepository,
+    CacheGateway,
+    GenerationalDependencyResolver,
+)
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime
+from loom.core.repository import Repository
 from loom.core.repository.abc import (
     CursorCodec,
     CursorResult,
@@ -153,3 +162,78 @@ async def test_a_cursor_issued_for_one_sort_is_refused_for_another(
 
     with pytest.raises(UnsupportedQuery):
         await repository.list_with_query(by_id)
+
+
+@pytest.fixture
+async def cached(
+    repository: RepositorySQLAlchemy[Reading, int],
+) -> AsyncIterator[CachedRepository[Reading, Any, Any, int]]:
+    CacheGateway.configure(
+        {
+            "default": {"cache": "aiocache.SimpleMemoryCache"},
+            "cursor_scope_data": {
+                "cache": "aiocache.SimpleMemoryCache",
+                "serializer": {"class": "loom.core.cache.serializer.MsgspecSerializer"},
+                "namespace": "cursor_scope_data",
+            },
+            "cursor_scope_counters": {
+                "cache": "aiocache.SimpleMemoryCache",
+                "namespace": "cursor_scope_counters",
+            },
+        }
+    )
+    data, counters = (
+        CacheGateway(alias="cursor_scope_data"),
+        CacheGateway(alias="cursor_scope_counters"),
+    )
+    config = CacheConfig(
+        enabled=True,
+        aiocache_alias="cursor_scope_data",
+        counter_alias="cursor_scope_counters",
+        default_ttl=120,
+        default_list_ttl=60,
+    )
+    try:
+        yield CachedRepository(
+            repository=cast(Repository[Reading, Any, Any, int], repository),
+            config=config,
+            cache=cast(CacheBackend, data),
+            dependency_resolver=GenerationalDependencyResolver(cast(CacheBackend, counters)),
+        )
+    finally:
+        await data.clear()
+        await counters.clear()
+        await data.close()
+        await counters.close()
+
+
+async def test_a_cached_first_page_is_not_served_to_another_scope(
+    cached: CachedRepository[Reading, Any, Any, int],
+) -> None:
+    """Tokens are scope-bound, so the query cache key carries the scope too."""
+    first_pages: dict[str, str | None] = {}
+    for tenant in ("tenant-a", "tenant-b"):
+        token = _tenant.set(tenant)
+        try:
+            page = await cached.list_with_query(_QUERY)
+            assert isinstance(page, CursorResult)
+            first_pages[tenant] = page.next_cursor
+        finally:
+            _tenant.reset(token)
+    token = _tenant.set("tenant-b")
+
+    try:
+        second = await cached.list_with_query(
+            QuerySpec(
+                sort=_QUERY.sort,
+                pagination=_QUERY.pagination,
+                limit=_QUERY.limit,
+                cursor=first_pages["tenant-b"],
+            )
+        )
+    finally:
+        _tenant.reset(token)
+
+    assert first_pages["tenant-a"] != first_pages["tenant-b"]
+    assert isinstance(second, CursorResult)
+    assert second.items

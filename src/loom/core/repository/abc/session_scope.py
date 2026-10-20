@@ -35,3 +35,17 @@ class SupportsCallerScopedSession(Protocol):
             repository would open and close a session of its own.
         """
         ...
+
+
+@runtime_checkable
+class SupportsCursorScope(Protocol):
+    """Optional capability: the caller scope this repository binds cursor tokens to.
+
+    A token is valid only in the scope it was issued in, so a wrapper that
+    keeps pages, such as the query cache, keys them by this scope too. A
+    repository without it binds its tokens to no scope.
+    """
+
+    def cursor_scope(self) -> str:
+        """Return the caller's scope as cursor tokens bind it; ``""`` when unscoped."""
+        ...

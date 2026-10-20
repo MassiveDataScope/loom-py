@@ -532,7 +532,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 backend=self.backend_name,
                 model=self.model,
                 cursor_codec=self.cursor_codec,
-                scope=self._cursor_scope(),
+                scope=self.cursor_scope(),
                 columns=self._cursor_columns,
             )
             core_model = self._effective_core_model
@@ -554,8 +554,11 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 core_model=core_model,
             )
 
-    def _cursor_scope(self) -> str:
-        """The row-level-security scope values cursors are bound to; ``""`` when unscoped."""
+    def cursor_scope(self) -> str:
+        """The row-level-security scope values cursors are bound to; ``""`` when unscoped.
+
+        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`.
+        """
         settings = self.session_manager.current_settings()
         scoped = sorted(item for item in settings.items() if item[0].startswith(SCOPE_PREFIX))
         return msgspec.json.encode(scoped).decode() if scoped else ""
