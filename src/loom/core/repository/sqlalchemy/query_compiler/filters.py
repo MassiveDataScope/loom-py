@@ -15,7 +15,11 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_exists,
     compile_not_exists,
 )
-from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+from loom.core.repository.sqlalchemy.values import (
+    is_json_column,
+    refuse_aware_time,
+    to_column_value,
+)
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {
@@ -88,7 +92,14 @@ def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
         return handler(col, value)
     json = is_json_column(col)
     if op is not FilterOp.IN:
-        return handler(col, to_column_value(value, json=json))
+        return handler(col, _bound_value(col, value, json=json))
     if isinstance(value, str | bytes) or not isinstance(value, Iterable):
         return handler(col, value)
-    return handler(col, [to_column_value(item, json=json) for item in value])
+    return handler(col, [_bound_value(col, item, json=json) for item in value])
+
+
+def _bound_value(col: Any, value: Any, *, json: bool) -> Any:
+    """Convert a filter value as the write path does, refusing what the write refuses."""
+    if not json:
+        refuse_aware_time(col.key, value)
+    return to_column_value(value, json=json)

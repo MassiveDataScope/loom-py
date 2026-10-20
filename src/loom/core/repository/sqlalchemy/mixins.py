@@ -33,7 +33,11 @@ from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.transactional import record_mutation
-from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+from loom.core.repository.sqlalchemy.values import (
+    is_json_column,
+    refuse_aware_time,
+    to_column_value,
+)
 
 _SENTINEL = object()
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
@@ -161,7 +165,10 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
             builtins = to_column_value(data)
             if not isinstance(builtins, dict):
                 raise TypeError("Struct payload must serialize to dict")
-            return self._encode_json_columns(_to_internal_field_names(type(data), builtins))
+            values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
+            for column, value in values.items():
+                refuse_aware_time(column, value)
+            return values
         return data
 
     def _encode_json_columns(self, values: dict[str, Any]) -> dict[str, Any]:

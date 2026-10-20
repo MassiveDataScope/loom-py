@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
 from typing import Any
@@ -87,6 +87,19 @@ class _CreateMark(Command, frozen=True):
     noted_at: datetime
 
 
+class _Slot(BaseModel):
+    __tablename__ = "typed_slots"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    opens_at: time = ColumnField()
+    noted_at: time = ColumnField(JSON)
+
+
+class _CreateSlot(Command, frozen=True):
+    opens_at: time
+    noted_at: time
+
+
 class _CustomerOut(LoomStruct, rename="camel"):
     id: int
     full_name: str
@@ -137,13 +150,15 @@ class _CreateTag(Command, frozen=True):
 
 
 _STAMP = datetime(2026, 1, 3, 12, 0)
+_AWARE_TIME = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
+_NAIVE_TIME = time(8, 30)
 _META = {"when": datetime(2026, 1, 3, 12, 0), "price": Decimal("9.5"), "tags": ["a"]}
 _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
 
 @pytest.fixture
 async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark)
+    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark, _Slot)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -204,6 +219,42 @@ class TestEnumColumns:
         assert (stored.state, stored.level) == (_State.CLOSED, _Level.HIGH)
         assert [item.id for item in found.items] == [created.id]
         assert sorted(raw.all()) == [("closed", 2), ("open", 1)]
+
+
+class TestTimeColumns:
+    async def test_writing_an_aware_time_to_a_time_column_is_refused(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        with pytest.raises(ValueError, match="opens_at.*naive"):
+            await repo.create(_CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME))
+
+    @pytest.mark.parametrize(
+        ("op", "value"), [(FilterOp.EQ, _AWARE_TIME), (FilterOp.IN, [_NAIVE_TIME, _AWARE_TIME])]
+    )
+    def test_filtering_a_time_column_by_an_aware_time_is_refused(
+        self, session_manager: SessionManager, op: FilterOp, value: Any
+    ) -> None:
+        group = FilterGroup(filters=(FilterSpec(field="opens_at", op=op, value=value),))
+
+        with pytest.raises(ValueError, match="naive"):
+            compile_filter_group(_compiled(_Slot), group, frozenset())
+
+    async def test_an_aware_time_in_a_json_column_keeps_its_offset(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        created = await repo.create(_CreateSlot(opens_at=_NAIVE_TIME, noted_at=_AWARE_TIME))
+        stored = await repo.get_by_id(created.id)
+
+        assert stored is not None
+        assert (stored.opens_at, stored.noted_at) == (_NAIVE_TIME, _AWARE_TIME)
 
 
 class TestRelatedStructs:

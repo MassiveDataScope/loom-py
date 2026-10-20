@@ -621,16 +621,27 @@
   nullable. Review such fields before upgrading.
 - **core:** a `date` field is inferred as a `Date` column and a `time` field
   as a `Time` column (`loom.core.model.Date`, `loom.core.model.Time`, new),
-  where both used to be inferred as an unbounded `String`. The SQLAlchemy
-  repository binds `date` and `time` values natively, so on Postgres with
-  asyncpg writing such a field failed with `expected str, got date`; SQLite
-  accepted it. An existing Postgres table holding these columns as `varchar`
-  needs a migration: Alembic autogenerate detects the type change, but
-  Postgres refuses it without a cast, so the revision passes
+  where both used to be inferred as an unbounded `String`; an enum mixed with
+  `date` or `time` follows to `Date` or `Time`. The SQLAlchemy repository
+  binds `date` and `time` values natively, so on Postgres with asyncpg writing
+  either field failed (`expected str, got date`, and the same for `time`).
+  The SQLAlchemy repository now refuses, with a `ValueError` naming the
+  column, a `time` that carries a UTC offset when it is written to or used as
+  a filter value on any column other than JSON: SQL `TIME` keeps no offset,
+  so Postgres and SQLite stored `08:30+02:00` as `08:30` and an aware filter
+  value matched the stored local time. Pass a naive `time`, or declare a
+  `datetime` field (`DateTime(tz=True)`) or a JSON column to keep the offset.
+  An existing Postgres table holding these columns as `varchar` needs a
+  migration: Alembic autogenerate detects the type change, but Postgres
+  refuses it without a cast, so the revision passes
   `postgresql_using="c::date"` (`"c::time"` for a `time` field) to
   `op.alter_column`, which is
-  `ALTER TABLE t ALTER COLUMN c TYPE date USING c::date`. MongoDB is
-  unaffected: it stores `date` and `time` values as ISO 8601 strings.
+  `ALTER TABLE t ALTER COLUMN c TYPE date USING c::date`. `c::time` drops any
+  offset the stored text holds (`'08:30+02'::time` is `08:30`): check first
+  with `SELECT c FROM t WHERE c ~ '[+-]\d{2}(:?\d{2})?$'`, and if offsets
+  are present convert those rows deliberately (for example to UTC with
+  `(c::timetz AT TIME ZONE 'UTC')::time`) before changing the type. MongoDB
+  is unaffected: it stores `date` and `time` values as ISO 8601 strings.
 
 ### ai
 
