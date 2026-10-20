@@ -92,7 +92,8 @@ a column reveals its values, through the order of the rows and through the
 cursor token, which carries them; so a `sortable` column must be a field of
 the items the route answers with (`PageResult[T]`, `CursorResult[T]` or
 `list[T]`), and compilation fails naming the route and the field otherwise.
-In cursor mode a sort column must also hold no null.
+In cursor mode a sort column must also hold no null. A `filterable` column
+follows the same rule, since the rows a filter keeps reveal its values too.
 
 Only scalar columns of the use case's own model qualify; a related model's
 column, a JSON, array or text-search column, and a field reference rooted at
@@ -100,8 +101,8 @@ another model fail compilation. An enum mixed with a scalar type, such as a
 `StrEnum` or `IntEnum`, is a scalar column of that type; a plain `Enum` or a
 `Literal` needs a declared column type (e.g. `ColumnField(String(16))`), and
 a SQLAlchemy model refuses one without it. `ALL` (from `loom.rest`)
-declares every scalar column, for `sortable` those the response does not show
-included, and logs a warning naming the route at startup.
+declares every scalar column, those the response does not show included, and
+logs a warning naming the route at startup.
 
 In `app.rest.interfaces`, both take column names, or `all`:
 

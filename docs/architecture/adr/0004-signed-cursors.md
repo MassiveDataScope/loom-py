@@ -184,7 +184,13 @@ its values with the order of the rows, and reads them from the token
   where `ordering_fields` defaults to the serializer's fields and `'__all__'`
   opens every model field, `sortable=ALL` is the explicit escape hatch: every
   scalar column, hidden ones included, with a WARNING at startup naming the
-  route. This one rule closes both channels.
+  route. This one rule closes both channels. `filterable` follows the same
+  rule, with `filterable=ALL` as its escape hatch, since the rows a filter
+  keeps reveal the filtered values just as an order does. The primary key is
+  sortable, and carried in every token, even when the response hides it: a
+  deliberate choice, since it is the order every page falls back to and the
+  tie-breaker that makes the keyset total; a route that must hide its keys
+  answers with a projection and pages by offset.
 - **Repositories, before the query runs.** In cursor mode every sort field
   and primary-key column must be a column whose type a token carries
   (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,

@@ -582,7 +582,8 @@
   the response does not show, or a result type that does not say, fails
   compilation naming the route and the field, since ordering by it reveals
   its values. `sortable=ALL` opens every scalar column, hidden ones included,
-  and its startup warning says so.
+  and its startup warning says so. `filterable` follows the same rule, with
+  `filterable=ALL` as its escape hatch.
 - **core:** a cursor page orders only by non-null columns of a type a token
   carries; a dotted path, a JSON, `bytes` or optional column answers
   `400 unsupported_query` before the query runs (`require_cursor_sort`), and

@@ -221,20 +221,39 @@ class _Entry(BaseModel):
     sort_order: int = ColumnField()
 
 
-class EntryFilterValuesUseCase(UseCase[_Entry, dict[str, Any]]):
+FILTERS_SEEN: list[dict[str, Any]] = []
+"""The filter values each entry filter double received, in call order."""
+
+
+class EntryFilterValuesUseCase(UseCase[_Entry, PageResult[_Entry]]):
+    """Answers with entries, so a column it filters on must be one they show."""
+
     def __init__(self) -> None:
         super().__init__()
 
-    async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> PageResult[_Entry]:
         await asyncio.sleep(0)
         assert query.filters is not None
-        return {spec.field: spec.value for spec in query.filters.filters}
+        FILTERS_SEEN.append(self.seen({spec.field: spec.value for spec in query.filters.filters}))
+        return build_page_result([], 0, PageParams(page=1, limit=1))
+
+    def seen(self, values: dict[str, Any]) -> dict[str, Any]:
+        return values
 
 
 class EntryFilterTypesUseCase(EntryFilterValuesUseCase):
-    async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
-        values = await super().execute(query, **kwargs)
+    def seen(self, values: dict[str, Any]) -> dict[str, Any]:
         return {field: type(value).__name__ for field, value in values.items()}
+
+
+def _filters_seen(
+    query: str, use_case: type[EntryFilterValuesUseCase] = EntryFilterValuesUseCase
+) -> dict[str, Any]:
+    FILTERS_SEEN.clear()
+    response = _entry_client(use_case).get(f"/entries/?{query}")
+    assert response.status_code == 200, response.text
+    (values,) = FILTERS_SEEN
+    return values
 
 
 SORTS_SEEN: list[list[list[str]]] = []
@@ -734,10 +753,7 @@ def test_bind_interfaces_refuses_an_operator_the_declared_field_cannot_take(
 
 @pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
 def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> None:
-    response = _entry_client().get(f"/entries/?code={raw}")
-
-    assert response.status_code == 200
-    assert response.json() == {"code": raw}
+    assert _filters_seen(f"code={raw}") == {"code": raw}
 
 
 @pytest.mark.parametrize(
@@ -752,27 +768,20 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
 def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
     query: str, expected: dict[str, Any]
 ) -> None:
-    response = _entry_client().get(f"/entries/?{query}")
-
-    assert response.status_code == 200
-    assert response.json() == expected
+    assert _filters_seen(query) == expected
 
 
 def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
-    client = _entry_client(EntryFilterTypesUseCase)
+    seen = _filters_seen(
+        "tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z", EntryFilterTypesUseCase
+    )
 
-    response = client.get("/entries/?tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z")
-
-    assert response.status_code == 200
-    assert response.json() == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
+    assert seen == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
 
 
 def test_bind_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value() -> None:
-    values = _entry_client().get("/entries/?phase=closed")
-    types = _entry_client(EntryFilterTypesUseCase).get("/entries/?phase=closed")
-
-    assert (values.status_code, values.json()) == (200, {"phase": "closed"})
-    assert (types.status_code, types.json()) == (200, {"phase": "_Phase"})
+    assert _filters_seen("phase=closed") == {"phase": "closed"}
+    assert _filters_seen("phase=closed", EntryFilterTypesUseCase) == {"phase": "_Phase"}
 
 
 @pytest.mark.parametrize(
@@ -801,10 +810,7 @@ def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
 def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
     query: str, expected: dict[str, Any]
 ) -> None:
-    response = _entry_client().get(f"/entries/?{query}")
-
-    assert response.status_code == 200
-    assert response.json() == expected
+    assert _filters_seen(query) == expected
 
 
 # ---------------------------------------------------------------------------

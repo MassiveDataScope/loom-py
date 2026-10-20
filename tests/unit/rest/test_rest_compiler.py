@@ -1032,6 +1032,34 @@ class TestDeclaredColumns:
         ):
             _compile_columns(IFace)
 
+    @pytest.mark.parametrize("use_case", [_ListBookCards, _CountBooks], ids=["hidden", "untyped"])
+    def test_a_filterable_column_the_response_does_not_show_fails_compilation(
+        self, use_case: type[UseCase[Any, Any]]
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=use_case, method="GET", path="/", filterable=("pages",)),)
+
+        with pytest.raises(
+            InterfaceCompilationError,
+            match=r"\(GET, '/'\): filterable field 'pages'.*filterable=ALL",
+        ):
+            _compile_columns(IFace)
+
+    def test_filterable_all_opens_hidden_columns_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBookCards, method="GET", path="/", filterable=ALL),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = _compile_columns(IFace)
+
+        assert "pages" in dict(route.filter_fields)
+        (record,) = caplog.records
+        assert "does not show" in record.getMessage()
+
     def test_a_sortable_column_the_response_shows_compiles(self) -> None:
         class IFace(RestInterface[_Book]):
             prefix = "/books"

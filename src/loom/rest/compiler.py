@@ -459,10 +459,11 @@ class _ColumnPolicy:
         """Resolve ``filterable``, refusing a column whose type a query value cannot decode.
 
         Raises:
-            InterfaceCompilationError: As :meth:`resolve`, or msgspec cannot
+            InterfaceCompilationError: As :meth:`resolve` and :meth:`sort_fields`
+                (a column the response does not show), or msgspec cannot
                 describe a declared column's type.
         """
-        columns = self.resolve("filterable", on_route, on_interface)
+        columns = self._shown("filterable", on_route, on_interface)
         for name, annotation in columns.items():
             try:
                 msgspec_type(annotation).schema()
@@ -476,31 +477,43 @@ class _ColumnPolicy:
     def sort_fields(
         self, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
     ) -> tuple[str, ...]:
-        """Resolve ``sortable``, refusing a column the route's response does not show.
+        """Resolve ``sortable``, then append the primary key as the default order.
 
-        Ordering by a column reveals its values even when the response hides
-        them: a client bisects with the order of the rows, or reads the value
-        a cursor token carries. Only :data:`ALL`, which logs a warning, opens
-        every column, hidden ones included. The primary key is appended as
-        the default order.
+        The primary key is sortable whether or not the response shows it: it is
+        the order every page falls back to, and a cursor token carries it.
 
         Raises:
             InterfaceCompilationError: As :meth:`resolve`, or a declared
                 column is not a field of the items the route answers with,
                 or the route's result type does not say which fields those are.
         """
-        declared = self.resolve("sortable", on_route, on_interface)
-        if declared and (on_route if on_route is not None else on_interface) is not ALL:
-            shown = _response_fields(self.response)
-            for name in declared:
-                if shown is None or name not in shown:
-                    raise InterfaceCompilationError(
-                        f"{self.where}: sortable field {name!r} is not a field of the items "
-                        "the route answers with, so ordering by it would reveal its values; "
-                        "show it in the response, or declare sortable=ALL to open every "
-                        "column on purpose."
-                    )
+        declared = self._shown("sortable", on_route, on_interface)
         return tuple(dict.fromkeys((*declared, *self.default_order())))
+
+    def _shown(
+        self, kind: str, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
+    ) -> dict[str, Any]:
+        """Resolve *kind*, refusing a column the route's response does not show.
+
+        Filtering or ordering by a column reveals its values even when the
+        response hides them: a client bisects with the rows a filter keeps or
+        with their order, and a cursor token carries the sort values. Only
+        :data:`ALL`, which logs a warning, opens every column, hidden ones
+        included.
+        """
+        declared = self.resolve(kind, on_route, on_interface)
+        if not declared or (on_route if on_route is not None else on_interface) is ALL:
+            return declared
+        shown = _response_fields(self.response)
+        for name in declared:
+            if shown is None or name not in shown:
+                raise InterfaceCompilationError(
+                    f"{self.where}: {kind} field {name!r} is not a field of the items the "
+                    f"route answers with, so {kind.removesuffix('able')}ing by it would "
+                    f"reveal its values; show it in the response, or declare {kind}=ALL "
+                    "to open every column on purpose."
+                )
+        return declared
 
     def default_order(self) -> tuple[str, ...]:
         """Primary-key columns, the order the route applies when the client names none."""
