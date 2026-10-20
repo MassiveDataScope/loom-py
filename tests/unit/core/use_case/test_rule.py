@@ -5,8 +5,9 @@ from typing import Any, cast
 import pytest
 
 from loom.core.command import Command, Patch
+from loom.core.errors import RuleViolation, RuleViolations
 from loom.core.use_case import F
-from loom.core.use_case.rule import Rule, RuleViolation, RuleViolations
+from loom.core.use_case.rule import Rule
 
 
 class CreateUser(Command, frozen=True):

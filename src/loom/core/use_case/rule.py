@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol, Self, TypeVar
 
 from loom.core.command.base import Command
-from loom.core.errors.errors import RuleViolation, RuleViolations
+from loom.core.errors.errors import RuleViolation
 from loom.core.use_case._predicates import (
     is_present as _is_present,
 )
@@ -17,12 +17,9 @@ from loom.core.use_case._predicates import (
 )
 from loom.core.use_case.field_ref import FieldExpr, FieldRef
 
-# Re-exported for backward compatibility — canonical home is loom.core.errors.
 __all__ = [
     "Rule",
     "RuleFn",
-    "RuleViolation",
-    "RuleViolations",
 ]
 
 CommandT = TypeVar("CommandT", bound=Command)

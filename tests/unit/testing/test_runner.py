@@ -11,11 +11,10 @@ from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.command import Command
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.errors import NotFound
+from loom.core.errors import NotFound, RuleViolation, RuleViolations
 from loom.core.identity import Identity
 from loom.core.model import LoomStruct
 from loom.core.use_case.markers import Agent, Caller, Input, LoadById, Mcp
-from loom.core.use_case.rule import RuleViolation, RuleViolations
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.auto import _AgentDepsFactory
 from loom.testing.runner import AgentHandleDouble, DepsFactoryDouble, McpHandleDouble, UseCaseTest

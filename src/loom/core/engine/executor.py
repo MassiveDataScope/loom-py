@@ -21,14 +21,13 @@ from loom.core.engine.post_commit import (
     bind_channel,
     reset_channel,
 )
-from loom.core.errors import NotFound, Unauthenticated
+from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
 from loom.core.identity import Identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.tracing import get_trace_id
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.context import _active_uow
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
-from loom.core.use_case.rule import RuleViolation, RuleViolations
 
 if TYPE_CHECKING:
     from loom.core.job.job import Job

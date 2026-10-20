@@ -6,7 +6,6 @@ import importlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -171,26 +170,6 @@ def test_load_backend_provider_names_the_registered_engines_when_rejecting() -> 
     message = str(excinfo.value)
     assert "polars" in message
     assert "spark" in message
-
-
-def test_load_backend_provider_legacy_entry_points_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _DummyEP:
-        name = "polars"
-
-        def load(self) -> type[Any]:
-            from loom.etl.backends.polars.provider import PolarsProvider
-
-            return PolarsProvider
-
-    entrypoints_module = importlib.import_module("loom.core.plugins.entrypoints")
-    monkeypatch.setattr(
-        entrypoints_module,
-        "entry_points",
-        lambda: {"loom.etl.backends": [_DummyEP()]},
-    )
-
-    provider = load_backend_provider("polars")
-    assert type(provider).__name__ == "PolarsProvider"
 
 
 # ---------------------------------------------------------------------------

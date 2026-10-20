@@ -202,11 +202,7 @@ def load_entry_point(
 
 
 def _iter_group(group: str) -> tuple[EntryPoint, ...]:
-    eps = entry_points()
-    if hasattr(eps, "select"):
-        return tuple(eps.select(group=group))
-    legacy = eps.get(group, ())
-    return tuple(legacy)
+    return tuple(entry_points().select(group=group))
 
 
 def _resolve_conflict(
