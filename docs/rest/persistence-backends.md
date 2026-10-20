@@ -273,8 +273,9 @@ message never echoes the token. An empty token is refused too, on every
 backend. A cursor page orders only by non-null columns of a type a token
 carries (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
 `Decimal`, an enum or a `Literal`): a dotted path, a JSON or `bytes` column or
-an optional column answers `400 unsupported_query` before the query runs,
-and so does a page whose last row holds a non-finite number. A naive datetime key, such as a
+an optional column answers `400 unsupported_query` before the query runs. A
+page whose last row holds a non-finite number answers the same 400 when its
+next token is issued, after the query has run. A naive datetime key, such as a
 `DateTime(tz=False)` column, is issued as UTC with an explicit offset and
 compared as naive UTC again against that column.
 

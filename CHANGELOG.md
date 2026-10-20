@@ -593,8 +593,8 @@
   `module.qualname`; `UnsupportedQuery` and the client's 400 name it by its
   qualified name alone. `CursorCodec.encode`/`decode`, `require_cursor_sort`
   and `QuerySpecCompiler(model=...)` take the model class (or a name). Mongo
-  issues the next token in the model's types, so a page sorted by a date,
-  decimal or UUID column, or keyed by a UUID, reaches the next page.
+  issues the next token in the model's types, so a page sorted by a date or
+  UUID column, or keyed by a UUID, reaches the next page.
 - **core:** one `CursorCodec` per process: the registration modules register
   it with `register_cursor_codec`, which raises `ConfigError` when a
   different codec is already registered, and, in a deployed environment,

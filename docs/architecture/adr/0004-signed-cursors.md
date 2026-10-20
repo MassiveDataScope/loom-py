@@ -1,7 +1,7 @@
 # ADR 0004: Signed, strictly decoded pagination cursors
 
 - Status: Accepted
-- Applies to: loom-kernel 2.21.0 and later
+- Applies to: the release after loom-kernel 2.22.x
 - Classification: hotfix; no external legacy, so no compatibility shims
 
 File and line references in Context are against loom-kernel 2.21.0.
@@ -158,8 +158,9 @@ or a `persistence.mongo` section, and finds:
   it anyway when the codec is built; the check reports it in CI too.
 
 Like the other checks it reads the keys as written and resolves no
-placeholder, so it runs without the key material, and it runs only in
-production and staging (ADR 0005). `persistence.cursors.*` is not on the
+placeholder, so it runs without the key material. At startup it runs only
+in production and staging (ADR 0005); `loom check --deploy` runs it in any
+environment. `persistence.cursors.*` is not on the
 `LOOM__*` override allowlist, so in production and staging
 `LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` fails at startup before any
 check runs. `persistence.cursors` is also protected like `config` and
@@ -209,8 +210,9 @@ its values with the order of the rows, and reads them from the token
   predicate would skip the rows holding one; supporting them would need
   dialect-specific `NULLS FIRST/LAST` handling in both backends.
 - **Values.** A non-finite `float` or `Decimal`, or any value of a type the
-  format does not carry, makes `encode` raise `UnsupportedQuery` (400), not
-  `TypeError` (500).
+  format does not carry, in the last row of a page makes `encode` raise
+  `UnsupportedQuery` (400), not `TypeError` (500), when the next token is
+  issued, after the query has run.
 - **Mongo** stores dates, decimals and UUIDs as text; it issues the next
   token from the output struct, in the model's types, so the next page's type
   check accepts it.
