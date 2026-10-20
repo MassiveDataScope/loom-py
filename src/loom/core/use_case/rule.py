@@ -47,9 +47,6 @@ class RuleBuilderFn(RuleFn, Protocol):
 class _RuleSpec:
     evaluator: Callable[..., Any]
     field: str | None = None
-    # Set by Rule.forbid, whose condition returns a bool; None for Rule.check,
-    # whose evaluator returns the violation itself or None.
-    message: str | None = None
     command_sources: tuple[FieldRef, ...] = ()
     param_names: tuple[str, ...] = ()
     include_command: bool = False
@@ -110,11 +107,6 @@ class _RuleSpec:
             raise result
         if isinstance(result, str):
             raise RuleViolation(self._resolved_field(command), result)
-        if self.message is not None:
-            # Rule.forbid: only boolean True signals failure, not any truthy value.
-            if result is True:
-                raise RuleViolation(self._resolved_field(command), self._resolved_message())
-            return
         if result is not None:
             raise TypeError(
                 f"Rule.check on field '{self._resolved_field(command)}': the evaluator "
@@ -130,9 +122,6 @@ class _RuleSpec:
             self.predicate.leaf if isinstance(self.predicate, FieldRef) else None,
         )
         return next((c for c in candidates if c is not None), type(command).__name__)
-
-    def _resolved_message(self) -> str:
-        return self.message or "Rule check failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,9 +176,12 @@ class Rule:
         *,
         message: str,
     ) -> RuleBuilderFn:
+        def _violation(*args: Any) -> str | None:
+            # Only boolean True signals failure, not any truthy value.
+            return message if condition(*args) is True else None
+
         return _RuleSpec(
-            evaluator=condition,
-            message=message,
+            evaluator=_violation,
             include_command=True,
             include_fields_set=True,
         )

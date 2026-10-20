@@ -462,9 +462,9 @@
 - **core:** `Rule.check(..., via=fn)` takes the violation from `fn`: a `str`
   (the message) or a `RuleViolation` fails the rule, `None` passes it. A `bool`
   or any other result raises `TypeError` naming the field, instead of `True`
-  failing the rule and `False` passing it, which read backwards for a function
-  named after the valid state. The `message=` parameter of `Rule.check` is
-  removed. `Rule.forbid` keeps its boolean condition. Migrate
+  failing the rule and `False` passing it. The `message=` parameter of
+  `Rule.check` is removed. `Rule.forbid` keeps its boolean condition; a `str`
+  or `RuleViolation` it returns no longer fails the rule. Migrate
   `Rule.check(F(Order).total, via=lambda v: v <= 0, message="total must be > 0")`
   to `Rule.check(F(Order).total, via=lambda v: "total must be > 0" if v <= 0 else None)`.
 - **core:** the `LoomType` protocol gains `from_query(params)`, which

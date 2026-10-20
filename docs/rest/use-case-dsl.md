@@ -1168,7 +1168,7 @@ methods stay on the protocol. Closing is the context manager's job
 | `Exists(Model, from_param=..., against=...)` | Check existence; 404 on missing if `RAISE` |
 | `Compute.set(F).from_command(...)` | Derive/normalise a command field |
 | `Compute.set(F).from_params(...)` | Include path params in derive computation |
-| `Rule.check(F, via=fn)` | Validate a field; `fn` returns error string or `None` |
+| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolation`, or `None` |
 | `Rule.forbid(predicate, message=...)` | Enforce invariant; predicate returns `True` to fail |
 | `.from_command(F1, F2, ...)` | Pass command fields to rule predicate |
 | `.from_params("name")` | Pass path parameter to rule predicate |
