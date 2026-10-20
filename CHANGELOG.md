@@ -635,7 +635,9 @@
   would match the row holding `08:30`. A JSON column and a `Time` column
   declared with `ColumnType("Time", kwargs={"timezone": True})` accept it;
   the JSON column keeps the written offset, and so does the `Time` column on
-  Postgres (`timetz`), while SQLite ignores its zone and drops the offset. A
+  Postgres (`timetz`). On any other dialect startup refuses a
+  `Time(timezone=True)` column with a `ConfigError` naming `table.column`,
+  since the dialect would not keep the offset. A
   `datetime` field (`DateTime(tz=True)`) keeps the instant on Postgres
   (`timestamptz`) and MongoDB, read back in UTC, not the written offset.
   `get_by`, `exists_by`

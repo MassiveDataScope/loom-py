@@ -106,7 +106,8 @@ holds no UTC offset, so a `time` with an offset answers
 `400 query_validation` as a filter value and `422 boundary_validation` in a
 create or update body. A `Time` column with time zone
 (`ColumnField(ColumnType("Time", kwargs={"timezone": True}))`) keeps the
-written offset on Postgres (`timetz`; SQLite drops it), and a JSON column
+written offset on Postgres (`timetz`; startup refuses it on any other
+dialect), and a JSON column
 keeps it as ISO text. A `datetime` field keeps the instant, not the written
 offset: Postgres (`timestamptz`) and MongoDB read it back in UTC.
 

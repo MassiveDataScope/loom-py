@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import ClassVar, Final, Literal
 
 import msgspec
-from sqlalchemy import inspect, make_url, text
+from sqlalchemy import MetaData, Time, inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from loom.core.authz.elevation import ElevationSink
@@ -205,6 +205,32 @@ def startup_checks(
     return unprotected
 
 
+def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
+    """Refuse a ``Time(timezone=True)`` column on a dialect that drops its offset.
+
+    Postgres stores such a column as ``time with time zone`` and keeps the
+    offset; SQLite ignores the zone and stores the time without it.
+
+    Raises:
+        ConfigError: When *metadata* holds such a column and *dialect* is not
+            Postgres, naming each ``table.column``.
+    """
+    if dialect == POSTGRES_DIALECT:
+        return
+    columns = sorted(
+        f"{table.name}.{column.name}"
+        for table in metadata.tables.values()
+        for column in table.columns
+        if isinstance(column.type, Time) and column.type.timezone
+    )
+    if columns:
+        raise ConfigError(
+            f"dialect {dialect!r} would drop the UTC offset of the Time(timezone=True) "
+            f"columns {', '.join(columns)}; declare a JSON column to keep the offset, "
+            "or a datetime field to keep the instant"
+        )
+
+
 @asynccontextmanager
 async def _lifespan(
     session_manager: SessionManager,
@@ -223,6 +249,7 @@ async def _lifespan(
         scoped,
         has_session_settings=session_manager.has_session_settings,
     )
+    check_time_zone_columns(session_manager.engine.dialect.name, get_metadata())
     if unprotected:
         _logger.warning(
             "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)

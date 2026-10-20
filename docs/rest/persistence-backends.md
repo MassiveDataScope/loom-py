@@ -372,7 +372,8 @@ Four limits decide what does not travel:
   and keeps the offset. Only two SQLAlchemy columns keep the written offset:
   - a `Time` column with time zone,
     `ColumnField(ColumnType("Time", kwargs={"timezone": True}))`, on Postgres
-    (`timetz`); SQLite ignores the zone and drops the offset;
+    only (`timetz`): on any other dialect startup refuses the column with a
+    `ConfigError` naming `table.column`;
   - a JSON column, `ColumnField(JSON)`, which stores the ISO text.
 
   A `datetime` field (`DateTime(tz=True)`) keeps the instant, not the

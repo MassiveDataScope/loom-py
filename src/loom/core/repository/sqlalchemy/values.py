@@ -14,7 +14,8 @@ A ``time`` with a UTC offset is refused for a column that cannot hold the
 offset: SQL ``TIME`` without time zone (Postgres ``time``, SQLite text) stores
 ``08:30+02:00`` as ``08:30``, and an aware value compared with it matches the
 row holding ``08:30``. A JSON column, which keeps the ISO text, and a ``Time``
-column with ``timezone=True`` (Postgres ``timetz``) accept it.
+column with ``timezone=True`` (Postgres ``timetz``) accept it; the SQLAlchemy
+backend refuses the latter at startup on any dialect other than Postgres.
 """
 
 from __future__ import annotations
