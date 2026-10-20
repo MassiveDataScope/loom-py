@@ -85,7 +85,7 @@ def _sql_section(endpoint: dict[str, Any], **conn_overrides: Any) -> dict[str, A
 
     The default connection is the single-role shape (empty allowlist plus a
     fixed ``default_role``): an allowlist is only representable on a mounted
-    endpoint under ``sql_endpoint.auth: jwt`` (spec §4).
+    endpoint under ``sql_endpoint.auth: identity`` (spec §4).
     """
     connection: dict[str, Any] = {
         "backend": "clickhouse",
@@ -266,18 +266,6 @@ def test_auth_identity_with_a_jwt_section_mounts_the_endpoint(tmp_path: Path) ->
         jwt_section=_JWT_SECTION,
     )
     app = create_app(config_path)
-    assert "/sql/analytics" in _route_paths(app)
-
-
-def test_the_deprecated_jwt_auth_mode_still_mounts_the_endpoint(tmp_path: Path) -> None:
-    """Existing configs keep working: ``auth: jwt`` is an alias of ``auth: identity``."""
-    config_path = _write_project(
-        tmp_path,
-        sql_section=_sql_section({"enabled": True, "auth": "jwt"}),
-        jwt_section=_JWT_SECTION,
-    )
-    with pytest.warns(DeprecationWarning, match="identity"):
-        app = create_app(config_path)
     assert "/sql/analytics" in _route_paths(app)
 
 

@@ -459,6 +459,10 @@
 
 ### core
 
+- **core:** `sql_endpoint.auth` admits only `identity` and `external`;
+  `auth: jwt` is refused when the config is loaded, and the alias and its
+  `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
+  `auth: identity`.
 - **core:** with no `LOOM_ENV` and no `environment=`, a process starts as
   `production` and runs the deploy checks; an API without authentication now
   fails at startup with `loom.rest.E001` until it configures

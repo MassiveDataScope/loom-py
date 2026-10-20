@@ -406,8 +406,7 @@ sources of truth for who the caller is were the defect this design closes.
 
 Other renames in the same change:
 
-- `sql_endpoint.auth: jwt` → `auth: identity` (`jwt` still works, with a
-  `DeprecationWarning`).
+- `auth: jwt` → `auth: identity`; `jwt` is no longer accepted.
 - The `401` error code is now `unauthenticated`, matching
   `ErrorCode`, and the response carries a
   `WWW-Authenticate: Bearer` challenge.
