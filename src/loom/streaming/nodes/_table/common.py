@@ -297,7 +297,8 @@ class IntoTable(Generic[EventT]):
         Raises:
             TypeError: If the provided config does not match the selected backend.
             RuntimeError: If required runtime resources are missing.
-            ValueError: If the resolved backend is not supported.
+            ValueError: If the resolved backend is not supported, or a Delta
+                payload type has no fields.
         """
         del worker_index, worker_count
         if self.backend is Backend.SQLALCHEMY:
@@ -325,6 +326,11 @@ class IntoTable(Generic[EventT]):
         if self.backend is Backend.DELTA:
             if not isinstance(config, DeltaSinkConfig):
                 raise TypeError("IntoTable backend=delta requires a DeltaSinkConfig.")
+            if not msgspec.structs.fields(cast(Any, self.payload)):
+                raise ValueError(
+                    f"IntoTable backend=delta requires a payload type with fields; "
+                    f"{self.payload.__name__} has none, so it has no row to write."
+                )
             return cast(
                 SinkPartition[EventT],
                 _DeltaTablePartition(config, logger=logger),
@@ -832,7 +838,6 @@ class _DeltaTablePartition:
         self._ipc_writer: Any = None  # pa.ipc.RecordBatchStreamWriter | None
         self._spool: Any = self._new_spool()
         self._staged_records = 0
-        self._rowless_items = 0
         self._staged_bytes = 0
         self._buffer_started_at: float | None = None
         self._closed = False
@@ -869,12 +874,7 @@ class _DeltaTablePartition:
         return durable
 
     def _stage_item(self, item: Any) -> None:
-        row = msgspec.structs.asdict(cast(msgspec.Struct, item))
-        if not row:
-            # No row to write; the item is reported durable with the next flush.
-            self._rowless_items += 1
-            return
-        self._mini_batch.append(row)
+        self._mini_batch.append(msgspec.structs.asdict(cast(msgspec.Struct, item)))
         self._staged_records += 1
         if len(self._mini_batch) >= self._mini_batch_size:
             self._commit_mini_batch()
@@ -929,12 +929,10 @@ class _DeltaTablePartition:
         if writer is None:
             return 0
         n = self._staged_records
-        durable = n + self._rowless_items
         spool = self._spool
         self._spool = self._new_spool()
         self._ipc_writer = None
         self._staged_records = 0
-        self._rowless_items = 0
         self._staged_bytes = 0
         self._buffer_started_at = None
         trace_id = uuid4().hex
@@ -956,7 +954,7 @@ class _DeltaTablePartition:
             raise
         finally:
             spool.close()
-        return durable
+        return n
 
     def _write_to_delta(
         self,

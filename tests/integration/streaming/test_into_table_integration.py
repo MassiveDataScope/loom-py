@@ -399,6 +399,18 @@ class TestIntoTableSQLAlchemyIntegration:
         assert partition.write_batch(rows[2:]) == 3
         assert partition.close() == 1
 
+    def test_a_delta_payload_without_fields_is_refused_at_startup(self, tmp_path: Path) -> None:
+        class _NoColumns(LoomStruct):
+            pass
+
+        node = IntoTable(payload=_NoColumns, table="events", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config(
+            {"uri": str(tmp_path / "events_delta")}, default_table="events"
+        )
+
+        with pytest.raises(ValueError, match="_NoColumns has none"):
+            node.build_partition(config, worker_index=0, worker_count=1)
+
     def test_delta_sink_config_parses_writer_properties_and_staging(
         self,
     ) -> None:
