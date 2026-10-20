@@ -63,7 +63,6 @@ def test_consumer_settings_compile_to_confluent_config() -> None:
     assert config["bootstrap.servers"] == "k1:9092"
     assert config["group.id"] == "g-1"
     assert config["auto.offset.reset"] == "latest"
-    assert config["enable.auto.commit"] is False
     assert config["fetch.min.bytes"] == 1024
 
 

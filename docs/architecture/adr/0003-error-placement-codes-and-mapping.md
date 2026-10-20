@@ -431,6 +431,7 @@ single parameter, that parameter is named `component` (see "Applied" below).
 - A bare string handed to `AgentCompilationError` or the streaming
   `CompilationError` becomes an `UNSPECIFIED` issue. The `from_message`
   helpers, one caller each, are removed.
+  Note: since #397 the streaming `CompilationError` takes typed issues only.
 - `ETLCompilationError` keeps its constructor in 2.x and gains one
   `from_issue(issue)` classmethod. In 3.0 the constructor takes the issue
   directly.
@@ -521,6 +522,7 @@ What the hotfix did where this ADR left a choice, and what it found:
 - `AgentCompilationIssue` and the streaming `CompilationIssue` are type
   aliases of `CompileIssue[...]`. `UNSPECIFIED` carries the template
   `"{message}"`, so a bare string becomes an issue through `issue()` too.
+  Note: since #397 the streaming `CompilationError` takes typed issues only.
 - Messages keep their text. Where a factory named a type by `__name__`, the
   call site passes `type(node).__name__`, because `__qualname__` would change
   the text for nested classes. A sequence that is empty renders `none` where

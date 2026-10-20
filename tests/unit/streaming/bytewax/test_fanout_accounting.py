@@ -359,7 +359,7 @@ class TestSinkTrackingContract:
 
         issue = exc_info.value.issues[0]
         assert issue.code is StreamingErrorCode.SINK_CANNOT_TRACK_COMMITS
-        assert (issue.component, issue.field) == ("_UserSink", "streaming.delivery")
+        assert (issue.component, issue.field) == ("_UserSink", "kafka.consumer.delivery")
 
     def test_untrackable_sink_is_fine_under_at_most_once(self) -> None:
         class _UserSink:
@@ -429,6 +429,7 @@ class TestSinkTrackingContract:
             ctx.inline_sink_partition_for((0, 1))
 
         assert exc_info.value.issues[0].code is StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS
+        assert exc_info.value.issues[0].field == "kafka.consumer.delivery"
 
 
 def _guard_context(**plan_parts: Any) -> _adapter._BuildContext:

@@ -231,7 +231,7 @@ class StreamingErrorCode(IssueCode):
             "would never be completed, so its partitions would stop committing while the "
             "flow looks healthy. Add bind_commit_tracker(tracker) to the sink, or declare "
             "delivery=at_most_once.",
-            field="streaming.delivery",
+            field="kafka.consumer.delivery",
         ),
     )
     INLINE_SINK_CANNOT_SKIP_COMMITS = (
@@ -242,7 +242,7 @@ class StreamingErrorCode(IssueCode):
             "its partitions would complete the offsets of messages that go on after the "
             "inline write. Add build_inline_partition() to the sink, or declare "
             "delivery=at_most_once.",
-            field="streaming.delivery",
+            field="kafka.consumer.delivery",
         ),
     )
     # Under at-least-once delivery no message is discarded unless the flow says so.

@@ -183,6 +183,10 @@ partition fails to build (never a silent fallback to `auto_offset_reset`).
 ```yaml
 kafka:
   consumer:
+    brokers: ["broker:9092"]
+    group_id: orders-service
+    topics: ["orders.in"]
+    delivery: at_least_once
     batch_size: 500            # records per poll cycle
     poll_backoff_ms: 50        # sleep after an empty poll
     commit_keepalive_ms: 1800000

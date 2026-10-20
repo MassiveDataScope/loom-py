@@ -450,6 +450,9 @@ class SqlAlchemySinkConfig:
         )
 
 
+_DEFAULT_MAX_ROW_GROUP_SIZE = 10_000
+
+
 @dataclass(frozen=True, slots=True)
 class DeltaSinkConfig:
     """Resolved ``IntoTable`` settings for the Delta backend.
@@ -463,7 +466,6 @@ class DeltaSinkConfig:
         target_file_size: Optional delta-rs target file size in bytes.
         staging_compression: Compression codec for the IPC staging stream.
         spool_max_bytes: Maximum in-memory bytes before spooling the staging file to disk.
-        part_max_records: Backward-compatible row-group hint for the final Delta write.
         writer_properties: Final Delta writer properties passed to delta-rs.
         buffer_policy: Common flush policy shared with other backends.
     """
@@ -476,25 +478,34 @@ class DeltaSinkConfig:
     target_file_size: int | None
     staging_compression: Literal["uncompressed", "lz4", "zstd"]
     spool_max_bytes: int
-    part_max_records: int
     writer_properties: Any | None
     buffer_policy: _TableBufferPolicy
     mini_batch_size: int = 500
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], *, default_table: str) -> Self:
-        """Build Delta sink settings from a resolved sink config."""
+        """Build Delta sink settings from a resolved sink config.
+
+        Without ``writer_properties`` the final write uses row groups of at
+        most 10 000 rows.
+
+        Raises:
+            ValueError: If ``uri`` is empty, a value is invalid, or the config
+                sets ``part_max_records``.
+        """
         table = str(config.get("table") or default_table).strip()
         uri = str(config.get("uri") or "").strip()
         if not uri:
             raise ValueError("Delta sink config requires a non-empty 'uri'.")
+        if "part_max_records" in config:
+            raise ValueError(
+                "Delta sink config has no 'part_max_records'; set "
+                "'writer_properties.max_row_group_size' instead."
+            )
         raw_partition_by = config.get("partition_by") or []
-        staging_config = config.get("staging") if isinstance(config.get("staging"), Mapping) else {}
-        staging_compression = _validate_ipc_compression(
-            staging_config.get("compression")
-            if isinstance(staging_config, Mapping)
-            else config.get("staging_compression", "uncompressed")
-        )
+        raw_staging = config.get("staging")
+        staging_config: Mapping[str, Any] = raw_staging if isinstance(raw_staging, Mapping) else {}
+        staging_compression = _validate_ipc_compression(staging_config.get("compression"))
         writer_properties = _build_writer_properties(
             config.get("writer_properties")
             if isinstance(config.get("writer_properties"), Mapping)
@@ -502,7 +513,7 @@ class DeltaSinkConfig:
         )
         if writer_properties is None:
             writer_properties = _writer_properties_factory(
-                max_row_group_size=_optional_int(config.get("part_max_records"), 10_000)
+                max_row_group_size=_DEFAULT_MAX_ROW_GROUP_SIZE
             )
         target_file_size_raw = config.get("target_file_size")
         return cls(
@@ -516,15 +527,9 @@ class DeltaSinkConfig:
             else None,
             staging_compression=staging_compression,
             spool_max_bytes=_optional_int(config.get("spool_max_bytes"), 32 * 1024 * 1024),
-            part_max_records=_optional_int(config.get("part_max_records"), 10_000),
             writer_properties=writer_properties,
             buffer_policy=_TableBufferPolicy.from_config(config),
-            mini_batch_size=_optional_int(
-                staging_config.get("mini_batch_size")
-                if isinstance(staging_config, Mapping)
-                else config.get("mini_batch_size"),
-                500,
-            ),
+            mini_batch_size=_optional_int(staging_config.get("mini_batch_size"), 500),
         )
 
 

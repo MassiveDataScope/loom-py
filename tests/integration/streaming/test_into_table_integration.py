@@ -459,7 +459,6 @@ class TestIntoTableSQLAlchemyIntegration:
                 "partition_by": ["year", "month"],
                 "target_file_size": 134_217_728,
                 "spool_max_bytes": 4096,
-                "part_max_records": 256,
                 "staging": {"compression": "zstd"},
                 "writer_properties": {"compression": "SNAPPY"},
             },

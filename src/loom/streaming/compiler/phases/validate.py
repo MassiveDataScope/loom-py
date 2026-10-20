@@ -76,8 +76,6 @@ def validate_delivery(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[Co
     Kafka config, an undeclared ``delivery`` included, is reported by
     :func:`validate_kafka`, not here.
     """
-    if not _uses_kafka(flow):
-        return []
     if not isinstance(flow.source, (FromTopic, FromMultiTypeTopic)):
         return []
     consumer = _resolve_consumer_settings(flow.source, ctx)

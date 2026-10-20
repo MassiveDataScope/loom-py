@@ -1114,6 +1114,12 @@
   removed. Build an issue from a `StreamingErrorCode` member with `.issue()`.
 - **streaming:** `CompilationError.errors` is removed. Read the messages from
   `CompilationError.issues` (`[issue.message for issue in error.issues]`).
+- **streaming:** a Delta `IntoTable` sink config that sets `part_max_records`
+  is refused with `SINK_CONFIG_INVALID`; it was an alias of
+  `writer_properties.max_row_group_size`. Set
+  `writer_properties.max_row_group_size` instead. Without `writer_properties`
+  the row groups still hold at most 10 000 rows. `DeltaSinkConfig` has no
+  `part_max_records` attribute.
 - **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
   `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
   and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
@@ -1597,6 +1603,10 @@
 
 ### streaming
 
+- **streaming:** `SINK_CANNOT_TRACK_COMMITS` and
+  `INLINE_SINK_CANNOT_SKIP_COMMITS` point their `field` at
+  `kafka.consumer.delivery`, the key that sets delivery, instead of
+  `streaming.delivery`, which no config reads.
 - **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
   `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
   `shape mismatch: expected many but got batch before ForEach`. Under

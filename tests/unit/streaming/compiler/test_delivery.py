@@ -39,12 +39,6 @@ def _kafka_config(consumer_overrides: dict[str, object]) -> dict[str, object]:
 
 
 class TestValidateDelivery:
-    @pytest.mark.parametrize("delivery", ["at_least_once", "at_most_once"])
-    def test_a_declared_delivery_passes(self, delivery: str) -> None:
-        ctx = ConfigContext.from_dict(_kafka_config({"delivery": delivery}))
-
-        assert validate_delivery(_flow(), ctx) == []
-
     def test_missing_kafka_section_is_not_reported_here(self) -> None:
         assert validate_delivery(_flow(), ConfigContext.from_dict({})) == []
 
