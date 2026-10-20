@@ -709,14 +709,11 @@ def test_execute_batch_expand_step_rejects_a_result_not_aligned_with_the_batch(
     result: object, error: str
 ) -> None:
     messages: list[Message[StreamPayload]] = [_message("a"), _message("b"), _message("c")]
+    observability = ObservabilityRuntime.noop()
+    step = _ResultBatchExpandStep(result)
     with pytest.raises(TypeError, match=error):
         _steps._execute_batch_expand_step(
-            ObservabilityRuntime.noop(),
-            "orders",
-            4,
-            "UpperBatchExpand",
-            _ResultBatchExpandStep(result),
-            messages,
+            observability, "orders", 4, "UpperBatchExpand", step, messages
         )
 
 
