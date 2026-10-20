@@ -251,6 +251,15 @@ class StreamingErrorCode(IssueCode):
         ),
     )
     # Under at-least-once delivery no message is discarded unless the flow says so.
+    TERMINAL_SINK_MISSING = (
+        "TERMINAL_SINK_MISSING",
+        Template(
+            "no runtime sink for the IntoTopic compiled at path {path} (topic {topic}): a "
+            "terminal_sinks override must cover every compiled IntoTopic path, or its "
+            "messages would complete without being written.",
+            component="IntoTopic",
+        ),
+    )
     FORK_UNMATCHED_UNROUTED = (
         "FORK_UNMATCHED_UNROUTED",
         Template(

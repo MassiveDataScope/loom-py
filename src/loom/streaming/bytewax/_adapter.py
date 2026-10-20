@@ -301,7 +301,7 @@ class _BuildContext:
         ``None`` means the branch already ended in a sink, which completes what
         it writes; wiring anything more would complete those offsets twice.
         """
-        sink = self.terminal_sinks.get(path)
+        sink = self._runtime_sink_for(path)
         if stream is None:
             if sink is not None:
                 raise RuntimeError(
@@ -321,6 +321,20 @@ class _BuildContext:
             stream,
             _DropSink(self.commit_tracker),
         )
+
+    def _runtime_sink_for(self, path: tuple[int, ...]) -> Any | None:
+        """Return the runtime sink for *path*, or ``None`` when nothing was compiled there.
+
+        Raises:
+            RuntimeConfigurationError: If an ``IntoTopic`` was compiled at *path*
+                but no runtime sink was supplied for it.
+        """
+        sink = self.terminal_sinks.get(path)
+        compiled = self.plan.terminal_sinks.get(path)
+        if sink is None and compiled is not None:
+            issue = StreamingErrorCode.TERMINAL_SINK_MISSING.issue(path=path, topic=compiled.topic)
+            raise RuntimeConfigurationError([issue])
+        return sink
 
     def _bind_terminal_tracing(self, sink: Any) -> None:
         """Give one real terminal sink the runtime its death spans open on.
@@ -399,7 +413,7 @@ class _BuildContext:
                 cannot be marked inline, so its partitions would complete
                 offsets at the inline write.
         """
-        sink = self.terminal_sinks.get(path)
+        sink = self._runtime_sink_for(path)
         if sink is None:
             return None
         if isinstance(sink, _SupportsInlinePartition):

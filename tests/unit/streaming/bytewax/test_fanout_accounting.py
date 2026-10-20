@@ -31,7 +31,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from bytewax.run import cli_main  # noqa: E402
-from bytewax.testing import TestingSource  # noqa: E402
+from bytewax.testing import TestingSink, TestingSource  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
@@ -353,6 +353,32 @@ class TestSinkTrackingContract:
 
         _adapter._bind_commit_tracker_object(_UserSink(), None)
 
+    def test_a_compiled_into_topic_without_a_runtime_sink_is_refused(self) -> None:
+        """A partial terminal_sinks override must not turn an IntoTopic into a drop sink."""
+        flow: StreamFlow[Any, Any] = StreamFlow(
+            name="paths",
+            source=FromTopic("items", payload=Item),
+            process=Process(
+                Router.by(
+                    msg.payload.value,
+                    routes={"item-0": Process(_topic("t.a"))},
+                    default=Process(_topic("t.b")),
+                )
+            ),
+        )
+        plan = compile_flow(flow, config=ConfigContext.from_dict(_PATH_CONFIG))
+        covered, missing = sorted(plan.terminal_sinks)
+        assert plan.terminal_sinks[missing].topic == "t.b"
+
+        with pytest.raises(RuntimeConfigurationError, match="no runtime sink") as exc_info:
+            _adapter.build_dataflow_with_shutdown(
+                plan, source=TestingSource([]), terminal_sinks={covered: TestingSink([])}
+            )
+
+        issue = exc_info.value.issues[0]
+        assert issue.code is StreamingErrorCode.TERMINAL_SINK_MISSING
+        assert "(topic t.b)" in issue.message
+
     def test_an_inline_sink_that_cannot_skip_commits_is_rejected(self) -> None:
         """Its partitions would complete offsets of messages that go on after the write."""
 
@@ -361,7 +387,7 @@ class TestSinkTrackingContract:
 
         tracker, _ = _tracker()
         ctx = _adapter._BuildContext(
-            plan=cast(Any, SimpleNamespace(name="orders")),
+            plan=cast(Any, SimpleNamespace(name="orders", terminal_sinks={})),
             bridge=None,
             flow_runtime=ObservabilityRuntime.noop(),
             flow_run_id="run-1",
