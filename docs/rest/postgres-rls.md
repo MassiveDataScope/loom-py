@@ -441,6 +441,11 @@ called. A product provider passed as `product=` may add its own keys; a key unde
 `loom.scope.`, in any letter case, raises `ValueError`. The automatic wiring merges no
 product provider.
 
+Cursor tokens are bound to these values: a repository signs every `loom.scope.` key the
+provider returns for the caller into the token, so a cursor issued in one tenant, or
+under an elevation, is refused with `400 unsupported_query` anywhere else (see
+[Cursor tokens](persistence-backends.md#cursor-tokens)).
+
 ### Configuration
 
 ```yaml

@@ -7,8 +7,8 @@ so its values are reduced completely.
 
 :func:`to_column_value` is the conversion the repository applies to a value it
 writes, and :func:`to_comparison_value` the one it applies to a value compared
-with a column (a filter, ``get_by``, ``exists_by``), so a comparison matches
-exactly what the row holds.
+with a column (a filter, ``get_by``, ``exists_by``, a cursor's keyset
+position), so a comparison matches exactly what the row holds.
 
 A ``time`` with a UTC offset is refused for a column that cannot hold the
 offset: SQL ``TIME`` without time zone (Postgres ``time``, SQLite text) stores

@@ -128,6 +128,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 ```

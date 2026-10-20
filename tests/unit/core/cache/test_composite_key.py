@@ -22,7 +22,7 @@ from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository import PageParams, PageResult
-from loom.core.repository.abc import CursorResult, PaginationMode, QuerySpec
+from loom.core.repository.abc import CursorCodec, CursorResult, PaginationMode, QuerySpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
@@ -91,7 +91,9 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
 
 @pytest.fixture
 async def env(session_manager: SessionManager, cache_config: CacheConfig) -> AsyncIterator[_Env]:
-    repository = _EntryRepository(session_manager=session_manager, model=_Entry)
+    repository = _EntryRepository(
+        session_manager=session_manager, model=_Entry, cursor_codec=CursorCodec(signing="ephemeral")
+    )
     await repository.create_many(
         [_CreateEntry(account_id=account, id=ident, rank=ident) for account, ident in _KEYS]
     )

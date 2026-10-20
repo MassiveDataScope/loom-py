@@ -101,6 +101,7 @@ from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.repository.abc import CursorCodec
 from loom.core.runner import shutdown_runner
 from loom.core.uow.abc import UnitOfWorkFactory
 from loom.core.use_case.agent_markers import declaring_agent_bindings
@@ -625,6 +626,7 @@ def _resolve_compilables_and_jobs(
 def _register_repositories(
     session_manager: SessionManager,
     models: Sequence[type[BaseModel]],
+    cursor_codec: CursorCodec,
 ) -> Callable[[LoomContainer], None]:
     """Build a container module that registers SQLAlchemy repositories."""
     try:
@@ -633,7 +635,9 @@ def _register_repositories(
         )
     except ImportError as exc:
         raise _sqlalchemy_extra_error() from exc
-    return build_sqlalchemy_repository_registration_module(session_manager, models)
+    return build_sqlalchemy_repository_registration_module(
+        session_manager, models, cursor_codec=cursor_codec
+    )
 
 
 def _worker_naming_convention(ctx: ConfigContext) -> Mapping[str, str] | None:
@@ -689,6 +693,7 @@ def _compile_db_layer(
     user_modules: Sequence[Callable[[LoomContainer], None]],
     *,
     naming_convention: Mapping[str, str] | None,
+    ctx: ConfigContext,
 ) -> tuple[tuple[type[BaseModel], ...], tuple[Callable[[LoomContainer], None], ...]]:
     """Compile models and register repositories; no-op when DB is not configured.
 
@@ -697,10 +702,16 @@ def _compile_db_layer(
         models: Model classes discovered or declared for this worker.
         user_modules: Container modules provided by the caller.
         naming_convention: The configured ``database.schema.naming_convention``.
+        ctx: Worker configuration; its ``persistence.cursors`` section builds
+            the cursor codec the repositories share.
 
     Returns:
         Tuple of (normalized_models, runtime_modules).  When no DB is
         configured or no models are present, original values pass through.
+
+    Raises:
+        ConfigError: When repositories are registered and
+            ``persistence.cursors`` cannot build a cursor codec.
     """
     base = tuple(user_modules)
     if session_manager is None:
@@ -708,7 +719,8 @@ def _compile_db_layer(
     normalized = _compile_models(models, naming_convention=naming_convention)
     if not normalized:
         return tuple(models), base
-    return normalized, (*base, _register_repositories(session_manager, normalized))
+    cursor_codec = CursorCodec.from_context(ctx)
+    return normalized, (*base, _register_repositories(session_manager, normalized, cursor_codec))
 
 
 def _emit_worker_init_graph(components: _WorkerResolved) -> None:
@@ -963,7 +975,7 @@ def bootstrap_worker(
     uow_factory, session_manager = _resolve_uow_factory(ctx)
     convention = _worker_naming_convention(ctx) if session_manager is not None else None
     final_models, runtime_modules = _compile_db_layer(
-        session_manager, resolved.models, modules, naming_convention=convention
+        session_manager, resolved.models, modules, naming_convention=convention, ctx=ctx
     )
     runtime_modules = (*runtime_modules, cache_module_for(ctx))
 

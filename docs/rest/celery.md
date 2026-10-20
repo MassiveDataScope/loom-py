@@ -372,6 +372,10 @@ app:
         - app.product.interface
         - app.product.callbacks
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL}
 ```
@@ -416,6 +420,10 @@ app:
     mode: manifest
     manifest:
       module: app.manifest
+
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
 
 database:
   url: ${oc.env:DATABASE_URL}

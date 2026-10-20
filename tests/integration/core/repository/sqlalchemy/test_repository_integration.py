@@ -6,6 +6,7 @@ import msgspec
 import pytest
 
 from loom.core.repository.abc import (
+    CursorCodec,
     FilterGroup,
     FilterOp,
     FilterParams,
@@ -271,6 +272,7 @@ class TestRepositorySQLAlchemyIntegration:
         custom_repo = _CustomProductRepository(
             session_manager=integration_context.session_manager,
             model=Product,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
         ids = await custom_repo.list_ids_with_price_gt(min_price=15.0)

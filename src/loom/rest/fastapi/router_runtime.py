@@ -394,7 +394,10 @@ def _build_query_spec(
             ((QueryParam.PAGE, _PAGE_TOO_FAR_MESSAGE),),
             code=ErrorCode.QUERY_VALIDATION,
         )
-    cursor = query_params.get(QueryParam.AFTER) or query_params.get(QueryParam.CURSOR)
+    # ``after`` wins when both are sent; an empty value is a token too, which
+    # the repository refuses like any invalid one.
+    after = query_params.get(QueryParam.AFTER)
+    cursor = after if after is not None else query_params.get(QueryParam.CURSOR)
     pagination = _parse_pagination_mode(
         query_params.get(QueryParam.PAGINATION),
         cursor,

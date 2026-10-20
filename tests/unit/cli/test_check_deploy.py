@@ -150,12 +150,20 @@ def _run_cli(*args: str, blocked: tuple[str, ...] = ()) -> subprocess.CompletedP
 
 
 def test_a_fresh_process_loads_the_checks_of_every_installed_area(tmp_path: Path) -> None:
-    config = _write(tmp_path / "app.yaml", {"app": _UNAUTHENTICATED_APP})
+    config = _write(
+        tmp_path / "app.yaml",
+        {
+            "app": _UNAUTHENTICATED_APP,
+            "database": {"url": "${oc.env:DATABASE_URL}"},
+            "persistence": {"cursors": {"signing": "unsigned"}},
+        },
+    )
 
     result = _run_cli("check", "--deploy", str(config))
 
     assert result.returncode == 1, result.stderr
     assert "loom.rest.E001" in result.stdout
+    assert "loom.cursors.E001" in result.stdout
 
 
 def test_without_the_rest_extra_the_rest_checks_do_not_apply(tmp_path: Path) -> None:

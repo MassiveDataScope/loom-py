@@ -42,13 +42,22 @@ from enum import Enum
 from http import HTTPStatus
 from typing import Any, NamedTuple
 
+import msgspec
+
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import UnsupportedBoundaryType, get_column_fields, loom_type, msgspec_type
+from loom.core.model import (
+    UnsupportedBoundaryType,
+    get_column_fields,
+    is_pydantic_model,
+    loom_type,
+    msgspec_type,
+)
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
-from loom.core.repository.abc.query import QuerySpec
+from loom.core.repository.abc.cursor import cursor_carries
+from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
@@ -387,45 +396,118 @@ class CompiledRoute:
 class _ColumnPolicy:
     """Resolves the columns a route lets a client filter or sort on (route → interface).
 
+    Filtering or ordering by a column reveals its values even when the
+    response hides them: a client bisects with the rows a filter keeps or
+    with their order, and a cursor token carries the sort values and the
+    primary key. So every column a route filters or sorts on, and the primary
+    key of a route that can serve cursor pages, must be a field of the items
+    the route answers with. Only :data:`ALL`, which logs a warning, opens
+    every column, hidden ones included.
+
     Args:
         where: Route label used in compilation errors and warnings.
         model: The use case's model, ``None`` when it declares none.
         takes_query_spec: Whether the use case takes a ``QuerySpec``.
+        response: Result type of the use case, ``Created`` removed.
+        cursor_pages: Whether the route can serve cursor pages: cursor mode,
+            or a client may switch to it.
     """
 
     where: str
     model: type[Any] | None
     takes_query_spec: bool
+    response: Any = Any
+    cursor_pages: bool = False
 
-    def resolve(
+    def filter_fields(
+        self, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
+    ) -> tuple[tuple[str, Any], ...]:
+        """Resolve ``filterable``, refusing a column whose type a query value cannot decode.
+
+        Raises:
+            InterfaceCompilationError: As :meth:`_shown`, or msgspec cannot
+                describe a declared column's type.
+        """
+        declared = self._declaration("filterable", on_route, on_interface)
+        columns = self._shown("filterable", declared, inherited=on_route is None)
+        for name, annotation in columns.items():
+            try:
+                msgspec_type(annotation).schema()
+            except (TypeError, UnsupportedBoundaryType) as exc:
+                raise InterfaceCompilationError(
+                    f"{self.where}: filterable field {name!r} has a type a query value "
+                    f"cannot be decoded into: {exc}"
+                ) from exc
+        return tuple(columns.items())
+
+    def sort_fields(
+        self, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
+    ) -> tuple[str, ...]:
+        """Resolve ``sortable``, then append the primary key as the default order.
+
+        Raises:
+            InterfaceCompilationError: As :meth:`_shown`; or the route can
+                serve cursor pages and its response does not show the primary
+                key (unless ``sortable`` is :data:`ALL`), or a token cannot
+                carry the key's type.
+        """
+        declared = self._declaration("sortable", on_route, on_interface)
+        columns = self._shown("sortable", declared, inherited=on_route is None)
+        key = self.default_order()
+        if self.cursor_pages:
+            self._require_cursor_key(key, opened=declared is ALL)
+        return tuple(dict.fromkeys((*columns, *key)))
+
+    def default_order(self) -> tuple[str, ...]:
+        """Primary-key columns, the order the route applies when the client names none."""
+        if self.model is None or not self.takes_query_spec:
+            return ()
+        fields = get_column_fields(self.model)
+        return tuple(name for name, info in fields.items() if info.field.primary_key)
+
+    def _declaration(
         self, kind: str, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
-    ) -> dict[str, Any]:
-        """Return ``{column: annotation}`` for the declared *kind* (``filterable``/``sortable``).
+    ) -> DeclaredFields | None:
+        """The effective declaration of *kind*: the route's, else the interface's.
 
         A declaration inherited by a route without a ``QuerySpec`` is ignored.
 
         Raises:
             InterfaceCompilationError: The route itself declares *kind* but
-                takes no ``QuerySpec``, the use case declares no model, or an
-                entry is not a scalar column of the route's model.
+                takes no ``QuerySpec``.
         """
         if on_route is not None and not self.takes_query_spec:
             raise InterfaceCompilationError(
                 f"{self.where} declares {kind} fields, but its use case takes no QuerySpec."
             )
-        declared = on_route if on_route is not None else on_interface
-        if not declared or not self.takes_query_spec:
+        if not self.takes_query_spec:
+            return None
+        return on_route if on_route is not None else on_interface
+
+    def _shown(
+        self, kind: str, declared: DeclaredFields | None, *, inherited: bool
+    ) -> dict[str, Any]:
+        """Return ``{column: annotation}`` for *declared*, each a column the response shows.
+
+        Raises:
+            InterfaceCompilationError: The use case declares no model, an entry
+                is not a scalar column of the route's model, or a column is
+                not a field of the items the route answers with (or the result
+                type does not say which fields those are), unless *declared*
+                is :data:`ALL`.
+        """
+        if not declared:
             return {}
         if self.model is None:
-            source = "declares" if on_route is not None else "inherits"
             raise InterfaceCompilationError(
-                f"{self.where} {source} {kind} fields, but its use case declares no model; "
-                "declare it as UseCase[Model, ...]."
+                f"{self.where} {'inherits' if inherited else 'declares'} {kind} fields, but "
+                "its use case declares no model; declare it as UseCase[Model, ...]."
             )
         columns = scalar_column_annotations(self.model)
         if declared is ALL:
             _logger.warning(
-                "%s makes every scalar column of %s %s (ALL); declare the columns instead.",
+                "%s makes every scalar column of %s %s (ALL), columns its response does not "
+                "show included; declare the columns instead.",
                 self.where,
                 self.model.__name__,
                 kind,
@@ -440,34 +522,40 @@ class _ColumnPolicy:
                     f"{self.model.__name__}."
                 )
             resolved[name] = columns[name]
+        shown = _response_fields(self.response)
+        for name in resolved:
+            if shown is None or name not in shown:
+                raise InterfaceCompilationError(
+                    f"{self.where}: {kind} field {name!r} is not a field of the items the "
+                    f"route answers with, so {kind.removesuffix('able')}ing by it would "
+                    f"reveal its values; show it in the response, or declare {kind}=ALL "
+                    "to open every column on purpose."
+                )
         return resolved
 
-    def filter_fields(
-        self, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
-    ) -> tuple[tuple[str, Any], ...]:
-        """Resolve ``filterable``, refusing a column whose type a query value cannot decode.
-
-        Raises:
-            InterfaceCompilationError: As :meth:`resolve`, or msgspec cannot
-                describe a declared column's type.
-        """
-        columns = self.resolve("filterable", on_route, on_interface)
-        for name, annotation in columns.items():
-            try:
-                msgspec_type(annotation).schema()
-            except (TypeError, UnsupportedBoundaryType) as exc:
+    def _require_cursor_key(self, key: tuple[str, ...], *, opened: bool) -> None:
+        """Refuse a cursor-capable route whose tokens would carry a hidden or uncarriable key."""
+        if self.model is None:
+            return
+        # The columns a SQL keyset can order, as the SQLAlchemy repository
+        # checks them at run time: a JSON or array key fails here instead.
+        annotations = scalar_column_annotations(self.model)
+        shown = _response_fields(self.response)
+        for name in key:
+            if not cursor_carries(annotations.get(name)):
                 raise InterfaceCompilationError(
-                    f"{self.where}: filterable field {name!r} has a type a query value "
-                    f"cannot be decoded into: {exc}"
-                ) from exc
-        return tuple(columns.items())
-
-    def default_order(self) -> tuple[str, ...]:
-        """Primary-key columns, the order the route applies when the client names none."""
-        if self.model is None or not self.takes_query_spec:
-            return ()
-        fields = get_column_fields(self.model)
-        return tuple(name for name, info in fields.items() if info.field.primary_key)
+                    f"{self.where}: primary key {name!r} has a type, or a column type, a "
+                    "cursor token cannot carry; serve offset pages only (pagination_mode "
+                    "offset and allow_pagination_override=False)."
+                )
+            if not opened and (shown is None or name not in shown):
+                raise InterfaceCompilationError(
+                    f"{self.where}: the route can serve cursor pages, whose tokens carry the "
+                    f"primary key {name!r}, but its response does not show it; show it, serve "
+                    "offset pages only (pagination_mode offset and "
+                    "allow_pagination_override=False), or declare sortable=ALL to open every "
+                    "column on purpose."
+                )
 
     def _column_name(self, kind: str, entry: FieldRef | str) -> str:
         if not isinstance(entry, FieldRef):
@@ -478,6 +566,34 @@ class _ColumnPolicy:
                 f"{entry.root!r}, not at the route's model."
             )
         return ".".join(entry.path)
+
+
+def _response_fields(response: Any) -> frozenset[str] | None:
+    """Fields every item of ``response`` shows, or ``None`` when its type does not say.
+
+    A ``PageResult[T]``, ``CursorResult[T]`` or ``list[T]`` shows the fields of
+    ``T``: a msgspec struct's fields, or a pydantic model's fields not
+    declared ``exclude=True``. A union shows those all its members share.
+    """
+    union = typing.get_origin(response) in (typing.Union, types.UnionType)
+    shown: frozenset[str] | None = None
+    for member in typing.get_args(response) if union else (response,):
+        if member is type(None):
+            continue
+        container = typing.get_origin(member)
+        item = (
+            typing.get_args(member)[0] if container in (PageResult, CursorResult, list) else member
+        )
+        if isinstance(item, type) and issubclass(item, msgspec.Struct):
+            fields = frozenset(field.name for field in msgspec.structs.fields(item))
+        elif is_pydantic_model(item):
+            fields = frozenset(
+                name for name, info in item.model_fields.items() if info.exclude is not True
+            )
+        else:
+            return None
+        shown = fields if shown is None else shown & fields
+    return shown
 
 
 class RestInterfaceCompiler:
@@ -631,10 +747,14 @@ class RestInterfaceCompiler:
             full_path = f"{prefix}{route.path}" if route.path else prefix or "/"
             where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
             takes_query_spec = any(names_query_spec(pb.annotation) for pb in plan.param_bindings)
+            pagination = self._resolve_pagination(route, interface)
+            pagination_override = self._resolve_allow_pagination_override(route, interface)
             columns = _ColumnPolicy(
                 where=where,
                 model=route.use_case.describe_main_repo()[0],
                 takes_query_spec=takes_query_spec,
+                response=result_type,
+                cursor_pages=pagination is PaginationMode.CURSOR or pagination_override,
             )
 
             compiled.append(
@@ -642,13 +762,11 @@ class RestInterfaceCompiler:
                     interface_name=iface_name,
                     route=route,
                     full_path=full_path,
-                    effective_pagination_mode=self._resolve_pagination(route, interface),
+                    effective_pagination_mode=pagination,
                     effective_profile_default=self._resolve_profile_default(route, interface),
                     effective_allowed_profiles=self._resolve_allowed_profiles(route, interface),
                     effective_expose_profile=self._resolve_expose_profile(route, interface),
-                    effective_allow_pagination_override=self._resolve_allow_pagination_override(
-                        route, interface
-                    ),
+                    effective_allow_pagination_override=pagination_override,
                     read_only=route.method.upper() == "GET",
                     interface_tags=interface.tags,
                     execute_param_types=self._resolve_execute_param_types(route.use_case),
@@ -656,14 +774,7 @@ class RestInterfaceCompiler:
                     effective_max_limit=self._defaults.max_limit,
                     query_fields=self._resolve_query_fields(where, takes_query_spec, route, plan),
                     filter_fields=columns.filter_fields(route.filterable, interface.filterable),
-                    sort_fields=tuple(
-                        dict.fromkeys(
-                            (
-                                *columns.resolve("sortable", route.sortable, interface.sortable),
-                                *columns.default_order(),
-                            )
-                        )
-                    ),
+                    sort_fields=columns.sort_fields(route.sortable, interface.sortable),
                     result_type=result_type,
                     created_type=created_type,
                 )
