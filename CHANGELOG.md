@@ -459,6 +459,25 @@
 
 ### core
 
+- **core:** a `uuid.UUID` field without a declared column type is now a
+  `Uuid` column (`loom.core.model.Uuid`, SQLAlchemy `Uuid`) instead of
+  `JSON`: `UUID` on Postgres, `CHAR(32)` holding the hex form on dialects
+  without a native UUID type, such as SQLite. Such a field is now a scalar
+  column, so REST `filterable`, `sortable` and `ALL` accept it on every
+  backend, `mongo` included; on SQLite a cursor walk sorted by it pages in
+  UUID order and an equality filter on it matches. Streaming `IntoTable` with the
+  SQLAlchemy backend binds a `UUID` field the same way instead of failing to
+  serialise it as JSON. Migration: an existing table with such a column needs
+  a revision changing its type; Alembic autogenerate reports it as a type
+  change from `JSON` to `Uuid`. Postgres does not cast `json` to `uuid`, so
+  the revision needs `postgresql_using="(<column> #>> '{}')::uuid"`. On a
+  dialect without a native UUID type the old rows hold JSON text (the quoted
+  UUID with dashes), which the `Uuid` column cannot read, so after the type
+  change the revision rewrites each value to its 32-character hex. On
+  SQLite: `op.batch_alter_table` for the type change, then
+  `UPDATE <table> SET <column> = replace(json_extract(<column>, '$'), '-', '')`.
+  Rewriting before the type change loses values on SQLite: a hex form made
+  only of digits is stored as a number in the `JSON` column.
 - **core:** a `Decimal` field, plain or optional, declares its column type: a
   SQLAlchemy model with an undeclared one is refused when it is compiled,
   naming the field. loom inferred `NUMERIC(10, 2)`, and Postgres silently

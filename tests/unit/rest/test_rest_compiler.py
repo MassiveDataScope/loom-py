@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from typing import Any
+from uuid import UUID
 
 import msgspec
 import pytest
@@ -887,6 +888,18 @@ class _ListOpaque(UseCase[_Opaque, str]):
         return "ok"
 
 
+class _Pass(BaseModel):
+    __tablename__ = "rest_compiler_passes"
+
+    id: int = ColumnField(primary_key=True)
+    ref: UUID
+
+
+class _ListPasses(UseCase[_Pass, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
 def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
     compiler = UseCaseCompiler()
     for interface in interfaces:
@@ -1017,3 +1030,22 @@ class TestDeclaredColumns:
         (record,) = caplog.records
         assert record.levelno == logging.WARNING
         assert "IFace: route (GET, '/')" in record.getMessage()
+
+    def test_a_uuid_column_is_filterable_sortable_and_in_all(self) -> None:
+        class Declared(RestInterface[_Pass]):
+            prefix = "/passes"
+            filterable = ("ref",)
+            sortable = ("ref",)
+            routes = (RestRoute(use_case=_ListPasses, method="GET", path="/"),)
+
+        class Everything(RestInterface[_Pass]):
+            prefix = "/all-passes"
+            filterable = ALL
+            sortable = ALL
+            routes = (RestRoute(use_case=_ListPasses, method="GET", path="/"),)
+
+        declared, everything = _compile_columns(Declared, Everything)
+
+        assert (declared.filter_fields, declared.sort_fields) == ((("ref", UUID),), ("ref", "id"))
+        assert dict(everything.filter_fields) == {"id": int, "ref": UUID}
+        assert set(everything.sort_fields) == {"id", "ref"}

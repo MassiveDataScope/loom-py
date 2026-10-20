@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
+from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.abc import UnsupportedQuery
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 
@@ -84,3 +87,33 @@ async def test_entity_name_is_the_model_table_name(fake_client: FakeClient) -> N
 
     assert repo.entity_name == "products"
     assert repo.model is Product
+
+
+class _Badge(BaseModel):
+    __tablename__ = "badges"
+    id: UUID = ColumnField(primary_key=True)
+    label: str = ""
+
+
+class _BadgeCreate(BaseModel):
+    id: UUID = ColumnField(primary_key=True)
+    label: str = ""
+
+
+_BADGE_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
+
+
+@pytest.mark.xfail(
+    raises=TypeError,
+    strict=True,
+    reason="follow-up hotfix: a UUID key reaches boto3's TypeSerializer unconverted",
+)
+async def test_a_uuid_primary_key_is_read_back_by_the_uuid() -> None:
+    repo: RepositoryDynamoDB[_Badge, UUID] = RepositoryDynamoDB(
+        client=FakeClient(key_name="id", table_names=("badges",)),
+        table_name="badges",
+        model=_Badge,
+    )
+    await repo.create(_BadgeCreate(id=_BADGE_ID, label="first"))
+
+    assert await repo.get_by_id(_BADGE_ID) == _Badge(id=_BADGE_ID, label="first")
