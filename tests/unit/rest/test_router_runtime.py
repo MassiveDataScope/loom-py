@@ -31,7 +31,13 @@ from loom.core.observability.event import LifecycleEvent as ObservabilityLifecyc
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import PaginationMode, QuerySpec
+from loom.core.repository.abc.query import (
+    PageParams,
+    PageResult,
+    PaginationMode,
+    QuerySpec,
+    build_page_result,
+)
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.field_ref import F
@@ -231,13 +237,20 @@ class EntryFilterTypesUseCase(EntryFilterValuesUseCase):
         return {field: type(value).__name__ for field, value in values.items()}
 
 
-class EntrySortUseCase(UseCase[_Entry, list[list[str]]]):
+SORTS_SEEN: list[list[list[str]]] = []
+"""The sort each ``EntrySortUseCase`` call received, in call order."""
+
+
+class EntrySortUseCase(UseCase[_Entry, PageResult[_Entry]]):
+    """Answers with entries, so a column it sorts by must be one they show."""
+
     def __init__(self) -> None:
         super().__init__()
 
-    async def execute(self, query: QuerySpec, **kwargs: Any) -> list[list[str]]:
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> PageResult[_Entry]:
         await asyncio.sleep(0)
-        return [[spec.field, spec.direction] for spec in query.sort]
+        SORTS_SEEN.append([[spec.field, spec.direction] for spec in query.sort])
+        return build_page_result([], 0, PageParams(page=1, limit=1))
 
 
 class DocUseCase(UseCase[Any, str]):
@@ -650,8 +663,14 @@ def _entry_client(
             "seen_at",
             "sort_order",
         )
-        sortable = (F(_Entry).seen_at,)
-        routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
+        routes = (
+            RestRoute(
+                use_case=use_case,
+                method="GET",
+                path="/",
+                sortable=(F(_Entry).seen_at,) if use_case is EntrySortUseCase else None,
+            ),
+        )
 
     return TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
 
@@ -673,10 +692,11 @@ def _refusal(response: Any) -> dict[str, Any]:
 def test_bind_interfaces_sorts_by_a_declared_column_or_the_primary_key(
     query: str, expected: list[list[str]]
 ) -> None:
+    SORTS_SEEN.clear()
     response = _entry_client(EntrySortUseCase).get(f"/entries/?{query}")
 
     assert response.status_code == 200
-    assert response.json() == expected
+    assert [expected] == SORTS_SEEN
 
 
 def test_bind_interfaces_refuses_a_sort_on_any_undeclared_column_alike() -> None:

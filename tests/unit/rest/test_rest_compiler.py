@@ -11,7 +11,7 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField, String
-from loom.core.repository.abc.query import QuerySpec
+from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case import Created, Query
 from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
@@ -861,9 +861,26 @@ class _Book(BaseModel):
     )
 
 
-class _ListBooks(UseCase[_Book, str]):
-    async def execute(self, query: QuerySpec) -> str:
-        return "ok"
+class _ListBooks(UseCase[_Book, PageResult[_Book] | CursorResult[_Book]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_Book] | CursorResult[_Book]:
+        raise NotImplementedError
+
+
+class _BookCard(msgspec.Struct):
+    """What a listing shows of a book: no page count."""
+
+    id: int
+    title: str
+
+
+class _ListBookCards(UseCase[_Book, PageResult[_BookCard]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_BookCard]:
+        raise NotImplementedError
+
+
+class _CountBooks(UseCase[_Book, int]):
+    async def execute(self, query: QuerySpec) -> int:
+        raise NotImplementedError
 
 
 class _ListAnything(UseCase[Any, str]):
@@ -1001,6 +1018,44 @@ class TestDeclaredColumns:
 
         with pytest.raises(InterfaceCompilationError, match=r"\(GET, '/'\).*'blob'"):
             _compile_columns(IFace)
+
+    @pytest.mark.parametrize("use_case", [_ListBookCards, _CountBooks], ids=["hidden", "untyped"])
+    def test_a_sortable_column_the_response_does_not_show_fails_compilation(
+        self, use_case: type[UseCase[Any, Any]]
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=use_case, method="GET", path="/", sortable=("pages",)),)
+
+        with pytest.raises(
+            InterfaceCompilationError, match=r"\(GET, '/'\): sortable field 'pages'.*sortable=ALL"
+        ):
+            _compile_columns(IFace)
+
+    def test_a_sortable_column_the_response_shows_compiles(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListBookCards, method="GET", path="/", sortable=("title",)),
+            )
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.sort_fields == ("title", "id")
+
+    def test_sortable_all_opens_hidden_columns_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBookCards, method="GET", path="/", sortable=ALL),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = _compile_columns(IFace)
+
+        assert "pages" in route.sort_fields
+        (record,) = caplog.records
+        assert "does not show" in record.getMessage()
 
     def test_all_resolves_the_root_scalar_columns_and_warns_naming_the_route(
         self, caplog: pytest.LogCaptureFixture

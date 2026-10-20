@@ -42,13 +42,21 @@ from enum import Enum
 from http import HTTPStatus
 from typing import Any, NamedTuple
 
+import msgspec
+
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import UnsupportedBoundaryType, get_column_fields, loom_type, msgspec_type
+from loom.core.model import (
+    UnsupportedBoundaryType,
+    get_column_fields,
+    is_pydantic_model,
+    loom_type,
+    msgspec_type,
+)
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
-from loom.core.repository.abc.query import QuerySpec
+from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
@@ -391,11 +399,13 @@ class _ColumnPolicy:
         where: Route label used in compilation errors and warnings.
         model: The use case's model, ``None`` when it declares none.
         takes_query_spec: Whether the use case takes a ``QuerySpec``.
+        response: Result type of the use case, ``Created`` removed.
     """
 
     where: str
     model: type[Any] | None
     takes_query_spec: bool
+    response: Any = Any
 
     def resolve(
         self, kind: str, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
@@ -425,7 +435,8 @@ class _ColumnPolicy:
         columns = scalar_column_annotations(self.model)
         if declared is ALL:
             _logger.warning(
-                "%s makes every scalar column of %s %s (ALL); declare the columns instead.",
+                "%s makes every scalar column of %s %s (ALL), columns its response does not "
+                "show included; declare the columns instead.",
                 self.where,
                 self.model.__name__,
                 kind,
@@ -462,6 +473,35 @@ class _ColumnPolicy:
                 ) from exc
         return tuple(columns.items())
 
+    def sort_fields(
+        self, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
+    ) -> tuple[str, ...]:
+        """Resolve ``sortable``, refusing a column the route's response does not show.
+
+        Ordering by a column reveals its values even when the response hides
+        them: a client bisects with the order of the rows, or reads the value
+        a cursor token carries. Only :data:`ALL`, which logs a warning, opens
+        every column, hidden ones included. The primary key is appended as
+        the default order.
+
+        Raises:
+            InterfaceCompilationError: As :meth:`resolve`, or a declared
+                column is not a field of the items the route answers with,
+                or the route's result type does not say which fields those are.
+        """
+        declared = self.resolve("sortable", on_route, on_interface)
+        if declared and (on_route if on_route is not None else on_interface) is not ALL:
+            shown = _response_fields(self.response)
+            for name in declared:
+                if shown is None or name not in shown:
+                    raise InterfaceCompilationError(
+                        f"{self.where}: sortable field {name!r} is not a field of the items "
+                        "the route answers with, so ordering by it would reveal its values; "
+                        "show it in the response, or declare sortable=ALL to open every "
+                        "column on purpose."
+                    )
+        return tuple(dict.fromkeys((*declared, *self.default_order())))
+
     def default_order(self) -> tuple[str, ...]:
         """Primary-key columns, the order the route applies when the client names none."""
         if self.model is None or not self.takes_query_spec:
@@ -478,6 +518,31 @@ class _ColumnPolicy:
                 f"{entry.root!r}, not at the route's model."
             )
         return ".".join(entry.path)
+
+
+def _response_fields(response: Any) -> frozenset[str] | None:
+    """Fields every item of ``response`` shows, or ``None`` when its type does not say.
+
+    A ``PageResult[T]``, ``CursorResult[T]`` or ``list[T]`` shows the fields of
+    ``T``; a union shows those all its members share.
+    """
+    union = typing.get_origin(response) in (typing.Union, types.UnionType)
+    shown: frozenset[str] | None = None
+    for member in typing.get_args(response) if union else (response,):
+        if member is type(None):
+            continue
+        container = typing.get_origin(member)
+        item = (
+            typing.get_args(member)[0] if container in (PageResult, CursorResult, list) else member
+        )
+        if isinstance(item, type) and issubclass(item, msgspec.Struct):
+            fields = frozenset(field.name for field in msgspec.structs.fields(item))
+        elif is_pydantic_model(item):
+            fields = frozenset(item.model_fields)
+        else:
+            return None
+        shown = fields if shown is None else shown & fields
+    return shown
 
 
 class RestInterfaceCompiler:
@@ -635,6 +700,7 @@ class RestInterfaceCompiler:
                 where=where,
                 model=route.use_case.describe_main_repo()[0],
                 takes_query_spec=takes_query_spec,
+                response=result_type,
             )
 
             compiled.append(
@@ -656,14 +722,7 @@ class RestInterfaceCompiler:
                     effective_max_limit=self._defaults.max_limit,
                     query_fields=self._resolve_query_fields(where, takes_query_spec, route, plan),
                     filter_fields=columns.filter_fields(route.filterable, interface.filterable),
-                    sort_fields=tuple(
-                        dict.fromkeys(
-                            (
-                                *columns.resolve("sortable", route.sortable, interface.sortable),
-                                *columns.default_order(),
-                            )
-                        )
-                    ),
+                    sort_fields=columns.sort_fields(route.sortable, interface.sortable),
                     result_type=result_type,
                     created_type=created_type,
                 )
