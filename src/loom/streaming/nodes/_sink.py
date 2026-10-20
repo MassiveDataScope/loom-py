@@ -26,7 +26,8 @@ class SinkPartition(Protocol[EventT_contra]):
 
     The adapter calls write_batch() once per Bytewax epoch and close() on
     shutdown. Implementations must be sync-safe — use AsyncBridge for storage
-    targets that require async I/O (e.g. SQLAlchemy async sessions).
+    targets that require async I/O (e.g. SQLAlchemy async sessions). After a
+    call raises, the counts later calls return complete nothing.
 
     Args:
         EventT_contra: Contravariant event type this partition accepts.

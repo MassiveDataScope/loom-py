@@ -79,6 +79,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         self._observer = observer
         self._commit_tracker = commit_tracker
         self._pending: deque[MessageMeta] = deque()
+        self._failed = False
 
     def write_batch(self, items: list[Message[Any]]) -> None:
         """Forward the payloads, then finish the messages the partition made durable.
@@ -98,6 +99,7 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         try:
             durable = self._partition.write_batch([item.payload for item in items])
         except Exception as exc:
+            self._failed = True
             self._emit_spans(list(self._pending), BatchWindow.since(started_ns), exc)
             raise
         self._finish(durable, BatchWindow.since(started_ns))
@@ -105,10 +107,20 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
     def _finish(self, durable: object, window: BatchWindow) -> None:
         """Emit the terminal spans of, and complete, the *durable* oldest pending messages.
 
+        After a call to the partition raised, nothing completes: a later count
+        cannot say which of the pending messages it covers.
+
         Raises:
             TypeError: If the partition did not report a count of its pending items.
         """
-        if not isinstance(durable, int) or not 0 <= durable <= len(self._pending):
+        if self._failed:
+            self._pending.clear()
+            return
+        if (
+            isinstance(durable, bool)
+            or not isinstance(durable, int)
+            or not 0 <= durable <= len(self._pending)
+        ):
             raise TypeError(
                 f"{self._node_name}: SinkPartition.write_batch and close must return how "
                 f"many of the {len(self._pending)} pending items they made durable; "
