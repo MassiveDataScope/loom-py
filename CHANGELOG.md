@@ -973,9 +973,11 @@
   `CompileIssue` instead), `loom_message_type()` is gone, and
   `CompilationIssue.prefixed()` is removed. Messages keep their text.
 - **streaming:** a `Broadcast` followed by another node reports
-  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level, in a
-  branch and in a Router branch. It used to report `TERMINAL_NOT_LAST` with
-  component `Broadcast`.
+  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level and in a
+  branch. It used to report `TERMINAL_NOT_LAST` with component `Broadcast`. In
+  a Router branch a `Broadcast` reports `ROUTER_BRANCH_UNSAFE_NODE`, and one
+  followed by another node also `TERMINAL_NOT_LAST` with component
+  `Broadcast`.
 - **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
   `IntoSink`) or `Drain` hands the message to that terminal. The branch's
   terminal was skipped: with a flow `output` the message went to the output
@@ -1378,7 +1380,10 @@
 - **streaming:** a `BatchExpandStep` subclass outputs records to the shape
   check. The compiler matched step output shapes by exact type, so every step
   subclass kept the incoming shape and a record step after a
-  `BatchExpandStep` failed with `expected record but got batch`.
+  `BatchExpandStep` failed with `expected record but got batch`. The shape
+  check reads a step's `input_shape` and `output_shape` from its class,
+  except in a Router branch: there a `BatchStep` runs one record at a time,
+  on a one-message batch, so it is record to record.
 - **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
   treated it as a plain terminal, so the nodes of its branches were never
   shape-checked. A branch with a shape mismatch, such as a record step after

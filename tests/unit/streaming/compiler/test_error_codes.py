@@ -434,12 +434,12 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "ExpandRoutes",
         None,
     ),
-    "broadcast not last inside a router branch": (
+    "broadcast inside a router branch": (
         lambda: _flow(_router(_broadcast(FakeStep()), FakeStep())),
         {},
-        StreamingErrorCode.BROADCAST_NOT_LAST,
-        "router branch predicate[0]: broadcast must be the last node in a process",
-        "router branch predicate[0] > broadcast",
+        StreamingErrorCode.ROUTER_BRANCH_UNSAFE_NODE,
+        "router branch predicate[0]: node Broadcast is not router-branch safe",
+        "router branch predicate[0]",
         None,
     ),
     "scoped process followed by a step": (

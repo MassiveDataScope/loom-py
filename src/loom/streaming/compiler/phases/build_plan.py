@@ -22,8 +22,8 @@ from loom.streaming.compiler._plan import (
 )
 from loom.streaming.compiler.phases.validate import (
     _node_needs_async_bridge,
-    _node_output_shape,
     _walk_all_process_nodes,
+    node_output_shape,
 )
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
@@ -169,7 +169,7 @@ def _build_nodes(flow: StreamFlow[Any, Any]) -> list[CompiledNode]:
     current_shape = StreamShape.RECORD
     for node in flow.process.nodes:
         input_shape = current_shape
-        output_shape = _node_output_shape(node, current_shape)
+        output_shape = node_output_shape(node, current_shape)
         nodes.append(
             CompiledNode(
                 node=node,

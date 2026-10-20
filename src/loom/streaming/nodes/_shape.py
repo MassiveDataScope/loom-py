@@ -63,8 +63,8 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
 
     Groups individual records into batches before handing them to downstream
     batch-aware nodes. Batch is an **optimization grouping**, not a
-    first-class semantic unit — downstream nodes receive and return individual
-    records after the batch step executes.
+    first-class semantic unit: a ``ForEach`` after the batch nodes turns the
+    batch back into individual records.
 
     Args:
         max_records: Maximum records collected into one batch.
