@@ -352,3 +352,21 @@ def test_an_empty_cursor_parameter_answers_400(
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "unsupported_query"
+
+
+def test_after_wins_over_cursor_when_both_are_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'w.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name in ("a", "b", "c"):
+            assert client.post("/products/", json={"name": name, "price": 1.0}).status_code == 201
+        issued = client.get(_CURSOR_PAGE).json()["nextCursor"]
+        after_valid = client.get(f"{_CURSOR_PAGE}&after={issued}&cursor=not-a-token")
+        after_invalid = client.get(f"{_CURSOR_PAGE}&after=not-a-token&cursor={issued}")
+
+    assert after_valid.status_code == 200
+    assert [item["name"] for item in after_valid.json()["items"]] == ["b"]
+    assert after_invalid.status_code == 400

@@ -1188,7 +1188,8 @@ class TestCursorCapableRoutes:
             (route,) = _compile_columns(IFace)
 
         assert "id" in route.sort_fields
-        assert caplog.records
+        (record,) = caplog.records
+        assert "(ALL), columns its response does not show included" in record.getMessage()
 
     def test_a_primary_key_a_token_cannot_carry_fails_compilation(self) -> None:
         class IFace(RestInterface[_Blobbed]):
