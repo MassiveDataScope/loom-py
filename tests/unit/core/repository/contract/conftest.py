@@ -51,7 +51,6 @@ class Order(BaseModel):
     id: int = ColumnField(primary_key=True, autoincrement=True)
     customer: str = ColumnField(length=32)
     amount: int = ColumnField()
-    # Explicit String: an un-typed StrEnum annotation is inferred as JSON.
     status: OrderStatus = ColumnField(String(16))
     # Naive: sqlite stores no offset, so an aware value would not round-trip.
     created_at: datetime = ColumnField(DateTime(tz=False))

@@ -5,8 +5,19 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
+from enum import Enum
 from types import UnionType
-from typing import Any, ClassVar, Union, cast, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Literal,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import msgspec
 
@@ -42,12 +53,18 @@ class PartialUnique:
 
 @dataclass(frozen=True, slots=True)
 class ColumnFieldInfo:
-    """Resolved metadata for a single column field."""
+    """Resolved metadata for a single column field.
+
+    ``needs_declared_type`` marks a field whose column type was not declared
+    and cannot be inferred, a plain enum or a ``Literal``: ``column_type`` is
+    then a JSON placeholder.
+    """
 
     name: str
     python_type: type
     column_type: ColumnType
     field: Field
+    needs_declared_type: bool = False
 
 
 def _collect_inherited_dict_metadata(cls: type, attr: str) -> dict[str, Any]:
@@ -88,40 +105,31 @@ def _resolve_column_field(
     struct_default: Any,
     declared: ColumnFieldSpec | None,
 ) -> ColumnFieldInfo:
-    """Build the column metadata for one field, declared or inferred."""
-    python_type = _extract_origin_type(annotation)
+    """Build the column metadata for one field, declared or inferred.
+
+    A ``ColumnField`` supplies the ``Field``; its column type, else the one in
+    ``Annotated``, else the inferred one is used.
+    """
+    annotated_type, field = _extract_annotated_column(annotation)
     if declared is not None:
-        return ColumnFieldInfo(
-            name=name,
-            python_type=python_type,
-            column_type=declared.column_type
-            or _infer_column_type(annotation, field=declared.field),
-            field=_with_struct_default(declared.field, struct_default),
-        )
-
-    annotated_type, annotated_field = _extract_annotated_column(annotation)
-    if annotated_type is not None:
-        return ColumnFieldInfo(
-            name=name,
-            python_type=python_type,
-            column_type=annotated_type,
-            field=_with_struct_default(annotated_field, struct_default),
-        )
-
-    inferred_field = _with_struct_default(Field(), struct_default)
+        annotated_type, field = declared.column_type or annotated_type, declared.field
+    field = _with_struct_default(field, struct_default)
+    column_type = annotated_type or _infer_column_type(annotation, field=field)
     return ColumnFieldInfo(
         name=name,
-        python_type=python_type,
-        column_type=_infer_column_type(annotation, field=inferred_field),
-        field=inferred_field,
+        python_type=_extract_origin_type(annotation),
+        column_type=column_type or JSON,
+        field=field,
+        needs_declared_type=column_type is None,
     )
 
 
 def _extract_annotated_column(annotation: Any) -> tuple[ColumnType | None, Field]:
-    """Read the ``ColumnType`` and ``Field`` carried by ``Annotated[T, ...]``."""
+    """Read the ``ColumnType`` and ``Field`` carried by ``Annotated[T, ...]``, optional or not."""
     column_type: ColumnType | None = None
     field = Field()
-    for entry in _extract_metadata(annotation):
+    _, metadata = _column_base(annotation)
+    for entry in metadata:
         if isinstance(entry, ColumnType):
             column_type = entry
         elif isinstance(entry, Field):
@@ -170,11 +178,6 @@ def get_table_name(cls: type) -> str:
     if not isinstance(table, str):
         raise ValueError(f"{cls.__name__} does not declare __tablename__")
     return table
-
-
-def _extract_metadata(annotation: Any) -> tuple[Any, ...]:
-    """Pull metadata entries from ``Annotated[T, ...]``."""
-    return getattr(annotation, "__metadata__", ())
 
 
 def resolve_type_hints(obj: Any, *, include_extras: bool = False) -> dict[str, Any]:
@@ -327,8 +330,10 @@ def scalar_column_annotations(model: type) -> dict[str, Any]:
     """Return the annotation of each scalar column of *model*, ``Annotated`` metadata removed.
 
     A JSON, array or text-search column is not scalar; lists, dicts and
-    structs, and an ``Enum`` or ``Literal`` declared without a column type,
-    are inferred as JSON.
+    structs are inferred as JSON. An enum mixed with a scalar type, such as a
+    ``StrEnum`` or ``IntEnum``, takes that type's column and is scalar. No
+    column type can be inferred for a plain ``Enum`` or a ``Literal`` declared
+    without one; its ``column_type`` is a JSON placeholder and it is not listed.
 
     Args:
         model: Model whose columns are read.
@@ -375,6 +380,23 @@ def _unwrap_optional(annotation: Any) -> Any:
     return annotation
 
 
+def _column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
+    """Strip ``Optional`` and ``Annotated`` layers, in either order.
+
+    Returns:
+        The inner annotation and the metadata of the ``Annotated`` layers.
+    """
+    metadata: tuple[Any, ...] = ()
+    while True:
+        unwrapped = _unwrap_optional(annotation)
+        if get_origin(unwrapped) is Annotated:
+            metadata += unwrapped.__metadata__
+            unwrapped = get_args(unwrapped)[0]
+        if unwrapped is annotation:
+            return annotation, metadata
+        annotation = unwrapped
+
+
 def _is_classvar(annotation: Any) -> bool:
     return get_origin(annotation) is ClassVar
 
@@ -391,14 +413,40 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
 }
 
 
-def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType:
-    base = _unwrap_optional(annotation)
-    if get_origin(base) in (list, tuple, set, dict):
+_COLUMN_RULE_TYPES = frozenset({str, *_SCALAR_TYPE_MAP})
+
+
+def _column_rule_type(annotation: Any) -> type:
+    """The class whose column rule the annotation follows.
+
+    An enum follows the first class of its MRO that has a rule, the scalar it is
+    mixed with; a plain enum has none and is returned as it is.
+    """
+    python_type = _extract_origin_type(annotation)
+    if not issubclass(python_type, Enum):
+        return python_type
+    return next((t for t in python_type.__mro__ if t in _COLUMN_RULE_TYPES), python_type)
+
+
+def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType | None:
+    """Infer the column type from the annotation; an enum follows its scalar mixin.
+
+    Returns:
+        The column type, or ``None`` for a plain enum or a ``Literal``, which
+        have no scalar type to follow.
+    """
+    base, _ = _column_base(annotation)
+    origin = get_origin(base)
+    if origin is Literal:
+        return None
+    if origin in (list, tuple, set, dict):
         return JSON
-    python_type = _extract_origin_type(base)
-    if python_type is str:
+    rule_type = _column_rule_type(base)
+    if rule_type is str:
         return String(field.length)
-    return _SCALAR_TYPE_MAP.get(python_type, JSON)
+    if issubclass(rule_type, Enum):
+        return None
+    return _SCALAR_TYPE_MAP.get(rule_type, JSON)
 
 
 _SCOPE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")

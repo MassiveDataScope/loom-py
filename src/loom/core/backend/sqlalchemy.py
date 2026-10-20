@@ -238,6 +238,7 @@ def _compile_model(
 
     table_name = get_table_name(struct_cls)
     column_fields = get_column_fields(struct_cls)
+    _refuse_undeclared_column_types(struct_cls, column_fields)
     scopes = scope_columns(struct_cls)
     boundary = next((scope for scope in scopes if scope.is_boundary), None)
     constraints, composite_columns = _foreign_key_constraints(
@@ -286,6 +287,21 @@ def _compile_model(
             privileges=declared_privileges(struct_cls),
         )
     return sa_cls
+
+
+def _refuse_undeclared_column_types(
+    struct_cls: type, column_fields: Mapping[str, ColumnFieldInfo]
+) -> None:
+    """Refuse a plain enum or ``Literal`` field whose column type is not declared.
+
+    loom does not infer a SQL type from the values of such a field.
+    """
+    for name, info in column_fields.items():
+        if info.needs_declared_type:
+            raise ValueError(
+                f"{struct_cls.__name__}.{name}: no column type can be inferred from a plain "
+                "Enum or Literal annotation; declare it, e.g. `ColumnField(String(20))`"
+            )
 
 
 def _declared_constraints(struct_cls: type, table_name: str) -> list[Constraint | Index]:

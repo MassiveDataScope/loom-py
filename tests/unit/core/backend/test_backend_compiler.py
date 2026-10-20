@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from datetime import date, time
-from typing import Any, cast
+from enum import Enum
+from typing import Annotated, Any, Literal, cast
 
 import pytest
+from sqlalchemy import MetaData
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 
@@ -24,6 +26,7 @@ from loom.core.model import (
     RelationField,
     TimestampedModel,
 )
+from loom.core.model.types import String
 from loom.core.projection.loaders import ExistsLoader
 
 
@@ -129,6 +132,51 @@ def _clean_registry() -> Generator[None, None, None]:
     reset_registry()
     yield
     reset_registry()
+
+
+class _Shade(Enum):
+    DARK = "dark"
+
+
+class _ShadedItem(BaseModel):
+    __tablename__ = "test_shaded_items"
+    shade: _Shade
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
+class _ModedItem(BaseModel):
+    __tablename__ = "test_moded_items"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    mode: Literal["a", "b"] | None = ColumnField(nullable=True, default=None)
+
+
+class _DeclaredShadeItem(BaseModel):
+    __tablename__ = "test_declared_shade_items"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    shade: _Shade = ColumnField(String(8))
+    mode: Annotated[Literal["a", "b"], String(1)] | None = None
+    kind: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
+
+
+class TestUndeclaredColumnTypes:
+    @pytest.mark.parametrize(("model", "field"), [(_ShadedItem, "shade"), (_ModedItem, "mode")])
+    def test_a_plain_enum_or_literal_without_a_column_type_is_refused(
+        self, model: type, field: str
+    ) -> None:
+        with pytest.raises(
+            ValueError, match=rf"{model.__name__}\.{field}: .*ColumnField\(String\(20\)\)"
+        ):
+            compile_all(model, metadata=MetaData())
+
+    def test_a_declared_column_type_compiles(self) -> None:
+        metadata = MetaData()
+
+        compile_all(_DeclaredShadeItem, metadata=metadata)
+
+        columns = metadata.tables["test_declared_shade_items"].c
+        types = (str(columns.shade.type), str(columns.mode.type), str(columns.kind.type))
+        assert types == ("VARCHAR(8)", "VARCHAR(1)", "VARCHAR(1)")
+        assert columns.kind.nullable is True
 
 
 class TestCompileModel:

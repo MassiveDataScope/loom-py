@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, IntEnum, StrEnum
 from typing import Any
 
 import pytest
-from sqlalchemy import and_, bindparam, func, select
+from sqlalchemy import and_, bindparam, func, select, text
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
@@ -35,6 +35,29 @@ class _CreateDoc(Command, frozen=True):
     meta: dict[str, Any]
 
 
+class _State(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+class _Level(IntEnum):
+    LOW = 1
+    HIGH = 2
+
+
+class _Case(BaseModel):
+    __tablename__ = "typed_cases"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    state: _State = ColumnField(length=16)
+    level: _Level = ColumnField()
+
+
+class _CreateCase(Command, frozen=True):
+    state: _State
+    level: _Level
+
+
 class _Shade(Enum):
     LIGHT = "light"
     DARK = "dark"
@@ -55,7 +78,7 @@ class _Mark(BaseModel):
     __tablename__ = "typed_marks"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
-    shade: _Shade = ColumnField()
+    shade: _Shade = ColumnField(JSON)
     noted_at: datetime = ColumnField(JSON)
 
 
@@ -120,7 +143,7 @@ _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
 @pytest.fixture
 async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Doc, _Customer, _Ticket, _Tag, _Swatch, _Mark)
+    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -152,6 +175,35 @@ class TestJsonColumns:
         assert created.meta == _META_STORED
         assert stored is not None
         assert (stored.stamped_at, stored.meta) == (_STAMP, _META_STORED)
+
+
+class TestEnumColumns:
+    async def test_enum_values_are_stored_read_back_and_filtered_by_equality(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Case, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Case
+        )
+        created = await repo.create(_CreateCase(state=_State.CLOSED, level=_Level.HIGH))
+        await repo.create(_CreateCase(state=_State.OPEN, level=_Level.LOW))
+
+        stored = await repo.get_by_id(created.id)
+        query = QuerySpec(
+            filters=FilterGroup(
+                filters=(
+                    FilterSpec("state", FilterOp.EQ, _State.CLOSED),
+                    FilterSpec("level", FilterOp.EQ, _Level.HIGH),
+                )
+            )
+        )
+        found = await repo.list_with_query(query)
+        async with session_manager.engine.connect() as connection:
+            raw = await connection.execute(text("SELECT state, level FROM typed_cases"))
+
+        assert stored is not None
+        assert (stored.state, stored.level) == (_State.CLOSED, _Level.HIGH)
+        assert [item.id for item in found.items] == [created.id]
+        assert sorted(raw.all()) == [("closed", 2), ("open", 1)]
 
 
 class TestRelatedStructs:
