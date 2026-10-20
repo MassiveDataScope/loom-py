@@ -1,4 +1,4 @@
-"""IntoTable streaming sink node — writes typed events to Delta or SQLAlchemy tables.
+"""IntoTable streaming sink node — writes typed events to SQLAlchemy, Delta or ClickHouse tables.
 
 IntoTable is a frozen dataclass that implements IntoSink structurally.
 The compiler detects it via isinstance(node, IntoSink) without any
@@ -10,10 +10,14 @@ Supported backends
   Requires an async bridge and a shared SQLAlchemy session manager from the
   Bytewax runtime.
   Install: ``pip install sqlalchemy``.
-- ``Backend.DELTA``: stages rows as parquet parts in temporary files and
-  appends them to Delta via delta-rs.
+- ``Backend.DELTA``: stages rows as a PyArrow IPC stream in a spooled
+  temporary file and appends it to Delta via delta-rs.
   Requires a ``uri`` key in the resolved config section.
   Install: ``pip install deltalake polars``.
+- ``Backend.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
+  Requires a ``database`` reference whose ``database.<name>`` section holds
+  ``http_url`` or ``url``.
+  Install: ``pip install clickhouse-connect``.
 
 Config example (streaming.sinks.<name>)::
 
@@ -163,7 +167,7 @@ class Backend(StrEnum):
     Args:
         SQLALCHEMY:  Bulk-insert rows via SQLAlchemy Core. Transport-agnostic —
             works with any SA-supported database.
-        DELTA:       Stage parquet parts and append them to a Delta Lake table.
+        DELTA:       Stage rows as a PyArrow IPC stream and append it to a Delta Lake table.
             Requires ``deltalake`` and ``polars`` to be installed.
         CLICKHOUSE:  Bulk-insert rows via ``clickhouse-connect`` (native HTTP/2
             protocol, no SQLAlchemy). Requires ``clickhouse-connect`` to be
@@ -384,6 +388,73 @@ class SqlAlchemyDatabaseConfig:
         }
 
 
+_BUFFER_KEYS: frozenset[str] = frozenset(
+    {"buffer_max_records", "buffer_max_bytes", "buffer_max_age_s", "flush_on_shutdown"}
+)
+_SQLALCHEMY_POOL_KEYS: frozenset[str] = frozenset(
+    {
+        "echo",
+        "pool_pre_ping",
+        "pool_size",
+        "max_overflow",
+        "pool_timeout",
+        "pool_recycle",
+        "connect_args",
+    }
+)
+_SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "database", "url", "chunk_size"}
+_DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
+    "table",
+    "uri",
+    "mode",
+    "storage_options",
+    "partition_by",
+    "target_file_size",
+    "spool_max_bytes",
+    "staging",
+    "writer_properties",
+}
+_DELTA_STAGING_KEYS: frozenset[str] = frozenset({"compression", "mini_batch_size"})
+_CLICKHOUSE_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
+    "table",
+    "database",
+    "url",
+    "insert_timeout",
+}
+
+
+def _mapping_section(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """Return the nested section *key* of a Delta sink config, ``{}`` when unset.
+
+    Raises:
+        ValueError: If *key* is set to something other than a mapping.
+    """
+    value = config.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"Delta sink config '{key}' must be a mapping, got {type(value).__name__}."
+        )
+    return value
+
+
+def _refuse_unknown_keys(
+    config: Mapping[str, Any], known: frozenset[str], *, sink: str, prefix: str = ""
+) -> None:
+    """Raise when *config* carries a key the sink does not read.
+
+    Raises:
+        ValueError: Naming every unknown key, sorted.
+    """
+    unknown = sorted(f"{prefix}{key}" for key in config if key not in known)
+    if not unknown:
+        return
+    noun = "key" if len(unknown) == 1 else "keys"
+    names = ", ".join(repr(key) for key in unknown)
+    raise ValueError(f"{sink} sink config has unknown {noun} {names}.")
+
+
 @dataclass(frozen=True, slots=True)
 class SqlAlchemySinkConfig:
     """Resolved ``IntoTable`` settings for the SQLAlchemy backend.
@@ -409,6 +480,8 @@ class SqlAlchemySinkConfig:
         table = str(config.get("table") or default_table).strip()
         database = str(config.get("database") or "").strip()
         url = str(config.get("url") or "").strip()
+        known = _SQLALCHEMY_SINK_KEYS if database else _SQLALCHEMY_SINK_KEYS | _SQLALCHEMY_POOL_KEYS
+        _refuse_unknown_keys(config, known, sink="SQLAlchemy")
         if not table:
             raise ValueError("SQLAlchemy sink config requires a non-empty table name.")
         return cls(
@@ -418,6 +491,9 @@ class SqlAlchemySinkConfig:
             chunk_size=_optional_int(config.get("chunk_size"), 500),
             buffer_policy=_TableBufferPolicy.from_config(config),
         )
+
+
+_DEFAULT_MAX_ROW_GROUP_SIZE = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,7 +509,6 @@ class DeltaSinkConfig:
         target_file_size: Optional delta-rs target file size in bytes.
         staging_compression: Compression codec for the IPC staging stream.
         spool_max_bytes: Maximum in-memory bytes before spooling the staging file to disk.
-        part_max_records: Backward-compatible row-group hint for the final Delta write.
         writer_properties: Final Delta writer properties passed to delta-rs.
         buffer_policy: Common flush policy shared with other backends.
     """
@@ -446,33 +521,34 @@ class DeltaSinkConfig:
     target_file_size: int | None
     staging_compression: Literal["uncompressed", "lz4", "zstd"]
     spool_max_bytes: int
-    part_max_records: int
     writer_properties: Any | None
     buffer_policy: _TableBufferPolicy
     mini_batch_size: int = 500
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], *, default_table: str) -> Self:
-        """Build Delta sink settings from a resolved sink config."""
+        """Build Delta sink settings from a resolved sink config.
+
+        Without ``writer_properties`` the final write uses row groups of at
+        most 10 000 rows.
+
+        Raises:
+            ValueError: If ``uri`` is empty, a value is invalid, or the config
+                or its ``staging`` carries a key the sink does not read.
+        """
+        _refuse_unknown_keys(config, _DELTA_SINK_KEYS, sink="Delta")
         table = str(config.get("table") or default_table).strip()
         uri = str(config.get("uri") or "").strip()
         if not uri:
             raise ValueError("Delta sink config requires a non-empty 'uri'.")
         raw_partition_by = config.get("partition_by") or []
-        staging_config = config.get("staging") if isinstance(config.get("staging"), Mapping) else {}
-        staging_compression = _validate_ipc_compression(
-            staging_config.get("compression")
-            if isinstance(staging_config, Mapping)
-            else config.get("staging_compression", "uncompressed")
-        )
-        writer_properties = _build_writer_properties(
-            config.get("writer_properties")
-            if isinstance(config.get("writer_properties"), Mapping)
-            else {}
-        )
+        staging_config = _mapping_section(config, "staging")
+        _refuse_unknown_keys(staging_config, _DELTA_STAGING_KEYS, sink="Delta", prefix="staging.")
+        staging_compression = _validate_ipc_compression(staging_config.get("compression"))
+        writer_properties = _build_writer_properties(_mapping_section(config, "writer_properties"))
         if writer_properties is None:
             writer_properties = _writer_properties_factory(
-                max_row_group_size=_optional_int(config.get("part_max_records"), 10_000)
+                max_row_group_size=_DEFAULT_MAX_ROW_GROUP_SIZE
             )
         target_file_size_raw = config.get("target_file_size")
         return cls(
@@ -486,15 +562,9 @@ class DeltaSinkConfig:
             else None,
             staging_compression=staging_compression,
             spool_max_bytes=_optional_int(config.get("spool_max_bytes"), 32 * 1024 * 1024),
-            part_max_records=_optional_int(config.get("part_max_records"), 10_000),
             writer_properties=writer_properties,
             buffer_policy=_TableBufferPolicy.from_config(config),
-            mini_batch_size=_optional_int(
-                staging_config.get("mini_batch_size")
-                if isinstance(staging_config, Mapping)
-                else config.get("mini_batch_size"),
-                500,
-            ),
+            mini_batch_size=_optional_int(staging_config.get("mini_batch_size"), 500),
         )
 
 
@@ -523,7 +593,13 @@ class ClickHouseSinkConfig:
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], *, default_table: str) -> Self:
-        """Build ClickHouse sink settings from a resolved sink + database config."""
+        """Build ClickHouse sink settings from a resolved sink + database config.
+
+        Raises:
+            ValueError: If the table or the url is empty, or the config carries
+                a key the sink does not read.
+        """
+        _refuse_unknown_keys(config, _CLICKHOUSE_SINK_KEYS, sink="ClickHouse")
         table = str(config.get("table") or default_table).strip()
         url = str(config.get("url") or "").strip()
         if not table:

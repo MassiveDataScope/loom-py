@@ -201,6 +201,7 @@ kafka:
   consumer:
     brokers: ["localhost:9092"]
     group_id: "test"
+    delivery: at_most_once
     topics: ["orders.in"]
   producer:
     brokers: ["localhost:9092"]
@@ -534,6 +535,7 @@ kafka:
   consumer:
     brokers: ["localhost:9092"]
     group_id: "test"
+    delivery: at_most_once
     topics: ["orders.in"]
   producer:
     brokers: ["localhost:9092"]
@@ -587,6 +589,7 @@ kafka:
   consumer:
     brokers: ["localhost:9092"]
     group_id: "test"
+    delivery: at_most_once
     topics: ["orders.in"]
   producer:
     brokers: ["localhost:9092"]

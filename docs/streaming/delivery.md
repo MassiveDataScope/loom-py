@@ -24,10 +24,12 @@ kafka:
 - **`at_most_once`** — librdkafka auto-commits on a timer, decoupled from
   processing. Simpler (no duplicates, no tracker), but a crash loses whatever
   was polled and not yet processed. Fine for metrics/telemetry-class data.
-- **Unset** — legacy resolution from the deprecated `enable_auto_commit`
-  flag (`false` → at-least-once; `true` or unset → at-most-once). Configs
-  written before `delivery` existed keep their exact behavior. Setting both
-  fields to contradicting values is a compile error (`DELIVERY_CONFLICT`).
+
+`delivery` is required and has no default: a consumer without it fails to
+decode, so compiling a flow that reads from Kafka reports
+`KAFKA_CONFIG_INVALID` naming the missing field. The consumer settings derive
+librdkafka's `enable.auto.commit` from it and accept no `enable_auto_commit`
+field.
 
 Under `at_least_once` two structural rules are enforced at compile/startup:
 
@@ -181,11 +183,15 @@ partition fails to build (never a silent fallback to `auto_offset_reset`).
 ```yaml
 kafka:
   consumer:
+    brokers: ["broker:9092"]
+    group_id: orders-service
+    topics: ["orders.in"]
+    delivery: at_least_once
     batch_size: 500            # records per poll cycle
     poll_backoff_ms: 50        # sleep after an empty poll
     commit_keepalive_ms: 1800000
 ```
 
-`poll_timeout_ms` is deprecated for the partitioned source (it was the old
-source's emission interval) and ignored with a warning; it still applies to
-the standalone `KafkaConsumerClient.poll()`.
+The consumer settings have no `poll_timeout_ms`; a config that sets it fails
+to decode. The standalone `KafkaConsumerClient.poll()` takes its wait as a
+`timeout_ms` argument.

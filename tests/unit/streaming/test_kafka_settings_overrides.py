@@ -16,7 +16,12 @@ def test_a_loom_override_reaches_the_kafka_settings(
     path = tmp_path / "kafka.yaml"
     document = {
         "kafka": {
-            "consumer": {"brokers": ["a:9092"], "group_id": "g", "topics": ["t"]},
+            "consumer": {
+                "brokers": ["a:9092"],
+                "group_id": "g",
+                "delivery": "at_most_once",
+                "topics": ["t"],
+            },
             "producer": {"brokers": ["a:9092"], "client_id": "c", "topic": "o"},
         }
     }

@@ -144,7 +144,12 @@ def flow_config() -> dict[str, Any]:
     producers = {topic: {"brokers": [_BROKER], "topic": topic} for topic in BRANCH_TOPICS.values()}
     return {
         "kafka": {
-            "consumer": {"brokers": [_BROKER], "group_id": "bench", "topics": [SOURCE_TOPIC]},
+            "consumer": {
+                "brokers": [_BROKER],
+                "group_id": "bench",
+                "delivery": "at_most_once",
+                "topics": [SOURCE_TOPIC],
+            },
             "producers": producers,
         }
     }

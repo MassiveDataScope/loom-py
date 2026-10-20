@@ -123,6 +123,7 @@ kafka:
       - ${ssm:/prod/incidents/kafka-broker}
     group_id: incidents-service
     topics: ["incidents.in"]
+    delivery: at_most_once
     security:
       protocol: SASL_SSL
       sasl_mechanism: SCRAM-SHA-512

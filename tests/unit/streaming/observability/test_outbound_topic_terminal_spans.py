@@ -80,7 +80,12 @@ _TRACES = (
 
 _CONFIG = {
     "kafka": {
-        "consumer": {"brokers": ["localhost:9092"], "group_id": "g", "topics": ["items"]},
+        "consumer": {
+            "brokers": ["localhost:9092"],
+            "group_id": "g",
+            "delivery": "at_most_once",
+            "topics": ["items"],
+        },
         "producer": {"brokers": ["localhost:9092"], "topic": _OUT_TOPIC},
     }
 }

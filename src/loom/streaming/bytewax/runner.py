@@ -88,11 +88,12 @@ class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True, forbid_unknown_fiel
 class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Runtime settings for executing a Bytewax dataflow.
 
-    **Delivery guarantee:** By default Kafka offsets are committed by the
-    consumer's auto-commit policy and are not tied to downstream success.
-    When ``enable.auto.commit`` is disabled in the consumer settings, Loom
-    tracks item completion through the adapter and commits offsets only after
-    the downstream branch finishes successfully.
+    **Delivery guarantee:** set by the Kafka consumer's ``delivery``. With
+    ``"at_most_once"``, librdkafka auto-commits offsets on its own schedule,
+    which is not tied to downstream success. With ``"at_least_once"``, Loom
+    tracks each record through the adapter and commits an offset only after
+    every downstream branch has finished with its record; the commits are
+    coalesced per partition.
 
     Args:
         workers_per_process: Number of worker threads in this process.

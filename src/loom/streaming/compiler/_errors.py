@@ -213,15 +213,6 @@ class StreamingErrorCode(IssueCode):
     )
 
     # Delivery-semantics phase (partitioned source spec)
-    DELIVERY_CONFLICT = (
-        "DELIVERY_CONFLICT",
-        Template(
-            "kafka consumer '{consumer_ref}': delivery={delivery} conflicts with "
-            "enable_auto_commit={enable_auto_commit}; remove the deprecated enable_auto_commit",
-            component="kafka consumer '{consumer_ref}'",
-            field="kafka.consumer.enable_auto_commit",
-        ),
-    )
     DELIVERY_KEYED_MULTIPROCESS = (
         "DELIVERY_KEYED_MULTIPROCESS",
         Template(
@@ -240,7 +231,7 @@ class StreamingErrorCode(IssueCode):
             "would never be completed, so its partitions would stop committing while the "
             "flow looks healthy. Add bind_commit_tracker(tracker) to the sink, or declare "
             "delivery=at_most_once.",
-            field="streaming.delivery",
+            field="{delivery_field}",
         ),
     )
     INLINE_SINK_CANNOT_SKIP_COMMITS = (
@@ -251,7 +242,7 @@ class StreamingErrorCode(IssueCode):
             "its partitions would complete the offsets of messages that go on after the "
             "inline write. Add build_inline_partition() to the sink, or declare "
             "delivery=at_most_once.",
-            field="streaming.delivery",
+            field="{delivery_field}",
         ),
     )
     # Under at-least-once delivery no message is discarded unless the flow says so.
@@ -274,9 +265,6 @@ class StreamingErrorCode(IssueCode):
             field="default",
         ),
     )
-
-    # Issues built from bare strings
-    UNSPECIFIED = "UNSPECIFIED", Template("{message}", component="")
 
 
 CompilationIssue: TypeAlias = CompileIssue[StreamingErrorCode]

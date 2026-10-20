@@ -32,7 +32,12 @@ from tests.helpers.deploy_checks import (  # noqa: E402
 from tests.unit.streaming.bytewax.cases import Order, Result  # noqa: E402
 
 _KAFKA: dict[str, Any] = {
-    "consumer": {"brokers": ["localhost:9092"], "group_id": "test", "topics": ["orders.in"]},
+    "consumer": {
+        "brokers": ["localhost:9092"],
+        "group_id": "test",
+        "delivery": "at_most_once",
+        "topics": ["orders.in"],
+    },
     "producer": {"brokers": ["localhost:9092"], "client_id": "p", "topic": "orders.out"},
 }
 

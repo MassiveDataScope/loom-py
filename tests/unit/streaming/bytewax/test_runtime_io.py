@@ -72,7 +72,7 @@ class TestRuntimeIOBuilders:
     ) -> None:
         fake_raw = RawProducerStub()
         monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
-        source = build_compiled_source(enable_auto_commit=False)
+        source = build_compiled_source(delivery="at_least_once")
         tracker = _runtime_io.build_commit_tracker(source)
         assert tracker is not None
 
@@ -253,13 +253,6 @@ class TestRuntimeIOBuilders:
         assert fake_raw.sent[0].headers["x-error-kind"] == b"wire"
         assert fake_raw.sent[0].headers["x-error-reason"] == b"decode failed"
 
-    def test_build_commit_tracker_defaults_to_legacy_at_most_once(self) -> None:
-        """Configs setting neither delivery nor enable_auto_commit keep prior behavior."""
-        source = build_compiled_source()
-
-        assert source.settings.to_confluent_config()["enable.auto.commit"] is True
-        assert _runtime_io.build_commit_tracker(source) is None
-
     def test_build_commit_tracker_with_explicit_at_least_once(self) -> None:
         tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
 
@@ -274,7 +267,7 @@ class TestRuntimeIOBuilders:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        source_cfg = build_compiled_source(enable_auto_commit=False)
+        source_cfg = build_compiled_source(delivery="at_least_once")
         tracker = _runtime_io.build_commit_tracker(source_cfg)
         assert tracker is not None
 
@@ -305,7 +298,7 @@ class TestRuntimeIOBuilders:
     def test_commit_tracker_waits_for_contiguous_offsets(
         self,
     ) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 2, consumer, None)
@@ -336,7 +329,7 @@ class TestRuntimeIOBuilders:
     def test_commit_tracker_accounts_for_broadcast_fanout(
         self,
     ) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 2, consumer, None)
@@ -359,7 +352,7 @@ class TestRuntimeIOBuilders:
     def test_commit_tracker_propagates_commit_offset_errors(
         self,
     ) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         consumer.commit_error = RuntimeError("commit-boom")
@@ -410,7 +403,7 @@ class TestRuntimeIOBuilders:
 class TestCommitTrackerGapsAndFloor:
     def test_watermark_passes_offset_gaps(self) -> None:
         """Offset gaps (transactions, compaction) must never freeze commits."""
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -425,7 +418,7 @@ class TestCommitTrackerGapsAndFloor:
         assert tracker.flush_partition("orders.in", 0) == [TopicPartition("orders.in", 0, 107)]
 
     def test_floor_suppresses_commits_at_or_below_committed_offset(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         # production attaches floor and seeded watermark together, from the
@@ -448,7 +441,7 @@ class TestCommitTrackerGapsAndFloor:
         assert tracker.flush_partition("orders.in", 0) == [TopicPartition("orders.in", 0, 6)]
 
     def test_partition_committers_route_commits_to_their_owner(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         owner_zero = ConsumerBackendStub({})
         owner_one = ConsumerBackendStub({})
@@ -468,7 +461,7 @@ class TestCommitTrackerGapsAndFloor:
         assert owner_one.commit_offset_calls == [[TopicPartition("orders.in", 1, 6)]]
 
     def test_force_flush_recommits_current_watermark_for_keepalive(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -482,7 +475,7 @@ class TestCommitTrackerGapsAndFloor:
         assert tracker.keepalive_partition("orders.in", 0) == [TopicPartition("orders.in", 0, 10)]
 
     def test_rebuilding_a_partition_clears_inflight_state(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -498,7 +491,7 @@ class TestCommitTrackerGapsAndFloor:
 
 class TestCommitTrackerRobustness:
     def test_duplicate_register_of_inflight_offset_is_a_noop(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -512,7 +505,7 @@ class TestCommitTrackerRobustness:
         assert tracker.flush_partition("orders.in", 0) == []
 
     def test_commit_failure_remarks_dirty_so_next_flush_retries(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         consumer.commit_error = RuntimeError("transient-commit-boom")

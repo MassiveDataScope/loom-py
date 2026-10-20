@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,6 +51,9 @@ def resolve_sqlalchemy_table_config(
     if not ctx.has(sink_key):
         raise ValueError(f"IntoTable '{node.name}': no config section found at {sink_key}")
     sink_cfg = ctx.section_or_default(sink_key, dict, {})
+    _refuse_url_and_database(
+        node, sink_cfg, remedy="set 'database' for a shared section or 'url' inline, not both"
+    )
     effective_cfg = dict(sink_cfg)
     if node.table:
         effective_cfg["table"] = node.table
@@ -108,6 +112,9 @@ def resolve_clickhouse_table_config(
     if not ctx.has(sink_key):
         raise ValueError(f"IntoTable '{node.name}': no config section found at {sink_key}")
     sink_cfg = ctx.section_or_default(sink_key, dict, {})
+    _refuse_url_and_database(
+        node, sink_cfg, remedy="the url comes from database.<name>, so set 'database' only"
+    )
     effective_cfg = dict(sink_cfg)
     if node.table:
         effective_cfg["table"] = node.table
@@ -125,6 +132,20 @@ def resolve_clickhouse_table_config(
     effective_cfg["url"] = str(db_cfg.get("http_url") or db_cfg.get("url") or "").strip()
     sink = ClickHouseSinkConfig.from_config(effective_cfg, default_table=node.table)
     return ResolvedClickHouseTableConfig(sink=sink)
+
+
+def _refuse_url_and_database(
+    node: IntoTable[Any], sink_cfg: Mapping[str, Any], *, remedy: str
+) -> None:
+    """Refuse a sink section that names its connection twice.
+
+    Raises:
+        ValueError: If the section sets both ``url`` and ``database``.
+    """
+    if "url" in sink_cfg and "database" in sink_cfg:
+        raise ValueError(
+            f"IntoTable '{node.name}': the sink section sets both 'url' and 'database'; {remedy}."
+        )
 
 
 __all__ = [

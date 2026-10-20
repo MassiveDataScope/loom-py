@@ -1147,6 +1147,47 @@
 
 ### streaming
 
+- **streaming:** `ConsumerSettings.delivery` is required. A Kafka consumer
+  config without `delivery` fails to decode, so compiling a flow that reads
+  from Kafka raises `CompilationError` with `KAFKA_CONFIG_INVALID` naming the
+  missing field. Before, a missing `delivery` resolved to `at_most_once`.
+  Declare `delivery: at_most_once` to keep that behaviour, or
+  `delivery: at_least_once`. `ConsumerSettings.effective_delivery()` is
+  removed; read `ConsumerSettings.delivery`.
+- **streaming:** `ConsumerSettings.enable_auto_commit` is removed, together
+  with the `DELIVERY_CONFLICT` compile code. The consumer settings forbid
+  unknown fields, so a config that sets `enable_auto_commit` fails to decode
+  (`KAFKA_CONFIG_INVALID`). Declare `delivery` instead: `enable_auto_commit:
+  false` was `delivery: at_least_once`, and `true` was `delivery:
+  at_most_once`.
+- **streaming:** `ConsumerSettings.poll_timeout_ms` is removed. The
+  partitioned source ignored it and logged a deprecation warning; a config
+  that sets it now fails to decode (`KAFKA_CONFIG_INVALID`). Remove the key;
+  the partitioned source is tuned with `batch_size` and `poll_backoff_ms`.
+- **streaming:** `CompilationError` takes `CompilationIssue` values only;
+  bare strings and the `StreamingErrorCode.UNSPECIFIED` code they became are
+  removed. Build an issue from a `StreamingErrorCode` member with `.issue()`.
+- **streaming:** `CompilationError.errors` is removed. Read the messages from
+  `CompilationError.issues` (`[issue.message for issue in error.issues]`).
+- **streaming:** an `IntoTable` sink section (`streaming.sinks.<name>`) with a
+  key its backend does not read fails at compile with `SINK_CONFIG_INVALID`,
+  naming every unknown key; on Delta this covers the keys under `staging`
+  too, and a `staging` or `writer_properties` that is not a mapping is
+  refused. Before, such a key was ignored. A SQLAlchemy sink that references a
+  shared `database` reads no pool keys (`pool_size`, `echo`, ...) from its own
+  section, so they are refused there; set them under `database.<name>`.
+  A SQLAlchemy or ClickHouse sink section that sets both `url` and `database`
+  is refused too, instead of one silently winning: a SQLAlchemy sink sets one
+  or the other, and a ClickHouse sink takes its url from `database.<name>`, so
+  it sets `database` only.
+  Delta's `part_max_records` is removed and therefore refused: it was an alias
+  of `writer_properties.max_row_group_size`, which is the key to set. Without
+  `writer_properties` the row groups still hold at most 10 000 rows.
+  `DeltaSinkConfig` has no `part_max_records` attribute.
+- **streaming:** `CompiledSingleSource` and `CompiledMultiSource` take a
+  required `settings_key`, the config key their consumer settings were
+  resolved from (`kafka.consumer` or `kafka.consumers.<ref>`);
+  `KafkaSettings.consumer_key_for(ref)` names it.
 - **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
   `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
   and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
@@ -1662,6 +1703,11 @@
 
 ### streaming
 
+- **streaming:** `SINK_CANNOT_TRACK_COMMITS` and
+  `INLINE_SINK_CANNOT_SKIP_COMMITS` point their `field` at the `delivery` of
+  the consumer the source was bound through, `kafka.consumer.delivery` or
+  `kafka.consumers.<ref>.delivery`, instead of `streaming.delivery`, which no
+  config reads.
 - **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
   `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
   `shape mismatch: expected many but got batch before ForEach`. Under

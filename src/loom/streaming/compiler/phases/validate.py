@@ -69,23 +69,21 @@ def validate_kafka(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[Compi
 
 
 def validate_delivery(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[CompilationIssue]:
-    """Validate that explicit delivery semantics do not contradict legacy flags.
+    """Validate what the declared delivery semantics require of *flow*.
 
-    Emits :data:`StreamingErrorCode.DELIVERY_CONFLICT` when a resolved consumer
-    sets ``delivery`` and an explicit ``enable_auto_commit`` that contradicts
-    it.  Missing Kafka config is reported by :func:`validate_kafka`, not here.
+    Under ``at_least_once`` a fork without a default branch is reported as
+    :data:`StreamingErrorCode.FORK_UNMATCHED_UNROUTED`.  Missing or invalid
+    Kafka config, an undeclared ``delivery`` included, is reported by
+    :func:`validate_kafka`, not here.
     """
-    if not _uses_kafka(flow):
-        return []
     if not isinstance(flow.source, (FromTopic, FromMultiTypeTopic)):
         return []
     consumer = _resolve_consumer_settings(flow.source, ctx)
     if consumer is None:
         return []
-    issues = _delivery_conflict_issues(flow.source.name, consumer)
-    if consumer.effective_delivery() == "at_least_once":
-        issues.extend(_unrouted_fork_issues(flow))
-    return issues
+    if consumer.delivery == "at_least_once":
+        return _unrouted_fork_issues(flow)
+    return []
 
 
 def validate_mongo(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[CompilationIssue]:
@@ -175,25 +173,6 @@ def _unrouted_fork_issues(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
         if isinstance(node, Fork) and node.default is None:
             issues.append(StreamingErrorCode.FORK_UNMATCHED_UNROUTED.issue())
     return issues
-
-
-def _delivery_conflict_issues(
-    consumer_ref: str,
-    settings: ConsumerSettings,
-) -> list[CompilationIssue]:
-    """Return a conflict issue when delivery and enable_auto_commit contradict."""
-    if settings.delivery is None or settings.enable_auto_commit is None:
-        return []
-    expected_auto_commit = settings.delivery == "at_most_once"
-    if settings.enable_auto_commit == expected_auto_commit:
-        return []
-    return [
-        StreamingErrorCode.DELIVERY_CONFLICT.issue(
-            consumer_ref=consumer_ref,
-            delivery=settings.delivery,
-            enable_auto_commit=settings.enable_auto_commit,
-        )
-    ]
 
 
 def _is_scoped_node_with_process(node: object) -> bool:

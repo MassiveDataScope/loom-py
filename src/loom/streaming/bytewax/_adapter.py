@@ -48,7 +48,11 @@ from loom.streaming.bytewax.handlers.dispatcher import (
 )
 from loom.streaming.compiler import CompiledPlan
 from loom.streaming.compiler._errors import StreamingErrorCode
-from loom.streaming.compiler._plan import CompiledMultiSource, CompiledSingleSource
+from loom.streaming.compiler._plan import (
+    CompiledMultiSource,
+    CompiledSingleSource,
+    CompiledSource,
+)
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._message import Message
 from loom.streaming.core._typing import StreamPayload
@@ -162,10 +166,10 @@ def build_dataflow_with_shutdown(
     if terminal_sinks is None:
         terminal_sinks = build_runtime_terminal_sinks(plan.terminal_sinks, commit_tracker)
     resolved_runtime = observability_runtime or ObservabilityRuntime.noop()
-    _bind_commit_tracker_object(source, commit_tracker)
-    _bind_commit_tracker_object(sink, commit_tracker)
-    _bind_commit_tracker_mapping(terminal_sinks, commit_tracker)
-    _bind_commit_tracker_mapping(error_sinks, commit_tracker)
+    _bind_commit_tracker_object(source, commit_tracker, plan.source)
+    _bind_commit_tracker_object(sink, commit_tracker, plan.source)
+    _bind_commit_tracker_mapping(terminal_sinks, commit_tracker, plan.source)
+    _bind_commit_tracker_mapping(error_sinks, commit_tracker, plan.source)
     resolved_bridge = bridge if bridge is not None else _maybe_create_bridge(plan)
     ctx = _BuildContext(
         plan=plan,
@@ -209,7 +213,9 @@ class _SupportsInlinePartition(Protocol):
 
 
 def _bind_commit_tracker_object(
-    item: object | None, commit_tracker: CommitCompletionPort | None
+    item: object | None,
+    commit_tracker: CommitCompletionPort | None,
+    plan_source: CompiledSource,
 ) -> None:
     """Bind a commit tracker to one runtime object, or refuse to run.
 
@@ -219,6 +225,11 @@ def _bind_commit_tracker_object(
     binding silently — the previous behaviour — made that the default outcome
     for any sink a user registered themselves.
 
+    Args:
+        item: Runtime object to bind, or ``None``.
+        commit_tracker: Tracker to bind, or ``None`` under at-most-once.
+        plan_source: Compiled source whose consumer declares the delivery.
+
     Raises:
         RuntimeConfigurationError: If a tracker is required and this runtime
             object cannot accept one.
@@ -226,7 +237,9 @@ def _bind_commit_tracker_object(
     if item is None or commit_tracker is None:
         return
     if not isinstance(item, _SupportsCommitBind):
-        issue = StreamingErrorCode.SINK_CANNOT_TRACK_COMMITS.issue(component=type(item).__name__)
+        issue = StreamingErrorCode.SINK_CANNOT_TRACK_COMMITS.issue(
+            component=type(item).__name__, delivery_field=_delivery_field(plan_source)
+        )
         raise RuntimeConfigurationError([issue])
     item.bind_commit_tracker(commit_tracker)
 
@@ -234,12 +247,25 @@ def _bind_commit_tracker_object(
 def _bind_commit_tracker_mapping(
     items: Mapping[Any, Any] | None,
     commit_tracker: CommitCompletionPort | None,
+    plan_source: CompiledSource,
 ) -> None:
     """Bind a commit tracker to each runtime object in a mapping when supported."""
     if items is None or commit_tracker is None:
         return
     for item in items.values():
-        _bind_commit_tracker_object(item, commit_tracker)
+        _bind_commit_tracker_object(item, commit_tracker, plan_source)
+
+
+def _delivery_field(source: CompiledSource) -> str:
+    """Config key of the ``delivery`` that asked for the commit tracker.
+
+    Raises:
+        TypeError: If *source* is not a Kafka source; only a Kafka source
+            builds a commit tracker.
+    """
+    if not isinstance(source, (CompiledSingleSource, CompiledMultiSource)):
+        raise TypeError(f"Expected a Kafka compiled source, got {type(source).__name__}.")
+    return f"{source.settings_key}.delivery"
 
 
 def _assemble_dataflow(plan: CompiledPlan, ctx: _BuildContext) -> Any:
@@ -428,7 +454,7 @@ class _BuildContext:
             return sink.build_inline_partition()
         if self.commit_tracker is not None:
             issue = StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS.issue(
-                component=type(sink).__name__
+                component=type(sink).__name__, delivery_field=_delivery_field(self.plan.source)
             )
             raise RuntimeConfigurationError([issue])
         partition: StatelessSinkPartition[Any] = sink.build(

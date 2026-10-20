@@ -100,10 +100,12 @@ def build_compiled_plan(
                 brokers=(_BROKER,),
                 group_id="test",
                 topics=("in",),
+                delivery="at_most_once",
             ),
             topics=("in",),
             payload_type=Order,
             decode_strategy="record",
+            settings_key="kafka.consumer",
         ),
         nodes=tuple(compiled_nodes),
         output=compiled_output,
@@ -114,13 +116,12 @@ def build_compiled_plan(
 
 
 def build_compiled_source(
-    poll_timeout_ms: int = 100,
     *,
-    enable_auto_commit: bool | None = None,
-    delivery: Literal["at_least_once", "at_most_once"] | None = None,
+    delivery: Literal["at_least_once", "at_most_once"] = "at_most_once",
     auto_offset_reset: Literal["earliest", "latest"] = "earliest",
     commit_keepalive_ms: int = 1_800_000,
     topics: tuple[str, ...] | None = None,
+    settings_key: str = "kafka.consumer",
 ) -> CompiledSingleSource:
     """Build a reusable compiled source for Bytewax adapter tests."""
     return CompiledSingleSource(
@@ -128,8 +129,6 @@ def build_compiled_source(
             brokers=(_BROKER,),
             group_id="test",
             topics=(_ORDERS_IN_TOPIC,),
-            poll_timeout_ms=poll_timeout_ms,
-            enable_auto_commit=enable_auto_commit,
             delivery=delivery,
             auto_offset_reset=auto_offset_reset,
             commit_keepalive_ms=commit_keepalive_ms,
@@ -137,6 +136,7 @@ def build_compiled_source(
         topics=topics or (_ORDERS_IN_TOPIC,),
         payload_type=Order,
         decode_strategy="record",
+        settings_key=settings_key,
     )
 
 

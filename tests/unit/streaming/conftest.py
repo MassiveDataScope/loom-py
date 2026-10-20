@@ -92,6 +92,7 @@ def _streaming_kafka_config_data() -> dict[str, object]:
             "consumer": {
                 "brokers": [_BROKER],
                 "group_id": "test",
+                "delivery": "at_most_once",
                 "topics": ["orders.raw"],
             },
             "producer": {"brokers": [_BROKER], "topic": _ORDERS_VALIDATED_TOPIC},
