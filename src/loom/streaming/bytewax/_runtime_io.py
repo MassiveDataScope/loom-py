@@ -124,7 +124,7 @@ def _write_kafka_batch(
                 if dlq_lineage is not None:
                     request = dlq_lineage(item, request)
                 headers = {**request.headers, "x-dlq-error": dlq_error}
-                # ``replace`` copies fields added later; the cast Sonar asks for fails mypy.
+                # ``replace`` copies fields added later.
                 _send_request(message_producer, sink.dlq_topic, replace(request, headers=headers))
             producer.flush()
         except KafkaDeliveryError as dlq_exc:
@@ -161,7 +161,7 @@ def _keep_message_lineage(
     request: _KafkaSendRequest[StreamPayload],
 ) -> _KafkaSendRequest[StreamPayload]:
     """Keep the failed message's own trace on its DLQ record instead of a child trace."""
-    # ``replace`` copies fields added later; the cast Sonar asks for fails mypy.
+    # ``replace`` copies fields added later.
     return replace(
         request,
         trace_id=message.meta.trace_id,

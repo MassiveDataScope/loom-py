@@ -11,6 +11,7 @@ name and the handshake is a ``getattr`` on the loaded object, never an
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
@@ -81,7 +82,7 @@ def resolve_engine_provider(name: str) -> AgentEngineProvider:
         raise AgentCompilationError(
             [AgentErrorCode.ENGINE_NOT_FOUND.issue(component=name, available=exc.available)]
         ) from exc
-    provider = loaded() if isinstance(loaded, type) else loaded
+    provider: object = loaded() if inspect.isclass(loaded) else loaded
     _verify_engine_api(name, provider)
     # The handshake above is the structural runtime check; the protocol is not
     # runtime-checkable by design, so the cast records the contract.
