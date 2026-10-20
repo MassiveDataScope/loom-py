@@ -294,8 +294,10 @@ def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
 def _execute_router(router: Router[Any, Any], branches: Sequence[Branch], message: Any) -> _Routed:
     """Run the selected branch up to its terminal.
 
-    Returns the index of the branch whose terminal must write the message, or
-    ``None`` when the message continues after the router.
+    Returns:
+        The message as the branch left it, tagged with the index of the branch
+        whose terminal must write it, or with ``None`` when it continues after
+        the router.
     """
     branch = _select_router_branch(router, branches, message)
     if branch is None:

@@ -931,12 +931,14 @@
 - **streaming:** a Delta `IntoTable` whose payload type has no fields fails
   with `ValueError` when its partition is built. Its items wrote no row.
 - **streaming:** an output declared after a node that ends every path fails
-  compilation: a flow `output` after a process that ends in `IntoTopic`,
-  `IntoSink`, `Drain` or `ExpandRoutes` (`OUTPUT_AFTER_PATH_END`), and a
-  Broadcast route `output` after a process that ends in a terminal
-  (`BROADCAST_OUTPUT_AFTER_PATH_END`). Such flows compiled and wrote the
-  message twice, or handed the expanded payload of an `ExpandRoutes` to the
-  output. A branch that ends without a sink no longer logs
+  compilation. A flow `output` after a process that ends in `IntoTopic`,
+  `IntoSink`, `Drain`, `ExpandRoutes`, or a `Router` with a `default` whose
+  branches all end in one of `IntoTopic`, `IntoSink`, `Drain`, fails with
+  `OUTPUT_AFTER_PATH_END`. A Broadcast route `output` after a process that ends
+  in any of those, in a `Broadcast`, or in a `Fork` with a `default` fails
+  with `BROADCAST_OUTPUT_AFTER_PATH_END`. Such flows compiled and wrote the
+  message twice, handed the expanded payload of an `ExpandRoutes` to the
+  output, or never wrote the output. A branch that ends without a sink no longer logs
   `unrouted_branch_drop_sink`.
 - **streaming:** a `terminal_sinks` override passed to `build_dataflow` must
   cover every compiled `IntoTopic` path; a missing one fails with

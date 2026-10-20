@@ -54,10 +54,10 @@ class Branch:
 
 
 BRANCHING_NODE_TYPES: Final = (Fork, Router, Broadcast, ExpandRoutes)
+"""Node types whose branches occupy their own path segment."""
 
 PATH_END_NODE_TYPES: Final = (IntoTopic, IntoSink, Drain, Broadcast)
 """Node types that end the path of every message they receive; validation keeps them last."""
-"""Node types whose branches occupy their own path segment."""
 
 _DEFAULT_LABEL: Final = "default"
 

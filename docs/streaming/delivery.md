@@ -62,6 +62,14 @@ can see.
   a Broadcast route's `output`, else to a drop sink that completes its record,
   so an unfinished `Broadcast` route or `Fork` branch cannot freeze commits.
   Only the flow's own live end goes to the flow `output`, else to a drop sink.
+- An output that nothing can reach fails compilation. A flow `output` after a
+  process that ends in `IntoTopic`, `IntoSink`, `Drain`, `ExpandRoutes`, or a
+  `Router` with a `default` whose branches all end, is `OUTPUT_AFTER_PATH_END`;
+  a Broadcast route `output` after such a process, or after a `Broadcast` or a
+  `Fork` with a `default`, is `BROADCAST_OUTPUT_AFTER_PATH_END`.
+- A `terminal_sinks` override must cover every compiled `IntoTopic` path,
+  inline ones included; a missing one is rejected at assembly
+  (`TERMINAL_SINK_MISSING`) instead of completing its messages unwritten.
 - A `Router` selects one branch per message and runs it inline, so the
   messages that continue after it keep their source order. A branch that ends
   in a sink hands the message to that sink at its compiled path; a message no
