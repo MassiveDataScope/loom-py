@@ -52,9 +52,10 @@ class TestValidateDelivery:
 class TestCompileFlowUndeclaredDelivery:
     def test_a_consumer_without_delivery_is_refused(self) -> None:
         config = OmegaConf.create(_kafka_config({}))
+        flow = _flow()
 
         with pytest.raises(CompilationError) as exc_info:
-            compile_flow(_flow(), config=config)
+            compile_flow(flow, config=config)
 
         issues = [
             issue
