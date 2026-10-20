@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.streaming import (
     Backend,
+    BatchExpandStep,
     Broadcast,
     BroadcastRoute,
     CollectBatch,
@@ -217,6 +218,12 @@ class _Tokens(ContextFactory):
 class _Fanout(ExpandStep[Order, Result]):
     def execute(self, message: Message[Order], **kwargs: object) -> list[Message[Result]]:
         del message, kwargs
+        return []
+
+
+class _BatchFanout(BatchExpandStep[Order, Result]):
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
+        del messages, kwargs
         return []
 
 
@@ -485,11 +492,12 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         None,
     ),
     "router branch issue scoped under its branch": (
-        lambda: _flow(_router(_out(), FakeStep()), output=_out()),
+        lambda: _flow(_router(_BatchFanout, _out())),
         {},
-        StreamingErrorCode.TERMINAL_NOT_LAST,
-        "router branch predicate[0]: IntoTopic must be the last node in a process",
-        "router branch predicate[0] > IntoTopic",
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "router branch predicate[0]: shape mismatch: expected batch but got record before "
+        "_BatchFanout",
+        "router branch predicate[0] > _BatchFanout",
         None,
     ),
     "flow output next to a fork": (

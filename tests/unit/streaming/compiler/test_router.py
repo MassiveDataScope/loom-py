@@ -8,7 +8,6 @@ import pytest
 from omegaconf import DictConfig, OmegaConf
 
 from loom.streaming import (
-    BatchStep,
     CollectBatch,
     Drain,
     ExpandStep,
@@ -117,23 +116,23 @@ class TestRouterCompiler:
 
         assert plan.output is not None
 
-    def test_rejects_a_batch_before_a_router(
+    @pytest.mark.parametrize(
+        "router",
+        [
+            Router.by(msg.payload.order_id, routes={"drop": Process(Drain())}),
+            Router.when([Route(when=msg.payload.order_id != "", process=Process(FakeStep()))]),
+        ],
+        ids=["path_ending_branch", "continuing_branch"],
+    )
+    def test_rejects_a_batch_before_a_router_with_one_issue(
         self,
+        router: Router[Order, Any],
         streaming_kafka_config: DictConfig,
     ) -> None:
-        class _BatchFakeStep(BatchStep[Order, Result]):
-            def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
-                del kwargs
-                return [Result(value=m.payload.order_id) for m in messages]
-
         flow: StreamFlow[Order, Result] = StreamFlow(
             name="test",
             source=FromTopic("in", payload=Order),
-            process=Process(
-                CollectBatch(max_records=10, timeout_ms=1000),
-                Router.by(msg.payload.order_id, routes={"drop": Process(Drain())}),
-                _BatchFakeStep(),
-            ),
+            process=Process(CollectBatch(max_records=10, timeout_ms=1000), router),
             output=IntoTopic("out", payload=Result),
         )
 

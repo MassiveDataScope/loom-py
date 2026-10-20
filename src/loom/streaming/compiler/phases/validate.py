@@ -351,7 +351,7 @@ def _validate_shape_node(
     if isinstance(node, ExpandRoutes):
         return _validate_expand_routes_node(node, idx, node_list)
     if isinstance(node, Router):
-        router_errors, next_shape = _validate_router_shapes(node, current_shape)
+        router_errors, next_shape = _validate_router_shapes(node, StreamShape.RECORD)
         if router_ends_every_path(node):
             not_last = StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
             router_errors.extend(_must_be_last_errors(idx, node_list, not_last))
