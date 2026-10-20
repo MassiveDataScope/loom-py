@@ -554,8 +554,9 @@ What the hotfix did where this ADR left a choice, and what it found:
   found that `ExpandRoutes` was never validated: its routes were not
   shape-checked, and a node could follow it. The hotfix checks each route as
   a record stream and keeps `ExpandRoutes` last (`TERMINAL_NOT_LAST`). A
-  misplaced `Broadcast` in a Router branch now reports `BROADCAST_NOT_LAST`
-  too.
+  `Broadcast` in a Router branch reports `ROUTER_BRANCH_UNSAFE_NODE`; one
+  followed by another node also reports `TERMINAL_NOT_LAST` (component
+  `router branch <label> > Broadcast`).
 - ETL: `ETLCompilationError` keeps its constructor and gains `from_issue`.
   Where a message showed a sorted list or a repr (`['a', 'b']`,
   `IntoTemp('x')`), the call site passes the formatted text, so messages keep

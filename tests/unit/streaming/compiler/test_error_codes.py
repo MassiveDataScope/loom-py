@@ -164,6 +164,23 @@ class TestBranchPrefixing:
         assert branch_issue.message.startswith("fork branch ")
 
 
+class TestRouterBranchTerminals:
+    def test_a_broadcast_followed_by_a_node_in_a_router_branch_is_terminal_not_last(
+        self, streaming_kafka_config: DictConfig
+    ) -> None:
+        """The branch reports the unsafe node and the misplaced terminal, once each."""
+        flow = _flow(_router(_broadcast(FakeStep()), FakeStep()))
+
+        with pytest.raises(CompilationError) as exc_info:
+            compile_flow(flow, config=streaming_kafka_config)
+
+        issues = [(issue.code, issue.component) for issue in exc_info.value.issues]
+        assert issues == [
+            (StreamingErrorCode.TERMINAL_NOT_LAST, "router branch predicate[0] > Broadcast"),
+            (StreamingErrorCode.ROUTER_BRANCH_UNSAFE_NODE, "router branch predicate[0]"),
+        ]
+
+
 class TestBuildPhaseCodes:
     def test_unsupported_storage_sink_raises_coded_error(self) -> None:
         class _NotATable:
@@ -228,9 +245,9 @@ class _SameBatch(BatchStep[Order, Order]):
 
 
 class _BatchFanout(BatchExpandStep[Order, Result]):
-    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
-        del messages, kwargs
-        return []
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[list[Result]]:
+        del kwargs
+        return [[] for _ in messages]
 
 
 class _Expander:
@@ -432,6 +449,22 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         StreamingErrorCode.TERMINAL_NOT_LAST,
         "ExpandRoutes must be the last node in a process",
         "ExpandRoutes",
+        None,
+    ),
+    "topic followed by a step inside a router branch": (
+        lambda: _flow(_router(_out(), FakeStep()), _out()),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "router branch predicate[0]: IntoTopic must be the last node in a process",
+        "router branch predicate[0] > IntoTopic",
+        None,
+    ),
+    "collect batch after a batch": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), CollectBatch(3, 50), Drain()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before CollectBatch",
+        "CollectBatch",
         None,
     ),
     "broadcast inside a router branch": (

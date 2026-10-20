@@ -21,9 +21,8 @@ from loom.streaming.compiler._plan import (
     CompiledStorageSink,
 )
 from loom.streaming.compiler.phases.validate import (
-    _node_needs_async_bridge,
-    _walk_all_process_nodes,
     node_output_shape,
+    walk_process_nodes,
 )
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
@@ -60,7 +59,7 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
     terminal_sinks, terminal_storage_sinks = _build_terminal_sinks(flow.process.nodes, ctx)
     error_routes = {kind: _build_sink(topic, ctx) for kind, topic in flow.errors.items()}
     needs_async = any(
-        _node_needs_async_bridge(node) for node in _walk_all_process_nodes(flow.process.nodes)
+        _node_needs_async_bridge(node) for node in walk_process_nodes(flow.process.nodes)
     )
     return CompiledPlan(
         name=flow.name,
@@ -71,6 +70,12 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
         terminal_storage_sinks=terminal_storage_sinks,
         error_routes=error_routes,
         needs_async_bridge=needs_async,
+    )
+
+
+def _node_needs_async_bridge(node: object) -> bool:
+    return isinstance(node, WithAsync) or (
+        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
     )
 
 

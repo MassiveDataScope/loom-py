@@ -226,12 +226,6 @@ def walk_process_nodes(nodes: Iterable[object]) -> Iterable[object]:
     yield from _walk_all_process_nodes(nodes)
 
 
-def _node_needs_async_bridge(node: object) -> bool:
-    return isinstance(node, WithAsync) or (
-        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
-    )
-
-
 def _check_input_shape(
     node: object,
     current_shape: StreamShape,
@@ -506,7 +500,6 @@ def _validate_broadcast_shapes(
 
 def _validate_router_branch_shape_sequence(
     nodes: Iterable[object],
-    initial_shape: StreamShape,
 ) -> tuple[list[CompilationIssue], StreamShape]:
     """Shape-check the nodes of one Router branch and return the branch's output shape.
 
@@ -515,7 +508,7 @@ def _validate_router_branch_shape_sequence(
     (``loom.streaming.bytewax.handlers.routing._execute_router_node``).
     """
     errors: list[CompilationIssue] = []
-    current_shape = initial_shape
+    current_shape = StreamShape.RECORD
     node_list = tuple(nodes)
 
     for idx, node in enumerate(node_list):
@@ -547,9 +540,7 @@ def _validate_router_shapes(
 
     for branch in iter_branches(router):
         label, nodes = branch.label, branch.nodes
-        branch_errors, branch_output = _validate_router_branch_shape_sequence(
-            nodes, StreamShape.RECORD
-        )
+        branch_errors, branch_output = _validate_router_branch_shape_sequence(nodes)
         errors.extend(_prefixed(issue, f"router branch {label}") for issue in branch_errors)
         for node in nodes:
             if not isinstance(node, RouterBranchSafe):
@@ -698,7 +689,7 @@ def _validate_scoped_process_nodes(nodes: Iterable[object]) -> list[CompilationI
 
 
 _NODE_SHAPES: tuple[tuple[type, StreamShape | None, StreamShape | None], ...] = (
-    (CollectBatch, None, StreamShape.BATCH),
+    (CollectBatch, StreamShape.RECORD, StreamShape.BATCH),
     (ForEach, StreamShape.BATCH, StreamShape.RECORD),
     (Explode, StreamShape.RECORD, None),
     (Router, StreamShape.RECORD, None),
