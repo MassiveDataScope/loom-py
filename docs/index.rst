@@ -55,6 +55,7 @@ Companion demo application:
    getting-started/rest
    getting-started/etl
    getting-started/streaming
+   getting-started/environments
 
 .. toctree::
    :maxdepth: 2

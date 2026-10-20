@@ -73,6 +73,10 @@ from loom.rest.fastapi.auto import create_app
 app = create_app("config/api.yaml")
 ```
 
+Run it with `LOOM_ENV=development`. Without the variable loom starts in
+production and runs the deploy checks, and this API authenticates nobody
+(`loom.rest.E001`). See [Environments and deploy checks](environments.md).
+
 Five endpoints (`GET /`, `GET /:id`, `POST /`, `PATCH /:id`, `DELETE /:id`) are
 live with zero hand-written use-case code.
 

@@ -18,7 +18,7 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.ipc as ipc
 
-_SPOOL_DIR_ENV = "LOOM_SPOOL_DIR"
+from loom.core.environment import SPOOL_DIR_VARIABLE, loom_variable
 
 
 class StreamingSpool(NamedTuple):
@@ -29,7 +29,7 @@ class StreamingSpool(NamedTuple):
 def _resolve_spool_dir(spool_dir: str | os.PathLike[str] | None) -> str | None:
     if spool_dir is not None:
         return str(spool_dir)
-    env_dir = os.environ.get(_SPOOL_DIR_ENV)
+    env_dir = loom_variable(SPOOL_DIR_VARIABLE)
     return env_dir if env_dir else None
 
 

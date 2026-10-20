@@ -1,6 +1,6 @@
 from loom.core.logger.abc import LoggerPort
+from loom.core.logger.checks import CONSOLE_RENDERER_CHECK
 from loom.core.logger.config import (
-    Environment,
     FileHandlerConfig,
     HandlerConfig,
     LogConfig,
@@ -20,7 +20,7 @@ from loom.core.logger.registry import (
 from loom.core.logger.structlogger import StructLogger
 
 __all__ = [
-    "Environment",
+    "CONSOLE_RENDERER_CHECK",
     "FileHandlerConfig",
     "HandlerConfig",
     "LogConfig",

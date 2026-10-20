@@ -17,6 +17,7 @@ from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError
 from loom.celery.bootstrap import WorkerBootstrapResult, bootstrap_worker
 from loom.celery.constants import TASK_JOB_PREFIX
+from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -149,9 +150,13 @@ class TestBootstrapWorkerResult:
         runtime = ObservabilityRuntime.noop()
 
         def _fake_from_config(
-            cls: type[ObservabilityRuntime], config: ObservabilityConfig
+            cls: type[ObservabilityRuntime],
+            config: ObservabilityConfig,
+            *,
+            environment: Environment,
         ) -> ObservabilityRuntime:
             captured["config"] = config
+            captured["environment"] = environment
             return runtime
 
         boot_module = cast(Any, boot)
@@ -161,9 +166,10 @@ class TestBootstrapWorkerResult:
             classmethod(_fake_from_config),
         )
 
-        result = bootstrap_worker(str(config_file), jobs=[_DoubleSyncJob])
+        result = bootstrap_worker(str(config_file), jobs=[_DoubleSyncJob], environment="staging")
         assert isinstance(result, WorkerBootstrapResult)
         assert captured["config"].log.enabled is False
+        assert captured["environment"] is Environment.STAGING
 
 
 class TestBootstrapWorkerTaskExecution:

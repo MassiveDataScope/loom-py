@@ -27,7 +27,7 @@ def _is_local_endpoint(endpoint: str) -> bool:
     return (urlparse(endpoint).hostname or "") in _LOCAL_HOSTS
 
 
-class OtelConfig(LoomFrozenStruct, frozen=True):
+class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """OpenTelemetry SDK/exporter configuration.
 
     Args:
