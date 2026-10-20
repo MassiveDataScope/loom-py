@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
+import msgspec
 import pytest
 
 from loom.core.model import BaseModel, ColumnField
@@ -33,6 +34,13 @@ class Ledger(BaseModel):
     day: date = ColumnField()
     at: time = ColumnField()
     ref: UUID = ColumnField()
+
+
+class _Pending(BaseModel):
+    __tablename__ = "pending_ledger"
+
+    id: UUID = ColumnField(primary_key=True)
+    amount: Decimal | msgspec.UnsetType = msgspec.UNSET
 
 
 def _single(spec: FilterSpec) -> FilterGroup:
@@ -247,6 +255,15 @@ class TestStorageValues:
 
         with pytest.raises(UnsupportedQuery, match="'amount'.*Decimal"):
             ledger.compile_sort(sort)
+
+    def test_an_unset_decimal_range_and_sort_are_unsupported_like_a_decimal(self) -> None:
+        compiler = MongoQueryCompiler(_Pending, "id")
+        group = _single(FilterSpec("amount", FilterOp.GT, Decimal("1")))
+
+        with pytest.raises(UnsupportedQuery, match="'amount'.*Decimal"):
+            compiler.compile_filter(group)
+        with pytest.raises(UnsupportedQuery, match="'amount'.*Decimal"):
+            compiler.compile_sort((SortSpec("amount"),))
 
 
 class TestGroups:

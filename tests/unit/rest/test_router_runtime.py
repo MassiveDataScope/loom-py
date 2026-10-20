@@ -219,6 +219,7 @@ class _Entry(BaseModel):
     due: date = ColumnField()
     seen_at: datetime = ColumnField()
     sort_order: int = ColumnField()
+    nickname: str | msgspec.UnsetType = msgspec.UNSET
 
 
 FILTERS_SEEN: list[dict[str, Any]] = []
@@ -682,6 +683,7 @@ def _entry_client(
             "due",
             "seen_at",
             "sort_order",
+            "nickname",
         )
         routes = (
             RestRoute(
@@ -767,6 +769,16 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
     ],
 )
 def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
+    query: str, expected: dict[str, Any]
+) -> None:
+    assert _filters_seen(query) == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("nickname=ann", {"nickname": "ann"}), ("nickname__like=an%25", {"nickname": "an%"})],
+)
+def test_bind_interfaces_filters_an_unset_text_column_by_value_and_pattern(
     query: str, expected: dict[str, Any]
 ) -> None:
     assert _filters_seen(query) == expected

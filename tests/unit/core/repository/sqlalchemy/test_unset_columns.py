@@ -1,13 +1,13 @@
-"""A field annotated ``X | UnsetType`` round-trips through the SQLAlchemy repository."""
+"""A field annotated ``X | UnsetType`` is stored as ``X`` through the SQLAlchemy repository."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from decimal import Decimal
+from typing import Any
 
 import msgspec
 import pytest
-from sqlalchemy import MetaData
+from sqlalchemy import text
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
@@ -58,44 +58,28 @@ def repo(session_manager: SessionManager) -> RepositorySQLAlchemy[_Badge, int]:
     )
 
 
-def test_an_unset_field_compiles_to_its_scalar_column() -> None:
-    compile_all(_Badge)
-    compiled = get_compiled(_Badge)
-    assert compiled is not None
-    columns = compiled.metadata.tables["unset_badges"].c
-
-    assert (type(columns.label.type).__name__, columns.label.nullable) == ("String", False)
-    assert (type(columns.note.type).__name__, columns.note.nullable) == ("String", True)
-
-
-def test_an_unset_decimal_needs_a_declared_column_type_like_a_decimal() -> None:
-    class _Priced(BaseModel):
-        __tablename__ = "unset_priced"
-
-        id: int = ColumnField(primary_key=True)
-        price: Decimal | msgspec.UnsetType = msgspec.UNSET
-
-    metadata = MetaData()
-
-    with pytest.raises(ValueError, match="no column type is inferred from a Decimal"):
-        compile_all(_Priced, metadata=metadata)
+async def _stored_row(session_manager: SessionManager, badge_id: int) -> tuple[Any, ...]:
+    """The row as the database holds it, bypassing the repository's decoding."""
+    async with session_manager.engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT label, note FROM unset_badges WHERE id = :id"), {"id": badge_id}
+        )
+        return tuple(result.one())
 
 
-async def test_an_unset_field_left_out_on_create_is_read_back_as_null(
-    repo: RepositorySQLAlchemy[_Badge, int],
+async def test_an_unset_field_left_out_on_create_is_stored_as_null(
+    repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
 ) -> None:
     created = await repo.create(_CreateBadge(label="first"))
-    stored = await repo.get_by_id(created.id)
 
-    assert stored is not None
-    assert (stored.label, stored.note) == ("first", None)
+    assert await _stored_row(session_manager, created.id) == ("first", None)
+    assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note=None)
 
 
-async def test_an_unset_field_given_on_create_is_read_back(
-    repo: RepositorySQLAlchemy[_Badge, int],
+async def test_an_unset_field_given_on_create_is_stored_as_its_scalar_value(
+    repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
 ) -> None:
     created = await repo.create(_CreateBadge(label="first", note="kept"))
-    stored = await repo.get_by_id(created.id)
 
-    assert stored is not None
-    assert (stored.label, stored.note) == ("first", "kept")
+    assert await _stored_row(session_manager, created.id) == ("first", "kept")
+    assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note="kept")
