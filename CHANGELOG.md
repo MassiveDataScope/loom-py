@@ -623,6 +623,46 @@
   settings take effect: `primary_key=True` adds the column to the primary key,
   which can turn a model's key composite, and `nullable=True` makes the column
   nullable. Review such fields before upgrading.
+- **core:** a `date` field is inferred as a `Date` column and a `time` field
+  as a `Time` column (`loom.core.model.Date`, `loom.core.model.Time`, new),
+  where both used to be inferred as an unbounded `String`; an enum mixed with
+  `date` or `time` follows to `Date` or `Time`. The SQLAlchemy repository
+  binds `date` and `time` values natively, so on Postgres with asyncpg writing
+  either field failed (`expected str, got date`, and the same for `time`). The
+  SQLAlchemy repository now refuses a `time` that carries a UTC offset when it
+  is written to, or compared with, a column that would drop the offset, with a
+  `BoundaryValidationError` (a `ValueError`) naming the column and not the
+  value: `boundary_validation` for a write (REST answers `422`),
+  `query_validation` for a filter, `get_by`, `exists_by` or `list_paginated`
+  value (`400`). Without the check, Postgres and SQLite would store
+  `08:30+02:00` in a `Time` column as `08:30`, and an aware filter value would
+  match the row holding `08:30`. A JSON column and a `Time` column declared
+  with `ColumnType("Time", kwargs={"timezone": True})` accept it; the JSON
+  column keeps the written offset, and so does the `Time` column on Postgres
+  (`timetz`), which takes only a `time` with an offset: one without (naive, or
+  with a zone but no fixed offset) is refused the same way, under
+  `time must carry a UTC offset`, since asyncpg cannot encode it for `timetz`;
+  every refused column of a write is reported, in name order. On any other
+  dialect startup refuses a `Time(timezone=True)` column with a `ConfigError`
+  naming `table.column`, since the dialect would not keep the offset. A
+  `datetime` field (`DateTime(tz=True)`) keeps the instant on Postgres
+  (`timestamptz`) and MongoDB, read back in UTC, not the written offset.
+  `get_by`, `exists_by` and the `filters` of `list_paginated` now convert
+  their value as a write converts it, as `QuerySpec` filters already did, so a
+  plain `Enum` member matches the value the write stored instead of failing to
+  bind. A `list_paginated` filter, `get_by` or `exists_by` on a name that is
+  not a mapped column of the model (a missing field, a relation, an attribute
+  such as `metadata`) raises `ValueError` naming it. An existing Postgres
+  table holding these columns as `varchar` needs a migration: Alembic
+  autogenerate detects the type change, but Postgres refuses it without a
+  cast, so the revision passes `postgresql_using="c::date"` (`"c::time"` for a
+  `time` field) to `op.alter_column`, which is
+  `ALTER TABLE t ALTER COLUMN c TYPE date USING c::date`. `c::time` drops any
+  offset the stored text holds (`'08:30+02'::time` is `08:30`): check first
+  with `SELECT c FROM t WHERE c ~ '[+-]\d{2}(:?\d{2})?$'`, and if offsets are
+  present convert those rows deliberately (for example to UTC with
+  `(c::timetz AT TIME ZONE 'UTC')::time`) before changing the type. MongoDB is
+  unaffected: it stores `date` and `time` values as ISO 8601 strings.
 
 ### ai
 
