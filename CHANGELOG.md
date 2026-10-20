@@ -930,12 +930,18 @@
   partitions completed offsets at the inline write.
 - **streaming:** a Delta `IntoTable` whose payload type has no fields fails
   with `ValueError` when its partition is built. Its items wrote no row.
-- **streaming:** a node that ends a path in a sink ends it: a top-level
-  `IntoTopic` or `IntoSink` is no longer also sent to the flow `output`, a
-  Broadcast route whose process ends in a terminal no longer also writes the
-  route's `output`, and the expanded payload of an `ExpandRoutes` no longer
-  goes to the flow `output`. A branch that ends without a sink no longer logs
+- **streaming:** an output declared after a node that ends every path fails
+  compilation: a flow `output` after a process that ends in `IntoTopic`,
+  `IntoSink`, `Drain` or `ExpandRoutes` (`OUTPUT_AFTER_PATH_END`), and a
+  Broadcast route `output` after a process that ends in a terminal
+  (`BROADCAST_OUTPUT_AFTER_PATH_END`). Such flows compiled and wrote the
+  message twice, or handed the expanded payload of an `ExpandRoutes` to the
+  output. A branch that ends without a sink no longer logs
   `unrouted_branch_drop_sink`.
+- **streaming:** a `terminal_sinks` override passed to `build_dataflow` must
+  cover every compiled `IntoTopic` path; a missing one fails with
+  `RuntimeConfigurationError` (`TERMINAL_SINK_MISSING`). The path fell back to
+  a drop sink, so its messages completed without being written.
 - **streaming:** a failed send or flush to a Kafka sink's DLQ topic fails the
   run (inside `With` or `WithAsync`, the message becomes an error envelope). It
   used to be logged as `dlq_send_failed` and the batch's offsets were
