@@ -949,6 +949,24 @@
 
 ### streaming
 
+- **streaming:** `BatchExpandStep.execute` returns one list of payloads per
+  message of its batch, in batch order, instead of one flat list. List `i`
+  holds what `messages[i]` expands into; each output takes that message's
+  metadata, and an empty list filters the message out. A result whose length
+  differs from the batch, a flat list of payloads, a `Message` among the
+  outputs, or a `str`, `bytes`, `bytearray` or mapping in place of the result
+  or of one of its lists raises `TypeError`, and the batch becomes error
+  envelopes.
+
+  ```python
+  # before
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
+      return [Score(value=m.payload.amount) for m in messages]
+
+  # after
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
+      return [[Score(value=m.payload.amount)] for m in messages]
+  ```
 - **streaming:** compile issues come from the code catalogue
   (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
   factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
@@ -1407,6 +1425,14 @@
   `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a step
   after a `Router` without a default whose branches all end their path failed
   with `SHAPE_MISMATCH`; both compile now.
+- **streaming:** a `BatchExpandStep` expands. Every output had to pair with
+  one input message, so a step returning more or fewer outputs than its batch
+  raised and each message of the batch became an error envelope. Under
+  at-least-once delivery each source offset now completes once per output,
+  after that output's write, and a message with no output completes its
+  offset at the step, also when the batch holds several messages of one
+  offset that an earlier expanding node produced. The new return type is under
+  Behaviour changes.
 
 ### prefect
 
