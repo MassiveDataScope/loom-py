@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Annotated, Any
 
 import msgspec
@@ -191,6 +191,11 @@ class _Tone(Enum):
     DARK = "dark"
 
 
+class _Phase(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
 class _Entry(BaseModel):
     __tablename__ = "router_runtime_entries"
 
@@ -200,6 +205,7 @@ class _Entry(BaseModel):
     quota: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
     active: bool = ColumnField()
     tone: _Tone = ColumnField(String(5))
+    phase: _Phase = ColumnField()
     due: date = ColumnField()
     seen_at: datetime = ColumnField()
     sort_order: int = ColumnField()
@@ -635,6 +641,7 @@ def _entry_client(
             F(_Entry).quota,
             "active",
             "tone",
+            "phase",
             "due",
             "seen_at",
             "sort_order",
@@ -734,6 +741,14 @@ def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
+
+
+def test_bind_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value() -> None:
+    values = _entry_client().get("/entries/?phase=closed")
+    types = _entry_client(EntryFilterTypesUseCase).get("/entries/?phase=closed")
+
+    assert (values.status_code, values.json()) == (200, {"phase": "closed"})
+    assert (types.status_code, types.json()) == (200, {"phase": "_Phase"})
 
 
 @pytest.mark.parametrize(

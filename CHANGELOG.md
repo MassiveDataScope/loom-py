@@ -589,6 +589,36 @@
   it. A `@cache_query` argument that is a pydantic instance now contributes
   its builtins rendering to the cache key rather than the instance's own
   `repr`, a one-time key change.
+- **core:** a model field annotated with an enum and no declared column type
+  takes the column type of the scalar the enum is mixed with, the first class
+  of its MRO with a column rule, as that class itself would: a `StrEnum` (any
+  `str` enum) becomes `String`, honouring `length=`, an `IntEnum` or `IntFlag`
+  becomes `Integer`, a `float` enum `Float`, a `Decimal` enum `Numeric`,
+  instead of `JSON`. The value is stored as a plain string or integer, not
+  JSON-encoded, so the column can be filtered by equality; `Optional` of such
+  an enum behaves the same. An existing table with such a column needs a
+  migration that converts the data with a `USING` clause, which Alembic's
+  autogenerate does not write: on Postgres,
+  `ALTER TABLE t ALTER COLUMN c TYPE varchar USING c #>> '{}'` and
+  `ALTER TABLE t ALTER COLUMN c TYPE integer USING (c #>> '{}')::integer`. On
+  SQLAlchemy models, a plain `Enum` (mixed with no scalar) or a `Literal[...]`
+  field with no declared column type now fails model compilation with a
+  `ValueError` naming the model and the field, instead of becoming a `JSON`
+  column; loom does not infer a type from the values. Declare the column, for
+  example `colour: Colour = ColumnField(String(20))`. Mongo and DynamoDB
+  models keep such fields as they are. Declared column types are unchanged,
+  and an `Annotated[...]` column type or `Field` is now read also when the
+  `Annotated` sits inside `Optional` (`Annotated[T, String(1)] | None`), and
+  is used when a `ColumnField(...)` on the field declares no column type.
+  `ColumnFieldInfo` gains `needs_declared_type`.
+- **core:** an `Optional` inside `Annotated` whose metadata carries no column
+  type, such as `Annotated[int | None, msgspec.Meta(ge=0)]`, now takes the
+  column of its scalar type (`Integer` here) instead of `JSON`; an existing
+  table needs the same `USING` migration as above. A `Field(...)` inside
+  `Annotated` with no column type is now read instead of being dropped, so its
+  settings take effect: `primary_key=True` adds the column to the primary key,
+  which can turn a model's key composite, and `nullable=True` makes the column
+  nullable. Review such fields before upgrading.
 
 ### ai
 
@@ -704,8 +734,8 @@
   the route at startup. Only scalar columns of the use case's own model
   (`UseCase[Model, ...]`) qualify. A related model's column (`warehouse.code`)
   is refused, and so are JSON, array and text-search columns; lists, dicts
-  and structs, and an `Enum` or `Literal` declared without a column type, are
-  JSON. `InterfaceCompilationError` names the route and the field. It is also
+  and structs are JSON. A `StrEnum` or `IntEnum` column is scalar; a plain
+  `Enum` or a `Literal` needs a declared column type. `InterfaceCompilationError` names the route and the field. It is also
   raised for a declaration on a use case with no model, and for a route-level
   declaration on a route without a `QuerySpec`; an inherited one is ignored.
   `exists` and `not_exists` answer `400 unsupported_query`, and so do `like`
