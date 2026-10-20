@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from sqlalchemy import and_, or_
+from sqlalchemy.sql.expression import ClauseElement
 
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
@@ -14,6 +15,7 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_exists,
     compile_not_exists,
 )
+from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {
@@ -74,7 +76,19 @@ def _compile_spec(
 
 
 def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
+    """Apply *op*, converting *value* as the repository converts a value it writes.
+
+    A SQLAlchemy expression, and an ``IN`` value that is a string or not
+    iterable, reach SQLAlchemy as they are.
+    """
     handler = _SIMPLE_OPS.get(op)
-    if handler is not None:
+    if handler is None:
+        raise ValueError(f"Unsupported FilterOp: {op!r}")
+    if isinstance(value, ClauseElement):
         return handler(col, value)
-    raise ValueError(f"Unsupported FilterOp: {op!r}")
+    json = is_json_column(col)
+    if op is not FilterOp.IN:
+        return handler(col, to_column_value(value, json=json))
+    if isinstance(value, str | bytes) or not isinstance(value, Iterable):
+        return handler(col, value)
+    return handler(col, [to_column_value(item, json=json) for item in value])
