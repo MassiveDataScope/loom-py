@@ -173,7 +173,7 @@ def test_apply_expand_step_executes_and_flattens(
         return fn(stream)
 
     monkeypatch.setattr(_steps, "bw_map", _bw_map)
-    monkeypatch.setattr("bytewax.operators.flat_map", _flat_map)
+    monkeypatch.setattr(_steps, "flat_map", _flat_map)
     monkeypatch.setattr(_steps, "_split_node_result", lambda stream, *_: stream)
 
     result = _steps._apply_expand_step("input-stream", _ExpandStep(), 5, _ctx())

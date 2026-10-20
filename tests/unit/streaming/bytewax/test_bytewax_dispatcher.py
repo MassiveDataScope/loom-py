@@ -681,8 +681,27 @@ def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing() -> None
             [[_message("a1")], [], []],
             "UpperBatchExpand must return payloads, not messages",
         ),
+        (["ab", [], []], "UpperBatchExpand must return one list of payloads per message"),
+        (["", [], []], "UpperBatchExpand must return one list of payloads per message"),
+        ([b"", [], []], "UpperBatchExpand must return one list of payloads per message"),
+        ([{}, [], []], "UpperBatchExpand must return one list of payloads per message"),
+        ("abc", "UpperBatchExpand must return one list of payloads per message"),
+        (
+            {"a": [], "b": [], "c": []},
+            "UpperBatchExpand must return one list of payloads per message",
+        ),
     ],
-    ids=["outer_length", "flat_payloads", "message_output"],
+    ids=[
+        "outer_length",
+        "flat_payloads",
+        "message_output",
+        "str_list",
+        "empty_str_list",
+        "bytes_list",
+        "mapping_list",
+        "str_result",
+        "mapping_result",
+    ],
 )
 def test_execute_batch_expand_step_rejects_a_result_not_aligned_with_the_batch(
     result: object, error: str

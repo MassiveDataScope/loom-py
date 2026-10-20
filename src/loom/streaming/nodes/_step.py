@@ -142,8 +142,13 @@ class BatchExpandStep(Step[InT, OutT], ABC):
     with the explicit batch and dependency signature they need. The result
     holds one list per message, in batch order: list ``i`` holds the payloads
     ``messages[i]`` expands into, and each takes that message's metadata. An
-    empty list filters the message out. A result of any other length raises
-    ``TypeError``.
+    empty list filters the message out. The result and each of its lists are
+    iterated once, so generators work.
+
+    These results raise ``TypeError`` and every message of the batch becomes
+    an error envelope: a result whose length differs from the batch, a flat
+    list of payloads, a ``Message`` among the outputs, and a ``str``,
+    ``bytes`` or mapping in place of the result or of one of its lists.
     """
 
     router_branch_safe: ClassVar[bool] = True

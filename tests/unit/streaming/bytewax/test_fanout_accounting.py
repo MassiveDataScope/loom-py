@@ -161,7 +161,7 @@ def _drive(monkeypatch: pytest.MonkeyPatch, module: Any, inputs: Any) -> list[An
         return result
 
     monkeypatch.setattr(module, "bw_map", _bw_map)
-    monkeypatch.setattr("bytewax.operators.flat_map", lambda step_id, stream, fn: fn(stream))
+    monkeypatch.setattr(module, "flat_map", lambda step_id, stream, fn: fn(stream))
     monkeypatch.setattr(module, "_split_node_result", lambda stream, *_: stream, raising=False)
     return produced
 
@@ -690,6 +690,22 @@ class _NothingFromBatch(BatchExpandStep[Item, Item]):
         return [[] for _ in messages]
 
 
+class _SameFromBatch(BatchExpandStep[Item, Item]):
+    """Expand every message of a batch into itself."""
+
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
+        del kwargs
+        return [[message.payload] for message in messages]
+
+
+class _FailingBatch(BatchExpandStep[Item, Item]):
+    """Fail on every batch."""
+
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
+        del kwargs, messages
+        raise RuntimeError("batch failed")
+
+
 class _TwoRows:
     """Expand every item into two rows of one type."""
 
@@ -1094,6 +1110,39 @@ _PATH_CASES = {
         ),
         _each("t.a", 0, 0, 2),
         shares={0: 2, 1: 1, 2: 1},
+        errors="t.err",
+    ),
+    "siblings_into_batch_expand_step": _PathCase(
+        lambda: Process(
+            _TwiceExceptItem1(),
+            CollectBatch(max_records=3, timeout_ms=50),
+            _SameFromBatch(),
+            _topic("t.a"),
+        ),
+        _each("t.a", 0, 0, 2, 2),
+        shares={0: 2, 1: 1, 2: 2},
+        errors="t.err",
+    ),
+    "siblings_into_batch_expand_step_to_nothing": _PathCase(
+        lambda: Process(
+            _TwiceExceptItem1(),
+            CollectBatch(max_records=3, timeout_ms=50),
+            _NothingFromBatch(),
+            _topic("t.a"),
+        ),
+        (),
+        shares={0: 2, 1: 1, 2: 2},
+        errors="t.err",
+    ),
+    "siblings_into_failing_batch_expand_step": _PathCase(
+        lambda: Process(
+            _TwiceExceptItem1(),
+            CollectBatch(max_records=3, timeout_ms=50),
+            _FailingBatch(),
+            _topic("t.a"),
+        ),
+        _each("t.err", 0, 0, 2, 2),
+        shares={0: 2, 1: 1, 2: 2},
         errors="t.err",
     ),
     "batch_expand_step_to_nothing": _PathCase(

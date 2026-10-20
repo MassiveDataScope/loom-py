@@ -1372,7 +1372,9 @@
   raised and each message of the batch became an error envelope. Under
   at-least-once delivery each source offset now completes once per output,
   after that output's write, and a message with no output completes its
-  offset at the step. The new return type is under Behaviour changes.
+  offset at the step, also when the batch holds several messages of one
+  offset that an earlier expanding node produced. The new return type is under
+  Behaviour changes.
 
 ### prefect
 
