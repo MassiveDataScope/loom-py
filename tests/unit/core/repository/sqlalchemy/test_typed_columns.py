@@ -282,7 +282,9 @@ class TestUuidColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Badge
+            session_manager=session_manager,
+            model=_Badge,
+            cursor_codec=_CODEC,
         )
         created = await repo.create(_CreateBadge(ref=_REF))
         await repo.create(_CreateBadge(ref=_OTHER_REF))
@@ -302,7 +304,9 @@ class TestUuidColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Pass, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Pass
+            session_manager=session_manager,
+            model=_Pass,
+            cursor_codec=_CODEC,
         )
 
         created = await repo.create(_CreatePass(ref=_REF))
@@ -318,7 +322,9 @@ class TestUuidColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Badge
+            session_manager=session_manager,
+            model=_Badge,
+            cursor_codec=_CODEC,
         )
         refs = [UUID(int=value << 64) for value in (7, 2, 9, 4, 1)]
         await repo.create_many([_CreateBadge(ref=ref) for ref in refs])
