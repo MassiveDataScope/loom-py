@@ -221,7 +221,7 @@ def run_deploy_checks(
     """
     section = _checks_section(config)
     _import_modules(section.modules)
-    silenced = silenced_checks(config)
+    silenced = _silenced(section.silenced)
     results = tuple(
         CheckResult(id=check_id, message=finding.message, hint=finding.hint)
         for check_id, check in registry.items()

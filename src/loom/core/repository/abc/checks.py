@@ -57,4 +57,4 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
     )
 
 
-__all__ = ["CURSOR_SIGNING_CHECK"]
+__all__: list[str] = []

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from enum import Enum
 
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.model import BaseModel, ColumnField, DateTime, String
+from loom.core.errors.codes import ErrorCode
+from loom.core.model import BaseModel, BoundaryValidationError, ColumnField, DateTime, String
 from loom.core.repository.abc import (
     Cursor,
     CursorCodec,
@@ -256,3 +257,39 @@ async def test_a_plain_enum_sort_walks_every_page(session_manager: SessionManage
     assert isinstance(second, CursorResult)
     walked = [item.shade for item in (*first.items, *second.items)]
     assert walked == sorted(_Shade, key=lambda shade: shade.value)
+
+
+class _Shift(BaseModel):
+    __tablename__ = "cursor_shifts"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    starts_at: time = ColumnField()
+
+
+async def test_a_forged_aware_time_for_a_naive_time_column_is_refused(
+    session_manager: SessionManager,
+) -> None:
+    """A position is compared as a filter value is, offset rule included."""
+    compile_all(_Shift)
+    compiled = get_compiled(_Shift)
+    assert compiled is not None
+    async with session_manager.engine.begin() as connection:
+        await connection.run_sync(compiled.metadata.create_all)
+    unsigned = CursorCodec(signing="unsigned")
+    repo: RepositorySQLAlchemy[_Shift, int] = RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Shift, cursor_codec=unsigned
+    )
+    query = QuerySpec(sort=(SortSpec("starts_at"),), pagination=PaginationMode.CURSOR, limit=2)
+    aware = time(9, 30, tzinfo=timezone(timedelta(hours=2)))
+    token = unsigned.encode(
+        Cursor(backend="sqlalchemy", keys=(aware,), tie_breaker=1),
+        model=_Shift,
+        query=query,
+        scope="",
+    )
+    forged = QuerySpec(sort=query.sort, pagination=query.pagination, limit=2, cursor=token)
+
+    with pytest.raises(BoundaryValidationError) as excinfo:
+        await repo.list_with_query(forged)
+
+    assert excinfo.value.code == ErrorCode.QUERY_VALIDATION

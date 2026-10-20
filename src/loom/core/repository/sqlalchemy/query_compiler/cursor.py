@@ -19,7 +19,7 @@ from sqlalchemy import and_, or_
 from loom.core.repository.abc.cursor import Cursor
 from loom.core.repository.abc.query import SortSpec
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
-from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+from loom.core.repository.sqlalchemy.values import to_comparison_value
 
 
 def compile_cursor_predicate(
@@ -49,6 +49,8 @@ def compile_cursor_predicate(
 
     Raises:
         FilterPathError: If a sort field cannot be resolved.
+        BoundaryValidationError: ``query_validation``, for a ``time`` key whose
+            offset its column cannot take.
     """
     ties = (
         cast(tuple[object, ...], cursor.tie_breaker)
@@ -106,13 +108,17 @@ def extract_next_cursor(
 
 
 def _column_value(column: Any, value: object) -> object:
-    """``value`` as ``column`` stores it, the conversion the write path applies.
+    """``value`` as ``column`` is compared: naive UTC for a datetime against a
+    ``timezone=False`` column, otherwise as a filter value is
+    (:func:`~loom.core.repository.sqlalchemy.values.to_comparison_value`).
 
-    A datetime against a ``timezone=False`` column is compared as naive UTC.
+    Raises:
+        BoundaryValidationError: ``query_validation``, for a ``time`` whose
+            offset the column cannot take.
     """
     if isinstance(value, datetime) and getattr(column.type, "timezone", True) is False:
         return value.astimezone(UTC).replace(tzinfo=None)
-    return to_column_value(value, json=is_json_column(column))
+    return to_comparison_value(column, value)
 
 
 def _read_path(obj: Any, path: str) -> Any:

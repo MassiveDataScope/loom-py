@@ -1,5 +1,6 @@
-from loom.core.repository.abc.checks import CURSOR_SIGNING_CHECK
+from loom.core.repository.abc import checks as checks  # registers loom.cursors.E001
 from loom.core.repository.abc.cursor import (
+    CURSOR_SIGNING_CHECK,
     Cursor,
     CursorCodec,
     CursorConfig,

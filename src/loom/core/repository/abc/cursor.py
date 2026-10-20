@@ -27,7 +27,6 @@ whose message never echoes the token. See ADR 0004.
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import hmac
 import logging
@@ -433,7 +432,7 @@ def _read_key(key_id: str, spec: CursorKeySource) -> bytes:
             raise ConfigError(f"cursor key {key_id!r}: its file could not be read") from None
     try:
         return base64.b64decode(text.strip(), validate=True)
-    except (binascii.Error, ValueError):
+    except ValueError:  # binascii.Error included
         raise ConfigError(f"cursor key {key_id!r} is not standard base64") from None
 
 
@@ -645,9 +644,9 @@ def cursor_carries(annotation: Any) -> bool:
     """Whether a token can carry a value of a column annotated ``annotation``.
 
     A non-optional ``bool``, ``int``, ``float``, ``str``, ``datetime``,
-    ``date``, ``time``, ``UUID``, ``Decimal``, ``Enum`` or ``Literal`` of
-    those; an optional annotation is refused, since a null cannot position a
-    page.
+    ``date``, ``time``, ``UUID``, ``Decimal`` or ``Enum``, or a ``Literal``
+    whose values are all ``int`` or ``str``; an optional annotation is
+    refused, since a null cannot position a page.
     """
     if get_origin(annotation) is Literal:
         return all(isinstance(value, int | str) for value in get_args(annotation))
@@ -664,7 +663,7 @@ def _b64decode(text: str) -> bytes | None:
         return None
     try:
         data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except (binascii.Error, ValueError):
+    except ValueError:  # binascii.Error included
         return None
     # Unused trailing bits would let several texts decode to the same bytes.
     return data if _b64encode(data) == text else None
