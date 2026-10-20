@@ -5,9 +5,8 @@ The renderer and colour defaults follow the central
 (production, staging) renders JSON without colours, a local one (development,
 test) coloured console lines. An explicit ``renderer`` or ``colors`` wins.
 
-In a deployed environment the deploy checks' logger and the handlers loom
-attaches keep a WARNING floor, so a configured level (``CRITICAL``, top-level
-or named) cannot hide a failing deploy check or the silenced ids.
+The attached handlers pass every record; the loggers filter, so a named level
+below the top-level one takes effect.
 """
 
 from __future__ import annotations
@@ -18,12 +17,11 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Final, Literal
+from typing import Any, Literal
 
 import msgspec
 import structlog
 
-from loom.core import checks
 from loom.core.environment import Environment, resolve_environment
 from loom.core.model import LoomFrozenStruct
 
@@ -264,11 +262,9 @@ def _setup_stdlib(config: LogConfig, level: int, environment: Environment) -> No
     while target.handlers:
         target.removeHandler(target.handlers[-1])
 
-    # Loggers still filter by their own level; the floor lets a deploy check through.
-    handler_level = min(level, _DEPLOYED_FLOOR) if environment.is_deployed else level
+    # Handlers stay at NOTSET: the loggers filter, so named levels apply as set.
     for handler_cfg in config.handlers or (StreamHandlerConfig(),):
         handler = _build_stdlib_handler(handler_cfg)
-        handler.setLevel(handler_level)
         handler.setFormatter(
             structlog.stdlib.ProcessorFormatter(
                 processor=_handler_renderer(handler_cfg, config, environment),
@@ -305,15 +301,7 @@ def _apply_named_levels(config: LogConfig) -> None:
         logging.getLogger(logger_name).setLevel(_resolve_level(level_name, logger_name))
 
 
-def _floor_deploy_checks_logger() -> None:
-    target = logging.getLogger(_DEPLOY_CHECKS_LOGGER)
-    if target.getEffectiveLevel() > _DEPLOYED_FLOOR:
-        target.setLevel(_DEPLOYED_FLOOR)
-
-
 _DEFAULT_LOG_CONFIG = LogConfig()
-_DEPLOYED_FLOOR: Final = logging.WARNING
-_DEPLOY_CHECKS_LOGGER: Final = checks.__name__
 
 
 def configure_logging_from_values(
@@ -386,11 +374,8 @@ def configure_logging(
         >>> configure_logging(LogConfig(level="WARNING"), environment=Environment.STAGING)
     """
     level = _parse_level(config.level)
-    resolved = resolve_environment(environment)
-    _setup_stdlib(config, level, resolved)
+    _setup_stdlib(config, level, resolve_environment(environment))
     _apply_named_levels(config)
-    if resolved.is_deployed:
-        _floor_deploy_checks_logger()
 
     if config.fields:
         structlog.contextvars.bind_contextvars(**dict(config.fields))

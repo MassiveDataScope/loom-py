@@ -111,18 +111,22 @@ def test_a_key_the_logger_does_not_know_is_a_config_error(logger_config: dict[st
         config.section("logger", LoggerConfig)
 
 
-_FLOOR_LOGGERS = ("loom", "loom.core", "loom.core.checks")
+_CHECKS_LOGGER = "loom.core.checks"
+_VERBOSE_LOGGER = "loom.tests.verbose"
+_TOUCHED_LOGGERS = ("loom", "loom.core", _CHECKS_LOGGER, _VERBOSE_LOGGER)
 
 
 @pytest.fixture
-def loom_logger_restored() -> Iterator[None]:
-    # configure_logging sets process-wide structlog filtering; restore it for later tests.
+def loom_loggers_restored() -> Iterator[None]:
+    # configure_logging sets process-wide structlog filtering and stdlib levels;
+    # restore both for later tests.
     structlog_config = structlog.get_config()
+    levels = {name: logging.getLogger(name).level for name in _TOUCHED_LOGGERS}
     yield
     structlog.configure(**structlog_config)
-    for name in _FLOOR_LOGGERS:
+    for name, level in levels.items():
         target = logging.getLogger(name)
-        target.setLevel(logging.NOTSET)
+        target.setLevel(level)
         for handler in list(target.handlers):
             target.removeHandler(handler)
 
@@ -137,32 +141,59 @@ def _warning_registry() -> DeployCheckRegistry:
     return registry
 
 
-@pytest.mark.usefixtures("loom_logger_restored")
+def _enforce_with_a_warning_and_a_silenced_id() -> None:
+    config = ConfigContext.from_dict({"checks": {"silenced": ["tests.floor.W002"]}})
+    enforce_deploy_checks(config, Environment.PRODUCTION, registry=_warning_registry())
+
+
+@pytest.mark.usefixtures("loom_loggers_restored")
+@pytest.mark.parametrize("environment", list(Environment))
 @pytest.mark.parametrize(
     ("level", "named_levels"),
     [("CRITICAL", {}), ("INFO", {"loom": "CRITICAL"}), ("INFO", {"loom.core": "CRITICAL"})],
+    ids=["top-level", "named loom", "named loom.core"],
 )
-def test_a_deployed_log_level_cannot_hide_the_deploy_check_warnings(
-    capsys: pytest.CaptureFixture[str], level: str, named_levels: dict[str, str]
+def test_a_parent_log_level_cannot_hide_the_deploy_check_warnings(
+    capsys: pytest.CaptureFixture[str],
+    environment: Environment,
+    level: str,
+    named_levels: dict[str, str],
 ) -> None:
     configure_logging_from_values(
-        name="loom", environment=Environment.PRODUCTION, level=level, named_levels=named_levels
+        name="loom", environment=environment, level=level, named_levels=named_levels
     )
-    config = ConfigContext.from_dict({"checks": {"silenced": ["tests.floor.W002"]}})
 
-    enforce_deploy_checks(config, Environment.PRODUCTION, registry=_warning_registry())
+    _enforce_with_a_warning_and_a_silenced_id()
 
     written = capsys.readouterr().out
     assert "tests.floor.W001" in written
-    assert "silenced" in written
+    assert "tests.floor.W002" in written
 
 
-@pytest.mark.usefixtures("loom_logger_restored")
-def test_a_local_log_level_still_hides_loom_warnings(capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.usefixtures("loom_loggers_restored")
+def test_an_explicit_level_on_the_deploy_checks_logger_wins(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     configure_logging_from_values(
-        name="loom", environment=Environment.DEVELOPMENT, level="CRITICAL"
+        name="loom",
+        environment=Environment.PRODUCTION,
+        named_levels={_CHECKS_LOGGER: "ERROR"},
     )
 
-    logging.getLogger("loom.core.checks").warning("hidden")
+    _enforce_with_a_warning_and_a_silenced_id()
 
-    assert "hidden" not in capsys.readouterr().out
+    assert "tests.floor" not in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("loom_loggers_restored")
+def test_a_named_level_below_the_top_level_prints(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging_from_values(
+        name="loom",
+        environment=Environment.PRODUCTION,
+        level="CRITICAL",
+        named_levels={_VERBOSE_LOGGER: "INFO"},
+    )
+
+    logging.getLogger(_VERBOSE_LOGGER).info("shown below the top-level level")
+
+    assert "shown below the top-level level" in capsys.readouterr().out

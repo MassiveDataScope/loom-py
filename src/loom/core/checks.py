@@ -22,7 +22,8 @@ The application factories call :func:`enforce_deploy_checks`, which runs the
 checks only in production and staging. ``loom check --deploy`` calls
 :func:`run_deploy_checks`, which runs them whatever the environment, for CI.
 An id listed under ``checks.silenced`` in the configuration does not run, and
-enforcing logs a warning naming every silenced id.
+enforcing logs a warning naming every silenced id. This module's logger has
+its own WARNING level, so a quieter parent does not hide these warnings.
 """
 
 from __future__ import annotations
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 _logger = logging.getLogger(__name__)
+# Its own level, so a parent at CRITICAL (the top-level level, or a named
+# level on ``loom``) cannot hide a check's warning or the silenced ids; a
+# named level on this logger itself is the explicit way to quiet it.
+_logger.setLevel(logging.WARNING)
 
 CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}")
 """Shape of a check id: a dotted area, then ``E`` or ``W`` and three digits."""
