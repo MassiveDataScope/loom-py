@@ -78,13 +78,13 @@ class TestSlackNotifier:
             state="Failed",
             correlation_id="corr-1",
             duration_seconds=65,
-            env="prod",
+            env="production",
             message="boom",
         )
         SlackNotifier(webhook_url="https://hooks.slack.com/X", http_post=http).notify(event)
         assert http.call_args.kwargs["json"]["text"] == (
             ":x: *etl-x* → `Failed`\n"
-            "run: `run-1`  env: `prod`  correlation: `corr-1`  duration: `1m 05s`\n"
+            "run: `run-1`  env: `production`  correlation: `corr-1`  duration: `1m 05s`\n"
             "boom\n"
             "<https://prefect/runs/1|Open in Prefect>"
         )

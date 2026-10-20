@@ -181,7 +181,7 @@ A connection mounts `POST /sql/{connection}` only with **double opt-in**:
 
 | `auth` value | Meaning |
 |--------------|---------|
-| `identity` | Requires a configured authentication mechanism — the built-in `app.rest.auth.jwt` section (with a validated `audience`) or a `create_app(authenticator=...)` of your own; startup fails with `ConfigError` otherwise. The only mode that can bind roles to an identity |
+| `identity` | Requires a configured authentication mechanism — the built-in `app.rest.auth.jwt` section (with a validated `audience`) or `app.rest.auth.custom: true` with a `create_app(authenticator=...)` of your own; startup fails with `ConfigError` otherwise. The only mode that can bind roles to an identity |
 | `external` | Explicit acknowledgement that the operator provides authentication in front of the app. No identity the framework can read, therefore no allowlist: single-role endpoint only |
 | `jwt` | Deprecated alias of `identity`, kept for existing configs. It named a mechanism where the contract only needs "the framework knows the caller" |
 
@@ -483,9 +483,9 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:LOOM_JWT_SECRET_PATH}   # HS256 — a path, not the value
+        secret_path: ${oc.env:JWT_SECRET_PATH}   # HS256 — a path, not the value
         # public_keys:                      # RS256/ES256/EdDSA — one PEM per key id
-        #   "2026-08": ${oc.env:LOOM_JWT_PUBLIC_KEY_PEM}
+        #   "2026-08": ${oc.env:JWT_PUBLIC_KEY_PEM}
         algorithms: [HS256]                 # explicit allowlist; 'none' always rejected
         audience: loom-api                  # REQUIRED by any sql_endpoint with auth: identity
         issuer: null                        # validated only when set

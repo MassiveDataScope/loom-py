@@ -103,6 +103,7 @@ def _write_project(
     *,
     sql_section: dict[str, Any] | None,
     jwt_section: dict[str, Any] | None = None,
+    custom_auth: bool = False,
 ) -> str:
     """Write the fixture app module plus a YAML config; return the config path."""
     (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
@@ -117,8 +118,13 @@ def _write_project(
         },
         "database": {"url": "sqlite+aiosqlite:///"},
     }
+    auth: dict[str, Any] = {}
     if jwt_section is not None:
-        config["app"]["rest"] = {"auth": {"jwt": jwt_section}}
+        auth["jwt"] = jwt_section
+    if custom_auth:
+        auth["custom"] = True
+    if auth:
+        config["app"]["rest"] = {"auth": auth}
     if sql_section is not None:
         config["sql"] = sql_section
     config_path = tmp_path / "app.yaml"
@@ -289,7 +295,9 @@ def test_a_configured_mechanism_mounts_the_authentication_middleware(tmp_path: P
 def test_a_custom_authenticator_satisfies_the_identity_gate(tmp_path: Path) -> None:
     """Agnosticism at the composition root: any mechanism unlocks the endpoint."""
     config_path = _write_project(
-        tmp_path, sql_section=_sql_section({"enabled": True, "auth": "identity"})
+        tmp_path,
+        sql_section=_sql_section({"enabled": True, "auth": "identity"}),
+        custom_auth=True,
     )
     app = create_app(config_path, authenticator=_StubAuthenticator())
     assert "/sql/analytics" in _route_paths(app)
@@ -303,6 +311,7 @@ def test_a_custom_authenticator_binds_the_allowlisted_roles(tmp_path: Path) -> N
             {"enabled": True, "auth": "identity"},
             allowed_roles=["role_viz_reader", "role_viz_sales"],
         ),
+        custom_auth=True,
     )
     app = create_app(config_path, authenticator=_StubAuthenticator())
     assert "/sql/analytics" in _route_paths(app)
@@ -316,6 +325,7 @@ def test_a_custom_authenticator_without_roles_fails_the_multi_role_gate(tmp_path
             {"enabled": True, "auth": "identity"},
             allowed_roles=["role_viz_reader", "role_viz_sales"],
         ),
+        custom_auth=True,
     )
     authenticator = _StubAuthenticator(provides_roles=False)
     with pytest.raises(ConfigError, match="binds no role"):
@@ -328,6 +338,7 @@ def test_two_authentication_mechanisms_at_once_fail_at_startup(tmp_path: Path) -
         tmp_path,
         sql_section=_sql_section({"enabled": True, "auth": "identity"}),
         jwt_section=_JWT_SECTION,
+        custom_auth=True,
     )
     authenticator = _StubAuthenticator()
     with pytest.raises(ConfigError, match="Exactly one authentication mechanism"):

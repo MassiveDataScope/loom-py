@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -21,6 +20,7 @@ from starlette.responses import Response
 
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import CacheGateways, cache_module_for
+from loom.core.checks import enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
@@ -28,6 +28,7 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.discovery import (
@@ -42,6 +43,7 @@ from loom.core.discovery._utils import (
 from loom.core.discovery.base import AGENTS_ONLY_HINT, DiscoveryResult
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.identity import Identity
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
@@ -51,6 +53,7 @@ from loom.core.introspection import (
     describe_app,
 )
 from loom.core.job.service import InlineJobService, JobService
+from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import PersistenceWiring, resolve_backend
@@ -128,32 +131,35 @@ _AGENTS_PREFIX: Final[str] = "/agents"
 _AGENTS_CONTRIBUTOR = "loom.ai.describe:describe_agents"
 
 
-class _DiscoveryInterfaces(msgspec.Struct, kw_only=True):
+class _DiscoveryInterfaces(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     modules: list[str] = msgspec.field(default_factory=list)
     warn_recommended: bool = True
 
 
-class _DiscoveryModules(msgspec.Struct, kw_only=True):
+class _DiscoveryModules(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     include: list[str] = msgspec.field(default_factory=list)
 
 
-class _DiscoveryManifest(msgspec.Struct, kw_only=True):
+class _DiscoveryManifest(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     module: str = ""
 
 
-class _DiscoveryConfig(msgspec.Struct, kw_only=True):
+class _DiscoveryConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     mode: str = "interfaces"
     interfaces: _DiscoveryInterfaces = msgspec.field(default_factory=_DiscoveryInterfaces)
     modules: _DiscoveryModules = msgspec.field(default_factory=_DiscoveryModules)
     manifest: _DiscoveryManifest = msgspec.field(default_factory=_DiscoveryManifest)
 
 
-class _RestAuthConfig(msgspec.Struct, kw_only=True):
+class _RestAuthConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     jwt: JwtAuthConfig | None = None
+    # True when the composition root passes create_app(authenticator=...):
+    # the configuration then says authentication is supplied in code.
+    custom: bool = False
     exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS
 
 
-class _RestConfig(msgspec.Struct, kw_only=True):
+class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     backend: str = "fastapi"
     title: str = "Loom API"
     version: str = "0.1.0"
@@ -175,7 +181,7 @@ class _RestConfig(msgspec.Struct, kw_only=True):
 
 class _AppConfig(msgspec.Struct, kw_only=True):
     name: str
-    code_path: str = "src"
+    code_path: str = DEFAULT_CODE_PATH
     discovery: _DiscoveryConfig = msgspec.field(default_factory=_DiscoveryConfig)
     rest: _RestConfig = msgspec.field(default_factory=_RestConfig)
 
@@ -194,12 +200,6 @@ _DISCOVERY_ENGINES: dict[str, Callable[[_DiscoveryConfig], DiscoveryResult]] = {
 }
 
 
-def _ensure_code_path(code_path: Path) -> None:
-    path_str = str(code_path.resolve())
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
-
-
 def _build_discovery_result(discovery_cfg: _DiscoveryConfig) -> DiscoveryResult:
     engine = _DISCOVERY_ENGINES.get(discovery_cfg.mode)
     if engine is None:
@@ -215,8 +215,8 @@ def _build_celery_service(
     """Return a ``CeleryJobService`` if the celery extra is installed and configured.
 
     Returns ``None`` when the ``loom[celery]`` extra is absent or the
-    ``celery`` config section is missing / malformed, so the caller can
-    fall back to :func:`_build_inline_service`.
+    ``celery`` section is, so the caller can fall back to
+    :func:`_build_inline_service`. A section that fails validation raises.
 
     Args:
         ctx: Resolved configuration context.
@@ -236,23 +236,23 @@ def _build_celery_service(
             CeleryJobService,  # type: ignore[import-untyped,unused-ignore]
         )
 
-        celery_cfg = ctx.section(ConfigKey.CELERY, _CC)
-        return CeleryJobService(
-            create_celery_app(celery_cfg),
-            metrics=result.metrics,
-            factory=result.factory,
-            executor=result.executor,
-            observability_runtime=observability_runtime,
-        )
     except ImportError:
         return None
-    except ConfigError:
+    celery_cfg = ctx.section_optional(ConfigKey.CELERY, _CC)
+    if celery_cfg is None:
         warnings.warn(
-            "Celery config section is missing or malformed — falling back to InlineJobService. "
-            "Add a 'celery' section to your config or install loom[celery] to suppress this.",
+            "Celery config section is missing — falling back to InlineJobService. "
+            "Add a 'celery' section to your config to suppress this.",
             stacklevel=3,
         )
         return None
+    return CeleryJobService(
+        create_celery_app(celery_cfg),
+        metrics=result.metrics,
+        factory=result.factory,
+        executor=result.executor,
+        observability_runtime=observability_runtime,
+    )
 
 
 def _build_inline_service(result: KernelRuntime) -> InlineJobService:
@@ -292,11 +292,14 @@ def _configure_job_service(
 
 
 def _load_observability_config(ctx: ConfigContext) -> ObservabilityConfig:
-    """Load top-level observability config or fall back to defaults."""
-    try:
-        return ctx.section(ConfigKey.OBSERVABILITY, ObservabilityConfig)
-    except ConfigError:
-        return ObservabilityConfig()
+    """Load the top-level observability config; defaults only when it is absent.
+
+    A section that fails validation stops startup: falling back to defaults
+    would silently drop every setting it holds.
+    """
+    return ctx.section_or_default(
+        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+    )
 
 
 def _build_bootstrap(
@@ -305,6 +308,7 @@ def _build_bootstrap(
     metrics: Any | None = None,
     config_interfaces: tuple[type[RestInterface[Any]], ...] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
+    environment: Environment = Environment.PRODUCTION,
 ) -> tuple[KernelRuntime, PersistenceWiring, DiscoveryResult, tuple[type[RestInterface[Any]], ...]]:
     discovered = _discover_components(app_cfg)
     # Captured before folding in config_interfaces: the explicit Python-only
@@ -326,6 +330,7 @@ def _build_bootstrap(
         metrics=metrics,
         user_modules=modules,
         extra_modules=(cache_module_for(ctx),),
+        environment=environment,
     )
     return result, wiring, discovered, python_interfaces
 
@@ -1079,19 +1084,17 @@ def _resolve_authentication(
         documentation_paths: Effective docs/schema/metrics/health paths, used
             as the default exclusion list.
 
+    The configuration names the mechanism, so ``loom check --deploy`` sees
+    what ``create_app`` builds: ``app.rest.auth.jwt`` for the built-in one,
+    ``app.rest.auth.custom: true`` for *authenticator*.
+
     Raises:
-        ConfigError: When both a custom authenticator and the built-in JWT
-            section are supplied — two mechanisms would mean two sources of
-            truth for the caller identity.
+        ConfigError: When ``custom: true`` and ``jwt`` are both declared, or
+            when *authenticator* and ``custom: true`` do not come together.
     """
     auth_cfg = app_cfg.rest.auth
     jwt_cfg = auth_cfg.jwt
-    if authenticator is not None and jwt_cfg is not None:
-        raise ConfigError(
-            "create_app received an 'authenticator' but 'app.rest.auth.jwt' is also "
-            "configured. Exactly one authentication mechanism may be active: drop the "
-            "JWT section, or drop the authenticator argument."
-        )
+    _require_declared_mechanism(auth_cfg, authenticator)
     if authenticator is not None:
         return _AuthWiring(
             authenticator=authenticator,
@@ -1105,6 +1108,28 @@ def _resolve_authentication(
             jwt_config=jwt_cfg,
         )
     return _AuthWiring(authenticator=None, exclude_paths=(), jwt_config=None)
+
+
+def _require_declared_mechanism(
+    auth_cfg: _RestAuthConfig, authenticator: Authenticator | None
+) -> None:
+    """Refuse a mechanism the configuration does not name, or names twice."""
+    if auth_cfg.custom and auth_cfg.jwt is not None:
+        raise ConfigError(
+            "'app.rest.auth.custom: true' and 'app.rest.auth.jwt' are both configured. "
+            "Exactly one authentication mechanism may be active: drop one of them."
+        )
+    if authenticator is not None and not auth_cfg.custom:
+        raise ConfigError(
+            "create_app received an 'authenticator' but 'app.rest.auth.custom' is not "
+            "true. Set 'app.rest.auth.custom: true' so the configuration says "
+            "authentication is supplied in code, and drop any 'app.rest.auth.jwt'."
+        )
+    if auth_cfg.custom and authenticator is None:
+        raise ConfigError(
+            "'app.rest.auth.custom' is true but create_app received no 'authenticator': "
+            "pass create_app(authenticator=...) or drop 'custom: true'."
+        )
 
 
 def _effective_exclusions(
@@ -1323,6 +1348,7 @@ def _build_kernel_runtime(
     metrics: Any | None = None,
     user_modules: Sequence[Callable[[LoomContainer], None]] = (),
     extra_modules: Sequence[Callable[[LoomContainer], None]] = (),
+    environment: Environment = Environment.PRODUCTION,
 ) -> KernelRuntime:
     # Same order as the Celery worker bootstrap: caller modules first, then
     # repositories, then the framework's own modules.
@@ -1332,6 +1358,7 @@ def _build_kernel_runtime(
         modules=[*user_modules, wiring.repo_registration_module, *extra_modules],
         uow_factory=wiring.uow_factory,
         metrics=metrics,
+        environment=environment,
     )
 
 
@@ -1478,18 +1505,34 @@ def _section_app_config(ctx: ConfigContext) -> _AppConfig:
 
 def create_app(
     *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
     code_path: str | None = None,
     metrics_registry: CollectorRegistry | None = None,
     authenticator: Authenticator | None = None,
     resolvers: Sequence[ConfigResolver] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> FastAPI:
-    """Create a FastAPI application from one or more YAML config files.
+    """Create a FastAPI application from a config directory or explicit YAML files.
 
-    Config files are merged left-to-right — later files override earlier ones.
-    Each file may also declare a top-level ``includes`` list to pull in
-    additional base files before its own values (resolved by
-    :meth:`loom.core.config.ConfigContext.from_yaml`).
+    The environment is resolved once: *environment* when given, else the
+    ``LOOM_ENV`` variable, else production (see :mod:`loom.core.environment`).
+    It picks the configuration overlay, drives the logger defaults, and is
+    registered in the container for use cases to inject.
+
+    Configuration comes from exactly one of two forms. *config_dir* loads its
+    ``base.yaml``, then ``<environment>.yaml`` when present. Explicit
+    *config_paths* are merged left-to-right as given. Either way later files
+    override earlier ones, each file's ``includes`` merge before its own
+    values, and the ``LOOM__SECTION__KEY`` variables merge last (see
+    :mod:`loom.core.config.overrides`).
+
+    In production and staging the deploy checks run once the logger is
+    configured and the code path is importable, before the kernel is built
+    (see :mod:`loom.core.checks`); ``checks.modules`` names the application
+    modules registering its own checks:
+    an error stops startup, a warning is logged, and ``checks.silenced``
+    lists the ids accepted on purpose.
 
     ``${secrets:...}`` and ``${ssm:...}`` placeholders resolve through loom's
     built-in AWS resolvers unless *resolvers* supplies one with the same name.
@@ -1500,8 +1543,9 @@ def create_app(
     ``true``.
 
     Authentication is mechanism-agnostic: configure ``app.rest.auth.jwt`` for
-    the built-in stateless JWT mechanism, or pass *authenticator* for any
-    other.  Exactly one of the two may be active.
+    the built-in stateless JWT mechanism, or set ``app.rest.auth.custom:
+    true`` and pass *authenticator* for any other.  Exactly one of the two
+    may be active, and the configuration always names it.
 
     The optional ``sql:`` section wires the SQL subsystem: its connections
     open inside the app lifespan and two collaborators are registered in the
@@ -1517,7 +1561,11 @@ def create_app(
     identity (for JWT, ``app.rest.auth.jwt.roles_claim``).
 
     Args:
-        *config_paths: One or more paths to YAML configuration files.
+        *config_paths: Paths to YAML configuration files, merged left to
+            right. Mutually exclusive with *config_dir*.
+        config_dir: Local directory holding ``base.yaml`` and the
+            per-environment overlays. Mutually exclusive with *config_paths*.
+        environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Optional override for ``app.code_path``.  Resolved relative
             to the first config file when not absolute.
         metrics_registry: Optional Prometheus ``CollectorRegistry`` used for
@@ -1526,8 +1574,8 @@ def create_app(
             avoid ``ValueError: Duplicated timeseries`` when multiple apps with
             ``observability.prometheus.enabled: true`` are created in the same
             process.
-        authenticator: Custom authentication mechanism.  Mutually exclusive
-            with the ``app.rest.auth.jwt`` config section.
+        authenticator: Custom authentication mechanism.  Requires
+            ``app.rest.auth.custom: true`` and excludes ``app.rest.auth.jwt``.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.
@@ -1547,14 +1595,22 @@ def create_app(
         Configured :class:`fastapi.FastAPI` application, ready to serve.
 
     Raises:
-        ConfigError: When no config path is given, or when both *authenticator*
-            and ``app.rest.auth.jwt`` are supplied.
+        ConfigError: When neither or both of *config_paths* and *config_dir*
+            are given, when the environment is unknown, or when *authenticator*
+            and ``app.rest.auth.custom: true`` do not come together.
+        DeployCheckError: When a deploy check of level error fails in
+            production or staging.
+
+    Example — config directory, overlay chosen by ``LOOM_ENV``::
+
+        # config/base.yaml, config/development.yaml, config/production.yaml
+        app = create_app(config_dir="config")
 
     Example — single config::
 
         app = create_app("config/app.yaml")
 
-    Example — a mechanism of your own::
+    Example — a mechanism of your own (``app.rest.auth.custom: true``)::
 
         app = create_app("config/app.yaml", authenticator=MyMtlsAuthenticator())
 
@@ -1565,9 +1621,11 @@ def create_app(
 
         app = create_app("config/app.yaml", modules=[clock_module])
 
-    Example — base + environment override::
+    Example — explicit layers, the environment named in code::
 
-        app = create_app("config/base.yaml", "config/production.yaml")
+        app = create_app(
+            "config/base.yaml", "config/production.yaml", environment="production"
+        )
 
     Example — single file using inline includes::
 
@@ -1577,13 +1635,16 @@ def create_app(
         #   - secrets.yaml
         app = create_app("config/app.yaml")
     """
-    if not config_paths:
-        raise ConfigError("create_app requires at least one config file path.")
-
-    ctx = ConfigContext.from_yaml(*config_paths, resolvers=with_default_resolvers(resolvers))
+    resolved_environment = resolve_environment(environment)
+    paths = select_config_paths(config_paths, config_dir, resolved_environment, caller="create_app")
+    ctx = load_application_config(
+        *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
+    )
     app_cfg = _section_app_config(ctx)
     observability_cfg = _load_observability_config(ctx)
-    observability_runtime = ObservabilityRuntime.from_config(observability_cfg)
+    observability_runtime = ObservabilityRuntime.from_config(
+        observability_cfg, environment=resolved_environment
+    )
     metrics_cfg = observability_cfg.prometheus
 
     auth = _resolve_authentication(
@@ -1593,11 +1654,12 @@ def create_app(
     )
     sql = _resolve_sql(ctx, auth)
 
-    config_file = Path(config_paths[0]).resolve()
-    effective_code_path = Path(code_path) if code_path is not None else Path(app_cfg.code_path)
-    if not effective_code_path.is_absolute():
-        effective_code_path = (config_file.parent / effective_code_path).resolve()
-    _ensure_code_path(effective_code_path)
+    effective_code_path = add_code_path(
+        code_path if code_path is not None else app_cfg.code_path,
+        Path(paths[0]).resolve().parent,
+    )
+    # After the code path: checks.modules may name the application's modules.
+    enforce_deploy_checks(ctx, resolved_environment)
 
     metrics_adapter = _build_metrics_adapter(metrics_cfg, metrics_registry)
 
@@ -1612,6 +1674,7 @@ def create_app(
         metrics=metrics_adapter,
         config_interfaces=config_interfaces,
         modules=modules,
+        environment=resolved_environment,
     )
     _configure_job_service(ctx, result, observability_runtime)
     _register_sql_collaborators(result.container, sql, observability_runtime)

@@ -10,7 +10,7 @@ from loom.core.model import LoomFrozenStruct
 from loom.core.observability.config import LogObservabilityConfig, ObservabilityConfig
 
 
-class LineageConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class LineageConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Persisted execution-lineage destination settings."""
 
     enabled: bool = False

@@ -14,13 +14,17 @@ from bytewax.recovery import RecoveryConfig
 from bytewax.run import cli_main
 
 from loom.core.async_bridge import AsyncBridge, build_backend_options
+from loom.core.checks import REST_CHECKS, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.overrides import load_application_config
+from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.types import PositiveInt
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -69,7 +73,7 @@ class _PreparedStreamingRun:
     shutdown: Callable[[], None]
 
 
-class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True):
+class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Recovery settings for the Bytewax runtime.
 
     Args:
@@ -81,7 +85,7 @@ class BytewaxRecoverySettings(LoomFrozenStruct, frozen=True):
     backup_interval_ms: int | None = None
 
 
-class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True):
+class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Runtime settings for executing a Bytewax dataflow.
 
     **Delivery guarantee:** By default Kafka offsets are committed by the
@@ -94,7 +98,8 @@ class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True):
         workers_per_process: Number of worker threads in this process.
         process_id: Optional cluster process id.
         addresses: Optional cluster address list, including this process.
-        epoch_interval_ms: Optional epoch duration in milliseconds.
+        epoch_interval_ms: Optional epoch duration in milliseconds, above
+            zero.
         recovery: Optional recovery settings.
         async_backend: Anyio backend used for :class:`AsyncBridge` when the
             flow contains :class:`~loom.streaming.WithAsync` nodes.
@@ -104,18 +109,18 @@ class BytewaxRuntimeConfig(LoomFrozenStruct, frozen=True):
             ``"asyncio"`` and the platform is not Windows.
         force_shutdown_timeout_ms: Maximum milliseconds to wait for in-flight
             async tasks to finish during shutdown.  When exceeded, the portal
-            thread is abandoned and a warning is logged.  ``None`` waits
-            indefinitely (default).
+            thread is abandoned and a warning is logged.  Above zero;
+            ``None`` waits indefinitely (default).
     """
 
     workers_per_process: int = 1
     process_id: int | None = None
     addresses: tuple[str, ...] | None = None
-    epoch_interval_ms: int | None = None
+    epoch_interval_ms: PositiveInt | None = None
     recovery: BytewaxRecoverySettings | None = None
     async_backend: Literal["asyncio", "trio"] = "asyncio"
     use_uvloop: bool = False
-    force_shutdown_timeout_ms: int | None = None
+    force_shutdown_timeout_ms: PositiveInt | None = None
 
 
 class StreamingRunner:
@@ -155,24 +160,45 @@ class StreamingRunner:
         *,
         config: ConfigContext,
         observability_runtime: ObservabilityRuntime | None = None,
+        environment: Environment | str | None = None,
     ) -> StreamingRunner:
-        """Build a runner from a resolved config context."""
+        """Build a runner from a resolved config context.
+
+        The environment is resolved once (*environment*, else ``LOOM_ENV``,
+        else production; see :mod:`loom.core.environment`): it drives the
+        logger defaults, and in production and staging the deploy checks run
+        against *config*, except the REST ones.
+
+        Raises:
+            DeployCheckError: When a deploy check of level error fails in
+                production or staging.
+        """
+        runner = cls()
+        runner._configure_from(flow, config, environment, observability_runtime)
+        return runner
+
+    def _configure_from(
+        self,
+        flow: StreamFlow[Any, Any],
+        config: ConfigContext,
+        environment: Environment | str | None,
+        observability_runtime: ObservabilityRuntime | None = None,
+    ) -> None:
+        resolved_environment = resolve_environment(environment)
+        observability_cfg = config.section_or_default(
+            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+        )
+        obs = observability_runtime or ObservabilityRuntime.from_config(
+            observability_cfg, environment=resolved_environment
+        )
+        enforce_deploy_checks(config, resolved_environment, skip=(REST_CHECKS,))
         plan = compile_flow(flow, config=config)
         runtime = config.section_or_default(
             ConfigKey.STREAMING_RUNTIME,
             BytewaxRuntimeConfig,
             BytewaxRuntimeConfig(),
         )
-        observability_cfg = config.section_optional(
-            ConfigKey.OBSERVABILITY,
-            ObservabilityConfig,
-        )
-        if observability_cfg is None:
-            observability_cfg = ObservabilityConfig()
-        obs = observability_runtime or ObservabilityRuntime.from_config(observability_cfg)
-        runner = cls()
-        runner._configure(flow, plan, runtime, obs)
-        return runner
+        self._configure(flow, plan, runtime, obs)
 
     @classmethod
     def from_yaml(
@@ -182,21 +208,26 @@ class StreamingRunner:
         *,
         resolvers: Sequence[ConfigResolver] = (),
         observability_runtime: ObservabilityRuntime | None = None,
+        environment: Environment | str | None = None,
     ) -> StreamingRunner:
-        """Load config from YAML and build a runner.
+        """Load config from YAML or a config directory and build a runner.
 
         Args:
             flow: Flow to compile.
-            path: Local path or cloud URI of the YAML config file.
+            path: Local path or cloud URI of the YAML config file, or a local
+                config directory: ``base.yaml`` then ``<environment>.yaml``.
             resolvers: Resolvers for ``${name:key}`` placeholders, registered
                 before the built-in ``secrets`` and ``ssm`` defaults.  A
                 resolver named like a default replaces it.
             observability_runtime: Optional runtime override.
+            environment: Environment of the run; overrides ``LOOM_ENV``.
         """
+        resolved_environment = resolve_environment(environment)
         return cls.from_context(
             flow,
-            config=_load_yaml(path, resolvers),
+            config=_load_yaml(path, resolvers, resolved_environment),
             observability_runtime=observability_runtime,
+            environment=resolved_environment,
         )
 
     @classmethod
@@ -206,12 +237,14 @@ class StreamingRunner:
         config: dict[str, Any],
         *,
         observability_runtime: ObservabilityRuntime | None = None,
+        environment: Environment | str | None = None,
     ) -> StreamingRunner:
-        """Build a runner from a plain Python config mapping."""
+        """Build a runner from a plain Python config mapping; see :meth:`from_context`."""
         return cls.from_context(
             flow,
             config=ConfigContext.from_dict(config),
             observability_runtime=observability_runtime,
+            environment=environment,
         )
 
     @property
@@ -287,6 +320,7 @@ class StreamingRunner:
         error_sinks: Mapping[ErrorKind, Any] | None = None,
         runtime: BytewaxRuntimeConfig | None = None,
         resolvers: Sequence[ConfigResolver] = (),
+        environment: Environment | str | None = None,
     ) -> None:
         """Execute the compiled dataflow with the real Bytewax runtime.
 
@@ -299,8 +333,8 @@ class StreamingRunner:
                 or ``config_path``, the runner is reconfigured before execution.
             config: Optional config context. Used together with ``flow`` to
                 reconfigure the runner.
-            config_path: Optional path to a YAML config file. Loaded and used
-                like ``config`` when provided.
+            config_path: Optional path to a YAML config file or a config
+                directory. Loaded and used like ``config`` when provided.
             error_sinks: Optional explicit error sinks. When provided, these
                 take precedence over registry-resolved sinks.
             runtime: Optional runtime override. When omitted, uses the runner's
@@ -309,6 +343,8 @@ class StreamingRunner:
                 ``config_path``, registered before the built-in ``secrets``
                 and ``ssm`` defaults.  A resolver named like a default
                 replaces it.  Only meaningful together with ``config_path``.
+            environment: Environment used when ``flow`` reconfigures the
+                runner, as in :meth:`from_context`; overrides ``LOOM_ENV``.
 
         Raises:
             ValueError: If ``resolvers`` is given together with ``config``
@@ -320,16 +356,11 @@ class StreamingRunner:
                 "resolvers apply only with config_path, not config: "
                 "config is already resolved, so resolvers would never be applied"
             )
+        resolved_environment = resolve_environment(environment)
         if config_path is not None:
-            config = _load_yaml(str(config_path), resolvers)
+            config = _load_yaml(str(config_path), resolvers, resolved_environment)
         if flow is not None and config is not None:
-            plan = compile_flow(flow, config=config)
-            runtime_cfg = config.section_or_default(
-                ConfigKey.STREAMING_RUNTIME, BytewaxRuntimeConfig, BytewaxRuntimeConfig()
-            )
-            obs_cfg = config.section_optional(ConfigKey.OBSERVABILITY, ObservabilityConfig)
-            obs = ObservabilityRuntime.from_config(obs_cfg or ObservabilityConfig())
-            self._configure(flow, plan, runtime_cfg, obs)
+            self._configure_from(flow, config, resolved_environment)
         if config is not None:
             bindings = self._sink_registry.resolve(config)
             self._resolved_error_sinks = {
@@ -373,9 +404,15 @@ class StreamingRunner:
             self._shutdown = None
 
 
-def _load_yaml(path: str, resolvers: Sequence[ConfigResolver]) -> ConfigContext:
-    """Load *path* with *resolvers* ahead of the built-in ``secrets``/``ssm`` defaults."""
-    return ConfigContext.from_yaml(path, resolvers=with_default_resolvers(resolvers))
+def _load_yaml(
+    path: str, resolvers: Sequence[ConfigResolver], environment: Environment
+) -> ConfigContext:
+    """Load *path*, a file or a config directory, with *resolvers* ahead of the defaults."""
+    return load_application_config(
+        *config_source_paths(path, environment),
+        resolvers=with_default_resolvers(resolvers),
+        environment=environment,
+    )
 
 
 def _runtime_kwargs(runtime: BytewaxRuntimeConfig) -> dict[str, Any]:

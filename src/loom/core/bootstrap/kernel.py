@@ -18,6 +18,7 @@ from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
+from loom.core.environment import Environment
 from loom.core.logger import LoggerPort
 from loom.core.uow.abc import UnitOfWorkFactory
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
@@ -52,6 +53,7 @@ def create_kernel(
     metrics: MetricsAdapter | None = None,
     uow_factory: UnitOfWorkFactory | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
+    environment: Environment | str | None = None,
 ) -> KernelRuntime:
     """Create a shared kernel runtime for application adapters.
 
@@ -65,6 +67,11 @@ def create_kernel(
         uow_factory: Optional UnitOfWork factory for transactional execution.
         repo_resolver: Optional repository resolver used by marker-based loads.
             Defaults to ``container.resolve_repo``.
+        environment: Environment of the application, resolved like
+            :func:`~loom.core.environment.resolve_environment` when ``None``.
+            Registered at ``APPLICATION`` scope before the modules run, so a
+            module's service or a use case can inject
+            :class:`~loom.core.environment.Environment`.
 
     Returns:
         Fully built :class:`KernelRuntime`.
@@ -75,6 +82,7 @@ def create_kernel(
         modules=modules,
         logger=logger,
         metrics=metrics,
+        environment=environment,
     )
     resolver = repo_resolver or base.container.resolve_repo
     executor = RuntimeExecutor(

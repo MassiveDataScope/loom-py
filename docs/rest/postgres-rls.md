@@ -445,7 +445,7 @@ product provider.
 
 ```yaml
 database:
-  url: ${LOOM_DATABASE_URL}
+  url: ${DATABASE_URL}
   schema:
     mode: external
     name: ledger

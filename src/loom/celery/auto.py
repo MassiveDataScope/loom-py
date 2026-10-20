@@ -13,11 +13,14 @@ from loom.core.di.container import LoomContainer
 if TYPE_CHECKING:
     from loom.core.config import ConfigResolver
     from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.environment import Environment
     from loom.core.job.job import Job
 
 
 def create_app(
     *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
     callbacks: Sequence[type[Any]] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
@@ -27,7 +30,12 @@ def create_app(
     """Create a Celery app with all Loom job tasks registered.
 
     Args:
-        *config_paths: One or more YAML config files merged left-to-right.
+        *config_paths: YAML config files merged left-to-right. Mutually
+            exclusive with *config_dir*.
+        config_dir: Directory holding ``base.yaml`` and the per-environment
+            overlays; ``<environment>.yaml`` loads after the base when present.
+        environment: Environment of the worker; overrides ``LOOM_ENV``, which
+            defaults to production when unset.
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
             Optional when ``app.discovery`` (modules/manifest) is configured.
         callbacks: Optional callback classes for success/failure hooks.
@@ -42,6 +50,8 @@ def create_app(
     """
     result = bootstrap_worker(
         *config_paths,
+        config_dir=config_dir,
+        environment=environment,
         jobs=jobs,
         callbacks=callbacks,
         modules=modules,

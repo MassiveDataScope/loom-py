@@ -140,3 +140,12 @@ def test_read_yaml_duplicate_key_raises_config_error_naming_the_file(tmp_path: P
     path.write_text("etl: a\netl: b\n", encoding="utf-8")
     with pytest.raises(ConfigError, match=str(path)):
         read_yaml(str(path))
+
+
+def test_loom_overrides_do_not_touch_a_flow_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write(tmp_path, "flow.yaml", "params:\n  source: web\ntags: [a]\n")
+    monkeypatch.setenv("LOOM__PARAMS__SOURCE", "batch")
+
+    assert read_yaml(str(path))["params"] == {"source": "web"}
