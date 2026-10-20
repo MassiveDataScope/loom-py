@@ -953,6 +953,13 @@
   array column, which a SQL keyset cannot order, fails compilation instead
   of on the first cursor request. A bare `UUID` key, a scalar `Uuid` column,
   compiles and pages on SQLAlchemy and Mongo alike.
+- **rest:** `create_fastapi_app(interfaces=...)` is removed and `routes` is
+  required; use `create_fastapi_app(result, RouteSources(python=[...]))`.
+- **rest:** the `QUERY_PARAM_PAGE`, `QUERY_PARAM_LIMIT`,
+  `QUERY_PARAM_PAGINATION`, `QUERY_PARAM_AFTER`, `QUERY_PARAM_CURSOR`,
+  `QUERY_PARAM_SORT`, `QUERY_PARAM_DIRECTION` and `QUERY_PARAM_PROFILE`
+  re-exports of `loom.rest.fastapi.openapi` are removed; use the matching
+  `loom.rest.constants.QueryParam` member (`QueryParam.PAGE`, ...).
 
 ### prefect
 

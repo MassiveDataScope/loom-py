@@ -40,16 +40,6 @@ _PARAM_REQUIRED = "required"
 _PARAM_SCHEMA = "schema"
 _PARAM_DESCRIPTION = "description"
 
-# Re-export for backwards compatibility — consumers may import from this module.
-QUERY_PARAM_PAGE = QueryParam.PAGE
-QUERY_PARAM_LIMIT = QueryParam.LIMIT
-QUERY_PARAM_PAGINATION = QueryParam.PAGINATION
-QUERY_PARAM_AFTER = QueryParam.AFTER
-QUERY_PARAM_CURSOR = QueryParam.CURSOR
-QUERY_PARAM_SORT = QueryParam.SORT
-QUERY_PARAM_DIRECTION = QueryParam.DIRECTION
-QUERY_PARAM_PROFILE = QueryParam.PROFILE
-
 QUERY_SPEC_PARAMETER_NAMES: tuple[str, ...] = (
     QueryParam.PAGE,
     QueryParam.LIMIT,
@@ -179,7 +169,7 @@ def build_query_parameters_schema(
 
     if has_profile_parameter(hints) and compiled_route.effective_expose_profile:
         profile_param: JsonSchema = {
-            _PARAM_NAME: QUERY_PARAM_PROFILE,
+            _PARAM_NAME: QueryParam.PROFILE,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
@@ -231,14 +221,14 @@ def _query_spec_openapi_parameters(
     mode_values = [item.value for item in PaginationMode]
     return [
         {
-            _PARAM_NAME: QUERY_PARAM_PAGE,
+            _PARAM_NAME: QueryParam.PAGE,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "integer", "minimum": 1, "default": 1},
             _PARAM_DESCRIPTION: "Offset page number.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_LIMIT,
+            _PARAM_NAME: QueryParam.LIMIT,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {
@@ -250,35 +240,35 @@ def _query_spec_openapi_parameters(
             _PARAM_DESCRIPTION: "Maximum rows per page.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_PAGINATION,
+            _PARAM_NAME: QueryParam.PAGINATION,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string", "enum": mode_values, "default": default_mode.value},
             _PARAM_DESCRIPTION: "Pagination strategy.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_AFTER,
+            _PARAM_NAME: QueryParam.AFTER,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
             _PARAM_DESCRIPTION: "Cursor token for cursor pagination.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_CURSOR,
+            _PARAM_NAME: QueryParam.CURSOR,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
             _PARAM_DESCRIPTION: "Alias for 'after'.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_SORT,
+            _PARAM_NAME: QueryParam.SORT,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
             _PARAM_DESCRIPTION: "Field used for ordering.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_DIRECTION,
+            _PARAM_NAME: QueryParam.DIRECTION,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string", "enum": ["ASC", "DESC"], "default": "ASC"},
