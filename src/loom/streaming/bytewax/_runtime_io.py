@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep, time_ns
 from typing import Any, Generic, TypeAlias, TypeVar, cast
@@ -69,6 +69,36 @@ class _KafkaSendRequest(Generic[PayloadT]):
     trace_id: str | None
     produced_at_ms: int | None
 
+    def with_headers(self, headers: dict[str, bytes]) -> _KafkaSendRequest[PayloadT]:
+        """Return this request with ``headers`` in place of its own."""
+        return self._copy(
+            headers=headers, trace_id=self.trace_id, parent_trace_id=self.parent_trace_id
+        )
+
+    def with_lineage(
+        self, trace_id: str | None, parent_trace_id: str | None
+    ) -> _KafkaSendRequest[PayloadT]:
+        """Return this request carrying ``trace_id`` and ``parent_trace_id``."""
+        return self._copy(headers=self.headers, trace_id=trace_id, parent_trace_id=parent_trace_id)
+
+    def _copy(
+        self, *, headers: dict[str, bytes], trace_id: str | None, parent_trace_id: str | None
+    ) -> _KafkaSendRequest[PayloadT]:
+        # Built field by field: typeshed types ``dataclasses.replace`` through a
+        # TypeVar bound to ``DataclassInstance``, and SonarCloud reads its result
+        # as that bound rather than as ``_KafkaSendRequest[PayloadT]``.
+        return _KafkaSendRequest(
+            payload=self.payload,
+            descriptor=self.descriptor,
+            key=self.key,
+            headers=headers,
+            correlation_id=self.correlation_id,
+            parent_trace_id=parent_trace_id,
+            causation_id=self.causation_id,
+            trace_id=trace_id,
+            produced_at_ms=self.produced_at_ms,
+        )
+
 
 _DlqLineage: TypeAlias = Callable[[ItemT, _KafkaSendRequest[PayloadT]], _KafkaSendRequest[PayloadT]]
 """Adjusts the trace lineage of one DLQ record derived from the sink's send request."""
@@ -124,7 +154,7 @@ def _write_kafka_batch(
                 if dlq_lineage is not None:
                     request = dlq_lineage(item, request)
                 headers = {**request.headers, "x-dlq-error": dlq_error}
-                _send_request(message_producer, sink.dlq_topic, replace(request, headers=headers))
+                _send_request(message_producer, sink.dlq_topic, request.with_headers(headers))
             producer.flush()
         except KafkaDeliveryError as dlq_exc:
             raise KafkaDeliveryError(
@@ -160,11 +190,7 @@ def _keep_message_lineage(
     request: _KafkaSendRequest[StreamPayload],
 ) -> _KafkaSendRequest[StreamPayload]:
     """Keep the failed message's own trace on its DLQ record instead of a child trace."""
-    return replace(
-        request,
-        trace_id=message.meta.trace_id,
-        parent_trace_id=message.meta.parent_trace_id,
-    )
+    return request.with_lineage(message.meta.trace_id, message.meta.parent_trace_id)
 
 
 def _commit_runtime_items(

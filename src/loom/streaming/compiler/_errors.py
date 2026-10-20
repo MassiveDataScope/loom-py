@@ -23,6 +23,7 @@ from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
 _FORK: Final = "fork"
 _OUTPUT: Final = "output"
+_FLOW_OUTPUT: Final = "flow.output"
 
 
 @unique
@@ -125,7 +126,7 @@ class StreamingErrorCode(IssueCode):
         "OUTPUT_WITH_FORK",
         Template(
             "flow.output cannot be combined with Fork: branches must be terminal",
-            component="flow.output",
+            component=_FLOW_OUTPUT,
             field=_OUTPUT,
         ),
     )
@@ -133,7 +134,7 @@ class StreamingErrorCode(IssueCode):
         "OUTPUT_WITH_BROADCAST",
         Template(
             "flow.output cannot be combined with Broadcast: branches must be terminal",
-            component="flow.output",
+            component=_FLOW_OUTPUT,
             field=_OUTPUT,
         ),
     )
@@ -142,7 +143,7 @@ class StreamingErrorCode(IssueCode):
         Template(
             "flow.output is never written: the process ends in {node}, which ends the path "
             "of every message it receives. Remove the output or the {node}.",
-            component="flow.output",
+            component=_FLOW_OUTPUT,
             field=_OUTPUT,
         ),
     )
