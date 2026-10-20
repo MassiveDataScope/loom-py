@@ -459,6 +459,21 @@
 
 ### core
 
+- **core:** a field annotated `X | UnsetType` infers `X`'s column type.
+  `UNSET` means "not provided", not another type, so `str | UnsetType` now
+  compiles to `String` and `int | UnsetType` to `Integer` instead of `JSON`,
+  and `Annotated[str, String(20)] | UnsetType` reads its declared type. Such
+  a column is scalar: a REST route may declare it filterable, `like` and
+  `ilike` included for text, and sortable by offset; a cursor sort on it is
+  still refused, since a cursor key must be a bare type. Nullability is
+  unchanged: `str | None | UnsetType` admits `None` and is nullable,
+  `UnsetType` alone keeps the column `NOT NULL`. An undeclared
+  `Decimal | UnsetType`, plain `Enum | UnsetType` or `Literal[...] | UnsetType`
+  now needs a declared column type, as it does without `UnsetType`. On Mongo,
+  a `str | UnsetType` or `UUID | UnsetType` primary key is now accepted, and
+  a range filter or sort on a `Decimal | UnsetType` field is refused, as on a
+  `Decimal` field. Alembic autogenerate will show the type change from `JSON`
+  for existing tables with such columns.
 - **core:** a column's nullability follows its field's annotation. A field
   whose annotation admits `None` (`x: int | None = None`, also inside
   `Annotated`) compiles to a nullable column; any other field compiles to

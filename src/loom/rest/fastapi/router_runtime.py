@@ -242,7 +242,8 @@ def _unsupported_query(message: str) -> LoomError:
 def _is_text(annotation: Any) -> bool:
     union = typing.get_origin(annotation) in (typing.Union, types.UnionType)
     members = typing.get_args(annotation) if union else (annotation,)
-    return [member for member in members if member is not type(None)] == [str]
+    absent = (type(None), msgspec.UnsetType)
+    return [member for member in members if member not in absent] == [str]
 
 
 def _filter_values(fields: Sequence[tuple[str, Any]]) -> _FilterValues:
