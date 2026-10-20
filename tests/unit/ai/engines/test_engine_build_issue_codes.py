@@ -74,8 +74,10 @@ def test_an_mcp_connection_the_runtime_never_opened_is_refused() -> None:
         server="orders", url="https://orders.example.com/mcp", timeout_ms=20000
     )
 
+    toolsets = SharedMcpToolsets()
+
     with pytest.raises(AgentCompilationError) as failure:
-        SharedMcpToolsets().for_build(capability, _AGENT)
+        toolsets.for_build(capability, _AGENT)
 
     code, message = _only_issue(failure)
     assert code is AgentErrorCode.MCP_CONNECTION_NOT_OPENED

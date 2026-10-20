@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 # path from more than one code.
 _FIELD_SPEC_VERSION: Final = "spec_version"
 _FIELD_CAPABILITIES: Final = "capabilities"
+_FIELD_CAPABILITIES_KEYS: Final = "capabilities.keys"
 _FIELD_FROM_PARAM: Final = "{field}"
 _FIELD_CAPABILITIES_CONNECTION: Final = "capabilities.connection"
 _FIELD_CAPABILITIES_LIBRARY: Final = "capabilities.library"
@@ -279,14 +280,16 @@ class AgentErrorCode(IssueCode):
     )
     USECASE_KEY_UNKNOWN = (
         "USECASE_KEY_UNKNOWN",
-        Template("{component}: use-case key '{key}' is not registered", field="capabilities.keys"),
+        Template(
+            "{component}: use-case key '{key}' is not registered", field=_FIELD_CAPABILITIES_KEYS
+        ),
     )
     USECASE_DECLARES_QUERY = (
         "USECASE_DECLARES_QUERY",
         Template(
             "{component}: use case '{key}' declares a Query() parameter, which an agent tool "
             "call cannot bind; grant a use case without one",
-            field="capabilities.keys",
+            field=_FIELD_CAPABILITIES_KEYS,
         ),
     )
     SQL_CONNECTION_UNKNOWN = (
@@ -724,7 +727,7 @@ class AgentErrorCode(IssueCode):
         "USECASE_NOT_COMPILED",
         Template(
             "use case '{key}' carries no compiled execution plan; it was never compiled",
-            field="capabilities.keys",
+            field=_FIELD_CAPABILITIES_KEYS,
             component="use case '{key}'",
         ),
     )
