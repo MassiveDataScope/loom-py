@@ -48,8 +48,9 @@ confidentiality.
   must arrive as their tagged key; a `time` key keeps the offset it was
   issued with, or none). A sort field missing from `columns` is
   refused, so a token can only position a query on a column whose type is
-  known. The repositories pass `scalar_column_annotations(model)`, the
-  columns a REST route may declare sortable. Without this check a token
+  known. SQLAlchemy repositories pass `scalar_column_annotations(model)`,
+  the columns a REST route may declare sortable; Mongo, whose documents
+  order any column, passes `column_annotations(model)`. Without this check a token
   carrying a string for an integer key, which an `unsigned` codec accepts
   and a holder of the key can sign, reached the database and answered 500.
   `LoomType.from_builtins` is not used because it parses strings into those
@@ -80,7 +81,8 @@ mac   = HMAC-SHA256(key, "loom.cursor\0" || version || len(key_id) || key_id
 The binding is recomputed from the request and never travels in the token:
 
 - the backend, carried in the payload and therefore signed;
-- the model's qualified name;
+- the model's module and qualified name (`f"{module}.{qualname}"`), so two
+  models of the same name in different modules do not share tokens;
 - the normalised filters: each condition encoded deterministically, the list
   sorted so the order of the conditions does not matter, every datetime
   converted to an aware UTC instant (a naive one is taken as UTC);
@@ -106,9 +108,12 @@ which has no such scope, the scope is `""`.
   how ECS and Fargate inject secrets). Key material never appears in the
   configuration struct, so a configuration dump cannot leak it, and a
   configuration error names the key id, never the key or its path.
-- A key is the UTF-8 text of its source with surrounding whitespace removed
-  and must be at least 32 bytes, the SHA-256 output length (NIST SP 800-107);
-  a shorter one fails startup. Key ids match `[A-Za-z0-9._-]{1,64}`.
+- A source holds the key in standard base64 (RFC 4648 §4, padded;
+  surrounding whitespace ignored), and the decoded bytes must be at least 32,
+  the SHA-256 output length (NIST SP 800-107). `openssl rand -base64 32`
+  makes one. Text that is not base64, such as a passphrase, and a shorter key
+  fail startup: a key is random bytes, not a password. Key ids match
+  `[A-Za-z0-9._-]{1,64}`.
 - Rotation: add the new key, make it `current_key_id`, keep the old id in
   `keys` while the tokens it signed matter, then remove it. An unknown key id
   is refused like any other invalid token.
@@ -153,9 +158,47 @@ placeholder, so it runs without the key material, and it runs only in
 production and staging (ADR 0005). `persistence.cursors.*` is not on the
 `LOOM__*` override allowlist, so in production and staging
 `LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` fails at startup before any
-check runs. A key's `env` source names the variable holding it; loom reads
-it through `loom.core.environment.configured_variable`, which refuses a
-`LOOM_*` name, since those are loom's own.
+check runs. `persistence.cursors` is also protected like `config` and
+`checks`: a `config.overridable` entry that could match a key under it
+(`persistence.cursors.signing`, `persistence.*.signing`) stops every load,
+so the files cannot reopen it either. A key's `env` source names the
+variable holding it; loom reads it through
+`loom.core.environment.configured_variable`, which refuses a `LOOM_*` name,
+since those are loom's own.
+
+### What a cursor may order by
+
+A cursor carries the sort values and the primary key of the last row of a
+page, and the order of the rows reveals how values compare. Ordering by a
+column the response hides is therefore an oracle twice: a client bisects
+its values with the order of the rows, and reads them from the token
+(base64url, not encrypted). So:
+
+- **REST.** `sortable` may name only fields of the items the route answers
+  with (`PageResult[T]`, `CursorResult[T]` or `list[T]`, `T` a struct or a
+  pydantic model; a union shows the fields all its members share). A field
+  the response does not show, or a result type that does not say, fails
+  compilation naming the route and the field. As in Django REST framework,
+  where `ordering_fields` defaults to the serializer's fields and `'__all__'`
+  opens every model field, `sortable=ALL` is the explicit escape hatch: every
+  scalar column, hidden ones included, with a WARNING at startup naming the
+  route. This one rule closes both channels.
+- **Repositories, before the query runs.** In cursor mode every sort field
+  and primary-key column must be a column whose type a token carries
+  (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
+  `Decimal`, an `Enum` or a `Literal`) and that holds no null:
+  `require_cursor_sort` refuses a dotted path, a JSON column, `bytes` or an
+  optional column with `UnsupportedQuery`, naming the field, instead of
+  serving a first page whose token no page accepts. Nulls are refused rather
+  than ordered because a comparison with a null is never true, so the keyset
+  predicate would skip the rows holding one; supporting them would need
+  dialect-specific `NULLS FIRST/LAST` handling in both backends.
+- **Values.** A non-finite `float` or `Decimal`, or any value of a type the
+  format does not carry, makes `encode` raise `UnsupportedQuery` (400), not
+  `TypeError` (500).
+- **Mongo** stores dates, decimals and UUIDs as text; it issues the next
+  token from the output struct, in the model's types, so the next page's type
+  check accepts it.
 
 ### Wiring and public surface
 
@@ -164,10 +207,17 @@ it through `loom.core.environment.configured_variable`, which refuses a
   required keyword-only `cursor_codec` to `RepositorySQLAlchemy`,
   `RepositoryMongo`, `QuerySpecCompiler` and the default builders, and
   registered in DI so a service paginating by hand resolves the codec the
-  repositories use.
+  repositories use. `register_cursor_codec` registers it, and raises
+  `ConfigError` when a different codec is already registered: two codecs
+  would sign with different keys and refuse each other's tokens.
+- An empty `cursor` is an invalid token on both backends (400), not a first
+  page.
 - The public surface is `CursorCodec`, its configuration (`CursorConfig`,
-  `CursorKeySource`) and the decoded position `Cursor`. `encode_cursor` and
-  `decode_cursor` are removed.
+  `CursorKeySource`), the decoded position `Cursor`, `require_cursor_sort`
+  and `register_cursor_codec`. `encode_cursor` and `decode_cursor` are
+  removed.
+- Decoding refuses base64url text whose unused trailing bits are set, so one
+  payload has one token text.
 
 ### Naive datetimes
 
@@ -187,8 +237,9 @@ new version byte if a consumer needs it.
 ## Alternatives rejected
 
 - **AEAD-encrypted cursors (AES-GCM, ChaCha20-Poly1305).** They add
-  confidentiality the token does not need: the keys it carries are column
-  values of rows the caller has just received. A MAC gives the integrity and
+  confidentiality the token does not need: the keys it carries are values of
+  fields the response shows (see "What a cursor may order by"), of rows the
+  caller has just received. A MAC gives the integrity and
   binding that matter with less machinery and no nonce management.
 - **JWS / JWT.** Algorithm agility in the header has a history of
   algorithm-confusion and `none` attacks, the header and claim set are

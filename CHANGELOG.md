@@ -564,17 +564,40 @@
   ```
 
   Keys are read from a file or an environment variable, never written in the
-  configuration, and must be at least 32 bytes; older key ids stay in `keys`
-  to verify the tokens they signed during a rotation.
+  configuration, as standard base64 decoding to at least 32 random bytes
+  (`openssl rand -base64 32`); a passphrase is refused. Older key ids stay in
+  `keys` to verify the tokens they signed during a rotation.
   The default is `signed` in every environment; `signing: ephemeral` (a
   random per-process key, for `development.yaml`) and `signing: unsigned`
   (for `test.yaml`) are explicit opt-outs, and both log a WARNING at
   startup. In production and staging the deploy check `loom.cursors.E001`
   fails startup, and `loom check --deploy` fails, when a `database` or
   `persistence.mongo` section is set and `signing` is not `signed` or
-  `current_key_id` names no entry of `keys`. A key's `env` source must not
+  `current_key_id` names no entry of `keys`. No `config.overridable` entry
+  may open a key under `persistence.cursors`. A key's `env` source must not
   name a `LOOM_*` variable. Tokens issued before this release are refused:
   clients restart from the first page.
+- **rest:** a `sortable` column must be a field of the items the route
+  answers with (`PageResult[T]`, `CursorResult[T]` or `list[T]`); a column
+  the response does not show, or a result type that does not say, fails
+  compilation naming the route and the field, since ordering by it reveals
+  its values. `sortable=ALL` opens every scalar column, hidden ones included,
+  and its startup warning says so.
+- **core:** a cursor page orders only by non-null columns of a type a token
+  carries; a dotted path, a JSON, `bytes` or optional column answers
+  `400 unsupported_query` before the query runs (`require_cursor_sort`), and
+  a page whose last row holds a non-finite number or a value the token
+  cannot carry answers 400 instead of 500. An empty cursor is an invalid
+  token on SQLAlchemy as on Mongo. Tokens bind the model as
+  `module.qualname`, so `UnsupportedQuery.model` names the module too. Mongo
+  issues the next token in the model's types, so a page sorted by a date,
+  decimal or UUID column, or keyed by a UUID, reaches the next page.
+- **core:** one `CursorCodec` per process: the registration modules register
+  it with `register_cursor_codec`, which raises `ConfigError` when a
+  different codec is already registered.
+- **ai:** a provider's `credentials_ref` is read through
+  `loom.core.environment.configured_variable` and may not name a `LOOM_*`
+  variable.
 - **core:** the unsigned module functions `encode_cursor` and
   `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
   `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
@@ -620,8 +643,7 @@
   takes the tuple as its first argument and raises `TypeError` for anything
   else. A cursor token issued for such a model before this release is refused with
   `UnsupportedQuery`, `400 unsupported_query`; clients restart from the first
-  page. `decode_cursor` takes `id_count`, the number of key columns, and
-  `get_id_attributes` returns every key column name.
+  page. `get_id_attributes` returns every key column name.
 
 - **core:** `compile_all` raises `ValueError` for a model with a composite
   primary key that declares a relation or a projection whose loader runs

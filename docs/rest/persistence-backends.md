@@ -234,7 +234,7 @@ persistence:
 |---|---|---|
 | `signing` | `signed` | `signed`, `ephemeral` or `unsigned` |
 | `current_key_id` | — | Key id that signs new tokens; must be one of `keys` |
-| `keys` | `{}` | Key id → exactly one source, `path` (a file, such as a mounted secret) or `env` (an environment variable). The key is the UTF-8 text found there, surrounding whitespace removed, at least 32 bytes; `openssl rand -base64 48` produces one. Key ids match `[A-Za-z0-9._-]{1,64}` |
+| `keys` | `{}` | Key id → exactly one source, `path` (a file, such as a mounted secret) or `env` (an environment variable). The source holds the key in standard padded base64, surrounding whitespace ignored, decoding to at least 32 random bytes; `openssl rand -base64 32` produces one. A passphrase or any other text is refused. Key ids match `[A-Za-z0-9._-]{1,64}` |
 
 Key material never appears in the configuration, so a dump of it cannot leak
 a key, and a configuration error names the key id, never the key or its path.
@@ -257,7 +257,8 @@ Production uses `signed`. In production and staging the deploy check
 `signed` or `current_key_id` names no entry of `keys` (see
 [Environments](../getting-started/environments.md#deploy-checks)).
 `persistence.cursors` cannot be set from a `LOOM__*` variable in those
-environments: it is not on the override allowlist. A key's `env` source names
+environments: it is not on the override allowlist, and no `config.overridable`
+entry may open a key under it. A key's `env` source names
 the variable holding the key, which must not start with `LOOM_`; on ECS it is
 a `secrets` entry of the task definition.
 
@@ -268,7 +269,12 @@ one whose key count differs from the sort or the primary key, or whose value
 has another type than its column, is refused: a string is not an integer and
 is never parsed into a datetime, date, time, UUID or decimal. Every
 refusal is `UnsupportedQuery` — `400 unsupported_query` on the wire — and its
-message never echoes the token. A naive datetime key, such as a
+message never echoes the token. An empty token is refused too, on every
+backend. A cursor page orders only by non-null columns of a type a token
+carries (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
+`Decimal`, an enum or a `Literal`): a dotted path, a JSON or `bytes` column or
+an optional column answers `400 unsupported_query` before the query runs,
+and so does a page whose last row holds a non-finite number. A naive datetime key, such as a
 `DateTime(tz=False)` column, is issued as UTC with an explicit offset and
 compared as naive UTC again against that column.
 

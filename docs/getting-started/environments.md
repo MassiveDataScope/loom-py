@@ -227,7 +227,8 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   authentication settings, the deploy checks, the documentation and metrics
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
-  inside `checks` or `config` stops startup naming the entry; the entries
+  that can match a key inside `checks`, `config` or `persistence.cursors`
+  (`persistence.*.signing` included) stops startup naming the entry; the entries
   are checked at every load, in every environment. Any other key you list
   is a reviewed choice, much like setting it from `${oc.env:...}` in the
   files; the deploy checks still judge the merged value.
