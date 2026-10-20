@@ -1156,6 +1156,10 @@
   too. Before, such a key was ignored. A SQLAlchemy sink that references a
   shared `database` reads no pool keys (`pool_size`, `echo`, ...) from its own
   section, so they are refused there; set them under `database.<name>`.
+  A SQLAlchemy or ClickHouse sink section that sets both `url` and `database`
+  is refused too, instead of one silently winning: a SQLAlchemy sink sets one
+  or the other, and a ClickHouse sink takes its url from `database.<name>`, so
+  it sets `database` only.
   Delta's `part_max_records` is removed and therefore refused: it was an alias
   of `writer_properties.max_row_group_size`, which is the key to set. Without
   `writer_properties` the row groups still hold at most 10 000 rows.

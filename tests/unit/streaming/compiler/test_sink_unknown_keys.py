@@ -1,4 +1,5 @@
-"""A table sink section with a key its backend does not read fails at compile time."""
+"""A table sink section with a key its backend does not read, or two sources of one
+setting, fails at compile time."""
 
 from __future__ import annotations
 
@@ -36,7 +37,10 @@ def _config(base: DictConfig, section: dict[str, object]) -> ConfigContext:
         base,
         OmegaConf.create(
             {
-                "database": {"clickhouse": {"url": "clickhouse://localhost:8123/default"}},
+                "database": {
+                    "clickhouse": {"url": "clickhouse://localhost:8123/default"},
+                    "warehouse": {"url": "sqlite+aiosqlite:///:memory:"},
+                },
                 "streaming": {"sinks": {_SINK: section}},
             }
         ),
@@ -69,3 +73,26 @@ def test_an_unknown_key_is_a_sink_config_issue_naming_the_key(
     ]
     assert len(issues) == 1
     assert "'chunk_sise'" in issues[0].message
+
+
+@pytest.mark.parametrize(
+    ("backend", "database"),
+    [(Backend.SQLALCHEMY, "warehouse"), (Backend.CLICKHOUSE, "clickhouse")],
+)
+def test_a_section_with_both_url_and_database_is_refused(
+    streaming_kafka_config: DictConfig, backend: Backend, database: str
+) -> None:
+    section = {"url": "sqlite+aiosqlite:///:memory:", "database": database}
+    flow = _flow(backend)
+    context = _config(streaming_kafka_config, section)
+
+    with pytest.raises(CompilationError) as failure:
+        compile_flow(flow, config=context)
+
+    issues = [
+        issue
+        for issue in failure.value.issues
+        if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
+    ]
+    assert len(issues) == 1
+    assert "both 'url' and 'database'" in issues[0].message
