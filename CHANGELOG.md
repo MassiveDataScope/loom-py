@@ -913,8 +913,10 @@
   message of its batch, in batch order, instead of one flat list. List `i`
   holds what `messages[i]` expands into; each output takes that message's
   metadata, and an empty list filters the message out. A result whose length
-  differs from the batch, a flat list of payloads, or a `Message` among the
-  outputs raises `TypeError`, and the batch becomes error envelopes.
+  differs from the batch, a flat list of payloads, a `Message` among the
+  outputs, or a `str`, `bytes`, `bytearray` or mapping in place of the result
+  or of one of its lists raises `TypeError`, and the batch becomes error
+  envelopes.
 
   ```python
   # before

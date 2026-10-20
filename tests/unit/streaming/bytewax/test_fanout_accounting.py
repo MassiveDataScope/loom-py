@@ -682,11 +682,20 @@ class _TwoNoneOneInBatch(BatchExpandStep[Item, Item]):
         return [[message.payload] * counts.get(message.payload.value, 1) for message in messages]
 
 
+_BATCH_OFFSETS: list[list[int | None]] = []
+"""Source offsets of every batch the batch-expanding fixtures below received."""
+
+
+def _record_batch(messages: list[Message[Item]]) -> None:
+    _BATCH_OFFSETS.append([message.meta.offset for message in messages])
+
+
 class _NothingFromBatch(BatchExpandStep[Item, Item]):
     """Expand every message of a batch into nothing."""
 
     def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
         del kwargs
+        _record_batch(messages)
         return [[] for _ in messages]
 
 
@@ -695,14 +704,30 @@ class _SameFromBatch(BatchExpandStep[Item, Item]):
 
     def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
         del kwargs
+        _record_batch(messages)
         return [[message.payload] for message in messages]
+
+
+class _OncePerOffsetInBatch(BatchExpandStep[Item, Item]):
+    """Expand the first message of each source offset in a batch into itself, the rest into none."""
+
+    def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
+        del kwargs
+        _record_batch(messages)
+        seen: set[int | None] = set()
+        outputs: list[list[Item]] = []
+        for message in messages:
+            outputs.append([] if message.meta.offset in seen else [message.payload])
+            seen.add(message.meta.offset)
+        return outputs
 
 
 class _FailingBatch(BatchExpandStep[Item, Item]):
     """Fail on every batch."""
 
     def execute(self, messages: list[Message[Item]], **kwargs: object) -> list[list[Item]]:
-        del kwargs, messages
+        del kwargs
+        _record_batch(messages)
         raise RuntimeError("batch failed")
 
 
@@ -920,6 +945,26 @@ def _each(topic: str, *offsets: int) -> tuple[tuple[str, int], ...]:
     return tuple((topic, offset) for offset in offsets)
 
 
+def _siblings_into(
+    step: type[BatchExpandStep[Item, Item]], writes: tuple[tuple[str, int], ...]
+) -> _PathCase:
+    """Expand items 0 and 2 into two siblings each, item 1 into none, then batch them.
+
+    The batch closes on size, so its first batch holds both siblings of offset 0.
+    """
+    return _PathCase(
+        lambda: Process(
+            _TwiceExceptItem1(),
+            CollectBatch(max_records=3, timeout_ms=60_000),
+            step(),
+            _topic("t.a"),
+        ),
+        writes,
+        shares={0: 2, 1: 1, 2: 2},
+        errors="t.err",
+    )
+
+
 _PATH_CASES = {
     "into_topic": _PathCase(
         lambda: Process(UpperItem(), _topic("t.a")),
@@ -1112,38 +1157,13 @@ _PATH_CASES = {
         shares={0: 2, 1: 1, 2: 1},
         errors="t.err",
     ),
-    "siblings_into_batch_expand_step": _PathCase(
-        lambda: Process(
-            _TwiceExceptItem1(),
-            CollectBatch(max_records=3, timeout_ms=50),
-            _SameFromBatch(),
-            _topic("t.a"),
-        ),
-        _each("t.a", 0, 0, 2, 2),
-        shares={0: 2, 1: 1, 2: 2},
-        errors="t.err",
+    "siblings_into_batch_expand_step": _siblings_into(_SameFromBatch, _each("t.a", 0, 0, 2, 2)),
+    "siblings_into_batch_expand_step_with_fewer_outputs": _siblings_into(
+        _OncePerOffsetInBatch, _each("t.a", 0, 2, 2)
     ),
-    "siblings_into_batch_expand_step_to_nothing": _PathCase(
-        lambda: Process(
-            _TwiceExceptItem1(),
-            CollectBatch(max_records=3, timeout_ms=50),
-            _NothingFromBatch(),
-            _topic("t.a"),
-        ),
-        (),
-        shares={0: 2, 1: 1, 2: 2},
-        errors="t.err",
-    ),
-    "siblings_into_failing_batch_expand_step": _PathCase(
-        lambda: Process(
-            _TwiceExceptItem1(),
-            CollectBatch(max_records=3, timeout_ms=50),
-            _FailingBatch(),
-            _topic("t.a"),
-        ),
-        _each("t.err", 0, 0, 2, 2),
-        shares={0: 2, 1: 1, 2: 2},
-        errors="t.err",
+    "siblings_into_batch_expand_step_to_nothing": _siblings_into(_NothingFromBatch, ()),
+    "siblings_into_failing_batch_expand_step": _siblings_into(
+        _FailingBatch, _each("t.err", 0, 0, 2, 2)
     ),
     "batch_expand_step_to_nothing": _PathCase(
         lambda: Process(
@@ -1373,6 +1393,16 @@ class TestEveryPathCompletesOnce:
         )
 
         _assert_each_offset_completes_once_after_its_writes(log, case.writes, case.shares, range(3))
+
+    @pytest.mark.parametrize("name", [name for name in _PATH_CASES if name.startswith("siblings_")])
+    def test_siblings_of_one_offset_share_a_batch(
+        self, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _BATCH_OFFSETS.clear()
+
+        self._assert_case(_PATH_CASES[name], monkeypatch)
+
+        assert [0, 0, 2] in _BATCH_OFFSETS, _BATCH_OFFSETS
 
     def test_a_router_keeps_the_source_order_of_the_messages_that_continue(
         self, monkeypatch: pytest.MonkeyPatch

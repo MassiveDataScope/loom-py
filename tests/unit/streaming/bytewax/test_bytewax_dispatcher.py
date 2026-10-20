@@ -684,6 +684,7 @@ def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing() -> None
         (["ab", [], []], "UpperBatchExpand must return one list of payloads per message"),
         (["", [], []], "UpperBatchExpand must return one list of payloads per message"),
         ([b"", [], []], "UpperBatchExpand must return one list of payloads per message"),
+        ([bytearray(), [], []], "UpperBatchExpand must return one list of payloads per message"),
         ([{}, [], []], "UpperBatchExpand must return one list of payloads per message"),
         ("abc", "UpperBatchExpand must return one list of payloads per message"),
         (
@@ -698,6 +699,7 @@ def test_execute_batch_expand_step_expands_an_empty_batch_into_nothing() -> None
         "str_list",
         "empty_str_list",
         "bytes_list",
+        "bytearray_list",
         "mapping_list",
         "str_result",
         "mapping_result",

@@ -30,7 +30,6 @@ from loom.streaming.bytewax.handlers._shared import (
     _replace_payload,
     _replace_payloads,
     _require_message,
-    _resolve_batch_expand_result,
     _resolve_batch_result,
     _resolve_expand_result,
     _resolve_node_name,
@@ -294,7 +293,7 @@ def _execute_batch_expand_step(
         trace_id=messages[0].meta.trace_id if messages else None,
         correlation_id=messages[0].meta.correlation_id if messages else None,
     ):
-        result = _resolve_batch_expand_result(batch_expand_step.execute(messages), name)
+        result = _resolve_expand_result(batch_expand_step.execute(messages), name)
         return _outputs_per_message(messages, _result_list(result, name), name)
 
 
