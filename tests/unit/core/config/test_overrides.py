@@ -225,6 +225,8 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         ("LOOM__APP__REST__DOCS_URL", "/docs"),
         ("LOOM__OBSERVABILITY__LOG__CONFIG__LEVELS", "DEBUG"),
         ("LOOM__SQL__CONNECTIONS__ANALYTICS__MAX_EXECUTION_TIME", "0"),
+        ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
+        ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),
     ],
     ids=[
         "a key a reviewed key references, off the allowlist",
@@ -236,6 +238,8 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         "a documentation path",
         "a key one character off an allowlisted one",
         "the query time limit",
+        "the columns a list route filters on",
+        "the columns a list route sorts by",
     ],
 )
 def test_a_deployed_environment_refuses_every_key_off_the_allowlist(
