@@ -703,6 +703,14 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "ExpandRoutes",
         None,
     ),
+    "batch into a broadcast": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _broadcast(FakeStep())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before Broadcast",
+        "Broadcast",
+        None,
+    ),
     "batch into a drain": (
         lambda: _flow(CollectBatch(3, 50), _SameBatch(), Drain()),
         {},

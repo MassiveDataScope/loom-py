@@ -909,14 +909,22 @@
 
 ### streaming
 
-- **streaming:** `FromTopic`, `FromMultiTypeTopic` and `FromMongoCDC` take no
-  `shape`, and `CompiledSingleSource`, `CompiledMultiSource` and
-  `CompiledMongoCDCSource` have no `shape` field. The runtime never read the
-  declared shape: every source emits one record per message, so a source
-  declared `BATCH` was shape-checked as batches while its nodes received
-  records. Every flow now starts as a record stream. Migration: drop
+- **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
+  `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
+  and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
+  is removed. The runtime never read a declared shape: every source emits one
+  record per message, so a source declared `BATCH` was shape-checked as
+  batches while its nodes received records, and an `IntoTopic` writes one
+  record per message whatever it declared. Every flow now starts as a record
+  stream, and an `IntoTopic` ends its path (shape `none`). Migration: drop
   `shape=`; to work on batches, use `CollectBatch` and, back to records,
   `ForEach`.
+- **streaming:** a batch reaching a `Drain` or a `Broadcast` fails compilation
+  with `SHAPE_MISMATCH`, whatever the delivery. Under at-most-once delivery
+  `CollectBatch → Drain` compiled and dropped the batch; under at-least-once
+  the batch's offsets never completed. Under at-least-once a `Broadcast` with
+  more than one route raised `TypeError` (`Expected Message, got list`) on a
+  batch. Put a `ForEach` before the node.
 - **streaming:** compile issues come from the code catalogue
   (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
   factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
@@ -1313,12 +1321,12 @@
   flushed.
 - **streaming:** a batch reaching a node that takes records fails compilation
   with `SHAPE_MISMATCH`: `IntoTopic`, `IntoTable` (any `IntoSink`), `Fork`,
-  `ExpandRoutes` and `Drain`, the flow `output` (component `flow.output`,
-  field `output`) and a Broadcast route `output` (component
-  `broadcast branch <n> > output`, field `output`). Such flows used to
-  compile. `CollectBatch → BatchStep → IntoTopic` raised `'list' object has
-  no attribute 'meta'` at runtime, and under at-least-once delivery a `Drain`
-  after a batch never completed the batch's offsets. Put a `ForEach` before the node.
+  `ExpandRoutes`, the flow `output` (component `flow.output`, field `output`)
+  and a Broadcast route `output` (component `broadcast branch <n> > output`,
+  field `output`). Such flows used to compile. `CollectBatch → BatchStep →
+  IntoTopic` raised `'list' object has no attribute 'meta'` at runtime. Put a
+  `ForEach` before the node. `Drain` and `Broadcast` are under Behaviour
+  changes.
 - **streaming:** a `BatchExpandStep` subclass outputs records to the shape
   check. The compiler matched step output shapes by exact type, so every step
   subclass kept the incoming shape and a record step after a

@@ -8,7 +8,6 @@ from typing import ClassVar, Generic, Protocol, TypeVar
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.routing import LogicalRef, as_logical_ref
 from loom.streaming.core._message import Message
-from loom.streaming.nodes._shape import StreamShape
 
 PayloadT = TypeVar("PayloadT", bound=LoomStruct | LoomFrozenStruct, contravariant=True)
 MultiPayloadT = TypeVar("MultiPayloadT", bound=LoomStruct | LoomFrozenStruct, covariant=True)
@@ -93,7 +92,6 @@ class IntoTopic(LoomFrozenStruct, Generic[PayloadT], frozen=True):
         name: Logical output reference. By default this is also used as the
             Kafka config reference.
         payload: Optional logical payload type descriptor.
-        shape: Declared output shape.
         partitioning: Optional partitioning policy.
         dlq: Optional dead-letter topic name.  When set, messages that fail
             delivery are routed to this topic instead of crashing the worker.
@@ -103,7 +101,6 @@ class IntoTopic(LoomFrozenStruct, Generic[PayloadT], frozen=True):
 
     name: str
     payload: type[PayloadT] | None = None
-    shape: StreamShape = StreamShape.RECORD
     partitioning: PartitionPolicy[PayloadT] | None = None
     dlq: str | None = None
     router_branch_safe: ClassVar[bool] = True

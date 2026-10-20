@@ -35,7 +35,7 @@ from loom.streaming.nodes._mongo import FromMongoCDC
 from loom.streaming.nodes._router import Router
 from loom.streaming.nodes._shape import CollectBatch, Drain, ForEach, StreamShape, WindowStrategy
 from loom.streaming.nodes._sink import IntoSink
-from loom.streaming.nodes._step import BatchExpandStep, BatchStep, ExpandStep, RecordStep
+from loom.streaming.nodes._step import BatchExpandStep, BatchStep, ExpandStep, RecordStep, Step
 from loom.streaming.nodes._table import Backend, IntoTable
 from loom.streaming.nodes._table.config import (
     resolve_clickhouse_table_config,
@@ -248,8 +248,9 @@ def _check_input_shape(
 def _output_shape_issues(shape: StreamShape, component: str) -> list[CompilationIssue]:
     """Return the mismatch of an output declared after a stream of *shape*.
 
-    An output writes records. A stream that ended (``none``) carries nothing to
-    the output, so it is no shape mismatch.
+    An output writes records, so only a ``batch`` is a mismatch. ``none`` is the
+    shape after a node that ends the path, and after ``With`` and ``WithAsync``,
+    whose runtime hands their results on one message at a time.
     """
     if shape in (StreamShape.RECORD, StreamShape.NONE):
         return []
@@ -656,19 +657,11 @@ def _contains_broadcast(nodes: Iterable[object]) -> bool:
 
 
 def _node_input_shape(node: object) -> StreamShape | None:
-    if isinstance(node, RecordStep):
-        return StreamShape.RECORD
-    if isinstance(node, BatchStep):
-        return StreamShape.BATCH
-    if isinstance(node, ExpandStep):
-        return StreamShape.RECORD
-    if isinstance(node, BatchExpandStep):
-        return StreamShape.BATCH
-    if isinstance(node, Explode):
-        return StreamShape.RECORD
+    if isinstance(node, Step):
+        return node.input_shape
     if isinstance(node, ForEach):
         return StreamShape.BATCH
-    if isinstance(node, (IntoTopic, IntoSink, Fork, ExpandRoutes, Drain)):
+    if isinstance(node, (Explode, IntoTopic, IntoSink, Fork, ExpandRoutes, Drain, Broadcast)):
         return StreamShape.RECORD
     return None
 
@@ -707,30 +700,21 @@ def _validate_scoped_process_nodes(nodes: Iterable[object]) -> list[CompilationI
     return errors
 
 
-_FIXED_OUTPUT_SHAPES: dict[type, StreamShape] = {
-    CollectBatch: StreamShape.BATCH,
-    Explode: StreamShape.RECORD,
-    ForEach: StreamShape.RECORD,
-    RecordStep: StreamShape.RECORD,
-    BatchStep: StreamShape.BATCH,
-    ExpandStep: StreamShape.RECORD,
-    BatchExpandStep: StreamShape.RECORD,
-    With: StreamShape.NONE,
-    WithAsync: StreamShape.NONE,
-    Drain: StreamShape.NONE,
-    Fork: StreamShape.NONE,
-    Broadcast: StreamShape.NONE,
-}
+_FIXED_OUTPUT_SHAPES: tuple[tuple[type, StreamShape], ...] = (
+    (CollectBatch, StreamShape.BATCH),
+    (Explode, StreamShape.RECORD),
+    (ForEach, StreamShape.RECORD),
+    (With, StreamShape.NONE),
+    (WithAsync, StreamShape.NONE),
+    (Drain, StreamShape.NONE),
+    (Fork, StreamShape.NONE),
+    (Broadcast, StreamShape.NONE),
+    (IntoTopic, StreamShape.NONE),
+    (IntoSink, StreamShape.NONE),
+)
 
 
 def _node_output_shape(node: object, current: StreamShape) -> StreamShape:
-    fixed = next(
-        (shape for kind, shape in _FIXED_OUTPUT_SHAPES.items() if isinstance(node, kind)), None
-    )
-    if fixed is not None:
-        return fixed
-    if isinstance(node, IntoSink):
-        return StreamShape.NONE
-    if isinstance(node, IntoTopic):
-        return node.shape
-    return current
+    if isinstance(node, Step):
+        return node.output_shape
+    return next((shape for kind, shape in _FIXED_OUTPUT_SHAPES if isinstance(node, kind)), current)

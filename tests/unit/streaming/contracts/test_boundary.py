@@ -27,28 +27,20 @@ class _OrderPartitionStrategy:
 
 
 class TestBoundaryContracts:
-    def test_topic_boundaries_hold_payload_classes_and_the_output_shape(self) -> None:
-        source = FromTopic("orders.in", payload=Order)
-        target = IntoTopic("orders.out", payload=Order, shape=StreamShape.MANY)
-
-        assert source.name == "orders.in"
-        assert source.payload is Order
-        assert target.payload is Order
-        assert target.shape is StreamShape.MANY
-
     @pytest.mark.parametrize(
-        ("source_type", "fields"),
+        ("boundary_type", "fields"),
         [
             (FromTopic, {"payload": Order}),
             (FromMultiTypeTopic, {"payloads": (Order, Order)}),
             (FromMongoCDC, {}),
+            (IntoTopic, {}),
         ],
         ids=lambda value: value.__name__ if isinstance(value, type) else "",
     )
-    def test_a_source_declares_no_shape(self, source_type: Any, fields: dict[str, Any]) -> None:
-        """Sources emit one record per message; a batch comes from CollectBatch."""
+    def test_a_boundary_declares_no_shape(self, boundary_type: Any, fields: dict[str, Any]) -> None:
+        """Sources emit and topics take one record per message; CollectBatch makes a batch."""
         with pytest.raises(TypeError, match="shape"):
-            source_type("orders.in", shape=StreamShape.BATCH, **fields)
+            boundary_type("orders.in", shape=StreamShape.BATCH, **fields)
 
     def test_topic_boundaries_use_logical_refs_only(self) -> None:
         source = FromTopic("orders-input", payload=Order)
@@ -61,7 +53,6 @@ class TestBoundaryContracts:
         target: IntoTopic[Any] = IntoTopic("orders.dlq")
 
         assert target.payload is None
-        assert target.shape is StreamShape.RECORD
 
     def test_into_topic_can_declare_partitioning_policy(self) -> None:
         strategy: PartitionStrategy[Order] = _OrderPartitionStrategy()

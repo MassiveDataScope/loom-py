@@ -12,7 +12,6 @@ class StreamShape(StrEnum):
     """Logical data shape at a streaming graph edge."""
 
     RECORD = "record"
-    MANY = "many"
     BATCH = "batch"
     NONE = "none"
 
