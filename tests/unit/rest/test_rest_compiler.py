@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import msgspec
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField
 from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case import Created, Query
+from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
-from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
+from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
 
 
 class CreateUserUseCase(UseCase[Any, str]):
@@ -835,3 +838,150 @@ class TestDeclaredQuery:
 
         with pytest.raises(InterfaceCompilationError, match=reason):
             compiler.compile(interface)
+
+
+class _Shelf(BaseModel):
+    __tablename__ = "rest_compiler_shelves"
+
+    id: int = ColumnField(primary_key=True)
+    label: str = ColumnField(length=32)
+
+
+class _Book(BaseModel):
+    __tablename__ = "rest_compiler_books"
+
+    id: int = ColumnField(primary_key=True)
+    title: str = ColumnField(length=64)
+    pages: int = ColumnField()
+    notes: dict[str, Any] = ColumnField(JSON)
+    shelf_id: int = ColumnField(foreign_key="rest_compiler_shelves.id")
+    shelf: _Shelf | None = RelationField(
+        foreign_key="shelf_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class _ListBooks(UseCase[_Book, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
+class _ListAnything(UseCase[Any, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
+class TestFilterable:
+    @staticmethod
+    def _compile(*interfaces: type[RestInterface[Any]]) -> list[Any]:
+        compiler = UseCaseCompiler()
+        compiler.compile(_ListBooks)
+        compiler.compile(_ListAnything)
+        compiler.compile(CreateUserUseCase)
+        rest = RestInterfaceCompiler(compiler)
+        return [route for interface in interfaces for route in rest.compile(interface)]
+
+    def test_a_field_ref_and_a_dotted_string_resolve_to_the_same_typed_paths(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = (F(_Book).pages, "shelf.label")
+            routes = (RestRoute(use_case=_ListBooks, method="GET", path="/"),)
+
+        (route,) = self._compile(IFace)
+
+        assert route.filter_fields == (("pages", int), ("shelf.label", str))
+
+    def test_a_route_declaration_overrides_its_interface(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = (F(_Book).pages,)
+            routes = (
+                RestRoute(use_case=_ListBooks, method="GET", path="/"),
+                RestRoute(use_case=_ListBooks, method="GET", path="/titled", filterable=("title",)),
+                RestRoute(use_case=_ListBooks, method="GET", path="/plain", filterable=()),
+            )
+
+        routes = self._compile(IFace)
+
+        assert [route.filter_fields for route in routes] == [
+            (("pages", int),),
+            (("title", str),),
+            (),
+        ]
+
+    def test_an_auto_crud_list_route_takes_its_interface_declaration(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            auto = True
+            include = ("list",)
+            filterable = ("title",)
+
+        compiler = UseCaseCompiler()
+        for route in IFace.routes:
+            compiler.compile(route.use_case)
+        (route,) = RestInterfaceCompiler(compiler).compile(IFace)
+
+        assert route.filter_fields == (("title", str),)
+
+    def test_a_route_without_a_query_spec_ignores_its_interface_declaration(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = ("title",)
+            routes = (RestRoute(use_case=CreateUserUseCase, method="POST", path="/"),)
+
+        (route,) = self._compile(IFace)
+
+        assert route.filter_fields == ()
+
+    @pytest.mark.parametrize(
+        ("filterable", "field"),
+        [
+            ((F(_Shelf).label,), "label"),
+            (("missing",), "missing"),
+            (("notes",), "notes"),
+            (("shelf.label.code",), "shelf.label.code"),
+        ],
+    )
+    def test_a_field_the_route_cannot_filter_fails_compilation(
+        self, filterable: tuple[Any, ...], field: str
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListBooks, method="GET", path="/", filterable=filterable),
+            )
+
+        with pytest.raises(InterfaceCompilationError, match=r"\(GET, '/'\).*" + field):
+            self._compile(IFace)
+
+    def test_a_use_case_without_a_model_cannot_declare_filterable_fields(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListAnything, method="GET", path="/", filterable=("title",)),
+            )
+
+        with pytest.raises(InterfaceCompilationError, match="declares no model"):
+            self._compile(IFace)
+
+    def test_all_resolves_every_scalar_field_and_warns_naming_the_route(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = ALL
+            routes = (RestRoute(use_case=_ListBooks, method="GET", path="/"),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = self._compile(IFace)
+
+        assert dict(route.filter_fields) == {
+            "id": int,
+            "title": str,
+            "pages": int,
+            "shelf_id": int,
+            "shelf.id": int,
+            "shelf.label": str,
+        }
+        (record,) = caplog.records
+        assert record.levelno == logging.WARNING
+        assert "IFace: route (GET, '/')" in record.getMessage()

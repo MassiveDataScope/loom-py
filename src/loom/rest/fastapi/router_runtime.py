@@ -47,18 +47,11 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
-from loom.core.model import (
-    BoundaryValidationError,
-    LoomType,
-    get_column_fields,
-    get_relations,
-    loom_type,
-    msgspec_type,
-)
-from loom.core.model.introspection import extract_model_from_hint
+from loom.core.model import BoundaryValidationError, LoomType, loom_type, msgspec_type
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
+    FIELD_TYPED_OPS,
     FilterGroup,
     FilterOp,
     FilterSpec,
@@ -170,11 +163,6 @@ def _normalize_path_param_annotation(annotation: Any) -> Any:
 
 _RESERVED_QUERY_KEYS = frozenset((*QUERY_SPEC_PARAMETER_NAMES, QueryParam.PROFILE))
 _FILTER_OP_VALUES = frozenset(item.value for item in FilterOp)
-# LIKE and ILIKE take a text pattern; the query compilers ignore the value of
-# IS_NULL, EXISTS and NOT_EXISTS.
-_TYPED_FILTER_OPS = frozenset(
-    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
-)
 
 
 def _camel_to_snake(value: str) -> str:
@@ -196,82 +184,49 @@ def _query_validation(exc: BoundaryValidationError) -> BoundaryValidationError:
 
 @dataclass(frozen=True, slots=True)
 class _FilterValues:
-    """Converts filter values by the type their field declares on the route's model.
+    """Refuses undeclared filter fields and types the values of declared ones.
 
-    ``attributes`` maps each filterable path (``"rank"``, ``"section.rank"``)
-    to its attribute on ``decoder``'s struct, whose encoded names are those
-    paths. A path the model does not declare keeps the text it was sent as
-    and is left to the repository, whose SQLAlchemy and Mongo query
-    compilers refuse an unknown path with ``400 unsupported_query``.
+    ``attributes`` maps each field the route declares filterable
+    (``"rank"``, ``"section.rank"``) to its attribute on ``decoder``'s
+    struct, whose encoded names are those paths.
     """
 
-    decoder: LoomType | None
+    decoder: LoomType
     attributes: Mapping[str, str]
 
     def convert(self, field: str, op: FilterOp, raw: str) -> Any:
         """Return the filter value of *op* on *field*, typed by the field.
 
         Raises:
+            LoomError: ``unsupported_query`` when the route does not declare
+                *field* filterable.
             BoundaryValidationError: ``query_validation`` when a value does
                 not satisfy the field's type.
         """
-        if op not in _TYPED_FILTER_OPS:
+        attribute = self.attributes.get(field)
+        if attribute is None:
+            raise LoomError(
+                f"Filtering on field {field!r} is not allowed by this route.",
+                code=ErrorCode.UNSUPPORTED_QUERY,
+            )
+        if op not in FIELD_TYPED_OPS:
             return raw
         if op is FilterOp.IN:
-            return [self._typed(field, item) for item in raw.split(",") if item != ""]
-        return self._typed(field, raw)
+            return [self._typed(field, attribute, item) for item in raw.split(",") if item != ""]
+        return self._typed(field, attribute, raw)
 
-    def _typed(self, field: str, text: str) -> Any:
-        attribute = self.attributes.get(field)
-        if self.decoder is None or attribute is None:
-            return text
+    def _typed(self, field: str, attribute: str, text: str) -> Any:
         try:
             return getattr(self.decoder.from_query({field: text}), attribute)
         except BoundaryValidationError as exc:
             raise _query_validation(exc) from exc
 
 
-def _column_annotations(model: type[Any]) -> list[tuple[str, Any]]:
-    """Return ``(name, annotation)`` per column of *model*, ``Annotated`` metadata removed.
-
-    A filter value is typed, not constrained: ``rank__gt=0`` is a valid filter
-    on a column declared ``ge=1``.
-    """
-    hints = typing.get_type_hints(model)
-    return [(name, hints[name]) for name in get_column_fields(model)]
-
-
-def _filterable_fields(model: type[Any]) -> list[tuple[str, Any]]:
-    """Return ``(path, annotation)`` per column of *model* and of each related model.
-
-    One relation level, the depth the SQLAlchemy query compiler resolves.
-    """
-    fields = _column_annotations(model)
-    hints = typing.get_type_hints(model)
-    for relation in get_relations(model):
-        target = extract_model_from_hint(hints.get(relation))
-        if target is not None and issubclass(target, msgspec.Struct):
-            fields.extend(
-                (f"{relation}.{name}", annotation)
-                for name, annotation in _column_annotations(target)
-            )
-    return fields
-
-
-def _filter_values(model: type[Any] | None) -> _FilterValues:
-    """Compile the filter value converter of a route whose use case serves *model*.
-
-    A ``QuerySpec`` use case queries its main model, the ``TModel`` of
-    ``UseCase[TModel, ...]``, so the fields of that model type the filter
-    values. A use case with no model (``UseCase[Any, ...]``) has no field to
-    type them by and receives every value as the text sent.
-    """
-    if model is None:
-        return _FilterValues(decoder=None, attributes={})
-    fields = _filterable_fields(model)
+def _filter_values(fields: Sequence[tuple[str, Any]]) -> _FilterValues:
+    """Compile the filter value decoder of a route from its declared ``(path, annotation)``."""
     attributes = {path: f"f{index}" for index, (path, _) in enumerate(fields)}
     struct = msgspec.defstruct(
-        f"{model.__name__}FilterValues",
+        "FilterValues",
         [(attributes[path], annotation, None) for path, annotation in fields],
         rename={attribute: path for path, attribute in attributes.items()},
     )
@@ -512,7 +467,6 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     query_binding = plan.query_binding if plan is not None else None
     accepts_profile_param = QueryParam.PROFILE in inspect.signature(uc_type.execute).parameters
     query_param_name = _resolve_query_param_name(uc_type)
-    filter_model = uc_type.describe_main_repo()[0] if query_param_name is not None else None
     declared_query = None
     if query_binding is not None:
         accepted = {field.name for field in compiled_route.query_fields}
@@ -533,7 +487,7 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
         query_param_name=query_param_name,
         has_input_binding=plan is not None and plan.input_binding is not None,
         declared_query=declared_query,
-        filter_values=_filter_values(filter_model),
+        filter_values=_filter_values(compiled_route.filter_fields),
     )
 
 

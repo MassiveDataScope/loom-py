@@ -25,14 +25,15 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.model import BaseModel, Cardinality, ColumnField, LoomStruct, RelationField
+from loom.core.model import BaseModel, Cardinality, ColumnField, LoomStruct, RelationField, String
 from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
+from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.field_ref import F
 from loom.core.use_case.markers import Exists, Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import (
@@ -43,7 +44,7 @@ from loom.rest.compiler import (
 )
 from loom.rest.fastapi.app import _register_openapi_components, create_fastapi_app
 from loom.rest.fastapi.router_runtime import bind_interfaces
-from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
+from loom.rest.model import ALL, RestApiDefaults, RestInterface, RestRoute
 
 # ---------------------------------------------------------------------------
 # Dummy use cases
@@ -160,8 +161,11 @@ class _FilterRow(BaseModel):
     rank: int = ColumnField()
 
 
-class CompiledFilterUseCase(UseCase[Any, str]):
+class CompiledFilterUseCase(UseCase[_FilterRow, str]):
     allowed_fields: frozenset[str] = frozenset()
+
+    def __init__(self) -> None:
+        super().__init__()
 
     async def execute(self, query: QuerySpec, **kwargs: Any) -> str:
         compile_all(_FilterRow)
@@ -202,9 +206,9 @@ class _Entry(BaseModel):
     code: str = ColumnField()
     rank: Annotated[int, msgspec.Meta(ge=1)] = ColumnField()
     quota: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
-    grade: Literal["low", "high"] = ColumnField()
+    grade: Literal["low", "high"] = ColumnField(String(4))
     active: bool = ColumnField()
-    tone: _Tone = ColumnField()
+    tone: _Tone = ColumnField(String(5))
     due: date = ColumnField()
     seen_at: datetime = ColumnField()
     section: _Section | None = RelationField(
@@ -524,16 +528,16 @@ def test_bind_interfaces_builds_query_spec_from_offset_url_params() -> None:
     routes = _compile_routes(IFace)
     app = _make_app(*routes)
     client = TestClient(app)
-    response = client.get("/items/?page=2&limit=10&price__gte=20&sort=id&direction=DESC")
+    response = client.get("/items/?page=2&limit=10&sort=id&direction=DESC")
     assert response.status_code == 200
     assert response.json() == {
         "pagination": PaginationMode.OFFSET.value,
         "page": 2,
         "limit": 10,
         "cursor": None,
-        "filter_field": "price",
-        "filter_op": FilterOp.GTE.value,
-        "filter_value": "20",
+        "filter_field": None,
+        "filter_op": None,
+        "filter_value": None,
         "sort_field": "id",
         "sort_direction": "DESC",
     }
@@ -547,16 +551,16 @@ def test_bind_interfaces_builds_query_spec_from_cursor_url_params() -> None:
     routes = _compile_routes(IFace)
     app = _make_app(*routes)
     client = TestClient(app)
-    response = client.get("/items/?after=abc123&limit=1&reviews__exists=true")
+    response = client.get("/items/?after=abc123&limit=1")
     assert response.status_code == 200
     assert response.json() == {
         "pagination": PaginationMode.CURSOR.value,
         "page": 1,
         "limit": 1,
         "cursor": "abc123",
-        "filter_field": "reviews",
-        "filter_op": FilterOp.EXISTS.value,
-        "filter_value": "true",
+        "filter_field": None,
+        "filter_op": None,
+        "filter_value": None,
         "sort_field": None,
         "sort_direction": None,
     }
@@ -599,17 +603,33 @@ def test_bind_interfaces_normalizes_camelcase_query_fields() -> None:
     routes = _compile_routes(IFace)
     app = _make_app(*routes)
     client = TestClient(app)
-    response = client.get("/items/?sort=createdAt&priceTotal__gte=20")
+    response = client.get("/items/?sort=createdAt")
     assert response.status_code == 200
     assert response.json()["sort_field"] == "created_at"
-    assert response.json()["filter_field"] == "price_total"
+
+
+@pytest.mark.parametrize("query", ["price__gte=s3cr3t", "reviews__exists=s3cr3t"])
+def test_bind_interfaces_answers_400_to_a_filter_on_an_undeclared_field(query: str) -> None:
+    class IFace(RestInterface[dict[str, Any]]):
+        prefix = "/items"
+        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+    response = client.get(f"/items/?{query}")
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["code"] == "unsupported_query"
+    assert query.split("__")[0] in body["message"]
+    assert "s3cr3t" not in response.text
 
 
 @pytest.mark.parametrize(
     ("use_case", "url", "field"),
     [
         (CompiledFilterUseCase, "/rows/?no_such_field=s3cr3t", "no_such_field"),
-        (IdOnlyFilterUseCase, "/rows/?rank=s3cr3t", "rank"),
+        (IdOnlyFilterUseCase, "/rows/?rank=7", "rank"),
     ],
 )
 def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
@@ -617,6 +637,7 @@ def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
 ) -> None:
     class IFace(RestInterface[str]):
         prefix = "/rows"
+        filterable = ALL
         routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
 
     client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
@@ -635,6 +656,18 @@ def _entry_filter_client(
 ) -> TestClient:
     class IFace(RestInterface[_Entry]):
         prefix = "/entries"
+        filterable = (
+            F(_Entry).code,
+            F(_Entry).rank,
+            F(_Entry).quota,
+            F(_Entry).section.position,
+            "grade",
+            "active",
+            "tone",
+            "due",
+            "seen_at",
+            "section.sort_order",
+        )
         routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
 
     return TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
@@ -652,7 +685,6 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
     ("query", "expected"),
     [
         ("rank=7", {"rank": 7}),
-        ("rank__gte=-3", {"rank": -3}),
         ("active=false", {"active": False}),
         ("section__position=2", {"section.position": 2}),
         ("section__sortOrder=4", {"section.sort_order": 4}),
@@ -660,7 +692,6 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
         ("quota__gt=0", {"quota": 0}),
         ("grade=high", {"grade": "high"}),
         ("rank__like=1%25", {"rank": "1%"}),
-        ("rank__ilike=1%25", {"rank": "1%"}),
     ],
 )
 def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
@@ -670,6 +701,15 @@ def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
 
     assert response.status_code == 200
     assert response.json() == expected
+
+
+def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
+    client = _entry_filter_client(EntryFilterTypesUseCase)
+
+    response = client.get("/entries/?tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z")
+
+    assert response.status_code == 200
+    assert response.json() == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
 
 
 @pytest.mark.parametrize(
@@ -1274,12 +1314,3 @@ def test_create_fastapi_app_exists_marker_uses_registered_repository() -> None:
     response = client.post("/users/exists", json={"email": "taken@example.com"})
     assert response.status_code == 200
     assert response.json() is True
-
-
-def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
-    client = _entry_filter_client(EntryFilterTypesUseCase)
-
-    response = client.get("/entries/?tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z")
-
-    assert response.status_code == 200
-    assert response.json() == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}

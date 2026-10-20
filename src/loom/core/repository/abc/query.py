@@ -59,6 +59,16 @@ class FilterOp(StrEnum):
     NOT_EXISTS = "not_exists"
 
 
+FIELD_TYPED_OPS = frozenset(
+    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
+)
+"""Operators whose value, or each ``IN`` item, is a value of the filtered field's type.
+
+``LIKE`` and ``ILIKE`` take a text pattern; the query compilers ignore the
+value of ``IS_NULL``, ``EXISTS`` and ``NOT_EXISTS``.
+"""
+
+
 class FilterSpec(LoomFrozenStruct, frozen=True):
     """A single field filter condition.
 
@@ -123,6 +133,10 @@ class QuerySpec(LoomFrozenStruct, frozen=True):
     Replaces the flat ``FilterParams`` dict with an explicit, type-safe
     representation.  The repository implementation compiles this into
     backend-specific clauses at query time.
+
+    Over REST, a ``QuerySpec`` route filters its use case's model (the
+    ``Model`` of ``UseCase[Model, ...]``), on the fields the route declares
+    ``filterable`` only.
 
     Args:
         filters: Optional filter group applied to the query.

@@ -31,6 +31,10 @@ class UseCase(ABC, Generic[ModelT, ResultT, RepoT]):
     - ``Exists(EntityType, ...)`` — boolean existence check by field.
     - No default — primitive param bound directly from the caller.
 
+    A ``QuerySpec`` parameter queries the use case's model, ``ModelT``: a
+    REST route filters it on the fields the route declares ``filterable``
+    only, so a use case declaring no model accepts no filter over REST.
+
     Class attributes ``computes``, ``rules``, and ``read_only`` declare the
     pre-execution pipeline and execution policy.  They are inspected once at
     startup by ``UseCaseCompiler`` and embedded in the immutable

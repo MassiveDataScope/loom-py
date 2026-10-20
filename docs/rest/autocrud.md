@@ -54,6 +54,58 @@ class ProductInterface(RestInterface[Product]):
 
 Valid values: `"get"`, `"list"`, `"create"`, `"update"`, `"delete"`.
 
+## Filter list routes
+
+A list route filters only the fields it declares `filterable`. Declare them
+on the interface (its auto-CRUD `list` route included) or on a `RestRoute`,
+which overrides the interface. A field reference rooted at the model is the
+primary form; a dotted path names the same field:
+
+```python
+from loom.core.use_case.field_ref import F
+
+
+class ProductInterface(RestInterface[Product]):
+    prefix = "/products"
+    auto = True
+    filterable = (F(Product).sku, F(Product).price_cents, "stock")
+```
+
+Callers filter with `field=value` or `field__op=value`, the operator one of
+`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like`,
+`ilike` and `is_null`; a camelCase name reads as snake_case, and a field of a
+related model one level down is `relation__field` (`F(Product).relation.field`):
+
+```
+GET /products?price_cents__lte=500&sku__in=A-01,A-02
+```
+
+Each value is converted by its field's type with the strict grammar of
+`Query()` (a boolean is `true` or `false`, a number follows the JSON number
+grammar, a `str` field keeps the text as sent). A value the type refuses
+answers `400 query_validation`; a field the route does not declare answers
+`400 unsupported_query`. A route with no declaration accepts no filter.
+
+Compilation refuses a field that is not a scalar column of the use case's
+model or of a model related to it one level down (JSON, list, dict and
+struct columns, which includes an `Enum` or `Literal` field declared without
+a column type), and a field reference rooted at another model.
+`filterable = ALL` (from `loom.rest`) makes every scalar field filterable and
+logs a warning naming the route at startup.
+
+In `app.rest.interfaces`, `filterable` takes dotted paths, or `all`:
+
+```yaml
+app:
+  rest:
+    interfaces:
+      products:
+        prefix: /products
+        auto: true
+        model: app.product.model:Product
+        filterable: [sku, price_cents, stock]
+```
+
 ## Multiple read profiles
 
 Expose a `profile` query parameter so callers choose the loading depth:

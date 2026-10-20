@@ -21,6 +21,10 @@ Compilation steps per interface:
    - Read the fields of a ``Query()`` parameter, refusing a non-scalar field,
      a name shared with a path parameter or ``profile``, or a ``QuerySpec``
      parameter next to it.
+   - Resolve the filterable fields of a ``QuerySpec`` route (route →
+     interface) against its use case's model, refusing a field reference
+     rooted elsewhere and a path that names no scalar column of that model or
+     of a model related to it one level down.
    - Refuse ``expose_profile`` without ``allowed_profiles``.
 """
 
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import logging
 import operator
 import types
 import typing
@@ -40,12 +45,15 @@ from typing import Any, NamedTuple
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import loom_type
+from loom.core.model import filter_field_annotations, loom_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.repository.abc.query import QuerySpec
+from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
-from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
+from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
+
+_logger = logging.getLogger(__name__)
 
 
 class _RouteOrigin(Enum):
@@ -333,6 +341,9 @@ class CompiledRoute:
             parameter of this route.
         query_fields: Parameters the route's ``Query()`` declares; empty
             when the use case declares none.
+        filter_fields: ``(path, annotation)`` of each field a client may
+            filter the route's ``QuerySpec`` on, the annotation without its
+            ``Annotated`` metadata; empty when the route filters nothing.
         result_type: Result type of ``execute`` without its ``Created``
             member, answered with the route's ``status_code``.
         created_type: Type a ``Created`` result wraps, answered with ``201``;
@@ -356,8 +367,69 @@ class CompiledRoute:
     effective_requires_roles: tuple[str, ...] = ()
     effective_max_limit: int = 1000
     query_fields: tuple[QueryField, ...] = ()
+    filter_fields: tuple[tuple[str, Any], ...] = ()
     result_type: Any = Any
     created_type: Any = None
+
+
+def _resolve_filter_fields(
+    iface_name: str,
+    route: RestRoute,
+    interface: type[RestInterface[Any]],
+    plan: ExecutionPlan,
+) -> tuple[tuple[str, Any], ...]:
+    """Resolve the fields a ``QuerySpec`` route lets a client filter on (route → interface).
+
+    A route without a ``QuerySpec`` parameter filters nothing, whatever its
+    interface declares.
+
+    Raises:
+        InterfaceCompilationError: The use case declares no model, a field
+            reference is rooted at another model, or a path names no scalar
+            column of the model or of a model related to it one level down.
+    """
+    declared = route.filterable if route.filterable is not None else interface.filterable
+    takes_query_spec = any(names_query_spec(pb.annotation) for pb in plan.param_bindings)
+    if not declared or not takes_query_spec:
+        return ()
+    where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
+    model = route.use_case.describe_main_repo()[0]
+    if model is None:
+        raise InterfaceCompilationError(
+            f"{where} declares filterable fields, but {route.use_case.__qualname__} declares "
+            "no model to filter; declare it as UseCase[Model, ...]."
+        )
+    paths: tuple[str, ...] | None = None
+    if declared is ALL:
+        _logger.warning(
+            "%s lets clients filter on every scalar field of %s (filterable=ALL); "
+            "declare the fields it filters instead.",
+            where,
+            model.__name__,
+        )
+    else:
+        paths = _filter_paths(where, model, declared)
+    try:
+        return tuple(filter_field_annotations(model, paths).items())
+    except ValueError as exc:
+        raise InterfaceCompilationError(f"{where}: filterable field {exc}") from exc
+
+
+def _filter_paths(
+    where: str, model: type[Any], declared: tuple[FieldRef | str, ...]
+) -> tuple[str, ...]:
+    """Normalise each declared field, a field reference or a dotted string, to its dotted path."""
+    paths: list[str] = []
+    for entry in declared:
+        if isinstance(entry, FieldRef):
+            if entry.root is not model:
+                raise InterfaceCompilationError(
+                    f"{where}: filterable field {'.'.join(entry.path)!r} is rooted at "
+                    f"{entry.root!r}, not at the route's model {model.__name__}."
+                )
+            entry = ".".join(entry.path)
+        paths.append(entry)
+    return tuple(paths)
 
 
 class RestInterfaceCompiler:
@@ -528,6 +600,7 @@ class RestInterfaceCompiler:
                     effective_requires_roles=self._resolve_requires_roles(route, interface),
                     effective_max_limit=self._defaults.max_limit,
                     query_fields=self._resolve_query_fields(iface_name, route, plan),
+                    filter_fields=_resolve_filter_fields(iface_name, route, interface, plan),
                     result_type=result_type,
                     created_type=created_type,
                 )

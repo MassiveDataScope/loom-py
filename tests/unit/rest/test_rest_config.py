@@ -21,7 +21,7 @@ from loom.rest.config import (
     validate_disable_routes_config,
     validate_interfaces_config,
 )
-from loom.rest.model import RestInterface, RestRoute
+from loom.rest.model import ALL, RestInterface, RestRoute
 
 _MODULE = __name__
 
@@ -531,3 +531,26 @@ def _interface_field_names() -> frozenset[str]:
     return frozenset(
         name for name, hint in hints.items() if typing.get_origin(hint) is not typing.ClassVar
     )
+
+
+class TestFilterable:
+    def test_dotted_paths_and_all_reach_the_interface_and_route(self) -> None:
+        raw = {
+            "prefix": "/pings",
+            "filterable": ["title", "owner.name"],
+            "routes": [
+                {
+                    "use_case": f"{_MODULE}:PingUseCase",
+                    "method": "GET",
+                    "path": "/",
+                    "filterable": "all",
+                }
+            ],
+        }
+
+        (interface,) = build_interfaces_from_config(
+            {"pings": msgspec.convert(raw, RestInterfaceConfig)}
+        )
+
+        assert interface.filterable == ("title", "owner.name")
+        assert interface.routes[0].filterable is ALL

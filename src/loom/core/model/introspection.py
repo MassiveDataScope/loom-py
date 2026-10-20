@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -314,6 +314,84 @@ def generic_type_arg(annotation: Any, origin: Any) -> type | None:
     if len(args) != 1 or not isinstance(args[0], type):
         return None
     return args[0]
+
+
+_NON_SCALAR_COLUMN_TYPES = frozenset({"JSON", "Postgres.JSONB", "Postgres.ARRAY"})
+
+
+def filter_field_annotations(model: type, paths: Iterable[str] | None = None) -> dict[str, Any]:
+    """Resolve the filterable field paths of *model* to their annotations.
+
+    A filterable path names a scalar column of *model* (``"status"``) or of a
+    model it relates to, one level down (``"warehouse.code"``), the depth
+    the SQLAlchemy query compiler resolves. A JSON or array column (lists,
+    dicts and structs are inferred as JSON) is not scalar. Each annotation is
+    returned without its ``Annotated`` metadata, so a filter value takes the
+    field's type but not its constraints.
+
+    Args:
+        model: Model whose fields are filtered.
+        paths: Dotted paths to resolve; ``None`` resolves every filterable
+            path of *model*.
+
+    Returns:
+        Mapping of dotted path to annotation, in the order resolved.
+
+    Raises:
+        ValueError: A path in *paths* names no scalar column of *model* or
+            of a model related to it one level down.
+    """
+    if paths is None:
+        return _every_filter_field(model)
+    return {path: _filter_field_annotation(model, path) for path in paths}
+
+
+def _every_filter_field(model: type) -> dict[str, Any]:
+    fields = _scalar_column_annotations(model)
+    for relation in get_relations(model):
+        target = _relation_target(model, relation)
+        if target is not None:
+            fields.update(
+                (f"{relation}.{name}", annotation)
+                for name, annotation in _scalar_column_annotations(target).items()
+            )
+    return fields
+
+
+def _filter_field_annotation(model: type, path: str) -> Any:
+    head, _, rest = path.partition(".")
+    owner = model if not rest else _relation_target(model, head)
+    name = rest or head
+    if owner is None or "." in name:
+        raise ValueError(
+            f"{path!r} is not a column of {model.__name__} or of a model related to it "
+            "one level down."
+        )
+    annotation = _scalar_column_annotations(owner).get(name)
+    if annotation is None:
+        raise ValueError(
+            f"{path!r} is not a scalar column of {owner.__name__}; JSON, list, dict and "
+            "struct columns cannot be filtered."
+        )
+    return annotation
+
+
+def _scalar_column_annotations(model: type) -> dict[str, Any]:
+    hints = get_type_hints(model)
+    return {
+        name: hints[name]
+        for name, info in get_column_fields(model).items()
+        if info.column_type.type_name not in _NON_SCALAR_COLUMN_TYPES
+    }
+
+
+def _relation_target(model: type, relation: str) -> type | None:
+    if relation not in get_relations(model):
+        return None
+    target = extract_model_from_hint(get_type_hints(model).get(relation))
+    if target is None or not issubclass(target, msgspec.Struct):
+        return None
+    return target
 
 
 def _extract_origin_type(annotation: Any) -> type[Any]:

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import re
 import typing
 from typing import Annotated, Any, Generic, TypeVar
 
 import msgspec
+import pytest
 
+from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
+    filter_field_annotations,
     generic_type_arg,
     get_column_fields,
     list_element_type,
@@ -141,3 +145,47 @@ class TestOptionalColumnTypes:
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
+
+
+class _Shelf(BaseModel):
+    __tablename__ = "introspection_shelves"
+
+    id: int = ColumnField(primary_key=True)
+    label: str = ColumnField(length=2)
+    tags: list[str] = ColumnField()
+
+
+class _Book(BaseModel):
+    __tablename__ = "introspection_books"
+
+    id: int = ColumnField(primary_key=True)
+    rank: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
+    settings: dict[str, Any] = ColumnField(JSON)
+    shelf_id: int = ColumnField(foreign_key="introspection_shelves.id")
+    shelf: _Shelf | None = RelationField(
+        foreign_key="shelf_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class TestFilterFieldAnnotations:
+    def test_declared_paths_resolve_to_their_annotation_without_metadata(self) -> None:
+        annotations = filter_field_annotations(_Book, ("rank", "shelf.label"))
+
+        assert annotations == {"rank": int | None, "shelf.label": str}
+
+    def test_without_paths_every_scalar_column_one_relation_down_is_filterable(self) -> None:
+        assert set(filter_field_annotations(_Book)) == {
+            "id",
+            "rank",
+            "shelf_id",
+            "shelf.id",
+            "shelf.label",
+        }
+
+    @pytest.mark.parametrize(
+        "path",
+        ["missing", "settings", "shelf.tags", "shelf", "shelf.label.code", "shelf.missing"],
+    )
+    def test_a_path_that_is_not_a_scalar_column_is_refused(self, path: str) -> None:
+        with pytest.raises(ValueError, match=re.escape(repr(path))):
+            filter_field_annotations(_Book, (path,))

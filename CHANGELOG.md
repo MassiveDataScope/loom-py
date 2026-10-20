@@ -602,6 +602,32 @@
 
 ### rest
 
+- **rest:** a `QuerySpec` route filters only the fields it declares. A query
+  parameter that filters a field the route does not declare `filterable`
+  answers `400 unsupported_query` naming the field; before, every field the
+  repository could resolve was filterable. Declare the fields on the
+  interface, which also covers its auto-CRUD `list` route, or on the route,
+  which overrides it, as field references or dotted paths:
+
+  ```python
+  class OrderRestInterface(RestInterface[Order]):
+      prefix = "/orders"
+      auto = True
+      filterable = (F(Order).status, F(Order).total, F(Order).warehouse.code)
+  ```
+
+  In `app.rest.interfaces`, `filterable` takes the dotted paths
+  (`[status, warehouse.code]`). `filterable = ALL` (`all` in YAML) keeps
+  every scalar field filterable and logs a warning naming the route at
+  startup. A field must be a column of the use case's model
+  (`UseCase[Model, ...]`) or of a model related to it one level down, and
+  scalar: JSON, list, dict and struct columns, which includes an `Enum` or
+  `Literal` field declared without a column type, cannot be filtered;
+  `InterfaceCompilationError` names the route and the field otherwise. A use
+  case that declares no model cannot declare `filterable`, so its route
+  accepts no filter. `EXISTS` and `NOT_EXISTS` name a relation, never a
+  column, so no route accepts them. The repository's `allowed_filter_fields`
+  is unchanged: programmatic callers are not restricted.
 - **rest:** every route now resolves its request parameters and decodes its
   body before the use case is built, so a request refused at that point
   never runs the use case's constructor.
@@ -964,19 +990,13 @@
   whatever the filtered field declared. `?code=0123` on a `str` field compared
   against `123`, and on Postgres a number bound to a text column answered
   `500`. Values of `eq`, `ne`, `gt`, `gte`, `lt`, `lte` and each item of `in`
-  are now converted by the type the field declares on the use case's model
-  (`UseCase[Model, ...]`), its columns and those of a related model one level
-  down, with the strict grammar of `Query()`: a `str` field keeps the text as
-  sent, a boolean accepts only `true` or `false`, an `Enum` or `Literal` only
-  its values, and a value its field's type refuses answers
-  `400 query_validation` with `violations` naming the field. The field's
-  constraints (`msgspec.Meta`) do not apply to a filter value, so `rank__gt=0`
-  is valid on a column declared `ge=1`. `like` and `ilike` keep their pattern
-  as text. A route whose use case declares no model (`UseCase[Any, ...]`) has
-  no field types to apply and now receives every filter value as the text
-  sent, so a use case that queries a repository of its own must convert them.
-  A path the model does not declare is passed as text to the repository,
-  which refuses an unknown one with `400 unsupported_query`.
+  are now converted by the type of the declared filterable field, with the
+  strict grammar of `Query()`: a `str` field keeps the text as sent, a
+  boolean accepts only `true` or `false`, an `Enum` or `Literal` only its
+  values, and a value its field's type refuses answers `400 query_validation`
+  with `violations` naming the field. The field's constraints
+  (`msgspec.Meta`) do not apply to a filter value, so `rank__gt=0` is valid
+  on a column declared `ge=1`. `like` and `ilike` keep their pattern as text.
 - **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
   `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
   while the router clamped `?limit=` to `max_limit`. The schema now publishes
