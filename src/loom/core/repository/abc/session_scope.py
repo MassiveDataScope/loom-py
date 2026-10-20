@@ -12,19 +12,22 @@ class SupportsCallerScopedSession(Protocol):
     A repository that resolves its session from the calling context — a
     ``@transactional`` scope, a unit of work — runs its reads inside a session
     that is closed when that caller unwinds, and whose uncommitted writes are
-    visible only to it.  A wrapper that would otherwise detach a read from its
-    caller must ask first: the cache layer skips its in-process coalescing
-    while this returns ``True``, because a coalesced load outlives the caller
-    that started it and would be shared with another one.
+    visible only to it.  A wrapper that keeps or shares results must ask
+    first: the repository cache takes no part while this returns ``True`` —
+    no lookup, no store and no in-process coalescing — because such a read
+    may see writes and settings only that caller has, and a coalesced load
+    would outlive the caller that started it.
 
     A repository that does not implement this protocol is taken to own the
     scope of its own reads, which is what a repository opening and closing a
     session per call does.
 
     This capability is provisional: it exists because each backend publishes
-    its transaction through its own ``ContextVar``.  It is expected to be
-    replaced by the neutral transaction scope, and is not a stable extension
-    point to build on.
+    its transaction through its own ``ContextVar``, and it is not a stable
+    extension point to build on.
+    :func:`loom.core.transaction.in_atomic_transaction` does not supersede
+    it: that marker answers whether *any* atomic transaction is open, not
+    whether *this* repository's session belongs to the caller.
     """
 
     def has_caller_scoped_session(self) -> bool:

@@ -1156,16 +1156,20 @@
   session-settings provider returns, so a policy reading a product setting
   such as `app.tenant_id` is kept apart too, while cursor tokens stay bound to
   the `loom.scope.*` settings only. Inside a caller-owned transaction (the
-  unit of work a use case runs in unless it is read-only, or a
-  `@transactional` scope) every cached read goes straight to the repository,
-  with no lookup and no store, and so does a `@cache_query` call given a
-  `session` argument; read-only use cases keep using the cache. Writes still
-  evict every scope's entries: the scope is not part of the dependency tags,
-  and a write bumps the same generation counters whatever its scope. The scope
-  is read once per cache operation and read again before its writes, which are
-  skipped if it changed. `CachedRepository` implements `cache_scope()` by
-  forwarding the wrapped repository's scope, so a wrapper around it keys by
-  the same scope, and refuses at construction, with a `RuntimeError`, a
+  unit of work a use case runs in, or a `@transactional` scope) every cached
+  read goes straight to the repository, with no lookup and no store, and so
+  does a call to a `@cache_query` method whose `session` parameter, passed by
+  position or by name, is not `None`. This holds where the backend reports
+  such a transaction, SQLAlchemy and Mongo with transactions; DynamoDB and
+  Mongo with `transactions: false` keep caching, and a read-only use case run
+  outside another unit of work opens none and keeps using the cache. Writes
+  still evict every scope's entries: the scope is not part of the dependency
+  tags, and a write bumps the same generation counters whatever its scope. The
+  scope is read once per cache operation and read again before its writes,
+  which are skipped if it changed. `CachedRepository` implements
+  `cache_scope()` and `has_caller_scoped_session()` by forwarding the wrapped
+  repository's, so a wrapper around it keys by the same scope and stays out of
+  the same transactions, and refuses at construction, with a `RuntimeError`, a
   repository whose `session_manager` has session settings but which does not
   implement `cache_scope()`. The list filter, query and `@cache_query`
   arguments fingerprints in cache keys are now the full SHA-256 instead of its

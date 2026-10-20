@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial, wraps
 from types import GenericAlias
-from typing import Any, Generic, NamedTuple, TypeVar, cast
+from typing import Any, Generic, NamedTuple, cast
 
 import msgspec
 
@@ -62,8 +62,6 @@ from loom.core.repository.abc.session_scope import (
     SupportsCallerScopedSession,
 )
 from loom.core.transaction import in_atomic_transaction
-
-LoadT = TypeVar("LoadT")
 
 
 def _infer_otm_cache_dep(model: type, attr_name: str, rel: Relation) -> str | None:
@@ -208,9 +206,10 @@ class CachedRepository(
     unit of work binds), every cached read — ``get_by_id``,
     ``list_paginated``, ``list_with_query`` and the ``@cache_query`` methods —
     goes straight to the repository, with no lookup, no store and no
-    coalescing; so does a ``@cache_query`` call given a ``session`` argument.
-    Such a read may see the transaction's uncommitted writes and the settings
-    the transaction started with, neither of which the caller's cache scope
+    coalescing; so does a call to a ``@cache_query`` method whose ``session``
+    parameter, passed by position or by name, is not ``None``.  Such a read
+    may see the transaction's uncommitted writes and the settings the
+    transaction started with, neither of which the caller's cache scope
     describes, and a coalesced load would outlive the caller's session.
     Writes still publish their invalidation.
 
@@ -219,11 +218,8 @@ class CachedRepository(
     served from the cache gets a freshly decoded one; treat a cached result as
     immutable, since a ``BaseModel`` struct is mutable unless declared frozen.
 
-    The cached list and query reads are deliberately left out of the
-    coalescing: their miss path is not a pure loader — it caches the page's
-    entities as a side effect — and its result feeds ``_load_items_from_index``,
-    which re-enters the coalesced entity read, so the herd is already collapsed
-    one level down.
+    The cached list and query reads are not coalesced: their miss path caches
+    the page's entities as a side effect, so it is not a pure loader.
 
     Every TTL is spread inside
     :attr:`~loom.core.cache.abc.config.CacheConfig.ttl_jitter` as it reaches
@@ -276,23 +272,52 @@ class CachedRepository(
         return self._entity_name
 
     def cache_scope(self) -> str:
-        """Forward the wrapped repository's cache scope, ``""`` when it reports none.
+        """The caller's scope every cache key carries; ``""`` when unscoped.
 
-        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`,
-        so a wrapper around this one keys its entries by the same scope.  It is
-        declared here rather than left to ``__getattr__``: from Python 3.12 a
-        runtime-checkable protocol is matched with ``inspect.getattr_static``,
-        which does not see attributes ``__getattr__`` forwards.
+        Forwards the wrapped repository's
+        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`,
+        so a wrapper around this one keys its entries by the same scope.  Read
+        once per cache operation, and every key of that operation is built
+        from the value read.  The scope stays out of the dependency tags: a
+        write bumps the same generation counters whatever its scope, so the
+        bump reaches the keys of every scope.
+
+        It and :meth:`has_caller_scoped_session` are declared here rather than
+        left to ``__getattr__``: from Python 3.12 a runtime-checkable protocol
+        is matched with ``inspect.getattr_static``, which does not see
+        attributes ``__getattr__`` forwards.
         """
-        return self._cache_scope()
+        repository = self._repository
+        return repository.cache_scope() if isinstance(repository, SupportsCacheScope) else ""
+
+    def has_caller_scoped_session(self) -> bool:
+        """Whether the wrapped repository reports a session owned by the caller.
+
+        Implements
+        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`
+        by forwarding it, so a wrapper around this one stays out of the
+        caller's transaction too.  A repository that does not declare the
+        capability is taken to own the scope of its own reads.
+
+        This wrapper asks "am I in a transaction?" two ways for two different
+        reasons: this one keeps the cache out of the caller's transaction,
+        while :func:`loom.core.transaction.in_atomic_transaction` in
+        :meth:`_publish_invalidation` guards the bump (must it wait for a
+        commit?). They read different signals and answer different questions;
+        neither substitutes for the other.
+        """
+        repository = self._repository
+        if not isinstance(repository, SupportsCallerScopedSession):
+            return False
+        return repository.has_caller_scoped_session()
 
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
-        if self._runs_in_caller_scoped_transaction():
+        if self.has_caller_scoped_session():
             return await self._repository.get_by_id(obj_id, profile=profile)
         tags = self._resolver.entity_tags(self.entity_name, obj_id)
         tags.extend(self._entity_dependency_tags(obj_id))
         fingerprint = await self._resolver.fingerprint(tags)
-        scope = self._cache_scope()
+        scope = self.cache_scope()
         key = entity_key(self.entity_name, obj_id, profile, fingerprint, scope=scope)
 
         cached_payload = await self._cache.get_value(key)
@@ -301,7 +326,7 @@ class CachedRepository(
             return self._to_output_from_cache(cached_payload)
 
         self._log.debug("CacheMissEntity", key=key)
-        return await self._coalesced(
+        return await self._single_flight.run(
             key,
             lambda: self._load_and_store_entity(key, obj_id, profile, scope),
         )
@@ -344,7 +369,7 @@ class CachedRepository(
         filter_params: FilterParams | None = None,
         profile: str = "default",
     ) -> PageResult[OutputT]:
-        if self._runs_in_caller_scoped_transaction():
+        if self.has_caller_scoped_session():
             return await self._repository.list_paginated(
                 page_params, filter_params=filter_params, profile=profile
             )
@@ -353,7 +378,7 @@ class CachedRepository(
         tags = self._resolver.list_tags(self.entity_name, filter_fingerprint)
         tags.extend(self._list_dependency_tags())
         fingerprint = await self._resolver.fingerprint(tags)
-        scope = self._cache_scope()
+        scope = self.cache_scope()
         index_key = list_index_key(
             self.entity_name,
             filter_fingerprint,
@@ -409,10 +434,10 @@ class CachedRepository(
         # For cursor pagination, cache only the first page to avoid
         # unbounded key growth and low-hit deep-page caches.
         should_cache = not is_cursor or query.cursor is None
-        if not should_cache or self._runs_in_caller_scoped_transaction():
+        if not should_cache or self.has_caller_scoped_session():
             return await self._repository.list_with_query(query, profile=profile)
 
-        scope = self._cache_scope()
+        scope = self.cache_scope()
         query_fingerprint = full_hash(repr(self._serialize_query(query)))
         tags = self._resolver.list_tags(self.entity_name, query_fingerprint)
         tags.extend(self._list_dependency_tags())
@@ -624,35 +649,6 @@ class CachedRepository(
         )
         return self._passthrough_codec
 
-    async def _coalesced(self, key: str, loader: Callable[[], Awaitable[LoadT]]) -> LoadT:
-        """Run *loader* once per key.
-
-        Coalescing detaches the load into its own task so it survives the
-        cancellation of the caller that started it.  It is never reached
-        inside a caller-scoped transaction, where every cached read goes
-        straight to the repository.
-        """
-        return await self._single_flight.run(key, loader)
-
-    def _runs_in_caller_scoped_transaction(self) -> bool:
-        """Whether the wrapped repository reports a session owned by the caller.
-
-        The capability is optional: a repository that does not declare
-        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`
-        is taken to own the scope of its own reads.
-
-        This wrapper asks "am I in a transaction?" two ways for two different
-        reasons: this one keeps the cache out of the caller's transaction,
-        while :func:`loom.core.transaction.in_atomic_transaction` in
-        :meth:`_publish_invalidation` guards the bump (must it wait for a
-        commit?). They read different signals and answer different questions;
-        neither substitutes for the other.
-        """
-        repository = self._repository
-        if not isinstance(repository, SupportsCallerScopedSession):
-            return False
-        return repository.has_caller_scoped_session()
-
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
         self._log.warning("CacheLoadAbandoned", key=key, error=repr(error))
 
@@ -798,13 +794,14 @@ class CachedRepository(
         metadata: dict[str, object],
     ) -> Callable[..., Awaitable[Any]]:
         codec = self._result_codecs.get(method_name, self._passthrough_codec)
+        signature = inspect.signature(method, follow_wrapped=False)
 
         @wraps(method)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
             # A session passed by hand runs under settings the cache cannot see.
-            if "session" in kwargs or self._runs_in_caller_scoped_transaction():
+            if _passes_a_session(signature, args, kwargs) or self.has_caller_scoped_session():
                 return await method(*args, **kwargs)
-            scope = self._cache_scope()
+            scope = self.cache_scope()
             key, ttl = await self._custom_cache_entry(method_name, metadata, args, kwargs, scope)
             cached_payload = await self._cache.get_value(key)
             if cached_payload is not None:
@@ -824,7 +821,7 @@ class CachedRepository(
                     await self._cache.set_value(key, encoded.payload, ttl=self._write_ttl(ttl))
                 return encoded.value
 
-            return await self._coalesced(key, load)
+            return await self._single_flight.run(key, load)
 
         return wrapped
 
@@ -1180,19 +1177,6 @@ class CachedRepository(
             return "{}"
         return repr(to_payload(filter_params.filters))
 
-    def _cache_scope(self) -> str:
-        """The caller's scope every cache key carries; ``""`` when unscoped.
-
-        Read once per cache operation, and every key of that operation is
-        built from the value read.  It is the wrapped repository's
-        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
-        The scope stays out of the dependency tags: a write bumps the same
-        generation counters whatever its scope, so the bump reaches the keys
-        of every scope.
-        """
-        repository = self._repository
-        return repository.cache_scope() if isinstance(repository, SupportsCacheScope) else ""
-
     def _still_in_scope(self, scope: str) -> bool:
         """Whether the caller's scope is still *scope*, the one the operation's keys carry.
 
@@ -1200,7 +1184,7 @@ class CachedRepository(
         between the key and the load would store one scope's result under
         another scope's key, so that write is skipped.
         """
-        if self._cache_scope() == scope:
+        if self.cache_scope() == scope:
             return True
         self._log.warning("CacheScopeChangedWriteSkipped", entity=self.entity_name)
         return False
@@ -1325,3 +1309,23 @@ def _require_reported_scope(repository: object) -> None:
             "its sessions carry session settings but it does not implement cache_scope(), "
             "so its cache entries could not be kept apart by scope."
         )
+
+
+def _passes_a_session(signature: inspect.Signature, args: tuple[Any, ...], kwargs: Any) -> bool:
+    """Whether a call hands the method a ``session`` that is not ``None``.
+
+    *signature* is the method's own, not the one ``functools.wraps`` exposes,
+    so a method decorated with
+    :func:`~loom.core.repository.sqlalchemy.repository.with_session_scope`
+    is read as it is called: its ``session`` is a keyword-only parameter.
+    A call the signature cannot bind is passed through, to fail in the method.
+    """
+    if kwargs.get("session") is not None:
+        return True
+    if "session" not in signature.parameters:
+        return False
+    try:
+        bound = signature.bind(*args, **kwargs)
+    except TypeError:
+        return True
+    return bound.arguments.get("session") is not None

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from loom.core.cache.keys import (
 )
 from loom.core.repository import PageParams
 from loom.core.repository.abc.query import QuerySpec
+from loom.core.repository.sqlalchemy.repository import with_session_scope
 
 from ._doubles import (
     CachedEnv,
@@ -60,11 +62,30 @@ class TransactionRepository(ScopedRepository):
         return self.in_transaction
 
     @cache_query(scope="list")
-    async def names_in(self, session: Any = None) -> list[str]:
+    async def names_in(self, prefix: str = "", session: Any = None) -> list[str]:
         """Custom read that accepts a session passed by hand."""
         _ = session
         self.names_in_calls += 1
-        return [row.name for row in self.storage.values()]
+        return [row.name for row in self.storage.values() if row.name.startswith(prefix)]
+
+
+class SessionScopedRepository(TransactionRepository):
+    """Double whose custom read takes its session as ``with_session_scope`` injects it."""
+
+    def __init__(self, rows: Sequence[Widget]) -> None:
+        super().__init__(rows)
+        self.sessions_seen: list[object] = []
+
+    @asynccontextmanager
+    async def _session_scope(self, session: object | None = None) -> AsyncIterator[object]:
+        yield "own-session" if session is None else session
+
+    @cache_query(scope="list")
+    @with_session_scope
+    async def names_with(self, session: object, prefix: str) -> list[str]:
+        """Custom read whose session ``with_session_scope`` supplies."""
+        self.sessions_seen.append(session)
+        return [row.name for row in self.storage.values() if row.name.startswith(prefix)]
 
 
 class SwitchingRepository(ScopedRepository):
@@ -335,7 +356,9 @@ class TestAScopeChangeSkipsTheWrite:
         assert not [key for key in backend.data if ":custom:" in key]
 
     @pytest.mark.asyncio
-    async def test_the_scope_is_read_once_for_the_keys_of_a_page(self) -> None:
+    async def test_a_page_reads_the_scope_for_its_keys_and_once_more_before_its_writes(
+        self,
+    ) -> None:
         repository = ScopedRepository([Widget(id=ROW_A, name="a")])
         repository.reads = 0
         wrapper = _wrap(repository, CountingCacheBackend())
@@ -407,3 +430,79 @@ class TestASessionPassedByHandBypassesTheCache:
         await wrapper.names_in()
 
         assert repository.names_in_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_a_session_passed_positionally_is_never_cached(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        backend = CountingCacheBackend()
+        wrapper = _wrap(repository, backend)
+
+        await wrapper.names_in("a", object())
+        await wrapper.names_in("a", object())
+
+        assert repository.names_in_calls == 2
+        assert not [key for key in backend.data if ":custom:" in key]
+
+    @pytest.mark.asyncio
+    async def test_a_session_of_none_is_cached_like_no_session(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        await wrapper.names_in("a", None)
+        await wrapper.names_in("a", None)
+
+        assert repository.names_in_calls == 1
+
+
+class TestAWrapperAroundAWrapperInATransaction:
+    def test_the_wrapper_reports_the_wrapped_caller_scoped_session(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        repository.in_transaction = True
+        assert wrapper.has_caller_scoped_session() is True
+        repository.in_transaction = False
+        assert wrapper.has_caller_scoped_session() is False
+
+    def test_a_wrapper_over_a_repository_without_the_capability_reports_none(self) -> None:
+        wrapper = _wrap(
+            CountingRepository([Widget(id=ROW_A, name="a")], Widget), CountingCacheBackend()
+        )
+
+        assert wrapper.has_caller_scoped_session() is False
+
+    @pytest.mark.asyncio
+    async def test_the_outer_cache_stays_out_of_the_transaction_too(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository.in_transaction = True
+        outer_backend = CountingCacheBackend()
+        outer = _wrap(_wrap(repository, CountingCacheBackend()), outer_backend)
+
+        await outer.get_by_id(ROW_A)
+        await outer.get_by_id(ROW_A)
+
+        assert repository.get_by_id_calls == 2
+        assert not [key for key in outer_backend.data if not key.startswith("tag:")]
+
+
+class TestASessionScopedReadFollowsTheSameRule:
+    @pytest.mark.asyncio
+    async def test_a_read_without_a_session_is_cached(self) -> None:
+        repository = SessionScopedRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        assert await wrapper.names_with("a") == ["a"]
+        assert await wrapper.names_with("a") == ["a"]
+
+        assert repository.sessions_seen == ["own-session"]
+
+    @pytest.mark.asyncio
+    async def test_a_read_given_a_session_is_not_cached(self) -> None:
+        repository = SessionScopedRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+        session = object()
+
+        await wrapper.names_with("a")
+        await wrapper.names_with("a", session=session)
+
+        assert repository.sessions_seen == ["own-session", session]

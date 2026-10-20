@@ -144,12 +144,15 @@ value, makes the cache effectively per request: every request writes its own
 entries, and their number grows with the request rate.
 
 The cache takes no part inside a caller-owned transaction: the unit of work a
-use case runs in unless it is read-only, or a `@transactional` scope. There,
-`get_by_id`, the list and query reads and every `@cache_query` method go
-straight to the repository, with no lookup and no store, so they see the
-transaction's own writes; writes still invalidate as usual. Read-only use
-cases open no unit of work and keep using the cache. A `@cache_query` call
-given a `session` argument is not cached either.
+use case runs in, or a `@transactional` scope. There, `get_by_id`, the list
+and query reads and every `@cache_query` method go straight to the repository,
+with no lookup and no store, so they see the transaction's own writes; writes
+still invalidate as usual. This holds where the backend reports such a
+transaction: SQLAlchemy, and Mongo with transactions. DynamoDB and Mongo with
+`transactions: false` report none and keep caching. A read-only use case run
+outside another unit of work opens none and keeps using the cache. A call to a
+`@cache_query` method whose `session` parameter, passed by position or by
+name, is not `None` is not cached either.
 
 Inside a use case or a `@transactional` scope the bump is not applied at the
 write: it is enqueued on the post-commit channel and published **after the

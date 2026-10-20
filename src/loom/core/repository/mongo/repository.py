@@ -258,8 +258,8 @@ class RepositoryMongo(
         :func:`loom.core.transaction.in_atomic_transaction` is the neutral
         marker this capability used to be a placeholder for, but it answers a
         different question — whether *any* atomic transaction is open — not
-        whether *this session* is scoped to the caller, which is what governs
-        coalescing safely detaching a read into its own task.  Keep using this
+        whether *this session* is scoped to the caller, which is what keeps
+        the repository cache out of the caller's transaction.  Keep using this
         method for that; it is not superseded.
 
         Returns:
