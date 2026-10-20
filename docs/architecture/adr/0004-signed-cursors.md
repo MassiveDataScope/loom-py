@@ -44,15 +44,16 @@ confidentiality.
   Every sort key and every primary-key value must have its column's type,
   checked with `msgspec.convert` in strict mode: an `int` is not a `str`, a
   `bool` is not an `int`, `None` matches only an optional column, and a
-  string is never parsed into a datetime, date, UUID or decimal (those must
-  arrive as their tagged key). A sort field missing from `columns` is
+  string is never parsed into a datetime, date, time, UUID or decimal (those
+  must arrive as their tagged key; a `time` key keeps the offset it was
+  issued with, or none). A sort field missing from `columns` is
   refused, so a token can only position a query on a column whose type is
   known. The repositories pass `scalar_column_annotations(model)`, the
   columns a REST route may declare sortable. Without this check a token
   carrying a string for an integer key, which an `unsigned` codec accepts
   and a holder of the key can sign, reached the database and answered 500.
   `LoomType.from_builtins` is not used because it parses strings into those
-  four types.
+  five types.
 - **Signed tokens.** HMAC-SHA256 over the payload and its binding, verified
   before the payload is parsed.
 

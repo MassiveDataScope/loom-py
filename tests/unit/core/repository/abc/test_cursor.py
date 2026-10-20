@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import secrets
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
@@ -113,6 +113,8 @@ class TestRoundTrip:
             True,
             None,
             date(2026, 9, 6),
+            time(9, 30, 15, 250),
+            time(9, 30, tzinfo=timezone(timedelta(hours=2))),
             Decimal("19.90"),
         ],
     )
@@ -261,6 +263,8 @@ class _Status(StrEnum):
 _TYPED: dict[str, Any] = {
     "created_at": datetime,
     "closed_at": datetime | None,
+    "held_on": date,
+    "starts_at": time,
     "rank": int,
     "code": str,
     "status": _Status,
@@ -286,11 +290,30 @@ class TestTypedValues:
             ("rank", None),
             ("code", 7),
             ("created_at", "2026-09-06T12:30:00+00:00"),
+            ("created_at", date(2026, 9, 6)),
+            ("held_on", "2026-09-06"),
+            ("held_on", datetime(2026, 9, 6, tzinfo=UTC)),
+            ("starts_at", "09:30:00"),
+            ("starts_at", datetime(2026, 9, 6, 9, 30, tzinfo=UTC)),
             ("ref", "b7cdfa6d-0805-4c13-8071-af9317c08254"),
             ("amount", 19.9),
             ("status", "archived"),
         ],
-        ids=["str-int", "bool-int", "null", "int-str", "str-dt", "str-uuid", "float-dec", "enum"],
+        ids=[
+            "str-int",
+            "bool-int",
+            "null",
+            "int-str",
+            "str-dt",
+            "date-dt",
+            "str-date",
+            "dt-date",
+            "str-time",
+            "dt-time",
+            "str-uuid",
+            "float-dec",
+            "enum",
+        ],
     )
     def test_a_sort_value_of_another_type_is_refused(
         self, unsigned: CursorCodec, field: str, value: object
@@ -340,6 +363,8 @@ class TestTypedValues:
         [
             ("created_at", datetime(2026, 9, 6, 12, 30, tzinfo=UTC)),
             ("closed_at", None),
+            ("held_on", date(2026, 9, 6)),
+            ("starts_at", time(9, 30)),
             ("rank", 7),
             ("code", "0123"),
             ("status", _Status.CLOSED),

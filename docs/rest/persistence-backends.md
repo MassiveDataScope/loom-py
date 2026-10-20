@@ -266,7 +266,7 @@ unpadded base64url, a payload that is not the token record, a datetime key
 without a time zone, a key of an unknown type, a token of another backend, or
 one whose key count differs from the sort or the primary key, or whose value
 has another type than its column, is refused: a string is not an integer and
-is never parsed into a datetime, date, UUID or decimal. Every
+is never parsed into a datetime, date, time, UUID or decimal. Every
 refusal is `UnsupportedQuery` — `400 unsupported_query` on the wire — and its
 message never echoes the token. A naive datetime key, such as a
 `DateTime(tz=False)` column, is issued as UTC with an explicit offset and

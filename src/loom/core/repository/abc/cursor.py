@@ -34,7 +34,7 @@ import logging
 import re
 import secrets
 from collections.abc import Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
@@ -74,7 +74,7 @@ _INVALID: Final = "cursor token is not valid"
 _OPT_OUT: Final = "persistence.cursors.signing: ephemeral in development.yaml"
 # Types a decoded value must already have: msgspec would otherwise parse a
 # string into them, and the keyset predicate would bind that string.
-_CARRIED_TYPES: Final = (datetime, date, UUID, Decimal)
+_CARRIED_TYPES: Final = (datetime, date, time, UUID, Decimal)
 
 
 class Cursor(LoomFrozenStruct, frozen=True):
@@ -150,6 +150,10 @@ class _DateKey(msgspec.Struct, tag="date", forbid_unknown_fields=True):
     v: date
 
 
+class _TimeKey(msgspec.Struct, tag="time", forbid_unknown_fields=True):
+    v: time
+
+
 class _UuidKey(msgspec.Struct, tag="uuid", forbid_unknown_fields=True):
     v: UUID
 
@@ -158,7 +162,7 @@ class _DecimalKey(msgspec.Struct, tag="decimal", forbid_unknown_fields=True):
     v: Decimal
 
 
-_Key = int | float | str | bool | None | _DateTimeKey | _DateKey | _UuidKey | _DecimalKey
+_Key = int | float | str | bool | None | _DateTimeKey | _DateKey | _TimeKey | _UuidKey | _DecimalKey
 
 
 class _Token(msgspec.Struct, forbid_unknown_fields=True):
@@ -451,6 +455,8 @@ def _wrap(value: object) -> _Key:
         return _DateTimeKey(value.replace(tzinfo=UTC) if value.tzinfo is None else value)
     if isinstance(value, date):
         return _DateKey(value)
+    if isinstance(value, time):
+        return _TimeKey(value)
     if isinstance(value, UUID):
         return _UuidKey(value)
     if isinstance(value, Decimal):
@@ -459,7 +465,7 @@ def _wrap(value: object) -> _Key:
 
 
 def _unwrap(key: _Key) -> object:
-    if isinstance(key, _DateTimeKey | _DateKey | _UuidKey | _DecimalKey):
+    if isinstance(key, _DateTimeKey | _DateKey | _TimeKey | _UuidKey | _DecimalKey):
         return key.v
     return key
 
@@ -497,7 +503,7 @@ def _typed_as(values: tuple[object, ...], types: tuple[Any, ...]) -> bool:
 
     msgspec checks each value strictly: an ``int`` is not a ``str``, a
     ``bool`` is not an ``int``, ``None`` only matches an optional type, and a
-    string is never parsed into a datetime, date, UUID or decimal.
+    string is never parsed into a datetime, date, time, UUID or decimal.
     """
     if len(values) != len(types) or None in types:
         return False

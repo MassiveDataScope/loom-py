@@ -583,7 +583,9 @@
   from `columns`. The backends
   register the codec they build in DI, so a service paginating by hand
   resolves it with `container.resolve(CursorCodec)`. A decoded datetime key
-  is always aware.
+  is always aware. A `time` sort key is carried too, with the offset it was
+  issued with; before, a page sorted by a column holding `time` values
+  raised `TypeError` when it issued the next cursor.
 - **core:** `RepositorySQLAlchemy`, `RepositoryMongo`, `QuerySpecCompiler`
   (with a required `scope` and `columns` too), `SQLAlchemyDefaultRepositoryBuilder`,
   `MongoDefaultRepositoryBuilder`, `build_sqlalchemy_repository_registration_module`,
