@@ -809,6 +809,8 @@
   present convert those rows deliberately (for example to UTC with
   `(c::timetz AT TIME ZONE 'UTC')::time`) before changing the type. MongoDB is
   unaffected: it stores `date` and `time` values as ISO 8601 strings.
+- **core:** `to_column_value` is imported from `loom.core.model.convert`; it is
+  no longer exported by `loom.core.repository.sqlalchemy.values`.
 
 ### ai
 
@@ -1285,6 +1287,13 @@
     of being written as `Numeric()` (a `Decimal`) or as JSON. Declare it, e.g.
     `Annotated[Decimal, Numeric(precision=12, scale=2)]`, or
     `Annotated[Decimal, Numeric()]` for an unbounded `NUMERIC`.
+- **streaming:** `IntoTable` with `Backend.CLICKHOUSE` hands a `date` field to
+  clickhouse-connect as a `date`, as core keeps it for a column, instead of as
+  its ISO-8601 text. clickhouse-connect writes a `Date` column only from a
+  `date` and refused the text ("unsupported operand type(s) for -: 'str' and
+  'datetime.date'"); a `String` column now refuses the `date` ("object of type
+  'datetime.date' has no len()"). A `dict` value is written as compact JSON
+  text from `msgspec.json`, keys still sorted (`{"a":1}`, was `{"a": 1}`).
 
 ## 🐛 Fixes
 
@@ -1382,7 +1391,7 @@
   startup. `parse_environment` validates a value naming an environment.
 - **core:** the SQLAlchemy query compiler converts a filter value, and each
   `in` item, as the repository converts a value it writes
-  (`loom.core.repository.sqlalchemy.values.to_column_value`, now shared by
+  (`loom.core.model.convert.to_column_value`, now shared by
   both): an `Enum` member is bound as its value, a JSON column's value is
   reduced to builtins. A plain `Enum` member as the value of a filter on a
   string column failed to bind.
@@ -1769,6 +1778,23 @@
   `ArrowInvalid`, and ClickHouse passed the `UNSET` object to
   clickhouse-connect's `insert`. Neither can leave a column out for one row as
   `Backend.SQLALCHEMY` does.
+- **streaming:** `IntoTable` with `Backend.DELTA` or `Backend.CLICKHOUSE`
+  converts each column value as `Backend.SQLALCHEMY` and core's repository
+  do, with `loom.core.model.convert.to_column_value`: a plain `Enum` becomes
+  its value and a nested `msgspec.Struct` or `LoomStruct` a dict, also inside a
+  list or a dict, while `bytes`, `datetime`, `date`, `time`, `Decimal` and
+  `UUID` are kept. Delta refused an `Enum` or a struct with pyarrow's
+  `ArrowInvalid` ("did not recognize Python value type when inferring an
+  Arrow data type"); a nested struct is now a Delta struct column, as a `dict`
+  field already was, and keeps its `datetime` and `Decimal` types.
+  clickhouse-connect refused an `Enum` or a struct ("object of type ... has no
+  len()") and `json.dumps` a `dict` holding a `Decimal` or `datetime` ("Object
+  of type Decimal is not JSON serializable"); an `Enum` is now inserted as its
+  value and a struct or `dict` as JSON text from `msgspec.json`, a `datetime`
+  inside it as ISO-8601 text and a `Decimal` as decimal text.
+  `to_column_value` moved to `loom.core.model.convert` (under Behaviour
+  changes), so the Delta and ClickHouse writers use it without SQLAlchemy
+  installed.
 
 ### prefect
 

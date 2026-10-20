@@ -5,13 +5,13 @@ SQLAlchemy binds ``bytes``, ``datetime``, ``date``, ``time``, ``Decimal`` and
 ``Enum`` to its value, a struct to a dict). A JSON column holds builtins only,
 so its values are reduced completely.
 
-:func:`to_column_value` is the conversion the repository applies to a value it
-writes, and :func:`to_comparison_value` the one it applies to a value compared
-with a column (a filter, ``get_by``, ``exists_by``, a cursor's keyset
-position), so a comparison matches exactly what the row holds.
-:func:`to_column_row` applies the offset check below and
-:func:`to_column_value` to the attributes of a struct named by the given
-columns, skipping those that are ``UNSET``.
+:func:`~loom.core.model.convert.to_column_value` is the conversion the
+repository applies to a value it writes, and :func:`to_comparison_value` the
+one it applies to a value compared with a column (a filter, ``get_by``,
+``exists_by``, a cursor's keyset position), so a comparison matches exactly
+what the row holds. :func:`to_column_row` applies the offset check below and
+:func:`~loom.core.model.convert.to_column_value` to the attributes of a struct
+named by the given columns, skipping those that are ``UNSET``.
 
 A ``time`` with a UTC offset is refused for a column that cannot hold the
 offset: SQL ``TIME`` without time zone (Postgres ``time``, SQLite text) stores
@@ -26,36 +26,15 @@ Postgres.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date, datetime, time
-from decimal import Decimal
+from datetime import time
 from typing import Any
-from uuid import UUID
 
 import msgspec
 from sqlalchemy import JSON, Time
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
-
-# Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
-_NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
-
-
-def to_column_value(value: object, *, json: bool = False) -> Any:
-    """Return the form ``value`` takes in a column.
-
-    Args:
-        value: A model value or a filter value.
-        json: ``True`` when the column is a JSON column.
-
-    Returns:
-        ``value`` reduced to msgspec builtins, keeping the natively bound
-        types unless the column is a JSON column.
-    """
-    if json:
-        return msgspec.to_builtins(value)
-    return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)
-
+from loom.core.model.convert import to_column_value
 
 _OFFSET_REFUSED = "time must not carry a UTC offset"
 _OFFSET_REQUIRED = "time must carry a UTC offset"
@@ -108,7 +87,7 @@ def to_column_row(item: object, columns: Iterable[Any]) -> dict[str, Any]:
     Each column takes the attribute of *item* with its name. A value that is
     ``UNSET`` is left out, so the column's database default applies; every
     other value is refused as :func:`check_time_offsets` refuses it, then
-    converted by :func:`to_column_value`.
+    converted by :func:`~loom.core.model.convert.to_column_value`.
 
     Args:
         item: A struct with one attribute per column.
@@ -134,9 +113,10 @@ def to_comparison_value(column: Any, value: object) -> Any:
     """Return *value* in the form it is compared with *column*.
 
     Refused as :func:`check_time_offsets` refuses it, and converted as
-    :func:`to_column_value` converts a written value. A refusal is raised under
-    ``query_validation`` whatever the value's source, so ``get_by`` and
-    ``exists_by`` called with a value from a command body raise it too.
+    :func:`~loom.core.model.convert.to_column_value` converts a written value.
+    A refusal is raised under ``query_validation`` whatever the value's source,
+    so ``get_by`` and ``exists_by`` called with a value from a command body
+    raise it too.
 
     Args:
         column: A SQLAlchemy column or mapped attribute.
@@ -162,6 +142,5 @@ __all__ = [
     "check_time_offsets",
     "is_json_column",
     "to_column_row",
-    "to_column_value",
     "to_comparison_value",
 ]

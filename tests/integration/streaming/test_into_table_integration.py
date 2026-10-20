@@ -12,8 +12,10 @@ import asyncio
 import os
 import time
 from collections.abc import Iterator, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from datetime import time as time_of_day
+from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import MagicMock
@@ -83,6 +85,49 @@ class _VisitRow(LoomStruct):
 
 
 _VISIT_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
+
+
+class _Tint(Enum):
+    RED = "red"
+
+
+class _TintRow(LoomStruct):
+    row_id: int
+    tint: _Tint
+
+
+class _Point(msgspec.Struct):
+    x: int
+    y: int
+
+
+class _Label(LoomStruct):
+    text: str
+
+
+class _NestedRow(LoomStruct):
+    row_id: int
+    point: _Point
+    label: _Label
+
+
+class _Reading(LoomStruct):
+    taken_at: datetime
+    amount: Decimal
+
+
+class _ReadingRow(LoomStruct):
+    row_id: int
+    reading: _Reading
+
+
+class _ExtraRow(LoomStruct):
+    row_id: int
+    extra: dict[str, Any]
+
+
+_TAKEN_AT = datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
+_AMOUNT = Decimal("12.50")
 
 
 # ── ClickHouse unit test fixtures ─────────────────────────────────────────────
@@ -541,6 +586,47 @@ class TestIntoTableSQLAlchemyIntegration:
         assert partition.close() == 0
         assert not Path(uri).exists()
 
+    def _write_to_delta(self, tmp_path: Path, payload: type[Any], items: list[Any]) -> str:
+        pytest.importorskip("deltalake")
+        uri = str(tmp_path / "converted_delta")
+        node = IntoTable(payload=payload, table="converted", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config({"uri": uri}, default_table="converted")
+        partition = node.build_partition(config, worker_index=0, worker_count=1)
+        partition.write_batch(items)
+        partition.close()
+        return uri
+
+    def test_a_plain_enum_field_is_written_to_delta_as_its_value(self, tmp_path: Path) -> None:
+        uri = self._write_to_delta(tmp_path, _TintRow, [_TintRow(row_id=1, tint=_Tint.RED)])
+
+        assert pl.read_delta(uri).to_dicts() == [{"row_id": 1, "tint": "red"}]
+
+    def test_a_nested_struct_field_is_written_to_delta_as_a_struct_column(
+        self, tmp_path: Path
+    ) -> None:
+        item = _NestedRow(row_id=1, point=_Point(x=2, y=3), label=_Label(text="dock"))
+
+        uri = self._write_to_delta(tmp_path, _NestedRow, [item])
+
+        frame = pl.read_delta(uri)
+        assert frame.schema["point"] == pl.Struct({"x": pl.Int64, "y": pl.Int64})
+        assert frame.to_dicts() == [
+            {"row_id": 1, "point": {"x": 2, "y": 3}, "label": {"text": "dock"}}
+        ]
+
+    def test_a_struct_field_keeps_its_datetime_and_decimal_on_delta(self, tmp_path: Path) -> None:
+        item = _ReadingRow(row_id=1, reading=_Reading(taken_at=_TAKEN_AT, amount=_AMOUNT))
+
+        uri = self._write_to_delta(tmp_path, _ReadingRow, [item])
+
+        frame = pl.read_delta(uri)
+        assert frame.schema["reading"] == pl.Struct(
+            {"taken_at": pl.Datetime("us", "UTC"), "amount": pl.Decimal(4, 2)}
+        )
+        assert frame.to_dicts() == [
+            {"row_id": 1, "reading": {"taken_at": _TAKEN_AT, "amount": _AMOUNT}}
+        ]
+
     def test_a_delta_payload_without_fields_is_refused_at_startup(self, tmp_path: Path) -> None:
         class _NoColumns(LoomStruct):
             pass
@@ -808,3 +894,70 @@ class TestIntoTableClickHouseUnit:
         partition.write_batch([])
 
         assert mock_ch_client.insert.call_count == 0  # still buffered
+
+    def test_a_plain_enum_field_is_inserted_as_its_value(self, mock_ch_client: MagicMock) -> None:
+        node = IntoTable(payload=_TintRow, table="t", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
+
+        partition.write_batch([_TintRow(row_id=1, tint=_Tint.RED)])
+        partition.close()
+
+        assert mock_ch_client.insert.call_args.args[1] == [[1], ["red"]]
+
+    def test_a_nested_struct_field_is_inserted_as_json_text(
+        self, mock_ch_client: MagicMock
+    ) -> None:
+        node = IntoTable(payload=_NestedRow, table="t", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
+
+        partition.write_batch(
+            [_NestedRow(row_id=1, point=_Point(x=2, y=3), label=_Label(text="dock"))]
+        )
+        partition.close()
+
+        assert mock_ch_client.insert.call_args.args[1] == [
+            [1],
+            ['{"x":2,"y":3}'],
+            ['{"text":"dock"}'],
+        ]
+
+    @pytest.mark.parametrize(
+        ("payload", "item"),
+        [
+            (_ExtraRow, _ExtraRow(row_id=1, extra={"taken_at": _TAKEN_AT, "amount": _AMOUNT})),
+            (
+                _ReadingRow,
+                _ReadingRow(row_id=1, reading=_Reading(taken_at=_TAKEN_AT, amount=_AMOUNT)),
+            ),
+        ],
+        ids=["dict", "struct"],
+    )
+    def test_a_datetime_and_a_decimal_in_a_mapping_are_inserted_as_json_text(
+        self, mock_ch_client: MagicMock, payload: type[Any], item: Any
+    ) -> None:
+        node = IntoTable(payload=payload, table="t", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
+
+        partition.write_batch([item])
+        partition.close()
+
+        assert mock_ch_client.insert.call_args.args[1] == [
+            [1],
+            ['{"amount":"12.50","taken_at":"2026-01-02T03:04:00Z"}'],
+        ]
+
+    def test_a_date_field_is_inserted_as_a_date(self, mock_ch_client: MagicMock) -> None:
+        """clickhouse-connect writes a ``Date`` column from ``date`` objects only."""
+        node = IntoTable(payload=_CalendarRow, table="t", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
+
+        partition.write_batch(
+            [_CalendarRow(reading_id=1, taken_on=date(2026, 1, 2), opens_at=time_of_day(8, 30))]
+        )
+        partition.close()
+
+        assert mock_ch_client.insert.call_args.args[1] == [
+            [1],
+            [date(2026, 1, 2)],
+            [time_of_day(8, 30)],
+        ]
