@@ -248,16 +248,22 @@ class IntoTable(Generic[EventT]):
     Example::
 
         Process(
-            Decompose(StoreEventExpander),
-            Router({
-                StoreRow:    Process(
-                    IntoTable(payload=StoreRow, table="store", name="store_sink")
-                ),
-                LanguageRow: Process(
-                    IntoTable(payload=LanguageRow, table="language", name="lang_sink")
-                ),
-            }),
+            Explode(StoreEventExpander),
+            Router.by(
+                PayloadType(),
+                routes={
+                    StoreRow: Process(
+                        IntoTable(payload=StoreRow, table="store", name="store_sink")
+                    ),
+                    LanguageRow: Process(
+                        IntoTable(payload=LanguageRow, table="language", name="lang_sink")
+                    ),
+                },
+            ),
         )
+
+    ``PayloadType`` is a ``Selector`` returning ``type(message.payload)``, as in
+    the :class:`~loom.streaming.nodes._decompose.Explode` example.
     """
 
     payload: type[EventT]

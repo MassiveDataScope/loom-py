@@ -53,9 +53,13 @@ def _wire_process(
     ctx: _BuildContextProtocol,
     *,
     path_prefix: tuple[int, ...] = (),
+    start: int = 0,
 ) -> Stream:
-    """Wire one process subtree under a path prefix."""
-    for idx, node in enumerate(nodes):
+    """Wire one process subtree under a path prefix, from the node at index *start*.
+
+    Node indices, and so compiled paths, stay those of the full *nodes*.
+    """
+    for idx, node in enumerate(nodes[start:], start):
         with ctx.enter_path(path_prefix + (idx,)):
             stream = _wire_node(stream, node, idx, ctx)
     return stream

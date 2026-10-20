@@ -778,9 +778,6 @@ _PATH_CASES = {
 }
 
 _WRONG_ON_MASTER = {
-    "router_terminal_branch": "a Router branch terminal writes nothing",
-    "router_terminal_branch_with_output": "a Router branch terminal falls to the flow output",
-    "router_unmatched": "an unmatched message with no output never completes",
     "router_into_table_branch": "a Router branch storage sink writes nothing",
     "into_table": "a storage sink never completes",
 }

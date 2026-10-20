@@ -14,6 +14,7 @@ from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
     _classify_routing,
     _execute_in_boundary,
+    _split_node_result,
 )
 from loom.streaming.bytewax.handlers._shared import (
     _BuildContextProtocol,
@@ -28,6 +29,7 @@ from loom.streaming.bytewax.handlers._shared import (
     _resolve_record_result,
     _step_id,
 )
+from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message
 from loom.streaming.nodes._boundary import IntoTopic
@@ -46,8 +48,18 @@ Stream = Any
 _NO_KEY: Final = object()
 """Sentinel for a router without a selector, which no keyed branch can match."""
 
+_PATH_ENDS: Final = (IntoTopic, IntoSink, Drain)
+"""Router branch nodes that end the message's path; validation keeps them last."""
+
 
 def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+    """Route each message once, inline, and end the branches that end in a terminal.
+
+    One map selects the branch and runs its nodes up to the terminal, so the
+    messages that continue keep their order. A message whose branch ends in a
+    terminal leaves the map tagged with the branch index and is written by
+    that terminal's own handler at its compiled path.
+    """
     if not isinstance(raw, Router):
         raise UnsupportedNodeError(f"Unsupported router node {type(raw).__name__}.")
     router = raw
@@ -55,6 +67,7 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
     flow_name = ctx.plan.name
     boundary = ErrorBoundary(observer=observer, flow=flow_name)
     branches = tuple(iter_branches(router))
+    router_path = ctx.current_path
 
     def step(msg: Any) -> Any:
         message = _require_message(msg)
@@ -66,11 +79,36 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
         )
 
     sid = _step_id(f"router_{idx}", ctx)
-    mapped = bw_map(sid, stream, step)
-    from loom.streaming.bytewax._error_boundary import _split_node_result
-    from loom.streaming.core._errors import ErrorKind
+    routed = bw_map(sid, stream, step)
+    for branch in branches:
+        if branch.nodes and isinstance(branch.nodes[-1], _PATH_ENDS):
+            ctx.wire_process(
+                bw_flat_map(
+                    _step_id(f"router_{idx}_to_{branch.index}", ctx),
+                    routed,
+                    _routed_to(branch.index),
+                ),
+                branch.nodes,
+                path_prefix=router_path + (branch.index,),
+                start=len(branch.nodes) - 1,
+            )
+    continuing = bw_flat_map(_step_id(f"router_{idx}_continue", ctx), routed, _routed_to(None))
+    return _split_node_result(continuing, sid, ctx, ErrorKind.ROUTING)
 
-    return _split_node_result(mapped, sid, ctx, ErrorKind.ROUTING)
+
+def _routed_to(target: int | None) -> Callable[[Any], list[Any]]:
+    """Keep the routed items bound for *target*: a terminal branch, or ``None`` to continue.
+
+    Error envelopes continue, to the routing error split.
+    """
+
+    def take(item: Any) -> list[Any]:
+        if isinstance(item, tuple):
+            index, message = item
+            return [message] if index == target else []
+        return [item] if target is None else []
+
+    return take
 
 
 def _execute_router_step(
@@ -80,7 +118,7 @@ def _execute_router_step(
     router: Router[Any, Any],
     branches: Sequence[Branch],
     message: Any,
-) -> Any:
+) -> tuple[int | None, Any]:
     with _observe_node(
         observer,
         flow_name,
@@ -260,14 +298,23 @@ def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
     return None if fork.default is not None else remaining
 
 
-def _execute_router(router: Router[Any, Any], branches: Sequence[Branch], message: Any) -> Any:
+def _execute_router(
+    router: Router[Any, Any], branches: Sequence[Branch], message: Any
+) -> tuple[int | None, Any]:
+    """Run the selected branch up to its terminal.
+
+    Returns the index of the branch whose terminal must write the message, or
+    ``None`` when the message continues after the router.
+    """
     branch = _select_router_branch(router, branches, message)
     if branch is None:
-        return message
+        return None, message
     result = message
     for node in branch.nodes:
+        if isinstance(node, _PATH_ENDS):
+            return branch.index, result
         result = _execute_router_node(node, result)
-    return result
+    return None, result
 
 
 def _select_router_branch(
@@ -298,8 +345,6 @@ def _execute_router_node(node: object, message: Any) -> Any:
             message,
             _resolve_record_result(record_node.execute(message), "Router"),
         )
-    if isinstance(node, RouterBranchSafe) and isinstance(node, (IntoTopic, Drain, IntoSink)):
-        return message
     raise TypeError(
         f"Router branch node {type(node).__name__} is not supported by Bytewax adapter."
     )

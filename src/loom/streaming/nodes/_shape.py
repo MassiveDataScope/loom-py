@@ -55,8 +55,6 @@ class ForEach(LoomFrozenStruct, frozen=True):
         them. It carries no business semantics.
     """
 
-    router_branch_safe: ClassVar[bool] = True
-
 
 class CollectBatch(LoomFrozenStruct, frozen=True):
     """Explicit shape adapter from ``record`` to ``batch``.
@@ -92,7 +90,6 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
     timeout_ms: int
     window: WindowStrategy = WindowStrategy.COLLECT
     event_time: bool = False
-    router_branch_safe: ClassVar[bool] = True
 
     def __post_init__(self) -> None:
         """Validate batch collection parameters."""

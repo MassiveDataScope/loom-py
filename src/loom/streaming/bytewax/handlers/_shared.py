@@ -166,8 +166,9 @@ class _BuildContextProtocol(Protocol):
         nodes: tuple[object, ...],
         *,
         path_prefix: tuple[int, ...] = (),
+        start: int = 0,
     ) -> Stream:
-        """Wire one nested process subtree."""
+        """Wire one nested process subtree from the node at index *start*."""
 
 
 def _step_id(base: str, ctx: _BuildContextProtocol) -> str:

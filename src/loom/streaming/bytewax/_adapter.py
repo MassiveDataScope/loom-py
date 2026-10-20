@@ -314,12 +314,6 @@ class _BuildContext:
         # A live branch end with no sink still owes each record a completion;
         # discarding it would leave the offset, or its fork share, outstanding
         # and freeze the partition's watermark.
-        logger.warning(
-            "unrouted_branch_drop_sink",
-            flow=self.plan.name,
-            step_id=step_id,
-            path=path,
-        )
         bw_output(
             _qualified_step_id(f"{step_id}_dropped", path),
             stream,
@@ -435,9 +429,10 @@ class _BuildContext:
         nodes: tuple[object, ...],
         *,
         path_prefix: tuple[int, ...] = (),
+        start: int = 0,
     ) -> Any:
-        """Wire one nested process subtree."""
-        return _wire_process(stream, nodes, self, path_prefix=path_prefix)
+        """Wire one nested process subtree from the node at index *start*."""
+        return _wire_process(stream, nodes, self, path_prefix=path_prefix, start=start)
 
     def shutdown_all(self) -> None:
         """Shutdown all resource managers."""

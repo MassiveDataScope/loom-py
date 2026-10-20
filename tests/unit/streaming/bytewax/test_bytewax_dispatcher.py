@@ -970,8 +970,6 @@ class TestWithAsyncBatch:
     [
         (_UpperRecordStep(), "ABC"),
         (_UpperBatchStep(), "ABC"),
-        (IntoTopic("orders.out", payload=_Payload), "abc"),
-        (Drain(), "abc"),
     ],
 )
 def test_execute_router_node_supports_allowed_branch_nodes(

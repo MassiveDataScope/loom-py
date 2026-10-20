@@ -65,25 +65,28 @@ class Explode(Generic[InT]):
     the same mechanism used for any multi-type stream. This keeps expanders
     and sinks fully decoupled.
 
-    Can appear in Router branches when nested expansion is needed
-    (e.g. OrderEvent → OrderLineEvent → OrderLineRow).
-
     Args:
         exploder: Class implementing PayloadExpander[InT].
 
     Example::
 
+        class PayloadType(Selector[Any]):
+            def select(self, message: Message[Any]) -> object:
+                return type(message.payload)
+
         Process(
             Explode(StoreEventExpander),
-            Router({
-                StoreRow: Process(IntoTopic("stores.rows", payload=StoreRow)),
-                LanguageRow: Process(IntoTopic("stores.languages", payload=LanguageRow)),
-            }),
+            Router.by(
+                PayloadType(),
+                routes={
+                    StoreRow: Process(IntoTopic("stores.rows", payload=StoreRow)),
+                    LanguageRow: Process(IntoTopic("stores.languages", payload=LanguageRow)),
+                },
+            ),
         )
     """
 
     exploder: type[PayloadExpander[InT]]
-    router_branch_safe: ClassVar[bool] = True
 
 
 __all__ = ["Explode", "PayloadExpander"]
