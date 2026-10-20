@@ -7,11 +7,13 @@ Offset completion invariant: for every flow that compiles, each source offset,
 or each share of it a fan-out node forked, completes exactly once, at the end
 of the path it travels and after that path's last durable write. A node
 handler returns the stream that is still live after it, or ``None`` when it
-ended the path in a sink that completes what it writes. Each live end goes
-through one place: :meth:`_BuildContext.wire_branch_terminal` for a branch,
-reached through :meth:`_BuildContext.wire_branch`, and
-:meth:`_BuildContext.wire_flow_output` for the flow, which write it to its
-compiled sink or else complete it at a drop sink. A Bytewax output has no
+ended the path in a sink that completes what it writes. ``IntoTopic`` ends its
+path at its compiled sink through :meth:`_BuildContext.wire_branch_terminal`.
+A branching node wires each branch through :meth:`_BuildContext.wire_branch`,
+which hands the branch's live end to ``wire_branch_terminal``: the sink
+compiled for the branch, else a drop sink. The flow's own live end goes
+through :meth:`_BuildContext.wire_flow_output`: the flow output, else a drop
+sink. A Bytewax output has no
 downstream, so no completion relies on the order of sibling operators: it
 happens inside the sink that writes, or downstream of an inline write.
 

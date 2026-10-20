@@ -693,8 +693,9 @@ class _SQLAlchemyTablePartition:
         """Buffer one epoch batch and bulk-insert it when a threshold is reached.
 
         Args:
-            items: Struct instances to insert.  Empty batches still check
-                for age-based flushes so stale buffers drain on quiet epochs.
+            items: Struct instances to insert.  An empty batch still checks
+                the age threshold; Bytewax 0.21.1 calls ``write_batch`` only
+                when items arrive, so it does not send one on idle epochs.
 
         Returns:
             How many buffered items this call committed to the table.
@@ -854,8 +855,9 @@ class _DeltaTablePartition:
         """Accumulate items into mini-batches and flush when a threshold is reached.
 
         Args:
-            items: Struct instances to write.  Empty batches still check
-                for age-based flushes so stale buffers drain on quiet epochs.
+            items: Struct instances to write.  An empty batch still checks
+                the age threshold; Bytewax 0.21.1 calls ``write_batch`` only
+                when items arrive, so it does not send one on idle epochs.
 
         Returns:
             How many buffered items this call wrote to the Delta table.
@@ -1116,8 +1118,9 @@ class _ClickHouseTablePartition:
         """Buffer items and flush to ClickHouse when a threshold is reached.
 
         Args:
-            items: Struct instances to write.  Empty batches still check
-                for age-based flushes so stale buffers drain on quiet epochs.
+            items: Struct instances to write.  An empty batch still checks
+                the age threshold; Bytewax 0.21.1 calls ``write_batch`` only
+                when items arrive, so it does not send one on idle epochs.
 
         Returns:
             How many buffered items this call inserted into ClickHouse.

@@ -85,8 +85,9 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
     def write_batch(self, items: list[Message[Any]]) -> None:
         """Forward the payloads, then finish the messages the partition made durable.
 
-        Empty epochs are forwarded too, so a partition can flush on age; a call
-        that makes nothing durable emits no span.
+        Bytewax 0.21.1 calls this only when items arrive, not on idle epochs, so a
+        partition's age threshold is checked on its next batch or flushed at
+        close. A call that makes nothing durable emits no span.
 
         Args:
             items: Loom messages delivered by Bytewax for the current epoch.

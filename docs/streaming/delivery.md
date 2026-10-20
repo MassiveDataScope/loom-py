@@ -58,9 +58,10 @@ can see.
   produced nothing is released instead of stalling its partition.
 - A path ends in one place. A sink that ends it (`IntoTopic`, `IntoTable` or
   any `IntoSink`, `Drain`) completes what it writes and nothing is wired after
-  it. A path still live at its end goes to its branch's output, else to the
-  flow `output`, else to a drop sink that completes its record, so an
-  unfinished `Broadcast` route or `Fork` branch cannot freeze commits.
+  it. A branch still live at its end goes to the sink compiled for it, such as
+  a Broadcast route's `output`, else to a drop sink that completes its record,
+  so an unfinished `Broadcast` route or `Fork` branch cannot freeze commits.
+  Only the flow's own live end goes to the flow `output`, else to a drop sink.
 - A `Router` selects one branch per message and runs it inline, so the
   messages that continue after it keep their source order. A branch that ends
   in a sink hands the message to that sink at its compiled path; a message no
