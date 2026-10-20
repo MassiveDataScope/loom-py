@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import typing
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum, IntEnum, IntFlag, StrEnum
 from typing import Annotated, Any, Generic, Literal, TypeVar
@@ -21,7 +21,7 @@ from loom.core.model.introspection import (
     list_element_type,
     resolve_type_hints,
 )
-from loom.core.model.types import JSON, Float, Integer, Numeric, String
+from loom.core.model.types import JSON, Bytes, DateTime, Float, Integer, Numeric, String
 
 
 class _Note:
@@ -177,6 +177,18 @@ class _Day(date, Enum):
     FIRST = (2026, 1, 1)
 
 
+class _Moment(datetime, Enum):
+    EPOCH = (2026, 1, 1, 0, 0)
+
+
+class _Hour(time, Enum):
+    NOON = (12, 0)
+
+
+class _Tag(bytes, Enum):
+    RAW = b"raw"
+
+
 class _Enums(BaseModel):
     __tablename__ = "enums"
     status: _Status
@@ -197,6 +209,16 @@ class _MixedEnums(BaseModel):
     ratio: _Ratio
     amount: _Amount
     day: _Day
+    moment: _Moment
+    hour: _Hour
+    tag: _Tag
+
+
+class _AnnotatedFields(BaseModel):
+    __tablename__ = "annotated_fields"
+    key: Annotated[int, Field(primary_key=True)]
+    count: Annotated[int | None, msgspec.Meta(ge=0)] = None
+    note: Annotated[str | None, Field(nullable=True)] = None
 
 
 class _PlainEnum(BaseModel):
@@ -248,6 +270,9 @@ class TestEnumColumnTypes:
             ("ratio", Float),
             ("amount", Numeric()),
             ("day", String(None)),
+            ("moment", DateTime(tz=True)),
+            ("hour", String(None)),
+            ("tag", Bytes),
         ],
     )
     def test_an_enum_follows_the_scalar_type_it_is_mixed_with(
@@ -270,3 +295,14 @@ class TestEnumColumnTypes:
 
     def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
         assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())
+
+
+class TestAnnotatedColumnFields:
+    def test_a_field_in_annotated_without_a_column_type_takes_effect(self) -> None:
+        fields = get_column_fields(_AnnotatedFields)
+
+        assert (fields["key"].field.primary_key, fields["key"].column_type) == (True, Integer)
+        assert (fields["note"].field.nullable, fields["note"].column_type) == (True, String())
+
+    def test_an_optional_inside_annotated_follows_its_scalar_type(self) -> None:
+        assert get_column_fields(_AnnotatedFields)["count"].column_type == Integer
