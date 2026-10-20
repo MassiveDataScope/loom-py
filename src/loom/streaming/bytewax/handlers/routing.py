@@ -149,12 +149,11 @@ def _apply_broadcast(
         )
 
     for branch in iter_branches(node):
-        branch_path = broadcast_path + (branch.index,)
-        branch_stream = ctx.wire_process(stream, branch.nodes, path_prefix=branch_path)
-        ctx.wire_branch_terminal(
+        ctx.wire_branch(
             f"broadcast_{idx}_out_{branch.index}",
-            branch_stream,
-            branch_path,
+            stream,
+            branch.nodes,
+            broadcast_path + (branch.index,),
         )
 
 
@@ -249,10 +248,8 @@ def _apply_expand_routes(
             expanded_stream,
             _row_extractor(node, output_type),
         )
-        ctx.wire_branch_terminal(
-            f"expand_routes_{idx}_out_{branch.index}",
-            ctx.wire_process(route_stream, branch.nodes, path_prefix=branch_path),
-            branch_path,
+        ctx.wire_branch(
+            f"expand_routes_{idx}_out_{branch.index}", route_stream, branch.nodes, branch_path
         )
 
 
@@ -289,11 +286,7 @@ def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
                 _step_id(f"fork_{idx}_{kind}_{branch.index}", ctx), remaining, predicate
             )
             claimed, remaining = split.trues, split.falses
-        ctx.wire_branch_terminal(
-            f"fork_{idx}_out_{branch.index}",
-            ctx.wire_process(claimed, branch.nodes, path_prefix=branch_path),
-            branch_path,
-        )
+        ctx.wire_branch(f"fork_{idx}_out_{branch.index}", claimed, branch.nodes, branch_path)
 
     return None if fork.default is not None else remaining
 

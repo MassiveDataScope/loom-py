@@ -9,6 +9,7 @@ of the path it travels and after that path's last durable write. A node
 handler returns the stream that is still live after it, or ``None`` when it
 ended the path in a sink that completes what it writes. Each live end goes
 through one place: :meth:`_BuildContext.wire_branch_terminal` for a branch,
+reached through :meth:`_BuildContext.wire_branch`, and
 :meth:`_BuildContext.wire_flow_output` for the flow, which write it to its
 compiled sink or else complete it at a drop sink. A Bytewax output has no
 downstream, so no completion relies on the order of sibling operators: it
@@ -241,8 +242,7 @@ def _assemble_dataflow(plan: CompiledPlan, ctx: _BuildContext) -> Any:
     flow = _bytewax_dataflow.Dataflow(plan.name)
     stream = _build_source_pipeline(flow, ctx)
     stream = _wire_process(stream, tuple(node.node for node in plan.nodes), ctx)
-
-    _wire_output(stream, ctx)
+    ctx.wire_flow_output(stream)
     return flow
 
 
@@ -287,11 +287,11 @@ class _BuildContext:
         self.resource_manager = ResourceManager(bridge)
         self._path: tuple[int, ...] = ()
 
-    def wire_terminal(self, step_id: str, stream: Any) -> None:
-        if self.sink is None:
-            raise RuntimeError("Bytewax sink is required for terminal output wiring.")
-        self._bind_terminal_tracing(self.sink)
-        bw_output(step_id, stream, self.sink)
+    def wire_branch(
+        self, step_id: str, stream: Any, nodes: tuple[object, ...], path: tuple[int, ...]
+    ) -> None:
+        """Wire one branch's *nodes* under *path* and end the stream left live after them."""
+        self.wire_branch_terminal(step_id, self.wire_process(stream, nodes, path_prefix=path), path)
 
     def wire_branch_terminal(self, step_id: str, stream: Any | None, path: tuple[int, ...]) -> None:
         """End one branch's live stream at the sink compiled for *path*, else a drop sink.
@@ -343,21 +343,21 @@ class _BuildContext:
         )
         bw_output(f"{step_id}_{kind.value}_dropped", stream, _DropSink(self.commit_tracker))
 
-    def wire_flow_output(self, stream: Any | None, plan: CompiledPlan) -> None:
+    def wire_flow_output(self, stream: Any | None) -> None:
         """End the flow's live stream at the output sink, else complete it at a drop sink."""
-        if self.sink is None and plan.output is not None:
+        if self.sink is None and self.plan.output is not None:
             raise RuntimeError("Bytewax sink is required for terminal output wiring.")
         if stream is not None and self.sink is not None:
-            self.wire_terminal("output", stream)
+            self._bind_terminal_tracing(self.sink)
+            bw_output("output", stream, self.sink)
         elif stream is not None:
             bw_output("output_dropped", stream, _DropSink(self.commit_tracker))
-        for kind in plan.error_routes:
+        for kind in self.plan.error_routes:
             if kind not in self.error_sinks:
                 raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
 
-    def wire_decode_error(self, stream: Any, plan: CompiledPlan) -> None:
+    def wire_decode_error(self, stream: Any) -> None:
         """Route undecodable records to the WIRE error sink, else complete them at a drop sink."""
-        del plan
         if ErrorKind.WIRE in self.plan.error_routes and ErrorKind.WIRE not in self.error_sinks:
             raise RuntimeError("Bytewax sink is required for WIRE error routing.")
         self.wire_node_error(ErrorKind.WIRE, "decode", stream)
@@ -459,7 +459,7 @@ def _build_source_pipeline(flow: Any, ctx: _BuildContext) -> Stream:
     stream: Stream = bw_input("source", flow, source)
     decoded = _decode_source_stream(stream, ctx, codec, step_id)
     decoded_branch = _split_decode_results(decoded, step_id)
-    ctx.wire_decode_error(decoded_branch.falses, ctx.plan)
+    ctx.wire_decode_error(decoded_branch.falses)
     return bw_map(f"{step_id}_message", decoded_branch.trues, _decode_ok_message)
 
 
@@ -476,11 +476,6 @@ def _decode_source_stream(
 def _split_decode_results(stream: Stream, step_id: str) -> Any:
     """Split decode results into successful messages and wire errors."""
     return branch(f"{step_id}_is_ok", stream, _is_decode_ok)
-
-
-def _wire_output(stream: Any | None, ctx: _BuildContext) -> None:
-    """Wire the output sink and error routes."""
-    ctx.wire_flow_output(stream, ctx.plan)
 
 
 def _qualified_step_id(step_id: str, path: tuple[int, ...]) -> str:

@@ -189,9 +189,10 @@ class _StorageDynamicSink(DynamicSink[Message[Any]]):
     """Bytewax DynamicSink that builds one _StorageSinkPartition per worker.
 
     Args:
-        compiled:   Pre-resolved storage sink carrying the DSL node and config.
-        observer:   Observability runtime forwarded to each per-worker partition.
-        flow_name:  Name of the enclosing streaming flow.
+        compiled: Pre-resolved storage sink carrying the DSL node and config.
+        ctx:      Adapter build context: flow name and run id, observability
+                  runtime, async bridge, session managers and commit tracker
+                  for each per-worker partition.
     """
 
     def __init__(

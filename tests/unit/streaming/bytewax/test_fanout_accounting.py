@@ -434,8 +434,7 @@ class TestExpandRoutesWiring:
         monkeypatch.setattr(_routing, "bw_map", _bw_map)
         monkeypatch.setattr(_routing, "bw_flat_map", _bw_flat_map)
         ctx = _ctx(tracker)
-        ctx.wire_process = lambda *args, **kwargs: "route-stream"
-        ctx.wire_branch_terminal = lambda *args, **kwargs: None
+        ctx.wire_branch = lambda *args, **kwargs: None
 
         _routing._apply_expand_routes(_sourced_message(Order(order_id="ab")), node, 4, ctx)
 
