@@ -460,17 +460,25 @@
 ### core
 
 - **core:** a `uuid.UUID` field without a declared column type is now a
-  `Uuid` column (`loom.core.model.Uuid`, SQLAlchemy `Uuid`): `UUID` on
-  Postgres and `CHAR(32)` holding the hex form elsewhere, instead of `JSON`.
-  Such a field is now a scalar column, so REST can declare it filterable or
-  sortable; a cursor walk sorted by it pages in UUID order on Postgres and
-  SQLite, and an equality filter on it matches on SQLite, which it did not as
-  JSON. Streaming `IntoTable` with the
+  `Uuid` column (`loom.core.model.Uuid`, SQLAlchemy `Uuid`) instead of
+  `JSON`: `UUID` on Postgres, `CHAR(32)` holding the hex form on dialects
+  without a native UUID type, such as SQLite. Such a field is now a scalar
+  column, so REST `filterable`, `sortable` and `ALL` accept it on every
+  backend, `mongo` included; a cursor walk sorted by it pages in UUID order
+  on Postgres and SQLite, and an equality filter on it matches on SQLite,
+  which it did not as JSON. Streaming `IntoTable` with the
   SQLAlchemy backend binds a `UUID` field the same way instead of failing to
   serialise it as JSON. Migration: an existing table with such a column needs
   a revision changing its type; Alembic autogenerate reports it as a type
   change from `JSON` to `Uuid`. Postgres does not cast `json` to `uuid`, so
-  the revision needs `postgresql_using="(<column> #>> '{}')::uuid"`.
+  the revision needs `postgresql_using="(<column> #>> '{}')::uuid"`. On a
+  dialect without a native UUID type the old rows hold JSON text (the quoted
+  UUID with dashes), which the `Uuid` column cannot read, so after the type
+  change the revision rewrites each value to its 32-character hex. On
+  SQLite: `op.batch_alter_table` for the type change, then
+  `UPDATE <table> SET <column> = replace(json_extract(<column>, '$'), '-', '')`.
+  Rewriting before the type change loses values on SQLite: a hex form made
+  only of digits is stored as a number in the `JSON` column.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with

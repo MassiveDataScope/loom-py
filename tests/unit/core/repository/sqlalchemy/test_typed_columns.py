@@ -32,7 +32,9 @@ from loom.core.repository.abc.query import (
     FilterParams,
     FilterSpec,
     PageParams,
+    PaginationMode,
     QuerySpec,
+    SortSpec,
 )
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -130,6 +132,17 @@ class _CreateBadge(Command, frozen=True):
     ref: UUID
 
 
+class _Pass(BaseModel):
+    __tablename__ = "typed_passes"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    ref: UUID
+
+
+class _CreatePass(Command, frozen=True):
+    ref: UUID
+
+
 class _CustomerOut(LoomStruct, rename="camel"):
     id: int
     full_name: str
@@ -190,7 +203,7 @@ _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
 @pytest.fixture
 async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark, _Slot, _Badge)
+    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark, _Slot, _Badge, _Pass)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -277,6 +290,52 @@ class TestUuidColumns:
         assert stored.ref == _REF
         assert [item.id for item in found.items] == [created.id]
         assert raw.scalars().all() == [_REF.hex, _OTHER_REF.hex]
+
+    async def test_a_bare_uuid_annotation_round_trips_as_hex(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Pass, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Pass
+        )
+
+        created = await repo.create(_CreatePass(ref=_REF))
+        stored = await repo.get_by_id(created.id)
+        async with session_manager.engine.connect() as connection:
+            raw = await connection.execute(text("SELECT ref FROM typed_passes"))
+
+        assert stored is not None
+        assert stored.ref == _REF
+        assert raw.scalars().all() == [_REF.hex]
+
+    async def test_a_cursor_walk_sorted_by_a_uuid_pages_in_uuid_order(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Badge
+        )
+        refs = [UUID(int=value << 64) for value in (7, 2, 9, 4, 1)]
+        await repo.create_many([_CreateBadge(ref=ref) for ref in refs])
+
+        walked: list[UUID] = []
+        cursor: str | None = None
+        pages = 0
+        while True:
+            page = await repo.list_with_query(
+                QuerySpec(
+                    sort=(SortSpec(field="ref", direction="DESC"),),
+                    pagination=PaginationMode.CURSOR,
+                    limit=2,
+                    cursor=cursor,
+                )
+            )
+            walked += [item.ref for item in page.items]
+            pages += 1
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+
+        assert walked == sorted(refs, reverse=True)
+        assert pages == 3
 
 
 _OFFSET_REFUSAL = (("opens_at", "time must not carry a UTC offset"),)

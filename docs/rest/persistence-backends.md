@@ -381,6 +381,12 @@ Four limits decide what does not travel:
   On Postgres (`timestamptz`) and `mongo`, a `datetime` field
   (`DateTime(tz=True)`) keeps the instant, read back in UTC, not the written
   offset.
+- **A `UUID` field is a UUID column on `sqlalchemy`.** A `uuid.UUID` field
+  without a declared type is inferred as a `Uuid` column: `uuid` on
+  Postgres, `CHAR(32)` holding the hex form on a dialect without a native
+  UUID type, such as SQLite. `Postgres.UUID` stays the Postgres-only choice.
+  `mongo` stores a UUID as its text form. On every backend the field is a
+  scalar column, so REST `filterable`, `sortable` and `ALL` take it.
 
 ## Upgrade notes
 
