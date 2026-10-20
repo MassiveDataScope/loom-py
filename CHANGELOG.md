@@ -773,9 +773,36 @@
 - **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
   many of the oldest events not yet reported durable they made durable, `0`
   when they only buffered. A custom `IntoSink` partition must report it; one
-  that returns anything else fails with `TypeError`. A storage sink's
+  that returns anything else, a `bool` included, fails with `TypeError`. After
+  a call raised, later counts complete nothing. A storage sink's
   `terminal:sink_write` spans are emitted for the events a call made durable,
-  not for every event handed to it.
+  not for every event handed to it. A buffering partition migrates like this:
+
+  ```python
+  # before
+  def write_batch(self, items):
+      self._buffer.extend(items)
+
+  def close(self):
+      flush(self._path, self._buffer)
+
+  # after
+  def write_batch(self, items) -> int:
+      self._buffer.extend(items)
+      return 0  # buffered, nothing durable yet
+
+  def close(self) -> int:
+      flush(self._path, self._buffer)
+      flushed, self._buffer = len(self._buffer), []
+      return flushed  # durable now
+  ```
+- **streaming:** under at-least-once delivery, a caller-supplied terminal sink
+  written inline by `With(process=...)` or `WithAsync(process=...)` must expose
+  `mark_inline_partition()`; without it the flow fails at assembly with
+  `RuntimeConfigurationError` (`INLINE_SINK_CANNOT_SKIP_COMMITS`). Its
+  partitions completed offsets at the inline write.
+- **streaming:** a Delta `IntoTable` whose payload type has no fields fails
+  with `ValueError` when its partition is built. Its items wrote no row.
 - **streaming:** a node that ends a path in a sink ends it: a top-level
   `IntoTopic` or `IntoSink` is no longer also sent to the flow `output`, a
   Broadcast route whose process ends in a terminal no longer also writes the
@@ -1045,12 +1072,19 @@
   - a Router branch terminal, and a Router's unmatched messages with nothing
     after them, never completed;
   - a storage sink (`IntoTable`, any `IntoSink`) never completed;
-  - an undecodable record with no `WIRE` error route never completed.
+  - an undecodable record with no `WIRE` error route never completed;
+  - a batch diverted to a DLQ topic completed before the DLQ records were
+    flushed.
 
   A Router keeps the source order of the messages that continue after it, and
   an inline write no longer completes an offset: the message completes where
   its path ends. A storage sink completes the offsets of the events its flush
   wrote, so events still buffered when a worker dies are consumed again.
+- **streaming:** a sync `With(process=...)` runs on a record stream. It
+  accepted only batches and raised `TypeError` for every message, and it
+  handed on whole batches, so as the last node of a flow without `output` its
+  messages never completed. It now hands on one message at a time, as
+  `WithAsync` does.
 - **streaming:** a Kafka sink batch diverted to its DLQ topic commits its
   offsets only once the DLQ topic received every record. The diversion sent
   each record without flushing, logged and swallowed per-record failures, and

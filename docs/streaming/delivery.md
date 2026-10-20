@@ -55,8 +55,30 @@ can see.
   `ExpandRoutes`) declare the fan-out they actually produced, so an offset is
   committed only once *all* its outputs are written — and a record that
   produced nothing is released instead of stalling its partition.
-- A branch with no terminal sink drains through a drop sink that completes its
-  record, so an unfinished `Broadcast` branch cannot freeze commits.
+- A path ends in one place. A sink that ends it (`IntoTopic`, `IntoTable` or
+  any `IntoSink`, `Drain`) completes what it writes and nothing is wired after
+  it. A path still live at its end goes to its branch's output, else to the
+  flow `output`, else to a drop sink that completes its record, so an
+  unfinished `Broadcast` route or `Fork` branch cannot freeze commits.
+- A `Router` selects one branch per message and runs it inline, so the
+  messages that continue after it keep their source order. A branch that ends
+  in a sink hands the message to that sink at its compiled path; a message no
+  branch claims continues after the Router.
+- An inline `IntoTopic` inside `With(process=...)` or `WithAsync(process=...)`
+  completes nothing: the message goes on and completes where its path ends.
+  A caller-supplied sink written inline must expose `mark_inline_partition()`,
+  or the flow is rejected at assembly (`INLINE_SINK_CANNOT_SKIP_COMMITS`).
+- A storage partition reports from `write_batch` and `close` how many buffered
+  events it made durable, and only those complete. Events still buffered when
+  a worker dies are consumed again, and after a failed write nothing more
+  completes. Bytewax calls `write_batch` only when items arrive, not on idle
+  epochs, so the buffer of an idle partition is checked against its thresholds
+  when the next item arrives and flushed at `close` at the latest; until then
+  its offsets stay uncommitted.
+- A Kafka sink batch whose delivery fails and whose `IntoTopic` declares a
+  `dlq` topic is sent to the DLQ topic and completes only once the producer
+  flushed it. A failed DLQ send or flush raises `KafkaDeliveryError` and
+  completes nothing, so the batch is consumed again.
 - Custom sinks must expose `bind_commit_tracker(tracker)`. A sink without it
   would never complete what it writes, so under `at_least_once` the flow is
   rejected at assembly with `RuntimeConfigurationError` naming the sink.
