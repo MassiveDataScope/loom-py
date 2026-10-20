@@ -38,12 +38,18 @@ from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
-from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
+from loom.core.model.introspection import (
+    column_annotations,
+    get_column_fields,
+    get_id_attributes,
+    get_table_name,
+)
 from loom.core.repository.abc import (
     BulkCreatable,
     Countable,
     Creatable,
     Cursor,
+    CursorCodec,
     CursorResult,
     Deletable,
     FilterGroup,
@@ -61,9 +67,8 @@ from loom.core.repository.abc import (
     SortSpec,
     Updatable,
     build_page_result,
-    decode_cursor,
-    encode_cursor,
 )
+from loom.core.repository.abc.cursor import require_cursor_sort
 from loom.core.repository.mongo.ids import IdPolicy, Uuid4IdPolicy
 from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
@@ -181,6 +186,13 @@ class RepositoryMongo(
         session_provider: Returns the active client session, or ``None``;
             every driver call runs in the session it returns. Defaults to
             no session.
+        cursor_codec: Codec that issues and verifies cursor tokens; the
+            backend builds one from ``persistence.cursors`` and shares it.
+            Mongo has no row-level-security scope, so cursors are bound to
+            no scope (``""``) beyond the model, filters and sort.
+            A codec passed here by hand skips the deployed-environment
+            refusal of an opt-out that ``register_cursor_codec`` applies; a
+            custom builder passes ``context.container.resolve(CursorCodec)``.
 
     Raises:
         ValueError: If the model declares no primary key.
@@ -188,7 +200,7 @@ class RepositoryMongo(
 
     Example::
 
-        repository = RepositoryMongo(Article, database["articles"])
+        repository = RepositoryMongo(Article, database["articles"], cursor_codec=codec)
         article = await repository.create(ArticleCreate(slug="hello", title="Hi"))
     """
 
@@ -200,14 +212,19 @@ class RepositoryMongo(
         collection: MongoCollection,
         id_policy: IdPolicy | None = None,
         session_provider: SessionProvider = _no_session,
+        *,
+        cursor_codec: CursorCodec,
     ) -> None:
         self._model = model
+        self._cursor_codec = cursor_codec
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
         self._session = session_provider
         self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
+        # Documents order any column; the sort check keeps the types a token carries.
+        self._cursor_columns = column_annotations(model)
         self._naive_datetime_fields = frozenset(
             name
             for name, info in column_fields.items()
@@ -241,8 +258,8 @@ class RepositoryMongo(
         :func:`loom.core.transaction.in_atomic_transaction` is the neutral
         marker this capability used to be a placeholder for, but it answers a
         different question — whether *any* atomic transaction is open — not
-        whether *this session* is scoped to the caller, which is what governs
-        coalescing safely detaching a read into its own task.  Keep using this
+        whether *this session* is scoped to the caller, which is what keeps
+        the repository cache out of the caller's transaction.  Keep using this
         method for that; it is not superseded.
 
         Returns:
@@ -420,9 +437,16 @@ class RepositoryMongo(
         return build_page_result(items, total, page_params)
 
     async def _list_cursor(self, query: QuerySpec) -> CursorResult[OutputT]:
+        require_cursor_sort(
+            query,
+            backend=self.backend_name,
+            model=self._model,
+            columns=self._cursor_columns,
+            primary_key=(self._id_attr,),
+        )
         mongo_filter = self._query_filter(query)
         if query.cursor is not None:
-            cursor = self._decode(query.cursor, query.sort)
+            cursor = self._decode(query.cursor, query)
             keyset = self._compiler.compile_cursor_filter(query.sort, cursor)
             mongo_filter = {"$and": [mongo_filter, keyset]} if mongo_filter else keyset
         documents = await (
@@ -432,13 +456,9 @@ class RepositoryMongo(
             .to_list()
         )
         has_next = len(documents) > query.limit
-        page = documents[: query.limit]
-        next_cursor = self._encode(page[-1], query.sort) if has_next else None
-        return CursorResult(
-            items=tuple(self._to_output(document) for document in page),
-            next_cursor=next_cursor,
-            has_next=has_next,
-        )
+        items = tuple(self._to_output(document) for document in documents[: query.limit])
+        next_cursor = self._encode(items[-1], query) if has_next else None
+        return CursorResult(items=items, next_cursor=next_cursor, has_next=has_next)
 
     def _query_filter(self, query: QuerySpec) -> MongoFilter:
         if query.filters is None:
@@ -456,14 +476,20 @@ class RepositoryMongo(
             return pairs
         return [*pairs, _ID_ASCENDING]
 
-    def _decode(self, token: str, sort: tuple[SortSpec, ...]) -> Cursor:
-        """Decode the token and put its keys in storage form."""
-        cursor = decode_cursor(
-            token, self.backend_name, self._model.__qualname__, key_count=len(sort)
+    def _decode(self, token: str, query: QuerySpec) -> Cursor:
+        """Verify and decode the token and put its keys in storage form."""
+        cursor = self._cursor_codec.decode(
+            token,
+            backend=self.backend_name,
+            model=self._model,
+            query=query,
+            scope="",
+            columns=self._cursor_columns,
+            primary_key=(self._id_attr,),
         )
         keys = tuple(
             self._compiler.storage_value(spec.field, key)
-            for spec, key in zip(sort, cursor.keys, strict=True)
+            for spec, key in zip(query.sort, cursor.keys, strict=True)
         )
         return Cursor(
             backend=cursor.backend,
@@ -471,15 +497,19 @@ class RepositoryMongo(
             tie_breaker=self._compiler.storage_value(self._id_attr, cursor.tie_breaker),
         )
 
-    def _encode(self, document: Document, sort: tuple[SortSpec, ...]) -> str:
-        """Issue the token for the page after ``document``; ``_id`` keys use the model form."""
-        keys = [self._model_value(document, spec.field) for spec in sort]
-        return encode_cursor(self.backend_name, keys, self._ids.from_storage(document[_ID]))
+    def _encode(self, item: object, query: QuerySpec) -> str:
+        """Issue the token for the page after ``item``, from its values in the model's types.
 
-    def _model_value(self, document: Document, field: str) -> object:
-        if field == self._id_attr:
-            return self._ids.from_storage(document[_ID])
-        return document.get(field)
+        A document holds a date, a decimal or a UUID as text; the output
+        struct holds the model's type, which the token carries and the next
+        page's type check expects.
+        """
+        position = Cursor(
+            backend=self.backend_name,
+            keys=tuple(getattr(item, spec.field) for spec in query.sort),
+            tie_breaker=getattr(item, self._id_attr),
+        )
+        return self._cursor_codec.encode(position, model=self._model, query=query, scope="")
 
     def _key(self, obj_id: object) -> MongoFilter:
         return {_ID: {"$eq": self._compiler.storage_value(self._id_attr, obj_id)}}

@@ -8,6 +8,10 @@ app:
     docs_url: /docs
     redoc_url: /redoc
 
+persistence:
+  cursors:
+    signing: ephemeral
+
 database:
   url: ${oc.env:LOOM_TEST_DATABASE_URL}
   echo: false

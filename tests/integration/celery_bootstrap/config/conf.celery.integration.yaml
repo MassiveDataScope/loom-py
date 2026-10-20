@@ -3,6 +3,10 @@ celery:
   result_backend: cache+memory://
   task_always_eager: true
 
+persistence:
+  cursors:
+    signing: ephemeral
+
 database:
   url: ${oc.env:LOOM_TEST_DATABASE_URL}
   echo: false

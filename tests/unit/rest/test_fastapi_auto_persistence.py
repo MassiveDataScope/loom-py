@@ -7,8 +7,9 @@ and the bootstrap steps around them.
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -20,6 +21,7 @@ import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import NoneBackend, PersistenceWiring
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
@@ -29,13 +31,18 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi import auto
 from loom.rest.fastapi.auto import (
     _AppConfig,
-    _build_bootstrap,
     _discover_components,
     create_app,
+)
+from loom.rest.fastapi.auto import (
+    _build_bootstrap as _build_bootstrap_in,
 )
 from loom.rest.model import RestInterface, RestRoute
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
 from tests.unit.rest._fixture_app import UUID4_ID_FIELD, write_project
+
+# The fixture apps opt out of cursor signing, which a deployed environment refuses.
+_build_bootstrap = functools.partial(_build_bootstrap_in, environment=Environment.TEST)
 
 
 def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
@@ -62,11 +69,13 @@ class PersistenceNoneRecord(BaseModel):
     name: str = ColumnField(length=50)
 
 
-def _ctx(**sections: object) -> ConfigContext:
+def _ctx(persistence: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
+    cursors = {"cursors": {"signing": "ephemeral"}}
     return ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
             "database": {"url": "sqlite+aiosqlite:///"},
+            "persistence": {**cursors, **(persistence or {})},
             **sections,
         }
     )

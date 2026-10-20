@@ -21,6 +21,8 @@ class ConfigKey(StrEnum):
     CACHE = "cache"
     DATABASE = "database"
     PERSISTENCE = "persistence"
+    PERSISTENCE_CURSORS = "persistence.cursors"
+    PERSISTENCE_MONGO = "persistence.mongo"
     CELERY = "celery"
     KAFKA = "kafka"
     MONGO = "mongo"

@@ -58,8 +58,11 @@ class Ticket(BaseModel):
     subject: str = ColumnField(length=32)
 
 
-def _ctx(section: dict[str, Any] | None) -> ConfigContext:
-    persistence: dict[str, Any] = {"backend": "mongo"}
+def _ctx(section: dict[str, Any] | None, cursors: dict[str, Any] | None = None) -> ConfigContext:
+    persistence: dict[str, Any] = {
+        "backend": "mongo",
+        "cursors": {"signing": "ephemeral"} if cursors is None else cursors,
+    }
     if section is not None:
         persistence["mongo"] = section
     return ConfigContext.from_dict({"app": {"name": "demo"}, "persistence": persistence})
@@ -89,6 +92,16 @@ def test_missing_section_is_a_config_error() -> None:
 
     with pytest.raises(ConfigError, match="persistence.mongo"):
         backend.build(ctx, ())
+
+
+def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(backend_module, "_build_mongo_client", lambda _cfg: FakeMongoClient())
+    ctx = _ctx(_SECTION, cursors={})
+
+    with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        MongoBackend().build(ctx, ())
 
 
 def test_wiring_shape(monkeypatch: pytest.MonkeyPatch) -> None:

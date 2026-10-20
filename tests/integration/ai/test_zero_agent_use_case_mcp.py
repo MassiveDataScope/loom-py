@@ -131,6 +131,7 @@ def _write_project(tmp_path: Path, *, declares_use_case: bool) -> str:
             "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
         "ai": {
             "engine": _ENGINE_NAME,
             "models": {"default": {"provider": "fake", "model": "fake-model"}},

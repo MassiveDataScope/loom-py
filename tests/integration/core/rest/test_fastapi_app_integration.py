@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import prometheus_client
@@ -221,3 +223,150 @@ def test_fake_repo_list_refuses_a_sort_on_an_undeclared_field_alike(
     assert detail["code"] == "unsupported_query"
     assert detail["message"] == f"Sorting on field {sort!r} is not allowed by this route."
     assert "nextCursor" not in response.text
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _flip_last_byte(segment: str) -> str:
+    raw = bytearray(_unb64(segment))
+    raw[-1] ^= 0x01
+    return _b64(bytes(raw))
+
+
+def _forged(payload: dict[str, object]) -> str:
+    return _b64(json.dumps(payload).encode())
+
+
+_CURSOR_PAGE = "/products/?pagination=cursor&limit=1&sort=id&direction=ASC"
+
+
+def _malformed_cursors(issued: str) -> dict[str, str]:
+    payload, tag = issued.split(".")
+    naive = {"b": "sqlalchemy", "k": [{"type": "datetime", "v": "2026-09-06T12:30:00"}], "id": 1}
+    unknown_tag = {"b": "sqlalchemy", "k": [{"type": "money", "v": "1"}], "id": 1}
+    return {
+        "alphabet": "not base64!",
+        "json": f"{_b64(b'{not json')}.{tag}",
+        "unsigned": payload,
+        "tampered-payload": f"{_flip_last_byte(payload)}.{tag}",
+        "tampered-tag": f"{payload}.{_flip_last_byte(tag)}",
+        "naive-datetime": f"{_forged(naive)}.{tag}",
+        "wrong-tag": f"{_forged(unknown_tag)}.{tag}",
+        "wrong-backend": f"{_forged({'b': 'mongo', 'k': [1], 'id': 1})}.{tag}",
+        "wrong-key-count": f"{_forged({'b': 'sqlalchemy', 'k': [1, 2, 3], 'id': 1})}.{tag}",
+        "other-filters": issued,
+    }
+
+
+def test_a_malformed_cursor_answers_400_without_echoing_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'c.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name in ("a", "b", "c"):
+            assert client.post("/products/", json={"name": name, "price": 20.0}).status_code == 201
+        issued = client.get(_CURSOR_PAGE).json()["nextCursor"]
+
+        answers = {
+            case: client.get(
+                f"{_CURSOR_PAGE}&after={token}"
+                + ("&price__eq=20" if case == "other-filters" else "")
+            )
+            for case, token in _malformed_cursors(issued).items()
+        }
+
+    statuses = {case: response.status_code for case, response in answers.items()}
+    assert statuses == dict.fromkeys(answers, 400)
+    for case, response in answers.items():
+        detail = response.json()["detail"]
+        assert detail["code"] == "unsupported_query", case
+        assert _malformed_cursors(issued)[case] not in response.text, case
+        assert "tests.integration" not in response.text, case
+
+
+def test_a_cursor_issued_for_one_sort_answers_400_for_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 's.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+    by_price = "/products/?pagination=cursor&limit=1&sort=price&direction=ASC"
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name, price in (("a", 1.0), ("b", 2.0), ("c", 3.0)):
+            assert client.post("/products/", json={"name": name, "price": price}).status_code == 201
+        issued = client.get(by_price).json()["nextCursor"]
+
+        same_sort = client.get(f"{by_price}&after={issued}")
+        other_sort = client.get(f"{_CURSOR_PAGE}&after={issued}")
+
+    assert same_sort.status_code == 200
+    assert other_sort.status_code == 400
+    assert other_sort.json()["detail"]["code"] == "unsupported_query"
+
+
+@pytest.mark.parametrize(
+    "position",
+    [{"k": ["2"], "id": 2}, {"k": [2], "id": "2"}, {"k": [True], "id": 2}, {"k": [None], "id": 2}],
+    ids=["str-sort-key", "str-primary-key", "bool", "null"],
+)
+def test_an_unsigned_cursor_holding_a_value_of_another_type_answers_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, position: dict[str, object]
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 't.sqlite'}")
+    monkeypatch.setenv("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name in ("a", "b", "c"):
+            assert client.post("/products/", json={"name": name, "price": 1.0}).status_code == 201
+        typed = client.get(
+            f"{_CURSOR_PAGE}&after={_forged({'b': 'sqlalchemy', 'k': [1], 'id': 1})}"
+        )
+        forged = client.get(f"{_CURSOR_PAGE}&after={_forged({'b': 'sqlalchemy', **position})}")
+
+    assert typed.status_code == 200
+    assert [item["name"] for item in typed.json()["items"]] == ["b"]
+    assert forged.status_code == 400
+    assert forged.json()["detail"]["code"] == "unsupported_query"
+
+
+@pytest.mark.parametrize("parameter", ["after", "cursor"])
+def test_an_empty_cursor_parameter_answers_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parameter: str
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'e.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert client.post("/products/", json={"name": "a", "price": 1.0}).status_code == 201
+        response = client.get(f"{_CURSOR_PAGE}&{parameter}=")
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "unsupported_query"
+
+
+def test_after_wins_over_cursor_when_both_are_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'w.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for name in ("a", "b", "c"):
+            assert client.post("/products/", json={"name": name, "price": 1.0}).status_code == 201
+        issued = client.get(_CURSOR_PAGE).json()["nextCursor"]
+        after_valid = client.get(f"{_CURSOR_PAGE}&after={issued}&cursor=not-a-token")
+        after_invalid = client.get(f"{_CURSOR_PAGE}&after=not-a-token&cursor={issued}")
+
+    assert after_valid.status_code == 200
+    assert [item["name"] for item in after_valid.json()["items"]] == ["b"]
+    assert after_invalid.status_code == 400

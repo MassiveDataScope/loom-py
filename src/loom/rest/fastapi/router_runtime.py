@@ -304,7 +304,7 @@ def _parse_pagination_mode(
 
 def _parse_sort(
     sort_field: str | None, direction_raw: str, sortable: Collection[str]
-) -> tuple[SortSpec, ...]:
+) -> SortSpec | None:
     """Read ``sort`` and ``direction``, refusing a column the route does not let clients sort by.
 
     The refusal is the same whether or not the column exists, so it does not
@@ -314,11 +314,11 @@ def _parse_sort(
     if direction not in {"ASC", "DESC"}:
         raise HTTPException(status_code=400, detail="direction must be 'ASC' or 'DESC'.")
     if not sort_field:
-        return ()
+        return None
     field = _normalize_field_name(sort_field)
     if field not in sortable:
         raise _unsupported_query(f"Sorting on field {sort_field!r} is not allowed by this route.")
-    return (SortSpec(field=field, direction=typing.cast(Any, direction)),)
+    return SortSpec(field=field, direction=typing.cast(Any, direction))
 
 
 def _parse_filter_specs(
@@ -394,7 +394,10 @@ def _build_query_spec(
             ((QueryParam.PAGE, _PAGE_TOO_FAR_MESSAGE),),
             code=ErrorCode.QUERY_VALIDATION,
         )
-    cursor = query_params.get(QueryParam.AFTER) or query_params.get(QueryParam.CURSOR)
+    # ``after`` wins when both are sent; an empty value is a token too, which
+    # the repository refuses like any invalid one.
+    after = query_params.get(QueryParam.AFTER)
+    cursor = after if after is not None else query_params.get(QueryParam.CURSOR)
     pagination = _parse_pagination_mode(
         query_params.get(QueryParam.PAGINATION),
         cursor,
@@ -410,7 +413,7 @@ def _build_query_spec(
     filter_group = FilterGroup(filters=tuple(filters)) if filters else None
     return QuerySpec(
         filters=filter_group,
-        sort=sort,
+        sort=() if sort is None else (sort,),
         pagination=pagination,
         limit=limit,
         page=page,

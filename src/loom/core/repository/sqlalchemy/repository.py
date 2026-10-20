@@ -12,6 +12,7 @@ from loom.core.repository.abc import (
     BulkCreatable,
     Countable,
     Creatable,
+    CursorCodec,
     Deletable,
     IdT,
     Listable,
@@ -71,6 +72,17 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
     Pass ``model`` (a Struct-based ``BaseModel``) to ``__init__``; the
     repository uses the compiled SA class for queries and returns the
     Struct directly.
+
+    Args:
+        session_manager: Shared session manager.
+        model: Model the repository serves.
+        cursor_codec: Codec that issues and verifies cursor tokens; the
+            backend builds one from ``persistence.cursors`` and shares it.
+            Cursors are bound to the row-level-security scope values of the
+            caller when the session manager has them, to no scope otherwise.
+            A codec passed here by hand skips the deployed-environment
+            refusal of an opt-out that ``register_cursor_codec`` applies; a
+            custom builder passes ``context.container.resolve(CursorCodec)``.
     """
 
     backend_name: ClassVar[str] = "sqlalchemy"
@@ -79,9 +91,12 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         self,
         session_manager: SessionManager,
         model: type,
+        *,
+        cursor_codec: CursorCodec,
     ) -> None:
         self.session_manager = session_manager
         self.model = model
+        self.cursor_codec = cursor_codec
         self._init_struct_model()
         self.log = get_logger(__name__).bind(repository=self.__class__.__name__)
 
@@ -98,8 +113,8 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         :func:`loom.core.transaction.in_atomic_transaction` is the neutral
         marker this capability used to be a placeholder for, but it answers a
         different question — whether *any* atomic transaction is open — not
-        whether *this session* is scoped to the caller, which is what governs
-        coalescing safely detaching a read into its own task.  Keep using this
+        whether *this session* is scoped to the caller, which is what keeps
+        the repository cache out of the caller's transaction.  Keep using this
         method for that; it is not superseded.
 
         Returns:

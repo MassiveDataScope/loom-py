@@ -11,16 +11,18 @@ from typing import Any
 
 from loom.etl.compiler import _filter
 
+_FILTER_PLAN = "loom.etl.compiler.filter_plan"
+
 #: Deprecated name → (attribute of ``loom.etl.compiler._filter`` it returns, replacement).
 _DEPRECATED: dict[str, tuple[str, str]] = {
-    "_filter_plan": ("filter_plan", "loom.etl.compiler.filter_plan"),
-    "_filter_process": ("_filter_process", "loom.etl.compiler.filter_plan"),
+    "_filter_plan": ("filter_plan", _FILTER_PLAN),
+    "_filter_process": ("_filter_process", _FILTER_PLAN),
     "_collect_all_names": (
         "_collect_all_names",
         "loom.etl.compiler.iter_processes and loom.etl.compiler.iter_all_steps",
     ),
-    "_map_pipeline_nodes": ("_map_pipeline_nodes", "loom.etl.compiler.filter_plan"),
-    "_map_process_nodes": ("_map_process_nodes", "loom.etl.compiler.filter_plan"),
+    "_map_pipeline_nodes": ("_map_pipeline_nodes", _FILTER_PLAN),
+    "_map_process_nodes": ("_map_process_nodes", _FILTER_PLAN),
 }
 
 

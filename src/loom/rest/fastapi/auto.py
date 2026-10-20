@@ -370,6 +370,7 @@ def _fold_config_interfaces(
         if model is not None and model not in known_models:
             models.append(model)
             known_models.add(model)
+    # ``replace`` copies fields added later.
     return dataclasses.replace(
         discovered,
         models=tuple(models),
@@ -428,7 +429,7 @@ def _gate_autocrud_capabilities(
             pruned.update(_gate_interface(interface, interface.auto_crud_model, wiring, backend))
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
-    # ``replace`` copies fields added later; the cast Sonar asks for fails mypy.
+    # ``replace`` copies fields added later.
     return dataclasses.replace(
         discovered,
         use_cases=tuple(uc for uc in discovered.use_cases if uc not in dropped),

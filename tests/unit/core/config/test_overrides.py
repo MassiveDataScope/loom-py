@@ -227,6 +227,7 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         ("LOOM__SQL__CONNECTIONS__ANALYTICS__MAX_EXECUTION_TIME", "0"),
         ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
         ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),
+        ("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned"),
     ],
     ids=[
         "a key a reviewed key references, off the allowlist",
@@ -240,6 +241,7 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         "the query time limit",
         "the columns a list route filters on",
         "the columns a list route sorts by",
+        "cursor signing",
     ],
 )
 def test_a_deployed_environment_refuses_every_key_off_the_allowlist(
@@ -295,6 +297,10 @@ def test_config_overridable_must_be_a_literal_list_of_dotted_keys_in_any_environ
         "CHECKS.modules",
         "config.overridable",
         "config.*",
+        "persistence.cursors.signing",
+        "Persistence.Cursors.current_key_id",
+        "persistence.*.signing",
+        "persistence.cursors.keys.*.env",
     ],
 )
 def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
@@ -307,7 +313,9 @@ def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
         load_application_config(path, environment=Environment.DEVELOPMENT)
 
 
-@pytest.mark.parametrize("entry", ["app.code_path", "app.*", "app.rest.auth.custom"])
+@pytest.mark.parametrize(
+    "entry", ["app.code_path", "app.*", "app.rest.auth.custom", "persistence.backend"]
+)
 def test_config_overridable_accepts_other_keys_since_a_deploy_check_judges_the_merged_value(
     tmp_path: Path, entry: str
 ) -> None:

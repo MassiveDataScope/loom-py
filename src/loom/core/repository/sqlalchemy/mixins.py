@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, ClassVar, Generic, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
 import msgspec
 from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
@@ -18,8 +18,10 @@ from loom.core.model.introspection import (
     get_id_attributes,
     get_relations,
     get_table_name,
+    scalar_column_annotations,
 )
 from loom.core.repository.abc import (
+    CursorCodec,
     CursorResult,
     FilterParams,
     IdT,
@@ -33,6 +35,7 @@ from loom.core.repository.abc import (
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
+from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
 from loom.core.repository.sqlalchemy.transactional import record_mutation
 from loom.core.repository.sqlalchemy.values import (
     check_time_offsets,
@@ -40,6 +43,9 @@ from loom.core.repository.sqlalchemy.values import (
     to_column_value,
     to_comparison_value,
 )
+
+if TYPE_CHECKING:
+    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 _SENTINEL = object()
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
@@ -50,10 +56,13 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     backend_name: ClassVar[str]
     model: type[Any]
+    session_manager: SessionManager
+    cursor_codec: CursorCodec
     _sa_model: type[Any] | None = None
     _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None
     _json_column_names: frozenset[str] = frozenset()
+    _cursor_columns: Mapping[str, Any]
     # Pre-computed at init to avoid per-request/per-object reflection.
     _output_column_keys: tuple[str, ...] | None = None
     _all_sa_column_keys: tuple[str, ...] | None = None
@@ -80,6 +89,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         self._json_column_names = frozenset(
             name for name in column_fields if is_json_column(getattr(sa, name, None))
         )
+        self._cursor_columns = scalar_column_annotations(self.model)
         self._relations_cache = get_relations(self.model)
         self._core_model = get_compiled_core(self.model)
         if self._core_model is None:
@@ -520,7 +530,10 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 self._id_columns(),
                 self.allowed_filter_fields,
                 backend=self.backend_name,
-                model_name=self.model.__qualname__,
+                model=self.model,
+                cursor_codec=self.cursor_codec,
+                scope=self._cursor_scope(),
+                columns=self._cursor_columns,
             )
             core_model = self._effective_core_model
 
@@ -540,6 +553,21 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 compiler=compiler,
                 core_model=core_model,
             )
+
+    def cache_scope(self) -> str:
+        """Every session setting the caller's transactions start with; ``""`` when none.
+
+        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
+        A row-level policy may read any setting, not only ``loom.scope.*``, so
+        all of them partition the cache; the ``loom.scope.*`` ones are among
+        them, so this tells apart every caller the cursor tokens do.
+        """
+        return _encode_settings(self.session_manager.current_settings())
+
+    def _cursor_scope(self) -> str:
+        """The row-level-security scope values cursors are bound to; ``""`` when unscoped."""
+        settings = self.session_manager.current_settings()
+        return _encode_settings({k: v for k, v in settings.items() if k.startswith(SCOPE_PREFIX)})
 
     async def _list_with_query_cursor(
         self,
@@ -709,3 +737,8 @@ def _to_internal_field_names(
         for field in msgspec.structs.fields(struct_type)
     }
     return {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+
+
+def _encode_settings(settings: Mapping[str, str]) -> str:
+    """Encode *settings* as a canonical string, sorted JSON pairs; ``""`` when empty."""
+    return msgspec.json.encode(sorted(settings.items())).decode() if settings else ""

@@ -26,6 +26,7 @@ from loom.core.model import (
 )
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.abc.query import (
     FilterGroup,
     FilterOp,
@@ -39,6 +40,8 @@ from loom.core.repository.abc.query import (
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+
+_CODEC = CursorCodec(signing="ephemeral")
 
 
 class _Doc(BaseModel):
@@ -225,7 +228,9 @@ class TestJsonColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Doc, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Doc
+            session_manager=session_manager,
+            model=_Doc,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
         created = await repo.create(_CreateDoc(stamped_at=_STAMP, meta=_META))
@@ -242,7 +247,9 @@ class TestEnumColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Case, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Case
+            session_manager=session_manager,
+            model=_Case,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         created = await repo.create(_CreateCase(state=_State.CLOSED, level=_Level.HIGH))
         await repo.create(_CreateCase(state=_State.OPEN, level=_Level.LOW))
@@ -275,7 +282,9 @@ class TestUuidColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Badge
+            session_manager=session_manager,
+            model=_Badge,
+            cursor_codec=_CODEC,
         )
         created = await repo.create(_CreateBadge(ref=_REF))
         await repo.create(_CreateBadge(ref=_OTHER_REF))
@@ -295,7 +304,9 @@ class TestUuidColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Pass, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Pass
+            session_manager=session_manager,
+            model=_Pass,
+            cursor_codec=_CODEC,
         )
 
         created = await repo.create(_CreatePass(ref=_REF))
@@ -311,7 +322,9 @@ class TestUuidColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Badge, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Badge
+            session_manager=session_manager,
+            model=_Badge,
+            cursor_codec=_CODEC,
         )
         refs = [UUID(int=value << 64) for value in (7, 2, 9, 4, 1)]
         await repo.create_many([_CreateBadge(ref=ref) for ref in refs])
@@ -364,7 +377,9 @@ class TestTimeColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         with pytest.raises(BoundaryValidationError) as caught:
@@ -395,7 +410,9 @@ class TestTimeColumns:
         self, session_manager: SessionManager, lookup: str
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         with pytest.raises(BoundaryValidationError) as caught:
@@ -407,7 +424,9 @@ class TestTimeColumns:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         created = await repo.create(
@@ -424,7 +443,9 @@ class TestTimeOffsetEscapeHatches:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         written = repo._serialize_input(
@@ -451,7 +472,9 @@ class TestTimeOffsetEscapeHatches:
         self, session_manager: SessionManager, value: time
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         with pytest.raises(BoundaryValidationError) as caught:
@@ -468,7 +491,9 @@ class TestTimeOffsetEscapeHatches:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
         group = FilterGroup(
             filters=(FilterSpec(field="opens_at", op=FilterOp.EQ, value=_ZONED_TIME),)
@@ -486,7 +511,9 @@ class TestTimeOffsetEscapeHatches:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         with pytest.raises(BoundaryValidationError) as caught:
@@ -522,7 +549,9 @@ class TestTimeOffsetEscapeHatches:
         self, session_manager: SessionManager, lookup: str
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Slot
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
         )
 
         with pytest.raises(BoundaryValidationError) as caught:
@@ -540,7 +569,9 @@ class TestLookupValues:
         self, session_manager: SessionManager, lookup: str
     ) -> None:
         repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Swatch
+            session_manager=session_manager,
+            model=_Swatch,
+            cursor_codec=_CODEC,
         )
         await repo.create(_CreateSwatch(shade=_Shade.DARK))
 
@@ -557,7 +588,9 @@ class TestLookupValues:
         self, session_manager: SessionManager, lookup: str, model: type[BaseModel], field: str
     ) -> None:
         repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=model
+            session_manager=session_manager,
+            model=model,
+            cursor_codec=_CODEC,
         )
 
         with pytest.raises(ValueError, match=f"Unknown field '{field}'"):
@@ -569,7 +602,9 @@ class TestRelatedStructs:
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Ticket, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Ticket
+            session_manager=session_manager,
+            model=_Ticket,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         ticket_sa = get_compiled(_Ticket)
         customer_sa = get_compiled(_Customer)
@@ -586,13 +621,19 @@ class TestRelatedStructs:
         self, session_manager: SessionManager
     ) -> None:
         tickets: RepositorySQLAlchemy[_Ticket, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Ticket
+            session_manager=session_manager,
+            model=_Ticket,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         customers: RepositorySQLAlchemy[_Customer, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Customer
+            session_manager=session_manager,
+            model=_Customer,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         tags: RepositorySQLAlchemy[_Tag, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Tag
+            session_manager=session_manager,
+            model=_Tag,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         customer = await customers.create(_CreateCustomer(full_name="Ann"))
         ticket = await tickets.create(_CreateTicket(customer_id=customer.id))
@@ -626,7 +667,9 @@ class TestFilterValues:
         self, session_manager: SessionManager, op: FilterOp, value: Any
     ) -> None:
         repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Swatch
+            session_manager=session_manager,
+            model=_Swatch,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         await repo.create(_CreateSwatch(shade=_Shade.LIGHT))
         dark = await repo.create(_CreateSwatch(shade=_Shade.DARK))
@@ -642,7 +685,9 @@ class TestFilterValues:
         self, session_manager: SessionManager, field: str, value: Any
     ) -> None:
         repo: RepositorySQLAlchemy[_Mark, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Mark
+            session_manager=session_manager,
+            model=_Mark,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         written = repo._serialize_input(_CreateMark(shade=_Shade.DARK, noted_at=_STAMP))[field]
 
