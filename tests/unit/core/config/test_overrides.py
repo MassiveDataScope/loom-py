@@ -304,7 +304,7 @@ def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
 
 
 @pytest.mark.parametrize("entry", ["app.code_path", "app.*", "app.rest.auth.custom"])
-def test_config_overridable_takes_keys_the_files_could_route_to_the_environment_anyway(
+def test_config_overridable_accepts_other_keys_since_a_deploy_check_judges_the_merged_value(
     tmp_path: Path, entry: str
 ) -> None:
     document = {**_DEPLOYED_DOCUMENT, "config": {"overridable": [entry]}}

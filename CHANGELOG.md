@@ -512,7 +512,8 @@
   deploy check's warning or the silenced ids; name `loom.core.checks` under
   `named_levels` to quiet it. The handlers `configure_logging` attaches no
   longer filter by level, so a named level below the top-level level takes
-  effect.
+  effect for stdlib loggers; structlog loggers, loom's own included, still
+  drop events below the top-level level.
 - **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
   sets it in `tests/conftest.py`), or every application it builds starts as
   production and runs the deploy checks.

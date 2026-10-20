@@ -189,8 +189,9 @@ Within any file, its own values win over its `includes`.
 | `sql.connections.*.connect_timeout` | Network timeout. |
 | `sql.connections.*.send_receive_timeout` | Network timeout. |
 
-The allowlisted sizes and timeouts must be above zero; a `0` fails when the
-section decodes.
+The SQL timeouts, `pool_size` and `executor_threads` must be above zero; a
+`0` fails when the section decodes. The Celery and streaming worker counts
+and `worker_prefetch_multiplier` are not constrained.
 
 Left off on purpose: anything that changes where data goes or who may reach
 it (broker and result URLs, the OTel endpoint, CORS origins, documentation
@@ -277,8 +278,9 @@ falling back to defaults.
   `SILENCED_SYSTEM_CHECKS`. The list is visible in the file of the environment
   that accepts the exception, and every deployed startup logs a warning naming
   the silenced ids.
-- The `loom.core.checks` logger sets its own WARNING level, and the handlers
-  `configure_logging` attaches pass every record, so a parent at `CRITICAL`
+- The `loom.core.checks` logger, a stdlib logger, sets its own WARNING level,
+  and the handlers `configure_logging` attaches pass every record, so a
+  parent at `CRITICAL`
   (the top-level level or `named_levels.loom`) cannot hide a check's warning
   or the silenced ids, in any environment; a named level on
   `loom.core.checks` itself is the explicit way to quiet them. A level on the
@@ -414,7 +416,9 @@ When #371 rebases on this branch it must also:
   `runtime.shutdown_timeout_ms` and the streaming runtime's
   `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero.
 - The handlers `configure_logging` attaches pass every record, so a named
-  level below the top-level level now takes effect.
+  level below the top-level level now takes effect for stdlib loggers;
+  structlog loggers, loom's own included, still drop events below the
+  top-level level.
 - A consumer's test suite must set `LOOM_ENV=test`, or every application it
   builds starts as production and runs the deploy checks.
 - The migration locator resolves `LOOM_ENV`, applies the `LOOM__*` variables

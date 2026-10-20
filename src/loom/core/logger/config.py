@@ -5,8 +5,9 @@ The renderer and colour defaults follow the central
 (production, staging) renders JSON without colours, a local one (development,
 test) coloured console lines. An explicit ``renderer`` or ``colors`` wins.
 
-The attached handlers pass every record; the loggers filter, so a named level
-below the top-level one takes effect.
+The attached handlers pass every record and the stdlib loggers filter, so a
+named level below the top-level one takes effect for stdlib loggers. structlog
+loggers, loom's own included, still drop events below the top-level level.
 """
 
 from __future__ import annotations
@@ -262,7 +263,8 @@ def _setup_stdlib(config: LogConfig, level: int, environment: Environment) -> No
     while target.handlers:
         target.removeHandler(target.handlers[-1])
 
-    # Handlers stay at NOTSET: the loggers filter, so named levels apply as set.
+    # Handlers stay at NOTSET: stdlib loggers filter, so their named levels apply
+    # as set. structlog's bound loggers still filter at the top-level level.
     for handler_cfg in config.handlers or (StreamHandlerConfig(),):
         handler = _build_stdlib_handler(handler_cfg)
         handler.setFormatter(
