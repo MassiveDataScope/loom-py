@@ -48,6 +48,9 @@ class SupportsCursorScope(Protocol):
     Only the ``loom.scope.*`` session settings make up the scope: they alone
     partition the repository cache and bind cursor tokens, so a row-level
     policy that reads any other setting is not kept apart by either.
+
+    Like :class:`SupportsCallerScopedSession`, this capability is provisional
+    and is not a stable extension point to build on.
     """
 
     def cursor_scope(self) -> str:

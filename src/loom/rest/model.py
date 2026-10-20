@@ -107,8 +107,9 @@ class RestRoute:
             the response shows, or compilation fails (:data:`ALL` opens every
             column, with a warning).  The primary key, the route's default
             order, needs no declaration; a route that can serve cursor pages,
-            whose tokens carry it, must show it too, or serve offset pages
-            only (``pagination_mode`` offset and
+            whose tokens carry it, must show it too, and it must be a scalar
+            column of a type a token can carry, or the route serves offset
+            pages only (``pagination_mode`` offset and
             ``allow_pagination_override=False``).
 
     Example::
