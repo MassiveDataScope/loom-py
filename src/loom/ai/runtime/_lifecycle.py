@@ -626,12 +626,11 @@ class AgentRuntime:
         unreachable: list[AgentCompilationIssue] = []
         unwired: list[AgentCompilationIssue] = []
         try:
-            async with asyncio.timeout_at(deadline):
-                async with asyncio.TaskGroup() as group:
-                    for capability in mcp:
-                        group.create_task(self._open_mcp(capability, opened, unreachable, unwired))
-                    for remote in a2a:
-                        group.create_task(self._open_a2a(remote, opened, unreachable, unwired))
+            async with asyncio.timeout_at(deadline), asyncio.TaskGroup() as group:
+                for capability in mcp:
+                    group.create_task(self._open_mcp(capability, opened, unreachable, unwired))
+                for remote in a2a:
+                    group.create_task(self._open_a2a(remote, opened, unreachable, unwired))
         except TimeoutError:
             unreachable.extend(self._timeout_issues(mcp, a2a, opened))
         finally:

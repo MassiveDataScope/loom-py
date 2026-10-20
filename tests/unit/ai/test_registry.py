@@ -140,6 +140,18 @@ class TestHandshakeOnTheInstance:
 
         assert isinstance(provider, _ProviderDeclaringOnTheInstance)
 
+    def test_returns_a_provider_the_entry_point_already_built_as_is(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An entry point targeting an instance is used without being called."""
+        built = _ProviderDeclaringOnTheInstance()
+        _install(monkeypatch, (_FakeEntryPoint(_ENGINE_NAME, "loom-engine-alpha", built),))
+
+        provider = resolve_engine_provider(_ENGINE_NAME)
+
+        assert provider is built
+
 
 class TestEngineDuplicate:
     @pytest.fixture
