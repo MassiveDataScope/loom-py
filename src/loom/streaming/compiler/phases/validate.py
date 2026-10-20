@@ -118,7 +118,9 @@ def validate_resources(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
 
 def validate_shapes(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
     """Validate shape transitions through the process tree."""
-    errors, _ = _validate_shape_sequence(flow.process.nodes, flow.source.shape)
+    errors, final_shape = _validate_shape_sequence(flow.process.nodes, flow.source.shape)
+    if flow.output is not None and final_shape is not StreamShape.NONE:
+        _check_input_shape(flow.output, final_shape, errors)
     errors.extend(_validate_window_strategies(flow.process.nodes))
     errors.extend(_validate_scoped_process_nodes(_walk_all_process_nodes(flow.process.nodes)))
     return errors
@@ -651,7 +653,9 @@ def _node_input_shape(node: object) -> StreamShape | None:
     if isinstance(node, (With, WithAsync)):
         return None
     if isinstance(node, ForEach):
-        return StreamShape.MANY
+        return StreamShape.BATCH
+    if isinstance(node, IntoTopic):
+        return StreamShape.RECORD
     if isinstance(node, Drain):
         return None
     if isinstance(node, Fork):
@@ -709,7 +713,9 @@ _FIXED_OUTPUT_SHAPES: dict[type, StreamShape] = {
 
 
 def _node_output_shape(node: object, current: StreamShape) -> StreamShape:
-    fixed = _FIXED_OUTPUT_SHAPES.get(type(node))
+    fixed = next(
+        (shape for kind, shape in _FIXED_OUTPUT_SHAPES.items() if isinstance(node, kind)), None
+    )
     if fixed is not None:
         return fixed
     if isinstance(node, IntoSink):

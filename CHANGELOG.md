@@ -1298,6 +1298,22 @@
 
 ### streaming
 
+- **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
+  `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
+  `shape mismatch: expected many but got batch before ForEach`. Under
+  at-least-once delivery each offset completes once, after its write is
+  flushed.
+- **streaming:** a batch reaching an `IntoTopic`, inside the process or as the
+  flow `output`, fails compilation with `SHAPE_MISMATCH` (`expected record but
+  got batch before IntoTopic`). `CollectBatch → BatchStep → IntoTopic`
+  compiled and raised `AttributeError` (`'list' object has no attribute
+  'meta'`) at runtime; put a `ForEach` before the `IntoTopic`. A source
+  declared with `shape=StreamShape.BATCH` or `StreamShape.MANY` that reaches an
+  `IntoTopic` is refused the same way; such flows used to compile.
+- **streaming:** a `BatchExpandStep` subclass outputs records to the shape
+  check. The compiler matched step output shapes by exact type, so every step
+  subclass kept the incoming shape and a record step after a
+  `BatchExpandStep` failed with `expected record but got batch`.
 - **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
   treated it as a plain terminal, so the nodes of its branches were never
   shape-checked. A branch with a shape mismatch, such as a record step after

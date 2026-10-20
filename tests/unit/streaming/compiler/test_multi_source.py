@@ -6,6 +6,7 @@ from omegaconf import DictConfig
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming import (
+    ForEach,
     FromMultiTypeTopic,
     FromTopic,
     IntoTopic,
@@ -50,7 +51,7 @@ class TestCompileFlowWithMultiSource:
                 ),
                 shape=StreamShape.BATCH,
             ),
-            process=Process(IntoTopic("out", payload=Result)),
+            process=Process(ForEach(), IntoTopic("out", payload=Result)),
         )
 
         plan = compile_flow(flow, config=streaming_kafka_config)

@@ -80,7 +80,6 @@ from loom.streaming.bytewax.handlers import routing as _routing  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import (  # noqa: E402
-    CompilationError,
     StreamingErrorCode,
     compile_flow,
 )
@@ -1266,11 +1265,6 @@ def _assert_each_offset_completes_once_after_its_writes(
 
 
 _KNOWN_BUGS_WITH_FOLLOW_UP: dict[str, tuple[type[BaseException], str, str]] = {
-    "collect_batch_batch_step_for_each": (
-        CompilationError,
-        "shape mismatch: expected many but got batch before ForEach",
-        "follow-up hotfix: ForEach must accept the batch a BatchStep produces",
-    ),
     "batch_expand_step": (
         AssertionError,
         r"written somewhere else[\s\S]*'t\.err'",

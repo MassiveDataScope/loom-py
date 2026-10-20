@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.streaming import (
     Backend,
+    BatchStep,
     Broadcast,
     BroadcastRoute,
     CollectBatch,
@@ -218,6 +219,12 @@ class _Fanout(ExpandStep[Order, Result]):
     def execute(self, message: Message[Order], **kwargs: object) -> list[Message[Result]]:
         del message, kwargs
         return []
+
+
+class _SameBatch(BatchStep[Order, Order]):
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Order]:
+        del kwargs
+        return [message.payload for message in messages]
 
 
 class _Expander:
@@ -647,6 +654,22 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "Only WindowStrategy.COLLECT is available in this adapter version.",
         "CollectBatch",
         "window",
+    ),
+    "batch into a topic": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _out()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before IntoTopic",
+        "IntoTopic",
+        None,
+    ),
+    "batch into the flow output": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), output=_out()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before IntoTopic",
+        "IntoTopic",
+        None,
     ),
     "scoped IntoTopic followed by a step": (
         lambda: _flow(With(process=Process(_out(), FakeStep()))),
