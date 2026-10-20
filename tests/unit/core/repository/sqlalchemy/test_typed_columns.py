@@ -361,12 +361,15 @@ class TestLookupValues:
         assert found
 
     @pytest.mark.parametrize("lookup", _LOOKUPS)
-    @pytest.mark.parametrize("field", ["nope", "metadata"])
+    @pytest.mark.parametrize(
+        ("model", "field"),
+        [(_Swatch, "nope"), (_Swatch, "metadata"), (_Ticket, "customer")],
+    )
     async def test_a_lookup_on_a_name_that_is_not_a_column_is_refused(
-        self, session_manager: SessionManager, lookup: str, field: str
+        self, session_manager: SessionManager, lookup: str, model: type[BaseModel], field: str
     ) -> None:
-        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
-            session_manager=session_manager, model=_Swatch
+        repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=model
         )
 
         with pytest.raises(ValueError, match=f"Unknown field '{field}'"):

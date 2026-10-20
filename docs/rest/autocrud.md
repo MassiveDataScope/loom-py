@@ -104,10 +104,11 @@ A `date` or `time` field is a `Date` or `Time` column on a SQLAlchemy model
 and takes ISO 8601 text. The inferred `Time` column has no time zone and
 holds no UTC offset, so a `time` with an offset answers
 `400 query_validation` as a filter value and `422 boundary_validation` in a
-create or update body. When the offset matters, declare a `datetime` field,
-a `Time` column with time zone
-(`ColumnField(ColumnType("Time", kwargs={"timezone": True}))`, Postgres
-`timetz`), or a JSON column; each accepts the offset.
+create or update body. A `Time` column with time zone
+(`ColumnField(ColumnType("Time", kwargs={"timezone": True}))`) keeps the
+written offset on Postgres (`timetz`; SQLite drops it), and a JSON column
+keeps it as ISO text. A `datetime` field keeps the instant, not the written
+offset: Postgres (`timestamptz`) and MongoDB read it back in UTC.
 
 In `app.rest.interfaces`, both take column names, or `all`:
 

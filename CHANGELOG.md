@@ -633,9 +633,12 @@
   value (`400`). Without the check, Postgres and SQLite would store
   `08:30+02:00` in a `Time` column as `08:30`, and an aware filter value
   would match the row holding `08:30`. A JSON column and a `Time` column
-  declared with `ColumnType("Time", kwargs={"timezone": True})` (Postgres
-  `timetz`) keep the offset and accept it; a `datetime` field
-  (`DateTime(tz=True)`) is the other way to keep it. `get_by`, `exists_by`
+  declared with `ColumnType("Time", kwargs={"timezone": True})` accept it;
+  the JSON column keeps the written offset, and so does the `Time` column on
+  Postgres (`timetz`), while SQLite ignores its zone and drops the offset. A
+  `datetime` field (`DateTime(tz=True)`) keeps the instant on Postgres
+  (`timestamptz`) and MongoDB, read back in UTC, not the written offset.
+  `get_by`, `exists_by`
   and the `filters` of `list_paginated` now convert their value as a write
   converts it, as `QuerySpec` filters already did, so a plain `Enum` member
   matches the value the write stored instead of failing to bind. A

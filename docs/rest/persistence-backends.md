@@ -369,12 +369,14 @@ Four limits decide what does not travel:
   repository refuses a `time` with an offset written to it
   (`boundary_validation`, REST `422`) or compared with it
   (`query_validation`, REST `400`). `mongo` stores `time` as ISO 8601 text
-  and keeps the offset. Where the offset matters, declare one of:
-  - a `datetime` field (`DateTime(tz=True)`), which keeps it on every backend;
+  and keeps the offset. Only two SQLAlchemy columns keep the written offset:
   - a `Time` column with time zone,
-    `ColumnField(ColumnType("Time", kwargs={"timezone": True}))` (Postgres
-    `timetz`);
+    `ColumnField(ColumnType("Time", kwargs={"timezone": True}))`, on Postgres
+    (`timetz`); SQLite ignores the zone and drops the offset;
   - a JSON column, `ColumnField(JSON)`, which stores the ISO text.
+
+  A `datetime` field (`DateTime(tz=True)`) keeps the instant, not the
+  written offset: Postgres (`timestamptz`) and `mongo` read it back in UTC.
 
 ## Upgrade notes
 
