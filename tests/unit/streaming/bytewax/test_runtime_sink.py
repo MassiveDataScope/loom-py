@@ -97,24 +97,84 @@ class TestRuntimeSinkPartitionPolicy:
         assert record.key == b"order-123"
 
 
+class _RecordingTracker:
+    """Commit tracker that records the offsets a batch completed."""
+
+    def __init__(self) -> None:
+        self.completed: list[tuple[str, int, int]] = []
+
+    def fork(self, topic: str, partition: int, offset: int, extra_outputs: int) -> None:
+        """Accept the fan-out hook; no test here forks."""
+
+    def complete(self, topic: str, partition: int, offset: int) -> None:
+        self.completed.append((topic, partition, offset))
+
+
+class _DlqRejectingProducer(RawProducerStub):
+    """Raw producer whose sends to the DLQ topic are rejected."""
+
+    def send(self, record: KafkaRecord[bytes]) -> None:
+        if record.topic == "orders.dlq":
+            raise KafkaDeliveryError("dlq queue full")
+        super().send(record)
+
+
+def _dlq_sink(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: RawProducerStub,
+) -> tuple[_runtime_io._KafkaMessageSinkPartition, _RecordingTracker]:
+    monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: raw)
+    sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
+    tracker = _RecordingTracker()
+    sink.bind_commit_tracker(tracker)
+    return sink, tracker
+
+
 class TestDlqRouting:
-    def test_routes_failed_batch_to_dlq_topic(
+    def test_batch_delivered_to_dlq_commits_its_offsets(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         fake_raw = RawProducerStub()
-        fake_raw.flush_error = KafkaDeliveryError("broker unavailable")
-        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
+        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable"), None]
+        sink, tracker = _dlq_sink(monkeypatch, fake_raw)
 
-        sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
+        sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
 
-        sink.write_batch([build_order_message("123", None)])
-
-        topics = [r.topic for r in fake_raw.sent]
-        assert "orders.out" in topics
-        assert "orders.dlq" in topics
         dlq_record = next(r for r in fake_raw.sent if r.topic == "orders.dlq")
         assert b"broker unavailable" in dlq_record.headers.get("x-dlq-error", b"")
+        assert tracker.completed == [("orders.in", 2, 9)]
+
+    def test_dlq_send_failure_raises_without_committing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_raw = _DlqRejectingProducer()
+        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
+        sink, tracker = _dlq_sink(monkeypatch, fake_raw)
+
+        with pytest.raises(KafkaDeliveryError, match="orders.dlq") as raised:
+            sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
+
+        assert str(raised.value.__cause__) == "dlq queue full"
+        assert tracker.completed == []
+
+    def test_dlq_flush_failure_raises_without_committing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_raw = RawProducerStub()
+        fake_raw.flush_errors = [
+            KafkaDeliveryError("broker unavailable"),
+            KafkaDeliveryError("dlq not acknowledged"),
+        ]
+        sink, tracker = _dlq_sink(monkeypatch, fake_raw)
+
+        with pytest.raises(KafkaDeliveryError, match="orders.dlq") as raised:
+            sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
+
+        assert str(raised.value.__cause__) == "dlq not acknowledged"
+        assert tracker.completed == []
 
     def test_no_dlq_reraises_delivery_error(
         self,

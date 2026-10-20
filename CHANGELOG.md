@@ -1045,6 +1045,14 @@
   an inline write no longer completes an offset: the message completes where
   its path ends. A storage sink completes the offsets of the events its flush
   wrote, so events still buffered when a worker dies are consumed again.
+- **streaming:** a Kafka sink batch diverted to its DLQ topic commits its
+  offsets only once the DLQ topic received every record. The diversion sent
+  each record without flushing, logged and swallowed per-record failures, and
+  committed anyway, so a batch the DLQ topic never received was lost. The
+  producer is now flushed after the diversion, and a failed DLQ send or flush
+  raises `KafkaDeliveryError` naming the DLQ topic, with the DLQ failure as its
+  cause, without committing, so the batch is redelivered like a failed batch on
+  a sink without a DLQ topic.
 
 ### prefect
 

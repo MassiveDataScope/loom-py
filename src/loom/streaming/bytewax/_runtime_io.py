@@ -80,10 +80,10 @@ class _BatchOutcome:
     """How one Kafka batch write ended, for the two exits that return normally.
 
     A delivery failure diverted to a DLQ topic returns exactly like a delivered
-    batch: it commits and raises nothing. The return value is therefore the only
-    thing that lets a caller above ``_write_kafka_batch`` tell the two apart —
-    and a diversion is a failure, because ``send_batch_to_dlq`` never flushes
-    and swallows per-item failures, so the DLQ landing is unverified here.
+    batch once the DLQ topic has received every record: it commits and raises
+    nothing. The return value is therefore the only thing that lets a caller
+    above ``_write_kafka_batch`` tell the two apart — and a diversion is a
+    failure, because the batch never reached its outbound topic.
 
     Args:
         error: Delivery failure that caused the diversion, or ``None`` when the
@@ -131,12 +131,36 @@ def _write_kafka_batch(
         producer.flush()
         _commit_runtime_items(items, item_to_commit, commit_tracker)
     except KafkaDeliveryError as exc:
-        if sink.dlq_topic is not None and dlq_sender is not None:
-            dlq_sender(message_producer, sink.dlq_topic, items, exc)
-            _commit_runtime_items(items, item_to_commit, commit_tracker)
-            return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
-        raise
+        if sink.dlq_topic is None or dlq_sender is None:
+            raise
+        _divert_to_dlq(message_producer, sink.dlq_topic, items, exc, dlq_sender)
+        _commit_runtime_items(items, item_to_commit, commit_tracker)
+        return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
     return _DELIVERED
+
+
+def _divert_to_dlq(
+    message_producer: KafkaMessageProducer[PayloadT],
+    dlq_topic: str,
+    items: list[ItemT],
+    exc: KafkaDeliveryError,
+    dlq_sender: Callable[
+        [KafkaMessageProducer[PayloadT], str, list[ItemT], KafkaDeliveryError], None
+    ],
+) -> None:
+    """Send a failed batch to its DLQ topic and flush until every record is delivered.
+
+    Raises:
+        KafkaDeliveryError: If any DLQ record could not be sent or the flush
+            reported a delivery failure; the batch must not be committed.
+    """
+    try:
+        dlq_sender(message_producer, dlq_topic, items, exc)
+        message_producer.flush()
+    except Exception as dlq_exc:
+        raise KafkaDeliveryError(
+            f"delivery to DLQ topic {dlq_topic!r} failed after sink delivery error: {exc}"
+        ) from dlq_exc
 
 
 def _commit_runtime_items(
@@ -460,7 +484,8 @@ class _KafkaMessageSinkPartition(
             The outcome of the write.
 
         Raises:
-            KafkaDeliveryError: If delivery failed and no DLQ topic is declared.
+            KafkaDeliveryError: If delivery failed and either no DLQ topic is
+                declared or the DLQ topic did not receive every record.
         """
         return _write_kafka_batch(
             sink=self._sink,
@@ -542,8 +567,8 @@ class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]
         """Write the batch, then close every message's trace with its death.
 
         Empty epochs are forwarded without a span, so an idle flow emits
-        nothing. A batch diverted to a DLQ closes *failed*: the diversion never
-        flushed, so the landing is unverified at span-close time.
+        nothing. A batch diverted to a DLQ closes *failed*: it never reached
+        its outbound topic.
 
         Args:
             items: Messages Bytewax delivered for the current epoch.

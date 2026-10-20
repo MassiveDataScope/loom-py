@@ -381,7 +381,7 @@ class TestRuntimeIOBuilders:
     ) -> None:
         fake_raw = RawProducerStub()
         monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
-        fake_raw.flush_error = KafkaDeliveryError("broker unavailable")
+        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
 
         partition = _runtime_io.build_inline_sink_partition(
             build_compiled_sink(dlq_topic="orders.dlq"),

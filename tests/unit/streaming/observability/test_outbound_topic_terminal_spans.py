@@ -120,6 +120,7 @@ class _FakeConfluentProducer:
         self.calls: list[str] = []
         self.first_produce_ns: int | None = None
         self.flush_error: Exception | None = None
+        self.flush_errors: list[Exception] = []
         self.flush_delay_s: float = 0.0
 
     def produce(
@@ -146,11 +147,16 @@ class _FakeConfluentProducer:
         del timeout
 
     def flush(self, timeout: float | None = None) -> None:
-        """Flush, optionally slowly and optionally failing."""
+        """Flush, optionally slowly and optionally failing.
+
+        Queued ``flush_errors`` are raised one per flush before ``flush_error``.
+        """
         self.calls.append("flush")
         self.flush_calls.append(timeout)
         if self.flush_delay_s:
             sleep(self.flush_delay_s)
+        if self.flush_errors:
+            raise self.flush_errors.pop(0)
         if self.flush_error is not None:
             raise self.flush_error
 
@@ -524,14 +530,14 @@ class TestReRaiseExit:
 
 
 class TestDivertedExit:
-    """AC7: delivery failed, a DLQ topic is declared, the batch commits anyway."""
+    """AC7: delivery failed, a DLQ topic is declared, the batch commits once it lands there."""
 
     def test_diverted_batches_close_failed_and_still_commit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The diversion never flushes, so the DLQ landing is unverified here."""
+        """The batch never reached its outbound topic, so the diversion is a failure."""
         fake = install_fake_producer(monkeypatch)
-        fake.flush_error = RuntimeError("broker down")
+        fake.flush_errors = [RuntimeError("broker down")]
         recorder = build_recorder()
         tracker = _RecordingTracker()
         sink = _terminal_sink(recorder, dlq_topic=_DLQ_TOPIC, tracker=tracker)
@@ -542,7 +548,7 @@ class TestDivertedExit:
         assert len(deaths) == 3
         for span in deaths:
             assert span.status.status_code is StatusCode.ERROR, (
-                "a diversion whose landing was never flushed is not a success"
+                "a batch diverted away from its outbound topic is not a success"
             )
             assert _attribute(span, "terminal.dlq_topic") == _DLQ_TOPIC
             assert _attribute(span, "terminal.failure_scope") == "batch"
@@ -554,7 +560,7 @@ class TestDivertedExit:
     ) -> None:
         """A wrapper cannot see a swallowed failure; the return value carries it."""
         fake = install_fake_producer(monkeypatch)
-        fake.flush_error = RuntimeError("broker down")
+        fake.flush_errors = [RuntimeError("broker down")]
         partition = _terminal_sink(None, dlq_topic=_DLQ_TOPIC).build("step", 0, 1)
         assert isinstance(partition, _KafkaMessageSinkPartition)
 

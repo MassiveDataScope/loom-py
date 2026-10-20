@@ -206,15 +206,18 @@ class RawProducerStub:
         self.closed = False
         self.close_error: Exception | None = None
         self.flush_error: Exception | None = None
+        self.flush_errors: list[Exception | None] = []
 
     def send(self, record: KafkaRecord[bytes]) -> None:
         self.sent.append(record)
 
     def flush(self, timeout_ms: int | None = None) -> None:
+        """Flush, raising the next queued outcome first, then ``flush_error``."""
         del timeout_ms
         self.flushed = True
-        if self.flush_error is not None:
-            raise self.flush_error
+        error = self.flush_errors.pop(0) if self.flush_errors else self.flush_error
+        if error is not None:
+            raise error
 
     def close(self) -> None:
         if self.close_error is not None:
