@@ -33,7 +33,7 @@ from loom.streaming.mongo import MongoConfig
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
 from loom.streaming.nodes._mongo import FromMongoCDC
-from loom.streaming.nodes._shape import CollectBatch
+from loom.streaming.nodes._shape import CollectBatch, StreamShape
 from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._table import Backend, IntoTable
 from loom.streaming.nodes._table.config import (
@@ -85,7 +85,6 @@ def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         settings=settings,
         collections=source.collections,
         watch_options=watch_options,
-        shape=source.shape,
     )
 
 
@@ -100,7 +99,6 @@ def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Comp
         settings=consumer,
         topics=consumer.topics,
         payload_type=source.payload,
-        shape=source.shape,
         decode_strategy=decode_strategy,
     )
 
@@ -117,7 +115,6 @@ def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         settings=consumer,
         topics=consumer.topics,
         dispatch=dispatch,
-        shape=source.shape,
         decode_strategy=decode_strategy,
     )
 
@@ -169,7 +166,7 @@ def _require_message_type(t: type[Any]) -> str:
 
 def _build_nodes(flow: StreamFlow[Any, Any]) -> list[CompiledNode]:
     nodes: list[CompiledNode] = []
-    current_shape = flow.source.shape
+    current_shape = StreamShape.RECORD
     for node in flow.process.nodes:
         input_shape = current_shape
         output_shape = _node_output_shape(node, current_shape)

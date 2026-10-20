@@ -24,12 +24,10 @@ class FromTopic(LoomFrozenStruct, Generic[PayloadT], frozen=True):
         name: Logical input reference. By default this is also used as the
             Kafka config reference.
         payload: Logical payload type descriptor.
-        shape: Declared source shape.
     """
 
     name: str
     payload: type[PayloadT]
-    shape: StreamShape = StreamShape.RECORD
 
     @property
     def logical_ref(self) -> LogicalRef:
@@ -56,7 +54,6 @@ class FromMultiTypeTopic(LoomFrozenStruct, Generic[MultiPayloadT], frozen=True):
     Args:
         name: Logical input reference.
         payloads: Tuple of two or more expected payload types.
-        shape: Declared source shape.
 
     Raises:
         ValueError: When fewer than two payload types are declared.
@@ -72,7 +69,6 @@ class FromMultiTypeTopic(LoomFrozenStruct, Generic[MultiPayloadT], frozen=True):
 
     name: str
     payloads: tuple[type[LoomStruct | LoomFrozenStruct], ...]
-    shape: StreamShape = StreamShape.RECORD
 
     def __post_init__(self) -> None:
         if len(self.payloads) < 2:

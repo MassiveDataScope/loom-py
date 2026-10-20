@@ -118,9 +118,9 @@ def validate_resources(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
 
 def validate_shapes(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
     """Validate shape transitions through the process tree."""
-    errors, final_shape = _validate_shape_sequence(flow.process.nodes, flow.source.shape)
-    if flow.output is not None and final_shape is not StreamShape.NONE:
-        _check_input_shape(flow.output, final_shape, errors)
+    errors, final_shape = _validate_shape_sequence(flow.process.nodes, StreamShape.RECORD)
+    if flow.output is not None:
+        errors.extend(_output_shape_issues(final_shape, "flow.output"))
     errors.extend(_validate_window_strategies(flow.process.nodes))
     errors.extend(_validate_scoped_process_nodes(_walk_all_process_nodes(flow.process.nodes)))
     return errors
@@ -243,6 +243,20 @@ def _check_input_shape(
                 expected=expected.value, got=current_shape.value, component=type(node).__name__
             )
         )
+
+
+def _output_shape_issues(shape: StreamShape, component: str) -> list[CompilationIssue]:
+    """Return the mismatch of an output declared after a stream of *shape*.
+
+    An output writes records. A stream that ended (``none``) carries nothing to
+    the output, so it is no shape mismatch.
+    """
+    if shape in (StreamShape.RECORD, StreamShape.NONE):
+        return []
+    issue = StreamingErrorCode.SHAPE_MISMATCH.issue(
+        expected=StreamShape.RECORD.value, got=shape.value, component=component
+    )
+    return [msgspec.structs.replace(issue, field="output")]
 
 
 def _must_be_last_errors(
@@ -472,7 +486,9 @@ def _validate_broadcast_shapes(
 ) -> tuple[list[CompilationIssue], StreamShape]:
     errors: list[CompilationIssue] = []
     for branch in iter_branches(broadcast):
-        branch_errors, _ = _validate_shape_sequence(branch.nodes, initial_shape)
+        branch_errors, final_shape = _validate_shape_sequence(branch.nodes, initial_shape)
+        if branch.output is not None:
+            branch_errors.extend(_output_shape_issues(final_shape, "output"))
         errors.extend(
             _prefixed(issue, f"broadcast branch {branch.label}") for issue in branch_errors
         )
@@ -650,16 +666,10 @@ def _node_input_shape(node: object) -> StreamShape | None:
         return StreamShape.BATCH
     if isinstance(node, Explode):
         return StreamShape.RECORD
-    if isinstance(node, (With, WithAsync)):
-        return None
     if isinstance(node, ForEach):
         return StreamShape.BATCH
-    if isinstance(node, IntoTopic):
+    if isinstance(node, (IntoTopic, IntoSink, Fork, ExpandRoutes, Drain)):
         return StreamShape.RECORD
-    if isinstance(node, Drain):
-        return None
-    if isinstance(node, Fork):
-        return None
     return None
 
 
@@ -705,6 +715,7 @@ _FIXED_OUTPUT_SHAPES: dict[type, StreamShape] = {
     BatchStep: StreamShape.BATCH,
     ExpandStep: StreamShape.RECORD,
     BatchExpandStep: StreamShape.RECORD,
+    With: StreamShape.NONE,
     WithAsync: StreamShape.NONE,
     Drain: StreamShape.NONE,
     Fork: StreamShape.NONE,
@@ -722,6 +733,4 @@ def _node_output_shape(node: object, current: StreamShape) -> StreamShape:
         return StreamShape.NONE
     if isinstance(node, IntoTopic):
         return node.shape
-    if isinstance(node, With):
-        return StreamShape.NONE if node.process is not None else StreamShape.MANY
     return current

@@ -102,7 +102,7 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
 
 
 class Drain(LoomFrozenStruct, frozen=True):
-    """Explicit terminal adapter from any shape to ``none``.
+    """Explicit terminal adapter from ``record`` to ``none``.
 
     Pattern:
         Shape adapter.

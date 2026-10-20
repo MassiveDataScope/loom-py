@@ -35,7 +35,6 @@ from loom.streaming import (
     Route,
     Router,
     StreamFlow,
-    StreamShape,
     WindowStrategy,
     With,
     msg,
@@ -59,8 +58,8 @@ class TestCompilationErrorContract:
     ) -> None:
         flow: StreamFlow[Order, Result] = StreamFlow(
             name="test",
-            source=FromTopic("in", payload=Order, shape=StreamShape.BATCH),
-            process=Process(FakeStep(), IntoTopic("out", payload=Result)),
+            source=FromTopic("in", payload=Order),
+            process=Process(CollectBatch(2, 10), FakeStep(), IntoTopic("out", payload=Result)),
         )
 
         with pytest.raises(CompilationError) as exc_info:
@@ -492,10 +491,7 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         None,
     ),
     "router branch issue scoped under its branch": (
-        lambda: _flow(
-            _router(FakeStep(), _out()),
-            source=FromTopic("in", payload=Order, shape=StreamShape.BATCH),
-        ),
+        lambda: _flow(_router(CollectBatch(2, 10), FakeStep(), _out())),
         {},
         StreamingErrorCode.SHAPE_MISMATCH,
         "router branch predicate[0]: shape mismatch: expected record but got batch before FakeStep",
@@ -667,8 +663,52 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         lambda: _flow(CollectBatch(3, 50), _SameBatch(), output=_out()),
         {},
         StreamingErrorCode.SHAPE_MISMATCH,
-        "shape mismatch: expected record but got batch before IntoTopic",
-        "IntoTopic",
+        "shape mismatch: expected record but got batch before flow.output",
+        "flow.output",
+        "output",
+    ),
+    "batch into a broadcast route output": (
+        lambda: _flow(_broadcast(CollectBatch(3, 50), _SameBatch())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "broadcast branch 0: shape mismatch: expected record but got batch before output",
+        "broadcast branch 0 > output",
+        "output",
+    ),
+    "batch into a table": (
+        lambda: _flow(
+            CollectBatch(3, 50),
+            _SameBatch(),
+            IntoTable(payload=Order, table="t", backend=Backend.DELTA, name="orders"),
+        ),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before IntoTable",
+        "IntoTable",
+        None,
+    ),
+    "batch into a fork": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _fork()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before Fork",
+        "Fork",
+        None,
+    ),
+    "batch into an expand routes": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _expand_routes(_out())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before ExpandRoutes",
+        "ExpandRoutes",
+        None,
+    ),
+    "batch into a drain": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), Drain()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before Drain",
+        "Drain",
         None,
     ),
     "scoped IntoTopic followed by a step": (

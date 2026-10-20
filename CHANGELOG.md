@@ -909,6 +909,14 @@
 
 ### streaming
 
+- **streaming:** `FromTopic`, `FromMultiTypeTopic` and `FromMongoCDC` take no
+  `shape`, and `CompiledSingleSource`, `CompiledMultiSource` and
+  `CompiledMongoCDCSource` have no `shape` field. The runtime never read the
+  declared shape: every source emits one record per message, so a source
+  declared `BATCH` was shape-checked as batches while its nodes received
+  records. Every flow now starts as a record stream. Migration: drop
+  `shape=`; to work on batches, use `CollectBatch` and, back to records,
+  `ForEach`.
 - **streaming:** compile issues come from the code catalogue
   (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
   factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
@@ -1303,13 +1311,14 @@
   `shape mismatch: expected many but got batch before ForEach`. Under
   at-least-once delivery each offset completes once, after its write is
   flushed.
-- **streaming:** a batch reaching an `IntoTopic`, inside the process or as the
-  flow `output`, fails compilation with `SHAPE_MISMATCH` (`expected record but
-  got batch before IntoTopic`). `CollectBatch → BatchStep → IntoTopic`
-  compiled and raised `AttributeError` (`'list' object has no attribute
-  'meta'`) at runtime; put a `ForEach` before the `IntoTopic`. A source
-  declared with `shape=StreamShape.BATCH` or `StreamShape.MANY` that reaches an
-  `IntoTopic` is refused the same way; such flows used to compile.
+- **streaming:** a batch reaching a node that takes records fails compilation
+  with `SHAPE_MISMATCH`: `IntoTopic`, `IntoTable` (any `IntoSink`), `Fork`,
+  `ExpandRoutes` and `Drain`, the flow `output` (component `flow.output`,
+  field `output`) and a Broadcast route `output` (component
+  `broadcast branch <n> > output`, field `output`). Such flows used to
+  compile. `CollectBatch → BatchStep → IntoTopic` raised `'list' object has
+  no attribute 'meta'` at runtime, and under at-least-once delivery a `Drain`
+  after a batch never completed the batch's offsets. Put a `ForEach` before the node.
 - **streaming:** a `BatchExpandStep` subclass outputs records to the shape
   check. The compiler matched step output shapes by exact type, so every step
   subclass kept the incoming shape and a record step after a

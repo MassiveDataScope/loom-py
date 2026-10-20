@@ -6,7 +6,7 @@ import pytest
 
 from loom.core.model import LoomFrozenStruct
 from loom.core.routing import LogicalRef
-from loom.streaming import FromMultiTypeTopic, StreamShape
+from loom.streaming import FromMultiTypeTopic
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.kafka import DecodeError
 
@@ -28,22 +28,6 @@ class TestFromMultiTypeTopicBoundary:
         assert source.name == "events.all"
         assert source.payloads == (_OrderEvent, _ProductEvent)
         assert source.logical_ref == LogicalRef("events.all")
-
-    @pytest.mark.parametrize(
-        ("shape", "expected"),
-        [
-            (StreamShape.RECORD, StreamShape.RECORD),
-            (StreamShape.BATCH, StreamShape.BATCH),
-        ],
-    )
-    def test_shape_contract(self, shape: StreamShape, expected: StreamShape) -> None:
-        source: FromMultiTypeTopic[_OrderEvent | _ProductEvent] = FromMultiTypeTopic(
-            "events.all",
-            payloads=(_OrderEvent, _ProductEvent),
-            shape=shape,
-        )
-
-        assert source.shape is expected
 
     def test_rejects_single_payload(self) -> None:
         with pytest.raises((ValueError, TypeError)):

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from loom.core.routing import LogicalRef
 from loom.streaming import (
+    FromMongoCDC,
+    FromMultiTypeTopic,
     FromTopic,
     IntoTopic,
     Message,
@@ -23,15 +27,28 @@ class _OrderPartitionStrategy:
 
 
 class TestBoundaryContracts:
-    def test_topic_boundaries_hold_payload_classes_and_explicit_shapes(self) -> None:
-        source = FromTopic("orders.in", payload=Order, shape=StreamShape.BATCH)
+    def test_topic_boundaries_hold_payload_classes_and_the_output_shape(self) -> None:
+        source = FromTopic("orders.in", payload=Order)
         target = IntoTopic("orders.out", payload=Order, shape=StreamShape.MANY)
 
         assert source.name == "orders.in"
         assert source.payload is Order
-        assert source.shape is StreamShape.BATCH
         assert target.payload is Order
         assert target.shape is StreamShape.MANY
+
+    @pytest.mark.parametrize(
+        ("source_type", "fields"),
+        [
+            (FromTopic, {"payload": Order}),
+            (FromMultiTypeTopic, {"payloads": (Order, Order)}),
+            (FromMongoCDC, {}),
+        ],
+        ids=lambda value: value.__name__ if isinstance(value, type) else "",
+    )
+    def test_a_source_declares_no_shape(self, source_type: Any, fields: dict[str, Any]) -> None:
+        """Sources emit one record per message; a batch comes from CollectBatch."""
+        with pytest.raises(TypeError, match="shape"):
+            source_type("orders.in", shape=StreamShape.BATCH, **fields)
 
     def test_topic_boundaries_use_logical_refs_only(self) -> None:
         source = FromTopic("orders-input", payload=Order)

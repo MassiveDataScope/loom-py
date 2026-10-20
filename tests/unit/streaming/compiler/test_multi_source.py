@@ -6,13 +6,11 @@ from omegaconf import DictConfig
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming import (
-    ForEach,
     FromMultiTypeTopic,
     FromTopic,
     IntoTopic,
     Process,
     StreamFlow,
-    StreamShape,
 )
 from loom.streaming.compiler import CompiledMultiSource, CompiledSingleSource, compile_flow
 from loom.streaming.core._errors import ErrorEnvelope
@@ -49,15 +47,13 @@ class TestCompileFlowWithMultiSource:
                     ErrorEnvelope[_OrderEvent],
                     DecodeError,
                 ),
-                shape=StreamShape.BATCH,
             ),
-            process=Process(ForEach(), IntoTopic("out", payload=Result)),
+            process=Process(IntoTopic("out", payload=Result)),
         )
 
         plan = compile_flow(flow, config=streaming_kafka_config)
 
         assert isinstance(plan.source, CompiledMultiSource)
-        assert plan.source.shape is StreamShape.BATCH
         assert _fqn(_OrderEvent) in plan.source.dispatch.plain
         assert _fqn(_ProductEvent) in plan.source.dispatch.plain
         assert plan.source.dispatch.plain[_fqn(_OrderEvent)] is _OrderEvent

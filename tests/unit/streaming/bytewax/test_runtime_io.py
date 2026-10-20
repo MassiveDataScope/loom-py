@@ -45,7 +45,6 @@ class TestRuntimeIOBuilders:
             settings=MongoSourceConfig(uri="mongodb://localhost:27017", database="app"),
             collections=("orders",),
             watch_options={"full_document": "updateLookup"},
-            shape=build_compiled_source().shape,
         )
 
         runtime_source = _runtime_io.build_runtime_source(source)
