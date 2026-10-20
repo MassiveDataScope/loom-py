@@ -7,6 +7,7 @@ from typing import Annotated, Any, Generic, TypeVar
 
 import msgspec
 
+from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, Postgres, RelationField
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
@@ -14,6 +15,7 @@ from loom.core.model.introspection import (
     get_column_fields,
     list_element_type,
     resolve_type_hints,
+    scalar_column_annotations,
 )
 from loom.core.model.types import Integer, String
 
@@ -141,3 +143,33 @@ class TestOptionalColumnTypes:
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
+
+
+class _Shelf(BaseModel):
+    __tablename__ = "introspection_shelves"
+
+    id: int = ColumnField(primary_key=True)
+    label: str = ColumnField(length=2)
+    tags: list[str] = ColumnField()
+    words: str = ColumnField(Postgres.TSVECTOR)
+    marks: list[int] = ColumnField(Postgres.ARRAY(Integer))
+
+
+class _Book(BaseModel):
+    __tablename__ = "introspection_books"
+
+    id: int = ColumnField(primary_key=True)
+    rank: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
+    settings: dict[str, Any] = ColumnField(JSON)
+    shelf_id: int = ColumnField(foreign_key="introspection_shelves.id")
+    shelf: _Shelf | None = RelationField(
+        foreign_key="shelf_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class TestScalarColumnAnnotations:
+    def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
+        assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
+
+    def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
+        assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}

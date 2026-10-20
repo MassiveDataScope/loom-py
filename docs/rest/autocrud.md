@@ -54,6 +54,64 @@ class ProductInterface(RestInterface[Product]):
 
 Valid values: `"get"`, `"list"`, `"create"`, `"update"`, `"delete"`.
 
+## Filter and sort list routes
+
+A list route filters and sorts only on the columns it declares `filterable`
+and `sortable`. Declare them on the interface (its auto-CRUD `list` route
+included) or on a `RestRoute`, which overrides the interface. A field
+reference rooted at the model is the primary form; the column name is the
+same column:
+
+```python
+from loom.core.use_case.field_ref import F
+
+
+class ProductInterface(RestInterface[Product]):
+    prefix = "/products"
+    auto = True
+    filterable = (F(Product).sku, F(Product).price_cents, "stock")
+    sortable = (F(Product).price_cents,)
+```
+
+Callers filter with `field=value` or `field__op=value`, the operator one of
+`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like` and
+`ilike` (on `str` columns) and `is_null`, and sort with `sort=` and
+`direction=`; a camelCase name reads as snake_case:
+
+```
+GET /products?price_cents__lte=500&sku__in=A-01,A-02&sort=price_cents&direction=DESC
+```
+
+Each value is converted by its column's type with the strict grammar of
+`Query()` (a boolean is `true` or `false`, a number follows the JSON number
+grammar, a `str` column keeps the text as sent). A value the type refuses
+answers `400 query_validation`. A column the route does not declare answers
+`400 unsupported_query`, the same answer whether or not the column exists.
+The primary key, the route's default order, is always sortable. A cursor
+carries the values of the columns it sorts by, and a forged cursor can
+range-probe them, so declare sortable only columns whose values the response
+already shows.
+
+Only scalar columns of the use case's own model qualify; a related model's
+column, a JSON, array or text-search column, and a field reference rooted at
+another model fail compilation. An `Enum` or `Literal` needs a column type
+(e.g. `ColumnField(String(16))`) to be scalar. `ALL` (from `loom.rest`)
+declares every scalar column and logs a warning naming the route at startup.
+
+In `app.rest.interfaces`, both take column names, or `all`:
+
+```yaml
+app:
+  rest:
+    interfaces:
+      products:
+        prefix: /products
+        auto: true
+        model: app.product.model:Product
+        filterable: [sku, price_cents, stock]
+        sortable: [price_cents]
+```
+
 ## Multiple read profiles
 
 Expose a `profile` query parameter so callers choose the loading depth:

@@ -21,7 +21,7 @@ from loom.rest.config import (
     validate_disable_routes_config,
     validate_interfaces_config,
 )
-from loom.rest.model import RestInterface, RestRoute
+from loom.rest.model import ALL, RestInterface, RestRoute
 
 _MODULE = __name__
 
@@ -531,3 +531,29 @@ def _interface_field_names() -> frozenset[str]:
     return frozenset(
         name for name, hint in hints.items() if typing.get_origin(hint) is not typing.ClassVar
     )
+
+
+class TestDeclaredColumns:
+    def test_column_names_and_all_reach_the_interface_and_route(self) -> None:
+        raw = {
+            "prefix": "/pings",
+            "filterable": ["title"],
+            "sortable": "all",
+            "routes": [
+                {
+                    "use_case": f"{_MODULE}:PingUseCase",
+                    "method": "GET",
+                    "path": "/",
+                    "filterable": "all",
+                    "sortable": ["title"],
+                }
+            ],
+        }
+
+        (interface,) = build_interfaces_from_config(
+            {"pings": msgspec.convert(raw, RestInterfaceConfig)}
+        )
+        (route,) = interface.routes
+
+        assert (interface.filterable, interface.sortable) == (("title",), ALL)
+        assert (route.filterable, route.sortable) == (ALL, ("title",))

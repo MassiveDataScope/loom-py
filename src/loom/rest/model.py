@@ -28,19 +28,43 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, TypeVar, get_args, get_origin
+from enum import Enum
+from typing import Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, get_args, get_origin
 
 from loom.core.repository.abc.query import PaginationMode
+from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.use_case import UseCase
 
 T = TypeVar("T")
 
 __all__ = [
+    "ALL",
+    "DeclaredFields",
     "PaginationMode",
     "RestApiDefaults",
     "RestInterface",
     "RestRoute",
 ]
+
+
+class _AllFields(Enum):
+    ALL = "all"
+
+
+ALL = _AllFields.ALL
+"""Escape hatch for ``filterable`` and ``sortable``: every scalar column of the route's model.
+
+Compiling a route that uses it logs a warning naming the route: a client may
+then filter or sort on any column, one added later included.
+"""
+
+DeclaredFields: TypeAlias = tuple[FieldRef | str, ...] | Literal[_AllFields.ALL]
+"""Columns a ``QuerySpec`` route lets a client filter or sort on.
+
+Each entry is a field reference rooted at the route's model
+(``F(Order).status``) or the column name as a string (``"status"``), or
+:data:`ALL`. Only scalar columns of the route's own model qualify.
+"""
 
 
 @dataclass(frozen=True)
@@ -74,6 +98,16 @@ class RestRoute:
             the use case is constructed.  Empty inherits the interface
             declaration, and an empty interface declaration leaves the route
             open.
+        filterable: Columns a client may filter this route's ``QuerySpec``
+            on (see :data:`DeclaredFields`).  ``None`` inherits the interface
+            declaration; a route that declares none, here or on its
+            interface, answers ``400 unsupported_query`` to any filter.
+        sortable: Columns a client may sort this route's ``QuerySpec`` by,
+            declared and inherited like ``filterable``.  The primary key, the
+            route's default order, needs no declaration.  A cursor page
+            carries the sort column's value, and a forged cursor can
+            range-probe it: declare only columns whose values the response
+            already shows.
 
     Example::
 
@@ -99,6 +133,8 @@ class RestRoute:
     allowed_profiles: tuple[str, ...] = ()
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
+    filterable: DeclaredFields | None = None
+    sortable: DeclaredFields | None = None
 
 
 def _extract_model_type(cls: type[Any]) -> type[Any] | None:
@@ -155,6 +191,11 @@ class RestInterface(Generic[T]):
         requires_roles: Roles granting access to every route of this
             interface.  Overridden per-route by
             :attr:`RestRoute.requires_roles`.
+        filterable: Columns a client may filter the ``QuerySpec`` routes of
+            this interface on, auto-CRUD ``list`` included.  Overridden
+            per-route by :attr:`RestRoute.filterable`.
+        sortable: Columns a client may sort the ``QuerySpec`` routes of this
+            interface by.  Overridden per-route by :attr:`RestRoute.sortable`.
 
     Example::
 
@@ -182,6 +223,8 @@ class RestInterface(Generic[T]):
     allowed_profiles: tuple[str, ...] = ()
     expose_profile: bool = False
     requires_roles: tuple[str, ...] = ()
+    filterable: DeclaredFields | None = None
+    sortable: DeclaredFields | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Auto-populate routes when ``auto=True`` and no routes are declared.
