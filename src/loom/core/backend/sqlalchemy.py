@@ -15,6 +15,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     Constraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -27,6 +28,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -80,7 +82,9 @@ _SA_TYPE_MAP: dict[str, type] = {
     "Text": Text,
     "JSON": JSON,
     "Bytes": LargeBinary,
+    "Date": Date,
     "DateTime": DateTime,
+    "Time": Time,
     "Numeric": Numeric,
     "Postgres.JSONB": PG_JSONB,
     "Postgres.UUID": PG_UUID,
@@ -288,15 +292,19 @@ def _compile_model(
 def _refuse_undeclared_column_types(
     struct_cls: type, column_fields: Mapping[str, ColumnFieldInfo]
 ) -> None:
-    """Refuse a plain enum or ``Literal`` field whose column type is not declared.
+    """Refuse a ``Decimal``, plain enum or ``Literal`` field whose column type is not declared.
 
-    loom does not infer a SQL type from the values of such a field.
+    loom does not infer a SQL type from the values of an enum or a ``Literal``,
+    nor a precision and scale for a ``Decimal``: Postgres rounds a value to the
+    declared scale and refuses one past the declared precision.
     """
     for name, info in column_fields.items():
         if info.needs_declared_type:
             raise ValueError(
-                f"{struct_cls.__name__}.{name}: no column type can be inferred from a plain "
-                "Enum or Literal annotation; declare it, e.g. `ColumnField(String(20))`"
+                f"{struct_cls.__name__}.{name}: no column type is inferred from a Decimal, "
+                "plain Enum or Literal annotation; declare it, e.g. "
+                "`Annotated[Decimal, Numeric(precision=12, scale=2)]` for a Decimal, "
+                "`ColumnField(String(20))` for an Enum or Literal"
             )
 
 
@@ -308,7 +316,8 @@ def sa_table_for(struct_cls: type, name: str) -> Table:
     ``MetaData`` and registered nowhere.
 
     Raises:
-        ValueError: If a plain enum or ``Literal`` field declares no column type.
+        ValueError: If a ``Decimal``, plain enum or ``Literal`` field declares no
+            column type.
     """
     column_fields = get_column_fields(struct_cls)
     _refuse_undeclared_column_types(struct_cls, column_fields)

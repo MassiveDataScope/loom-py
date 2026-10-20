@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from datetime import date, time
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
 import pytest
 from sqlalchemy import MetaData
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import CreateTable
 
 from loom.core.backend.sqlalchemy import (
     compile_all,
@@ -23,7 +27,7 @@ from loom.core.model import (
     RelationField,
     TimestampedModel,
 )
-from loom.core.model.types import String
+from loom.core.model.types import Numeric, String
 from loom.core.projection.loaders import ExistsLoader
 
 
@@ -117,6 +121,13 @@ class _LegacyAuditEntity(BaseModel):
     updated_at: str = ColumnField(server_onupdate="now", nullable=True)
 
 
+class _Shift(BaseModel):
+    __tablename__ = "test_shifts"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    day: date = ColumnField()
+    starts_at: time = ColumnField()
+
+
 @pytest.fixture(autouse=True)
 def _clean_registry() -> Generator[None, None, None]:
     reset_registry()
@@ -148,6 +159,26 @@ class _DeclaredShadeItem(BaseModel):
     kind: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
 
 
+class _PricedItem(BaseModel):
+    __tablename__ = "test_priced_items"
+    price: Decimal
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
+class _MaybePricedItem(BaseModel):
+    __tablename__ = "test_maybe_priced_items"
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    price: Decimal | None = None
+
+
+class _DeclaredPriceItem(BaseModel):
+    __tablename__ = "test_declared_price_items"
+    annotated: Annotated[Decimal, Numeric(precision=20, scale=6)]
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    field: Decimal | None = ColumnField(Numeric(precision=12, scale=2), nullable=True)
+    unbounded: Annotated[Decimal, Numeric()] = Decimal("0")
+
+
 class TestUndeclaredColumnTypes:
     @pytest.mark.parametrize(("model", "field"), [(_ShadedItem, "shade"), (_ModedItem, "mode")])
     def test_a_plain_enum_or_literal_without_a_column_type_is_refused(
@@ -157,6 +188,28 @@ class TestUndeclaredColumnTypes:
             ValueError, match=rf"{model.__name__}\.{field}: .*ColumnField\(String\(20\)\)"
         ):
             compile_all(model, metadata=MetaData())
+
+    @pytest.mark.parametrize("model", [_PricedItem, _MaybePricedItem])
+    def test_a_decimal_without_a_column_type_is_refused(self, model: type) -> None:
+        metadata = MetaData()
+
+        with pytest.raises(
+            ValueError,
+            match=rf"{model.__name__}\.price: .*"
+            r"Annotated\[Decimal, Numeric\(precision=12, scale=2\)\]",
+        ):
+            compile_all(model, metadata=metadata)
+
+    def test_a_decimal_compiles_to_its_declared_precision_and_scale(self) -> None:
+        metadata = MetaData()
+
+        compile_all(_DeclaredPriceItem, metadata=metadata)
+
+        table = metadata.tables["test_declared_price_items"]
+        ddl = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+        assert "annotated NUMERIC(20, 6) NOT NULL" in ddl
+        assert "field NUMERIC(12, 2)," in ddl
+        assert "unbounded NUMERIC NOT NULL" in ddl
 
     def test_a_declared_column_type_compiles(self) -> None:
         metadata = MetaData()
@@ -199,6 +252,14 @@ class TestCompileModel:
         sa_cls = cast(Any, compile_model(_LegacyAuditEntity))
         updated = sa_cls.__table__.c.updated_at
         assert updated.onupdate is not None
+
+    def test_date_and_time_fields_compile_to_date_and_time_columns(self) -> None:
+        sa_cls = cast(Any, compile_model(_Shift))
+
+        ddl = str(CreateTable(sa_cls.__table__).compile(dialect=postgresql.dialect()))
+
+        assert "day DATE NOT NULL" in ddl
+        assert "starts_at TIME WITHOUT TIME ZONE NOT NULL" in ddl
 
 
 class TestCompileAll:

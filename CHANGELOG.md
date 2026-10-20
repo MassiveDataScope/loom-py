@@ -459,6 +459,16 @@
 
 ### core
 
+- **core:** a `Decimal` field, plain or optional, declares its column type: a
+  SQLAlchemy model with an undeclared one is refused when it is compiled,
+  naming the field. loom inferred `NUMERIC(10, 2)`, and Postgres silently
+  rounds a value to that scale (`1.2345` is stored as `1.23`) and refuses one
+  past that precision. Migration: declare it, e.g.
+  `Annotated[Decimal, Numeric(precision=20, scale=6)]` or
+  `ColumnField(Numeric(precision=20, scale=6))`; `Numeric()` with no
+  precision is now an unbounded `NUMERIC` instead of `NUMERIC(10, 2)`, and
+  `Numeric(scale=...)` without a precision raises `ValueError`, as SQLAlchemy
+  would drop the scale.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
@@ -623,6 +633,46 @@
   settings take effect: `primary_key=True` adds the column to the primary key,
   which can turn a model's key composite, and `nullable=True` makes the column
   nullable. Review such fields before upgrading.
+- **core:** a `date` field is inferred as a `Date` column and a `time` field
+  as a `Time` column (`loom.core.model.Date`, `loom.core.model.Time`, new),
+  where both used to be inferred as an unbounded `String`; an enum mixed with
+  `date` or `time` follows to `Date` or `Time`. The SQLAlchemy repository
+  binds `date` and `time` values natively, so on Postgres with asyncpg writing
+  either field failed (`expected str, got date`, and the same for `time`). The
+  SQLAlchemy repository now refuses a `time` that carries a UTC offset when it
+  is written to, or compared with, a column that would drop the offset, with a
+  `BoundaryValidationError` (a `ValueError`) naming the column and not the
+  value: `boundary_validation` for a write (REST answers `422`),
+  `query_validation` for a filter, `get_by`, `exists_by` or `list_paginated`
+  value (`400`). Without the check, Postgres and SQLite would store
+  `08:30+02:00` in a `Time` column as `08:30`, and an aware filter value would
+  match the row holding `08:30`. A JSON column and a `Time` column declared
+  with `ColumnType("Time", kwargs={"timezone": True})` accept it; the JSON
+  column keeps the written offset, and so does the `Time` column on Postgres
+  (`timetz`), which takes only a `time` with an offset: one without (naive, or
+  with a zone but no fixed offset) is refused the same way, under
+  `time must carry a UTC offset`, since asyncpg cannot encode it for `timetz`;
+  every refused column of a write is reported, in name order. On any other
+  dialect startup refuses a `Time(timezone=True)` column with a `ConfigError`
+  naming `table.column`, since the dialect would not keep the offset. A
+  `datetime` field (`DateTime(tz=True)`) keeps the instant on Postgres
+  (`timestamptz`) and MongoDB, read back in UTC, not the written offset.
+  `get_by`, `exists_by` and the `filters` of `list_paginated` now convert
+  their value as a write converts it, as `QuerySpec` filters already did, so a
+  plain `Enum` member matches the value the write stored instead of failing to
+  bind. A `list_paginated` filter, `get_by` or `exists_by` on a name that is
+  not a mapped column of the model (a missing field, a relation, an attribute
+  such as `metadata`) raises `ValueError` naming it. An existing Postgres
+  table holding these columns as `varchar` needs a migration: Alembic
+  autogenerate detects the type change, but Postgres refuses it without a
+  cast, so the revision passes `postgresql_using="c::date"` (`"c::time"` for a
+  `time` field) to `op.alter_column`, which is
+  `ALTER TABLE t ALTER COLUMN c TYPE date USING c::date`. `c::time` drops any
+  offset the stored text holds (`'08:30+02'::time` is `08:30`): check first
+  with `SELECT c FROM t WHERE c ~ '[+-]\d{2}(:?\d{2})?$'`, and if offsets are
+  present convert those rows deliberately (for example to UTC with
+  `(c::timetz AT TIME ZONE 'UTC')::time`) before changing the type. MongoDB is
+  unaffected: it stores `date` and `time` values as ISO 8601 strings.
 
 ### ai
 
@@ -909,6 +959,24 @@
 
 ### streaming
 
+- **streaming:** `BatchExpandStep.execute` returns one list of payloads per
+  message of its batch, in batch order, instead of one flat list. List `i`
+  holds what `messages[i]` expands into; each output takes that message's
+  metadata, and an empty list filters the message out. A result whose length
+  differs from the batch, a flat list of payloads, a `Message` among the
+  outputs, or a `str`, `bytes`, `bytearray` or mapping in place of the result
+  or of one of its lists raises `TypeError`, and the batch becomes error
+  envelopes.
+
+  ```python
+  # before
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
+      return [Score(value=m.payload.amount) for m in messages]
+
+  # after
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
+      return [[Score(value=m.payload.amount)] for m in messages]
+  ```
 - **streaming:** compile issues come from the code catalogue
   (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
   factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
@@ -928,6 +996,14 @@
   `Explode` inside a Router branch fail compilation with
   `ROUTER_BRANCH_UNSAFE_NODE`. Such flows compiled and raised `TypeError` when
   the branch ran.
+- **streaming:** a `Router` requires a record stream. A batch reaching a
+  `Router`, such as after a `CollectBatch`, fails compilation with
+  `SHAPE_MISMATCH` before `Router`. Such flows compiled and raised
+  `TypeError` at the Router when a batch arrived.
+- **streaming:** `ROUTER_BRANCH_SHAPE_DIVERGENCE` reads "messages continuing
+  after the router have different shapes: ...", since the unmatched input of
+  a `Router` without a default takes part in the check. It read "router
+  branches produce different shapes: ...".
 - **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
   many of the oldest events not yet reported durable they made durable, `0`
   when they only buffered. A custom `IntoSink` partition must report it: a
@@ -1000,15 +1076,11 @@
     `Integer`) instead of as JSON;
   - a column type declared with `ColumnField` (on a `BaseModel`) or
     `Annotated[T, <ColumnType>]` is used;
-  - a plain `Enum` or `Literal` field without a declared column type is
-    refused when the partition is built, with core's message, instead of
-    being written as JSON;
-  - a `Decimal` field is bound as `Numeric(10, 2)` instead of `Numeric()`.
-    IntoTable creates no table, but on Postgres the INSERT casts the value
-    (`$1::NUMERIC(10, 2)`): a value with more than two decimals is rounded to
-    two (verified: `1.2345` is stored as `1.23` in a `numeric` column) and one
-    of `10^8` or more fails with "numeric field overflow". Declare the
-    column's precision with `Annotated[Decimal, Numeric(precision=..., scale=...)]`.
+  - a `Decimal`, plain `Enum` or `Literal` field without a declared column
+    type is refused when the partition is built, with core's message, instead
+    of being written as `Numeric()` (a `Decimal`) or as JSON. Declare it, e.g.
+    `Annotated[Decimal, Numeric(precision=12, scale=2)]`, or
+    `Annotated[Decimal, Numeric()]` for an unbounded `NUMERIC`.
 
 ## 🐛 Fixes
 
@@ -1366,6 +1438,22 @@
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
+- **streaming:** a `Router` branch that ends its path in `IntoTopic`,
+  `IntoSink` or `Drain` no longer takes part in the branch shape check, and a
+  `Router` reports the shape of the messages that continue after it: the
+  output of the branches that do not end their path and, without a default
+  branch, the unmatched input. A `Router` with an `IntoTopic` branch and a
+  `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a step
+  after a `Router` without a default whose branches all end their path failed
+  with `SHAPE_MISMATCH`; both compile now.
+- **streaming:** a `BatchExpandStep` expands. Every output had to pair with
+  one input message, so a step returning more or fewer outputs than its batch
+  raised and each message of the batch became an error envelope. Under
+  at-least-once delivery each source offset now completes once per output,
+  after that output's write, and a message with no output completes its
+  offset at the step, also when the batch holds several messages of one
+  offset that an earlier expanding node produced. The new return type is under
+  Behaviour changes.
 - **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds a `bytes` field as
   `LargeBinary` (`bytea` on Postgres). It bound it as text, which Postgres
   refused for a `bytea` column ("column is of type bytea but expression is of
@@ -1373,12 +1461,15 @@
   model introspection (`loom.core.backend.sqlalchemy.sa_table_for`), the type
   a compiled model declares, and writes each value as core's repository does
   (`to_column_value`): a plain `Enum` as its value, a struct in a JSON column
-  as a dict, an `UNSET` value left out. Relation and projection fields are no
-  longer columns for any backend: the SQLAlchemy and Delta rows included them
-  and failed on their `UNSET` value, and the ClickHouse insert named them. A
-  `date` or `time` field follows core's inference, still `String`: writing
-  one into a Postgres `date` or `time` column fails until core infers `Date`
-  and `Time` columns (#379).
+  as a dict, an `UNSET` value left out so the column's database default
+  applies, also when other rows of the batch set it. Relation and projection
+  fields are no longer columns for any backend: the SQLAlchemy and Delta rows
+  included them and failed on their `UNSET` value, and the ClickHouse insert
+  named them. A
+  `date` or `time` field is bound as `Date` or `Time`, as core infers it, so
+  it is written into a Postgres `date` or `time` column; it was bound as
+  `String` and Postgres refused it ("column is of type date but expression is
+  of type character varying").
 
 ### prefect
 

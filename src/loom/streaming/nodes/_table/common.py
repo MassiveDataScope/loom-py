@@ -94,8 +94,8 @@ from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
 
 # ── optional SQLAlchemy dependency ────────────────────────────────────────────
-# Imported once at module level. _SA_AVAILABLE stays False only when sqlalchemy
-# itself is not installed; any other import error is raised.
+# Imported once at module level. _SA_AVAILABLE stays False when sqlalchemy is
+# missing; an import error naming another module (a broken dependency) is raised.
 try:
     from sqlalchemy import insert as _sa_insert
 
@@ -104,7 +104,7 @@ try:
 
     _SA_AVAILABLE = True
 except ImportError as exc:
-    if exc.name != "sqlalchemy":
+    if exc.name is not None and exc.name.partition(".")[0] != "sqlalchemy":
         raise
     _sa_insert = cast(Any, None)
     sa_table_for = cast(Any, None)
@@ -679,9 +679,9 @@ class _SQLAlchemyTablePartition:
                         rows.append(row)
                         self._buffer_records -= 1
                         self._buffer_bytes -= row_bytes
-                    if rows:
-                        await session.execute(statement, rows)
-                        n += len(rows)
+                    for same_columns in _rows_by_column_set(rows):
+                        await session.execute(statement, same_columns)
+                    n += len(rows)
                 await session.commit()
                 if self._logger is not None:
                     self._logger.info(
@@ -706,6 +706,18 @@ def _column_names(payload_type: type[Any]) -> list[str]:
     Relation and projection fields are not columns.
     """
     return list(get_column_fields(payload_type))
+
+
+def _rows_by_column_set(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group *rows* by the columns they set, keeping their order within a group.
+
+    One executemany INSERT takes its columns from the first row: a later row
+    missing one fails, and a column only a later row sets is dropped.
+    """
+    groups: dict[frozenset[str], list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(frozenset(row), []).append(row)
+    return list(groups.values())
 
 
 def _to_column_row(item: Any, columns: Iterable[Any]) -> dict[str, Any]:

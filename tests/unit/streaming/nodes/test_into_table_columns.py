@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time
@@ -16,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.backend.sqlalchemy import compile_model
-from loom.core.model import BaseModel, ColumnField, LoomStruct, String, Text
+from loom.core.model import BaseModel, ColumnField, LoomStruct, Numeric, String, Text
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.streaming.nodes._table import Backend, IntoTable, SqlAlchemySinkConfig
@@ -44,7 +45,7 @@ class _Reading(BaseModel):
     count: int
     ratio: float
     active: bool
-    amount: Decimal
+    amount: Annotated[Decimal, Numeric(precision=12, scale=2)]
     taken_at: datetime
     taken_on: date
     opens_at: time
@@ -61,7 +62,7 @@ class _PlainReading(msgspec.Struct):
     count: int
     ratio: float
     active: bool
-    amount: Decimal
+    amount: Annotated[Decimal, Numeric(precision=12, scale=2)]
     taken_at: datetime
     taken_on: date
     opens_at: time
@@ -84,6 +85,10 @@ class _Setting(LoomStruct):
 
 class _UndeclaredMode(LoomStruct):
     mode: _Mode
+
+
+class _UndeclaredAmount(LoomStruct):
+    amount: Decimal
 
 
 class _Owner(LoomStruct):
@@ -201,8 +206,15 @@ def test_a_relation_field_is_neither_a_column_nor_a_value(bridge: AsyncBridge) -
     assert row == {"owner_id": 3, "id": 7}
 
 
-def test_a_plain_enum_without_a_declared_column_type_is_refused(bridge: AsyncBridge) -> None:
-    with pytest.raises(ValueError, match=r"_UndeclaredMode\.mode: no column type can be inferred"):
-        _sink(_UndeclaredMode).build_partition(
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [(_UndeclaredMode, "_UndeclaredMode.mode"), (_UndeclaredAmount, "_UndeclaredAmount.amount")],
+    ids=["plain_enum", "decimal"],
+)
+def test_a_field_without_a_declared_column_type_is_refused(
+    bridge: AsyncBridge, payload: type[Any], field: str
+) -> None:
+    with pytest.raises(ValueError, match=rf"^{re.escape(field)}: no column type is inferred"):
+        _sink(payload).build_partition(
             _sink_config(), 0, 1, bridge=bridge, session_manager=_RecordingSessionManager()
         )

@@ -16,7 +16,7 @@ class SiteReading(BaseModel, RowScoped):
     __scope_privileges__ = frozenset({Privilege.SELECT})
     region: int = ScopedField(Integer, primary_key=True, scope="region")
     id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    value: float = ColumnField(Numeric())
+    value: float = ColumnField(Numeric(precision=10, scale=2))
 
 
 class SiteKind(BaseModel):

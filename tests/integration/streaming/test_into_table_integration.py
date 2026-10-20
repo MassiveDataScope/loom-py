@@ -15,10 +15,11 @@ from collections.abc import Iterator, Sequence
 from datetime import date
 from datetime import time as time_of_day
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import msgspec
 import polars as pl
 import pytest
 from sqlalchemy import Row, create_engine, event, text
@@ -31,7 +32,7 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.model import BaseModel, ColumnField, LoomStruct  # noqa: E402
+from loom.core.model import BaseModel, ColumnField, LoomStruct, Text  # noqa: E402
 from loom.core.model.enums import Cardinality  # noqa: E402
 from loom.core.model.relation import RelationField  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
@@ -46,6 +47,11 @@ class _OrderRow(LoomStruct):
     order_id: int
     amount: float
     status: str
+
+
+class _NoteRow(LoomStruct):
+    note_id: int
+    note: Annotated[str | msgspec.UnsetType, Text] = msgspec.UNSET
 
 
 class _Owner(LoomStruct):
@@ -152,6 +158,41 @@ class TestIntoTableSQLAlchemyIntegration:
         assert rows[0] == (1, 99.9, "shipped")
         assert rows[1] == (2, 49.5, "pending")
         assert (buffered, flushed) == (0, 2), "durable only once the close flush committed"
+
+    @pytest.mark.parametrize("first_has_note", [True, False], ids=["set_first", "unset_first"])
+    def test_a_batch_mixing_set_and_unset_fields_writes_every_row(
+        self, tmp_path: Path, first_has_note: bool
+    ) -> None:
+        path = _make_db(
+            tmp_path, "CREATE TABLE notes (note_id INTEGER, note TEXT DEFAULT 'from-default')"
+        )
+        with_note = _NoteRow(note_id=1, note="written")
+        without_note = _NoteRow(note_id=2)
+        items = [with_note, without_note] if first_has_note else [without_note, with_note]
+        bridge = AsyncBridge()
+        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.SQLALCHEMY)
+        partition = node.build_partition(
+            SqlAlchemySinkConfig.from_config({"table": "notes"}, default_table="notes"),
+            worker_index=0,
+            worker_count=1,
+            bridge=bridge,
+            session_manager=session_manager,
+        )
+        try:
+            partition.write_batch(items)
+            flushed = partition.close()
+        finally:
+            bridge.run(session_manager.dispose())
+            bridge.shutdown()
+
+        engine = create_engine(_sync_url(path))
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT note_id, note FROM notes ORDER BY note_id")).fetchall()
+        engine.dispose()
+
+        assert flushed == 2
+        assert [tuple(row) for row in rows] == [(1, "written"), (2, "from-default")]
 
     def test_empty_batch_is_noop(self, tmp_path: Path) -> None:
         path = _make_db(
@@ -547,10 +588,6 @@ class TestIntoTablePostgresIntegration:
         rows = asyncio.run(_pg_fetch(pg_uri, [f"SELECT reading_id, blob FROM {pg_table}"]))
         assert [tuple(row) for row in rows] == [(1, b"\x00\xff")]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core infers date/time fields as String until #379 adds Date/Time columns",
-    )
     def test_writes_date_and_time_into_date_and_time_columns(
         self, pg_uri: str, pg_table: str
     ) -> None:
