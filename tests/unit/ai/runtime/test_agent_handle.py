@@ -20,6 +20,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from loom.ai.abc import AgentEvent, AgentResult, Conversation, FinalEvent, HealthStatus, StateShape
 from loom.ai.compiler._plan import CompiledOutputHook
+from loom.ai.config import AiConfig
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._handle import _BoundAgentHandle, agent_marker_resolver
@@ -687,6 +688,17 @@ class TestRejectionByOutputHook:
 _RUNBOOKS_SERVER = "runbooks"
 
 
+def _mcp_config(*servers: str) -> AiConfig:
+    """Build an ``AiConfig`` registering *servers* with a ten-second start-up budget.
+
+    The MCP stubs here answer without delay, so only wall-clock time on a
+    loaded runner can spend the start-up budget, a real loop-time deadline.
+    No test in this module checks that budget, so it is ten seconds instead
+    of the 500 ms default of ``make_ai_config``.
+    """
+    return make_ai_config(mcp_servers=make_mcp_servers(*servers), startup_timeout_ms=10_000)
+
+
 async def _runtime_with_one_mcp_grant(
     deps: StubDepsFactory, container: LoomContainer
 ) -> AgentRuntime:
@@ -697,7 +709,7 @@ async def _runtime_with_one_mcp_grant(
     provider = CountingEngineProvider(engines={_AGENT_NAME: _OneShotEngine()})  # type: ignore[dict-item]
     return AgentRuntime(
         plans=[make_plan(_AGENT_NAME, capabilities=(capability,))],
-        config=make_ai_config(mcp_servers=make_mcp_servers(_RUNBOOKS_SERVER)),
+        config=_mcp_config(_RUNBOOKS_SERVER),
         engine_provider=provider,  # type: ignore[arg-type]
         deps=deps,
         container=container,
@@ -808,14 +820,7 @@ class TestPublishedGrants:
                     ),
                 )
             ],
-            # The stubs answer without delay, so only wall-clock time on a
-            # loaded runner can spend the start-up budget, a real loop-time
-            # deadline; this test checks order, not that budget, so it gets
-            # ten seconds instead of the 500 ms default.
-            config=make_ai_config(
-                mcp_servers=make_mcp_servers(_RUNBOOKS_SERVER, second),
-                startup_timeout_ms=10_000,
-            ),
+            config=_mcp_config(_RUNBOOKS_SERVER, second),
             sql_config=make_sql_config("analytics"),
             engine_provider=provider,  # type: ignore[arg-type]
             deps=deps,
