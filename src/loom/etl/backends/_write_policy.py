@@ -68,10 +68,19 @@ def _ensure_can_create_missing_table(
         schema_mode=schema_mode, missing_table_policy=missing_table_policy
     ):
         return
-    raise SchemaNotFoundError(
-        f"Destination table does not yet exist: {target}. "
-        "Use SchemaMode.OVERWRITE or set storage.missing_table_policy='create'."
-    )
+    advice = _missing_table_advice(missing_table_policy)
+    raise SchemaNotFoundError(f"Destination table does not yet exist: {target}. {advice}")
+
+
+def _missing_table_advice(missing_table_policy: MissingTablePolicy) -> str:
+    """Return the ways to create a missing table that work under *missing_table_policy*."""
+    if missing_table_policy is MissingTablePolicy.ERROR:
+        return (
+            "storage.missing_table_policy='error' never creates it: "
+            "set storage.missing_table_policy='create' "
+            "(or 'schema_mode' with SchemaMode.OVERWRITE), or create the table first."
+        )
+    return "Use SchemaMode.OVERWRITE or set storage.missing_table_policy='create'."
 
 
 def _can_create_missing_table(

@@ -273,6 +273,38 @@ def test_writer_error_policy_blocks_creation_even_with_overwrite_schema(tmp_path
         writer.write(frame, spec, None)
 
 
+def test_writer_error_policy_missing_table_advice_omits_overwrite(tmp_path: Path) -> None:
+    writer = PolarsTargetWriter(tmp_path, missing_table_policy=MissingTablePolicy.ERROR)
+    frame = pl.DataFrame({"id": [1], "v": [10.0]}).lazy()
+    spec = ReplaceSpec(table_ref=TableRef("staging.must_exist"), schema_mode=SchemaMode.OVERWRITE)
+
+    with pytest.raises(SchemaNotFoundError) as excinfo:
+        writer.write(frame, spec, None)
+
+    message = str(excinfo.value)
+    assert "staging.must_exist" in message
+    assert "missing_table_policy='error'" in message
+    assert "missing_table_policy='create'" in message
+    assert "'schema_mode' with SchemaMode.OVERWRITE" in message
+    assert "create the table first" in message
+    assert "Use SchemaMode.OVERWRITE" not in message
+
+
+def test_writer_schema_mode_policy_missing_table_advice_names_overwrite(tmp_path: Path) -> None:
+    writer = PolarsTargetWriter(tmp_path, missing_table_policy=MissingTablePolicy.SCHEMA_MODE)
+    frame = pl.DataFrame({"id": [1], "v": [10.0]}).lazy()
+    spec = AppendSpec(table_ref=TableRef("staging.must_exist"))
+
+    with pytest.raises(SchemaNotFoundError) as excinfo:
+        writer.write(frame, spec, None)
+
+    message = str(excinfo.value)
+    assert "staging.must_exist" in message
+    assert "SchemaMode.OVERWRITE" in message
+    assert "missing_table_policy='create'" in message
+    assert "'schema_mode'" not in message
+
+
 def test_writer_append_creates_table_on_first_write(tmp_path: Path) -> None:
     writer = PolarsTargetWriter(tmp_path, missing_table_policy=MissingTablePolicy.CREATE)
     frame = pl.DataFrame({"id": [1], "v": [10.0]}).lazy()
