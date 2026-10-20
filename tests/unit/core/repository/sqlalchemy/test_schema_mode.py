@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import time
 
 import msgspec
 import pytest
@@ -8,12 +9,13 @@ from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
+from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
     _DatabaseConfig,
     _SchemaConfig,
+    check_time_zone_columns,
     startup_checks,
 )
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -29,6 +31,18 @@ class Scoped(BaseModel, RowScoped):
     __tablename__ = "scoped_items"
     holder: int = ScopedField(Integer, primary_key=True, scope="holder")
     id: int = ColumnField(Integer, primary_key=True)
+
+
+class Zoned(BaseModel):
+    __tablename__ = "zoned_items"
+    id: int = ColumnField(Integer, primary_key=True)
+    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+
+
+def _zoned() -> MetaData:
+    metadata = MetaData()
+    compile_all(Zoned, metadata=metadata)
+    return metadata
 
 
 def _scoped() -> dict:
@@ -207,3 +221,21 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
 
     assert with_sink.container.resolve(RuntimeExecutor)._elevation_sink is sink
     assert without_sink.container.resolve(RuntimeExecutor)._elevation_sink is None
+
+
+def test_a_time_with_time_zone_column_is_refused_on_a_dialect_that_drops_its_offset() -> None:
+    with pytest.raises(ConfigError, match=r"zoned_items\.closes_at.*offset"):
+        check_time_zone_columns("sqlite", _zoned())
+
+
+def test_a_time_with_time_zone_column_is_accepted_on_postgres() -> None:
+    check_time_zone_columns("postgresql", _zoned())
+
+
+async def test_startup_refuses_a_time_with_time_zone_column_on_another_dialect() -> None:
+    wiring = _wiring("sqlite+aiosqlite://", Zoned)
+    wiring.prepare_models((Zoned,))
+
+    with pytest.raises(ConfigError, match=r"zoned_items\.closes_at"):
+        async with wiring.lifespan_init():
+            pass

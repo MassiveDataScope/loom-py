@@ -3,24 +3,42 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import and_, bindparam, func, select, text
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String
+from loom.core.model import (
+    JSON,
+    BaseModel,
+    BoundaryValidationError,
+    ColumnField,
+    ColumnType,
+    LoomStruct,
+    String,
+)
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.core.repository.abc import CursorCodec
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
+from loom.core.repository.abc.query import (
+    FilterGroup,
+    FilterOp,
+    FilterParams,
+    FilterSpec,
+    PageParams,
+    QuerySpec,
+)
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+
+_CODEC = CursorCodec(signing="ephemeral")
 
 
 class _Doc(BaseModel):
@@ -88,6 +106,21 @@ class _CreateMark(Command, frozen=True):
     noted_at: datetime
 
 
+class _Slot(BaseModel):
+    __tablename__ = "typed_slots"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    opens_at: time = ColumnField()
+    noted_at: time = ColumnField(JSON)
+    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+
+
+class _CreateSlot(Command, frozen=True):
+    opens_at: time
+    noted_at: time
+    closes_at: time
+
+
 class _CustomerOut(LoomStruct, rename="camel"):
     id: int
     full_name: str
@@ -138,13 +171,17 @@ class _CreateTag(Command, frozen=True):
 
 
 _STAMP = datetime(2026, 1, 3, 12, 0)
+_AWARE_TIME = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
+_NAIVE_TIME = time(8, 30)
+# A zone on a time gives it no offset: utcoffset() is None.
+_ZONED_TIME = time(8, 30, tzinfo=ZoneInfo("Europe/Madrid"))
 _META = {"when": datetime(2026, 1, 3, 12, 0), "price": Decimal("9.5"), "tags": ["a"]}
 _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
 
 @pytest.fixture
 async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark)
+    compile_all(_Doc, _Customer, _Ticket, _Tag, _Case, _Swatch, _Mark, _Slot)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -209,6 +246,252 @@ class TestEnumColumns:
         assert (stored.state, stored.level) == (_State.CLOSED, _Level.HIGH)
         assert [item.id for item in found.items] == [created.id]
         assert sorted(raw.all()) == [("closed", 2), ("open", 1)]
+
+
+_OFFSET_REFUSAL = (("opens_at", "time must not carry a UTC offset"),)
+_OFFSET_REQUIRED = (("closes_at", "time must carry a UTC offset"),)
+
+
+async def _lookup(
+    repo: RepositorySQLAlchemy[Any, int], lookup: str, field: str, value: object
+) -> object:
+    """Run one equality lookup that bypasses ``QuerySpec``: get_by, exists_by or filter_by."""
+    if lookup == "get_by":
+        return await repo.get_by(field, value)
+    if lookup == "exists_by":
+        return await repo.exists_by(field, value)
+    page = await repo.list_paginated(
+        PageParams(page=1, limit=10), FilterParams(filters={field: value})
+    )
+    return page.items
+
+
+_LOOKUPS = ("get_by", "exists_by", "list_paginated")
+
+
+class TestTimeColumns:
+    async def test_writing_an_aware_time_to_a_time_column_is_refused(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            await repo.create(
+                _CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME, closes_at=_AWARE_TIME)
+            )
+
+        assert (caught.value.code, caught.value.violations) == (
+            "boundary_validation",
+            _OFFSET_REFUSAL,
+        )
+
+    @pytest.mark.parametrize(
+        ("op", "value"), [(FilterOp.EQ, _AWARE_TIME), (FilterOp.IN, [_NAIVE_TIME, _AWARE_TIME])]
+    )
+    def test_filtering_a_time_column_by_an_aware_time_is_refused(
+        self, session_manager: SessionManager, op: FilterOp, value: Any
+    ) -> None:
+        group = FilterGroup(filters=(FilterSpec(field="opens_at", op=op, value=value),))
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert (caught.value.code, caught.value.violations) == ("query_validation", _OFFSET_REFUSAL)
+
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    async def test_looking_up_a_time_column_by_an_aware_time_is_refused(
+        self, session_manager: SessionManager, lookup: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            await _lookup(repo, lookup, "opens_at", _AWARE_TIME)
+
+        assert (caught.value.code, caught.value.violations) == ("query_validation", _OFFSET_REFUSAL)
+
+    async def test_an_aware_time_in_a_json_column_keeps_its_offset(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        created = await repo.create(
+            _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_AWARE_TIME, closes_at=_AWARE_TIME)
+        )
+        stored = await repo.get_by_id(created.id)
+
+        assert stored is not None
+        assert (stored.opens_at, stored.noted_at) == (_NAIVE_TIME, _AWARE_TIME)
+
+
+class TestTimeOffsetEscapeHatches:
+    def test_a_time_with_time_zone_column_accepts_an_aware_time_on_write(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        written = repo._serialize_input(
+            _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_NAIVE_TIME, closes_at=_AWARE_TIME)
+        )
+
+        assert written["closes_at"] == _AWARE_TIME
+
+    @pytest.mark.parametrize(
+        ("field", "bound"),
+        [("closes_at", _AWARE_TIME), ("noted_at", _AWARE_TIME.isoformat())],
+    )
+    def test_a_column_that_keeps_the_offset_accepts_an_aware_filter_value(
+        self, session_manager: SessionManager, field: str, bound: object
+    ) -> None:
+        group = FilterGroup(filters=(FilterSpec(field=field, op=FilterOp.EQ, value=_AWARE_TIME),))
+
+        clause = compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert list(clause.compile().params.values()) == [bound]
+
+    @pytest.mark.parametrize("value", [_NAIVE_TIME, _ZONED_TIME])
+    def test_a_time_with_time_zone_column_refuses_a_time_without_offset_on_write(
+        self, session_manager: SessionManager, value: time
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            repo._serialize_input(
+                _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_NAIVE_TIME, closes_at=value)
+            )
+
+        assert (caught.value.code, caught.value.violations) == (
+            "boundary_validation",
+            _OFFSET_REQUIRED,
+        )
+
+    def test_a_plain_time_column_accepts_a_time_with_a_zone_but_no_offset(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+        group = FilterGroup(
+            filters=(FilterSpec(field="opens_at", op=FilterOp.EQ, value=_ZONED_TIME),)
+        )
+
+        written = repo._serialize_input(
+            _CreateSlot(opens_at=_ZONED_TIME, noted_at=_NAIVE_TIME, closes_at=_AWARE_TIME)
+        )
+        clause = compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert written["opens_at"] == _ZONED_TIME
+        assert list(clause.compile().params.values()) == [_ZONED_TIME]
+
+    def test_a_write_reports_every_refused_time_column_in_name_order(
+        self, session_manager: SessionManager
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            repo._serialize_input(
+                _CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME, closes_at=_NAIVE_TIME)
+            )
+
+        assert caught.value.violations == _OFFSET_REQUIRED + _OFFSET_REFUSAL
+
+    @pytest.mark.parametrize(
+        ("op", "value"),
+        [
+            (FilterOp.EQ, _NAIVE_TIME),
+            (FilterOp.EQ, _ZONED_TIME),
+            (FilterOp.IN, [_AWARE_TIME, _NAIVE_TIME]),
+        ],
+    )
+    def test_a_time_with_time_zone_column_refuses_a_filter_value_without_offset(
+        self, session_manager: SessionManager, op: FilterOp, value: Any
+    ) -> None:
+        group = FilterGroup(filters=(FilterSpec(field="closes_at", op=op, value=value),))
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert (caught.value.code, caught.value.violations) == (
+            "query_validation",
+            _OFFSET_REQUIRED,
+        )
+
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    async def test_a_time_with_time_zone_column_refuses_a_naive_lookup_value(
+        self, session_manager: SessionManager, lookup: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Slot,
+            cursor_codec=_CODEC,
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            await _lookup(repo, lookup, "closes_at", _NAIVE_TIME)
+
+        assert (caught.value.code, caught.value.violations) == (
+            "query_validation",
+            _OFFSET_REQUIRED,
+        )
+
+
+class TestLookupValues:
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    async def test_a_lookup_by_a_plain_enum_matches_what_the_write_stored(
+        self, session_manager: SessionManager, lookup: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=_Swatch,
+            cursor_codec=_CODEC,
+        )
+        await repo.create(_CreateSwatch(shade=_Shade.DARK))
+
+        found = await _lookup(repo, lookup, "shade", _Shade.DARK)
+
+        assert found
+
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    @pytest.mark.parametrize(
+        ("model", "field"),
+        [(_Swatch, "nope"), (_Swatch, "metadata"), (_Ticket, "customer")],
+    )
+    async def test_a_lookup_on_a_name_that_is_not_a_column_is_refused(
+        self, session_manager: SessionManager, lookup: str, model: type[BaseModel], field: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
+            session_manager=session_manager,
+            model=model,
+            cursor_codec=_CODEC,
+        )
+
+        with pytest.raises(ValueError, match=f"Unknown field '{field}'"):
+            await _lookup(repo, lookup, field, 1)
 
 
 class TestRelatedStructs:

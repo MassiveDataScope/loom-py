@@ -107,6 +107,18 @@ a SQLAlchemy model refuses one without it. `ALL` (from `loom.rest`)
 declares every scalar column, those the response does not show included, and
 logs a warning naming the route at startup.
 
+A `date` or `time` field is a `Date` or `Time` column on a SQLAlchemy model
+and takes ISO 8601 text. The inferred `Time` column has no time zone and
+holds no UTC offset, so a `time` with an offset answers
+`400 query_validation` as a filter value and `422 boundary_validation` in a
+create or update body. A `Time` column with time zone
+(`ColumnField(ColumnType("Time", kwargs={"timezone": True}))`) keeps the
+written offset on Postgres (`timetz`; startup refuses it on any other
+dialect) and takes only a `time` with an offset, answering the same `400` or
+`422` for a naive one; a JSON column keeps the offset as ISO text. On
+Postgres (`timestamptz`) and MongoDB, a `datetime` field keeps the instant,
+read back in UTC, not the written offset.
+
 In `app.rest.interfaces`, both take column names, or `all`:
 
 ```yaml

@@ -15,7 +15,7 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_exists,
     compile_not_exists,
 )
-from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+from loom.core.repository.sqlalchemy.values import to_comparison_value
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {
@@ -50,6 +50,8 @@ def compile_filter_group(
     Raises:
         UnsafeFilterError: If a field is not in ``allowed_fields``.
         FilterPathError: If a field path cannot be resolved.
+        BoundaryValidationError: ``query_validation``, for a ``time`` whose
+            offset the compared column cannot take.
     """
     clauses = [_compile_spec(sa_model, spec, allowed_fields) for spec in group.filters]
     if group.op == "OR":
@@ -78,17 +80,22 @@ def _compile_spec(
 def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
     """Apply *op*, converting *value* as the repository converts a value it writes.
 
-    A SQLAlchemy expression, and an ``IN`` value that is a string or not
-    iterable, reach SQLAlchemy as they are.
+    A ``time`` whose offset the column cannot take is refused, as
+    :func:`to_comparison_value` refuses it. A SQLAlchemy expression, and an
+    ``IN`` value that is a string or not iterable, reach SQLAlchemy as they
+    are.
+
+    Raises:
+        ValueError: If *op* is not a supported operator.
+        BoundaryValidationError: ``query_validation``, for a refused ``time``.
     """
     handler = _SIMPLE_OPS.get(op)
     if handler is None:
         raise ValueError(f"Unsupported FilterOp: {op!r}")
     if isinstance(value, ClauseElement):
         return handler(col, value)
-    json = is_json_column(col)
     if op is not FilterOp.IN:
-        return handler(col, to_column_value(value, json=json))
+        return handler(col, to_comparison_value(col, value))
     if isinstance(value, str | bytes) or not isinstance(value, Iterable):
         return handler(col, value)
-    return handler(col, [to_column_value(item, json=json) for item in value])
+    return handler(col, [to_comparison_value(col, item) for item in value])
