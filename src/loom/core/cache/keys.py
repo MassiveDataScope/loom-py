@@ -102,6 +102,33 @@ def list_index_key(
     )
 
 
+def query_index_key(
+    entity: str,
+    query_fingerprint: str,
+    profile: str,
+    deps_fingerprint: str,
+    *,
+    scope: str,
+) -> str:
+    """Build the cache key for one ``list_with_query`` page.
+
+    Args:
+        entity: Normalized entity name.
+        query_fingerprint: Hash of the serialized query.
+        profile: Loading profile name.
+        deps_fingerprint: Dependency fingerprint for generational invalidation.
+        scope: The caller's cache scope, ``""`` when unscoped; a page cached
+            for one scope is never served to another.
+
+    Returns:
+        A composite cache key string.
+    """
+    return (
+        f"{entity}:query:{query_fingerprint}:profile={profile}:deps={deps_fingerprint}"
+        f":scope={_scope_digest(scope)}"
+    )
+
+
 def custom_query_key(
     entity: str,
     method_name: str,

@@ -103,8 +103,9 @@ values: every `loom.scope.*` key the session-settings provider returns,
 serialised in key order. A cursor issued in one tenant, or under an
 elevation, does not verify in another. Without a provider, and on Mongo,
 which has no such scope, the scope is `""`. The query cache keys a cached
-page by the repository's cache scope, which includes these values, so the
-page and its token are not served to another scope.
+page by the repository's cache scope, which it builds from every setting the
+same provider returns, these values included, so the page and its token are
+not served to another scope.
 
 ### Keys and rotation
 

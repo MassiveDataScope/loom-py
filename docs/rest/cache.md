@@ -139,12 +139,17 @@ settings). The scope is not a tag, so a write still evicts the entry in every
 scope. Visibility that depends on other tables, such as a membership join a
 policy reads, is not in the scope, so a change there reaches a cached entry
 only when its TTL runs out.
-Inside an open transaction the scope is the settings that transaction
-applied, which Postgres keeps until it ends; identity context must not change
-inside an open transaction, since uncached reads there would already run under
-the old settings. A per-request value in `session_settings`, such as a request
-id or an audit value, makes the cache effectively per request: every request
-writes its own entries, and their number grows with the request rate.
+A per-request value in `session_settings`, such as a request id or an audit
+value, makes the cache effectively per request: every request writes its own
+entries, and their number grows with the request rate.
+
+The cache takes no part inside a caller-owned transaction: the unit of work a
+use case runs in unless it is read-only, or a `@transactional` scope. There,
+`get_by_id`, the list and query reads and every `@cache_query` method go
+straight to the repository, with no lookup and no store, so they see the
+transaction's own writes; writes still invalidate as usual. Read-only use
+cases open no unit of work and keep using the cache. A `@cache_query` call
+given a `session` argument is not cached either.
 
 Inside a use case or a `@transactional` scope the bump is not applied at the
 write: it is enqueued on the post-commit channel and published **after the

@@ -21,7 +21,6 @@ SET_SETTINGS: Final = (
     "SELECT set_config(s.key, s.value, true) FROM jsonb_each_text(CAST(:settings AS jsonb)) AS s"
 )
 _SET_SETTINGS: Final = text(SET_SETTINGS)
-_APPLIED: Final = "loom.applied_session_settings"
 
 
 def settings_statement(
@@ -71,9 +70,7 @@ def settings_parameters(values: Mapping[str, str] | None) -> dict[str, str] | No
 def install_session_settings(session_class: type[Session], provider: SessionSettings) -> None:
     """Apply *provider*'s settings at the start of every outer transaction of *session_class*.
 
-    The listener runs once per outer transaction and not for savepoints, and
-    records what it applied for :func:`applied_settings` until that
-    transaction ends. A provider
+    The listener runs once per outer transaction and not for savepoints. A provider
     that raises, an invalid key, or a non-``str`` value fails the transaction before
     its first product statement reaches the database, and invalidates its connection,
     so the session refuses further statements until it is rolled back.
@@ -84,34 +81,13 @@ def install_session_settings(session_class: type[Session], provider: SessionSett
     """
 
     @event.listens_for(session_class, "after_begin")
-    def _apply_session_settings(session: Session, transaction: Any, connection: Any) -> None:
+    def _apply_session_settings(_session: Session, transaction: Any, connection: Any) -> None:
         if transaction.nested:
             return
         try:
-            values = dict(provider() or {})
-            parameters = settings_parameters(values)
+            parameters = settings_parameters(provider())
             if parameters is not None:
                 connection.execute(_SET_SETTINGS, parameters)
         except BaseException:
             connection.invalidate()
             raise
-        session.info[_APPLIED] = values
-
-    @event.listens_for(session_class, "after_transaction_end")
-    def _forget_session_settings(session: Session, transaction: Any) -> None:
-        if transaction.parent is None:
-            session.info.pop(_APPLIED, None)
-
-
-def applied_settings(session: Session) -> Mapping[str, str] | None:
-    """The settings the open transaction of *session* started with.
-
-    Postgres keeps them for the whole transaction, whatever the provider
-    returns afterwards.
-
-    Returns:
-        The mapping applied at the start of the current outer transaction, or
-        ``None`` until one has started on a connection, and when no provider
-        is installed on the session's class.
-    """
-    return session.info.get(_APPLIED)

@@ -48,9 +48,6 @@ class SupportsCacheScope(Protocol):
     the repository's cursor tokens are bound apart for, since a kept first
     page carries such a token. A repository without it is kept under ``""``.
 
-    The SQLAlchemy repository makes it of every session setting, while it
-    binds cursor tokens to the ``loom.scope.*`` settings only.
-
     Like :class:`SupportsCallerScopedSession`, this capability is provisional
     and is not a stable extension point to build on.
     """

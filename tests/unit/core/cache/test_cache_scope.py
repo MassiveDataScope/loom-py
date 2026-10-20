@@ -9,8 +9,15 @@ import pytest
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.cache.decorators import cache_query
-from loom.core.cache.keys import custom_query_key, entity_key, full_hash, list_index_key
+from loom.core.cache.keys import (
+    custom_query_key,
+    entity_key,
+    full_hash,
+    list_index_key,
+    query_index_key,
+)
 from loom.core.repository import PageParams
+from loom.core.repository.abc.query import QuerySpec
 
 from ._doubles import (
     CachedEnv,
@@ -39,6 +46,25 @@ class ScopedRepository(WritableRepository[Widget]):
     def cache_scope(self) -> str:
         self.reads += 1
         return self.scope
+
+
+class TransactionRepository(ScopedRepository):
+    """Double that reports a caller-scoped session while ``in_transaction`` is set."""
+
+    def __init__(self, rows: Sequence[Widget]) -> None:
+        super().__init__(rows)
+        self.in_transaction = False
+        self.names_in_calls = 0
+
+    def has_caller_scoped_session(self) -> bool:
+        return self.in_transaction
+
+    @cache_query(scope="list")
+    async def names_in(self, session: Any = None) -> list[str]:
+        """Custom read that accepts a session passed by hand."""
+        _ = session
+        self.names_in_calls += 1
+        return [row.name for row in self.storage.values()]
 
 
 class SwitchingRepository(ScopedRepository):
@@ -105,6 +131,13 @@ class TestKeys:
         keys = {
             list_index_key("widget", "f", 1, 10, "default", "d", scope=s)
             for s in ("", SCOPE_A, SCOPE_B)
+        }
+
+        assert len(keys) == 3
+
+    def test_a_query_index_key_differs_by_scope(self) -> None:
+        keys = {
+            query_index_key("widget", "q", "default", "d", scope=s) for s in ("", SCOPE_A, SCOPE_B)
         }
 
         assert len(keys) == 3
@@ -311,3 +344,66 @@ class TestAScopeChangeSkipsTheWrite:
 
         # One read for the keys and one check before the writes.
         assert repository.reads == 2
+
+
+class TestACallerTransactionBypassesTheCache:
+    """Inside a caller-owned transaction every cached read goes to the repository."""
+
+    @pytest.mark.asyncio
+    async def test_every_read_reaches_the_repository_and_nothing_is_stored(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        repository.in_transaction = True
+        backend = CountingCacheBackend()
+        wrapper = _wrap(repository, backend)
+
+        for _ in range(2):
+            await wrapper.get_by_id(ROW_A)
+            await wrapper.list_paginated(PAGE)
+            await wrapper.list_with_query(QuerySpec(page=1, limit=10))
+            await wrapper.all_names()
+
+        calls = (
+            repository.get_by_id_calls,
+            repository.list_paginated_calls,
+            repository.list_with_query_calls,
+            repository.all_names_calls,
+        )
+        assert calls == (2, 2, 2, 2)
+        assert not [key for key in backend.data if not key.startswith("tag:")]
+
+    @pytest.mark.asyncio
+    async def test_reads_after_the_transaction_use_the_cache_again(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        repository.in_transaction = True
+        await wrapper.get_by_id(ROW_A)
+        repository.in_transaction = False
+        await wrapper.get_by_id(ROW_A)
+        await wrapper.get_by_id(ROW_A)
+
+        assert repository.get_by_id_calls == 2
+
+
+class TestASessionPassedByHandBypassesTheCache:
+    @pytest.mark.asyncio
+    async def test_a_custom_read_given_a_session_is_never_cached(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        backend = CountingCacheBackend()
+        wrapper = _wrap(repository, backend)
+
+        await wrapper.names_in(session=object())
+        await wrapper.names_in(session=object())
+
+        assert repository.names_in_calls == 2
+        assert not [key for key in backend.data if ":custom:" in key]
+
+    @pytest.mark.asyncio
+    async def test_the_same_read_without_a_session_is_cached(self) -> None:
+        repository = TransactionRepository([Widget(id=ROW_A, name="a")])
+        wrapper = _wrap(repository, CountingCacheBackend())
+
+        await wrapper.names_in()
+        await wrapper.names_in()
+
+        assert repository.names_in_calls == 1

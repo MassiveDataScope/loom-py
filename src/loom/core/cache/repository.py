@@ -23,6 +23,7 @@ from loom.core.cache.keys import (
     entity_key,
     full_hash,
     list_index_key,
+    query_index_key,
 )
 from loom.core.cache.result_codec import (
     PassthroughResultCodec,
@@ -197,18 +198,21 @@ class CachedRepository(
     Concurrent misses of the same key on the entity read and on a
     ``@cache_query`` read are coalesced inside the process: the first caller
     loads and the rest await that result, so a burst on a hot key costs one
-    repository call.  Two conditions bound that:
+    repository call.  The wrapper must be application-scoped for that: a
+    wrapper built per request has a coalescing group of one, so it never
+    coalesces anything and only pays the bookkeeping.
 
-    * The wrapper must be application-scoped.  A wrapper built per request has
-      a coalescing group of one, so it never coalesces anything and only pays
-      the bookkeeping.
-    * Coalescing is skipped while the wrapped repository reports a
-      caller-scoped session (``has_caller_scoped_session()``), which is what a
-      ``@transactional`` scope or a unit of work binds.  A coalesced load runs
-      in its own task and outlives the caller that started it, so inside a
-      transaction it would query a session already closed by that caller's
-      teardown, and would serve another caller the uncommitted writes of the
-      first.  Inside a transaction the read runs inline.
+    The cache takes no part inside a caller-owned transaction.  While the
+    wrapped repository reports a caller-scoped session
+    (``has_caller_scoped_session()``, which a ``@transactional`` scope or a
+    unit of work binds), every cached read — ``get_by_id``,
+    ``list_paginated``, ``list_with_query`` and the ``@cache_query`` methods —
+    goes straight to the repository, with no lookup, no store and no
+    coalescing; so does a ``@cache_query`` call given a ``session`` argument.
+    Such a read may see the transaction's uncommitted writes and the settings
+    the transaction started with, neither of which the caller's cache scope
+    describes, and a coalesced load would outlive the caller's session.
+    Writes still publish their invalidation.
 
     Callers that miss together are served the *same object* by the coalesced
     load, on the entity read as on a ``@cache_query`` read, while a caller
@@ -283,6 +287,8 @@ class CachedRepository(
         return self._cache_scope()
 
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
+        if self._runs_in_caller_scoped_transaction():
+            return await self._repository.get_by_id(obj_id, profile=profile)
         tags = self._resolver.entity_tags(self.entity_name, obj_id)
         tags.extend(self._entity_dependency_tags(obj_id))
         fingerprint = await self._resolver.fingerprint(tags)
@@ -338,6 +344,10 @@ class CachedRepository(
         filter_params: FilterParams | None = None,
         profile: str = "default",
     ) -> PageResult[OutputT]:
+        if self._runs_in_caller_scoped_transaction():
+            return await self._repository.list_paginated(
+                page_params, filter_params=filter_params, profile=profile
+            )
         filters_payload = self._serialize_filters(filter_params)
         filter_fingerprint = full_hash(filters_payload)
         tags = self._resolver.list_tags(self.entity_name, filter_fingerprint)
@@ -399,18 +409,16 @@ class CachedRepository(
         # For cursor pagination, cache only the first page to avoid
         # unbounded key growth and low-hit deep-page caches.
         should_cache = not is_cursor or query.cursor is None
-        if not should_cache:
+        if not should_cache or self._runs_in_caller_scoped_transaction():
             return await self._repository.list_with_query(query, profile=profile)
 
         scope = self._cache_scope()
-        query_payload = self._serialize_query(query, scope)
-        query_fingerprint = full_hash(repr(query_payload))
+        query_fingerprint = full_hash(repr(self._serialize_query(query)))
         tags = self._resolver.list_tags(self.entity_name, query_fingerprint)
         tags.extend(self._list_dependency_tags())
         deps_fingerprint = await self._resolver.fingerprint(tags)
-        query_key = (
-            f"{self.entity_name}:query:{query_fingerprint}:"
-            f"profile={profile}:deps={deps_fingerprint}"
+        query_key = query_index_key(
+            self.entity_name, query_fingerprint, profile, deps_fingerprint, scope=scope
         )
 
         cached_index = await self._cache.get_value(query_key, type=_QueryIndexPayload)
@@ -617,17 +625,13 @@ class CachedRepository(
         return self._passthrough_codec
 
     async def _coalesced(self, key: str, loader: Callable[[], Awaitable[LoadT]]) -> LoadT:
-        """Run *loader* once per key, unless the caller owns the session it uses.
+        """Run *loader* once per key.
 
         Coalescing detaches the load into its own task so it survives the
-        cancellation of the caller that started it.  Inside a caller-scoped
-        transaction that is exactly wrong: the task would inherit a session
-        that is closed when the caller unwinds, and a waiter from another
-        request would read the caller's uncommitted writes.  The load then runs
-        inline, as it did before coalescing existed.
+        cancellation of the caller that started it.  It is never reached
+        inside a caller-scoped transaction, where every cached read goes
+        straight to the repository.
         """
-        if self._runs_in_caller_scoped_transaction():
-            return await loader()
         return await self._single_flight.run(key, loader)
 
     def _runs_in_caller_scoped_transaction(self) -> bool:
@@ -638,9 +642,9 @@ class CachedRepository(
         is taken to own the scope of its own reads.
 
         This wrapper asks "am I in a transaction?" two ways for two different
-        reasons: this one guards coalescing (may a read safely detach into
-        its own task?), while :func:`loom.core.transaction.in_atomic_transaction`
-        in :meth:`_publish_invalidation` guards the bump (must it wait for a
+        reasons: this one keeps the cache out of the caller's transaction,
+        while :func:`loom.core.transaction.in_atomic_transaction` in
+        :meth:`_publish_invalidation` guards the bump (must it wait for a
         commit?). They read different signals and answer different questions;
         neither substitutes for the other.
         """
@@ -797,6 +801,9 @@ class CachedRepository(
 
         @wraps(method)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
+            # A session passed by hand runs under settings the cache cannot see.
+            if "session" in kwargs or self._runs_in_caller_scoped_transaction():
+                return await method(*args, **kwargs)
             scope = self._cache_scope()
             key, ttl = await self._custom_cache_entry(method_name, metadata, args, kwargs, scope)
             cached_payload = await self._cache.get_value(key)
@@ -1198,10 +1205,9 @@ class CachedRepository(
         self._log.warning("CacheScopeChangedWriteSkipped", entity=self.entity_name)
         return False
 
-    def _serialize_query(self, query: QuerySpec, scope: str) -> dict[str, Any]:
-        """The query cache key's payload, under the caller's cache scope."""
+    def _serialize_query(self, query: QuerySpec) -> dict[str, Any]:
+        """The query cache key's payload: the query alone, without the caller's scope."""
         return {
-            "scope": scope,
             "pagination": query.pagination.value,
             "limit": query.limit,
             "page": query.page,

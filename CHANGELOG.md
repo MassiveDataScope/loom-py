@@ -1146,31 +1146,34 @@
 
 - **cache:** security: the repository cache keeps each caller's entries apart.
   The entity key (`get_by_id`, and the rows behind a cached page), the
-  `list_paginated` index key, the query key and the key of a `@cache_query`
-  read (`scope="entity"` and `scope="list"`) now carry the caller's cache
-  scope, so a row, a page of ids, a first page with its next cursor or a
-  custom read's result cached for one caller is no longer served to another
-  that row-level security hides it from. The scope comes from the new,
-  provisional `SupportsCacheScope.cache_scope()` (`""` for a repository
-  without it): `RepositorySQLAlchemy` builds it from every session setting, so
-  a policy reading a product setting such as `app.tenant_id` is kept apart
-  too, while cursor tokens stay bound to the `loom.scope.*` settings only.
-  Inside a caller-owned transaction it is the settings that transaction
-  applied, which Postgres keeps until it ends, not what the provider returns
-  afterwards (`session_settings.applied_settings`). Writes still evict every
-  scope's entries: the scope is not part of the dependency tags, and a write
-  bumps the same generation counters whatever its scope. The scope is read
-  once per cache operation and read again before its writes, which are skipped
-  if it changed. `CachedRepository` implements `cache_scope()` by forwarding
-  the wrapped repository's scope, so a wrapper around it keys by the same
-  scope, and refuses at construction, with a `RuntimeError`, a repository
-  whose `session_manager` has session settings but which does not implement
-  `cache_scope()`. The list filter, query and `@cache_query` arguments
-  fingerprints in cache keys are now the full SHA-256 instead of its first 64
-  bits. `entity_key` and `list_index_key` take a required keyword-only
-  `scope`, and the new `custom_query_key` builds the `@cache_query` key.
-  Existing entity, list, query and `@cache_query` entries are no longer read
-  after the upgrade and expire by their TTL.
+  `list_paginated` index key, the `list_with_query` key and the key of a
+  `@cache_query` read (`scope="entity"` and `scope="list"`) now carry the
+  caller's cache scope, so a row, a page of ids, a first page with its next
+  cursor or a custom read's result cached for one caller is no longer served
+  to another that row-level security hides it from. The scope comes from the
+  new, provisional `SupportsCacheScope.cache_scope()` (`""` for a repository
+  without it): `RepositorySQLAlchemy` builds it from every setting the
+  session-settings provider returns, so a policy reading a product setting
+  such as `app.tenant_id` is kept apart too, while cursor tokens stay bound to
+  the `loom.scope.*` settings only. Inside a caller-owned transaction (the
+  unit of work a use case runs in unless it is read-only, or a
+  `@transactional` scope) every cached read goes straight to the repository,
+  with no lookup and no store, and so does a `@cache_query` call given a
+  `session` argument; read-only use cases keep using the cache. Writes still
+  evict every scope's entries: the scope is not part of the dependency tags,
+  and a write bumps the same generation counters whatever its scope. The scope
+  is read once per cache operation and read again before its writes, which are
+  skipped if it changed. `CachedRepository` implements `cache_scope()` by
+  forwarding the wrapped repository's scope, so a wrapper around it keys by
+  the same scope, and refuses at construction, with a `RuntimeError`, a
+  repository whose `session_manager` has session settings but which does not
+  implement `cache_scope()`. The list filter, query and `@cache_query`
+  arguments fingerprints in cache keys are now the full SHA-256 instead of its
+  first 64 bits. `entity_key` and `list_index_key` take a required
+  keyword-only `scope`, and the new `query_index_key` and `custom_query_key`
+  build the `list_with_query` and `@cache_query` keys. Existing entity, list,
+  query and `@cache_query` entries are no longer read after the upgrade and
+  expire by their TTL.
 - **core:** one environment selector and deploy checks (ADR 0005). loom had
   two unconnected notions of environment (the logger's `dev`/`prod`, where an
   unknown value meant `dev`, and `FlowCtx.environment`) and nothing checked a
