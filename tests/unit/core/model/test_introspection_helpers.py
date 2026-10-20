@@ -7,6 +7,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum, IntEnum, IntFlag, StrEnum
 from typing import Annotated, Any, Generic, Literal, TypeVar
+from uuid import UUID
 
 import msgspec
 import pytest
@@ -39,6 +40,7 @@ from loom.core.model.types import (
     Numeric,
     String,
     Time,
+    Uuid,
 )
 
 
@@ -179,6 +181,24 @@ class TestTemporalColumnTypes:
         assert (fields["day"].column_type, fields["at"].column_type) == (Date, Time)
 
 
+class _Keyed(BaseModel):
+    __tablename__ = "introspection_keyed"
+
+    id: int = ColumnField(primary_key=True)
+    ref: UUID
+    alt: UUID | None = None
+
+
+class TestUuidColumnTypes:
+    def test_infers_a_uuid_column_for_a_uuid_annotation_optional_or_not(self) -> None:
+        fields = get_column_fields(_Keyed)
+
+        assert (fields["ref"].column_type, fields["alt"].column_type) == (Uuid, Uuid)
+
+    def test_a_uuid_column_is_scalar(self) -> None:
+        assert scalar_column_annotations(_Keyed) == {"id": int, "ref": UUID, "alt": UUID | None}
+
+
 class _Status(StrEnum):
     PAID = "paid"
 
@@ -304,7 +324,6 @@ class TestEnumColumnTypes:
             ("priority", Integer),
             ("mask", Integer),
             ("ratio", Float),
-            ("amount", Numeric()),
             ("day", Date),
             ("moment", DateTime(tz=True)),
             ("hour", Time),
@@ -328,6 +347,11 @@ class TestEnumColumnTypes:
         info = get_column_fields(model)[field]
 
         assert (info.column_type, info.needs_declared_type) == (JSON, True)
+
+    def test_a_decimal_enum_without_a_column_type_needs_one_declared(self) -> None:
+        info = get_column_fields(_MixedEnums)["amount"]
+
+        assert (info.column_type, info.needs_declared_type) == (Numeric(), True)
 
     def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
         assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())
@@ -366,9 +390,19 @@ class _Book(BaseModel):
     )
 
 
+class _Priced(BaseModel):
+    __tablename__ = "introspection_priced"
+
+    price: Decimal
+    maybe: Decimal | None = None
+
+
 class TestScalarColumnAnnotations:
     def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
         assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
 
     def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
         assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}
+
+    def test_a_decimal_without_a_column_type_is_scalar(self) -> None:
+        assert scalar_column_annotations(_Priced) == {"price": Decimal, "maybe": Decimal | None}
