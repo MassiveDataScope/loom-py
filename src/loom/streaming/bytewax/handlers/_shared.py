@@ -115,9 +115,15 @@ class _BuildContextProtocol(Protocol):
     flow_run_id: str
 
     def wire_branch(
-        self, step_id: str, stream: Stream, nodes: tuple[object, ...], path: tuple[int, ...]
+        self,
+        step_id: str,
+        stream: Stream,
+        nodes: tuple[object, ...],
+        path: tuple[int, ...],
+        *,
+        start: int = 0,
     ) -> None:
-        """Wire one branch's nodes under *path* and end the stream left live after them."""
+        """Wire one branch's nodes from index *start* under *path*; end what stays live."""
 
     def wire_branch_terminal(self, step_id: str, stream: Stream, path: tuple[int, ...]) -> None:
         """End one live stream at the sink compiled for *path*, else a drop sink."""
@@ -155,16 +161,6 @@ class _BuildContextProtocol(Protocol):
     def enter_path(self, path: tuple[int, ...]) -> AbstractContextManager[None]:
         """Temporarily set the current compilation path."""
         ...
-
-    def wire_process(
-        self,
-        stream: Stream,
-        nodes: tuple[object, ...],
-        *,
-        path_prefix: tuple[int, ...] = (),
-        start: int = 0,
-    ) -> Stream:
-        """Wire one nested process subtree from the node at index *start*."""
 
 
 def _step_id(base: str, ctx: _BuildContextProtocol) -> str:

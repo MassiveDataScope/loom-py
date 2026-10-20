@@ -44,7 +44,9 @@ from loom.streaming.nodes._with import With, WithAsync
 
 Stream: TypeAlias = Any
 
-NodeHandler: TypeAlias = Callable[[Stream, object, int, _BuildContextProtocol], Stream]
+NodeHandler: TypeAlias = Callable[[Stream, object, int, _BuildContextProtocol], Stream | None]
+"""A handler returns the stream still live after its node, or ``None`` when the node
+ended the path of every message it received."""
 
 
 def _wire_process(
@@ -54,18 +56,27 @@ def _wire_process(
     *,
     path_prefix: tuple[int, ...] = (),
     start: int = 0,
-) -> Stream:
+) -> Stream | None:
     """Wire one process subtree under a path prefix, from the node at index *start*.
 
     Node indices, and so compiled paths, stay those of the full *nodes*.
+
+    Raises:
+        RuntimeError: If a node ended every path and another node follows it.
     """
+    live: Stream | None = stream
     for idx, node in enumerate(nodes[start:], start):
+        if live is None:
+            raise RuntimeError(
+                f"{type(nodes[idx - 1]).__name__} ended every path, so "
+                f"{type(node).__name__} after it would receive nothing."
+            )
         with ctx.enter_path(path_prefix + (idx,)):
-            stream = _wire_node(stream, node, idx, ctx)
-    return stream
+            live = _wire_node(live, node, idx, ctx)
+    return live
 
 
-def _wire_node(stream: Stream, node: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+def _wire_node(stream: Stream, node: object, idx: int, ctx: _BuildContextProtocol) -> Stream | None:
     """Dispatch one DSL node to its Bytewax handler."""
     for handler_type, handler in _NODE_HANDLERS.items():
         if isinstance(node, handler_type):

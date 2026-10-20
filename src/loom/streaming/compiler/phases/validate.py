@@ -20,7 +20,7 @@ from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import ConsumerSettings, KafkaSettings
 from loom.streaming.mongo import MongoConfig
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
-from loom.streaming.nodes._branches import is_branching_node, iter_branches
+from loom.streaming.nodes._branches import PATH_END_NODE_TYPES, is_branching_node, iter_branches
 from loom.streaming.nodes._broadcast import Broadcast
 from loom.streaming.nodes._capabilities import RouterBranchSafe
 from loom.streaming.nodes._decompose import Explode
@@ -551,7 +551,7 @@ def _is_leaf_terminal(node: object) -> bool:
     ``Broadcast`` has branches, but they need not reach an output; the shape
     validators check ``Broadcast`` before this, to validate those branches.
     """
-    return isinstance(node, (IntoTopic, Drain, IntoSink, Broadcast))
+    return isinstance(node, PATH_END_NODE_TYPES)
 
 
 def _path_end(nodes: tuple[object, ...]) -> object | None:

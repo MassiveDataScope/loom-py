@@ -20,6 +20,8 @@ from loom.streaming.nodes._expand_routes import ExpandRoutes
 from loom.streaming.nodes._expr_eval import PredicateSpec
 from loom.streaming.nodes._fork import Fork, ForkKind
 from loom.streaming.nodes._router import Router
+from loom.streaming.nodes._shape import Drain
+from loom.streaming.nodes._sink import IntoSink
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,9 @@ class Branch:
 
 
 BRANCHING_NODE_TYPES: Final = (Fork, Router, Broadcast, ExpandRoutes)
+
+PATH_END_NODE_TYPES: Final = (IntoTopic, IntoSink, Drain, Broadcast)
+"""Node types that end the path of every message they receive; validation keeps them last."""
 """Node types whose branches occupy their own path segment."""
 
 _DEFAULT_LABEL: Final = "default"
@@ -141,4 +146,10 @@ def _default_branch(index: int, nodes: tuple[object, ...]) -> Branch:
     return Branch(index=index, label=_DEFAULT_LABEL, nodes=nodes, is_default=True)
 
 
-__all__ = ["BRANCHING_NODE_TYPES", "Branch", "is_branching_node", "iter_branches"]
+__all__ = [
+    "BRANCHING_NODE_TYPES",
+    "PATH_END_NODE_TYPES",
+    "Branch",
+    "is_branching_node",
+    "iter_branches",
+]

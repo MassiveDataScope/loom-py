@@ -291,10 +291,17 @@ class _BuildContext:
         self._path: tuple[int, ...] = ()
 
     def wire_branch(
-        self, step_id: str, stream: Any, nodes: tuple[object, ...], path: tuple[int, ...]
+        self,
+        step_id: str,
+        stream: Any,
+        nodes: tuple[object, ...],
+        path: tuple[int, ...],
+        *,
+        start: int = 0,
     ) -> None:
-        """Wire one branch's *nodes* under *path* and end the stream left live after them."""
-        self.wire_branch_terminal(step_id, self.wire_process(stream, nodes, path_prefix=path), path)
+        """Wire one branch's *nodes* from index *start* under *path*; end what stays live."""
+        tail = _wire_process(stream, nodes, self, path_prefix=path, start=start)
+        self.wire_branch_terminal(step_id, tail, path)
 
     def wire_branch_terminal(self, step_id: str, stream: Any | None, path: tuple[int, ...]) -> None:
         """End one branch's live stream at the sink compiled for *path*, else a drop sink.
@@ -450,17 +457,6 @@ class _BuildContext:
             yield
         finally:
             self._path = previous
-
-    def wire_process(
-        self,
-        stream: Any,
-        nodes: tuple[object, ...],
-        *,
-        path_prefix: tuple[int, ...] = (),
-        start: int = 0,
-    ) -> Any:
-        """Wire one nested process subtree from the node at index *start*."""
-        return _wire_process(stream, nodes, self, path_prefix=path_prefix, start=start)
 
     def shutdown_all(self) -> None:
         """Shutdown all resource managers."""

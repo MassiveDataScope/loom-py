@@ -32,24 +32,18 @@ from loom.streaming.bytewax.handlers._shared import (
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message
-from loom.streaming.nodes._boundary import IntoTopic
-from loom.streaming.nodes._branches import Branch, iter_branches
+from loom.streaming.nodes._branches import PATH_END_NODE_TYPES, Branch, iter_branches
 from loom.streaming.nodes._broadcast import Broadcast
 from loom.streaming.nodes._capabilities import RouterBranchSafe
 from loom.streaming.nodes._expand_routes import ExpandRoutes
 from loom.streaming.nodes._fork import Fork, ForkKind
 from loom.streaming.nodes._router import Router, evaluate_predicate, select_value
-from loom.streaming.nodes._shape import Drain
-from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._step import BatchStep, RecordStep
 
 Stream = Any
 
 _NO_KEY: Final = object()
 """Sentinel for a router without a selector, which no keyed branch can match."""
-
-_PATH_ENDS: Final = (IntoTopic, IntoSink, Drain)
-"""Router branch nodes that end the message's path; validation keeps them last."""
 
 
 def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
@@ -81,15 +75,16 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
     sid = _step_id(f"router_{idx}", ctx)
     routed = bw_map(sid, stream, step)
     for branch in branches:
-        if branch.nodes and isinstance(branch.nodes[-1], _PATH_ENDS):
-            ctx.wire_process(
+        if branch.nodes and isinstance(branch.nodes[-1], PATH_END_NODE_TYPES):
+            ctx.wire_branch(
+                f"router_{idx}_out_{branch.index}",
                 bw_flat_map(
                     _step_id(f"router_{idx}_to_{branch.index}", ctx),
                     routed,
                     _routed_to(branch.index),
                 ),
                 branch.nodes,
-                path_prefix=router_path + (branch.index,),
+                router_path + (branch.index,),
                 start=len(branch.nodes) - 1,
             )
     continuing = bw_flat_map(_step_id(f"router_{idx}_continue", ctx), routed, _routed_to(None))
@@ -253,7 +248,7 @@ def _apply_expand_routes(
         )
 
 
-def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream | None:
     """Split *stream* into the fork's branches and end each branch's live stream.
 
     Returns the messages no branch claimed, or ``None`` when a default branch
@@ -304,7 +299,7 @@ def _execute_router(
         return None, message
     result = message
     for node in branch.nodes:
-        if isinstance(node, _PATH_ENDS):
+        if isinstance(node, PATH_END_NODE_TYPES):
             return branch.index, result
         result = _execute_router_node(node, result)
     return None, result
