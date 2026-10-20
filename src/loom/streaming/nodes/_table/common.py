@@ -90,7 +90,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import msgspec
 import msgspec.structs
@@ -119,6 +119,7 @@ try:
     String = _sa.String
     Table = _sa.Table
     Text = _sa.Text
+    Uuid = _sa.Uuid
 
     # Defined inside the try block so all SA names are provably bound here.
     _SA_TYPE_MAP: dict[type, Any] = {
@@ -131,6 +132,7 @@ try:
         time: String(8),
         Decimal: Numeric(),
         bytes: Text(),
+        UUID: Uuid(),
     }
     _SA_AVAILABLE = True
 except ImportError:

@@ -22,6 +22,7 @@ JSON = ColumnType("JSON")
 Bytes = ColumnType("Bytes")
 Date = ColumnType("Date")
 Time = ColumnType("Time")
+Uuid = ColumnType("Uuid")
 
 
 def DateTime(*, tz: bool = True) -> ColumnType:
