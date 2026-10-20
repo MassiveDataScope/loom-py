@@ -62,15 +62,19 @@ PATH_END_NODE_TYPES: Final = (IntoTopic, IntoSink, Drain, Broadcast)
 _DEFAULT_LABEL: Final = "default"
 
 
+def branch_ends_path(branch: Branch) -> bool:
+    """Return whether *branch* ends in a node of :data:`PATH_END_NODE_TYPES`."""
+    return bool(branch.nodes) and isinstance(branch.nodes[-1], PATH_END_NODE_TYPES)
+
+
 def router_ends_every_path(router: Router[Any, Any]) -> bool:
     """Return whether *router* ends the path of every message it receives.
 
     It does when it has a default branch, so every message takes a branch, and
-    every branch ends in a node of :data:`PATH_END_NODE_TYPES`.
+    every branch ends the path (:func:`branch_ends_path`).
     """
     return router.default is not None and all(
-        branch.nodes and isinstance(branch.nodes[-1], PATH_END_NODE_TYPES)
-        for branch in iter_branches(router)
+        branch_ends_path(branch) for branch in iter_branches(router)
     )
 
 
@@ -162,6 +166,7 @@ __all__ = [
     "BRANCHING_NODE_TYPES",
     "PATH_END_NODE_TYPES",
     "Branch",
+    "branch_ends_path",
     "is_branching_node",
     "iter_branches",
     "router_ends_every_path",

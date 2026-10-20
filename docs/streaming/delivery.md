@@ -59,7 +59,8 @@ can see.
 - A path ends in one place. A sink that ends it (`IntoTopic`, `IntoTable` or
   any `IntoSink`, `Drain`) completes what it writes and nothing is wired after
   it; a `Router` with a `default` whose branches all end that way ends every
-  path too, so it must be the last node of its process (`TERMINAL_NOT_LAST`). A branch still live at its end goes to the sink compiled for it, such as
+  path too, so it must be the last node of its process (`TERMINAL_NOT_LAST`).
+  A branch still live at its end goes to the sink compiled for it, such as
   a Broadcast route's `output`, else to a drop sink that completes its record,
   so an unfinished `Broadcast` route or `Fork` branch cannot freeze commits.
   Only the flow's own live end goes to the flow `output`, else to a drop sink.

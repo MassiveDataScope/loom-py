@@ -35,6 +35,7 @@ from loom.streaming.core._message import Message
 from loom.streaming.nodes._branches import (
     PATH_END_NODE_TYPES,
     Branch,
+    branch_ends_path,
     iter_branches,
     router_ends_every_path,
 )
@@ -85,7 +86,7 @@ def _apply_router(
     sid = _step_id(f"router_{idx}", ctx)
     routed = bw_map(sid, stream, step)
     for branch in branches:
-        if branch.nodes and isinstance(branch.nodes[-1], PATH_END_NODE_TYPES):
+        if branch_ends_path(branch):
             ctx.wire_branch(
                 f"router_{idx}_out_{branch.index}",
                 bw_flat_map(

@@ -939,7 +939,8 @@
   with `BROADCAST_OUTPUT_AFTER_PATH_END`. Such flows compiled and wrote the
   message twice, handed the expanded payload of an `ExpandRoutes` to the
   output, or never wrote the output. A step or an `IntoTopic` after such a
-  `Router` fails with `TERMINAL_NOT_LAST`, as after any other terminal. A
+  `Router` fails with `TERMINAL_NOT_LAST`, the code an `IntoTopic`, `IntoSink`
+  or `Drain` followed by a node reports. A
   branch that ends without a sink no longer logs `unrouted_branch_drop_sink`.
 - **streaming:** a `terminal_sinks` override passed to `build_dataflow` must
   cover every compiled `IntoTopic` path; a missing one fails with
