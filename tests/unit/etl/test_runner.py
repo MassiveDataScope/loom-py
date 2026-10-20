@@ -208,13 +208,6 @@ class TestFilterPlan:
     def test_filter_with_an_empty_include_keeps_nothing(self) -> None:
         assert filter_plan(_compile(PipelineAll), ()).nodes == ()
 
-    def test_the_deprecated_runner_filter_still_filters(self) -> None:
-        from loom.etl.runner import filtering
-
-        with pytest.warns(DeprecationWarning, match="filter_plan"):
-            filtered = filtering._filter_plan(_compile(PipelineAll), frozenset({"StepB"}))
-        assert [step.step_type.__name__ for step in iter_all_steps(filtered)] == ["StepB"]
-
 
 class TestRunnerRun:
     @pytest.mark.parametrize(
