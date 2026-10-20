@@ -583,7 +583,20 @@
   compilation naming the route and the field, since ordering by it reveals
   its values. `sortable=ALL` opens every scalar column, hidden ones included,
   and its startup warning says so. `filterable` follows the same rule, with
-  `filterable=ALL` as its escape hatch.
+  `filterable=ALL` as its escape hatch. "Shown" is decided by field name; a
+  pydantic field declared `exclude=True` is not shown.
+- **rest:** breaking: a `QuerySpec` route that can serve cursor pages (cursor
+  mode, or the default `allow_pagination_override=True`) must answer with
+  items that show its primary key, which every cursor token carries. A route
+  whose response hides the key, or whose result type is untyped (`str`,
+  `dict[str, Any]`, ...), now fails compilation naming the route and the key.
+  `sortable=ALL` opens it with a warning; a route that must hide its keys
+  serves offset pages only (`pagination_mode` offset and
+  `allow_pagination_override=False`). On such a route the key must also be of
+  a type a token carries and not in a JSON or array column; a bare `UUID`
+  annotation, inferred as JSON, fails compilation instead of on the first
+  cursor request: declare its column type (`Postgres.UUID`) or serve offset
+  pages only.
 - **core:** a cursor page orders only by non-null columns of a type a token
   carries; a dotted path, a JSON, `bytes` or optional column answers
   `400 unsupported_query` before the query runs (`require_cursor_sort`), and
@@ -599,7 +612,13 @@
   it with `register_cursor_codec`, which raises `ConfigError` when a
   different codec is already registered, and, in a deployed environment,
   for an `ephemeral` or `unsigned` codec unless `CursorCodec.from_context`
-  built it from a configuration silencing `loom.cursors.E001`.
+  built it from a configuration silencing `loom.cursors.E001`. Without a
+  registered `Environment` the process environment decides (`LOOM_ENV`, else
+  production).
+- **cache:** the query cache key carries the caller's cursor scope
+  (`SupportsCursorScope`, `RepositorySQLAlchemy.cursor_scope()`), so a first
+  page and its next cursor cached under one row-level-security scope are not
+  served to another.
   `loom.core.checks.silenced_checks(config)` returns the silenced ids.
 - **ai:** a provider's `credentials_ref` is read through
   `loom.core.environment.configured_variable` and may not name a `LOOM_*`

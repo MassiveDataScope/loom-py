@@ -94,7 +94,9 @@ the items the route answers with (`PageResult[T]`, `CursorResult[T]` or
 `list[T]`), and compilation fails naming the route and the field otherwise.
 In cursor mode a sort column must also hold no null. A `filterable` column
 follows the same rule, since the rows a filter keeps reveal its values too.
-A route that can serve cursor pages must also show its primary key, which
+"Shown" is decided by field name; a pydantic field declared `exclude=True`
+is the only one treated as hidden. A route that can serve cursor pages must
+also show its primary key, which
 every token carries, or serve offset pages only (`pagination_mode` offset
 and `allow_pagination_override=False`).
 
