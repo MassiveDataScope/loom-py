@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from importlib.metadata import Distribution, EntryPoint, entry_points
+from importlib.metadata import EntryPoint, entry_points
 from typing import Literal
 
 _log = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def list_entry_points(group: str) -> tuple[EntryPoint, ...]:
     Returns:
         The registered entry points, possibly empty.
     """
-    return _iter_group(group)
+    return tuple(entry_points().select(group=group))
 
 
 def select_entry_point(
@@ -159,7 +159,7 @@ def select_entry_point(
         DuplicateEntryPointError: When several distributions register ``name``
             in ``group`` and ``on_duplicate`` is ``"error"``.
     """
-    matches = tuple(ep for ep in _iter_group(group) if ep.name == name)
+    matches = tuple(ep for ep in list_entry_points(group) if ep.name == name)
     if not matches:
         return None
     if len(matches) == 1:
@@ -201,10 +201,6 @@ def load_entry_point(
     return obj
 
 
-def _iter_group(group: str) -> tuple[EntryPoint, ...]:
-    return tuple(entry_points().select(group=group))
-
-
 def _resolve_conflict(
     group: str,
     name: str,
@@ -227,11 +223,11 @@ def _resolve_conflict(
 
 
 def _registered_names(group: str) -> tuple[str, ...]:
-    return tuple(sorted({ep.name for ep in _iter_group(group)}))
+    return tuple(sorted({ep.name for ep in list_entry_points(group)}))
 
 
 def _distribution_name(ep: EntryPoint) -> str:
-    dist: Distribution | None = getattr(ep, "dist", None)
+    dist = ep.dist
     if dist is None:
         return _UNKNOWN_DISTRIBUTION
     return dist.name

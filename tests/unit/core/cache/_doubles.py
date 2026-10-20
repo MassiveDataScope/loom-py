@@ -585,26 +585,6 @@ class CodecRepository(CustomCallCountingRepository[RowT], Generic[RowT]):
         return LateStats(count=len(self.storage))
 
 
-class UnresolvableReadRepository(CustomCallCountingRepository[RowT], Generic[RowT]):
-    """Double whose cached read names a return type nothing here defines."""
-
-    @cache_query(scope="list")
-    async def unresolvable(
-        self,
-    ) -> UnknownStats:  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-        """Return a value whose annotation names nothing importable here."""
-        return Stats(total=len(self.storage), label="unresolvable")
-
-
-class UnannotatedReadRepository(CustomCallCountingRepository[RowT], Generic[RowT]):
-    """Double whose cached read declares no return type."""
-
-    @cache_query(scope="list")
-    async def unannotated(self):  # type: ignore[no-untyped-def]
-        """Return a struct without declaring it."""
-        return Stats(total=len(self.storage), label="unannotated")
-
-
 class OutOfGrammarReadRepository(CodecRepository[RowT], Generic[RowT]):
     """:class:`CodecRepository` plus a cached read returning a mapping."""
 

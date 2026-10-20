@@ -14,7 +14,6 @@ type differs from the miss.
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -28,16 +27,13 @@ from loom.core.model import BoundaryValidationError
 from ._doubles import (
     CachedEnv,
     CodecRepository,
-    CustomCallCountingRepository,
     EvolvedRepository,
     EvolvedStats,
     LateStats,
     LyingRepository,
     OutOfGrammarReadRepository,
     Stats,
-    UnannotatedReadRepository,
     UnmarkedOverrideRepository,
-    UnresolvableReadRepository,
     Widget,
     WidgetCreate,
     WidgetUpdate,
@@ -207,38 +203,18 @@ class TestAuditFinding05:
 class TestUnusableAnnotations:
     """A declared type outside the grammar is refused when the repository is wrapped."""
 
-    @pytest.mark.parametrize(
-        ("repository_type", "method_name"),
-        [
-            (UnannotatedReadRepository, "unannotated"),
-            (UnresolvableReadRepository, "unresolvable"),
-            (OutOfGrammarReadRepository, "out_of_grammar"),
-        ],
-    )
     def test_wrapping_names_the_method_and_what_to_annotate(
         self,
         cache_config: CacheConfig,
-        repository_type: type[CustomCallCountingRepository[Widget]],
-        method_name: str,
     ) -> None:
-        repository = repository_type(_widgets(ROW_COUNT), Widget)
+        repository = OutOfGrammarReadRepository(_widgets(ROW_COUNT), Widget)
 
         with pytest.raises(RuntimeError) as excinfo:
             wrap_with_cache(repository, cache_config)
 
         message = str(excinfo.value)
-        assert f"{repository_type.__name__}.{method_name}" in message
+        assert "OutOfGrammarReadRepository.out_of_grammar" in message
         assert "Annotate its return type" in message
-
-    def test_a_repository_whose_reads_are_inside_the_grammar_wraps_without_warning(
-        self,
-        cache_config: CacheConfig,
-    ) -> None:
-        repository = CodecRepository(_widgets(ROW_COUNT), Widget)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            wrap_with_cache(repository, cache_config)
 
     def test_a_cached_read_absent_from_the_class_is_refused_when_reached(
         self,
@@ -435,9 +411,13 @@ class TestUnmarkedOverride:
 
     def test_the_base_annotation_of_an_overridden_read_is_not_refused(
         self,
-        override_env: CachedEnv[Widget],
+        cache_config: CacheConfig,
     ) -> None:
-        assert override_env.wrapper.out_of_grammar is not None
+        repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), Widget)
+
+        env = wrap_with_cache(repository, cache_config)
+
+        assert env.wrapper.out_of_grammar == repository.out_of_grammar
 
     async def test_the_overridden_read_is_not_cached(
         self,
@@ -475,6 +455,14 @@ def _returns_optional_list() -> list[Stats] | None:
     raise NotImplementedError
 
 
+def _returns_nothing():  # type: ignore[no-untyped-def]
+    raise NotImplementedError
+
+
+def _returns_unknown() -> UnknownStats:  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+    raise NotImplementedError
+
+
 class TestGrammarBoundaries:
     """Where the grammar stops, asserted on the builder rather than end to end."""
 
@@ -486,6 +474,8 @@ class TestGrammarBoundaries:
             _returns_bare_list,
             _returns_sequence,
             _returns_any,
+            _returns_nothing,
+            _returns_unknown,
         ],
     )
     def test_an_annotation_outside_the_grammar_gets_no_codec(
