@@ -468,39 +468,36 @@ class CachedRepository(
 
         self._log.debug("CacheMissQuery", key=query_key)
         loaded = await self._repository.list_with_query(query, profile=profile)
+        await self._store_query_page(query_key, loaded, profile, scope)
+        return loaded
+
+    async def _store_query_page(
+        self,
+        key: str,
+        loaded: PageResult[OutputT] | CursorResult[OutputT],
+        profile: str,
+        scope: str,
+    ) -> None:
+        """Cache a freshly loaded query page and its entities, if still in *scope*."""
+        if not self._still_in_scope(scope):
+            return
         ids = [
             cast(IdT, entity_id)
             for item in loaded.items
             for entity_id in [self._extract_entity_id(item)]
             if entity_id is not None
         ]
-        if not self._still_in_scope(scope):
-            return loaded
-        ttl = self._write_ttl(self._config.ttl_for_list(self.entity_name))
         if isinstance(loaded, CursorResult):
-            await self._cache.set_value(
-                query_key,
-                _QueryIndexPayload(
-                    ids=ids,
-                    next_cursor=loaded.next_cursor,
-                    has_next=loaded.has_next,
-                ),
-                ttl=ttl,
+            index = _QueryIndexPayload(
+                ids=ids, next_cursor=loaded.next_cursor, has_next=loaded.has_next
             )
-            await self._cache_entity_batch(loaded.items, profile=profile, scope=scope)
-            return loaded
-
-        await self._cache.set_value(
-            query_key,
-            _QueryIndexPayload(
-                ids=ids,
-                total_count=loaded.total_count,
-                has_next=loaded.has_next,
-            ),
-            ttl=ttl,
-        )
+        else:
+            index = _QueryIndexPayload(
+                ids=ids, total_count=loaded.total_count, has_next=loaded.has_next
+            )
+        ttl = self._write_ttl(self._config.ttl_for_list(self.entity_name))
+        await self._cache.set_value(key, index, ttl=ttl)
         await self._cache_entity_batch(loaded.items, profile=profile, scope=scope)
-        return loaded
 
     async def create(self, data: CreateT) -> OutputT:
         created = await self._repository.create(data)

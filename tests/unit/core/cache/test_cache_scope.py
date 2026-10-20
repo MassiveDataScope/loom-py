@@ -312,8 +312,11 @@ class TestTheScopeIsNeverLost:
         assert repository.get_by_id_calls == 2
 
     def test_a_repository_with_session_settings_and_no_scope_is_refused(self) -> None:
+        repository = SettingsRepository(has_session_settings=True)
+        backend = CountingCacheBackend()
+
         with pytest.raises(RuntimeError, match="cache_scope"):
-            _wrap(SettingsRepository(has_session_settings=True), CountingCacheBackend())
+            _wrap(repository, backend)
 
     def test_a_repository_without_session_settings_needs_no_scope(self) -> None:
         wrapper = _wrap(SettingsRepository(has_session_settings=False), CountingCacheBackend())
