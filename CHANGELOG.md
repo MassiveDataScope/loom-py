@@ -1043,11 +1043,8 @@
 - **etl:** a `WithAgent` compiled by a runner whose config has no `ai:`
   section fails with the new code `AGENT_RUNNER_NOT_CONFIGURED` instead of
   `AGENT_NOT_FOUND`, which now means only that no artifact declares the name.
-- **etl:** the names of `loom.etl.runner.filtering` (`_filter_plan`,
-  `_filter_process`, `_collect_all_names`, `_map_pipeline_nodes`,
-  `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
-  `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
-  or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
+- **etl:** `loom.etl.runner.filtering` is removed; use
+  `loom.etl.compiler.filter_plan`.
 - **etl:** the Polars writer refuses, under `SchemaMode.STRICT` and
   `EVOLVE`, a frame column that is a `Struct` or `List` where the Delta table
   has `String`, or `String` where the table has a `Struct` or `List`, at any
