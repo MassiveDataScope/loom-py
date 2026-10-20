@@ -281,34 +281,35 @@ def test_a_config_directory_layers_the_overlay_of_the_environment(
 
 
 class TestAddCodePath:
+    """Each test swaps ``sys.path`` for a fresh list, so the real one is never touched."""
+
     def test_a_relative_directory_resolves_against_the_config_and_goes_first(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "src").mkdir()
-        monkeypatch.setattr(sys, "path", list(sys.path))
+        monkeypatch.setattr(sys, "path", ["/already/there"])
 
         resolved = add_code_path(DEFAULT_CODE_PATH, tmp_path)
 
         assert resolved == (tmp_path / "src").resolve()
-        assert sys.path[0] == str(resolved)
+        assert sys.path == [str(resolved), "/already/there"]
 
     def test_a_missing_directory_is_not_added(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(sys, "path", list(sys.path))
-        before = list(sys.path)
+        monkeypatch.setattr(sys, "path", ["/already/there"])
 
         add_code_path("missing", tmp_path)
 
-        assert sys.path == before
+        assert sys.path == ["/already/there"]
 
     def test_a_directory_already_on_the_path_is_not_added_twice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "src").mkdir()
         resolved = str((tmp_path / "src").resolve())
-        monkeypatch.syspath_prepend(resolved)
+        monkeypatch.setattr(sys, "path", [resolved])
 
         add_code_path("src", tmp_path)
 
-        assert sys.path.count(resolved) == 1
+        assert sys.path == [resolved]

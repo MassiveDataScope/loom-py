@@ -8,8 +8,8 @@ it. Three rules keep it that way:
 - closed world: outside the environment module, every access to
   ``os.environ``, ``environ``, ``os.getenv`` or ``getenv`` reads one variable
   named by a string literal that does not start with ``LOOM_``. A dynamic
-  key, iteration, ``.copy()``, ``dict(os.environ)``, a write or membership
-  tested on a name fails, unless the file is in a small allowlist with its
+  key, iteration, ``.copy()``, ``dict(os.environ)``, a write or a membership
+  test fails, unless the file is in a small allowlist with its
   reason;
 - no source or document names a ``LOOM_*`` variable that loom does not own.
 """
@@ -74,9 +74,6 @@ def _reads_one_literal(node: ast.AST, parent: ast.AST | None, grand: ast.AST | N
         return isinstance(parent.ctx, ast.Load) and _literal_key(parent.slice)
     if isinstance(parent, ast.Attribute) and parent.attr == "get" and isinstance(grand, ast.Call):
         return bool(grand.args) and _literal_key(grand.args[0])
-    if isinstance(parent, ast.Compare) and node in parent.comparators:
-        membership = all(isinstance(op, ast.In | ast.NotIn) for op in parent.ops)
-        return membership and _literal_key(parent.left)
     return False
 
 
@@ -90,8 +87,6 @@ def _environ_violations(tree: ast.AST) -> list[str]:
                 hits.append(f"{node.lineno}: {ast.unparse(node)}")
             continue
         if not isinstance(node, ast.Attribute | ast.Name) or ast.unparse(node) not in _ENVIRON:
-            continue
-        if isinstance(parent, ast.Attribute) and ast.unparse(parent) in _ENVIRON:
             continue
         grand = parents.get(parent) if parent is not None else None
         if not _reads_one_literal(node, parent, grand):
@@ -126,7 +121,7 @@ _VIOLATIONS = {
     "iteration": "import os\nfound = [k for k in os.environ if k.startswith(prefix)]\n",
     "copy": "import os\nsnapshot = os.environ.copy()\n",
     "dict": "import os\nsnapshot = dict(os.environ)\n",
-    "membership on a name": "import os\npresent = name in os.environ\n",
+    "membership": "import os\npresent = 'DEBUG' in os.environ\n",
     "write": "import os\nos.environ['HOME'] = '/tmp'\n",
 }
 _ALLOWED = (
@@ -134,7 +129,6 @@ _ALLOWED = (
     "home = os.environ.get('HOME')\n"
     "port = os.getenv('PORT', '8000')\n"
     "region = os.environ['AWS_REGION']\n"
-    "debug = 'DEBUG' in os.environ\n"
 )
 
 
