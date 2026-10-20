@@ -55,7 +55,9 @@ can see.
 - Nodes that change the record count (`Explode`, `Expand`, `BatchExpand`,
   `ExpandRoutes`) declare the fan-out they actually produced, so an offset is
   committed only once *all* its outputs are written — and a record that
-  produced nothing is released instead of stalling its partition.
+  produced nothing is released instead of stalling its partition. A
+  `BatchExpandStep` returns one list of payloads per message of its batch, in
+  batch order, so each output is accounted to the record it came from.
 - A path ends in one place. A sink that ends it (`IntoTopic`, `IntoTable` or
   any `IntoSink`, `Drain`) completes what it writes and nothing is wired after
   it; a `Router` with a `default` whose branches all end that way ends every

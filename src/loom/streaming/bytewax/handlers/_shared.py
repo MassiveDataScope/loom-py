@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 Stream: TypeAlias = Any
 AwaitT = TypeVar("AwaitT")
+ExpandT = TypeVar("ExpandT", bound=Iterable[Any])
 
 
 @runtime_checkable
@@ -91,11 +92,8 @@ class _ExecutableBatchExpandStep(Protocol):
         self,
         messages: list[Message[StreamPayload]],
         **kwargs: object,
-    ) -> (
-        Iterable[StreamPayload | Message[StreamPayload]]
-        | Awaitable[Iterable[StreamPayload | Message[StreamPayload]]]
-    ):
-        """Expand one batch into many payloads or replacement messages."""
+    ) -> Iterable[Iterable[StreamPayload]] | Awaitable[Iterable[Iterable[StreamPayload]]]:
+        """Expand each message of one batch into its own list of payloads."""
         ...
 
 
@@ -259,10 +257,9 @@ def _resolve_batch_result(
 
 
 def _resolve_expand_result(
-    result: Iterable[StreamPayload | Message[StreamPayload]]
-    | Awaitable[Iterable[StreamPayload | Message[StreamPayload]]],
+    result: ExpandT | Awaitable[ExpandT],
     node_type: str,
-) -> Iterable[StreamPayload | Message[StreamPayload]]:
+) -> ExpandT:
     """Resolve a synchronous expanding result and reject awaitables."""
     if isinstance(result, Awaitable):
         raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
@@ -353,9 +350,11 @@ def _reconcile_fanout(
 
     An expanding node turns one input record into N outputs that all carry the
     same source offset, and every one of them completes that offset when it
-    reaches a terminal. The tracker starts each record expecting a single
-    completion, so accounting has to be corrected here — while the outputs are
-    still a plain list and none of them can have reached a terminal yet.
+    reaches a terminal. Each input already owes one completion, and a batch can
+    hold several inputs of one offset when an earlier node expanded it, so per
+    offset the outputs are compared with the inputs: extra outputs fork the
+    difference, and missing ones complete it here — while the outputs are still
+    a plain list and none of them can have reached a terminal yet.
 
     Two failures this prevents, both silent:
 
@@ -372,18 +371,19 @@ def _reconcile_fanout(
     """
     if tracker is None:
         return
-    produced: Counter[tuple[str, int, int]] = Counter()
-    for item in results:
-        key = _commit_key(item)
-        if key is not None:
-            produced[key] += 1
-    for key, count in produced.items():
-        if count > 1:
-            tracker.fork(key[0], key[1], key[2], count - 1)
-    for original in originals:
-        key = _commit_key(original)
-        if key is not None and key not in produced:
+    expected = _commit_key_counts(originals)
+    produced = _commit_key_counts(results)
+    for key in expected | produced:
+        delta = produced[key] - expected[key]
+        if delta > 0:
+            tracker.fork(key[0], key[1], key[2], delta)
+        for _ in range(-delta):
             tracker.complete(key[0], key[1], key[2])
+
+
+def _commit_key_counts(items: Sequence[Any]) -> Counter[tuple[str, int, int]]:
+    """Count the items accountable for each source offset."""
+    return Counter(key for item in items if (key := _commit_key(item)) is not None)
 
 
 def _drop_and_commit(item: Any, tracker: CommitCompletionPort) -> tuple[()]:

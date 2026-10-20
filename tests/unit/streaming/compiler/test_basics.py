@@ -78,9 +78,9 @@ def test_compile_succeeds_when_kafka_present(streaming_kafka_config: DictConfig)
 
 
 class _EachTwice(BatchExpandStep[Order, Order]):
-    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Order]:
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[list[Order]]:
         del kwargs
-        return [message.payload for message in messages for _ in range(2)]
+        return [[message.payload, message.payload] for message in messages]
 
 
 def test_a_record_step_follows_a_batch_expand_step(streaming_kafka_config: DictConfig) -> None:
