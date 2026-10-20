@@ -16,15 +16,22 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar, get_args
+from typing import TYPE_CHECKING, Final, Literal, TypeVar, get_args
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigError, ConfigKey
+from loom.core.config.overrides import load_application_config
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
 from loom.core.discovery.modules import ModulesDiscoveryEngine
+from loom.core.environment import (
+    CONFIG_VARIABLE,
+    config_source_paths,
+    loom_variable,
+    resolve_environment,
+)
 from loom.core.model.scoped import ScopedTable
 from loom.core.schema_names import SchemaNames
 
@@ -33,11 +40,14 @@ if TYPE_CHECKING:
 
     from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseUser
 
-CONFIG_ENV_VAR = "LOOM_CONFIG"
 SchemaMode = Literal["create_all", "external"]
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
 _T = TypeVar("_T")
+
+
+DEFAULT_CODE_PATH: Final = "src"
+"""``app.code_path`` when the configuration names none."""
 
 
 class _DiscoveryInterfaces(msgspec.Struct, kw_only=True):
@@ -62,7 +72,7 @@ class _Discovery(msgspec.Struct, kw_only=True):
 
 class _AppSection(msgspec.Struct, kw_only=True):
     name: str
-    code_path: str = "src"
+    code_path: str = DEFAULT_CODE_PATH
     discovery: _Discovery = msgspec.field(default_factory=_Discovery)
 
 
@@ -137,6 +147,11 @@ _ENGINES: dict[str, Callable[[_Discovery], DiscoveryResult]] = {
 def load_application(config_path: str | None = None) -> Application:
     """Load, discover and compile the application described by ``config_path``.
 
+    ``config_path``, else ``LOOM_CONFIG``, is a file or a config directory:
+    a directory loads ``base.yaml`` then the overlay of the environment
+    ``LOOM_ENV`` selects, as the application factories do, and the
+    ``LOOM__*`` variables merge last.
+
     Raises:
         ConfigError: When the path is missing, a required key is absent or a
             value has the wrong shape; the message names the key.
@@ -151,10 +166,12 @@ def load_application(config_path: str | None = None) -> Application:
     )
 
     path = _resolve_path(config_path)
-    context = ConfigContext.from_yaml(path)
+    environment = resolve_environment()
+    paths = config_source_paths(path, environment)
+    context = load_application_config(*paths, environment=environment)
     app = context.section(ConfigKey.APP, _AppSection)
     database = context.section(ConfigKey.DATABASE, DatabaseConfig)
-    _ensure_on_path(app.code_path, Path(path).resolve().parent)
+    add_code_path(app.code_path, Path(paths[0]).resolve().parent)
     models = _discover(app.discovery).models
     metadata = MetaData(
         naming_convention=configured_naming_convention(database.schema.naming_convention)
@@ -175,21 +192,32 @@ def load_application(config_path: str | None = None) -> Application:
     )
 
 
-def _ensure_on_path(code_path: str, config_dir: Path) -> None:
+def add_code_path(code_path: str | os.PathLike[str], config_dir: Path) -> Path:
+    """Put an application's code directory first on ``sys.path``, once.
+
+    Args:
+        code_path: ``app.code_path``; relative to *config_dir* unless absolute.
+        config_dir: Directory of the application's first configuration file.
+
+    Returns:
+        The resolved directory. It is added only when it exists, so a
+        configuration naming no local code leaves ``sys.path`` alone.
+    """
     candidate = Path(code_path)
     if not candidate.is_absolute():
         candidate = config_dir / candidate
-    resolved = str(candidate.resolve())
-    if resolved not in sys.path:
-        sys.path.insert(0, resolved)
+    resolved = candidate.resolve()
+    if resolved.is_dir() and str(resolved) not in sys.path:
+        sys.path.insert(0, str(resolved))
+    return resolved
 
 
 def _resolve_path(config_path: str | None) -> str:
     if config_path:
         return config_path
-    from_env = os.environ.get(CONFIG_ENV_VAR)
+    from_env = loom_variable(CONFIG_VARIABLE)
     if not from_env:
-        raise ConfigError(f"{CONFIG_ENV_VAR} is not set and no config path was given")
+        raise ConfigError(f"{CONFIG_VARIABLE} is not set and no config path was given")
     return from_env
 
 

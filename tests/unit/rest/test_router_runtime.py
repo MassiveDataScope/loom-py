@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from datetime import date, datetime
+from enum import Enum, StrEnum
+from typing import Annotated, Any
 
+import msgspec
 import pydantic
 import pytest
 from fastapi import FastAPI
@@ -22,14 +25,15 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.model import BaseModel, ColumnField, LoomStruct
+from loom.core.model import BaseModel, ColumnField, LoomStruct, String
 from loom.core.observability.event import EventKind as ObservabilityEventKind
 from loom.core.observability.event import LifecycleEvent as ObservabilityLifecycleEvent
 from loom.core.observability.event import Scope as ObservabilityScope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc.query import FilterOp, PaginationMode, QuerySpec
+from loom.core.repository.abc.query import PaginationMode, QuerySpec
 from loom.core.repository.sqlalchemy.query_compiler import QuerySpecCompiler
 from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.field_ref import F
 from loom.core.use_case.markers import Exists, Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import (
@@ -40,7 +44,7 @@ from loom.rest.compiler import (
 )
 from loom.rest.fastapi.app import _register_openapi_components, create_fastapi_app
 from loom.rest.fastapi.router_runtime import bind_interfaces
-from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
+from loom.rest.model import ALL, RestApiDefaults, RestInterface, RestRoute
 
 # ---------------------------------------------------------------------------
 # Dummy use cases
@@ -157,8 +161,11 @@ class _FilterRow(BaseModel):
     rank: int = ColumnField()
 
 
-class CompiledFilterUseCase(UseCase[Any, str]):
+class CompiledFilterUseCase(UseCase[_FilterRow, str]):
     allowed_fields: frozenset[str] = frozenset()
+
+    def __init__(self) -> None:
+        super().__init__()
 
     async def execute(self, query: QuerySpec, **kwargs: Any) -> str:
         compile_all(_FilterRow)
@@ -177,6 +184,56 @@ class CompiledFilterUseCase(UseCase[Any, str]):
 
 class IdOnlyFilterUseCase(CompiledFilterUseCase):
     allowed_fields = frozenset({"id"})
+
+
+class _Tone(Enum):
+    LIGHT = "light"
+    DARK = "dark"
+
+
+class _Phase(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+class _Entry(BaseModel):
+    __tablename__ = "router_runtime_entries"
+
+    id: int = ColumnField(primary_key=True)
+    code: str = ColumnField()
+    rank: Annotated[int, msgspec.Meta(ge=1)] = ColumnField()
+    quota: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
+    active: bool = ColumnField()
+    tone: _Tone = ColumnField(String(5))
+    phase: _Phase = ColumnField()
+    due: date = ColumnField()
+    seen_at: datetime = ColumnField()
+    sort_order: int = ColumnField()
+
+
+class EntryFilterValuesUseCase(UseCase[_Entry, dict[str, Any]]):
+    def __init__(self) -> None:
+        super().__init__()
+
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
+        await asyncio.sleep(0)
+        assert query.filters is not None
+        return {spec.field: spec.value for spec in query.filters.filters}
+
+
+class EntryFilterTypesUseCase(EntryFilterValuesUseCase):
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> dict[str, Any]:
+        values = await super().execute(query, **kwargs)
+        return {field: type(value).__name__ for field, value in values.items()}
+
+
+class EntrySortUseCase(UseCase[_Entry, list[list[str]]]):
+    def __init__(self) -> None:
+        super().__init__()
+
+    async def execute(self, query: QuerySpec, **kwargs: Any) -> list[list[str]]:
+        await asyncio.sleep(0)
+        return [[spec.field, spec.direction] for spec in query.sort]
 
 
 class DocUseCase(UseCase[Any, str]):
@@ -475,18 +532,18 @@ def test_bind_interfaces_builds_query_spec_from_offset_url_params() -> None:
     routes = _compile_routes(IFace)
     app = _make_app(*routes)
     client = TestClient(app)
-    response = client.get("/items/?page=2&limit=10&price__gte=20&sort=id&direction=DESC")
+    response = client.get("/items/?page=2&limit=10")
     assert response.status_code == 200
     assert response.json() == {
         "pagination": PaginationMode.OFFSET.value,
         "page": 2,
         "limit": 10,
         "cursor": None,
-        "filter_field": "price",
-        "filter_op": FilterOp.GTE.value,
-        "filter_value": 20,
-        "sort_field": "id",
-        "sort_direction": "DESC",
+        "filter_field": None,
+        "filter_op": None,
+        "filter_value": None,
+        "sort_field": None,
+        "sort_direction": None,
     }
 
 
@@ -498,19 +555,34 @@ def test_bind_interfaces_builds_query_spec_from_cursor_url_params() -> None:
     routes = _compile_routes(IFace)
     app = _make_app(*routes)
     client = TestClient(app)
-    response = client.get("/items/?after=abc123&limit=1&reviews__exists=true")
+    response = client.get("/items/?after=abc123&limit=1")
     assert response.status_code == 200
     assert response.json() == {
         "pagination": PaginationMode.CURSOR.value,
         "page": 1,
         "limit": 1,
         "cursor": "abc123",
-        "filter_field": "reviews",
-        "filter_op": FilterOp.EXISTS.value,
-        "filter_value": True,
+        "filter_field": None,
+        "filter_op": None,
+        "filter_value": None,
         "sort_field": None,
         "sort_direction": None,
     }
+
+
+def test_bind_interfaces_refuses_a_page_whose_offset_overflows() -> None:
+    class IFace(RestInterface[dict[str, Any]]):
+        prefix = "/items"
+        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+    response = client.get(f"/items/?page={2**63}&limit=2")
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "query_validation"
+    assert [violation["field"] for violation in detail["violations"]] == ["page"]
 
 
 def test_bind_interfaces_uses_compiled_default_pagination_mode() -> None:
@@ -542,43 +614,173 @@ def test_bind_interfaces_rejects_pagination_override_when_disabled() -> None:
     assert "cannot override" in response.json()["detail"]
 
 
-def test_bind_interfaces_normalizes_camelcase_query_fields() -> None:
-    class IFace(RestInterface[dict[str, Any]]):
-        prefix = "/items"
-        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
-
-    routes = _compile_routes(IFace)
-    app = _make_app(*routes)
-    client = TestClient(app)
-    response = client.get("/items/?sort=createdAt&priceTotal__gte=20")
-    assert response.status_code == 200
-    assert response.json()["sort_field"] == "created_at"
-    assert response.json()["filter_field"] == "price_total"
-
-
-@pytest.mark.parametrize(
-    ("use_case", "url", "field"),
-    [
-        (CompiledFilterUseCase, "/rows/?no_such_field=s3cr3t", "no_such_field"),
-        (IdOnlyFilterUseCase, "/rows/?rank=s3cr3t", "rank"),
-    ],
-)
-def test_bind_interfaces_answers_400_when_the_compiler_refuses_a_filter_field(
-    use_case: type[CompiledFilterUseCase], url: str, field: str
-) -> None:
+def test_bind_interfaces_answers_400_when_the_repository_refuses_a_filter_field() -> None:
     class IFace(RestInterface[str]):
         prefix = "/rows"
-        routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
+        filterable = ALL
+        routes = (RestRoute(use_case=IdOnlyFilterUseCase, method="GET", path="/"),)
 
     client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
 
-    response = client.get(url)
+    response = client.get("/rows/?rank=7")
 
     assert response.status_code == 400
     body = response.json()["detail"]
     assert body["code"] == "unsupported_query"
-    assert field in body["message"]
-    assert "s3cr3t" not in body["message"]
+    assert "rank" in body["message"]
+
+
+def _entry_client(
+    use_case: type[UseCase[_Entry, Any]] = EntryFilterValuesUseCase,
+) -> TestClient:
+    class IFace(RestInterface[_Entry]):
+        prefix = "/entries"
+        filterable = (
+            F(_Entry).code,
+            F(_Entry).rank,
+            F(_Entry).quota,
+            "active",
+            "tone",
+            "phase",
+            "due",
+            "seen_at",
+            "sort_order",
+        )
+        sortable = (F(_Entry).seen_at,)
+        routes = (RestRoute(use_case=use_case, method="GET", path="/"),)
+
+    return TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+
+def _refusal(response: Any) -> dict[str, Any]:
+    assert response.status_code == 400
+    detail: dict[str, Any] = response.json()["detail"]
+    assert detail["code"] == "unsupported_query"
+    return {key: value for key, value in detail.items() if key != "trace_id"}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("sort=seenAt", [["seen_at", "ASC"]]),
+        ("sort=id&direction=DESC", [["id", "DESC"]]),
+    ],
+)
+def test_bind_interfaces_sorts_by_a_declared_column_or_the_primary_key(
+    query: str, expected: list[list[str]]
+) -> None:
+    response = _entry_client(EntrySortUseCase).get(f"/entries/?{query}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_bind_interfaces_refuses_a_sort_on_any_undeclared_column_alike() -> None:
+    client = _entry_client(EntrySortUseCase)
+
+    existing = _refusal(client.get("/entries/?sort=code"))
+    missing = _refusal(client.get("/entries/?sort=nope"))
+
+    assert existing["message"].replace("'code'", "'nope'") == missing["message"]
+
+
+@pytest.mark.parametrize("query", ["id=1", "id__like=1%25", "id__is_null=true"])
+def test_bind_interfaces_refuses_a_filter_on_an_undeclared_field_for_every_operator(
+    query: str,
+) -> None:
+    detail = _refusal(_entry_client().get(f"/entries/?{query}"))
+
+    assert detail["message"] == "Filtering on field 'id' is not allowed by this route."
+
+
+@pytest.mark.parametrize(
+    ("query", "message"),
+    [
+        ("code__exists=true", "Operator 'exists' is not supported by this route."),
+        ("code__not_exists=true", "Operator 'not_exists' is not supported by this route."),
+        ("rank__like=1%25", "Operator 'like' applies to text fields only."),
+        ("rank__ilike=1%25", "Operator 'ilike' applies to text fields only."),
+    ],
+)
+def test_bind_interfaces_refuses_an_operator_the_declared_field_cannot_take(
+    query: str, message: str
+) -> None:
+    assert _refusal(_entry_client().get(f"/entries/?{query}"))["message"] == message
+
+
+@pytest.mark.parametrize("raw", ["0123", "true", "1.5"])
+def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> None:
+    response = _entry_client().get(f"/entries/?code={raw}")
+
+    assert response.status_code == 200
+    assert response.json() == {"code": raw}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("rank=7", {"rank": 7}),
+        ("sortOrder=4", {"sort_order": 4}),
+        ("quota__gt=0", {"quota": 0}),
+        ("code__like=01%25", {"code": "01%"}),
+    ],
+)
+def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
+    query: str, expected: dict[str, Any]
+) -> None:
+    response = _entry_client().get(f"/entries/?{query}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_bind_interfaces_builds_enum_and_temporal_filter_values() -> None:
+    client = _entry_client(EntryFilterTypesUseCase)
+
+    response = client.get("/entries/?tone=dark&due=2026-01-02&seen_at__gte=2026-01-02T03:04:05Z")
+
+    assert response.status_code == 200
+    assert response.json() == {"tone": "_Tone", "due": "date", "seen_at": "datetime"}
+
+
+def test_bind_interfaces_filters_a_str_enum_column_declared_filterable_by_its_value() -> None:
+    values = _entry_client().get("/entries/?phase=closed")
+    types = _entry_client(EntryFilterTypesUseCase).get("/entries/?phase=closed")
+
+    assert (values.status_code, values.json()) == (200, {"phase": "closed"})
+    assert (types.status_code, types.json()) == (200, {"phase": "_Phase"})
+
+
+@pytest.mark.parametrize(
+    ("query", "field"),
+    [("rank=s3cr3t", "rank"), ("active=1", "active"), ("rank__in=1,s3cr3t", "rank")],
+)
+def test_bind_interfaces_answers_400_when_a_filter_value_is_not_its_field_type(
+    query: str, field: str
+) -> None:
+    response = _entry_client().get(f"/entries/?{query}")
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["code"] == "query_validation"
+    assert [violation["field"] for violation in body["violations"]] == [field]
+    assert "s3cr3t" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("rank__in=1,2,3", {"rank": [1, 2, 3]}),
+        ("code__in=01,true,2.5", {"code": ["01", "true", "2.5"]}),
+    ],
+)
+def test_bind_interfaces_converts_each_in_filter_item_by_its_field_type(
+    query: str, expected: dict[str, Any]
+) -> None:
+    response = _entry_client().get(f"/entries/?{query}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
 
 
 # ---------------------------------------------------------------------------

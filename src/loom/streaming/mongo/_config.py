@@ -18,7 +18,7 @@ def _redact_uri(uri: str) -> str:
     return _URI_CREDENTIALS_RE.sub("://***@", uri)
 
 
-class MongoSourceConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class MongoSourceConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Connection settings for one MongoDB CDC source."""
 
     uri: str
@@ -36,7 +36,7 @@ class MongoSourceConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         )
 
 
-class MongoConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class MongoConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Top-level MongoDB settings loaded from the ``mongo`` config section."""
 
     source: MongoSourceConfig | None = None

@@ -15,6 +15,7 @@ from typing import Any, Literal
 import msgspec
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.types import PositiveInt
 
 # re.ASCII keeps the exact [A-Za-z0-9_] charset: without it \w would also
 # accept Unicode word characters, widening this security allowlist.
@@ -58,7 +59,7 @@ def roles_need_identity_binding(
     return bool(allowed_roles) and not mechanism_binds_roles
 
 
-class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Opt-in REST endpoint settings for a SQL connection.
 
     Attributes:
@@ -100,7 +101,7 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         return self.auth in _IDENTITY_BOUND_AUTH_MODES
 
 
-class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Named SQL connection with role policy, limits and driver tuning.
 
     Attributes:
@@ -127,13 +128,16 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         readonly: Whether queries run in read-only mode. Defaults to ``True``.
         default_limit: Row limit applied when the request brings none.
         max_limit: Hard cap for any requested limit.
-        max_execution_time: Per-query execution timeout in seconds.
+        max_execution_time: Per-query execution timeout in seconds, above
+            zero: ``0`` means no limit to ClickHouse.
         max_sql_bytes: Maximum accepted SQL statement size in bytes.
-        connect_timeout: Driver connect timeout in seconds.
-        send_receive_timeout: Driver send/receive timeout in seconds.
-        executor_threads: Async client thread pool size (driver default if
+        connect_timeout: Driver connect timeout in seconds, above zero.
+        send_receive_timeout: Driver send/receive timeout in seconds, above
+            zero.
+        executor_threads: Async client thread pool size, above zero (driver
+            default if ``None``).
+        pool_size: HTTP connection pool size, above zero (driver default if
             ``None``).
-        pool_size: HTTP connection pool size (driver default if ``None``).
         settings: Extra backend settings handed to the executor at
             construction. They can never override the policy.
         sql_endpoint: Optional REST endpoint settings for this connection.
@@ -155,12 +159,12 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     readonly: bool = True
     default_limit: int = 1000
     max_limit: int = 10000
-    max_execution_time: int = 30
+    max_execution_time: PositiveInt = 30
     max_sql_bytes: int = 262144
-    connect_timeout: int = 10
-    send_receive_timeout: int = 60
-    executor_threads: int | None = None
-    pool_size: int | None = None
+    connect_timeout: PositiveInt = 10
+    send_receive_timeout: PositiveInt = 60
+    executor_threads: PositiveInt | None = None
+    pool_size: PositiveInt | None = None
     settings: dict[str, Any] = msgspec.field(default_factory=dict)
     sql_endpoint: SqlEndpointConfig = msgspec.field(default_factory=SqlEndpointConfig)
 
@@ -180,7 +184,7 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         )
 
 
-class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Root of the ``sql:`` config section.
 
     Attributes:

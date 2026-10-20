@@ -23,6 +23,8 @@ def test_create_app_delegates_to_bootstrap_worker() -> None:
     assert app is expected
     mock_bootstrap.assert_called_once_with(
         "config/worker.yaml",
+        config_dir=None,
+        environment=None,
         jobs=[_DummyJob],
         callbacks=(),
         modules=(),
@@ -39,6 +41,8 @@ def test_create_app_allows_discovery_without_explicit_jobs() -> None:
     assert app is expected
     mock_bootstrap.assert_called_once_with(
         "config/worker.yaml",
+        config_dir=None,
+        environment=None,
         jobs=(),
         callbacks=(),
         modules=(),
@@ -68,6 +72,8 @@ def test_create_app_passes_optional_arguments() -> None:
     mock_bootstrap.assert_called_once_with(
         "base.yaml",
         "worker.yaml",
+        config_dir=None,
+        environment=None,
         jobs=[_DummyJob],
         callbacks=[callback],
         modules=[module],
@@ -84,3 +90,13 @@ def test_create_app_forwards_resolvers() -> None:
         create_app("config/worker.yaml", jobs=[_DummyJob], resolvers=[resolver])
 
     assert mock_bootstrap.call_args.kwargs["resolvers"] == [resolver]
+
+
+def test_create_app_forwards_the_config_directory_and_environment() -> None:
+    result = SimpleNamespace(celery_app=MagicMock())
+
+    with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
+        create_app(config_dir="config", environment="staging", jobs=[_DummyJob])
+
+    kwargs = mock_bootstrap.call_args.kwargs
+    assert (kwargs["config_dir"], kwargs["environment"]) == ("config", "staging")

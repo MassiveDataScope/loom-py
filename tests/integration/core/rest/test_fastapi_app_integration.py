@@ -202,3 +202,22 @@ def test_fake_repo_list_query_cursor_and_profile_controls(
             json={"name": "forbidden", "price": 1.0},
         )
         assert post_profile_forbidden.status_code == 400
+
+
+@pytest.mark.parametrize("sort", ["name", "no_such_column"])
+def test_fake_repo_list_refuses_a_sort_on_an_undeclared_field_alike(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sort: str
+) -> None:
+    monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'sort.sqlite'}")
+    app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+    with TestClient(app) as client:
+        assert client.post("/products/", json={"name": "s3cr3t", "price": 1.0}).status_code == 201
+        assert client.post("/products/", json={"name": "other", "price": 2.0}).status_code == 201
+
+        response = client.get(f"/products/?sort={sort}&pagination=cursor&limit=1")
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "unsupported_query"
+    assert detail["message"] == f"Sorting on field {sort!r} is not allowed by this route."
+    assert "nextCursor" not in response.text

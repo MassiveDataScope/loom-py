@@ -15,6 +15,8 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.overrides import load_application_config
+from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.etl._uri import is_cloud_path
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.storage._config import (
@@ -60,16 +62,26 @@ def _load_yaml(
     return _parse_sections(_load_context(path, resolvers=resolvers))
 
 
-def _load_context(path: str, *, resolvers: Sequence[ConfigResolver] = ()) -> ConfigContext:
+def _load_context(
+    path: str,
+    *,
+    resolvers: Sequence[ConfigResolver] = (),
+    environment: Environment | str | None = None,
+) -> ConfigContext:
     """Load an ETL config YAML into a :class:`ConfigContext`.
 
     Interpolations stay lazy: a section is resolved when it is read, so the
-    ``FromConfig`` keys outside ``storage:`` resolve when a step runs.
+    ``FromConfig`` keys outside ``storage:`` resolve when a step runs. The
+    ``LOOM__SECTION__KEY`` variables merge last.
 
     Args:
-        path: Local path or cloud URI of the YAML file.
+        path: Local path or cloud URI of the YAML file, or a local config
+            directory: ``base.yaml`` then the overlay of *environment*.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.
+        environment: Environment picking the overlay of a directory,
+            resolved like :func:`~loom.core.environment.resolve_environment`
+            when ``None``.
 
     Returns:
         The loaded config context.
@@ -79,10 +91,12 @@ def _load_context(path: str, *, resolvers: Sequence[ConfigResolver] = ()) -> Con
             or a keyed collection holds a duplicate key or mixes list and
             mapping forms.
     """
-    return ConfigContext.from_yaml(
-        path,
+    resolved = resolve_environment(environment)
+    return load_application_config(
+        *config_source_paths(path, resolved),
         resolvers=with_default_resolvers(resolvers),
         keyed=STORAGE_KEYED_COLLECTIONS,
+        environment=resolved,
     )
 
 
@@ -90,15 +104,17 @@ def config_dir(path: str) -> Path:
     """Return the directory the relative paths of a config resolve against.
 
     Args:
-        path: Local path or cloud URI of the YAML file.
+        path: Local path or cloud URI of the YAML file, or a config directory.
 
     Returns:
-        The absolute directory holding a local file, or the working directory
+        A config directory itself, the absolute directory holding a local
+        file, or the working directory
         for a cloud URI, which has no local directory of its own.
     """
     if is_cloud_path(path):
         return Path.cwd().resolve()
-    return Path(path).resolve().parent
+    resolved = Path(path).resolve()
+    return resolved if resolved.is_dir() else resolved.parent
 
 
 def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservabilityConfig]:

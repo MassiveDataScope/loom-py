@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
+import msgspec
+
 from loom.core.model.field import ColumnType
 
 
@@ -35,3 +37,6 @@ class _JsonMarker:
 
 
 JsonStr = Annotated[str, _JsonMarker()]
+
+PositiveInt = Annotated[int, msgspec.Meta(gt=0)]
+"""An integer above zero: a size, a count or a timeout where zero makes no sense."""

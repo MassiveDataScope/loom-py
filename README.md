@@ -360,6 +360,10 @@ from loom.rest.fastapi.auto import create_app
 app = create_app("config/api.yaml")
 ```
 
+Run it with `LOOM_ENV=development`: an unset `LOOM_ENV` means production, where
+the deploy checks refuse an API that authenticates nobody (`loom.rest.E001`).
+See [Environments and deploy checks](docs/getting-started/environments.md).
+
 For larger projects, use `mode: manifest` and a manifest module:
 
 ```python

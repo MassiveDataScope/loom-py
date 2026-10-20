@@ -459,6 +459,85 @@
 
 ### core
 
+- **core:** with no `LOOM_ENV` and no `environment=`, a process starts as
+  `production` and runs the deploy checks; an API without authentication now
+  fails at startup with `loom.rest.E001` until it configures
+  `app.rest.auth.jwt`, sets `app.rest.auth.custom: true` and passes an
+  `authenticator`, sets `LOOM_ENV=development`, or lists the id under
+  `checks.silenced`. An unknown or empty `LOOM_ENV` is a startup error.
+- **core:** the logger's default changed from development to production: with
+  no explicit `renderer`/`colors`, logs render as JSON without colours unless
+  the process resolved `development` or `test`. `create_kernel`,
+  `bootstrap_app`, `ObservabilityRuntime.from_config`, `configure_logging`
+  and `configure_logging_from_values` take `environment=None` and resolve it
+  (`LOOM_ENV`, else production) when none is passed.
+- **core:** the logger's own environment is removed:
+  `loom.core.logger.Environment`, `LoggerConfig.environment` and
+  `LogConfig.environment` are gone, and the logging functions take
+  `loom.core.environment.Environment`.
+- **core:** configuration sections refuse keys they do not declare: the
+  logger and its handlers, `checks`, `app.rest` (with `auth`, `jwt`, `cors`
+  and `discovery`), the `observability` log, otel and prometheus structs and
+  `OtelConfig`, `sql`, `celery` and `jobs`, every ETL `storage` struct and
+  lineage, `kafka`, the bytewax runtime, streaming `mongo`, `dynamodb` and the
+  flow config. A leftover `observability.log.config.environment`, or any
+  typo there, is a `ConfigError`. `app`, `database`, `persistence` and the
+  top of `observability`, which several readers decode in part, still accept
+  keys another reader owns. `create_app` and `bootstrap_worker` no longer fall
+  back to the default `observability` section when it fails validation, and
+  `create_app` registers the in-process job service when the `celery`
+  section is absent (with a warning) or the Celery extra is not installed; a
+  `celery` section that fails validation now stops startup instead.
+- **core:** a `LOOM__*` override sets one leaf value. A variable naming no
+  known section, with a malformed level, whose value is or holds a mapping,
+  whose target the files declare as a mapping or a list of mappings, naming
+  `config`, holding `${` however it is written, reaching inside an
+  interpolated key, failing to parse, or colliding with another variable
+  stops startup naming the variable, never the value. In production and
+  staging an override may set only an allowlisted key: loom's operational
+  keys (`loom.core.config.overrides.OVERRIDABLE`: log levels, Celery and
+  streaming worker counts and timeouts, SQL pool sizes and driver timeouts)
+  and the keys the reviewed files list under `config.overridable`. A
+  `config.overridable` entry starting with `*`, or inside `checks` or
+  `config`, stops every load. A placeholder in the `checks` section is a
+  `ConfigError`. A per-flow Prefect YAML is read without overrides.
+  `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by nothing, are removed.
+- **core:** the SQL `max_execution_time`, `connect_timeout`,
+  `send_receive_timeout`, `pool_size` and `executor_threads`, the Celery
+  `runtime.shutdown_timeout_ms` and the streaming runtime's
+  `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero; a
+  `0` fails when the section decodes.
+- **core:** the `loom.core.checks` logger sets its own WARNING level, so a
+  parent level (`CRITICAL`, top-level or `named_levels.loom`) cannot hide a
+  deploy check's warning or the silenced ids; name `loom.core.checks` under
+  `named_levels` to quiet it. The handlers `configure_logging` attaches no
+  longer filter by level, so a named level below the top-level level takes
+  effect for stdlib loggers; structlog loggers, loom's own included, still
+  drop events below the top-level level.
+- **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
+  sets it in `tests/conftest.py`), or every application it builds starts as
+  production and runs the deploy checks.
+- **core:** the migration locator now resolves `LOOM_ENV` (picking the
+  overlay of a config directory), applies the `LOOM__*` variables and puts
+  `app.code_path` on `sys.path` when the directory exists, as the
+  application does. `loom check --deploy` refuses an `app.code_path` that is
+  not a literal path.
+- **core:** `ETLRunner` and `StreamingRunner` resolve the environment
+  (`LOOM_ENV`, else production): without one they log JSON and, built from a
+  whole configuration (a file, a directory, or a mapping for
+  `StreamingRunner.from_dict`), run the deploy checks; `ETLRunner.from_dict`
+  and `from_spark` receive no whole configuration and run none.
+- **core:** `loom.core.locator.CONFIG_ENV_VAR` is replaced by
+  `loom.core.environment.CONFIG_VARIABLE`; `LOOM_CONFIG` may name a config
+  directory. `loom.prefect`'s `LOOM_ETL_CONFIG` alias is removed; use
+  `loom.core.environment.ETL_CONFIG_VARIABLE`. `app.code_path` is added to
+  `sys.path` only when the directory exists.
+- **core:** a non-deployed environment logs one WARNING that the deploy
+  checks were skipped.
+- **rest:** `create_app(authenticator=...)` requires
+  `app.rest.auth.custom: true`, `custom: true` requires an `authenticator`,
+  and `custom: true` beside `app.rest.auth.jwt` is refused; `loom.rest.E001`
+  passes on `custom: true`.
 - **core:** `Rule.check(..., via=fn)` takes the violation from `fn`: a `str`
   (the message) or a `RuleViolation` fails the rule, `None` passes it. A `bool`
   or any other result raises `TypeError` naming the field, instead of `True`
@@ -631,6 +710,37 @@
 
 ### rest
 
+- **rest:** a `QuerySpec` route filters and sorts only on the columns it
+  declares. Before, a client could filter or sort on any field the repository
+  could resolve. Now a filter on an undeclared column answers
+  `400 unsupported_query` naming the field, and so does a sort on one, with the
+  same answer whether or not the column exists. The primary key, which the
+  route orders by when the client names no sort, needs no declaration.
+  Declare `filterable` and `sortable` on the interface (its auto-CRUD `list`
+  route included) or on a route, which overrides it, as field references or
+  column names:
+
+  ```python
+  class OrderRestInterface(RestInterface[Order]):
+      prefix = "/orders"
+      auto = True
+      filterable = (F(Order).status, F(Order).total)
+      sortable = (F(Order).created_at,)
+  ```
+
+  In `app.rest.interfaces` both take column names (`[status, total]`).
+  `ALL` (`all` in YAML) keeps every scalar column and logs a warning naming
+  the route at startup. Only scalar columns of the use case's own model
+  (`UseCase[Model, ...]`) qualify. A related model's column (`warehouse.code`)
+  is refused, and so are JSON, array and text-search columns; lists, dicts
+  and structs are JSON. A `StrEnum` or `IntEnum` column is scalar; a plain
+  `Enum` or a `Literal` needs a declared column type. `InterfaceCompilationError` names the route and the field. It is also
+  raised for a declaration on a use case with no model, and for a route-level
+  declaration on a route without a `QuerySpec`; an inherited one is ignored.
+  `exists` and `not_exists` answer `400 unsupported_query`, and so do `like`
+  and `ilike` on a column that is not `str`. The repository's
+  `allowed_filter_fields` is unchanged: programmatic callers are not
+  restricted.
 - **rest:** every route now resolves its request parameters and decodes its
   body before the use case is built, so a request refused at that point
   never runs the use case's constructor.
@@ -662,6 +772,20 @@
 
 ### prefect
 
+- **prefect:** `FlowCtx.environment` is removed; nothing read it.
+- **prefect:** the flow parameter `env` and the keys of a flow YAML's
+  `environments` block are loom environments (`production`, `staging`,
+  `development`, `test`); `prod`, `dev`, `local` or any other key or value is
+  a `ConfigError`. A run resolves the worker's environment (`LOOM_ENV`, else
+  production); `env` defaults to `None` and only confirms it, so a run whose
+  `env` differs fails before anything runs. The run hands the environment to
+  the runner, which takes its logger defaults from it and runs the deploy
+  checks when deployed; notifications report it. `deploy_flow` and
+  `discover_and_deploy_etls` take an optional `env` resolved the same way and
+  record it as the deployment's `env` parameter, so a deployment run on a
+  worker in another environment fails.
+- **prefect:** the storage configuration of a flow run may be a config
+  directory.
 - **prefect:** a placeholder counts from the run's scheduled start instead of
   the wall clock. `${today-1d}`, `${yesterday}` and `${now±N}` counted from
   `datetime.now()` inside the flow, so a queued run that started after
@@ -796,6 +920,60 @@
 
 ### core
 
+- **core:** one environment selector and deploy checks (ADR 0005). loom had
+  two unconnected notions of environment (the logger's `dev`/`prod`, where an
+  unknown value meant `dev`, and `FlowCtx.environment`) and nothing checked a
+  deployed configuration. `loom.core.environment` now holds
+  `Environment` (`production`, `staging`, `development`, `test`) and
+  `resolve_environment`: the explicit argument, else `LOOM_ENV`, else
+  `production`; an unknown or empty value raises `ConfigError`. REST
+  `create_app`, Celery `create_app` and `bootstrap_worker` take
+  `environment=` and `config_dir=`, which loads `base.yaml` then
+  `<environment>.yaml` when present; explicit file lists keep working, one
+  form or the other. `create_kernel(environment=...)` registers the
+  environment in the container, so a use case can inject `Environment`.
+  `loom.core.checks` adds deploy checks with stable ids
+  (`@deploy_check("<area>.<E|W><nnn>")`), run at startup in production and
+  staging: `E` fails startup with `DeployCheckError`, `W` logs a warning, and
+  `checks.silenced: [ids]` silences by id with a startup warning naming them.
+  Initial checks: `loom.rest.E001` (neither a literal `app.rest.auth.jwt`
+  mapping nor the literal `app.rest.auth.custom: true`), `loom.rest.W001` (docs, redoc or OpenAPI
+  URL not `null`), `loom.logger.W001` (`console` renderer); they read keys as
+  written (`ConfigContext.raw`) and resolve no placeholder. Processes serving
+  no HTTP skip the `loom.rest` checks. `loom check --deploy [--env X]
+  [--skip AREA] <config>` runs them in CI without starting the application
+  and prints the areas it skipped.
+- **core:** one place tells every loom process its environment and
+  configuration (ADR 0005). `LOOM__SECTION__KEY` variables override any
+  configuration key as the last layer (code defaults < `base.yaml` <
+  `<LOOM_ENV>.yaml` < `LOOM__*`, allowlisted keys only in production and
+  staging), merged as an OmegaConf dotlist; levels
+  match declared keys case-insensitively, a first level naming no known
+  section is a `ConfigError` naming the variable, values are parsed literals
+  (no `${` anywhere in them), an override sets one leaf, and one WARNING
+  line names the overridden keys without their values.
+  `loom.core.config.overrides.load_application_config` is the one loader
+  behind REST and Celery `create_app`, `bootstrap_worker`,
+  `loom check --deploy`, `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`,
+  the migration locator and `load_kafka_settings`; a per-flow Prefect YAML is
+  a flow definition and is read without them. Deploy checks see the final configuration. `ETLRunner`,
+  `StreamingRunner` and the migration locator accept a config directory as
+  the factories do. They take `environment=`, take their logger defaults from
+  it and run the deploy checks when deployed, like the Prefect flows through
+  them; a Prefect run's `env` only confirms the worker's environment.
+  Only `loom.core.environment` names, reads or sets `LOOM_*` variables.
+  `checks.modules` lists the modules registering an
+  application's own checks, imported before every run, at startup and in
+  `loom check --deploy` (which puts `app.code_path` on the import path as
+  `create_app` does). `app.rest.auth.custom: true` declares an authenticator
+  passed in code, so `loom.rest.E001` reads the same answer in CI and at
+  startup. `parse_environment` validates a value naming an environment.
+- **core:** the SQLAlchemy query compiler converts a filter value, and each
+  `in` item, as the repository converts a value it writes
+  (`loom.core.repository.sqlalchemy.values.to_column_value`, now shared by
+  both): an `Enum` member is bound as its value, a JSON column's value is
+  reduced to builtins. A plain `Enum` member as the value of a filter on a
+  string column failed to bind.
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become
@@ -982,6 +1160,29 @@
 
 ### rest
 
+- **rest:** `?sort=` accepted any column. A cursor page put the sort
+  column's raw value of its last row in `nextCursor` (base64 JSON), so any
+  column, a secret one included, could be read through it, and a forged
+  cursor could range-probe it. Offset pages leaked its order, and an unknown
+  column answered `400 unsupported_query` (`Unknown filter field path`) while
+  a known one answered `200`, so the model's columns could be enumerated. A
+  route now sorts only by its declared `sortable` columns and its primary
+  key, so a cursor carries only those values.
+- **rest:** a `page` whose offset, `(page - 1) * limit`, exceeds the largest
+  signed 64-bit integer answers `400 query_validation` on `page` before any
+  query runs.
+- **rest:** a `QuerySpec` filter value was typed by its spelling: `true` and
+  `false` became booleans, text with a `.` a float and digits an integer,
+  whatever the filtered field declared. `?code=0123` on a `str` field compared
+  against `123`, and on Postgres a number bound to a text column answered
+  `500`. Values of `eq`, `ne`, `gt`, `gte`, `lt`, `lte` and each item of `in`
+  are now converted by the type of the declared filterable field, with the
+  strict grammar of `Query()`: a `str` field keeps the text as sent, a
+  boolean accepts only `true` or `false`, an `Enum` or `Literal` only its
+  values, and a value its field's type refuses answers `400 query_validation`
+  with `violations` naming the field. The field's constraints
+  (`msgspec.Meta`) do not apply to a filter value, so `rank__gt=0` is valid
+  on a column declared `ge=1`. `like` and `ilike` keep their pattern as text.
 - **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
   `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
   while the router clamped `?limit=` to `max_limit`. The schema now publishes

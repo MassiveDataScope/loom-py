@@ -624,6 +624,11 @@ from loom.rest.fastapi.auto import create_app
 app = create_app("config/api.yaml")
 ```
 
+Run it with `LOOM_ENV=development`. Without it loom starts as production, runs
+the deploy checks, and refuses an API that authenticates nobody
+(`loom.rest.E001`). See
+[Environments, configuration and deploy checks](../getting-started/environments.md).
+
 ---
 
 ## Source files

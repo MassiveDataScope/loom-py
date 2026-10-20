@@ -148,7 +148,8 @@ class TestHealthAuthentication:
     def test_health_is_served_without_credentials_under_a_custom_authenticator(
         self, tmp_path: Path
     ) -> None:
-        app = create_app(write_project(tmp_path, rest=_NO_DOCS), authenticator=_AlwaysRefuses())
+        rest = {**_NO_DOCS, "auth": {"custom": True}}
+        app = create_app(write_project(tmp_path, rest=rest), authenticator=_AlwaysRefuses())
 
         with TestClient(app) as client:
             assert client.get(_HEALTH).status_code == 200

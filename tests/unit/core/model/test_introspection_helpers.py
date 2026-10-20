@@ -11,7 +11,15 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 import msgspec
 import pytest
 
-from loom.core.model import BaseModel, ColumnField, Field
+from loom.core.model import (
+    JSON,
+    BaseModel,
+    Cardinality,
+    ColumnField,
+    Field,
+    Postgres,
+    RelationField,
+)
 from loom.core.model.field import ColumnType
 from loom.core.model.introspection import (
     _union_inner_args,
@@ -20,8 +28,9 @@ from loom.core.model.introspection import (
     get_column_fields,
     list_element_type,
     resolve_type_hints,
+    scalar_column_annotations,
 )
-from loom.core.model.types import JSON, Bytes, DateTime, Float, Integer, Numeric, String
+from loom.core.model.types import Bytes, DateTime, Float, Integer, Numeric, String
 
 
 class _Note:
@@ -306,3 +315,33 @@ class TestAnnotatedColumnFields:
 
     def test_an_optional_inside_annotated_follows_its_scalar_type(self) -> None:
         assert get_column_fields(_AnnotatedFields)["count"].column_type == Integer
+
+
+class _Shelf(BaseModel):
+    __tablename__ = "introspection_shelves"
+
+    id: int = ColumnField(primary_key=True)
+    label: str = ColumnField(length=2)
+    tags: list[str] = ColumnField()
+    words: str = ColumnField(Postgres.TSVECTOR)
+    marks: list[int] = ColumnField(Postgres.ARRAY(Integer))
+
+
+class _Book(BaseModel):
+    __tablename__ = "introspection_books"
+
+    id: int = ColumnField(primary_key=True)
+    rank: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
+    settings: dict[str, Any] = ColumnField(JSON)
+    shelf_id: int = ColumnField(foreign_key="introspection_shelves.id")
+    shelf: _Shelf | None = RelationField(
+        foreign_key="shelf_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class TestScalarColumnAnnotations:
+    def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
+        assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
+
+    def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
+        assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}
