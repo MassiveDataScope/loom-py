@@ -508,8 +508,8 @@ class _TerminalTracing:
     """Everything the terminal span of an outbound-topic write needs.
 
     Bound once, at wiring time, by the adapter sites that run only for a real
-    terminal — never for the inline ``WithAsync`` sink, whose messages go on
-    living.
+    terminal — never for an inline ``With`` or ``WithAsync`` write, whose
+    messages go on living.
 
     Args:
         observer: Runtime the terminal and batch spans are opened on.

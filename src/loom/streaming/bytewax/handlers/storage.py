@@ -191,21 +191,33 @@ class _StorageSinkPartition(StatelessSinkPartition[Message[Any]]):
         """Close the underlying partition and finish what its final flush made durable.
 
         close() runs during Bytewax shutdown, so a bad count is logged instead of
-        raised, and nothing completes.
+        raised, and nothing completes. Events still pending after the final count
+        were never reported durable; they stay uncompleted and are logged.
         """
         started_ns = time_ns()
         durable = self._partition.close()
-        if self._failed or self._is_durable_count(durable):
-            self._finish(durable, BatchWindow.since(started_ns))
+        if self._failed:
+            self._pending.clear()
             return
-        logger.error(
-            "storage_sink_close_count_invalid",
-            sink=self._node_name,
-            flow=self._flow_name,
-            pending=len(self._pending),
-            got=repr(durable),
-        )
-        self._pending.clear()
+        if not self._is_durable_count(durable):
+            logger.error(
+                "storage_sink_close_count_invalid",
+                sink=self._node_name,
+                flow=self._flow_name,
+                pending=len(self._pending),
+                got=repr(durable),
+            )
+            self._pending.clear()
+            return
+        self._finish(durable, BatchWindow.since(started_ns))
+        if self._pending:
+            logger.warning(
+                "storage_sink_closed_with_pending_events",
+                sink=self._node_name,
+                flow=self._flow_name,
+                pending=len(self._pending),
+            )
+            self._pending.clear()
 
 
 class _StorageDynamicSink(DynamicSink[Message[Any]]):

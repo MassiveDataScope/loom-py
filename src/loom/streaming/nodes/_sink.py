@@ -116,7 +116,10 @@ class IntoSink(Protocol[EventT]):
 
     @property
     def router_branch_safe(self) -> bool:
-        """Whether the same sink may terminate more than one router branch."""
+        """Whether this sink may appear inside a Router branch.
+
+        Only the attribute's presence is checked.
+        """
         ...
 
     def build_partition(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Final, cast
+from typing import Any, Final, NamedTuple, cast
 
 from bytewax.operators import branch as bw_branch
 from bytewax.operators import flat_map as bw_flat_map
@@ -34,7 +34,6 @@ from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message
 from loom.streaming.nodes._branches import PATH_END_NODE_TYPES, Branch, iter_branches
 from loom.streaming.nodes._broadcast import Broadcast
-from loom.streaming.nodes._capabilities import RouterBranchSafe
 from loom.streaming.nodes._expand_routes import ExpandRoutes
 from loom.streaming.nodes._fork import Fork, ForkKind
 from loom.streaming.nodes._router import Router, evaluate_predicate, select_value
@@ -91,6 +90,13 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
     return _split_node_result(continuing, sid, ctx, ErrorKind.ROUTING)
 
 
+class _Routed(NamedTuple):
+    """A message the router ran, and the terminal branch that must write it, if any."""
+
+    terminal: int | None
+    message: Any
+
+
 def _routed_to(target: int | None) -> Callable[[Any], list[Any]]:
     """Keep the routed items bound for *target*: a terminal branch, or ``None`` to continue.
 
@@ -98,9 +104,8 @@ def _routed_to(target: int | None) -> Callable[[Any], list[Any]]:
     """
 
     def take(item: Any) -> list[Any]:
-        if isinstance(item, tuple):
-            index, message = item
-            return [message] if index == target else []
+        if isinstance(item, _Routed):
+            return [item.message] if item.terminal == target else []
         return [item] if target is None else []
 
     return take
@@ -113,7 +118,7 @@ def _execute_router_step(
     router: Router[Any, Any],
     branches: Sequence[Branch],
     message: Any,
-) -> tuple[int | None, Any]:
+) -> _Routed:
     with _observe_node(
         observer,
         flow_name,
@@ -286,9 +291,7 @@ def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
     return None if fork.default is not None else remaining
 
 
-def _execute_router(
-    router: Router[Any, Any], branches: Sequence[Branch], message: Any
-) -> tuple[int | None, Any]:
+def _execute_router(router: Router[Any, Any], branches: Sequence[Branch], message: Any) -> _Routed:
     """Run the selected branch up to its terminal.
 
     Returns the index of the branch whose terminal must write the message, or
@@ -296,13 +299,13 @@ def _execute_router(
     """
     branch = _select_router_branch(router, branches, message)
     if branch is None:
-        return None, message
+        return _Routed(None, message)
     result = message
     for node in branch.nodes:
         if isinstance(node, PATH_END_NODE_TYPES):
-            return branch.index, result
+            return _Routed(branch.index, result)
         result = _execute_router_node(node, result)
-    return None, result
+    return _Routed(None, result)
 
 
 def _select_router_branch(
@@ -323,11 +326,11 @@ def _select_router_branch(
 
 
 def _execute_router_node(node: object, message: Any) -> Any:
-    if isinstance(node, RouterBranchSafe) and isinstance(node, BatchStep):
+    if isinstance(node, BatchStep):
         batch_node = cast(_ExecutableBatchStep, node)
         results = _resolve_batch_result(batch_node.execute([message]), "Router")
         return _replace_payload(message, results[0])
-    if isinstance(node, RouterBranchSafe) and isinstance(node, RecordStep):
+    if isinstance(node, RecordStep):
         record_node = cast(_ExecutableRecordStep, node)
         return _replace_payload(
             message,

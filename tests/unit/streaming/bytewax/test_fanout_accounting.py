@@ -1317,6 +1317,31 @@ class TestStorageCompletesAfterItsFlush:
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
 
+    def test_events_a_close_leaves_unflushed_are_logged_and_stay_uncompleted(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A partition that does not flush at close leaves its buffer unwritten."""
+
+        class _NoFlushOnClose(_BufferingPartition):
+            def close(self) -> int:
+                return 0
+
+        tracker, _ = _tracker(0, 1)
+        sink = _storage._StorageSinkPartition(
+            _NoFlushOnClose(flush_at=10),
+            node_name="table",
+            flow_name="orders",
+            flow_run_id="run-1",
+            observer=ObservabilityRuntime.noop(),
+            commit_tracker=tracker,
+        )
+        sink.write_batch(self._orders(0, 1))
+
+        sink.close()
+
+        assert tracker.flush_partition(TOPIC, PARTITION) == []
+        assert "storage_sink_closed_with_pending_events" in caplog.text
+
     def test_a_bad_count_from_close_completes_nothing_and_does_not_raise(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

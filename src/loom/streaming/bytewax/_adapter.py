@@ -7,15 +7,15 @@ Offset completion invariant: for every flow that compiles, each source offset,
 or each share of it a fan-out node forked, completes exactly once, at the end
 of the path it travels and after that path's last durable write. A node
 handler returns the stream that is still live after it, or ``None`` when it
-ended the path in a sink that completes what it writes. ``IntoTopic`` ends its
+closed every path it received. ``IntoTopic`` ends its
 path at its compiled sink through :meth:`_BuildContext.wire_branch_terminal`.
 A branching node wires each branch through :meth:`_BuildContext.wire_branch`,
 which hands the branch's live end to ``wire_branch_terminal``: the sink
 compiled for the branch, else a drop sink. The flow's own live end goes
 through :meth:`_BuildContext.wire_flow_output`: the flow output, else a drop
-sink. A Bytewax output has no
-downstream, so no completion relies on the order of sibling operators: it
-happens inside the sink that writes, or downstream of an inline write.
+sink. A Bytewax output has no downstream, so no completion relies on the order
+of sibling operators: it happens inside the sink that writes, or downstream of
+an inline write.
 
 Requires ``bytewax`` to be installed.
 """
@@ -77,11 +77,13 @@ class _BuiltDataflow:
 
 
 class _DropSinkPartition(StatelessSinkPartition[Any]):
-    """Discard items routed to an unrouted error branch.
+    """Discard the items of a path that ends without a sink.
 
-    Discarding still completes each record with the commit tracker: a dropped
-    message that never completes would freeze its partition's watermark under
-    at-least-once delivery.
+    Such a path is an error kind with no route, a branch or flow end that owns
+    no output, or an undecodable record with no WIRE route. Discarding still
+    completes each record with the commit tracker: a dropped message that never
+    completes would freeze its partition's watermark under at-least-once
+    delivery.
     """
 
     def __init__(self, commit_tracker: CommitCompletionPort | None = None) -> None:
@@ -97,7 +99,7 @@ class _DropSinkPartition(StatelessSinkPartition[Any]):
 
 
 class _DropSink(DynamicSink[Any]):
-    """Build a tracker-aware discard sink for unrouted error branches."""
+    """Build the tracker-aware discard sink for a path that ends without a sink."""
 
     def __init__(self, commit_tracker: CommitCompletionPort | None = None) -> None:
         self._commit_tracker = commit_tracker
@@ -246,6 +248,9 @@ def _assemble_dataflow(plan: CompiledPlan, ctx: _BuildContext) -> Any:
     stream = _build_source_pipeline(flow, ctx)
     stream = _wire_process(stream, tuple(node.node for node in plan.nodes), ctx)
     ctx.wire_flow_output(stream)
+    for kind in plan.error_routes:
+        if kind not in ctx.error_sinks:
+            raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
     return flow
 
 
@@ -384,9 +389,6 @@ class _BuildContext:
             bw_output("output", stream, self.sink)
         elif stream is not None:
             bw_output("output_dropped", stream, _DropSink(self.commit_tracker))
-        for kind in self.plan.error_routes:
-            if kind not in self.error_sinks:
-                raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
 
     def wire_decode_error(self, stream: Any) -> None:
         """Route undecodable records to the WIRE error sink, else complete them at a drop sink."""
