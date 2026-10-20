@@ -349,10 +349,14 @@ Three limits decide what does not travel:
   on `mongo` (and on the ClickHouse backend when it arrives); `dynamodb`
   still accepts it today, with a deprecation planned. Use
   `ServerDefault.UUID4`.
-- **Relations are SQL-only.** `Relation` / `Projection` fields, the
-  `EXISTS` / `NOT_EXISTS` filter operators and dotted field paths
-  (`category.name`) compile on `sqlalchemy` only; elsewhere they are
-  `UnsupportedQuery`.
+- **Relations are SQL-only.** `Relation` / `Projection` fields and the
+  `EXISTS` / `NOT_EXISTS` filter operators compile on `sqlalchemy` only;
+  elsewhere they are `UnsupportedQuery`. A dotted filter path
+  (`category.name`) is `UnsupportedQuery` outside `sqlalchemy`, and on
+  `sqlalchemy` it compiles without a join, so each root row comes back once
+  per matching related row, related to it or not (pinned by
+  `test_a_filter_on_a_related_column_selects_each_matching_row_once` until
+  relation filtering lands). REST routes cannot declare one.
 - **Not every backend has every capability.** `dynamodb` today mounts no
   `list` / `count` (listing by a declared index arrives with the next
   backends of this feature); the ClickHouse backend, when it arrives, offers

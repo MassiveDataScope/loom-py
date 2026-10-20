@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 from typing import Any
 
 import msgspec
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField, String
 from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case import Created, Query
+from loom.core.use_case.field_ref import F
 from loom.core.use_case.use_case import UseCase
 from loom.rest.compiler import InterfaceCompilationError, RestInterfaceCompiler, RouteSources
-from loom.rest.model import PaginationMode, RestApiDefaults, RestInterface, RestRoute
+from loom.rest.model import ALL, PaginationMode, RestApiDefaults, RestInterface, RestRoute
 
 
 class CreateUserUseCase(UseCase[Any, str]):
@@ -835,3 +839,181 @@ class TestDeclaredQuery:
 
         with pytest.raises(InterfaceCompilationError, match=reason):
             compiler.compile(interface)
+
+
+class _Shelf(BaseModel):
+    __tablename__ = "rest_compiler_shelves"
+
+    id: int = ColumnField(primary_key=True)
+    label: str = ColumnField(length=32)
+
+
+class _Book(BaseModel):
+    __tablename__ = "rest_compiler_books"
+
+    id: int = ColumnField(primary_key=True)
+    title: str = ColumnField(length=64)
+    pages: int = ColumnField()
+    notes: dict[str, Any] = ColumnField(JSON)
+    shelf_id: int = ColumnField(foreign_key="rest_compiler_shelves.id")
+    shelf: _Shelf | None = RelationField(
+        foreign_key="shelf_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class _ListBooks(UseCase[_Book, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
+class _ListAnything(UseCase[Any, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
+class _Blob:
+    """A type msgspec cannot describe as a query value."""
+
+
+class _Opaque(BaseModel):
+    __tablename__ = "rest_compiler_opaque"
+
+    id: int = ColumnField(primary_key=True)
+    blob: _Blob = ColumnField(String(8))
+
+
+class _ListOpaque(UseCase[_Opaque, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
+def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
+    compiler = UseCaseCompiler()
+    for interface in interfaces:
+        for route in interface.routes:
+            compiler.compile(route.use_case)
+    rest = RestInterfaceCompiler(compiler)
+    return [route for interface in interfaces for route in rest.compile(interface)]
+
+
+class TestDeclaredColumns:
+    def test_a_field_ref_and_a_column_name_resolve_alike(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = (F(_Book).pages, "title")
+            sortable = ("title", F(_Book).pages)
+            routes = (RestRoute(use_case=_ListBooks, method="GET", path="/"),)
+
+        (route,) = _compile_columns(IFace)
+
+        assert route.filter_fields == (("pages", int), ("title", str))
+        assert route.sort_fields == ("title", "pages", "id")
+
+    def test_a_route_declaration_overrides_its_interface(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = (F(_Book).pages,)
+            routes = (
+                RestRoute(use_case=_ListBooks, method="GET", path="/"),
+                RestRoute(use_case=_ListBooks, method="GET", path="/titled", filterable=("title",)),
+                RestRoute(use_case=_ListBooks, method="GET", path="/plain", filterable=()),
+            )
+
+        routes = _compile_columns(IFace)
+
+        assert [route.filter_fields for route in routes] == [
+            (("pages", int),),
+            (("title", str),),
+            (),
+        ]
+
+    def test_an_auto_crud_list_route_takes_its_interface_declaration(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            auto = True
+            include = ("list",)
+            filterable = ("title",)
+            sortable = ("pages",)
+
+        (route,) = _compile_columns(IFace)
+
+        assert (route.filter_fields, route.sort_fields) == ((("title", str),), ("pages", "id"))
+
+    def test_a_route_without_a_query_spec_ignores_an_inherited_declaration(self) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = ("title",)
+            sortable = ("title",)
+            routes = (RestRoute(use_case=CreateUserUseCase, method="POST", path="/"),)
+
+        (route,) = _compile_columns(IFace)
+
+        assert (route.filter_fields, route.sort_fields) == ((), ())
+
+    @pytest.mark.parametrize("kind", ["filterable", "sortable"])
+    def test_a_route_without_a_query_spec_cannot_declare_columns(self, kind: str) -> None:
+        route = RestRoute(use_case=CreateUserUseCase, method="POST", path="/")
+
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (dataclasses.replace(route, **{kind: ("title",)}),)
+
+        with pytest.raises(InterfaceCompilationError, match=f"declares {kind}.*no QuerySpec"):
+            _compile_columns(IFace)
+
+    @pytest.mark.parametrize(
+        ("declared", "field"),
+        [((F(_Shelf).label,), "label"), (("shelf.label",), "shelf.label")],
+    )
+    def test_a_column_the_route_cannot_use_fails_compilation(
+        self, declared: tuple[Any, ...], field: str
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (RestRoute(use_case=_ListBooks, method="GET", path="/", sortable=declared),)
+
+        with pytest.raises(InterfaceCompilationError, match=rf"\(GET, '/'\).*'{field}'"):
+            _compile_columns(IFace)
+
+    def test_a_use_case_without_a_model_cannot_declare_or_inherit_columns(self) -> None:
+        class Declares(RestInterface[_Book]):
+            prefix = "/books"
+            routes = (
+                RestRoute(use_case=_ListAnything, method="GET", path="/", filterable=("title",)),
+            )
+
+        class Inherits(RestInterface[_Book]):
+            prefix = "/books"
+            sortable = ("title",)
+            routes = (RestRoute(use_case=_ListAnything, method="GET", path="/"),)
+
+        with pytest.raises(InterfaceCompilationError, match="declares filterable.*no model"):
+            _compile_columns(Declares)
+        with pytest.raises(InterfaceCompilationError, match="inherits sortable.*no model"):
+            _compile_columns(Inherits)
+
+    def test_a_filterable_column_a_query_value_cannot_decode_fails_compilation(self) -> None:
+        class IFace(RestInterface[_Opaque]):
+            prefix = "/opaque"
+            routes = (
+                RestRoute(use_case=_ListOpaque, method="GET", path="/", filterable=("blob",)),
+            )
+
+        with pytest.raises(InterfaceCompilationError, match=r"\(GET, '/'\).*'blob'"):
+            _compile_columns(IFace)
+
+    def test_all_resolves_the_root_scalar_columns_and_warns_naming_the_route(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class IFace(RestInterface[_Book]):
+            prefix = "/books"
+            filterable = ALL
+            routes = (RestRoute(use_case=_ListBooks, method="GET", path="/"),)
+
+        with caplog.at_level(logging.WARNING, logger="loom.rest.compiler"):
+            (route,) = _compile_columns(IFace)
+
+        assert dict(route.filter_fields) == {"id": int, "title": str, "pages": int, "shelf_id": int}
+        (record,) = caplog.records
+        assert record.levelno == logging.WARNING
+        assert "IFace: route (GET, '/')" in record.getMessage()

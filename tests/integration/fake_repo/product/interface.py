@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from loom.core.use_case.field_ref import F
 from loom.rest.model import RestInterface, RestRoute
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.use_cases import (
@@ -29,6 +30,7 @@ class ProductRestInterface(RestInterface[Product]):
             method="GET",
             path="/",
             expose_profile=True,
+            filterable=(F(Product).name, F(Product).price),
         ),
         RestRoute(
             use_case=FindProductByNameUseCase,

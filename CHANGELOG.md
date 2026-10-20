@@ -602,6 +602,37 @@
 
 ### rest
 
+- **rest:** a `QuerySpec` route filters and sorts only on the columns it
+  declares. Before, a client could filter or sort on any field the repository
+  could resolve. Now a filter on an undeclared column answers
+  `400 unsupported_query` naming the field, and so does a sort on one, with the
+  same answer whether or not the column exists. The primary key, which the
+  route orders by when the client names no sort, needs no declaration.
+  Declare `filterable` and `sortable` on the interface (its auto-CRUD `list`
+  route included) or on a route, which overrides it, as field references or
+  column names:
+
+  ```python
+  class OrderRestInterface(RestInterface[Order]):
+      prefix = "/orders"
+      auto = True
+      filterable = (F(Order).status, F(Order).total)
+      sortable = (F(Order).created_at,)
+  ```
+
+  In `app.rest.interfaces` both take column names (`[status, total]`).
+  `ALL` (`all` in YAML) keeps every scalar column and logs a warning naming
+  the route at startup. Only scalar columns of the use case's own model
+  (`UseCase[Model, ...]`) qualify. A related model's column (`warehouse.code`)
+  is refused, and so are JSON, array and text-search columns; lists, dicts
+  and structs, and an `Enum` or `Literal` declared without a column type, are
+  JSON. `InterfaceCompilationError` names the route and the field. It is also
+  raised for a declaration on a use case with no model, and for a route-level
+  declaration on a route without a `QuerySpec`; an inherited one is ignored.
+  `exists` and `not_exists` answer `400 unsupported_query`, and so do `like`
+  and `ilike` on a column that is not `str`. The repository's
+  `allowed_filter_fields` is unchanged: programmatic callers are not
+  restricted.
 - **rest:** every route now resolves its request parameters and decodes its
   body before the use case is built, so a request refused at that point
   never runs the use case's constructor.
@@ -767,6 +798,12 @@
 
 ### core
 
+- **core:** the SQLAlchemy query compiler converts a filter value, and each
+  `in` item, as the repository converts a value it writes
+  (`loom.core.repository.sqlalchemy.values.to_column_value`, now shared by
+  both): an `Enum` member is bound as its value, a JSON column's value is
+  reduced to builtins. A plain `Enum` member as the value of a filter on a
+  string column failed to bind.
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
   field or dict key) and `Invalid value 'x'` (a tagged-union tag) become
@@ -953,6 +990,29 @@
 
 ### rest
 
+- **rest:** `?sort=` accepted any column. A cursor page put the sort
+  column's raw value of its last row in `nextCursor` (base64 JSON), so any
+  column, a secret one included, could be read through it, and a forged
+  cursor could range-probe it. Offset pages leaked its order, and an unknown
+  column answered `400 unsupported_query` (`Unknown filter field path`) while
+  a known one answered `200`, so the model's columns could be enumerated. A
+  route now sorts only by its declared `sortable` columns and its primary
+  key, so a cursor carries only those values.
+- **rest:** a `page` whose offset, `(page - 1) * limit`, exceeds the largest
+  signed 64-bit integer answers `400 query_validation` on `page` before any
+  query runs.
+- **rest:** a `QuerySpec` filter value was typed by its spelling: `true` and
+  `false` became booleans, text with a `.` a float and digits an integer,
+  whatever the filtered field declared. `?code=0123` on a `str` field compared
+  against `123`, and on Postgres a number bound to a text column answered
+  `500`. Values of `eq`, `ne`, `gt`, `gte`, `lt`, `lte` and each item of `in`
+  are now converted by the type of the declared filterable field, with the
+  strict grammar of `Query()`: a `str` field keeps the text as sent, a
+  boolean accepts only `true` or `false`, an `Enum` or `Literal` only its
+  values, and a value its field's type refuses answers `400 query_validation`
+  with `violations` naming the field. The field's constraints
+  (`msgspec.Meta`) do not apply to a filter value, so `rank__gt=0` is valid
+  on a column declared `ge=1`. `like` and `ilike` keep their pattern as text.
 - **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
   `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
   while the router clamped `?limit=` to `max_limit`. The schema now publishes

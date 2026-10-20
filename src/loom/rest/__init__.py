@@ -19,6 +19,7 @@ from loom.rest.config import RestInterfaceConfigError
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.middleware import TraceIdMiddleware
 from loom.rest.model import (
+    ALL,
     PaginationMode,
     RestApiDefaults,
     RestInterface,
@@ -27,6 +28,7 @@ from loom.rest.model import (
 from loom.rest.rest_adapter import LoomRestAdapter
 
 __all__ = [
+    "ALL",
     "CompiledRoute",
     "HttpErrorMapper",
     "InterfaceCompilationError",

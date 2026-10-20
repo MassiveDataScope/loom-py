@@ -3,10 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from datetime import date, datetime, time
-from decimal import Decimal
 from typing import Any, ClassVar, Generic, cast
-from uuid import UUID
 
 import msgspec
 from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
@@ -36,11 +33,9 @@ from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.transactional import record_mutation
+from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
 
 _SENTINEL = object()
-# Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
-_NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
-_JSON_TYPE_NAMES = frozenset({"JSON", "Postgres.JSONB"})
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
 
 
@@ -77,9 +72,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         column_field_names = frozenset(column_fields.keys())
         self._column_field_names = column_field_names
         self._json_column_names = frozenset(
-            name
-            for name, info in column_fields.items()
-            if info.column_type.type_name in _JSON_TYPE_NAMES
+            name for name in column_fields if is_json_column(getattr(sa, name, None))
         )
         self._relations_cache = get_relations(self.model)
         self._core_model = get_compiled_core(self.model)
@@ -165,7 +158,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     def _serialize_input(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
         if isinstance(data, msgspec.Struct):
-            builtins = msgspec.to_builtins(data, builtin_types=_NATIVE_COLUMN_TYPES)
+            builtins = to_column_value(data)
             if not isinstance(builtins, dict):
                 raise TypeError("Struct payload must serialize to dict")
             return self._encode_json_columns(_to_internal_field_names(type(data), builtins))
@@ -174,7 +167,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
     def _encode_json_columns(self, values: dict[str, Any]) -> dict[str, Any]:
         """Reduce JSON-column payloads to JSON-serialisable builtins."""
         for key in self._json_column_names.intersection(values):
-            values[key] = msgspec.to_builtins(values[key])
+            values[key] = to_column_value(values[key], json=True)
         return values
 
     def _column_for_field(self, field: str) -> Any:

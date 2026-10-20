@@ -316,6 +316,32 @@ def generic_type_arg(annotation: Any, origin: Any) -> type | None:
     return args[0]
 
 
+_NON_SCALAR_COLUMN_TYPES = frozenset(
+    {"JSON", "Postgres.JSONB", "Postgres.ARRAY", "Postgres.TSVECTOR"}
+)
+
+
+def scalar_column_annotations(model: type) -> dict[str, Any]:
+    """Return the annotation of each scalar column of *model*, ``Annotated`` metadata removed.
+
+    A JSON, array or text-search column is not scalar; lists, dicts and
+    structs, and an ``Enum`` or ``Literal`` declared without a column type,
+    are inferred as JSON.
+
+    Args:
+        model: Model whose columns are read.
+
+    Returns:
+        Mapping of column name to its annotation, in declaration order.
+    """
+    hints = get_type_hints(model)
+    return {
+        name: hints[name]
+        for name, info in get_column_fields(model).items()
+        if info.column_type.type_name not in _NON_SCALAR_COLUMN_TYPES
+    }
+
+
 def _extract_origin_type(annotation: Any) -> type[Any]:
     """Return the base type from ``Annotated[T, ...]``."""
     origin = getattr(annotation, "__origin__", None)
