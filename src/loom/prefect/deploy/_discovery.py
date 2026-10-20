@@ -196,7 +196,9 @@ def _loaded_module_name(source_file: str) -> str | None:
     a symlinked directory matches the file it resolves to.
     """
     source = os.path.realpath(source_file)
-    for name, module in list(sys.modules.items()):
+    # Iterates a copy: another thread can import while this loop runs, and so
+    # can reading ``__file__`` on a lazily loaded module.
+    for name, module in sys.modules.copy().items():
         module_file = getattr(module, "__file__", None)
         if module_file is not None and os.path.realpath(module_file) == source:
             return name
@@ -257,7 +259,7 @@ def _with_recorded_env(plan: _DeploymentPlan, config_uri: str) -> _DeploymentPla
     """Record the declaration file under ``job_variables.env`` for the worker."""
     user_env = plan.job_variables.get("env") or {}
     env = {**user_env, ETL_CONFIG_VARIABLE: config_uri}
-    # ``replace`` copies fields added later; the cast Sonar asks for fails mypy.
+    # ``replace`` copies fields added later.
     return replace(plan, job_variables={**plan.job_variables, "env": env})
 
 

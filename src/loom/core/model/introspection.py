@@ -117,7 +117,7 @@ def _resolve_column_field(
     annotated_type, field = _extract_annotated_column(annotation)
     if declared is not None:
         annotated_type, field = declared.column_type or annotated_type, declared.field
-    field = _with_struct_default(field, struct_default)
+    field = _with_nullable(_with_struct_default(field, struct_default), annotation)
     column_type = annotated_type or _infer_column_type(annotation, field=field)
     return ColumnFieldInfo(
         name=name,
@@ -139,6 +139,27 @@ def _extract_annotated_column(annotation: Any) -> tuple[ColumnType | None, Field
         elif isinstance(entry, Field):
             field = entry
     return column_type, field
+
+
+def _with_nullable(field: Field, annotation: Any) -> Field:
+    """Resolve an undeclared ``nullable`` from the annotation; primary keys stay NOT NULL."""
+    if field.nullable is not None:
+        return field
+    nullable = not field.primary_key and _admits_none(annotation)
+    return cast(Field, replace(field, nullable=nullable))  # type: ignore[redundant-cast]
+
+
+def _admits_none(annotation: Any) -> bool:
+    """Whether ``annotation`` accepts ``None``, through ``Annotated``, ``Literal`` and unions."""
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _admits_none(get_args(annotation)[0])
+    if origin is Literal:
+        return None in get_args(annotation)
+    members = _union_members(annotation)
+    if members is None:
+        return annotation is type(None)
+    return any(_admits_none(member) for member in members)
 
 
 def _with_struct_default(field: Field, struct_default: Any) -> Field:

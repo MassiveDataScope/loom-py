@@ -22,12 +22,17 @@ class ColumnType:
 
 @dataclass(frozen=True, slots=True)
 class Field:
-    """Column constraint metadata stored inside ``Annotated[...]``."""
+    """Column constraint metadata stored inside ``Annotated[...]``.
+
+    ``nullable`` left as ``None`` follows the annotation: the column is nullable
+    when the field admits ``None`` and is not part of the primary key. A
+    declared ``True`` or ``False`` overrides that.
+    """
 
     primary_key: bool = False
     unique: bool = False
     index: bool = False
-    nullable: bool = False
+    nullable: bool | None = None
     autoincrement: bool = False
     server_default: ServerDefault | None = None
     server_onupdate: ServerOnUpdate | str | None = None
@@ -54,7 +59,7 @@ def ColumnField(
     primary_key: bool = False,
     unique: bool = False,
     index: bool = False,
-    nullable: bool = False,
+    nullable: bool | None = None,
     autoincrement: bool = False,
     server_default: ServerDefault | None = None,
     server_onupdate: ServerOnUpdate | str | None = None,
@@ -94,7 +99,7 @@ def ScopedField(
     on: Reach = "both",
     elevable: bool = False,
     primary_key: bool = False,
-    nullable: bool = False,
+    nullable: bool | None = None,
     foreign_key: str | None = None,
     on_delete: OnDelete | None = None,
     length: int | None = None,
