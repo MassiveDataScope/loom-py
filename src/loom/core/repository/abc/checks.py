@@ -55,3 +55,6 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
         message=f"{_SECTION} names no signing key: current_key_id must name an entry of keys.",
         hint=_HINT,
     )
+
+
+__all__ = ["CURSOR_SIGNING_CHECK"]

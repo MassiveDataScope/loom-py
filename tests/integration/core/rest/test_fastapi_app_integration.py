@@ -352,4 +352,3 @@ def test_an_empty_cursor_parameter_answers_400(
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "unsupported_query"
-
