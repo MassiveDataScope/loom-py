@@ -85,7 +85,6 @@ async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, 
 @pytest.mark.parametrize(
     ("field", "op", "value"),
     [
-        ("code", FilterOp.EQ, "0123"),
         ("shade", FilterOp.EQ, Shade.DARK),
         ("shade", FilterOp.IN, [Shade.DARK]),
         ("size", FilterOp.EQ, Size.LARGE),

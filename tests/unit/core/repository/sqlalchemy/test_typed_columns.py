@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Any
 
 import pytest
+from sqlalchemy import and_, bindparam, func, select
+from sqlalchemy.exc import ArgumentError
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
@@ -16,6 +18,7 @@ from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
+from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -47,6 +50,19 @@ class _Swatch(BaseModel):
 
 class _CreateSwatch(Command, frozen=True):
     shade: _Shade
+
+
+class _Mark(BaseModel):
+    __tablename__ = "typed_marks"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    shade: _Shade = ColumnField()
+    noted_at: datetime = ColumnField(JSON)
+
+
+class _CreateMark(Command, frozen=True):
+    shade: _Shade
+    noted_at: datetime
 
 
 class _CustomerOut(LoomStruct, rename="camel"):
@@ -105,7 +121,7 @@ _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
 @pytest.fixture
 async def session_manager() -> AsyncIterator[SessionManager]:
-    compile_all(_Doc, _Customer, _Ticket, _Tag, _Swatch)
+    compile_all(_Doc, _Customer, _Ticket, _Tag, _Swatch, _Mark)
     manager = SessionManager(
         "sqlite+aiosqlite:///:memory:",
         pool_size=None,
@@ -206,3 +222,56 @@ class TestFilterValues:
         )
 
         assert [item.id for item in page.items] == [dark.id]
+
+    @pytest.mark.parametrize(("field", "value"), [("shade", _Shade.DARK), ("noted_at", _STAMP)])
+    def test_a_json_column_filter_binds_the_value_the_write_hands_sqlalchemy(
+        self, session_manager: SessionManager, field: str, value: Any
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Mark, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Mark
+        )
+        written = repo._serialize_input(_CreateMark(shade=_Shade.DARK, noted_at=_STAMP))[field]
+
+        clause = compile_filter_group(
+            _compiled(_Mark),
+            FilterGroup(filters=(FilterSpec(field=field, op=FilterOp.EQ, value=value),)),
+            frozenset(),
+        )
+
+        assert list(clause.compile().params.values()) == [written]
+
+    def test_an_in_filter_whose_value_is_not_a_list_is_left_to_sqlalchemy(
+        self, session_manager: SessionManager
+    ) -> None:
+        group = FilterGroup(filters=(FilterSpec(field="shade", op=FilterOp.IN, value="dark"),))
+
+        with pytest.raises(ArgumentError, match="IN expression list"):
+            compile_filter_group(_compiled(_Swatch), group, frozenset())
+
+    @pytest.mark.parametrize(
+        ("op", "value"),
+        [
+            (FilterOp.LTE, func.now()),
+            (FilterOp.IN, bindparam("stamps", expanding=True)),
+            (FilterOp.IN, select(func.now())),
+        ],
+    )
+    def test_a_sqlalchemy_expression_filter_value_is_bound_as_it_is(
+        self, session_manager: SessionManager, op: FilterOp, value: Any
+    ) -> None:
+        column = _compiled(_Doc).stamped_at
+        expected = column <= value if op is FilterOp.LTE else column.in_(value)
+
+        clause = compile_filter_group(
+            _compiled(_Doc),
+            FilterGroup(filters=(FilterSpec(field="stamped_at", op=op, value=value),)),
+            frozenset(),
+        )
+
+        assert str(clause) == str(and_(expected))
+
+
+def _compiled(model: type[BaseModel]) -> Any:
+    compiled = get_compiled(model)
+    assert compiled is not None
+    return compiled

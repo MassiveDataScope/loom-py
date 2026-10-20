@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import msgspec
 import pydantic
@@ -201,6 +201,8 @@ class _Entry(BaseModel):
     id: int = ColumnField(primary_key=True)
     code: str = ColumnField()
     rank: Annotated[int, msgspec.Meta(ge=1)] = ColumnField()
+    quota: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
+    grade: Literal["low", "high"] = ColumnField()
     active: bool = ColumnField()
     tone: _Tone = ColumnField()
     due: date = ColumnField()
@@ -655,6 +657,8 @@ def test_bind_interfaces_keeps_a_string_field_filter_value_as_sent(raw: str) -> 
         ("section__position=2", {"section.position": 2}),
         ("section__sortOrder=4", {"section.sort_order": 4}),
         ("rank__gt=0", {"rank": 0}),
+        ("quota__gt=0", {"quota": 0}),
+        ("grade=high", {"grade": "high"}),
         ("rank__like=1%25", {"rank": "1%"}),
         ("rank__ilike=1%25", {"rank": "1%"}),
     ],
@@ -677,6 +681,7 @@ def test_bind_interfaces_converts_a_filter_value_by_its_field_type(
         ("rank__in=1,s3cr3t", "rank"),
         ("section__position=s3cr3t", "section.position"),
         ("tone=s3cr3t", "tone"),
+        ("grade=s3cr3t", "grade"),
         ("due=s3cr3t", "due"),
     ],
 )

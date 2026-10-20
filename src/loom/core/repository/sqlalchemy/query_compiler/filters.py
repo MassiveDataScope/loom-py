@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import JSON, and_, or_
+from sqlalchemy.sql.expression import ClauseElement
 
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
@@ -82,8 +83,20 @@ def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
 
 
 def _column_value(col: Any, op: FilterOp, value: Any) -> Any:
-    """Convert *value*, or each ``IN`` item, as the repository converts a value it writes."""
+    """Convert *value*, or each item of an ``IN`` list, as the repository writes a value.
+
+    A SQLAlchemy expression, and an ``IN`` value that is not a list or tuple,
+    reach SQLAlchemy as they are.
+    """
     json = isinstance(getattr(col, "type", None), JSON)
     if op is FilterOp.IN:
-        return [to_column_value(item, json=json) for item in value]
+        if not isinstance(value, list | tuple):
+            return value
+        return [_bound_value(item, json=json) for item in value]
+    return _bound_value(value, json=json)
+
+
+def _bound_value(value: Any, *, json: bool) -> Any:
+    if isinstance(value, ClauseElement):
+        return value
     return to_column_value(value, json=json)
