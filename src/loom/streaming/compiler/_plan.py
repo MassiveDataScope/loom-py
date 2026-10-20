@@ -31,7 +31,6 @@ class CompiledSingleSource:
     settings: ConsumerSettings
     topics: tuple[str, ...]
     payload_type: type[LoomStruct | LoomFrozenStruct]
-    shape: StreamShape
     decode_strategy: Literal["record", "batch"]
 
 
@@ -45,7 +44,6 @@ class CompiledMultiSource:
         dispatch: Pre-built table mapping ``message_type`` and error
             ``payload_type`` strings to their concrete Python types, plus
             explicit wire-error payload types.
-        shape: Declared source shape.
         decode_strategy: Whether to decode records individually or in batches.
     """
 
@@ -54,7 +52,6 @@ class CompiledMultiSource:
     settings: ConsumerSettings
     topics: tuple[str, ...]
     dispatch: DispatchTable
-    shape: StreamShape
     decode_strategy: Literal["record", "batch"]
 
 
@@ -67,7 +64,6 @@ class CompiledMongoCDCSource:
     settings: MongoSourceConfig
     collections: tuple[str, ...]
     watch_options: Mapping[str, object]
-    shape: StreamShape
 
 
 @dataclass(frozen=True)

@@ -17,7 +17,7 @@ from datetime import time as time_of_day
 from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import msgspec
 import polars as pl
@@ -68,6 +68,14 @@ class _OwnedRow(BaseModel):
         foreign_key="owners.id", cardinality=Cardinality.MANY_TO_ONE
     )
     row_id: int = ColumnField(primary_key=True)
+
+
+class _VisitRow(LoomStruct):
+    visit_id: UUID
+    label: str
+
+
+_VISIT_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
 
 
 # ── ClickHouse unit test fixtures ─────────────────────────────────────────────
@@ -193,6 +201,34 @@ class TestIntoTableSQLAlchemyIntegration:
 
         assert flushed == 2
         assert [tuple(row) for row in rows] == [(1, "written"), (2, "from-default")]
+
+    def test_a_uuid_field_is_written_as_core_writes_a_uuid_column(self, tmp_path: Path) -> None:
+        path = _make_db(tmp_path, "CREATE TABLE visits (visit_id CHAR(32), label TEXT)")
+        bridge = AsyncBridge()
+        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        node = IntoTable(payload=_VisitRow, table="visits", backend=Backend.SQLALCHEMY)
+        sink_config = SqlAlchemySinkConfig.from_config({"table": "visits"}, default_table="visits")
+        partition = node.build_partition(
+            sink_config,
+            worker_index=0,
+            worker_count=1,
+            bridge=bridge,
+            session_manager=session_manager,
+        )
+
+        try:
+            partition.write_batch([_VisitRow(visit_id=_VISIT_ID, label="first")])
+            partition.close()
+        finally:
+            bridge.run(session_manager.dispose())
+            bridge.shutdown()
+
+        engine = create_engine(_sync_url(path))
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT visit_id, label FROM visits")).fetchall()
+        engine.dispose()
+
+        assert rows == [(_VISIT_ID.hex, "first")]
 
     def test_empty_batch_is_noop(self, tmp_path: Path) -> None:
         path = _make_db(

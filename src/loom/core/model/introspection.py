@@ -19,6 +19,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from uuid import UUID
 
 import msgspec
 
@@ -39,6 +40,7 @@ from loom.core.model.types import (
     Numeric,
     String,
     Time,
+    Uuid,
 )
 from loom.core.schema_names import sql_identifier
 
@@ -416,6 +418,7 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     date: Date,
     time: Time,
     Decimal: _UNDECLARED_DECIMAL,
+    UUID: Uuid,
 }
 
 

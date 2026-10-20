@@ -30,6 +30,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -86,6 +87,7 @@ _SA_TYPE_MAP: dict[str, type] = {
     "DateTime": DateTime,
     "Time": Time,
     "Numeric": Numeric,
+    "Uuid": Uuid,
     "Postgres.JSONB": PG_JSONB,
     "Postgres.UUID": PG_UUID,
     "Postgres.TSVECTOR": PG_TSVECTOR,

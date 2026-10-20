@@ -80,7 +80,6 @@ from loom.streaming.bytewax.handlers import routing as _routing  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import (  # noqa: E402
-    CompilationError,
     StreamingErrorCode,
     compile_flow,
 )
@@ -1046,6 +1045,12 @@ _PATH_CASES = {
         ),
         _each("t.a", 0) + _each("t.b", 1, 2),
     ),
+    "router_drain_branch_without_default": _PathCase(
+        lambda: Process(
+            Router.by(msg.payload.value, routes={"item-0": Process(Drain())}), _topic("t.a")
+        ),
+        _each("t.a", 1, 2),
+    ),
     "router_terminal_branch_with_output": _PathCase(
         lambda: Process(
             Router.by(
@@ -1360,20 +1365,6 @@ def _assert_each_offset_completes_once_after_its_writes(
                 )
 
 
-_KNOWN_BUGS_WITH_FOLLOW_UP: dict[str, tuple[type[BaseException], str, str]] = {
-    "collect_batch_batch_step_for_each": (
-        CompilationError,
-        "shape mismatch: expected many but got batch before ForEach",
-        "follow-up hotfix: ForEach must accept the batch a BatchStep produces",
-    ),
-}
-"""Shapes outside the completion invariant that fail today, pinned to their failure.
-
-Each is ``(exception, message pattern, follow-up)``. When a follow-up fixes the
-shape, ``pytest.raises`` fails and the entry must go.
-"""
-
-
 class TestEveryPathCompletesOnce:
     """Each offset completes once per share, and only after its writes are flushed."""
 
@@ -1381,14 +1372,7 @@ class TestEveryPathCompletesOnce:
     def test_each_offset_completes_once_per_share_after_its_last_flush(
         self, name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        known_bug = _KNOWN_BUGS_WITH_FOLLOW_UP.get(name)
-        if known_bug is None:
-            self._assert_case(_PATH_CASES[name], monkeypatch)
-            return
-        exception, pattern, follow_up = known_bug
-        with pytest.raises(exception, match=pattern):
-            self._assert_case(_PATH_CASES[name], monkeypatch)
-        pytest.xfail(follow_up)
+        self._assert_case(_PATH_CASES[name], monkeypatch)
 
     @staticmethod
     def _assert_case(case: _PathCase, monkeypatch: pytest.MonkeyPatch) -> None:

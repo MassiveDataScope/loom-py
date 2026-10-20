@@ -104,6 +104,10 @@ class BatchStep(Step[InT, OutT], ABC):
 
     Subclasses define ``execute(self, messages, **kwargs) -> OutT`` with the
     explicit batch and dependency signature they need.
+
+    ``input_shape`` and ``output_shape`` hold outside a Router branch. Inside
+    one the step runs on a one-message batch of the routed message, so there
+    it is record to record.
     """
 
     router_branch_safe: ClassVar[bool] = True

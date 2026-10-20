@@ -7,6 +7,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum, IntEnum, IntFlag, StrEnum
 from typing import Annotated, Any, Generic, Literal, TypeVar
+from uuid import UUID
 
 import msgspec
 import pytest
@@ -39,6 +40,7 @@ from loom.core.model.types import (
     Numeric,
     String,
     Time,
+    Uuid,
 )
 
 
@@ -177,6 +179,24 @@ class TestTemporalColumnTypes:
         fields = get_column_fields(_Temporal)
 
         assert (fields["day"].column_type, fields["at"].column_type) == (Date, Time)
+
+
+class _Keyed(BaseModel):
+    __tablename__ = "introspection_keyed"
+
+    id: int = ColumnField(primary_key=True)
+    ref: UUID
+    alt: UUID | None = None
+
+
+class TestUuidColumnTypes:
+    def test_infers_a_uuid_column_for_a_uuid_annotation_optional_or_not(self) -> None:
+        fields = get_column_fields(_Keyed)
+
+        assert (fields["ref"].column_type, fields["alt"].column_type) == (Uuid, Uuid)
+
+    def test_a_uuid_column_is_scalar(self) -> None:
+        assert scalar_column_annotations(_Keyed) == {"id": int, "ref": UUID, "alt": UUID | None}
 
 
 class _Status(StrEnum):
