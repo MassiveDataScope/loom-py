@@ -9,11 +9,10 @@ from pyspark.sql import DataFrame
 from pyspark.sql import types as T
 
 from loom.etl.declarative.target import SchemaMode
-from loom.etl.schema._schema import SchemaNotFoundError
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["apply_schema_spark", "SparkPhysicalSchema", "SchemaNotFoundError"]
+__all__ = ["apply_schema_spark", "SparkPhysicalSchema"]
 
 
 @dataclass(frozen=True)

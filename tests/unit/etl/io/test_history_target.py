@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._params import ParamExpr, params
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import (
@@ -31,7 +32,6 @@ from loom.etl.declarative.target import (
     IntoHistory,
     TargetSpec,
 )
-from loom.etl.declarative.target._schema_mode import SchemaMode
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history._enums import (
@@ -12,7 +13,6 @@ from loom.etl.declarative.target._history._enums import (
     HistoryDateType,
 )
 from loom.etl.declarative.target._history._spec import HistorifySpec
-from loom.etl.declarative.target._schema_mode import SchemaMode
 
 
 class IntoHistory:

@@ -1,4 +1,4 @@
-"""ClickHouse source reader and compatibility re-exports."""
+"""ClickHouse source reader."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ except ImportError:
 from loom.core.logger import get_logger
 from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
-from loom.etl.declarative.source._from_clickhouse import FromClickHouse
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
 from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader
 from loom.etl.schema._schema import ColumnSchema
@@ -319,4 +318,4 @@ def _log_query_start(spec: ClickHouseSourceSpec, query: str, *, streaming: bool)
     )
 
 
-__all__ = ["ClickHouseSourceReader", "ClickHouseSourceSpec", "FromClickHouse"]
+__all__ = ["ClickHouseSourceReader"]

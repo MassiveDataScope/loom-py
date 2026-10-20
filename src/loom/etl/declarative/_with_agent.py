@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import numbers
 import operator
-import warnings
 from decimal import Decimal
 from typing import Any
 
@@ -28,14 +27,12 @@ class WithAgent:
         max_usd: Budget of one execution of the step, in USD, as a
             :class:`~decimal.Decimal` or an integral number (an ``int`` or
             another :class:`numbers.Integral`, such as ``numpy.int64``),
-            which is converted exactly. A ``float`` is deprecated until loom 3.0: it emits a
-            :class:`DeprecationWarning` and is converted through its
-            ``str()``, so ``0.1`` becomes ``Decimal("0.1")``. ``None`` spends
-            without a ceiling beyond each run's own ``policies.max_usd``.
+            which is converted exactly. ``None`` spends without a ceiling
+            beyond each run's own ``policies.max_usd``.
 
     Raises:
-        TypeError: When *max_usd* is not ``None``, a :class:`~decimal.Decimal`,
-            an integral number or a ``float``; a ``bool`` is refused.
+        TypeError: When *max_usd* is not ``None``, a :class:`~decimal.Decimal`
+            or an integral number; a ``bool`` and a ``float`` are refused.
         ValueError: When *name* is empty or *max_usd* is not a finite
             amount greater than zero.
 
@@ -57,7 +54,7 @@ class WithAgent:
         name: str,
         *,
         output: type[Any],
-        max_usd: Decimal | int | float | None = None,
+        max_usd: Decimal | int | None = None,
     ) -> None:
         if not name:
             raise ValueError("WithAgent name must not be empty")
@@ -92,14 +89,6 @@ def _budget(max_usd: object) -> Decimal:
         raise TypeError("WithAgent max_usd must be a Decimal or an int, got bool")
     elif isinstance(max_usd, numbers.Integral):
         amount = Decimal(operator.index(max_usd))
-    elif isinstance(max_usd, float):
-        warnings.warn(
-            "WithAgent(max_usd=<float>) is deprecated and will be removed in loom 3.0; "
-            'pass a Decimal, such as Decimal("2.50"), or an int instead.',
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        amount = Decimal(str(max_usd))
     else:
         raise TypeError(
             f"WithAgent max_usd must be a Decimal or an int, got {type(max_usd).__name__}"

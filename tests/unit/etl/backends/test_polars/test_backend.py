@@ -12,7 +12,7 @@ from deltalake import DeltaTable, write_deltalake
 
 from loom.etl import ETLParams, col
 from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
-from loom.etl.backends.polars._schema import PolarsPhysicalSchema, SchemaNotFoundError
+from loom.etl.backends.polars._schema import PolarsPhysicalSchema
 from loom.etl.declarative._format import Format
 from loom.etl.declarative.expr._params import params as p
 from loom.etl.declarative.expr._refs import TableRef
@@ -22,6 +22,7 @@ from loom.etl.declarative.target import IntoTable, SchemaMode
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import AppendSpec, ReplacePartitionsSpec, ReplaceSpec
 from loom.etl.lineage._records import WriteContext
+from loom.etl.schema import SchemaNotFoundError
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaError
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from loom.etl.storage._locator import MappingLocator, TableLocation

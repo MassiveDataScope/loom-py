@@ -42,6 +42,7 @@ Write errors:
 * :class:`EmptyReplaceError` — ``replace(allow_empty=False)`` received no rows
 """
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.target._client import ClientSpec, IntoClient
 from loom.etl.declarative.target._errors import EmptyReplaceError
 from loom.etl.declarative.target._file import FileSpec
@@ -58,7 +59,6 @@ from loom.etl.declarative.target._history import (
     IntoHistory,
 )
 from loom.etl.declarative.target._into import IntoFile, IntoTable, IntoTemp
-from loom.etl.declarative.target._schema_mode import SchemaMode
 from loom.etl.declarative.target._table import (
     AppendSpec,
     ReplacePartitionsSpec,

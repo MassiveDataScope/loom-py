@@ -400,13 +400,3 @@ def test_make_checkpoint_store_warns_encryption_is_lost_on_spark(
         make_checkpoint_store(config, spark=MagicMock())
 
     assert any("ignored by the Spark backend" in r.message for r in caplog.records)
-
-
-def test_schema_mode_module_import_exports_expected_values() -> None:
-    schema_mode_module = importlib.reload(
-        importlib.import_module("loom.etl.declarative.target._schema_mode")
-    )
-    assert schema_mode_module.SchemaMode.STRICT.value == "strict"
-    assert schema_mode_module.SchemaMode.EVOLVE.value == "evolve"
-    assert schema_mode_module.SchemaMode.OVERWRITE.value == "overwrite"
-    assert schema_mode_module.__all__ == ["SchemaMode"]
