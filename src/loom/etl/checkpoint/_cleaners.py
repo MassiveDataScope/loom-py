@@ -33,10 +33,10 @@ class FsspecTempCleaner:
         self._storage_options = checkpoint_options(storage_options or {}).fsspec
 
     def delete_tree(self, path: str) -> None:
-        """Remove *path* and its contents from cloud storage.
+        """Remove *path* and its contents from cloud storage, best effort.
 
-        Raises:
-            CheckpointCleanupError: When the deletion fails for any reason.
+        A failure is logged as a warning and never raised: cleanup must not
+        fail the run whose intermediates it removes.
         """
         try:
             fs, fpath = fsspec.core.url_to_fs(path, **self._storage_options)

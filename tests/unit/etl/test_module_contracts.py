@@ -162,19 +162,14 @@ def test_reload_sql_and_compiler_definition_modules_with_basic_usage() -> None:
     assert callable(predicate_utils.predicate_to_sql)
 
 
-def test_invalid_stage_error_is_one_class_across_its_import_paths() -> None:
-    import loom.etl
-    import loom.etl.compiler
-    import loom.etl.runner
-    import loom.etl.runner.errors
+def test_invalid_stage_error_is_defined_by_the_compiler() -> None:
+    from loom.etl.compiler import InvalidStageError
 
-    assert loom.etl.runner.InvalidStageError is loom.etl.compiler.InvalidStageError
-    assert loom.etl.runner.errors.InvalidStageError is loom.etl.compiler.InvalidStageError
-    assert loom.etl.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert InvalidStageError.__module__ == "loom.etl.compiler._filter"
 
 
 def test_runner_error_message_lists_the_unknown_names() -> None:
-    from loom.etl.runner.errors import InvalidStageError
+    from loom.etl.compiler import InvalidStageError
 
     err = InvalidStageError(frozenset({"MissingStep", "MissingProcess"}))
     text = str(err)

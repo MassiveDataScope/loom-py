@@ -1,16 +1,12 @@
-"""Tests for runner-specific errors."""
+"""Tests for InvalidStageError."""
 
 from __future__ import annotations
 
-import importlib
 import pickle
 
 import pytest
 
-import loom.etl.runner.errors as errors_mod
-
-errors_mod = importlib.reload(errors_mod)
-InvalidStageError = errors_mod.InvalidStageError
+from loom.etl.compiler import InvalidStageError
 
 
 def test_invalid_stage_error_message_lists_the_unknown_names_sorted() -> None:

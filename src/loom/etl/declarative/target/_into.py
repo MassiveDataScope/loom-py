@@ -95,8 +95,10 @@ class IntoTable:
         Args:
             schema:    Schema evolution strategy.  Defaults to
                        :attr:`~SchemaMode.STRICT`.
-            streaming: When ``True`` the Polars backend writes via an Arrow
-                       ``RecordBatchReader`` instead of materialising.
+            streaming: Kept on the :class:`AppendSpec`; an append does not
+                       read it.  The Polars backend collects the frame with
+                       the streaming engine when the step sets
+                       ``streaming = True``.
 
         Returns:
             New ``IntoTable`` with APPEND mode.
