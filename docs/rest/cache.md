@@ -115,14 +115,16 @@ silently disabled every override is the failure mode this guards against.
 
 ## What is cached, what invalidates it
 
-Two kinds of entry are stored on the data alias:
+Three kinds of entry are stored on the data alias:
 
-- **Entity reads** — `get_by_id` and every `@cache_query(scope="entity")`
-  method — keyed on the entity name, the id and a fingerprint of their tags.
-- **List indexes** — the paginated and cursor reads and every
-  `@cache_query(scope="list")` method — an index of ids plus the entities of
-  the page, so a warm index reloads only the rows it is missing, with one
-  `<primary key> IN (...)` query.
+- **Entity reads** — `get_by_id` — keyed on the entity name, the id and a
+  fingerprint of their tags.
+- **List indexes** — the paginated and cursor reads — an index of ids plus the
+  entities of the page, so a warm index reloads only the rows it is missing,
+  with one `<primary key> IN (...)` query.
+- **Custom reads** — every `@cache_query` method — the method's encoded result,
+  keyed on the method name, a hash of its arguments and a fingerprint of its
+  tags; `scope="entity"` or `scope="list"` chooses those tags and the TTL.
 
 Every entry lists the tags it depends on; the counters alias holds one
 generation counter per tag (`tag:<name>`), and an entry whose fingerprint no
