@@ -970,8 +970,6 @@ class TestWithAsyncBatch:
     [
         (_UpperRecordStep(), "ABC"),
         (_UpperBatchStep(), "ABC"),
-        (IntoTopic("orders.out", payload=_Payload), "abc"),
-        (Drain(), "abc"),
     ],
 )
 def test_execute_router_node_supports_allowed_branch_nodes(
@@ -987,8 +985,7 @@ def test_apply_broadcast_increments_commit_tracker_for_fanout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tracker = _CommitTracker()
-    wire_process_calls: list[tuple[object, tuple[object, ...], tuple[int, ...]]] = []
-    terminal_calls: list[tuple[object, object, object]] = []
+    branch_calls: list[tuple[str, object, tuple[object, ...], tuple[int, ...]]] = []
 
     def _bw_map(step_id: str, stream: object, fn: Callable[[object], object]) -> object:
         assert step_id == "1_broadcast_5_fanout"
@@ -997,14 +994,10 @@ def test_apply_broadcast_increments_commit_tracker_for_fanout(
         assert _message_payload(cast(Message[_Payload], result)).value == "abc"
         return "tracked-stream"
 
-    def _wire_process(
-        stream: object,
-        nodes: tuple[object, ...],
-        *,
-        path_prefix: tuple[int, ...] = (),
-    ) -> object:
-        wire_process_calls.append((stream, nodes, path_prefix))
-        return f"wired-{path_prefix}"
+    def _wire_branch(
+        step_id: str, stream: object, nodes: tuple[object, ...], path: tuple[int, ...]
+    ) -> None:
+        branch_calls.append((step_id, stream, nodes, path))
 
     monkeypatch.setattr(_routing, "bw_map", _bw_map)
 
@@ -1021,21 +1014,18 @@ def test_apply_broadcast_increments_commit_tracker_for_fanout(
     ctx: Any = SimpleNamespace(
         current_path=(1,),
         commit_tracker=tracker,
-        wire_process=_wire_process,
-        wire_branch_terminal=_record_branch_terminal(terminal_calls),
+        wire_branch=_wire_branch,
     )
 
     result = _routing._apply_broadcast("input-stream", node, 5, ctx)
 
-    assert result == "tracked-stream"
+    assert result is None, "a Broadcast ends the path; each route's stream ends on its own"
     assert tracker.forks == [("t", 0, 0, 1)]
-    assert [call[0] for call in wire_process_calls] == ["tracked-stream", "tracked-stream"]
-    assert [call[2] for call in wire_process_calls] == [(1, 0), (1, 1)]
-    assert all(len(call[1]) == 1 and isinstance(call[1][0], Drain) for call in wire_process_calls)
-    assert terminal_calls == [
-        ("broadcast_5_out_0", "wired-(1, 0)", (1, 0)),
-        ("broadcast_5_out_1", "wired-(1, 1)", (1, 1)),
+    assert [(call[0], call[1], call[3]) for call in branch_calls] == [
+        ("broadcast_5_out_0", "tracked-stream", (1, 0)),
+        ("broadcast_5_out_1", "tracked-stream", (1, 1)),
     ]
+    assert all(len(call[2]) == 1 and isinstance(call[2][0], Drain) for call in branch_calls)
 
 
 def test_apply_drain_completes_commit_tracker(
@@ -1058,17 +1048,8 @@ def test_apply_drain_completes_commit_tracker(
         cast(Any, SimpleNamespace(current_path=(), commit_tracker=tracker)),
     )
 
-    assert result == "dropped-stream"
+    assert result is None, "a Drain ends the path; nothing continues after it"
     assert tracker.completes == [("t", 0, 0)]
-
-
-def _record_branch_terminal(
-    calls: list[tuple[object, object, object]],
-) -> Callable[[object, object, object], None]:
-    def _record(step_id: object, stream: object, path: object) -> None:
-        calls.append((step_id, stream, path))
-
-    return _record
 
 
 def _message_payload(message: Message[StreamPayload]) -> _Payload:

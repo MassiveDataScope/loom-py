@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep, time_ns
 from typing import Any, Generic, TypeAlias, TypeVar, cast
@@ -20,11 +20,6 @@ from loom.core.observability.span import LoomSpan
 from loom.core.tracing import generate_trace_id
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort, KafkaCommitTracker
-from loom.streaming.bytewax._dlq import (
-    send_batch_to_dlq,
-    send_decode_error_batch_to_dlq,
-    send_error_batch_to_dlq,
-)
 from loom.streaming.compiler._plan import (
     CompiledMongoCDCSource,
     CompiledMultiSource,
@@ -75,15 +70,19 @@ class _KafkaSendRequest(Generic[PayloadT]):
     produced_at_ms: int | None
 
 
+_DlqLineage: TypeAlias = Callable[[ItemT, _KafkaSendRequest[PayloadT]], _KafkaSendRequest[PayloadT]]
+"""Adjusts the trace lineage of one DLQ record derived from the sink's send request."""
+
+
 @dataclass(frozen=True, slots=True)
 class _BatchOutcome:
     """How one Kafka batch write ended, for the two exits that return normally.
 
     A delivery failure diverted to a DLQ topic returns exactly like a delivered
-    batch: it commits and raises nothing. The return value is therefore the only
-    thing that lets a caller above ``_write_kafka_batch`` tell the two apart —
-    and a diversion is a failure, because ``send_batch_to_dlq`` never flushes
-    and swallows per-item failures, so the DLQ landing is unverified here.
+    batch once the DLQ topic has received every record: it commits and raises
+    nothing. The return value is therefore the only thing that lets a caller
+    above ``_write_kafka_batch`` tell the two apart — and a diversion is a
+    failure, because the batch never reached its outbound topic.
 
     Args:
         error: Delivery failure that caused the diversion, or ``None`` when the
@@ -107,36 +106,65 @@ def _write_kafka_batch(
     items: list[ItemT],
     item_to_send: Callable[[ItemT], _KafkaSendRequest[PayloadT]],
     item_to_commit: Callable[[ItemT], tuple[str | None, int | None, int | None]] | None,
-    dlq_sender: Callable[
-        [KafkaMessageProducer[PayloadT], str, list[ItemT], KafkaDeliveryError], None
-    ]
-    | None,
     commit_tracker: CommitCompletionPort | None,
+    dlq_lineage: _DlqLineage[ItemT, PayloadT] | None = None,
 ) -> _BatchOutcome:
     try:
         for item in items:
-            request = item_to_send(item)
-            message_producer.send(
-                topic=sink.topic,
-                payload=request.payload,
-                descriptor=request.descriptor,
-                key=request.key,
-                headers=request.headers,
-                correlation_id=request.correlation_id,
-                parent_trace_id=request.parent_trace_id,
-                causation_id=request.causation_id,
-                trace_id=request.trace_id,
-                produced_at_ms=request.produced_at_ms,
-            )
+            _send_request(message_producer, sink.topic, item_to_send(item))
         producer.flush()
         _commit_runtime_items(items, item_to_commit, commit_tracker)
     except KafkaDeliveryError as exc:
-        if sink.dlq_topic is not None and dlq_sender is not None:
-            dlq_sender(message_producer, sink.dlq_topic, items, exc)
-            _commit_runtime_items(items, item_to_commit, commit_tracker)
-            return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
-        raise
+        if sink.dlq_topic is None:
+            raise
+        dlq_error = str(exc).encode("utf-8")
+        try:
+            for item in items:
+                request = item_to_send(item)
+                if dlq_lineage is not None:
+                    request = dlq_lineage(item, request)
+                headers = {**request.headers, "x-dlq-error": dlq_error}
+                _send_request(message_producer, sink.dlq_topic, replace(request, headers=headers))
+            producer.flush()
+        except KafkaDeliveryError as dlq_exc:
+            raise KafkaDeliveryError(
+                f"delivery failed after diverting the batch to DLQ topic {sink.dlq_topic!r} "
+                f"(sink delivery error: {exc})"
+            ) from dlq_exc
+        _commit_runtime_items(items, item_to_commit, commit_tracker)
+        return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
     return _DELIVERED
+
+
+def _send_request(
+    message_producer: KafkaMessageProducer[PayloadT],
+    topic: str,
+    request: _KafkaSendRequest[PayloadT],
+) -> None:
+    message_producer.send(
+        topic=topic,
+        payload=request.payload,
+        descriptor=request.descriptor,
+        key=request.key,
+        headers=request.headers,
+        correlation_id=request.correlation_id,
+        parent_trace_id=request.parent_trace_id,
+        causation_id=request.causation_id,
+        trace_id=request.trace_id,
+        produced_at_ms=request.produced_at_ms,
+    )
+
+
+def _keep_message_lineage(
+    message: Message[StreamPayload],
+    request: _KafkaSendRequest[StreamPayload],
+) -> _KafkaSendRequest[StreamPayload]:
+    """Keep the failed message's own trace on its DLQ record instead of a child trace."""
+    return replace(
+        request,
+        trace_id=message.meta.trace_id,
+        parent_trace_id=message.meta.parent_trace_id,
+    )
 
 
 def _commit_runtime_items(
@@ -460,7 +488,8 @@ class _KafkaMessageSinkPartition(
             The outcome of the write.
 
         Raises:
-            KafkaDeliveryError: If delivery failed and no DLQ topic is declared.
+            KafkaDeliveryError: If delivery failed and either no DLQ topic is
+                declared or the DLQ topic did not receive every record.
         """
         return _write_kafka_batch(
             sink=self._sink,
@@ -469,8 +498,8 @@ class _KafkaMessageSinkPartition(
             items=items,
             item_to_send=lambda msg: _message_to_send_with_policy(msg, self._sink.partition_policy),
             item_to_commit=_message_to_commit,
-            dlq_sender=send_batch_to_dlq,
             commit_tracker=self._commit_tracker,
+            dlq_lineage=_keep_message_lineage,
         )
 
 
@@ -479,8 +508,8 @@ class _TerminalTracing:
     """Everything the terminal span of an outbound-topic write needs.
 
     Bound once, at wiring time, by the adapter sites that run only for a real
-    terminal — never for the inline ``WithAsync`` sink, whose messages go on
-    living.
+    terminal — never for an inline ``With`` or ``WithAsync`` write, whose
+    messages go on living.
 
     Args:
         observer: Runtime the terminal and batch spans are opened on.
@@ -542,8 +571,8 @@ class _TracedMessageSinkPartition(StatelessSinkPartition[Message[StreamPayload]]
         """Write the batch, then close every message's trace with its death.
 
         Empty epochs are forwarded without a span, so an idle flow emits
-        nothing. A batch diverted to a DLQ closes *failed*: the diversion never
-        flushed, so the landing is unverified at span-close time.
+        nothing. A batch diverted to a DLQ closes *failed*: it never reached
+        its outbound topic.
 
         Args:
             items: Messages Bytewax delivered for the current epoch.
@@ -631,7 +660,6 @@ class _KafkaErrorEnvelopeSinkPartition(
                 envelope, self._sink.partition_policy
             ),
             item_to_commit=_error_item_to_commit,
-            dlq_sender=send_error_batch_to_dlq,
             commit_tracker=self._commit_tracker,
         )
 
@@ -649,7 +677,6 @@ class _KafkaDecodeErrorSinkPartition(_KafkaSinkPartitionBase, StatelessSinkParti
             items=items,
             item_to_send=lambda error: _decode_error_to_send(error, self._sink.partition_policy),
             item_to_commit=_decode_error_to_commit,
-            dlq_sender=send_decode_error_batch_to_dlq,
             commit_tracker=self._commit_tracker,
         )
 
@@ -672,7 +699,7 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
     Terminal tracing is optional and off by default. The adapter binds it only
     at the wiring sites that run for a real terminal, so this sink is the only
     one that can emit a death span: the error sinks structurally cannot receive
-    the binding, and an inline ``WithAsync`` sink is refused it.
+    the binding, and :meth:`build_inline_partition` never applies it.
 
     Args:
         sink: Compiled Kafka sink configuration.
@@ -681,7 +708,6 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
     def __init__(self, sink: CompiledSink) -> None:
         super().__init__(sink)
         self._terminal_tracing: _TerminalTracing | None = None
-        self._built_inline_partition = False
 
     def bind_terminal_tracing(
         self,
@@ -695,38 +721,18 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
             observer: Runtime the terminal and batch spans are opened on.
             flow: Name of the enclosing flow.
             flow_run_id: Identifier of the flow run.
-
-        Raises:
-            RuntimeError: If an inline ``WithAsync`` partition was already built
-                from this sink, which would make it report a death that a still
-                living message never had.
         """
-        if self._built_inline_partition:
-            raise RuntimeError(
-                f"cannot bind terminal tracing to the sink for topic '{self._sink.topic}': "
-                "an inline WithAsync partition was already built from it. A message written "
-                "by an inline IntoTopic goes on living, so a terminal span there would "
-                "report a death that never happened."
-            )
         self._terminal_tracing = _TerminalTracing(
             observer=observer, flow=flow, flow_run_id=flow_run_id
         )
 
-    def mark_inline_partition(self) -> None:
-        """Record that an inline, non-terminal partition is built from this sink.
+    def build_inline_partition(self) -> _KafkaMessageSinkPartition:
+        """Build a partition for an inline write: no commit tracker, no terminal tracing.
 
-        Raises:
-            RuntimeError: If terminal tracing is already bound. Nothing fixes
-                the order the two wiring sites run in, so the collision is
-                refused from both directions.
+        The message goes on after an inline write, so the write neither completes
+        its offset nor records its death.
         """
-        if self._terminal_tracing is not None:
-            raise RuntimeError(
-                f"cannot build an inline WithAsync partition from the sink for topic "
-                f"'{self._sink.topic}': terminal tracing is already bound to it, so the "
-                "inline and terminal wiring paths collided on one compiled sink."
-            )
-        self._built_inline_partition = True
+        return _KafkaMessageSinkPartition(self._sink, None)
 
     def build(
         self,
@@ -831,26 +837,6 @@ def build_runtime_terminal_sinks(
 ) -> dict[tuple[int, ...], _KafkaMessageSink]:
     """Build runtime sinks for terminal branch outputs."""
     return {path: build_runtime_sink(sink, commit_tracker) for path, sink in terminal_sinks.items()}
-
-
-def build_inline_sink_partition(
-    sink: CompiledSink,
-    commit_tracker: CommitCompletionPort | None = None,
-) -> _KafkaMessageSinkPartition:
-    """Build a sink partition for direct (non-Bytewax-graph) message writing.
-
-    Used by ``WithAsync(process=...)`` to write messages directly to Kafka
-    from within the async concurrent execution, bypassing the Bytewax output
-    wiring layer.
-
-    Args:
-        sink: Compiled Kafka sink configuration.
-        commit_tracker: Optional commit tracker for manual offset acknowledgment.
-
-    Returns:
-        A ready-to-write sink partition.
-    """
-    return _KafkaMessageSinkPartition(sink, commit_tracker)
 
 
 def build_commit_tracker(source: CompiledSource) -> KafkaCommitTracker | None:

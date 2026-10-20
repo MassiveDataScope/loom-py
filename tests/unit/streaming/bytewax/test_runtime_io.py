@@ -18,7 +18,6 @@ from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka import MsgspecCodec  # noqa: E402
-from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from loom.streaming.kafka._wire import DecodeError  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
@@ -374,23 +373,6 @@ class TestRuntimeIOBuilders:
         tracker.complete("orders.in", 2, 9)
         with pytest.raises(RuntimeError, match="commit-boom"):
             tracker.flush_partition("orders.in", 2)
-
-    def test_build_inline_sink_partition_can_write_dlq_payloads(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        fake_raw = RawProducerStub()
-        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
-        fake_raw.flush_error = KafkaDeliveryError("broker unavailable")
-
-        partition = _runtime_io.build_inline_sink_partition(
-            build_compiled_sink(dlq_topic="orders.dlq"),
-        )
-        partition.write_batch([build_order_message("123", None)])
-
-        topics = [record.topic for record in fake_raw.sent]
-        assert "orders.out" in topics
-        assert "orders.dlq" in topics
 
     def test_branch_terminal_without_sink_falls_back_to_a_drop_sink(
         self,

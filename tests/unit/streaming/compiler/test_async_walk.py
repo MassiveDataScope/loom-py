@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -27,25 +27,30 @@ from loom.streaming.compiler import compile_flow
 from tests.unit.streaming.compiler.cases import Order, Result
 
 
-def _flow_with_async_inside_router() -> StreamFlow[Order, Result]:
+def _flow_with_sqlalchemy_into_table_inside_router() -> StreamFlow[Order, Result]:
+    into_table: Any = IntoTable(
+        payload=Result,
+        table="results",
+        backend=Backend.SQLALCHEMY,
+        name="results_sink",
+    )
     return StreamFlow(
         name="test_async_in_router",
         source=FromTopic("in", payload=Order),
         process=Process(
             Router.when(
-                routes=[
-                    Route(
-                        when=msg.payload.order_id != "",
-                        process=Process(
-                            WithAsync(
-                                process=Process(IntoTopic("out", payload=Result)),
-                            ),
-                        ),
-                    )
-                ],
+                routes=[Route(when=msg.payload.order_id != "", process=Process(into_table))],
             )
         ),
     )
+
+
+def _with_results_sink(config: DictConfig) -> ConfigContext:
+    merged = OmegaConf.merge(
+        config,
+        OmegaConf.create({"streaming": {"sinks": {"results_sink": {"url": "sqlite:///:memory:"}}}}),
+    )
+    return ConfigContext(cast(DictConfig, merged))
 
 
 def _flow_with_sqlalchemy_into_table() -> StreamFlow[Order, Result]:
@@ -63,12 +68,12 @@ def _flow_with_sqlalchemy_into_table() -> StreamFlow[Order, Result]:
 
 
 class TestAsyncBridgeDetection:
-    def test_needs_async_bridge_is_true_when_with_async_is_inside_router(
+    def test_needs_async_bridge_is_true_when_sqlalchemy_into_table_is_inside_router(
         self,
         streaming_kafka_config: DictConfig,
     ) -> None:
-        flow = _flow_with_async_inside_router()
-        plan = compile_flow(flow, config=ConfigContext(streaming_kafka_config))
+        flow = _flow_with_sqlalchemy_into_table_inside_router()
+        plan = compile_flow(flow, config=_with_results_sink(streaming_kafka_config))
 
         assert plan.needs_async_bridge is True
 

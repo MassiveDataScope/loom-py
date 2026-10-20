@@ -3,6 +3,20 @@
 Translates a :class:`CompiledPlan` into a Bytewax :class:`Dataflow`,
 wiring decode, node dispatch, encode, and output routing operators.
 
+Offset completion invariant: for every flow that compiles, each source offset,
+or each share of it a fan-out node forked, completes exactly once, at the end
+of the path it travels and after that path's last durable write. A node
+handler returns the stream that is still live after it, or ``None`` when it
+closed every path it received. ``IntoTopic`` ends its
+path at its compiled sink through :meth:`_BuildContext.wire_branch_terminal`.
+A branching node wires each branch through :meth:`_BuildContext.wire_branch`,
+which hands the branch's live end to ``wire_branch_terminal``: the sink
+compiled for the branch, else a drop sink. The flow's own live end goes
+through :meth:`_BuildContext.wire_flow_output`: the flow output, else a drop
+sink. A Bytewax output has no downstream, so no completion relies on the order
+of sibling operators: it happens inside the sink that writes, or downstream of
+an inline write.
+
 Requires ``bytewax`` to be installed.
 """
 
@@ -63,11 +77,13 @@ class _BuiltDataflow:
 
 
 class _DropSinkPartition(StatelessSinkPartition[Any]):
-    """Discard items routed to an unrouted error branch.
+    """Discard the items of a path that ends without a sink.
 
-    Discarding still completes each record with the commit tracker: a dropped
-    message that never completes would freeze its partition's watermark under
-    at-least-once delivery.
+    Such a path is an error kind with no route, a branch or flow end that owns
+    no output, or an undecodable record with no WIRE route. Discarding still
+    completes each record with the commit tracker: a dropped message that never
+    completes would freeze its partition's watermark under at-least-once
+    delivery.
     """
 
     def __init__(self, commit_tracker: CommitCompletionPort | None = None) -> None:
@@ -83,7 +99,7 @@ class _DropSinkPartition(StatelessSinkPartition[Any]):
 
 
 class _DropSink(DynamicSink[Any]):
-    """Build a tracker-aware discard sink for unrouted error branches."""
+    """Build the tracker-aware discard sink for a path that ends without a sink."""
 
     def __init__(self, commit_tracker: CommitCompletionPort | None = None) -> None:
         self._commit_tracker = commit_tracker
@@ -182,18 +198,14 @@ class _SupportsTerminalTracing(Protocol):
     ) -> None:
         """Make this sink emit a terminal span per message it writes."""
 
-    def mark_inline_partition(self) -> None:
-        """Record that an inline, non-terminal partition is built from this sink."""
 
+@runtime_checkable
+class _SupportsInlinePartition(Protocol):
+    """Runtime sink that can build a partition for an inline, non-terminal write."""
 
-def _mark_inline_partition(sink: object) -> None:
-    """Record on one sink that an inline, non-terminal partition is built from it.
-
-    Sinks that cannot carry terminal tracing — storage sinks, test doubles —
-    have nothing to record and are left untouched.
-    """
-    if isinstance(sink, _SupportsTerminalTracing):
-        sink.mark_inline_partition()
+    def build_inline_partition(self) -> StatelessSinkPartition[Any]:
+        """Build a partition that completes no offset and records no death."""
+        ...
 
 
 def _bind_commit_tracker_object(
@@ -235,8 +247,10 @@ def _assemble_dataflow(plan: CompiledPlan, ctx: _BuildContext) -> Any:
     flow = _bytewax_dataflow.Dataflow(plan.name)
     stream = _build_source_pipeline(flow, ctx)
     stream = _wire_process(stream, tuple(node.node for node in plan.nodes), ctx)
-
-    _wire_output(stream, ctx)
+    ctx.wire_flow_output(stream)
+    for kind in plan.error_routes:
+        if kind not in ctx.error_sinks:
+            raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
     return flow
 
 
@@ -281,43 +295,66 @@ class _BuildContext:
         self.resource_manager = ResourceManager(bridge)
         self._path: tuple[int, ...] = ()
 
-    def wire_terminal(self, step_id: str, stream: Any) -> None:
-        if self.sink is None:
-            raise RuntimeError("Bytewax sink is required for terminal output wiring.")
-        self._bind_terminal_tracing(self.sink)
-        bw_output(step_id, stream, self.sink)
+    def wire_branch(
+        self,
+        step_id: str,
+        stream: Any,
+        nodes: tuple[object, ...],
+        path: tuple[int, ...],
+        *,
+        start: int = 0,
+    ) -> None:
+        """Wire one branch's *nodes* from index *start* under *path*; end what stays live."""
+        tail = _wire_process(stream, nodes, self, path_prefix=path, start=start)
+        self.wire_branch_terminal(step_id, tail, path)
 
-    def wire_branch_terminal(self, step_id: str, stream: Any, path: tuple[int, ...]) -> None:
-        sink = self.terminal_sinks.get(path)
+    def wire_branch_terminal(self, step_id: str, stream: Any | None, path: tuple[int, ...]) -> None:
+        """End one branch's live stream at the sink compiled for *path*, else a drop sink.
+
+        ``None`` means the branch already ended in a sink, which completes what
+        it writes; wiring anything more would complete those offsets twice.
+        """
+        sink = self._runtime_sink_for(path)
+        if stream is None:
+            if sink is not None:
+                raise RuntimeError(
+                    f"the output compiled for path {path} is never written: the branch "
+                    "already ended the path of every message it received."
+                )
+            return
         if sink is not None:
             self._bind_terminal_tracing(sink)
             bw_output(_qualified_step_id(step_id, path), stream, sink)
             return
-        # A branch without a terminal still owes its record a completion: the
-        # broadcast that created it already forked the offset once per branch.
-        # Discarding the stream silently left that fork outstanding forever and
-        # froze the partition's watermark. Unrouted error branches already fall
-        # back to a drop sink for exactly this reason; branches now do too.
-        logger.warning(
-            "unrouted_branch_drop_sink",
-            flow=self.plan.name,
-            step_id=step_id,
-            path=path,
-        )
+        # A live branch end with no sink still owes each record a completion;
+        # discarding it would leave the offset, or its fork share, outstanding
+        # and freeze the partition's watermark.
         bw_output(
             _qualified_step_id(f"{step_id}_dropped", path),
             stream,
             _DropSink(self.commit_tracker),
         )
 
+    def _runtime_sink_for(self, path: tuple[int, ...]) -> Any | None:
+        """Return the runtime sink for *path*, or ``None`` when nothing was compiled there.
+
+        Raises:
+            RuntimeConfigurationError: If an ``IntoTopic`` was compiled at *path*
+                but no runtime sink was supplied for it.
+        """
+        sink = self.terminal_sinks.get(path)
+        compiled = self.plan.terminal_sinks.get(path)
+        if sink is None and compiled is not None:
+            issue = StreamingErrorCode.TERMINAL_SINK_MISSING.issue(path=path, topic=compiled.topic)
+            raise RuntimeConfigurationError([issue])
+        return sink
+
     def _bind_terminal_tracing(self, sink: Any) -> None:
         """Give one real terminal sink the runtime its death spans open on.
 
         Called only from the two wiring sites that run for a genuine terminal.
-        ``_BuildContext.inline_sink_partition_for`` builds from the *same*
-        ``terminal_sinks`` mapping for ``WithAsync(process=[..., IntoTopic])``,
-        where the message explicitly does not die; binding any earlier would
-        emit a death span for a message that goes on living.
+        An inline partition comes from ``build_inline_partition``, which never
+        applies tracing, because the message goes on after an inline write.
 
         Sinks that cannot record a death — storage sinks, drop sinks, test
         doubles — are left untouched.
@@ -338,22 +375,26 @@ class _BuildContext:
         )
         bw_output(f"{step_id}_{kind.value}_dropped", stream, _DropSink(self.commit_tracker))
 
-    def wire_flow_output(self, stream: Any, plan: CompiledPlan) -> None:
-        if self.sink is None and plan.output is not None:
+    def wire_flow_output(self, stream: Any | None) -> None:
+        """End the flow's live stream at the output sink, else complete it at a drop sink."""
+        if self.sink is None and self.plan.output is not None:
             raise RuntimeError("Bytewax sink is required for terminal output wiring.")
-        if self.sink is not None:
-            self.wire_terminal("output", stream)
-        for kind in plan.error_routes:
-            if kind not in self.error_sinks:
-                raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
+        if stream is None and self.plan.output is not None:
+            raise RuntimeError(
+                "flow.output is never written: the process already ended the path of every "
+                "message it received."
+            )
+        if stream is not None and self.sink is not None:
+            self._bind_terminal_tracing(self.sink)
+            bw_output("output", stream, self.sink)
+        elif stream is not None:
+            bw_output("output_dropped", stream, _DropSink(self.commit_tracker))
 
-    def wire_decode_error(self, stream: Any, plan: CompiledPlan) -> None:
-        del plan
-        if self.error_sinks.get(ErrorKind.WIRE) is not None:
-            self.wire_node_error(ErrorKind.WIRE, "decode", stream)
-            return
-        if ErrorKind.WIRE in self.plan.error_routes:
+    def wire_decode_error(self, stream: Any) -> None:
+        """Route undecodable records to the WIRE error sink, else complete them at a drop sink."""
+        if ErrorKind.WIRE in self.plan.error_routes and ErrorKind.WIRE not in self.error_sinks:
             raise RuntimeError("Bytewax sink is required for WIRE error routing.")
+        self.wire_node_error(ErrorKind.WIRE, "decode", stream)
 
     def inline_sink_partition_for(
         self,
@@ -373,16 +414,27 @@ class _BuildContext:
             sink is registered for *path*.
 
         Raises:
-            RuntimeError: If the sink for *path* already carries terminal
-                tracing, meaning an inline and a terminal wiring path collided
-                on one compiled sink.
+            RuntimeConfigurationError: If an ``IntoTopic`` was compiled at *path*
+                but no runtime sink was supplied for it
+                (``TERMINAL_SINK_MISSING``), or if a commit tracker is bound and
+                the sink cannot build an inline partition, so its partitions
+                would complete offsets at the inline write
+                (``INLINE_SINK_CANNOT_SKIP_COMMITS``).
         """
-        sink = self.terminal_sinks.get(path)
+        sink = self._runtime_sink_for(path)
         if sink is None:
             return None
-        _mark_inline_partition(sink)
-        step_id = "inline_" + "_".join(str(p) for p in path)
-        return cast(StatelessSinkPartition[Any], sink.build(step_id, 0, 1))
+        if isinstance(sink, _SupportsInlinePartition):
+            return sink.build_inline_partition()
+        if self.commit_tracker is not None:
+            issue = StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS.issue(
+                component=type(sink).__name__
+            )
+            raise RuntimeConfigurationError([issue])
+        partition: StatelessSinkPartition[Any] = sink.build(
+            "inline_" + "_".join(str(p) for p in path), 0, 1
+        )
+        return partition
 
     def manager_for(
         self,
@@ -411,16 +463,6 @@ class _BuildContext:
         finally:
             self._path = previous
 
-    def wire_process(
-        self,
-        stream: Any,
-        nodes: tuple[object, ...],
-        *,
-        path_prefix: tuple[int, ...] = (),
-    ) -> Any:
-        """Wire one nested process subtree."""
-        return _wire_process(stream, nodes, self, path_prefix=path_prefix)
-
     def shutdown_all(self) -> None:
         """Shutdown all resource managers."""
         self.resource_manager.shutdown_all()
@@ -442,7 +484,7 @@ def _build_source_pipeline(flow: Any, ctx: _BuildContext) -> Stream:
     stream: Stream = bw_input("source", flow, source)
     decoded = _decode_source_stream(stream, ctx, codec, step_id)
     decoded_branch = _split_decode_results(decoded, step_id)
-    ctx.wire_decode_error(decoded_branch.falses, ctx.plan)
+    ctx.wire_decode_error(decoded_branch.falses)
     return bw_map(f"{step_id}_message", decoded_branch.trues, _decode_ok_message)
 
 
@@ -459,11 +501,6 @@ def _decode_source_stream(
 def _split_decode_results(stream: Stream, step_id: str) -> Any:
     """Split decode results into successful messages and wire errors."""
     return branch(f"{step_id}_is_ok", stream, _is_decode_ok)
-
-
-def _wire_output(stream: Any, ctx: _BuildContext) -> None:
-    """Wire the output sink and error routes."""
-    ctx.wire_flow_output(stream, ctx.plan)
 
 
 def _qualified_step_id(step_id: str, path: tuple[int, ...]) -> str:

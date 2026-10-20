@@ -20,7 +20,12 @@ from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import ConsumerSettings, KafkaSettings
 from loom.streaming.mongo import MongoConfig
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
-from loom.streaming.nodes._branches import is_branching_node, iter_branches
+from loom.streaming.nodes._branches import (
+    PATH_END_NODE_TYPES,
+    is_branching_node,
+    iter_branches,
+    router_ends_every_path,
+)
 from loom.streaming.nodes._broadcast import Broadcast
 from loom.streaming.nodes._capabilities import RouterBranchSafe
 from loom.streaming.nodes._decompose import Explode
@@ -130,6 +135,10 @@ def validate_outputs(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
     if flow.output is not None and _contains_broadcast(flow.process.nodes):
         errors.append(StreamingErrorCode.OUTPUT_WITH_BROADCAST.issue())
 
+    last = _path_end(flow.process.nodes)
+    if flow.output is not None and last is not None and not isinstance(last, (Broadcast, Fork)):
+        errors.append(StreamingErrorCode.OUTPUT_AFTER_PATH_END.issue(node=type(last).__name__))
+
     if not has_terminal:
         errors.append(StreamingErrorCode.MISSING_TERMINAL_OUTPUT.issue())
 
@@ -157,7 +166,7 @@ def _resolve_consumer_settings(
 
 
 def _unrouted_fork_issues(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
-    """Report terminal forks whose unmatched stream would drop without completing."""
+    """Report forks whose unmatched messages would be committed without being written."""
     issues: list[CompilationIssue] = []
     for node in _walk_all_process_nodes(flow.process.nodes):
         if isinstance(node, Fork) and node.default is None:
@@ -342,6 +351,10 @@ def _validate_shape_node(
         return _validate_expand_routes_node(node, idx, node_list)
     if isinstance(node, Router):
         router_errors, next_shape = _validate_router_shapes(node, current_shape)
+        if router_ends_every_path(node):
+            not_last = StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
+            router_errors.extend(_must_be_last_errors(idx, node_list, not_last))
+            return router_errors, StreamShape.NONE, True
         return router_errors, next_shape, False
     return [], _node_output_shape(node, current_shape), False
 
@@ -461,6 +474,13 @@ def _validate_broadcast_shapes(
         errors.extend(
             _prefixed(issue, f"broadcast branch {branch.label}") for issue in branch_errors
         )
+        last = _path_end(branch.nodes)
+        if branch.output is not None and last is not None:
+            errors.append(
+                StreamingErrorCode.BROADCAST_OUTPUT_AFTER_PATH_END.issue(
+                    label=branch.label, node=type(last).__name__
+                )
+            )
     return errors, StreamShape.NONE
 
 
@@ -540,7 +560,25 @@ def _is_leaf_terminal(node: object) -> bool:
     ``Broadcast`` has branches, but they need not reach an output; the shape
     validators check ``Broadcast`` before this, to validate those branches.
     """
-    return isinstance(node, (IntoTopic, Drain, IntoSink, Broadcast))
+    return isinstance(node, PATH_END_NODE_TYPES)
+
+
+def _path_end(nodes: tuple[object, ...]) -> object | None:
+    """Return the last of *nodes* when it ends the path of every message it receives.
+
+    Nothing runs after such a node, so an output declared after it is never written.
+    A Fork ends the path only with a default branch; without one, the messages no
+    branch claims go on. A Router ends it only with a default branch and when every
+    branch ends in a path-ending node; otherwise some messages continue after it.
+    """
+    last = nodes[-1] if nodes else None
+    if _is_leaf_terminal(last) or isinstance(last, ExpandRoutes):
+        return last
+    if isinstance(last, Fork) and last.default is not None:
+        return last
+    if isinstance(last, Router) and router_ends_every_path(last):
+        return last
+    return None
 
 
 def _node_has_terminal_output(node: object) -> bool:

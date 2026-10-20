@@ -19,7 +19,7 @@ from loom.streaming.bytewax._error_boundary import (
     _build_error_envelope,
     _classify_task,
     _execute_batch_in_boundary,
-    _split_batch_node_result,
+    _split_node_result,
 )
 from loom.streaming.bytewax._operators import ResourceLifecycle
 from loom.streaming.bytewax.handlers._shared import (
@@ -62,8 +62,8 @@ def _apply_with(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
     boundary = ErrorBoundary(observer=observer, flow=flow_name)
     inner_steps, sink_partition = _resolve_inner_process(node, ctx)
 
-    def step(batch: list[Any]) -> list[Any]:
-        messages = _messages_from_batch(batch)
+    def step(msg: Any) -> list[Any]:
+        messages = _messages_from_batch(msg) if isinstance(msg, list) else [_require_message(msg)]
         return _execute_batch_in_boundary(
             _classify_task,
             messages,
@@ -81,10 +81,9 @@ def _apply_with(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtoco
             boundary,
         )
 
-    mapped = bw_map(_step_id(f"with_{idx}", ctx), stream, step)
-    return _split_batch_node_result(
-        mapped, _step_id(f"with_{idx}_{node_type}", ctx), ctx, ErrorKind.TASK
-    )
+    sid = _step_id(f"with_{idx}", ctx)
+    flat = flat_map(f"{sid}_flat", bw_map(sid, stream, step), _identity)
+    return _split_node_result(flat, _step_id(f"with_{idx}_{node_type}", ctx), ctx, ErrorKind.TASK)
 
 
 def _apply_with_async(
@@ -196,12 +195,9 @@ async def _execute_inner_process(
         current = _replace_payload(current, result)
     if sink_partition is not None:
         sink_partition.write_batch([current])
-    # Deliberately no tracker.complete() here. The message is returned into the
-    # stream and continues to its real terminal, which is what completes the
-    # offset. Completing at an inline sink released the record while it was
-    # still in flight — a data-loss window on any intermediate WithAsync. The
-    # synchronous sibling (_execute_with_step) never completed either; this
-    # removes the asymmetry.
+    # No offset completes here: an inline partition is built without the commit
+    # tracker. The message is returned into the stream and completes where its
+    # path ends, after this write.
     return current
 
 

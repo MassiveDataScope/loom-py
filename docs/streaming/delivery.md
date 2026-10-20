@@ -32,8 +32,9 @@ kafka:
 Under `at_least_once` two structural rules are enforced at compile/startup:
 
 - A terminal `Fork` must declare a `default` branch
-  (`FORK_UNMATCHED_UNROUTED`): unmatched messages that silently drop would
-  otherwise freeze the commit watermark. `default=Process(Drain())` is enough.
+  (`FORK_UNMATCHED_UNROUTED`): a message no branch claims would otherwise be
+  committed without being written anywhere. Add a default route that writes
+  it, or `default=Process(Drain())` to discard it explicitly.
 - Keyed nodes (`CollectBatch`) are rejected on a **multi-process** Bytewax
   cluster (`DELIVERY_KEYED_MULTIPROCESS`): keyed operators route records to a
   primary worker by key hash, which may be another process, where completions
@@ -55,8 +56,41 @@ can see.
   `ExpandRoutes`) declare the fan-out they actually produced, so an offset is
   committed only once *all* its outputs are written — and a record that
   produced nothing is released instead of stalling its partition.
-- A branch with no terminal sink drains through a drop sink that completes its
-  record, so an unfinished `Broadcast` branch cannot freeze commits.
+- A path ends in one place. A sink that ends it (`IntoTopic`, `IntoTable` or
+  any `IntoSink`, `Drain`) completes what it writes and nothing is wired after
+  it; a `Router` with a `default` whose branches all end that way ends every
+  path too, so it must be the last node of its process (`TERMINAL_NOT_LAST`).
+  A branch still live at its end goes to the sink compiled for it, such as
+  a Broadcast route's `output`, else to a drop sink that completes its record,
+  so an unfinished `Broadcast` route or `Fork` branch cannot freeze commits.
+  Only the flow's own live end goes to the flow `output`, else to a drop sink.
+- An output that nothing can reach fails compilation. A flow `output` after a
+  process that ends in `IntoTopic`, `IntoSink`, `Drain`, `ExpandRoutes`, or a
+  `Router` with a `default` whose branches all end, is `OUTPUT_AFTER_PATH_END`;
+  a Broadcast route `output` after such a process, or after a `Broadcast` or a
+  `Fork` with a `default`, is `BROADCAST_OUTPUT_AFTER_PATH_END`.
+- A `terminal_sinks` override must cover every compiled `IntoTopic` path,
+  inline ones included; a missing one is rejected at assembly
+  (`TERMINAL_SINK_MISSING`) instead of completing its messages unwritten.
+- A `Router` selects one branch per message and runs it inline, so the
+  messages that continue after it keep their source order. A branch that ends
+  in a sink hands the message to that sink at its compiled path; a message no
+  branch claims continues after the Router.
+- An inline `IntoTopic` inside `With(process=...)` or `WithAsync(process=...)`
+  completes nothing: the message goes on and completes where its path ends.
+  A caller-supplied sink written inline must expose `build_inline_partition()`,
+  or the flow is rejected at assembly (`INLINE_SINK_CANNOT_SKIP_COMMITS`).
+- A storage partition reports from `write_batch` and `close` how many buffered
+  events it made durable, and only those complete. Events still buffered when
+  a worker dies are consumed again, and after a failed write nothing more
+  completes. Bytewax calls `write_batch` only when items arrive, not on idle
+  epochs, so the buffer of an idle partition is checked against its thresholds
+  when the next item arrives and flushed at `close` at the latest; until then
+  its offsets stay uncommitted.
+- A Kafka sink batch whose delivery fails and whose `IntoTopic` declares a
+  `dlq` topic is sent to the DLQ topic and completes only once the producer
+  flushed it. A failed DLQ send or flush raises `KafkaDeliveryError` and
+  completes nothing, so the batch is consumed again.
 - Custom sinks must expose `bind_commit_tracker(tracker)`. A sink without it
   would never complete what it writes, so under `at_least_once` the flow is
   rejected at assembly with `RuntimeConfigurationError` naming the sink.

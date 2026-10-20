@@ -114,20 +114,22 @@ class _BuildContextProtocol(Protocol):
     flow_runtime: ObservabilityRuntime
     flow_run_id: str
 
-    def wire_terminal(self, step_id: str, stream: Stream) -> None:
-        """Wire one terminal output branch."""
+    def wire_branch(
+        self,
+        step_id: str,
+        stream: Stream,
+        nodes: tuple[object, ...],
+        path: tuple[int, ...],
+        *,
+        start: int = 0,
+    ) -> None:
+        """Wire one branch's nodes from index *start* under *path*; end what stays live."""
 
     def wire_branch_terminal(self, step_id: str, stream: Stream, path: tuple[int, ...]) -> None:
-        """Wire one branch terminal output branch."""
+        """End one live stream at the sink compiled for *path*, else a drop sink."""
 
     def wire_node_error(self, kind: ErrorKind, step_id: str, stream: Stream) -> None:
         """Wire one node error branch."""
-
-    def wire_flow_output(self, stream: Stream, plan: CompiledPlan) -> None:
-        """Wire flow-level outputs after the process completes."""
-
-    def wire_decode_error(self, stream: Stream, plan: CompiledPlan) -> None:
-        """Wire source decode errors."""
 
     @property
     def current_path(self) -> tuple[int, ...]:
@@ -159,15 +161,6 @@ class _BuildContextProtocol(Protocol):
     def enter_path(self, path: tuple[int, ...]) -> AbstractContextManager[None]:
         """Temporarily set the current compilation path."""
         ...
-
-    def wire_process(
-        self,
-        stream: Stream,
-        nodes: tuple[object, ...],
-        *,
-        path_prefix: tuple[int, ...] = (),
-    ) -> Stream:
-        """Wire one nested process subtree."""
 
 
 def _step_id(base: str, ctx: _BuildContextProtocol) -> str:
@@ -323,11 +316,6 @@ def _replace_payloads(
         _replace_payload(message, payload)
         for message, payload in zip(messages, payloads, strict=True)
     ]
-
-
-def _empty(_item: Any) -> tuple[()]:
-    """Drop one item from a stream."""
-    return ()
 
 
 def _commit_key(item: Any) -> tuple[str, int, int] | None:
