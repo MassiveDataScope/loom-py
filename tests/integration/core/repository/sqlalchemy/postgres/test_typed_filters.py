@@ -141,5 +141,9 @@ async def test_a_naive_time_for_a_time_with_time_zone_column_is_refused(
 ) -> None:
     naive = msgspec.structs.replace(_FIRST, closes_at=time(18, 0))
 
-    with pytest.raises(BoundaryValidationError, match="closes_at: time must carry a UTC offset"):
+    with pytest.raises(
+        BoundaryValidationError, match="closes_at: time must carry a UTC offset"
+    ) as caught:
         await repo.create(naive)
+
+    assert caught.value.code == "boundary_validation"

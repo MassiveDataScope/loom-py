@@ -7,6 +7,7 @@ from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import and_, bindparam, func, select, text
@@ -169,6 +170,8 @@ class _CreateTag(Command, frozen=True):
 _STAMP = datetime(2026, 1, 3, 12, 0)
 _AWARE_TIME = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
 _NAIVE_TIME = time(8, 30)
+# A zone on a time gives it no offset: utcoffset() is None.
+_ZONED_TIME = time(8, 30, tzinfo=ZoneInfo("Europe/Madrid"))
 _META = {"when": datetime(2026, 1, 3, 12, 0), "price": Decimal("9.5"), "tags": ["a"]}
 _META_STORED = {"when": "2026-01-03T12:00:00", "price": "9.5", "tags": ["a"]}
 
@@ -239,6 +242,7 @@ class TestEnumColumns:
 
 
 _OFFSET_REFUSAL = (("opens_at", "time must not carry a UTC offset"),)
+_OFFSET_REQUIRED = (("closes_at", "time must carry a UTC offset"),)
 
 
 async def _lookup(
@@ -345,7 +349,25 @@ class TestTimeOffsetEscapeHatches:
 
         assert list(clause.compile().params.values()) == [bound]
 
-    def test_a_time_with_time_zone_column_refuses_a_naive_time_on_write(
+    @pytest.mark.parametrize("value", [_NAIVE_TIME, _ZONED_TIME])
+    def test_a_time_with_time_zone_column_refuses_a_time_without_offset_on_write(
+        self, session_manager: SessionManager, value: time
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            repo._serialize_input(
+                _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_NAIVE_TIME, closes_at=value)
+            )
+
+        assert (caught.value.code, caught.value.violations) == (
+            "boundary_validation",
+            _OFFSET_REQUIRED,
+        )
+
+    def test_a_write_reports_every_refused_time_column_in_name_order(
         self, session_manager: SessionManager
     ) -> None:
         repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
@@ -354,27 +376,46 @@ class TestTimeOffsetEscapeHatches:
 
         with pytest.raises(BoundaryValidationError) as caught:
             repo._serialize_input(
-                _CreateSlot(opens_at=_NAIVE_TIME, noted_at=_NAIVE_TIME, closes_at=_NAIVE_TIME)
+                _CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME, closes_at=_NAIVE_TIME)
             )
 
-        assert (caught.value.code, caught.value.violations) == (
-            "boundary_validation",
-            (("closes_at", "time must carry a UTC offset"),),
-        )
+        assert caught.value.violations == _OFFSET_REQUIRED + _OFFSET_REFUSAL
 
-    def test_a_time_with_time_zone_column_refuses_a_naive_filter_value(
-        self, session_manager: SessionManager
+    @pytest.mark.parametrize(
+        ("op", "value"),
+        [
+            (FilterOp.EQ, _NAIVE_TIME),
+            (FilterOp.EQ, _ZONED_TIME),
+            (FilterOp.IN, [_AWARE_TIME, _NAIVE_TIME]),
+        ],
+    )
+    def test_a_time_with_time_zone_column_refuses_a_filter_value_without_offset(
+        self, session_manager: SessionManager, op: FilterOp, value: Any
     ) -> None:
-        group = FilterGroup(
-            filters=(FilterSpec(field="closes_at", op=FilterOp.EQ, value=_NAIVE_TIME),)
-        )
+        group = FilterGroup(filters=(FilterSpec(field="closes_at", op=op, value=value),))
 
         with pytest.raises(BoundaryValidationError) as caught:
             compile_filter_group(_compiled(_Slot), group, frozenset())
 
         assert (caught.value.code, caught.value.violations) == (
             "query_validation",
-            (("closes_at", "time must carry a UTC offset"),),
+            _OFFSET_REQUIRED,
+        )
+
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    async def test_a_time_with_time_zone_column_refuses_a_naive_lookup_value(
+        self, session_manager: SessionManager, lookup: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            await _lookup(repo, lookup, "closes_at", _NAIVE_TIME)
+
+        assert (caught.value.code, caught.value.violations) == (
+            "query_validation",
+            _OFFSET_REQUIRED,
         )
 
 

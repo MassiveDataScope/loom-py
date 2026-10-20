@@ -226,8 +226,7 @@ def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
     if columns:
         raise ConfigError(
             f"dialect {dialect!r} would drop the UTC offset of the Time(timezone=True) "
-            f"columns {', '.join(columns)}; declare a JSON column to keep the offset, "
-            "or a datetime field to keep the instant"
+            f"columns {', '.join(columns)}; declare a JSON column to keep the offset"
         )
 
 

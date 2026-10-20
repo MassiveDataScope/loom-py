@@ -22,6 +22,7 @@ Postgres.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
@@ -57,43 +58,51 @@ _OFFSET_REFUSED = "time must not carry a UTC offset"
 _OFFSET_REQUIRED = "time must carry a UTC offset"
 
 
-def check_time_offset(column: Any, value: object, *, code: str) -> None:
-    """Raise when *value* is a ``time`` whose offset *column* cannot take as it is.
+def check_time_offsets(bindings: Iterable[tuple[Any, object]], *, code: str) -> None:
+    """Raise when a ``time`` is bound to a column that cannot take its offset as it is.
 
     A JSON column takes any ``time``. A ``Time(timezone=True)`` column keeps the
-    offset and takes only a ``time`` that carries one; every other column
-    drops the offset and takes only a naive ``time``. A model that needs the
-    offset declares a JSON column or ``ColumnType("Time", kwargs={"timezone":
-    True})`` (Postgres only), or a ``datetime`` field for the instant. The
-    error names the column, not the value.
+    offset and takes only a ``time`` that has one (``utcoffset()`` is not
+    ``None``); every other column drops the offset and takes only a ``time``
+    without one. A model that needs the offset declares a JSON column or
+    ``ColumnType("Time", kwargs={"timezone": True})`` (Postgres only); on
+    Postgres and MongoDB a ``datetime`` field keeps the instant instead. The
+    error names the columns, not the values.
 
     Args:
-        column: The SQLAlchemy column or mapped attribute the value is bound to.
-        value: A value about to be written to or compared with *column*.
-        code: ``boundary_validation`` for a written value, ``query_validation``
-            for a compared value.
+        bindings: ``(column, value)`` pairs, each a SQLAlchemy column or mapped
+            attribute and a value about to be written to or compared with it.
+        code: ``boundary_validation`` for written values, ``query_validation``
+            for compared values.
 
     Raises:
-        BoundaryValidationError: If *value* is a ``time`` with an offset for a
-            column that drops it, or a naive ``time`` for a
-            ``Time(timezone=True)`` column.
+        BoundaryValidationError: With one violation per refused column, in
+            column name order.
     """
-    if not isinstance(value, time):
-        return
+    violations = sorted(
+        (column.key, reason)
+        for column, value in bindings
+        if (reason := _time_offset_refusal(column, value)) is not None
+    )
+    if violations:
+        message = "; ".join(f"{name}: {reason}" for name, reason in violations)
+        raise BoundaryValidationError(message, tuple(violations), code=code)
+
+
+def _time_offset_refusal(column: Any, value: object) -> str | None:
+    if not isinstance(value, time) or is_json_column(column):
+        return None
     column_type = getattr(column, "type", None)
-    if isinstance(column_type, JSON):
-        return
     keeps_offset = isinstance(column_type, Time) and bool(column_type.timezone)
-    if (value.tzinfo is not None) == keeps_offset:
-        return
-    reason = _OFFSET_REQUIRED if keeps_offset else _OFFSET_REFUSED
-    raise BoundaryValidationError(f"{column.key}: {reason}", ((column.key, reason),), code=code)
+    if (value.utcoffset() is not None) == keeps_offset:
+        return None
+    return _OFFSET_REQUIRED if keeps_offset else _OFFSET_REFUSED
 
 
 def to_comparison_value(column: Any, value: object) -> Any:
     """Return *value* in the form it is compared with *column*.
 
-    Refused as :func:`check_time_offset` refuses it, and converted as
+    Refused as :func:`check_time_offsets` refuses it, and converted as
     :func:`to_column_value` converts a written value. A refusal is raised under
     ``query_validation`` whatever the value's source, so ``get_by`` and
     ``exists_by`` called with a value from a command body raise it too.
@@ -104,9 +113,9 @@ def to_comparison_value(column: Any, value: object) -> Any:
 
     Raises:
         BoundaryValidationError: ``query_validation``, for a ``time`` whose
-            offset *column* cannot take, as :func:`check_time_offset` decides.
+            offset *column* cannot take, as :func:`check_time_offsets` decides.
     """
-    check_time_offset(column, value, code=ErrorCode.QUERY_VALIDATION)
+    check_time_offsets(((column, value),), code=ErrorCode.QUERY_VALIDATION)
     return to_column_value(value, json=is_json_column(column))
 
 
@@ -118,4 +127,4 @@ def is_json_column(column: object) -> bool:
     return isinstance(getattr(column, "type", None), JSON)
 
 
-__all__ = ["check_time_offset", "is_json_column", "to_column_value", "to_comparison_value"]
+__all__ = ["check_time_offsets", "is_json_column", "to_column_value", "to_comparison_value"]

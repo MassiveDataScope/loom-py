@@ -81,9 +81,9 @@ def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
     """Apply *op*, converting *value* as the repository converts a value it writes.
 
     A ``time`` whose offset the column cannot take is refused, as
-    :func:`to_comparison_value` refuses it. A SQLAlchemy
-    expression, and an ``IN`` value that is a string or not iterable, reach
-    SQLAlchemy as they are.
+    :func:`to_comparison_value` refuses it. A SQLAlchemy expression, and an
+    ``IN`` value that is a string or not iterable, reach SQLAlchemy as they
+    are.
 
     Raises:
         ValueError: If *op* is not a supported operator.
