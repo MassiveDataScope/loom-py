@@ -404,8 +404,8 @@ class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
         ),
     )
     rules = (
-        Rule.check(F(PricingCommand).unit_price, via=lambda v: v <= 0, message="unit_price must be > 0"),
-        Rule.check(F(PricingCommand).country, via=lambda v: v not in TAX_RATES, message="Unsupported country"),
+        Rule.check(F(PricingCommand).unit_price, via=lambda v: "unit_price must be > 0" if v <= 0 else None),
+        Rule.check(F(PricingCommand).country, via=lambda v: None if v in TAX_RATES else "Unsupported country"),
     )
 
     async def execute(self, record_id: int, cmd: PricingCommand = Input()) -> PricingPreviewResponse:
