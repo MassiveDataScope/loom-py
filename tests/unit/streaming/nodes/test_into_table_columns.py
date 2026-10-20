@@ -247,10 +247,10 @@ def test_a_field_without_a_declared_column_type_is_refused(
 def test_a_time_with_an_offset_is_refused_for_a_time_column_as_the_repository_refuses_it(
     bridge: AsyncBridge,
 ) -> None:
-    aware = time(8, 30, tzinfo=timezone(timedelta(hours=2)))
+    opening = _Opening(opening_id=1, opens_at=time(8, 30, tzinfo=timezone(timedelta(hours=2))))
 
     with pytest.raises(BoundaryValidationError) as refused:
-        _write(bridge, _Opening(opening_id=1, opens_at=aware))
+        _write(bridge, opening)
 
     assert refused.value.code == ErrorCode.BOUNDARY_VALIDATION
     assert refused.value.violations == (("opens_at", "time must not carry a UTC offset"),)
