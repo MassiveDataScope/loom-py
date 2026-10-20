@@ -951,7 +951,7 @@ class TestPrimaryKeyByName:
         fingerprint = await env.resolver.fingerprint(
             env.resolver.entity_tags(env.wrapper.entity_name, 1)
         )
-        expected_key = entity_key(env.wrapper.entity_name, 1, "default", fingerprint)
+        expected_key = entity_key(env.wrapper.entity_name, 1, "default", fingerprint, scope="")
         entity_batches = [batch for batch in env.backend.multi_set_batches if expected_key in batch]
         assert entity_batches == [[expected_key]]
         assert await env.backend.get_value(expected_key, type=CodeWidget) == keyed
@@ -1105,7 +1105,7 @@ class _ReadOnlyRepository:
         return None
 
 
-_OPTIONAL_OVERRIDES = frozenset({"on_transaction_committed"})
+_OPTIONAL_OVERRIDES = frozenset({"on_transaction_committed", "cursor_scope"})
 """Public overrides outside the precondition: the wrapper adapts them when present."""
 
 

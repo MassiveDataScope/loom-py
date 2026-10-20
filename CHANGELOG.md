@@ -1147,6 +1147,24 @@
 
 ### core
 
+- **cache:** security: the repository cache keeps each row-level-security
+  scope's entries apart. The entity key (`get_by_id`, and the rows behind a
+  cached page) and the `list_paginated` index key now carry the caller's scope
+  (`SupportsCursorScope.cursor_scope()`, `""` for a repository without it), so
+  a row or a page of ids cached under one scope is no longer served to another
+  scope that row-level security hides it from. Writes still evict every
+  scope's entries: the scope is not part of the dependency tags, and a write
+  bumps the same generation counters whatever its scope. `CachedRepository`
+  implements `cursor_scope()` by forwarding the wrapped repository's scope, so
+  a wrapper around it keys by the same scope, and refuses at construction,
+  with a `RuntimeError`, a repository whose `session_manager` has session
+  settings but which does not implement `cursor_scope()`. The list filter and
+  query fingerprints in cache keys are now the full SHA-256 instead of its
+  first 64 bits. `entity_key` and `list_index_key` take a required
+  keyword-only `scope`. Existing entity, list and query entries are no longer
+  read after the upgrade and expire by their TTL. Only `loom.scope.*` session
+  settings make up the scope: a row-level policy that reads any other setting
+  is not kept apart by the cache.
 - **core:** one environment selector and deploy checks (ADR 0005). loom had
   two unconnected notions of environment (the logger's `dev`/`prod`, where an
   unknown value meant `dev`, and `FlowCtx.environment`) and nothing checked a

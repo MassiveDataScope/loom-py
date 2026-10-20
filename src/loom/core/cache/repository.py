@@ -18,7 +18,7 @@ from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
 from loom.core.cache.decorators import declares_cache_policy
-from loom.core.cache.keys import entity_key, list_index_key, stable_hash
+from loom.core.cache.keys import entity_key, full_hash, list_index_key, stable_hash
 from loom.core.cache.result_codec import (
     PassthroughResultCodec,
     ResultCodec,
@@ -234,6 +234,7 @@ class CachedRepository(
         dependency_resolver: DependencyResolver,
     ) -> None:
         _require_full_repository(repository)
+        _require_reported_scope(repository)
         self._repository = repository
         self._config = config
         self._cache = cache
@@ -265,11 +266,19 @@ class CachedRepository(
         """Normalized name of the cached entity."""
         return self._entity_name
 
+    def cursor_scope(self) -> str:
+        """Forward the wrapped repository's scope, ``""`` when it reports none.
+
+        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`,
+        so a wrapper around this one keys its entries by the same scope.
+        """
+        return self._cache_scope()
+
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
         tags = self._resolver.entity_tags(self.entity_name, obj_id)
         tags.extend(self._entity_dependency_tags(obj_id))
         fingerprint = await self._resolver.fingerprint(tags)
-        key = entity_key(self.entity_name, obj_id, profile, fingerprint)
+        key = entity_key(self.entity_name, obj_id, profile, fingerprint, scope=self._cache_scope())
 
         cached_payload = await self._cache.get_value(key)
         if cached_payload is not None:
@@ -321,7 +330,7 @@ class CachedRepository(
         profile: str = "default",
     ) -> PageResult[OutputT]:
         filters_payload = self._serialize_filters(filter_params)
-        filter_fingerprint = stable_hash(filters_payload)
+        filter_fingerprint = full_hash(filters_payload)
         tags = self._resolver.list_tags(self.entity_name, filter_fingerprint)
         tags.extend(self._list_dependency_tags())
         fingerprint = await self._resolver.fingerprint(tags)
@@ -332,6 +341,7 @@ class CachedRepository(
             limit=page_params.limit,
             profile=profile,
             deps_fingerprint=fingerprint,
+            scope=self._cache_scope(),
         )
         cached_index = await self._cache.get_value(index_key, type=_ListIndexPayload)
         entity_ids = None if cached_index is None else self._index_ids(cached_index.ids)
@@ -381,7 +391,7 @@ class CachedRepository(
             return await self._repository.list_with_query(query, profile=profile)
 
         query_payload = self._serialize_query(query)
-        query_fingerprint = stable_hash(repr(query_payload))
+        query_fingerprint = full_hash(repr(query_payload))
         tags = self._resolver.list_tags(self.entity_name, query_fingerprint)
         tags.extend(self._list_dependency_tags())
         deps_fingerprint = await self._resolver.fingerprint(tags)
@@ -895,8 +905,9 @@ class CachedRepository(
             for eid in ids
         ]
         fingerprints = await self._resolve_fingerprints(tags_by_id)
+        scope = self._cache_scope()
         entity_keys = [
-            entity_key(self.entity_name, eid, profile, fp)
+            entity_key(self.entity_name, eid, profile, fp, scope=scope)
             for eid, fp in zip(ids, fingerprints, strict=True)
         ]
         cached_values = await self._cache.multi_get_values(entity_keys)
@@ -1015,10 +1026,11 @@ class CachedRepository(
             for _item, entity_id in keyed
         ]
         fingerprints = await self._resolve_fingerprints(tags_by_id)
+        scope = self._cache_scope()
 
         pairs: list[tuple[str, Any]] = []
         for (item, entity_id), fingerprint in zip(keyed, fingerprints, strict=True):
-            key = entity_key(self.entity_name, entity_id, profile, fingerprint)
+            key = entity_key(self.entity_name, entity_id, profile, fingerprint, scope=scope)
             pairs.append((key, self._entity_payload(item)))
         await self._cache.multi_set_values(pairs, ttl=ttl)
 
@@ -1139,12 +1151,22 @@ class CachedRepository(
             return "{}"
         return repr(to_payload(filter_params.filters))
 
+    def _cache_scope(self) -> str:
+        """The caller's row-level-security scope every cache key carries; ``""`` when unscoped.
+
+        It is the scope the wrapped repository binds cursor tokens to, so a
+        row, a page of ids or a query result cached for one scope is never
+        read back by another.  The scope stays out of the dependency tags: a
+        write bumps the same generation counters whatever its scope, so the
+        bump reaches the keys of every scope.
+        """
+        repository = self._repository
+        return repository.cursor_scope() if isinstance(repository, SupportsCursorScope) else ""
+
     def _serialize_query(self, query: QuerySpec) -> dict[str, Any]:
         """The query cache key's payload, scoped like the cursor tokens a page carries."""
-        repository = self._repository
-        scope = repository.cursor_scope() if isinstance(repository, SupportsCursorScope) else ""
         return {
-            "scope": scope,
+            "scope": self._cache_scope(),
             "pagination": query.pagination.value,
             "limit": query.limit,
             "page": query.page,
@@ -1234,4 +1256,32 @@ def _require_full_repository(repository: object) -> None:
             f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
             f"it does not implement {', '.join(missing)}. A @cached repository must "
             f"implement the full Repository protocol."
+        )
+
+
+def _require_reported_scope(repository: object) -> None:
+    """Refuse a repository whose sessions carry settings but which reports no scope.
+
+    Every cache key carries the scope the wrapped repository reports through
+    :class:`~loom.core.repository.abc.session_scope.SupportsCursorScope`. A
+    repository whose ``session_manager`` applies session settings, such as a
+    decorator around a SQLAlchemy repository that does not forward
+    ``cursor_scope``, would key every caller's entries under ``""`` and serve
+    one scope's rows to another, so it is refused here instead.
+
+    Args:
+        repository: The instance about to be wrapped.
+
+    Raises:
+        RuntimeError: If the repository's session manager has session settings
+            and the repository does not implement ``cursor_scope``.
+    """
+    if isinstance(repository, SupportsCursorScope):
+        return
+    session_manager = getattr(repository, "session_manager", None)
+    if getattr(session_manager, "has_session_settings", False) is True:
+        raise RuntimeError(
+            f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
+            "its sessions carry session settings but it does not implement cursor_scope(), "
+            "so its cache entries could not be kept apart by scope."
         )

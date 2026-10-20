@@ -122,7 +122,7 @@ def _keys(result: PageResult[_Entry] | CursorResult[_Entry]) -> list[_Key]:
 async def _evict(env: _Env, key: _Key) -> None:
     tags = env.resolver.entity_tags(env.wrapper.entity_name, key)
     fingerprint = await env.resolver.fingerprint(tags)
-    del env.backend.data[entity_key(env.wrapper.entity_name, key, _PROFILE, fingerprint)]
+    del env.backend.data[entity_key(env.wrapper.entity_name, key, _PROFILE, fingerprint, scope="")]
 
 
 class TestCachedList:

@@ -44,6 +44,10 @@ class SupportsCursorScope(Protocol):
     A token is valid only in the scope it was issued in, so a wrapper that
     keeps pages, such as the query cache, keys them by this scope too. A
     repository without it binds its tokens to no scope.
+
+    Only the ``loom.scope.*`` session settings make up the scope: they alone
+    partition the repository cache and bind cursor tokens, so a row-level
+    policy that reads any other setting is not kept apart by either.
     """
 
     def cursor_scope(self) -> str:
