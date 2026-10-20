@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.streaming import (
     Backend,
+    BatchExpandStep,
     BatchStep,
     Broadcast,
     BroadcastRoute,
@@ -224,6 +225,12 @@ class _SameBatch(BatchStep[Order, Order]):
     def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Order]:
         del kwargs
         return [message.payload for message in messages]
+
+
+class _BatchFanout(BatchExpandStep[Order, Result]):
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
+        del messages, kwargs
+        return []
 
 
 class _Expander:
@@ -486,16 +493,17 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         ),
         {},
         StreamingErrorCode.ROUTER_BRANCH_SHAPE_DIVERGENCE,
-        "router branches produce different shapes: batch, record",
+        "messages continuing after the router have different shapes: batch, record",
         "router",
         None,
     ),
     "router branch issue scoped under its branch": (
-        lambda: _flow(_router(CollectBatch(2, 10), FakeStep(), _out())),
+        lambda: _flow(_router(_BatchFanout, _out())),
         {},
         StreamingErrorCode.SHAPE_MISMATCH,
-        "router branch predicate[0]: shape mismatch: expected record but got batch before FakeStep",
-        "router branch predicate[0] > FakeStep",
+        "router branch predicate[0]: shape mismatch: expected batch but got record before "
+        "_BatchFanout",
+        "router branch predicate[0] > _BatchFanout",
         None,
     ),
     "flow output next to a fork": (

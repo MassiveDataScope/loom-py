@@ -11,6 +11,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import get_compiled_core
+from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import (
     get_column_fields,
@@ -33,7 +34,12 @@ from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.transactional import record_mutation
-from loom.core.repository.sqlalchemy.values import is_json_column, to_column_value
+from loom.core.repository.sqlalchemy.values import (
+    check_time_offsets,
+    is_json_column,
+    to_column_value,
+    to_comparison_value,
+)
 
 _SENTINEL = object()
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
@@ -161,7 +167,14 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
             builtins = to_column_value(data)
             if not isinstance(builtins, dict):
                 raise TypeError("Struct payload must serialize to dict")
-            return self._encode_json_columns(_to_internal_field_names(type(data), builtins))
+            values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
+            sa_model = self._effective_sa_model
+            names = (self._column_field_names or frozenset()).intersection(values)
+            check_time_offsets(
+                ((getattr(sa_model, name), values[name]) for name in names),
+                code=ErrorCode.BOUNDARY_VALIDATION,
+            )
+            return values
         return data
 
     def _encode_json_columns(self, values: dict[str, Any]) -> dict[str, Any]:
@@ -174,10 +187,11 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Resolve a model column attribute by field name.
 
         Raises:
-            ValueError: If ``field`` does not exist on the SQLAlchemy model.
+            ValueError: If ``field`` is not a mapped column of the SQLAlchemy
+                model.
         """
         sa_model = self._effective_sa_model
-        if not hasattr(sa_model, field):
+        if field not in inspect(sa_model).column_attrs:
             raise ValueError(f"Unknown field '{field}' for model '{self.model.__name__}'")
         return getattr(sa_model, field)
 
@@ -189,7 +203,12 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Apply page-mode filters to an offset items statement."""
         if not filter_params or not filter_params.filters:
             return items_stmt
-        return items_stmt.filter_by(**filter_params.filters)
+        return items_stmt.filter_by(
+            **{
+                name: to_comparison_value(self._column_for_field(name), value)
+                for name, value in filter_params.filters.items()
+            }
+        )
 
     def _to_output(
         self,
@@ -441,7 +460,9 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         """Fetch one entity by equality over an arbitrary column field."""
         async with self._session_scope() as scoped_session:
             core_model = self._effective_core_model
-            stmt = core_model.select(profile).where(self._column_for_field(field) == value).limit(1)
+            column = self._column_for_field(field)
+            stmt = core_model.select(profile).where(column == to_comparison_value(column, value))
+            stmt = stmt.limit(1)
             loaded = await core_model.fetch_one(scoped_session, stmt, profile=profile)
             return cast(OutputT | None, loaded)
 
@@ -575,7 +596,8 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
 
     async def exists_by(self, field: str, value: Any) -> bool:
         """Check whether an entity exists by an arbitrary column field."""
-        return await self._exists_where(self._column_for_field(field) == value)
+        column = self._column_for_field(field)
+        return await self._exists_where(column == to_comparison_value(column, value))
 
     async def _exists_where(self, clause: Any) -> bool:
         async with self._session_scope() as scoped_session:

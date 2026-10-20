@@ -44,6 +44,7 @@ from loom.core.model.types import (
     BigInteger,
     Boolean,
     Bytes,
+    Date,
     DateTime,
     Float,
     Integer,
@@ -51,6 +52,7 @@ from loom.core.model.types import (
     Numeric,
     String,
     Text,
+    Time,
 )
 from loom.core.model.types_postgres import Postgres
 
@@ -85,6 +87,7 @@ __all__ = [
     "ColumnField",
     "ScopedField",
     "ColumnType",
+    "Date",
     "DateTime",
     "Field",
     "Float",
@@ -105,6 +108,7 @@ __all__ = [
     "ServerOnUpdate",
     "String",
     "Text",
+    "Time",
     "UnsupportedBoundaryType",
     "get_column_fields",
     "get_id_attribute",
