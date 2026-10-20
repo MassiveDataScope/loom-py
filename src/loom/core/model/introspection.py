@@ -146,7 +146,7 @@ def _with_nullable(field: Field, annotation: Any) -> Field:
     if field.nullable is not None:
         return field
     nullable = not field.primary_key and _admits_none(annotation)
-    return replace(field, nullable=nullable)
+    return cast(Field, replace(field, nullable=nullable))  # type: ignore[redundant-cast]
 
 
 def _admits_none(annotation: Any) -> bool:

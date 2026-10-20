@@ -66,6 +66,7 @@ async def test_an_optional_field_left_as_none_is_stored_and_read_back(
 async def test_a_field_that_does_not_admit_none_is_not_null_in_the_database(
     manager: SessionManager,
 ) -> None:
-    with pytest.raises(IntegrityError):
-        async with manager.engine.begin() as conn:
-            await conn.execute(text(f"INSERT INTO {_TABLE} (label) VALUES (NULL)"))
+    statement = text(f"INSERT INTO {_TABLE} (label) VALUES (NULL)")
+    async with manager.engine.connect() as conn:
+        with pytest.raises(IntegrityError):
+            await conn.execute(statement)
