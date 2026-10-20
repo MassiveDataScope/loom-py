@@ -409,10 +409,15 @@ def _extract_origin_type(annotation: Any) -> type[Any]:
 
 
 def _unwrap_optional(annotation: Any) -> Any:
-    members = _union_members(annotation)
-    if members is None:
+    """Return the single type of a union once ``None`` and ``UnsetType`` are dropped.
+
+    ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
+    and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
+    is decided apart, by :func:`_admits_none`.
+    """
+    args = _union_inner_args(annotation)
+    if args is None:
         return annotation
-    args = tuple(arg for arg in members if arg is not type(None))
     if len(args) == 1:
         return args[0]
     return annotation

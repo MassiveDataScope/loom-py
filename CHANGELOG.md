@@ -474,6 +474,21 @@
   as one set on the instance, raises `RuntimeError` when it is looked up on
   the wrapper, since no codec was built for it; define it as a method of the
   class.
+- **core:** a field annotated `X | UnsetType` infers `X`'s column type.
+  `UNSET` means "not provided", not another type, so `str | UnsetType` now
+  compiles to `String` and `int | UnsetType` to `Integer` instead of `JSON`,
+  and `Annotated[str, String(20)] | UnsetType` reads its declared type. Such
+  a column is scalar: a REST route may declare it filterable, `like` and
+  `ilike` included for text, and sortable by offset; a cursor sort on it is
+  still refused, since a cursor key must be a bare type. Nullability is
+  unchanged: `str | None | UnsetType` admits `None` and is nullable,
+  `UnsetType` alone keeps the column `NOT NULL`. An undeclared
+  `Decimal | UnsetType`, plain `Enum | UnsetType` or `Literal[...] | UnsetType`
+  now needs a declared column type, as it does without `UnsetType`. On Mongo,
+  a `str | UnsetType` or `UUID | UnsetType` primary key is now accepted, and
+  a range filter or sort on a `Decimal | UnsetType` field is refused, as on a
+  `Decimal` field. Alembic autogenerate will show the type change from `JSON`
+  for existing tables with such columns.
 - **core:** a column's nullability follows its field's annotation. A field
   whose annotation admits `None` (`x: int | None = None`, also inside
   `Annotated`) compiles to a nullable column; any other field compiles to
@@ -1247,6 +1262,14 @@
 
 ### core
 
+- **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
+  primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
+  handed the raw key to boto3's `TypeSerializer`, which raised
+  `TypeError: Unsupported type "<class 'uuid.UUID'>"`; `create` already stored
+  the key as a string through `msgspec.to_builtins`. The key is now encoded
+  with that same conversion, so it matches its stored form and round-trips.
+  `update` keeps the key as stored instead of rewriting it from the argument.
+  Attribute values are encoded as before.
 - **cache:** security: the repository cache keeps each caller's entries apart.
   The entity key (`get_by_id`, and the rows behind a cached page), the
   `list_paginated` index key, the `list_with_query` key and the key of a

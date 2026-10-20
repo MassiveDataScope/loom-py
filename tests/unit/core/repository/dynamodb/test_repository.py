@@ -95,25 +95,76 @@ class _Badge(BaseModel):
     label: str = ""
 
 
-class _BadgeCreate(BaseModel):
-    id: UUID = ColumnField(primary_key=True)
+class _BadgeUpdate(BaseModel):
     label: str = ""
 
 
 _BADGE_ID = UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")
 
 
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason="follow-up hotfix: a UUID key reaches boto3's TypeSerializer unconverted",
-)
-async def test_a_uuid_primary_key_is_read_back_by_the_uuid() -> None:
-    repo: RepositoryDynamoDB[_Badge, UUID] = RepositoryDynamoDB(
-        client=FakeClient(key_name="id", table_names=("badges",)),
+def _badge_repo(client: FakeClient | None = None) -> RepositoryDynamoDB[_Badge, UUID]:
+    return RepositoryDynamoDB(
+        client=client or FakeClient(key_name="id", table_names=("badges",)),
         table_name="badges",
         model=_Badge,
     )
-    await repo.create(_BadgeCreate(id=_BADGE_ID, label="first"))
+
+
+async def test_a_uuid_primary_key_is_read_back_by_the_uuid() -> None:
+    repo = _badge_repo()
+    await repo.create(_Badge(id=_BADGE_ID, label="first"))
 
     assert await repo.get_by_id(_BADGE_ID) == _Badge(id=_BADGE_ID, label="first")
+
+
+async def test_a_uuid_primary_key_answers_exists_by() -> None:
+    repo = _badge_repo()
+    await repo.create(_Badge(id=_BADGE_ID, label="first"))
+
+    assert await repo.exists_by("id", _BADGE_ID) is True
+
+
+async def test_an_item_is_updated_by_its_uuid_primary_key() -> None:
+    repo = _badge_repo()
+    await repo.create(_Badge(id=_BADGE_ID, label="first"))
+
+    updated = await repo.update(_BADGE_ID, _BadgeUpdate(label="second"))
+
+    assert updated == _Badge(id=_BADGE_ID, label="second")
+    assert await repo.get_by_id(_BADGE_ID) == _Badge(id=_BADGE_ID, label="second")
+
+
+async def test_an_item_is_deleted_by_its_uuid_primary_key() -> None:
+    repo = _badge_repo()
+    await repo.create(_Badge(id=_BADGE_ID, label="first"))
+
+    assert await repo.delete(_BADGE_ID) is True
+    assert await repo.get_by_id(_BADGE_ID) is None
+
+
+async def test_an_update_keeps_the_key_in_its_stored_form() -> None:
+    client = FakeClient(key_name="id", table_names=("badges",))
+    repo = _badge_repo(client)
+    await repo.create(_Badge(id=_BADGE_ID, label="first"))
+
+    await repo.update(_BADGE_ID, _BadgeUpdate(label="second"))
+
+    assert client.items["badges"][str(_BADGE_ID)]["id"] == {"S": str(_BADGE_ID)}
+
+
+async def test_an_update_keeps_attributes_the_model_does_not_declare() -> None:
+    # Single-table design: another writer stores a binary and two sets on the item.
+    client = FakeClient(key_name="id", table_names=("badges",))
+    repo = _badge_repo(client)
+    await repo.create(_Badge(id=_BADGE_ID, label="first"))
+    stored = client.items["badges"][str(_BADGE_ID)]
+    stored["blob"] = {"B": b"\x00\x01"}
+    stored["tags"] = {"SS": ["a", "b"]}
+    stored["sizes"] = {"NS": ["1", "2.5"]}
+
+    await repo.update(_BADGE_ID, _BadgeUpdate(label="second"))
+
+    after = client.items["badges"][str(_BADGE_ID)]
+    assert after["blob"] == {"B": b"\x00\x01"}
+    assert sorted(after["tags"]["SS"]) == ["a", "b"]
+    assert sorted(after["sizes"]["NS"]) == ["1", "2.5"]
