@@ -459,6 +459,14 @@
 
 ### core
 
+- **core:** a `Decimal` field, plain or optional, declares its column type: a
+  SQLAlchemy model with an undeclared one is refused when it is compiled,
+  naming the field. loom inferred `NUMERIC(10, 2)`, and Postgres silently
+  rounds a value to that scale (`1.2345` is stored as `1.23`) and refuses one
+  past that precision. Migration: declare it, e.g.
+  `Annotated[Decimal, Numeric(precision=20, scale=6)]` or
+  `ColumnField(Numeric(precision=20, scale=6))`; `Numeric()` with no
+  precision is now an unbounded `NUMERIC` instead of `NUMERIC(10, 2)`.
 - **core:** `sql_endpoint.auth` admits only `identity` and `external`;
   `auth: jwt` is refused when the config is loaded, and the alias and its
   `DeprecationWarning` are gone. Migration: replace `auth: jwt` with

@@ -283,7 +283,6 @@ class TestEnumColumnTypes:
             ("priority", Integer),
             ("mask", Integer),
             ("ratio", Float),
-            ("amount", Numeric()),
             ("day", String(None)),
             ("moment", DateTime(tz=True)),
             ("hour", String(None)),
@@ -307,6 +306,11 @@ class TestEnumColumnTypes:
         info = get_column_fields(model)[field]
 
         assert (info.column_type, info.needs_declared_type) == (JSON, True)
+
+    def test_a_decimal_enum_without_a_column_type_needs_one_declared(self) -> None:
+        info = get_column_fields(_MixedEnums)["amount"]
+
+        assert (info.column_type, info.needs_declared_type) == (Numeric(), True)
 
     def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
         assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())
@@ -345,9 +349,19 @@ class _Book(BaseModel):
     )
 
 
+class _Priced(BaseModel):
+    __tablename__ = "introspection_priced"
+
+    price: Decimal
+    maybe: Decimal | None = None
+
+
 class TestScalarColumnAnnotations:
     def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
         assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
 
     def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
         assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}
+
+    def test_a_decimal_without_a_column_type_is_scalar(self) -> None:
+        assert scalar_column_annotations(_Priced) == {"price": Decimal, "maybe": Decimal | None}
