@@ -6,12 +6,15 @@ SQLAlchemy binds ``bytes``, ``datetime``, ``date``, ``time``, ``Decimal`` and
 so its values are reduced completely.
 
 :func:`to_column_value` is the conversion the repository applies to a value it
-writes and the query compiler to a filter value, so a filter compares against
+writes, and :func:`to_comparison_value` the one it applies to a value compared
+with a column (a filter, ``get_by``, ``exists_by``), so a comparison matches
 exactly what the row holds.
 
-A ``time`` with a UTC offset is refused outside a JSON column: SQL ``TIME``
-(Postgres ``time without time zone``, SQLite text) keeps no offset, so the
-offset would be dropped on write and ignored by a filter.
+A ``time`` with a UTC offset is refused for a column that cannot hold the
+offset: SQL ``TIME`` without time zone (Postgres ``time``, SQLite text) stores
+``08:30+02:00`` as ``08:30``, and an aware value compared with it matches the
+row holding ``08:30``. A JSON column, which keeps the ISO text, and a ``Time``
+column with ``timezone=True`` (Postgres ``timetz``) accept it.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from typing import Any
 from uuid import UUID
 
 import msgspec
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Time
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
@@ -47,30 +50,53 @@ def to_column_value(value: object, *, json: bool = False) -> Any:
     return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)
 
 
-def refuse_aware_time(
-    column: str, value: object, *, code: str = ErrorCode.BOUNDARY_VALIDATION
-) -> None:
-    """Raise when *value* is a ``time`` with a UTC offset bound to *column*.
+_OFFSET_REFUSAL = "time must not carry a UTC offset"
 
-    The message names the column, not the value.
+
+def refuse_aware_time(
+    name: str, column: object, value: object, *, code: str = ErrorCode.BOUNDARY_VALIDATION
+) -> None:
+    """Raise when *value* is a ``time`` with a UTC offset that *column* would drop.
+
+    A JSON column and a ``Time(timezone=True)`` column keep the offset and
+    accept it; every other column refuses it. A model that needs the offset
+    declares a ``datetime`` field (``DateTime(tz=True)``), a JSON column, or
+    ``ColumnType("Time", kwargs={"timezone": True})``. The error names the
+    column, not the value.
 
     Args:
-        column: The name of the column the value is bound to.
-        value: A value about to be bound to a column other than JSON.
-        code: The error code: ``boundary_validation`` for a written value,
-            ``query_validation`` for a filter value.
+        name: The name of the column, for the error.
+        column: The SQLAlchemy column or mapped attribute the value is bound to.
+        value: A value about to be written to or compared with *column*.
+        code: ``boundary_validation`` for a written value, ``query_validation``
+            for a compared value.
 
     Raises:
         BoundaryValidationError: If *value* is a ``time`` whose ``tzinfo`` is
-            set.
+            set and *column* cannot hold the offset.
     """
-    if isinstance(value, time) and value.tzinfo is not None:
-        reason = (
-            "a Time column stores naive times and would drop the UTC offset; pass a "
-            "naive time, or declare a datetime field (DateTime(tz=True)) or a JSON "
-            "column to keep the offset"
-        )
-        raise BoundaryValidationError(f"{column}: {reason}", ((column, reason),), code=code)
+    if not isinstance(value, time) or value.tzinfo is None:
+        return
+    column_type = getattr(column, "type", None)
+    if isinstance(column_type, JSON) or (isinstance(column_type, Time) and column_type.timezone):
+        return
+    raise BoundaryValidationError(
+        f"{name}: {_OFFSET_REFUSAL}", ((name, _OFFSET_REFUSAL),), code=code
+    )
+
+
+def to_comparison_value(column: Any, value: object) -> Any:
+    """Return *value* in the form it is compared with *column*.
+
+    Refused as :func:`refuse_aware_time` refuses it, under ``query_validation``,
+    and converted as :func:`to_column_value` converts a written value.
+
+    Args:
+        column: A SQLAlchemy column or mapped attribute.
+        value: A filter or lookup value.
+    """
+    refuse_aware_time(column.key, column, value, code=ErrorCode.QUERY_VALIDATION)
+    return to_column_value(value, json=is_json_column(column))
 
 
 def is_json_column(column: object) -> bool:
@@ -81,4 +107,4 @@ def is_json_column(column: object) -> bool:
     return isinstance(getattr(column, "type", None), JSON)
 
 
-__all__ = ["is_json_column", "refuse_aware_time", "to_column_value"]
+__all__ = ["is_json_column", "refuse_aware_time", "to_column_value", "to_comparison_value"]

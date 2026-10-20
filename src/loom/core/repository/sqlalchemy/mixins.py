@@ -37,6 +37,7 @@ from loom.core.repository.sqlalchemy.values import (
     is_json_column,
     refuse_aware_time,
     to_column_value,
+    to_comparison_value,
 )
 
 _SENTINEL = object()
@@ -166,8 +167,9 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
             if not isinstance(builtins, dict):
                 raise TypeError("Struct payload must serialize to dict")
             values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
-            for column, value in values.items():
-                refuse_aware_time(column, value)
+            sa_model = self._effective_sa_model
+            for name, value in values.items():
+                refuse_aware_time(name, getattr(sa_model, name, None), value)
             return values
         return data
 
@@ -196,7 +198,12 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Apply page-mode filters to an offset items statement."""
         if not filter_params or not filter_params.filters:
             return items_stmt
-        return items_stmt.filter_by(**filter_params.filters)
+        return items_stmt.filter_by(
+            **{
+                name: to_comparison_value(self._column_for_field(name), value)
+                for name, value in filter_params.filters.items()
+            }
+        )
 
     def _to_output(
         self,
@@ -448,7 +455,9 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         """Fetch one entity by equality over an arbitrary column field."""
         async with self._session_scope() as scoped_session:
             core_model = self._effective_core_model
-            stmt = core_model.select(profile).where(self._column_for_field(field) == value).limit(1)
+            column = self._column_for_field(field)
+            stmt = core_model.select(profile).where(column == to_comparison_value(column, value))
+            stmt = stmt.limit(1)
             loaded = await core_model.fetch_one(scoped_session, stmt, profile=profile)
             return cast(OutputT | None, loaded)
 
@@ -582,7 +591,8 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
 
     async def exists_by(self, field: str, value: Any) -> bool:
         """Check whether an entity exists by an arbitrary column field."""
-        return await self._exists_where(self._column_for_field(field) == value)
+        column = self._column_for_field(field)
+        return await self._exists_where(column == to_comparison_value(column, value))
 
     async def _exists_where(self, clause: Any) -> bool:
         async with self._session_scope() as scoped_session:

@@ -13,10 +13,24 @@ from sqlalchemy import and_, bindparam, func, select, text
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String
+from loom.core.model import (
+    JSON,
+    BaseModel,
+    BoundaryValidationError,
+    ColumnField,
+    LoomStruct,
+    String,
+)
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
+from loom.core.repository.abc.query import (
+    FilterGroup,
+    FilterOp,
+    FilterParams,
+    FilterSpec,
+    PageParams,
+    QuerySpec,
+)
 from loom.core.repository.sqlalchemy.query_compiler.filters import compile_filter_group
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -221,6 +235,26 @@ class TestEnumColumns:
         assert sorted(raw.all()) == [("closed", 2), ("open", 1)]
 
 
+_OFFSET_REFUSAL = (("opens_at", "time must not carry a UTC offset"),)
+
+
+async def _lookup(
+    repo: RepositorySQLAlchemy[Any, int], lookup: str, field: str, value: object
+) -> object:
+    """Run one equality lookup that bypasses ``QuerySpec``: get_by, exists_by or filter_by."""
+    if lookup == "get_by":
+        return await repo.get_by(field, value)
+    if lookup == "exists_by":
+        return await repo.exists_by(field, value)
+    page = await repo.list_paginated(
+        PageParams(page=1, limit=10), FilterParams(filters={field: value})
+    )
+    return page.items
+
+
+_LOOKUPS = ("get_by", "exists_by", "list_paginated")
+
+
 class TestTimeColumns:
     async def test_writing_an_aware_time_to_a_time_column_is_refused(
         self, session_manager: SessionManager
@@ -229,8 +263,13 @@ class TestTimeColumns:
             session_manager=session_manager, model=_Slot
         )
 
-        with pytest.raises(ValueError, match="opens_at.*naive"):
+        with pytest.raises(BoundaryValidationError) as caught:
             await repo.create(_CreateSlot(opens_at=_AWARE_TIME, noted_at=_NAIVE_TIME))
+
+        assert (caught.value.code, caught.value.violations) == (
+            "boundary_validation",
+            _OFFSET_REFUSAL,
+        )
 
     @pytest.mark.parametrize(
         ("op", "value"), [(FilterOp.EQ, _AWARE_TIME), (FilterOp.IN, [_NAIVE_TIME, _AWARE_TIME])]
@@ -240,8 +279,23 @@ class TestTimeColumns:
     ) -> None:
         group = FilterGroup(filters=(FilterSpec(field="opens_at", op=op, value=value),))
 
-        with pytest.raises(ValueError, match="naive"):
+        with pytest.raises(BoundaryValidationError) as caught:
             compile_filter_group(_compiled(_Slot), group, frozenset())
+
+        assert (caught.value.code, caught.value.violations) == ("query_validation", _OFFSET_REFUSAL)
+
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    async def test_looking_up_a_time_column_by_an_aware_time_is_refused(
+        self, session_manager: SessionManager, lookup: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Slot, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Slot
+        )
+
+        with pytest.raises(BoundaryValidationError) as caught:
+            await _lookup(repo, lookup, "opens_at", _AWARE_TIME)
+
+        assert (caught.value.code, caught.value.violations) == ("query_validation", _OFFSET_REFUSAL)
 
     async def test_an_aware_time_in_a_json_column_keeps_its_offset(
         self, session_manager: SessionManager
@@ -255,6 +309,21 @@ class TestTimeColumns:
 
         assert stored is not None
         assert (stored.opens_at, stored.noted_at) == (_NAIVE_TIME, _AWARE_TIME)
+
+
+class TestLookupValues:
+    @pytest.mark.parametrize("lookup", _LOOKUPS)
+    async def test_a_lookup_by_a_plain_enum_matches_what_the_write_stored(
+        self, session_manager: SessionManager, lookup: str
+    ) -> None:
+        repo: RepositorySQLAlchemy[_Swatch, int] = RepositorySQLAlchemy(
+            session_manager=session_manager, model=_Swatch
+        )
+        await repo.create(_CreateSwatch(shade=_Shade.DARK))
+
+        found = await _lookup(repo, lookup, "shade", _Shade.DARK)
+
+        assert found
 
 
 class TestRelatedStructs:

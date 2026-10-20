@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy import and_, or_
 from sqlalchemy.sql.expression import ClauseElement
 
-from loom.core.errors.codes import ErrorCode
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
 from loom.core.repository.sqlalchemy.query_compiler.paths import resolve_column
@@ -16,11 +15,7 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_exists,
     compile_not_exists,
 )
-from loom.core.repository.sqlalchemy.values import (
-    is_json_column,
-    refuse_aware_time,
-    to_column_value,
-)
+from loom.core.repository.sqlalchemy.values import to_comparison_value
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {
@@ -91,16 +86,8 @@ def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
         raise ValueError(f"Unsupported FilterOp: {op!r}")
     if isinstance(value, ClauseElement):
         return handler(col, value)
-    json = is_json_column(col)
     if op is not FilterOp.IN:
-        return handler(col, _bound_value(col, value, json=json))
+        return handler(col, to_comparison_value(col, value))
     if isinstance(value, str | bytes) or not isinstance(value, Iterable):
         return handler(col, value)
-    return handler(col, [_bound_value(col, item, json=json) for item in value])
-
-
-def _bound_value(col: Any, value: Any, *, json: bool) -> Any:
-    """Convert a filter value as the write path does, refusing what the write refuses."""
-    if not json:
-        refuse_aware_time(col.key, value, code=ErrorCode.QUERY_VALIDATION)
-    return to_column_value(value, json=json)
+    return handler(col, [to_comparison_value(col, item) for item in value])

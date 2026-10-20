@@ -310,32 +310,24 @@ class TestAutoInterfaceInclude:
 class TestAwareTimeRefusal:
     """A time with a UTC offset never reaches a Time column; the client gets a 4xx."""
 
-    @pytest.fixture
-    def lenient_client(self, tmp_path: Path) -> Generator[TestClient, None, None]:
-        app = _build_app(tmp_path / "aware_time.sqlite")
-        with TestClient(app, raise_server_exceptions=False) as c:
-            yield c
-
-    def test_an_aware_time_filter_value_answers_400(self, lenient_client: TestClient) -> None:
-        resp = lenient_client.get("/auto-products/", params={"opensAt": "08:30:00+02:00"})
+    def test_an_aware_time_filter_value_answers_400(self, client: TestClient) -> None:
+        resp = client.get("/auto-products/", params={"opensAt": "08:30:00+02:00"})
 
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "query_validation"
         assert "08:30" not in resp.text
 
-    def test_an_aware_time_in_a_create_body_answers_422(self, lenient_client: TestClient) -> None:
-        resp = lenient_client.post(
-            "/auto-products/", json={"name": "Shop", "opensAt": "08:30:00+02:00"}
-        )
+    def test_an_aware_time_in_a_create_body_answers_422(self, client: TestClient) -> None:
+        resp = client.post("/auto-products/", json={"name": "Shop", "opensAt": "08:30:00+02:00"})
 
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "boundary_validation"
         assert "08:30" not in resp.text
 
-    def test_an_aware_time_in_an_update_body_answers_422(self, lenient_client: TestClient) -> None:
-        item_id = lenient_client.post("/auto-products/", json={"name": "Shop"}).json()["id"]
+    def test_an_aware_time_in_an_update_body_answers_422(self, client: TestClient) -> None:
+        item_id = client.post("/auto-products/", json={"name": "Shop"}).json()["id"]
 
-        resp = lenient_client.patch(f"/auto-products/{item_id}", json={"opensAt": "08:30:00+02:00"})
+        resp = client.patch(f"/auto-products/{item_id}", json={"opensAt": "08:30:00+02:00"})
 
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "boundary_validation"

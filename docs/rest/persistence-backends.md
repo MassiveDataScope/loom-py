@@ -343,7 +343,7 @@ persistence:
     database: shop
 ```
 
-Three limits decide what does not travel:
+Four limits decide what does not travel:
 
 - **Autoincrement is SQL-only.** `autoincrement=True` is refused at startup
   on `mongo` (and on the ClickHouse backend when it arrives); `dynamodb`
@@ -363,6 +363,13 @@ Three limits decide what does not travel:
   no `update` / `delete`. Routes for a capability the backend lacks are not
   mounted, and an interface whose `include` names one explicitly fails at
   boot naming model, operation and backend.
+- **A `time` with a UTC offset does not reach a SQL `Time` column.** On
+  `sqlalchemy` a `date` field is inferred as a `Date` column and a `time`
+  field as a `Time` column, which holds no offset; the repository refuses a
+  `time` with an offset written to it (`boundary_validation`, REST `422`) or
+  compared with it (`query_validation`, REST `400`). `mongo` stores `time` as
+  ISO 8601 text and keeps the offset. A `datetime` field keeps the offset on
+  both.
 
 ## Upgrade notes
 

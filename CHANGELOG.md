@@ -626,13 +626,21 @@
   binds `date` and `time` values natively, so on Postgres with asyncpg writing
   either field failed (`expected str, got date`, and the same for `time`).
   The SQLAlchemy repository now refuses a `time` that carries a UTC offset
-  when it is written to or used as a filter value on any column other than
-  JSON, with a `BoundaryValidationError` (a `ValueError`) naming the column
+  when it is written to, or compared with, a column that would drop the
+  offset, with a `BoundaryValidationError` (a `ValueError`) naming the column
   and not the value: `boundary_validation` for a write (REST answers `422`),
-  `query_validation` for a filter value (`400`). SQL `TIME` keeps no offset,
-  so Postgres and SQLite stored `08:30+02:00` as `08:30` and an aware filter
-  value matched the stored local time. Pass a naive `time`, or declare a
-  `datetime` field (`DateTime(tz=True)`) or a JSON column to keep the offset.
+  `query_validation` for a filter, `get_by`, `exists_by` or `list_paginated`
+  value (`400`). Without the check, Postgres and SQLite would store
+  `08:30+02:00` in a `Time` column as `08:30`, and an aware filter value
+  would match the row holding `08:30`. A JSON column and a `Time` column
+  declared with `ColumnType("Time", kwargs={"timezone": True})` (Postgres
+  `timetz`) keep the offset and accept it; a `datetime` field
+  (`DateTime(tz=True)`) is the other way to keep it. `get_by`, `exists_by`
+  and the `filters` of `list_paginated` now convert their value as a write
+  converts it, as `QuerySpec` filters already did, so a plain `Enum` member
+  matches the value the write stored instead of failing to bind; a
+  `list_paginated` filter on a field the model does not have raises
+  `ValueError` naming the field.
   An existing Postgres table holding these columns as `varchar` needs a
   migration: Alembic autogenerate detects the type change, but Postgres
   refuses it without a cast, so the revision passes
