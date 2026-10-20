@@ -12,7 +12,10 @@ require_bytewax()
 
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.core._message import Message  # noqa: E402
-from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
+from loom.streaming.kafka._errors import (  # noqa: E402
+    KafkaDeliveryError,
+    KafkaSerializationError,
+)
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from loom.streaming.nodes._boundary import PartitionGuarantee, PartitionPolicy  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
@@ -111,11 +114,15 @@ class _RecordingTracker:
 
 
 class _DlqRejectingProducer(RawProducerStub):
-    """Raw producer whose sends to the DLQ topic are rejected."""
+    """Raw producer whose sends to the DLQ topic raise ``dlq_error``."""
+
+    def __init__(self, dlq_error: Exception) -> None:
+        super().__init__()
+        self.dlq_error = dlq_error
 
     def send(self, record: KafkaRecord[bytes]) -> None:
         if record.topic == "orders.dlq":
-            raise KafkaDeliveryError("dlq queue full")
+            raise self.dlq_error
         super().send(record)
 
 
@@ -136,20 +143,21 @@ class TestDlqRouting:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         fake_raw = RawProducerStub()
-        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable"), None]
+        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
         sink, tracker = _dlq_sink(monkeypatch, fake_raw)
 
         sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
 
         dlq_record = next(r for r in fake_raw.sent if r.topic == "orders.dlq")
         assert b"broker unavailable" in dlq_record.headers.get("x-dlq-error", b"")
+        assert fake_raw.flush_count == 2
         assert tracker.completed == [("orders.in", 2, 9)]
 
     def test_dlq_send_failure_raises_without_committing(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        fake_raw = _DlqRejectingProducer()
+        fake_raw = _DlqRejectingProducer(KafkaDeliveryError("dlq queue full"))
         fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
         sink, tracker = _dlq_sink(monkeypatch, fake_raw)
 
@@ -157,6 +165,19 @@ class TestDlqRouting:
             sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
 
         assert str(raised.value.__cause__) == "dlq queue full"
+        assert tracker.completed == []
+
+    def test_dlq_non_delivery_error_propagates_without_committing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_raw = _DlqRejectingProducer(KafkaSerializationError("payload not encodable"))
+        fake_raw.flush_errors = [KafkaDeliveryError("broker unavailable")]
+        sink, tracker = _dlq_sink(monkeypatch, fake_raw)
+
+        with pytest.raises(KafkaSerializationError, match="payload not encodable"):
+            sink.write_batch([build_order_message("123", None, partition=2, offset=9)])
+
         assert tracker.completed == []
 
     def test_dlq_flush_failure_raises_without_committing(

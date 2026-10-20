@@ -133,34 +133,16 @@ def _write_kafka_batch(
     except KafkaDeliveryError as exc:
         if sink.dlq_topic is None or dlq_sender is None:
             raise
-        _divert_to_dlq(message_producer, sink.dlq_topic, items, exc, dlq_sender)
+        try:
+            dlq_sender(message_producer, sink.dlq_topic, items, exc)
+            producer.flush()
+        except KafkaDeliveryError as dlq_exc:
+            raise KafkaDeliveryError(
+                f"delivery to DLQ topic {sink.dlq_topic!r} failed after sink delivery error: {exc}"
+            ) from dlq_exc
         _commit_runtime_items(items, item_to_commit, commit_tracker)
         return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
     return _DELIVERED
-
-
-def _divert_to_dlq(
-    message_producer: KafkaMessageProducer[PayloadT],
-    dlq_topic: str,
-    items: list[ItemT],
-    exc: KafkaDeliveryError,
-    dlq_sender: Callable[
-        [KafkaMessageProducer[PayloadT], str, list[ItemT], KafkaDeliveryError], None
-    ],
-) -> None:
-    """Send a failed batch to its DLQ topic and flush until every record is delivered.
-
-    Raises:
-        KafkaDeliveryError: If any DLQ record could not be sent or the flush
-            reported a delivery failure; the batch must not be committed.
-    """
-    try:
-        dlq_sender(message_producer, dlq_topic, items, exc)
-        message_producer.flush()
-    except Exception as dlq_exc:
-        raise KafkaDeliveryError(
-            f"delivery to DLQ topic {dlq_topic!r} failed after sink delivery error: {exc}"
-        ) from dlq_exc
 
 
 def _commit_runtime_items(
