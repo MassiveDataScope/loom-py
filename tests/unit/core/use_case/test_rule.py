@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -114,7 +114,7 @@ class TestRule:
 
 
 class TestRuleDsl:
-    def test_check_runs_validator(self) -> None:
+    def test_check_raises_returned_message_as_violation(self) -> None:
         rule = Rule.check(
             F(CreateUser).email,
             via=email_format_error_or_none,
@@ -127,6 +127,28 @@ class TestRuleDsl:
             rule(cmd, fields_set)
 
         assert exc_info.value.field == "email"
+        assert exc_info.value.message == "Invalid email format"
+
+    def test_check_passes_when_evaluator_returns_none(self) -> None:
+        rule = Rule.check(F(CreateUser).email, via=email_format_error_or_none)
+
+        rule(CreateUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
+
+    def test_check_raises_returned_rule_violation(self) -> None:
+        violation = RuleViolation("contact", "Contact rejected")
+        rule = Rule.check(F(CreateUser).email, via=lambda _email: violation)
+
+        with pytest.raises(RuleViolation) as exc_info:
+            rule(CreateUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
+
+        assert exc_info.value is violation
+
+    @pytest.mark.parametrize("outcome", [True, False])
+    def test_check_refuses_boolean_outcome(self, outcome: bool) -> None:
+        rule = Rule.check(F(CreateUser).email, via=cast(Any, lambda _email: outcome))
+
+        with pytest.raises(TypeError, match=r"field 'email'.*returned bool.*or None"):
+            rule(CreateUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
 
     def test_check_when_present_for_patch_field(self) -> None:
         rule = Rule.check(

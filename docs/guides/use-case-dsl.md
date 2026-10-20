@@ -235,7 +235,9 @@ before `execute()` is called.
 ### Rule.check — field validation
 
 `Rule.check` validates a single field. The `via=` function returns an error
-string when the value is invalid, or `None` when it is valid:
+string (or a `RuleViolation`) when the value is invalid, or `None` when it is
+valid. Any other result, a `bool` included, raises `TypeError`; a boolean
+condition belongs in `Rule.forbid`:
 
 ```python
 from loom.core.use_case import Rule, F
