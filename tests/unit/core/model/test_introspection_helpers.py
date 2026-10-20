@@ -169,6 +169,33 @@ class TestOptionalColumnTypes:
         assert get_column_fields(_Optionals)["label"].column_type == String()
 
 
+class _Unsettable(BaseModel):
+    __tablename__ = "introspection_unsettable"
+
+    id: int = ColumnField(primary_key=True)
+    label: str | msgspec.UnsetType = msgspec.UNSET
+    count: int | msgspec.UnsetType = msgspec.UNSET
+    note: str | None | msgspec.UnsetType = msgspec.UNSET
+
+
+class TestUnsetColumnTypes:
+    @pytest.mark.parametrize(
+        ("name", "column_type"),
+        [("label", String()), ("count", Integer), ("note", String())],
+    )
+    def test_unset_type_does_not_change_the_inferred_column_type(
+        self, name: str, column_type: ColumnType
+    ) -> None:
+        assert get_column_fields(_Unsettable)[name].column_type == column_type
+
+    @pytest.mark.parametrize(("name", "nullable"), [("label", False), ("note", True)])
+    def test_only_none_makes_an_unset_field_nullable(self, name: str, nullable: bool) -> None:
+        assert get_column_fields(_Unsettable)[name].field.nullable is nullable
+
+    def test_an_unset_scalar_field_is_a_scalar_column(self) -> None:
+        assert set(scalar_column_annotations(_Unsettable)) == {"id", "label", "count", "note"}
+
+
 class _Temporal(msgspec.Struct):
     day: date
     at: time | None = None

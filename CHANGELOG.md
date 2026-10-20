@@ -459,6 +459,16 @@
 
 ### core
 
+- **core:** a field annotated `X | UnsetType` infers `X`'s column type.
+  `UNSET` means "not provided", not another type, so `str | UnsetType` now
+  compiles to `String` and `int | UnsetType` to `Integer` instead of `JSON`,
+  and such a column is scalar (filterable and sortable). Nullability is
+  unchanged: `str | None | UnsetType` admits `None` and is nullable,
+  `UnsetType` alone keeps the column `NOT NULL`. An undeclared
+  `Decimal | UnsetType`, plain `Enum | UnsetType` or `Literal[...] | UnsetType`
+  now needs a declared column type, as it does without `UnsetType`. Alembic
+  autogenerate will show the type change from `JSON` for existing tables with
+  such columns.
 - **core:** a column's nullability follows its field's annotation. A field
   whose annotation admits `None` (`x: int | None = None`, also inside
   `Annotated`) compiles to a nullable column; any other field compiles to
