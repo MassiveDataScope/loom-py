@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 import structlog
 
+from loom.core.checks import DeployCheckRegistry, Finding, enforce_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
@@ -108,3 +109,60 @@ def test_a_key_the_logger_does_not_know_is_a_config_error(logger_config: dict[st
 
     with pytest.raises(ConfigError, match="environment|colours"):
         config.section("logger", LoggerConfig)
+
+
+_FLOOR_LOGGERS = ("loom", "loom.core", "loom.core.checks")
+
+
+@pytest.fixture
+def loom_logger_restored() -> Iterator[None]:
+    # configure_logging sets process-wide structlog filtering; restore it for later tests.
+    structlog_config = structlog.get_config()
+    yield
+    structlog.configure(**structlog_config)
+    for name in _FLOOR_LOGGERS:
+        target = logging.getLogger(name)
+        target.setLevel(logging.NOTSET)
+        for handler in list(target.handlers):
+            target.removeHandler(handler)
+
+
+def _warning_registry() -> DeployCheckRegistry:
+    registry = DeployCheckRegistry()
+
+    @registry.register("tests.floor.W001")
+    def _always(config: ConfigContext) -> Finding | None:
+        return Finding(message="tests.floor is set", hint="unset it")
+
+    return registry
+
+
+@pytest.mark.usefixtures("loom_logger_restored")
+@pytest.mark.parametrize(
+    ("level", "named_levels"),
+    [("CRITICAL", {}), ("INFO", {"loom": "CRITICAL"}), ("INFO", {"loom.core": "CRITICAL"})],
+)
+def test_a_deployed_log_level_cannot_hide_the_deploy_check_warnings(
+    capsys: pytest.CaptureFixture[str], level: str, named_levels: dict[str, str]
+) -> None:
+    configure_logging_from_values(
+        name="loom", environment=Environment.PRODUCTION, level=level, named_levels=named_levels
+    )
+    config = ConfigContext.from_dict({"checks": {"silenced": ["tests.floor.W002"]}})
+
+    enforce_deploy_checks(config, Environment.PRODUCTION, registry=_warning_registry())
+
+    written = capsys.readouterr().out
+    assert "tests.floor.W001" in written
+    assert "silenced" in written
+
+
+@pytest.mark.usefixtures("loom_logger_restored")
+def test_a_local_log_level_still_hides_loom_warnings(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging_from_values(
+        name="loom", environment=Environment.DEVELOPMENT, level="CRITICAL"
+    )
+
+    logging.getLogger("loom.core.checks").warning("hidden")
+
+    assert "hidden" not in capsys.readouterr().out
