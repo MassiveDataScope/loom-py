@@ -341,6 +341,27 @@ class TestSinkTrackingContract:
 
         _adapter._bind_commit_tracker_object(_UserSink(), None)
 
+    def test_an_inline_sink_that_cannot_skip_commits_is_rejected(self) -> None:
+        """Its partitions would complete offsets of messages that go on after the write."""
+
+        class _UserSink:
+            """A tracker-aware sink that cannot be told its partitions write inline."""
+
+        tracker, _ = _tracker()
+        ctx = _adapter._BuildContext(
+            plan=cast(Any, SimpleNamespace(name="orders")),
+            bridge=None,
+            flow_runtime=ObservabilityRuntime.noop(),
+            flow_run_id="run-1",
+            terminal_sinks={(0, 1): _UserSink()},
+            commit_tracker=tracker,
+        )
+
+        with pytest.raises(RuntimeConfigurationError, match="mark_inline_partition") as exc_info:
+            ctx.inline_sink_partition_for((0, 1))
+
+        assert exc_info.value.issues[0].code is StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS
+
 
 class TestErrorEnvelopeAccounting:
     """A failed record still owes exactly one completion, from its error route."""

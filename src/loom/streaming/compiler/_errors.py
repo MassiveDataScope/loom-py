@@ -220,6 +220,17 @@ class StreamingErrorCode(IssueCode):
             field="streaming.delivery",
         ),
     )
+    INLINE_SINK_CANNOT_SKIP_COMMITS = (
+        "INLINE_SINK_CANNOT_SKIP_COMMITS",
+        Template(
+            "delivery=at_least_once: {component} is written inline by "
+            "With/WithAsync(process=...) but exposes no mark_inline_partition method, so "
+            "its partitions would complete the offsets of messages that go on after the "
+            "inline write. Add mark_inline_partition() to the sink, or declare "
+            "delivery=at_most_once.",
+            field="streaming.delivery",
+        ),
+    )
     # Under at-least-once delivery a dropped message that never completes
     # freezes the partition's commit watermark forever.
     FORK_UNMATCHED_UNROUTED = (

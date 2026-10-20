@@ -193,18 +193,13 @@ class _SupportsTerminalTracing(Protocol):
     ) -> None:
         """Make this sink emit a terminal span per message it writes."""
 
+
+@runtime_checkable
+class _SupportsInlinePartition(Protocol):
+    """Runtime sink whose partitions can be built for an inline, non-terminal write."""
+
     def mark_inline_partition(self) -> None:
-        """Record that an inline, non-terminal partition is built from this sink."""
-
-
-def _mark_inline_partition(sink: object) -> None:
-    """Record on one sink that an inline, non-terminal partition is built from it.
-
-    Sinks that cannot carry terminal tracing — storage sinks, test doubles —
-    have nothing to record and are left untouched.
-    """
-    if isinstance(sink, _SupportsTerminalTracing):
-        sink.mark_inline_partition()
+        """Record that partitions built from now on write inline and complete nothing."""
 
 
 def _bind_commit_tracker_object(
@@ -388,13 +383,22 @@ class _BuildContext:
             RuntimeError: If the sink for *path* already carries terminal
                 tracing, meaning an inline and a terminal wiring path collided
                 on one compiled sink.
+            RuntimeConfigurationError: If a commit tracker is bound and the sink
+                cannot be marked inline, so its partitions would complete
+                offsets at the inline write.
         """
         sink = self.terminal_sinks.get(path)
         if sink is None:
             return None
-        _mark_inline_partition(sink)
+        if isinstance(sink, _SupportsInlinePartition):
+            sink.mark_inline_partition()
+        elif self.commit_tracker is not None:
+            issue = StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS.issue(
+                component=type(sink).__name__
+            )
+            raise RuntimeConfigurationError([issue])
         step_id = "inline_" + "_".join(str(p) for p in path)
-        return cast(StatelessSinkPartition[Any], sink.build(step_id, 0, 1))
+        return cast(StatelessSinkPartition[Any], cast(Any, sink).build(step_id, 0, 1))
 
     def manager_for(
         self,
