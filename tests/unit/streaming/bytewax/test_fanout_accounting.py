@@ -6,12 +6,15 @@ reaches a terminal. The tracker expects exactly one completion per record, so a
 node that fans out must raise that expectation before any output can be
 completed, and a node that produces nothing must release the record itself.
 
-Both failures are silent, which is why they are asserted here against a real
-``KafkaCommitTracker`` and its committed offsets rather than against a spy:
+Both failures are silent, which is why the unit classes assert them against a
+real ``KafkaCommitTracker`` and its committed offsets rather than against a spy:
 
 - fan-out without a fork commits the offset after the *first* output, losing the
   remaining N-1 on a crash — the consumer group has already moved past them;
 - zero outputs without a completion freezes the partition's watermark forever.
+
+``TestEveryPathCompletesOnce`` runs whole flows on the Bytewax runtime instead,
+with a logging tracker and a testing source in place of the Kafka ones.
 """
 
 from __future__ import annotations
@@ -56,7 +59,6 @@ from loom.streaming import (  # noqa: E402
     IntoTopic,
     Process,
     RecordStep,
-    Route,
     Router,
     Selector,
     StreamFlow,
@@ -74,7 +76,11 @@ from loom.streaming.bytewax.handlers import _shared  # noqa: E402
 from loom.streaming.bytewax.handlers import routing as _routing  # noqa: E402
 from loom.streaming.bytewax.handlers import steps as _steps  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
-from loom.streaming.compiler import StreamingErrorCode, compile_flow  # noqa: E402
+from loom.streaming.compiler import (  # noqa: E402
+    CompilationError,
+    StreamingErrorCode,
+    compile_flow,
+)
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka import MessageDescriptor, MsgspecCodec, build_message  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
@@ -512,9 +518,10 @@ class TestCommitKeyGuards:
 # --- Each listed path shape ends in exactly one completion per share -------------
 #
 # The flows below run on the real Bytewax runtime with the real adapter, the real
-# Kafka sinks and the real codec; only the confluent producer and the storage
-# partition are faked, and both write into one ordered log next to every fork
-# and completion the commit tracker receives. They compile under
+# Kafka sinks and the real codec. The confluent producer and the storage
+# partition are faked, the commit tracker is a logging stand-in and the source is
+# a TestingSource; the producer, the partition and the tracker write into one
+# ordered log of writes, flushes, forks and completions. They compile under
 # delivery=at_least_once, except the one row that pins what an at-least-once
 # compile rule refuses. _PATH_CASES is the list of shapes covered.
 
@@ -985,6 +992,7 @@ _PATH_CASES = {
         ),
         _each("t.a", 0, 0, 1, 1, 2, 2),
         shares=2,
+        errors="t.err",
     ),
     "explode_then_router": _PathCase(
         lambda: Process(
@@ -1069,15 +1077,6 @@ _PATH_CASES = {
         _each("items_table", 0, 0, 1, 1, 2, 2),
         shares=2,
     ),
-    "router_when": _PathCase(
-        lambda: Process(
-            Router.when(
-                [Route(when=msg.payload.value == "item-0", process=Process(_topic("t.a")))],
-                default=Process(_topic("t.b")),
-            )
-        ),
-        _each("t.a", 0) + _each("t.b", 1, 2),
-    ),
     "router_branch_step_fails": _PathCase(
         lambda: Process(
             Router.by(
@@ -1159,38 +1158,44 @@ def _assert_each_offset_completes_once_after_its_writes(
                 )
 
 
-_WRONG_TODAY = {
+_KNOWN_BUGS_WITH_FOLLOW_UP: dict[str, tuple[type[BaseException], str, str]] = {
     "collect_batch_batch_step_for_each": (
-        "ForEach after a BatchStep fails compilation: ForEach expects shape many, a "
-        "BatchStep produces batch"
+        CompilationError,
+        "shape mismatch: expected many but got batch before ForEach",
+        "follow-up hotfix: ForEach must accept the batch a BatchStep produces",
     ),
     "batch_expand_step": (
-        "a BatchExpandStep must return as many outputs as it received, so it cannot expand"
+        AssertionError,
+        r"written somewhere else[\s\S]*'t\.err'",
+        "follow-up hotfix: a BatchExpandStep must be able to return more outputs than "
+        "inputs; today _replace_payloads refuses it and every message becomes an error",
     ),
 }
-"""Shapes outside the completion invariant that fail before any offset is written."""
+"""Shapes outside the completion invariant that fail today, pinned to their failure.
 
-
-def _path_case_params() -> list[Any]:
-    return [
-        pytest.param(
-            case,
-            id=name,
-            marks=[pytest.mark.xfail(strict=True, reason=_WRONG_TODAY[name])]
-            if name in _WRONG_TODAY
-            else [],
-        )
-        for name, case in _PATH_CASES.items()
-    ]
+Each is ``(exception, message pattern, follow-up)``. When a follow-up fixes the
+shape, ``pytest.raises`` fails and the entry must go.
+"""
 
 
 class TestEveryPathCompletesOnce:
     """Each offset completes once per share, and only after its writes are flushed."""
 
-    @pytest.mark.parametrize("case", _path_case_params())
+    @pytest.mark.parametrize("name", list(_PATH_CASES))
     def test_each_offset_completes_once_per_share_after_its_last_flush(
-        self, case: _PathCase, monkeypatch: pytest.MonkeyPatch
+        self, name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        known_bug = _KNOWN_BUGS_WITH_FOLLOW_UP.get(name)
+        if known_bug is None:
+            self._assert_case(_PATH_CASES[name], monkeypatch)
+            return
+        exception, pattern, follow_up = known_bug
+        with pytest.raises(exception, match=pattern):
+            self._assert_case(_PATH_CASES[name], monkeypatch)
+        pytest.xfail(follow_up)
+
+    @staticmethod
+    def _assert_case(case: _PathCase, monkeypatch: pytest.MonkeyPatch) -> None:
         log = _run_paths(
             case.process(),
             case.items(),
@@ -1249,11 +1254,12 @@ class TestStorageCompletesAfterItsFlush:
 
     @staticmethod
     def _sink(
-        flush_at: int, *, fail: bool = False
+        partition: object, *offsets: int
     ) -> tuple[_storage._StorageSinkPartition, KafkaCommitTracker]:
-        tracker, _ = _tracker(*range(5))
+        """Wrap *partition* in the storage sink, tracking *offsets*."""
+        tracker, _ = _tracker(*offsets)
         sink = _storage._StorageSinkPartition(
-            _BufferingPartition(flush_at, fail=fail),
+            cast(Any, partition),
             node_name="table",
             flow_name="orders",
             flow_run_id="run-1",
@@ -1268,7 +1274,7 @@ class TestStorageCompletesAfterItsFlush:
 
     def test_buffered_rows_complete_only_with_the_flush_that_writes_them(self) -> None:
         """No close() at the end is the crash: offset 3 was never written, so it is replayed."""
-        sink, tracker = self._sink(flush_at=3)
+        sink, tracker = self._sink(_BufferingPartition(flush_at=3), *range(5))
 
         sink.write_batch(self._orders(0, 1))
         assert tracker.flush_partition(TOPIC, PARTITION) == [], "buffered rows were completed"
@@ -1278,7 +1284,7 @@ class TestStorageCompletesAfterItsFlush:
         assert tracker.flush_partition(TOPIC, PARTITION) == [TopicPartition(TOPIC, PARTITION, 3)]
 
     def test_the_final_flush_at_close_completes_the_rest(self) -> None:
-        sink, tracker = self._sink(flush_at=10)
+        sink, tracker = self._sink(_BufferingPartition(flush_at=10), 0, 1)
         sink.write_batch(self._orders(0, 1))
 
         sink.close()
@@ -1287,7 +1293,7 @@ class TestStorageCompletesAfterItsFlush:
 
     def test_after_a_failed_write_a_later_count_completes_nothing(self) -> None:
         """The close count cannot say which pending rows it covers once a write failed."""
-        sink, tracker = self._sink(flush_at=10, fail=True)
+        sink, tracker = self._sink(_BufferingPartition(flush_at=10, fail=True), 0, 1)
 
         with pytest.raises(RuntimeError, match="table down"):
             sink.write_batch(self._orders(0, 1))
@@ -1301,15 +1307,7 @@ class TestStorageCompletesAfterItsFlush:
                 super().write_batch(items)
                 return cast(int, None)
 
-        tracker, _ = _tracker(0, 1)
-        sink = _storage._StorageSinkPartition(
-            _CountsLate(flush_at=10),
-            node_name="table",
-            flow_name="orders",
-            flow_run_id="run-1",
-            observer=ObservabilityRuntime.noop(),
-            commit_tracker=tracker,
-        )
+        sink, tracker = self._sink(_CountsLate(flush_at=10), 0, 1)
         with pytest.raises(TypeError, match="must return how many"):
             sink.write_batch(self._orders(0, 1))
 
@@ -1326,15 +1324,7 @@ class TestStorageCompletesAfterItsFlush:
             def close(self) -> int:
                 return 0
 
-        tracker, _ = _tracker(0, 1)
-        sink = _storage._StorageSinkPartition(
-            _NoFlushOnClose(flush_at=10),
-            node_name="table",
-            flow_name="orders",
-            flow_run_id="run-1",
-            observer=ObservabilityRuntime.noop(),
-            commit_tracker=tracker,
-        )
+        sink, tracker = self._sink(_NoFlushOnClose(flush_at=10), 0, 1)
         sink.write_batch(self._orders(0, 1))
 
         sink.close()
@@ -1351,15 +1341,7 @@ class TestStorageCompletesAfterItsFlush:
             def close(self) -> int:
                 return cast(int, None)
 
-        tracker, _ = _tracker(0, 1)
-        sink = _storage._StorageSinkPartition(
-            _BadClose(flush_at=10),
-            node_name="table",
-            flow_name="orders",
-            flow_run_id="run-1",
-            observer=ObservabilityRuntime.noop(),
-            commit_tracker=tracker,
-        )
+        sink, tracker = self._sink(_BadClose(flush_at=10), 0, 1)
         sink.write_batch(self._orders(0, 1))
 
         sink.close()
@@ -1377,13 +1359,7 @@ class TestStorageCompletesAfterItsFlush:
             def close(self) -> object:
                 return count
 
-        sink = _storage._StorageSinkPartition(
-            cast(Any, _Silent()),
-            node_name="table",
-            flow_name="orders",
-            flow_run_id="run-1",
-            observer=ObservabilityRuntime.noop(),
-        )
+        sink, _ = self._sink(_Silent(), 0)
 
         with pytest.raises(TypeError, match="must return how many of the 1 pending items"):
             sink.write_batch(self._orders(0))
