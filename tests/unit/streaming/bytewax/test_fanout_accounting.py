@@ -508,11 +508,16 @@ def _offset_in(value: bytes | str) -> int:
 
 
 class _LoggingProducer(ProducerBackendStub):
-    """One sink's confluent producer; its produces and flushes go to the shared log."""
+    """One sink's confluent producer; its produces and flushes go to the shared log.
+
+    A flush fails when it would deliver a record to ``t.unreachable``, so a sink
+    with a DLQ topic diverts that batch.
+    """
 
     def __init__(self, log: list[Event]) -> None:
         super().__init__({})
         self._log = log
+        self._unflushed: set[str] = set()
 
     def produce(
         self,
@@ -532,10 +537,15 @@ class _LoggingProducer(ProducerBackendStub):
             timestamp=timestamp,
             on_delivery=on_delivery,
         )
+        self._unflushed.add(topic)
         self._log.append(("produce", (id(self), topic), _offset_in(value)))
 
     def flush(self, timeout: float | None = None) -> None:
         super().flush(timeout)
+        unreachable = "t.unreachable" in self._unflushed
+        self._unflushed.clear()
+        if unreachable:
+            raise RuntimeError("t.unreachable is down")
         self._log.append(("flush", id(self), None))
 
 
@@ -663,6 +673,10 @@ _PATH_CASES = {
         lambda: Process(_Upper(), _topic("t.a")),
         _each("t.a", 0, 1, 2),
         output="t.out",
+    ),
+    "dlq_diversion": _PathCase(
+        lambda: Process(IntoTopic("t.unreachable", payload=_Item, dlq="t.dlq")),
+        _each("t.unreachable", 0, 1, 2) + _each("t.dlq", 0, 1, 2),
     ),
     "inline_then_output": _PathCase(
         lambda: Process(WithAsync(process=Process(_Upper(), _topic("t.inline")))),
