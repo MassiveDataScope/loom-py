@@ -182,7 +182,7 @@ class RepositoryDynamoDB(
             return None
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
-        merged = {**self._decode_item(existing), **changes, self._id_attr: obj_id}
+        merged = {**self._decode_item(existing), **changes}
         try:
             await asyncio.to_thread(
                 self._client.put_item,
@@ -236,16 +236,12 @@ class RepositoryDynamoDB(
         return cast(OutputT, to_struct(self._model, kwargs))
 
     def _encode_value(self, value: Any) -> dict[str, Any]:
-        """Serialize a Python value to a low-level ``AttributeValue`` dict.
+        """Serialize a plain Python value to a low-level ``AttributeValue`` dict.
 
-        The value is first converted with :func:`msgspec.to_builtins`, the same
-        conversion ``create`` stores items with, so a key such as a ``UUID``
-        encodes to the stored form and round-trips. Floats are then converted
-        to ``Decimal`` because DynamoDB — and ``TypeSerializer`` — reject
-        native floats.
+        Floats are converted to ``Decimal`` first because DynamoDB — and
+        ``TypeSerializer`` — reject native floats.
         """
-        builtins = msgspec.to_builtins(value)
-        return cast("dict[str, Any]", self._serializer.serialize(_floats_to_decimal(builtins)))
+        return cast("dict[str, Any]", self._serializer.serialize(_floats_to_decimal(value)))
 
     def _decode_value(self, value: dict[str, Any]) -> Any:
         """Deserialize a low-level ``AttributeValue`` dict back to a Python value.
@@ -264,8 +260,12 @@ class RepositoryDynamoDB(
         return {key: self._decode_value(value) for key, value in item.items()}
 
     def _encode_key(self, obj_id: Any) -> dict[str, Any]:
-        """Build the low-level ``Key`` dict for the partition key."""
-        return {self._id_attr: self._encode_value(obj_id)}
+        """Build the low-level ``Key`` dict for the partition key.
+
+        The key is converted with :func:`msgspec.to_builtins`, as ``create``
+        stores it, so a key such as a ``UUID`` matches its stored form.
+        """
+        return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
 
 
 def _single_id_attribute(model: type) -> str:

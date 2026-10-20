@@ -1233,8 +1233,10 @@
   primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
   handed the raw key to boto3's `TypeSerializer`, which raised
   `TypeError: Unsupported type "<class 'uuid.UUID'>"`; `create` already stored
-  the key as a string through `msgspec.to_builtins`. Keys and values are now
-  encoded with that same conversion, so a key round-trips.
+  the key as a string through `msgspec.to_builtins`. The key is now encoded
+  with that same conversion, so it matches its stored form and round-trips.
+  `update` keeps the key as stored instead of rewriting it from the argument.
+  Attribute values are encoded as before.
 - **core:** one environment selector and deploy checks (ADR 0005). loom had
   two unconnected notions of environment (the logger's `dev`/`prod`, where an
   unknown value meant `dev`, and `FlowCtx.environment`) and nothing checked a
