@@ -564,6 +564,21 @@ def test_bind_interfaces_builds_query_spec_from_cursor_url_params() -> None:
     }
 
 
+def test_bind_interfaces_refuses_a_page_whose_offset_overflows() -> None:
+    class IFace(RestInterface[dict[str, Any]]):
+        prefix = "/items"
+        routes = (RestRoute(use_case=QueryAwareUseCase, method="GET", path="/"),)
+
+    client = TestClient(_make_app(*_compile_routes(IFace)), raise_server_exceptions=False)
+
+    response = client.get(f"/items/?page={2**63}&limit=2")
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "query_validation"
+    assert [violation["field"] for violation in detail["violations"]] == ["page"]
+
+
 def test_bind_interfaces_uses_compiled_default_pagination_mode() -> None:
     class IFace(RestInterface[dict[str, Any]]):
         prefix = "/items"

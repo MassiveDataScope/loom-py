@@ -280,6 +280,7 @@ class TestRepositorySQLAlchemyIntegration:
 @pytest.mark.asyncio
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason=(
         "A filter on a related model's column compiles without a join, so each "
         "matching related row multiplies every root row; relation filtering is a "

@@ -45,7 +45,7 @@ from typing import Any, NamedTuple
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.model import get_column_fields, loom_type
+from loom.core.model import UnsupportedBoundaryType, get_column_fields, loom_type, msgspec_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
 from loom.core.repository.abc.query import QuerySpec
@@ -417,8 +417,9 @@ class _ColumnPolicy:
         if not declared or not self.takes_query_spec:
             return {}
         if self.model is None:
+            source = "declares" if on_route is not None else "inherits"
             raise InterfaceCompilationError(
-                f"{self.where} declares {kind} fields, but its use case declares no model; "
+                f"{self.where} {source} {kind} fields, but its use case declares no model; "
                 "declare it as UseCase[Model, ...]."
             )
         columns = scalar_column_annotations(self.model)
@@ -440,6 +441,26 @@ class _ColumnPolicy:
                 )
             resolved[name] = columns[name]
         return resolved
+
+    def filter_fields(
+        self, on_route: DeclaredFields | None, on_interface: DeclaredFields | None
+    ) -> tuple[tuple[str, Any], ...]:
+        """Resolve ``filterable``, refusing a column whose type a query value cannot decode.
+
+        Raises:
+            InterfaceCompilationError: As :meth:`resolve`, or msgspec cannot
+                describe a declared column's type.
+        """
+        columns = self.resolve("filterable", on_route, on_interface)
+        for name, annotation in columns.items():
+            try:
+                msgspec_type(annotation).schema()
+            except (TypeError, UnsupportedBoundaryType) as exc:
+                raise InterfaceCompilationError(
+                    f"{self.where}: filterable field {name!r} has a type a query value "
+                    f"cannot be decoded into: {exc}"
+                ) from exc
+        return tuple(columns.items())
 
     def default_order(self) -> tuple[str, ...]:
         """Primary-key columns, the order the route applies when the client names none."""
@@ -608,10 +629,12 @@ class RestInterfaceCompiler:
             seen[key] = route
 
             full_path = f"{prefix}{route.path}" if route.path else prefix or "/"
+            where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
+            takes_query_spec = any(names_query_spec(pb.annotation) for pb in plan.param_bindings)
             columns = _ColumnPolicy(
-                where=f"{iface_name}: route ({route.method.upper()}, {route.path!r})",
+                where=where,
                 model=route.use_case.describe_main_repo()[0],
-                takes_query_spec=any(names_query_spec(pb.annotation) for pb in plan.param_bindings),
+                takes_query_spec=takes_query_spec,
             )
 
             compiled.append(
@@ -631,15 +654,15 @@ class RestInterfaceCompiler:
                     execute_param_types=self._resolve_execute_param_types(route.use_case),
                     effective_requires_roles=self._resolve_requires_roles(route, interface),
                     effective_max_limit=self._defaults.max_limit,
-                    query_fields=self._resolve_query_fields(iface_name, route, plan),
-                    filter_fields=tuple(
-                        columns.resolve(
-                            "filterable", route.filterable, interface.filterable
-                        ).items()
-                    ),
-                    sort_fields=(
-                        *columns.resolve("sortable", route.sortable, interface.sortable),
-                        *columns.default_order(),
+                    query_fields=self._resolve_query_fields(where, takes_query_spec, route, plan),
+                    filter_fields=columns.filter_fields(route.filterable, interface.filterable),
+                    sort_fields=tuple(
+                        dict.fromkeys(
+                            (
+                                *columns.resolve("sortable", route.sortable, interface.sortable),
+                                *columns.default_order(),
+                            )
+                        )
                     ),
                     result_type=result_type,
                     created_type=created_type,
@@ -696,13 +719,12 @@ class RestInterfaceCompiler:
 
     @staticmethod
     def _resolve_query_fields(
-        iface_name: str, route: RestRoute, plan: ExecutionPlan
+        where: str, takes_query_spec: bool, route: RestRoute, plan: ExecutionPlan
     ) -> tuple[QueryField, ...]:
         binding = plan.query_binding
         if binding is None:
             return ()
-        where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
-        if any(names_query_spec(pb.annotation) for pb in plan.param_bindings):
+        if takes_query_spec:
             raise InterfaceCompilationError(
                 f"{where}: Query() cannot be combined with a QuerySpec parameter."
             )

@@ -10,7 +10,7 @@ import msgspec
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField
+from loom.core.model import JSON, BaseModel, Cardinality, ColumnField, RelationField, String
 from loom.core.repository.abc.query import QuerySpec
 from loom.core.use_case import Created, Query
 from loom.core.use_case.field_ref import F
@@ -871,6 +871,22 @@ class _ListAnything(UseCase[Any, str]):
         return "ok"
 
 
+class _Blob:
+    """A type msgspec cannot describe as a query value."""
+
+
+class _Opaque(BaseModel):
+    __tablename__ = "rest_compiler_opaque"
+
+    id: int = ColumnField(primary_key=True)
+    blob: _Blob = ColumnField(String(8))
+
+
+class _ListOpaque(UseCase[_Opaque, str]):
+    async def execute(self, query: QuerySpec) -> str:
+        return "ok"
+
+
 def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
     compiler = UseCaseCompiler()
     for interface in interfaces:
@@ -959,14 +975,31 @@ class TestDeclaredColumns:
         with pytest.raises(InterfaceCompilationError, match=rf"\(GET, '/'\).*'{field}'"):
             _compile_columns(IFace)
 
-    def test_a_use_case_without_a_model_cannot_declare_columns(self) -> None:
-        class IFace(RestInterface[_Book]):
+    def test_a_use_case_without_a_model_cannot_declare_or_inherit_columns(self) -> None:
+        class Declares(RestInterface[_Book]):
             prefix = "/books"
             routes = (
                 RestRoute(use_case=_ListAnything, method="GET", path="/", filterable=("title",)),
             )
 
-        with pytest.raises(InterfaceCompilationError, match="declares no model"):
+        class Inherits(RestInterface[_Book]):
+            prefix = "/books"
+            sortable = ("title",)
+            routes = (RestRoute(use_case=_ListAnything, method="GET", path="/"),)
+
+        with pytest.raises(InterfaceCompilationError, match="declares filterable.*no model"):
+            _compile_columns(Declares)
+        with pytest.raises(InterfaceCompilationError, match="inherits sortable.*no model"):
+            _compile_columns(Inherits)
+
+    def test_a_filterable_column_a_query_value_cannot_decode_fails_compilation(self) -> None:
+        class IFace(RestInterface[_Opaque]):
+            prefix = "/opaque"
+            routes = (
+                RestRoute(use_case=_ListOpaque, method="GET", path="/", filterable=("blob",)),
+            )
+
+        with pytest.raises(InterfaceCompilationError, match=r"\(GET, '/'\).*'blob'"):
             _compile_columns(IFace)
 
     def test_all_resolves_the_root_scalar_columns_and_warns_naming_the_route(

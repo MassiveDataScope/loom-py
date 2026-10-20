@@ -51,7 +51,6 @@ from loom.core.model import BoundaryValidationError, LoomType, loom_type, msgspe
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
-    FIELD_TYPED_OPS,
     FilterGroup,
     FilterOp,
     FilterSpec,
@@ -79,6 +78,10 @@ _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
+# The largest signed 64-bit integer: Postgres takes OFFSET as a bigint and
+# SQLite binds no larger integer, so a page beyond it cannot be queried.
+_MAX_OFFSET = 2**63 - 1
+_PAGE_TOO_FAR_MESSAGE = "Page is beyond the largest offset a query can skip."
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
 _UNSUPPORTED_QUERY_MESSAGE = (
     "The request has a query parameter this route does not accept, or one given twice."
@@ -210,7 +213,7 @@ class _FilterValues:
             raise _unsupported_query(f"Operator {op.value!r} is not supported by this route.")
         if op in _PATTERN_OPS and field not in self.text_columns:
             raise _unsupported_query(f"Operator {op.value!r} applies to text fields only.")
-        if op not in FIELD_TYPED_OPS:
+        if op not in _TYPED_OPS:
             return raw
         if op is FilterOp.IN:
             return [self._typed(field, item) for item in raw.split(",") if item != ""]
@@ -225,6 +228,11 @@ class _FilterValues:
 
 _RELATION_OPS = frozenset((FilterOp.EXISTS, FilterOp.NOT_EXISTS))
 _PATTERN_OPS = frozenset((FilterOp.LIKE, FilterOp.ILIKE))
+# Operators whose value, or each IN item, is a value of the column's type;
+# LIKE and ILIKE take a text pattern and IS_NULL ignores its value.
+_TYPED_OPS = frozenset(
+    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
+)
 
 
 def _unsupported_query(message: str) -> LoomError:
@@ -380,6 +388,12 @@ def _build_query_spec(
     # Clamped rather than refused: a caller asking for more rows than the API
     # serves gets the maximum, but never turns one request into a full scan.
     limit = min(_positive_int(query_params, QueryParam.LIMIT, LIMIT_DEFAULT), max_limit)
+    if (page - 1) * limit > _MAX_OFFSET:
+        raise BoundaryValidationError(
+            _PAGE_TOO_FAR_MESSAGE,
+            ((QueryParam.PAGE, _PAGE_TOO_FAR_MESSAGE),),
+            code=ErrorCode.QUERY_VALIDATION,
+        )
     cursor = query_params.get(QueryParam.AFTER) or query_params.get(QueryParam.CURSOR)
     pagination = _parse_pagination_mode(
         query_params.get(QueryParam.PAGINATION),
@@ -454,7 +468,7 @@ class _DeclaredQuery:
         """
         keys = [key for key, _ in query_params.multi_items()]
         if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
-            raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
+            raise _unsupported_query(_UNSUPPORTED_QUERY_MESSAGE)
         profile = query_params.get(QueryParam.PROFILE)
         if profile is not None and profile not in self.profiles:
             raise BoundaryValidationError(

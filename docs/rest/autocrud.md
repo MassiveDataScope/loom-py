@@ -87,8 +87,10 @@ Each value is converted by its column's type with the strict grammar of
 grammar, a `str` column keeps the text as sent). A value the type refuses
 answers `400 query_validation`. A column the route does not declare answers
 `400 unsupported_query`, the same answer whether or not the column exists.
-The primary key, the route's default order, is always sortable, and a cursor
-carries only sortable columns' values.
+The primary key, the route's default order, is always sortable. A cursor
+carries the values of the columns it sorts by, and a forged cursor can
+range-probe them, so declare sortable only columns whose values the response
+already shows.
 
 Only scalar columns of the use case's own model qualify; a related model's
 column, a JSON, array or text-search column, and a field reference rooted at

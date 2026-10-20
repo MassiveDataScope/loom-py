@@ -994,10 +994,13 @@
   column's raw value of its last row in `nextCursor` (base64 JSON), so any
   column, a secret one included, could be read through it, and a forged
   cursor could range-probe it. Offset pages leaked its order, and an unknown
-  column answered `400` while a known one answered `200`, so the model's
-  columns could be enumerated. A route now sorts only by its declared
-  `sortable` columns and its primary key, so a cursor carries only those
-  values.
+  column answered `400 unsupported_query` (`Unknown filter field path`) while
+  a known one answered `200`, so the model's columns could be enumerated. A
+  route now sorts only by its declared `sortable` columns and its primary
+  key, so a cursor carries only those values.
+- **rest:** a `page` whose offset, `(page - 1) * limit`, exceeds the largest
+  signed 64-bit integer answers `400 query_validation` on `page` before any
+  query runs.
 - **rest:** a `QuerySpec` filter value was typed by its spelling: `true` and
   `false` became booleans, text with a `.` a float and digits an integer,
   whatever the filtered field declared. `?code=0123` on a `str` field compared

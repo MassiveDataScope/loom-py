@@ -59,16 +59,6 @@ class FilterOp(StrEnum):
     NOT_EXISTS = "not_exists"
 
 
-FIELD_TYPED_OPS = frozenset(
-    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
-)
-"""Operators whose value, or each ``IN`` item, is a value of the filtered field's type.
-
-``LIKE`` and ``ILIKE`` take a text pattern; the query compilers ignore the
-value of ``IS_NULL``, ``EXISTS`` and ``NOT_EXISTS``.
-"""
-
-
 class FilterSpec(LoomFrozenStruct, frozen=True):
     """A single field filter condition.
 
