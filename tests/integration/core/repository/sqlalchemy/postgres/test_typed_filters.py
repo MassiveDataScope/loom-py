@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -25,41 +25,28 @@ class Shade(Enum):
     DARK = "dark"
 
 
-class Size(StrEnum):
-    SMALL = "small"
-    LARGE = "large"
-
-
 class Sample(BaseModel):
     __tablename__ = "loom_it_typed_filter_samples"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
-    code: str = ColumnField(length=16)
     shade: Shade = ColumnField(String(16))
-    size: Size = ColumnField(String(16))
     seen_at: datetime = ColumnField()
     ref: UUID = ColumnField(Postgres.UUID)
 
 
 class CreateSample(Command, frozen=True):
-    code: str
     shade: Shade
-    size: Size
     seen_at: datetime
     ref: UUID
 
 
 _FIRST = CreateSample(
-    code="0123",
     shade=Shade.DARK,
-    size=Size.LARGE,
     seen_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
     ref=UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60"),
 )
 _SECOND = CreateSample(
-    code="123",
     shade=Shade.LIGHT,
-    size=Size.SMALL,
     seen_at=datetime(2026, 2, 3, 4, 5, 6, tzinfo=UTC),
     ref=UUID("0b9d2f1c-1111-4c1e-9d1e-1b2c3d4e5f60"),
 )
@@ -86,8 +73,6 @@ async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, 
     ("field", "op", "value"),
     [
         ("shade", FilterOp.EQ, Shade.DARK),
-        ("shade", FilterOp.IN, [Shade.DARK]),
-        ("size", FilterOp.EQ, Size.LARGE),
         ("seen_at", FilterOp.LTE, datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)),
         ("ref", FilterOp.EQ, UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")),
     ],

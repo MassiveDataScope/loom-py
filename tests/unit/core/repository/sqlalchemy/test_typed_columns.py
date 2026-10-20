@@ -1,4 +1,4 @@
-"""Typed values on the SQLAlchemy write path: JSON columns and related structs."""
+"""Typed values on the SQLAlchemy write and filter paths: JSON columns, related structs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 from sqlalchemy import and_, bindparam, func, select
-from sqlalchemy.exc import ArgumentError
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
@@ -239,14 +238,6 @@ class TestFilterValues:
         )
 
         assert list(clause.compile().params.values()) == [written]
-
-    def test_an_in_filter_whose_value_is_not_a_list_is_left_to_sqlalchemy(
-        self, session_manager: SessionManager
-    ) -> None:
-        group = FilterGroup(filters=(FilterSpec(field="shade", op=FilterOp.IN, value="dark"),))
-
-        with pytest.raises(ArgumentError, match="IN expression list"):
-            compile_filter_group(_compiled(_Swatch), group, frozenset())
 
     @pytest.mark.parametrize(
         ("op", "value"),

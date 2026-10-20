@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import msgspec
+from sqlalchemy import JSON
 
 # Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
 _NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
@@ -39,4 +40,12 @@ def to_column_value(value: object, *, json: bool = False) -> Any:
     return msgspec.to_builtins(value, builtin_types=_NATIVE_COLUMN_TYPES)
 
 
-__all__ = ["to_column_value"]
+def is_json_column(column: object) -> bool:
+    """Whether *column*, a SQLAlchemy column or mapped attribute, holds JSON.
+
+    ``JSON`` and the dialect types derived from it (Postgres ``JSONB``) count.
+    """
+    return isinstance(getattr(column, "type", None), JSON)
+
+
+__all__ = ["is_json_column", "to_column_value"]
