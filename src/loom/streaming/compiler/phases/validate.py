@@ -22,6 +22,7 @@ from loom.streaming.mongo import MongoConfig
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import (
     PATH_END_NODE_TYPES,
+    branch_ends_path,
     is_branching_node,
     iter_branches,
     router_ends_every_path,
@@ -519,10 +520,16 @@ def _validate_router_shapes(
     router: Router[StreamPayload, StreamPayload],
     initial_shape: StreamShape,
 ) -> tuple[list[CompilationIssue], StreamShape]:
-    errors: list[CompilationIssue] = []
-    outputs: list[StreamShape] = []
+    """Validate *router*'s branches and return the shape of the messages that continue.
 
-    for label, nodes in _labelled_branch_nodes(router):
+    Those are the outputs of the branches that do not end their path and, without
+    a default branch, the unmatched input; only they must agree on one shape.
+    """
+    errors: list[CompilationIssue] = []
+    outputs: set[StreamShape] = set() if router.default is not None else {initial_shape}
+
+    for branch in iter_branches(router):
+        label, nodes = branch.label, branch.nodes
         branch_errors, branch_output = _validate_router_branch_shape_sequence(nodes, initial_shape)
         errors.extend(_prefixed(issue, f"router branch {label}") for issue in branch_errors)
         for node in nodes:
@@ -538,14 +545,14 @@ def _validate_router_shapes(
                         label=label, node=type(node).__name__
                     )
                 )
-        outputs.append(branch_output)
+        if not branch_ends_path(branch):
+            outputs.add(branch_output)
 
-    unique_outputs = set(outputs)
-    if len(unique_outputs) > 1:
-        shapes = {shape.value for shape in unique_outputs}
+    if len(outputs) > 1:
+        shapes = {shape.value for shape in outputs}
         errors.append(StreamingErrorCode.ROUTER_BRANCH_SHAPE_DIVERGENCE.issue(shapes=shapes))
 
-    return errors, outputs[0] if outputs else initial_shape
+    return errors, next(iter(outputs), StreamShape.NONE)
 
 
 def _labelled_branch_nodes(node: object) -> Iterable[tuple[str, tuple[object, ...]]]:

@@ -1351,6 +1351,18 @@
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
+- **streaming:** a `Router` branch that ends its path in `IntoTopic`,
+  `IntoSink`, `Drain` or `Broadcast` no longer takes part in the branch shape
+  check, and a `Router` reports the shape of the messages that continue after
+  it: the output of the branches that do not end their path and, without a
+  default branch, the unmatched input. A `Router` with an `IntoTopic` branch
+  and a `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a
+  step after a `Router` without a default whose branches all end their path
+  failed with `SHAPE_MISMATCH`; both compile now. A `Router` without a default
+  whose continuing branches change the shape of its input, such as a
+  `BatchStep` branch on a batch source, now fails with
+  `ROUTER_BRANCH_SHAPE_DIVERGENCE`; it used to compile although its unmatched
+  messages continue in the input shape.
 
 ### prefect
 

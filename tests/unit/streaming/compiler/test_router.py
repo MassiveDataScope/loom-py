@@ -8,7 +8,9 @@ import pytest
 from omegaconf import DictConfig, OmegaConf
 
 from loom.streaming import (
+    BatchStep,
     CollectBatch,
+    Drain,
     ExpandStep,
     Explode,
     ForEach,
@@ -76,6 +78,69 @@ class TestRouterCompiler:
 
         assert plan.nodes[0].output_shape is StreamShape.RECORD
         assert plan.output is None
+
+    def test_accepts_branches_that_end_their_path_in_different_shapes(
+        self,
+        streaming_kafka_config: DictConfig,
+    ) -> None:
+        flow: StreamFlow[Order, Result] = StreamFlow(
+            name="test",
+            source=FromTopic("in", payload=Order),
+            process=Process(
+                Router.by(
+                    msg.payload.order_id,
+                    routes={"vip": Process(FakeStep(), IntoTopic("out", payload=Result))},
+                    default=Process(Drain()),
+                )
+            ),
+        )
+
+        plan = compile_flow(flow, config=streaming_kafka_config)
+
+        assert len(plan.terminal_sinks) == 1, "only the IntoTopic branch owns a sink"
+
+    def test_unmatched_messages_keep_their_shape_after_terminal_branches(
+        self,
+        streaming_kafka_config: DictConfig,
+    ) -> None:
+        flow: StreamFlow[Order, Result] = StreamFlow(
+            name="test",
+            source=FromTopic("in", payload=Order),
+            process=Process(
+                Router.by(msg.payload.order_id, routes={"drop": Process(Drain())}),
+                FakeStep(),
+            ),
+            output=IntoTopic("out", payload=Result),
+        )
+
+        plan = compile_flow(flow, config=streaming_kafka_config)
+
+        assert plan.output is not None
+
+    def test_rejects_continuing_branches_that_change_the_unmatched_shape(
+        self,
+        streaming_kafka_config: DictConfig,
+    ) -> None:
+        class _BatchFakeStep(BatchStep[Order, Result]):
+            def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
+                del kwargs
+                return [Result(value=m.payload.order_id) for m in messages]
+
+        flow: StreamFlow[Order, Result] = StreamFlow(
+            name="test",
+            source=FromTopic("in", payload=Order, shape=StreamShape.BATCH),
+            process=Process(
+                Router.by(msg.payload.order_id, routes={"vip": Process(_BatchFakeStep())})
+            ),
+            output=IntoTopic("out", payload=Result),
+        )
+
+        with pytest.raises(CompilationError) as exc_info:
+            compile_flow(flow, config=streaming_kafka_config)
+
+        assert [issue.code for issue in exc_info.value.issues] == [
+            StreamingErrorCode.ROUTER_BRANCH_SHAPE_DIVERGENCE
+        ]
 
     def test_mixed_keyed_and_predicate_router_sinks_have_unique_paths(
         self,
