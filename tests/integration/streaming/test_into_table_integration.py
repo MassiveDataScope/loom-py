@@ -31,7 +31,9 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
-from loom.core.model import LoomStruct  # noqa: E402
+from loom.core.model import BaseModel, ColumnField, LoomStruct  # noqa: E402
+from loom.core.model.enums import Cardinality  # noqa: E402
+from loom.core.model.relation import RelationField  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
 from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
@@ -44,6 +46,22 @@ class _OrderRow(LoomStruct):
     order_id: int
     amount: float
     status: str
+
+
+class _Owner(LoomStruct):
+    id: int
+
+
+class _OwnedRow(BaseModel):
+    """A model whose relation field is not a column."""
+
+    __tablename__ = "owned_rows"
+
+    owner_id: int
+    owner: _Owner | None = RelationField(
+        foreign_key="owners.id", cardinality=Cardinality.MANY_TO_ONE
+    )
+    row_id: int = ColumnField(primary_key=True)
 
 
 # ── ClickHouse unit test fixtures ─────────────────────────────────────────────
@@ -407,6 +425,18 @@ class TestIntoTableSQLAlchemyIntegration:
         assert partition.write_batch(rows[2:]) == 3
         assert partition.close() == 1
 
+    def test_a_delta_table_gets_no_column_for_a_relation_field(self, tmp_path: Path) -> None:
+        pytest.importorskip("deltalake")
+        uri = str(tmp_path / "owned_delta")
+        node = IntoTable(payload=_OwnedRow, table="owned", backend=Backend.DELTA)
+        config = DeltaSinkConfig.from_config({"uri": uri}, default_table="owned")
+        partition = node.build_partition(config, worker_index=0, worker_count=1)
+
+        partition.write_batch([_OwnedRow(owner_id=3, row_id=7)])
+        partition.close()
+
+        assert pl.read_delta(uri).to_dicts() == [{"owner_id": 3, "row_id": 7}]
+
     def test_a_delta_payload_without_fields_is_refused_at_startup(self, tmp_path: Path) -> None:
         class _NoColumns(LoomStruct):
             pass
@@ -571,6 +601,17 @@ class TestIntoTableClickHouseUnit:
         assert data[2] == [1, 0]  # active: bool → int
         assert data[3] == [["a", "b"], ["c"]]  # tags: list[str] native, no json.dumps
         assert data[4] == [None, 10]  # parent_id: Nullable
+
+    def test_a_relation_field_is_not_a_column(self, mock_ch_client: MagicMock) -> None:
+        node = IntoTable(payload=_OwnedRow, table="t", backend=Backend.CLICKHOUSE)
+        partition = node.build_partition(_ch_config(), worker_index=0, worker_count=1)
+
+        partition.write_batch([_OwnedRow(owner_id=3, row_id=7)])
+        partition.close()
+
+        _, kwargs = mock_ch_client.insert.call_args
+        assert kwargs["column_names"] == ["owner_id", "row_id"]
+        assert mock_ch_client.insert.call_args.args[1] == [[3], [7]]
 
     def test_list_field_not_json_serialised(self, mock_ch_client: MagicMock) -> None:
         """list[str] arrives at insert() as a Python list, never as a JSON string."""

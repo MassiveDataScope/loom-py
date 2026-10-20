@@ -300,6 +300,25 @@ def _refuse_undeclared_column_types(
             )
 
 
+def sa_table_for(struct_cls: type, name: str) -> Table:
+    """Return a Core ``Table`` named *name* whose columns are those of *struct_cls*.
+
+    Each column has the type :func:`compile_model` gives the field; keys,
+    constraints and defaults are left out. The table is bound to a fresh
+    ``MetaData`` and registered nowhere.
+
+    Raises:
+        ValueError: If a plain enum or ``Literal`` field declares no column type.
+    """
+    column_fields = get_column_fields(struct_cls)
+    _refuse_undeclared_column_types(struct_cls, column_fields)
+    columns = [
+        Column(field_name, _build_sa_column_type(info.column_type))
+        for field_name, info in column_fields.items()
+    ]
+    return Table(name, MetaData(), *columns)
+
+
 def _declared_constraints(struct_cls: type, table_name: str) -> list[Constraint | Index]:
     """Keys, indexes and checks declared on the model, in declaration order.
 

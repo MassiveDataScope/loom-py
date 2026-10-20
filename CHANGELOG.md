@@ -994,6 +994,21 @@
 - **streaming:** a sync `With(process=...)` hands on one message at a time, as
   `WithAsync` does. After a `CollectBatch` it handed on whole batches, so as
   the last node of a flow without `output` its messages never completed.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds each column with
+  the type core compiles for the field instead of its own map:
+  - a `StrEnum` or `IntEnum` field is written as its scalar (`String`,
+    `Integer`) instead of as JSON;
+  - a column type declared with `ColumnField` (on a `BaseModel`) or
+    `Annotated[T, <ColumnType>]` is used;
+  - a plain `Enum` or `Literal` field without a declared column type is
+    refused when the partition is built, with core's message, instead of
+    being written as JSON;
+  - a `Decimal` field is bound as `Numeric(10, 2)` instead of `Numeric()`.
+    IntoTable creates no table, but on Postgres the INSERT casts the value
+    (`$1::NUMERIC(10, 2)`): a value with more than two decimals is rounded to
+    two (verified: `1.2345` is stored as `1.23` in a `numeric` column) and one
+    of `10^8` or more fails with "numeric field overflow". Declare the
+    column's precision with `Annotated[Decimal, Numeric(precision=..., scale=...)]`.
 
 ## 🐛 Fixes
 
@@ -1351,17 +1366,19 @@
   consumed again from the recovery snapshot or, without one, from the last
   committed offset; inside `With` or `WithAsync` the message becomes an error
   envelope.
-- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` gives each column the
-  type core's model introspection infers for the field, the type a compiled
-  model declares, instead of its own map. A `bytes` field is now bound as
-  `LargeBinary` (`bytea` on Postgres) instead of text, which Postgres refused
-  for a `bytea` column ("column is of type bytea but expression is of type
-  character varying"). A `StrEnum` or `IntEnum` field is bound as its scalar
-  (`String`, `Integer`) instead of JSON, a type declared with `ColumnField` or
-  `Annotated` is honoured, and a `Decimal` field is `Numeric(10, 2)` as in
-  core. A `date` or `time` field follows core's inference, still `String`:
-  writing one into a Postgres `date` or `time` column fails until core infers
-  `Date` and `Time` columns (#379).
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds a `bytes` field as
+  `LargeBinary` (`bytea` on Postgres). It bound it as text, which Postgres
+  refused for a `bytea` column ("column is of type bytea but expression is of
+  type character varying"). IntoTable now takes each column's type from core's
+  model introspection (`loom.core.backend.sqlalchemy.sa_table_for`), the type
+  a compiled model declares, and writes each value as core's repository does
+  (`to_column_value`): a plain `Enum` as its value, a struct in a JSON column
+  as a dict, an `UNSET` value left out. Relation and projection fields are no
+  longer columns for any backend: the SQLAlchemy and Delta rows included them
+  and failed on their `UNSET` value, and the ClickHouse insert named them. A
+  `date` or `time` field follows core's inference, still `String`: writing
+  one into a Postgres `date` or `time` column fails until core infers `Date`
+  and `Time` columns (#379).
 
 ### prefect
 
