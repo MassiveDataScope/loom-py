@@ -101,7 +101,7 @@ def env(cache_config: CacheConfig) -> _Env[Widget]:
 async def _entity_cache_key(env: _Env[RowT], obj_id: object) -> str:
     tags = env.resolver.entity_tags(env.wrapper.entity_name, obj_id)
     fingerprint = await env.resolver.fingerprint(tags)
-    return entity_key(env.wrapper.entity_name, obj_id, PROFILE, fingerprint)
+    return entity_key(env.wrapper.entity_name, obj_id, PROFILE, fingerprint, scope="")
 
 
 async def _warm_index(env: _Env[RowT], limit: int = ROW_COUNT) -> None:

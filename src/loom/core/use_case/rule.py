@@ -56,10 +56,8 @@ class _RuleSpec:
     def from_command(self, *sources: FieldRef) -> _RuleSpec:
         if not sources:
             # Full command mode: provide both command and fields_set.
-            return replace(  # NOSONAR
-                self, command_sources=(), include_command=True, include_fields_set=True
-            )
-        return replace(  # NOSONAR
+            return replace(self, command_sources=(), include_command=True, include_fields_set=True)
+        return replace(
             self,
             command_sources=tuple(sources),
             include_command=False,
@@ -69,10 +67,10 @@ class _RuleSpec:
     def from_params(self, *names: str) -> _RuleSpec:
         if not names:
             raise ValueError("Rule.from_params(...) requires at least one parameter name.")
-        return replace(self, param_names=(*self.param_names, *names))  # NOSONAR
+        return replace(self, param_names=(*self.param_names, *names))
 
     def when_present(self, predicate: FieldRef | FieldExpr) -> _RuleSpec:
-        return replace(self, predicate=predicate)  # NOSONAR
+        return replace(self, predicate=predicate)
 
     def __call__(
         self,
@@ -132,7 +130,7 @@ class _RequirePresentSpec:
     predicate: FieldRef | FieldExpr | None = None
 
     def when_present(self, predicate: FieldRef | FieldExpr) -> _RequirePresentSpec:
-        return replace(self, predicate=predicate)  # NOSONAR
+        return replace(self, predicate=predicate)
 
     def __call__(
         self,
