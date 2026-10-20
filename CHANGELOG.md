@@ -1313,8 +1313,9 @@
   column only. The cursor now orders and compares on
   every key column after the sort keys and carries every key value in the
   token; offset pages and `list_paginated` order by every key column too.
-  Tokens of single-column keys are unchanged. A cached repository over such a
-  model keyed its entries by the first key column too, so a warm
+  That fix leaves tokens of single-column keys as they were. A cached
+  repository over such a model keyed its entries by the first key column
+  too, so a warm
   `list_paginated` or first cursor page served the rows sharing a first key
   value as copies of one of them; it now caches and reloads every row by its
   full key, one `get_by_id` per missing row.
