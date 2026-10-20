@@ -84,7 +84,13 @@ from loom.streaming.compiler import (  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka import MessageDescriptor, MsgspecCodec, build_message  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
-from tests.unit.streaming.bytewax.cases import Item, Order, Result, UpperItem  # noqa: E402
+from tests.unit.streaming.bytewax.cases import (  # noqa: E402
+    Item,
+    Order,
+    Result,
+    UpperItem,
+    build_compiled_plan,
+)
 from tests.unit.streaming.kafka.fakes import ProducerBackendStub  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
@@ -405,6 +411,58 @@ class TestSinkTrackingContract:
             ctx.inline_sink_partition_for((0, 1))
 
         assert exc_info.value.issues[0].code is StreamingErrorCode.INLINE_SINK_CANNOT_SKIP_COMMITS
+
+
+def _guard_context(**plan_parts: Any) -> _adapter._BuildContext:
+    """Build a context around a hand-built plan, with no validation in front of it."""
+    sink = TestingSink([])
+    plan = build_compiled_plan(**plan_parts)
+    return _adapter._BuildContext(
+        plan=plan,
+        bridge=None,
+        flow_runtime=ObservabilityRuntime.noop(),
+        flow_run_id="run-1",
+        sink=sink,
+        terminal_sinks=dict.fromkeys(plan.terminal_sinks, sink),
+    )
+
+
+def _compiled_topic(topic: str) -> Any:
+    return build_compiled_plan(output=IntoTopic(topic, payload=Result)).output
+
+
+class TestWiringGuards:
+    """Wiring refuses the shapes validation rejects, if a plan ever skips validation."""
+
+    @pytest.mark.parametrize(
+        ("wire", "message"),
+        [
+            pytest.param(
+                lambda: _guard_context(
+                    terminal_sinks={(0,): _compiled_topic("t.a")}
+                ).wire_branch_terminal("route", None, (0,)),
+                r"output compiled for path \(0,\) is never written",
+                id="branch output after a path end",
+            ),
+            pytest.param(
+                lambda: _guard_context(output=IntoTopic("t.out", payload=Result)).wire_flow_output(
+                    None
+                ),
+                "flow.output is never written",
+                id="flow output after a path end",
+            ),
+            pytest.param(
+                lambda: _adapter._wire_process(object(), (Drain(), UpperItem()), _guard_context()),
+                "Drain ended every path, so UpperItem after it would receive nothing",
+                id="node after a path end",
+            ),
+        ],
+    )
+    def test_a_guard_refuses_wiring_after_a_path_end(
+        self, wire: Callable[[], object], message: str
+    ) -> None:
+        with pytest.raises(RuntimeError, match=message):
+            wire()
 
 
 class TestErrorEnvelopeAccounting:
