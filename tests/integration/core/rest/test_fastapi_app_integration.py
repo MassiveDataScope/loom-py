@@ -290,6 +290,7 @@ def test_a_malformed_cursor_answers_400_without_echoing_it(
         detail = response.json()["detail"]
         assert detail["code"] == "unsupported_query", case
         assert _malformed_cursors(issued)[case] not in response.text, case
+        assert "tests.integration" not in response.text, case
 
 
 def test_a_cursor_issued_for_one_sort_answers_400_for_another(

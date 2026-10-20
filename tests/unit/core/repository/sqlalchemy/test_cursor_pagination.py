@@ -121,7 +121,7 @@ class TestRejectedTokens:
             await repository.list_with_query(query)
 
         assert excinfo.value.backend == "sqlalchemy"
-        assert excinfo.value.model == f"{_Row.__module__}._Row"
+        assert excinfo.value.model == "_Row"
 
     async def test_token_issued_for_a_different_sort(
         self, repository: RepositorySQLAlchemy[_Row, int]

@@ -276,13 +276,15 @@ class CursorCodec:
         keys = {key_id: _read_key(key_id, spec) for key_id, spec in config.keys.items()}
         return cls(signing=_SIGNED, keys=keys, current_key_id=config.current_key_id)
 
-    def encode(self, cursor: Cursor, *, model: str, query: QuerySpec, scope: str) -> str:
+    def encode(self, cursor: Cursor, *, model: type | str, query: QuerySpec, scope: str) -> str:
         """Issue the token for ``cursor``, bound to ``model``, ``query`` and ``scope``.
 
         Args:
             cursor: Position of the last row on the page. A naive datetime
                 key is taken as UTC and carried with an explicit offset.
-            model: Qualified name of the model being paginated.
+            model: Model being paginated. A class is bound by module and
+                qualified name and named in errors by its qualified name
+                alone; a string is both.
             query: Query the page answers; its filters and sort are bound.
             scope: Caller scope the cursor is valid in, such as the tenant id;
                 ``""`` binds the cursor to no scope, deliberately.
@@ -294,6 +296,7 @@ class CursorCodec:
             UnsupportedQuery: If a key has a type the token format cannot
                 carry, or is a non-finite number.
         """
+        binding, label = _model_names(model)
         tie_breaker = cursor.tie_breaker
         try:
             tie: _Key | list[_Key] = (
@@ -304,14 +307,14 @@ class CursorCodec:
             keys = [_wrap(key) for key in cursor.keys]
         except (TypeError, ValueError):
             raise UnsupportedQuery(
-                cursor.backend, model, "a cursor cannot carry the sort value of the page's last row"
+                cursor.backend, label, "a cursor cannot carry the sort value of the page's last row"
             ) from None
         token = _Token(b=cursor.backend, k=keys, id=tie)
         payload = msgspec.json.encode(token)
         if self._signing == _UNSIGNED:
             return _b64encode(payload)
         key_id = self._current
-        mac = _mac(self._keys[key_id], key_id, _binding(model, query, scope), payload)
+        mac = _mac(self._keys[key_id], key_id, _binding(binding, query, scope), payload)
         header = bytes((_VERSION, len(key_id))) + key_id
         return f"{_b64encode(payload)}.{_b64encode(header + mac)}"
 
@@ -320,7 +323,7 @@ class CursorCodec:
         token: str,
         *,
         backend: str,
-        model: str,
+        model: type | str,
         query: QuerySpec,
         scope: str,
         columns: Mapping[str, Any],
@@ -331,7 +334,7 @@ class CursorCodec:
         Args:
             token: Token as received from the client.
             backend: Name of the backend serving the query.
-            model: Qualified model name; bound and used in the error.
+            model: Model being paginated, as :meth:`encode` takes it.
             query: Query being served; its filters and sort must match the
                 ones the token was issued for, and it must sort by as many
                 keys as the token carries.
@@ -351,20 +354,21 @@ class CursorCodec:
                 backend, or does not match the sort or the primary key in
                 number or type of values.
         """
-        payload = self._verified_payload(token, model, query, scope)
+        binding, label = _model_names(model)
+        payload = self._verified_payload(token, binding, query, scope)
         if payload is None:
-            raise UnsupportedQuery(backend, model, _INVALID)
+            raise UnsupportedQuery(backend, label, _INVALID)
         try:
             record = msgspec.json.decode(payload, type=_Token)
         except msgspec.DecodeError:
             # The decoder's message may quote the payload: never chain it.
-            raise UnsupportedQuery(backend, model, _INVALID) from None
+            raise UnsupportedQuery(backend, label, _INVALID) from None
         sort_types = tuple(columns.get(spec.field) for spec in query.sort)
         id_types = tuple(columns.get(name) for name in primary_key)
-        return _position(record, backend, model, sort_types=sort_types, id_types=id_types)
+        return _position(record, backend, label, sort_types=sort_types, id_types=id_types)
 
     def _verified_payload(
-        self, token: str, model: str, query: QuerySpec, scope: str
+        self, token: str, binding: str, query: QuerySpec, scope: str
     ) -> bytes | None:
         """The payload bytes once the signature checks out, or ``None``."""
         if self._signing == _UNSIGNED:
@@ -378,7 +382,7 @@ class CursorCodec:
         key = self._keys.get(tag[2:id_end])
         if key is None or len(tag) != id_end + _MAC_BYTES:
             return None
-        expected = _mac(key, tag[2:id_end], _binding(model, query, scope), payload)
+        expected = _mac(key, tag[2:id_end], _binding(binding, query, scope), payload)
         return payload if hmac.compare_digest(expected, tag[id_end:]) else None
 
 
@@ -532,7 +536,7 @@ def require_cursor_sort(
     query: QuerySpec,
     *,
     backend: str,
-    model: str,
+    model: type | str,
     columns: Mapping[str, Any],
     primary_key: Sequence[str],
 ) -> None:
@@ -546,7 +550,7 @@ def require_cursor_sort(
     Args:
         query: The cursor query about to run.
         backend: Name of the backend serving it.
-        model: Qualified model name, as bound into its tokens.
+        model: Model being paginated, as :meth:`CursorCodec.encode` takes it.
         columns: Annotation of each column, by name.
         primary_key: Primary-key column names in key order.
 
@@ -557,7 +561,7 @@ def require_cursor_sort(
         if not _sortable(columns.get(name)):
             raise UnsupportedQuery(
                 backend,
-                model,
+                _model_names(model)[1],
                 f"cursor pagination cannot order by {name!r}: it must be a non-null column "
                 "of a type a cursor carries",
             )
@@ -578,6 +582,18 @@ def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
             "another CursorCodec is already registered; one codec per process issues and "
             "verifies every cursor"
         )
+
+
+def _model_names(model: type | str) -> tuple[str, str]:
+    """The name a token is bound to and the name an error shows.
+
+    A class is bound by module and qualified name, so two models of one name
+    in different modules do not share tokens, and named by its qualified name
+    alone, so an answer to a client does not reveal the module layout.
+    """
+    if isinstance(model, str):
+        return model, model
+    return f"{model.__module__}.{model.__qualname__}", model.__qualname__
 
 
 def _sortable(annotation: Any) -> bool:

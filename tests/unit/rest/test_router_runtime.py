@@ -184,7 +184,7 @@ class CompiledFilterUseCase(UseCase[_FilterRow, str]):
             sa_model.id,
             self.allowed_fields,
             backend="sqlalchemy",
-            model_name="_FilterRow",
+            model=_FilterRow,
             cursor_codec=CursorCodec(signing="ephemeral"),
             scope="",
             columns={},

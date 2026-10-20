@@ -589,7 +589,9 @@
   a page whose last row holds a non-finite number or a value the token
   cannot carry answers 400 instead of 500. An empty cursor is an invalid
   token on SQLAlchemy as on Mongo. Tokens bind the model as
-  `module.qualname`, so `UnsupportedQuery.model` names the module too. Mongo
+  `module.qualname`; `UnsupportedQuery` and the client's 400 name it by its
+  qualified name alone. `CursorCodec.encode`/`decode`, `require_cursor_sort`
+  and `QuerySpecCompiler(model=...)` take the model class (or a name). Mongo
   issues the next token in the model's types, so a page sorted by a date,
   decimal or UUID column, or keyed by a UUID, reaches the next page.
 - **core:** one `CursorCodec` per process: the registration modules register

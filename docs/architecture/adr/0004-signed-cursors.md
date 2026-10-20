@@ -82,7 +82,9 @@ The binding is recomputed from the request and never travels in the token:
 
 - the backend, carried in the payload and therefore signed;
 - the model's module and qualified name (`f"{module}.{qualname}"`), so two
-  models of the same name in different modules do not share tokens;
+  models of the same name in different modules do not share tokens. Errors,
+  and so the client's 400, name the model by its qualified name alone and
+  never reveal the module;
 - the normalised filters: each condition encoded deterministically, the list
   sorted so the order of the conditions does not matter, every datetime
   converted to an aware UTC instant (a naive one is taken as UTC);

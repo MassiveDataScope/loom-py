@@ -520,6 +520,25 @@ class TestBinding:
 
         assert excinfo.value.reason == _INVALID
 
+    def test_a_class_is_bound_by_module_and_named_without_it(self, codec: CursorCodec) -> None:
+        billing = type("Invoice", (), {"__module__": "billing.models"})
+        archive = type("Invoice", (), {"__module__": "archive.models"})
+        token = codec.encode(_at(1), model=billing, query=_QUERY, scope=_SCOPE)
+
+        with pytest.raises(UnsupportedQuery) as excinfo:
+            codec.decode(
+                token,
+                backend=_BACKEND,
+                model=archive,
+                query=_QUERY,
+                scope=_SCOPE,
+                columns=_UNTYPED,
+                primary_key=("id",),
+            )
+
+        assert excinfo.value.model == "Invoice"
+        assert "models" not in str(excinfo.value)
+
     def test_a_cursor_for_one_model_is_refused_for_another(self, codec: CursorCodec) -> None:
         token = codec.encode(_at(1), model="billing.Refund", query=_QUERY, scope=_SCOPE)
 

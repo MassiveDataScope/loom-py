@@ -28,7 +28,7 @@ def _compiler(allowed: frozenset[str] = frozenset()) -> QuerySpecCompiler:
         sa_model.id,
         allowed,
         backend="sqlalchemy",
-        model_name="_Row",
+        model=_Row,
         cursor_codec=CursorCodec(signing="ephemeral"),
         scope="",
         columns={},

@@ -38,8 +38,9 @@ class QuerySpecCompiler:
         allowed_fields: Permitted filter field names.  Empty frozenset
             allows all fields.
         backend: Backend name stamped on and required from cursor tokens.
-        model_name: Qualified model name reported in query errors and bound
-            into cursor tokens.
+        model: Model the query reads: its qualified name is reported in query
+            errors, and its module and qualified name are bound into cursor
+            tokens. A string is used as both.
         cursor_codec: Codec that issues and verifies cursor tokens.
         scope: Caller scope cursor tokens are bound to; ``""`` deliberately
             binds them to no scope.
@@ -54,7 +55,7 @@ class QuerySpecCompiler:
             ProductSA.id,
             frozenset(),
             backend="sqlalchemy",
-            model_name="Product",
+            model=Product,
             cursor_codec=codec,
             scope="",
             columns=scalar_column_annotations(Product),
@@ -69,7 +70,7 @@ class QuerySpecCompiler:
         allowed_fields: frozenset[str],
         *,
         backend: str,
-        model_name: str,
+        model: type[Any] | str,
         cursor_codec: CursorCodec,
         scope: str,
         columns: Mapping[str, Any],
@@ -80,7 +81,7 @@ class QuerySpecCompiler:
         )
         self._allowed_fields = allowed_fields
         self._backend = backend
-        self._model_name = model_name
+        self._model = model
         self._cursor_codec = cursor_codec
         self._scope = scope
         self._columns = columns
@@ -158,7 +159,7 @@ class QuerySpecCompiler:
         require_cursor_sort(
             query,
             backend=self._backend,
-            model=self._model_name,
+            model=self._model,
             columns=self._columns,
             primary_key=primary_key,
         )
@@ -173,7 +174,7 @@ class QuerySpecCompiler:
             cursor = self._cursor_codec.decode(
                 query.cursor,
                 backend=self._backend,
-                model=self._model_name,
+                model=self._model,
                 query=query,
                 scope=self._scope,
                 columns=self._columns,
@@ -200,7 +201,7 @@ class QuerySpecCompiler:
         if position is None:
             return page_items, None, has_next
         token = self._cursor_codec.encode(
-            position, model=self._model_name, query=query, scope=self._scope
+            position, model=self._model, query=query, scope=self._scope
         )
         return page_items, token, has_next
 

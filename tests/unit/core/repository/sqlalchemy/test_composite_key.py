@@ -137,7 +137,7 @@ class TestCursorPagination:
             (sa_model.account_id, sa_model.id),
             frozenset(),
             backend="sqlalchemy",
-            model_name="_Entry",
+            model=_Entry,
             cursor_codec=_CODEC,
             scope="",
             columns={},

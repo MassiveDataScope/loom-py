@@ -222,7 +222,6 @@ class RepositoryMongo(
         self._column_fields = frozenset(column_fields)
         # Documents order any column; the sort check keeps the types a token carries.
         self._cursor_columns = column_annotations(model)
-        self._cursor_model = f"{model.__module__}.{model.__qualname__}"
         self._naive_datetime_fields = frozenset(
             name
             for name, info in column_fields.items()
@@ -438,7 +437,7 @@ class RepositoryMongo(
         require_cursor_sort(
             query,
             backend=self.backend_name,
-            model=self._cursor_model,
+            model=self._model,
             columns=self._cursor_columns,
             primary_key=(self._id_attr,),
         )
@@ -479,7 +478,7 @@ class RepositoryMongo(
         cursor = self._cursor_codec.decode(
             token,
             backend=self.backend_name,
-            model=self._cursor_model,
+            model=self._model,
             query=query,
             scope="",
             columns=self._cursor_columns,
@@ -507,7 +506,7 @@ class RepositoryMongo(
             keys=tuple(getattr(item, spec.field) for spec in query.sort),
             tie_breaker=getattr(item, self._id_attr),
         )
-        return self._cursor_codec.encode(position, model=self._cursor_model, query=query, scope="")
+        return self._cursor_codec.encode(position, model=self._model, query=query, scope="")
 
     def _key(self, obj_id: object) -> MongoFilter:
         return {_ID: {"$eq": self._compiler.storage_value(self._id_attr, obj_id)}}

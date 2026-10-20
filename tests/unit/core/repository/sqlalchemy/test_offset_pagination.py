@@ -79,7 +79,7 @@ class TestOffsetOrdering:
             sa_model.id,
             frozenset(),
             backend="sqlalchemy",
-            model_name="_Row",
+            model=_Row,
             cursor_codec=CursorCodec(signing="ephemeral"),
             scope="",
             columns={},
