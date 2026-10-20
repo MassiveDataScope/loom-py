@@ -81,10 +81,7 @@ def resolve_engine_provider(name: str) -> AgentEngineProvider:
         raise AgentCompilationError(
             [AgentErrorCode.ENGINE_NOT_FOUND.issue(component=name, available=exc.available)]
         ) from exc
-    provider: object = loaded
-    if isinstance(loaded, type):
-        provider_class: type[object] = loaded
-        provider = provider_class()
+    provider = loaded() if isinstance(loaded, type) else loaded
     _verify_engine_api(name, provider)
     # The handshake above is the structural runtime check; the protocol is not
     # runtime-checkable by design, so the cast records the contract.
