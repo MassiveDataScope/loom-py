@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.schema import SchemaMode
 from loom.etl import col
 from loom.etl.backends import _write_policy
 from loom.etl.backends._write_policy import _WritePolicy
@@ -31,7 +32,6 @@ from loom.etl.declarative.target._history import (
     HistorifyRepairReport,
     HistorifySpec,
 )
-from loom.etl.declarative.target._schema_mode import SchemaMode
 from loom.etl.declarative.target._table import (
     AppendSpec,
     ReplacePartitionsSpec,

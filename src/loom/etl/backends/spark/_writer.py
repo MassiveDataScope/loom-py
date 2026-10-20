@@ -90,7 +90,7 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         *,
         streaming: bool = False,
     ) -> None:
-        """Append frame to table (legacy API, creates table on first write)."""
+        """Append frame to table, creating it on first write (``RecordFrameTargetWriter``)."""
         spec = AppendSpec(table_ref=table_ref, schema_mode=SchemaMode.EVOLVE)
         self.write(frame, spec, params_instance, streaming=streaming)
 

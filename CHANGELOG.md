@@ -1066,8 +1066,7 @@
   `Unknown step or process names: [...]` instead of `No steps or processes
   match include=[...]`, the constructor's parameter is `unknown`, and the
   names are kept on the new `unknown` attribute. Positional construction is
-  unchanged; `InvalidStageError(include=...)` still works, emits a
-  `DeprecationWarning` and is removed in loom 3.0. The error survives pickle
+  unchanged. The error survives pickle
   with its `unknown` names, so it crosses process boundaries intact.
 - **etl:** `ThreadDispatcher` runs each task in a copy of the caller's
   context, as `asyncio.to_thread` does, so a step of a parallel group sees
@@ -1078,13 +1077,28 @@
   caller's context among the requirements on an implementation.
 - **etl:** `WithAgent(max_usd=...)` keeps the budget as a `Decimal`. An
   `int`, or another `numbers.Integral` such as `numpy.int64`, is converted
-  exactly. A `float` emits a `DeprecationWarning`, is converted through its
-  `str()` (`0.1` becomes `Decimal("0.1")`) and is removed in loom 3.0. A
-  `bool`, accepted before, and any other type, such as `str`, raise
-  `TypeError`. `NaN`, `sNaN` and `Infinity`, as a `Decimal` or a `float`,
-  raise `ValueError`, like zero and a negative amount; a `Decimal` `NaN` or
-  `sNaN` used to raise `decimal.InvalidOperation`, and a `Decimal`
-  `Infinity`, a `float` `inf` and a `float` `nan` were accepted.
+  exactly. A `bool`, accepted before, and any other type, such as `str`,
+  raise `TypeError`. `NaN`, `sNaN` and `Infinity` raise `ValueError`, like
+  zero and a negative amount; a `Decimal` `NaN` or `sNaN` used to raise
+  `decimal.InvalidOperation`, and a `Decimal` `Infinity` was accepted.
+- **etl:** `InvalidStageError(include=...)` is removed; use
+  `InvalidStageError(unknown=...)` or pass the names positionally.
+- **etl:** `WithAgent(max_usd=<float>)` is removed and raises `TypeError`;
+  pass a `Decimal`, such as `Decimal("2.50")`, or an `int`.
+- **etl:** `loom.etl.CheckpointCleaner` and
+  `loom.etl.checkpoint.CheckpointCleaner` are removed; use
+  `FsspecTempCleaner`, now exported from `loom.etl` as well.
+- **etl:** the module `loom.etl.declarative.target._schema_mode` is removed;
+  import `SchemaMode` from `loom.core.schema` (or `loom.etl`).
+- **etl:** `FromClickHouse.select(columns)` is removed; use
+  `FromClickHouse.columns(*columns)`.
+- **etl:** `ClickHouseSourceSpec.table` is removed; use
+  `ClickHouseSourceSpec.table_ref.ref`.
+- **etl:** `loom.etl.backends.polars._reader._apply_source_schema` is
+  removed; use `PolarsSourceReader._apply_source_schema`.
+- **etl:** `loom.etl.io.sources._clickhouse` no longer re-exports
+  `FromClickHouse` and `ClickHouseSourceSpec`; import them from
+  `loom.etl.declarative.source` (`FromClickHouse` also from `loom.etl`).
 
 ### streaming
 

@@ -390,11 +390,6 @@ class PolarsSourceReader(SourceReader):
         return frame.with_columns(cast_exprs)
 
 
-def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
-    """Compatibility helper used by tests."""
-    return PolarsSourceReader._apply_source_schema(frame, schema)
-
-
 def execute_sql(frames: dict[str, pl.LazyFrame], query: str) -> pl.LazyFrame:
     """Execute SQL query against lazy frames registered in a SQLContext."""
     ctx = pl.SQLContext()
@@ -407,5 +402,4 @@ __all__ = [
     "PolarsSourceReader",
     "decode_json_columns",
     "execute_sql",
-    "_apply_source_schema",
 ]

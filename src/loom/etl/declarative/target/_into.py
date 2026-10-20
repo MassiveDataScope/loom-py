@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from loom.core.routing import LogicalRef
+from loom.core.schema import SchemaMode
 from loom.etl.checkpoint import CheckpointScope
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._utils import _clone_slots
@@ -31,7 +32,6 @@ from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._predicate import AndPred, EqPred, PredicateNode
 from loom.etl.declarative.expr._refs import TableRef, UnboundColumnRef
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._schema_mode import SchemaMode
 from loom.etl.declarative.target._table import (
     AppendSpec,
     ReplacePartitionsSpec,

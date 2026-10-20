@@ -29,22 +29,14 @@ def test_invalid_stage_error_takes_the_names_as_unknown() -> None:
     assert "['MissingStep']" in str(error)
 
 
-def test_the_include_keyword_still_builds_the_error_with_a_deprecation_warning() -> None:
-    with pytest.warns(DeprecationWarning, match="unknown="):
-        error = InvalidStageError(include=frozenset({"MissingStep"}))
-
-    assert error.unknown == frozenset({"MissingStep"})
-    assert "['MissingStep']" in str(error)
+def test_the_include_keyword_is_refused() -> None:
+    with pytest.raises(TypeError, match="include"):
+        InvalidStageError(include=frozenset({"MissingStep"}))  # type: ignore[call-arg]
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [{}, {"unknown": frozenset({"A"}), "include": frozenset({"A"})}],
-    ids=["neither", "both"],
-)
-def test_the_names_are_given_exactly_once(kwargs: dict[str, frozenset[str]]) -> None:
-    with pytest.raises(TypeError, match="InvalidStageError"):
-        InvalidStageError(**kwargs)
+def test_the_unknown_names_are_required() -> None:
+    with pytest.raises(TypeError, match="unknown"):
+        InvalidStageError()  # type: ignore[call-arg]
 
 
 def test_invalid_stage_error_keeps_its_unknown_names_across_pickle() -> None:

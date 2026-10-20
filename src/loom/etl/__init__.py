@@ -47,9 +47,9 @@ the public API and may change without notice.
 from loom.core.observability.config import OtelConfig
 from loom.etl.backends._format_registry import UnsupportedFormatError
 from loom.etl.checkpoint import (
-    CheckpointCleaner,
     CheckpointScope,
     CheckpointStore,
+    FsspecTempCleaner,
 )
 from loom.etl.declarative import (
     CsvReadOptions,
@@ -208,7 +208,7 @@ __all__ = [
     "HistorifyTemporalConflictError",
     "EmptyReplaceError",
     # intermediates
-    "CheckpointCleaner",
+    "FsspecTempCleaner",
     "CheckpointScope",
     "CheckpointStore",
     # format

@@ -47,10 +47,6 @@ class FsspecTempCleaner:
             _log.warning("checkpoint cleanup skipped path=%r reason=%s", path, exc)
 
 
-# Backward-compatible alias for public imports.
-CheckpointCleaner = FsspecTempCleaner
-
-
 def _join_path(base: str, *parts: str) -> str:
     """Join *base* and *parts* into a single path, preserving cloud URI schemes."""
     root = base.rstrip("/")
