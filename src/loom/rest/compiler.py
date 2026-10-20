@@ -55,7 +55,7 @@ from loom.core.model import (
     msgspec_type,
 )
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
-from loom.core.model.introspection import column_annotations, scalar_column_annotations
+from loom.core.model.introspection import scalar_column_annotations
 from loom.core.repository.abc.cursor import cursor_carries
 from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case.field_ref import FieldRef
@@ -537,21 +537,24 @@ class _ColumnPolicy:
         """Refuse a cursor-capable route whose tokens would carry a hidden or uncarriable key."""
         if self.model is None:
             return
-        annotations = column_annotations(self.model)
+        # The columns a SQL keyset can order, as the SQLAlchemy repository
+        # checks them at run time: a JSON or array key fails here instead.
+        annotations = scalar_column_annotations(self.model)
         shown = _response_fields(self.response)
         for name in key:
             if not cursor_carries(annotations.get(name)):
                 raise InterfaceCompilationError(
-                    f"{self.where}: primary key {name!r} has a type a cursor token cannot "
-                    "carry; serve offset pages only (pagination_mode offset and "
-                    "allow_pagination_override=False)."
+                    f"{self.where}: primary key {name!r} has a type, or a column type, a "
+                    "cursor token cannot carry; serve offset pages only (pagination_mode "
+                    "offset and allow_pagination_override=False)."
                 )
             if not opened and (shown is None or name not in shown):
                 raise InterfaceCompilationError(
                     f"{self.where}: the route can serve cursor pages, whose tokens carry the "
                     f"primary key {name!r}, but its response does not show it; show it, serve "
-                    "offset pages only (allow_pagination_override=False), or declare "
-                    "sortable=ALL to open every column on purpose."
+                    "offset pages only (pagination_mode offset and "
+                    "allow_pagination_override=False), or declare sortable=ALL to open every "
+                    "column on purpose."
                 )
 
     def _column_name(self, kind: str, entry: FieldRef | str) -> str:

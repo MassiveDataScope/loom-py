@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from typing import Any
+from uuid import UUID
 
 import msgspec
 import pydantic
@@ -941,6 +942,20 @@ class _ListBlobbed(UseCase[_Blobbed, PageResult[_Blobbed]]):
         raise NotImplementedError
 
 
+class _JsonKeyed(BaseModel):
+    """A bare ``UUID`` key is inferred as a JSON column, which SQL keysets cannot order."""
+
+    __tablename__ = "rest_compiler_json_keyed"
+
+    id: UUID = ColumnField(primary_key=True)
+    label: str = ColumnField(length=8)
+
+
+class _ListJsonKeyed(UseCase[_JsonKeyed, PageResult[_JsonKeyed]]):
+    async def execute(self, query: QuerySpec) -> PageResult[_JsonKeyed]:
+        raise NotImplementedError
+
+
 def _compile_columns(*interfaces: type[RestInterface[Any]]) -> list[Any]:
     compiler = UseCaseCompiler()
     for interface in interfaces:
@@ -1179,6 +1194,14 @@ class TestCursorCapableRoutes:
         class IFace(RestInterface[_Blobbed]):
             prefix = "/blobs"
             routes = (RestRoute(use_case=_ListBlobbed, method="GET", path="/"),)
+
+        with pytest.raises(InterfaceCompilationError, match=r"primary key 'id'.*cursor"):
+            _compile_columns(IFace)
+
+    def test_a_primary_key_in_a_json_column_fails_compilation(self) -> None:
+        class IFace(RestInterface[_JsonKeyed]):
+            prefix = "/keyed"
+            routes = (RestRoute(use_case=_ListJsonKeyed, method="GET", path="/"),)
 
         with pytest.raises(InterfaceCompilationError, match=r"primary key 'id'.*cursor"):
             _compile_columns(IFace)

@@ -95,8 +95,8 @@ the items the route answers with (`PageResult[T]`, `CursorResult[T]` or
 In cursor mode a sort column must also hold no null. A `filterable` column
 follows the same rule, since the rows a filter keeps reveal its values too.
 A route that can serve cursor pages must also show its primary key, which
-every token carries, or serve offset pages only
-(`allow_pagination_override=False`).
+every token carries, or serve offset pages only (`pagination_mode` offset
+and `allow_pagination_override=False`).
 
 Only scalar columns of the use case's own model qualify; a related model's
 column, a JSON, array or text-search column, and a field reference rooted at

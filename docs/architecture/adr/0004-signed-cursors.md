@@ -189,16 +189,20 @@ its values with the order of the rows, and reads them from the token
   scalar column, hidden ones included, with a WARNING at startup naming the
   route. This one rule closes both channels. `filterable` follows the same
   rule, with `filterable=ALL` as its escape hatch, since the rows a filter
-  keeps reveal the filtered values just as an order does. A pydantic field
-  declared `exclude=True` is not shown.
+  keeps reveal the filtered values just as an order does. "Shown" is decided
+  by field name: a field of the item type is shown unless it is a pydantic
+  field declared `exclude=True`, the only per-field suppression recognised.
 - **The primary key** is the order every page falls back to and the
   tie-breaker in every token, so a token always carries it. A route that can
   serve cursor pages (cursor mode, or a client may switch to it) whose
   response does not show the key fails compilation, as a hidden sort column
   does; `sortable=ALL` opens it with the same warning, and a route that must
-  hide its keys serves offset pages only (`allow_pagination_override=False`).
-  A key of a type a token cannot carry fails compilation on such a route too,
-  instead of on the first cursor request.
+  hide its keys serves offset pages only (`pagination_mode` offset and
+  `allow_pagination_override=False`).
+  A key of a type a token cannot carry, or in a JSON or array column (the
+  columns a SQL keyset orders, as the SQLAlchemy repository checks them at
+  run time), fails compilation on such a route too, instead of on the first
+  cursor request.
 - **Repositories, before the query runs.** In cursor mode every sort field
   and primary-key column must be a column whose type a token carries
   (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
@@ -213,9 +217,10 @@ its values with the order of the rows, and reads them from the token
   format does not carry, in the last row of a page makes `encode` raise
   `UnsupportedQuery` (400), not `TypeError` (500), when the next token is
   issued, after the query has run.
-- **Mongo** stores dates, decimals and UUIDs as text; it issues the next
-  token from the output struct, in the model's types, so the next page's type
-  check accepts it.
+- **Mongo** stores dates and UUIDs as text; it issues the next token from
+  the output struct, in the model's types, so the next page's type check
+  accepts it. It refuses to sort by a `Decimal` column, which it also stores
+  as text with no natural order, so no decimal sort value reaches a token.
 
 ### Wiring and public surface
 
