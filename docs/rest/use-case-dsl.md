@@ -881,20 +881,11 @@ the duplicate declaration instead.
 > duplicate is removed. This applies whether or not any YAML interface is in
 > use.
 
-> **Breaking change:** `create_fastapi_app`'s second parameter used to be
-> `interfaces: Sequence[type[RestInterface]]`; it is now
-> `routes: RouteSources`. Code that called it as documented —
-> `create_fastapi_app(result, interfaces=[...])`, keyword form, every
-> published example — still works: a deprecated `interfaces=` keyword wraps
-> the list in `RouteSources(python=interfaces)` and emits a
-> `DeprecationWarning` naming `routes` as the replacement (the keyword will
-> be removed in 2.0). A call that passed the list *positionally* now binds
-> it to `routes`, which requires a `RouteSources` instance:
-> `create_fastapi_app` raises `TypeError` immediately, naming
-> `RouteSources(python=[...])` as the replacement — it does not wait for
-> compilation to fail on a missing attribute. Passing both `routes` and
-> `interfaces`, or neither, also raises `TypeError`. Migrate by replacing
-> `interfaces=[...]` with `routes=RouteSources(python=[...])`.
+> **Breaking change:** `create_fastapi_app`'s second parameter is
+> `routes: RouteSources`, and it is required. The `interfaces=` keyword is
+> removed: replace `interfaces=[...]` with `routes=RouteSources(python=[...])`.
+> A list passed positionally raises `TypeError` immediately, naming
+> `RouteSources(python=[...])` as the replacement.
 
 ### Disabling a route per environment (`app.rest.disable_routes`)
 
