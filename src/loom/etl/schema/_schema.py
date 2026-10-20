@@ -284,13 +284,17 @@ LoomType = (
 
 
 class SchemaNotFoundError(Exception):
-    """Raised when a write targets a table that does not exist.
+    """Raised when a table's schema is needed but the table does not exist.
 
-    An append, replace or upsert creates the missing table when it writes with
-    :attr:`~loom.core.schema.SchemaMode.OVERWRITE` or when
-    ``storage.missing_table_policy`` is ``"create"``; otherwise it raises this
-    error.  An update never creates the table and always raises it for a
-    missing one.
+    * A write that may create its table (append, replace, replace_partitions,
+      replace_where, upsert, historify) raises it for a missing table unless
+      ``storage.missing_table_policy`` is ``"create"``, or is
+      ``"schema_mode"`` (the default) and the write uses
+      :attr:`~loom.core.schema.SchemaMode.OVERWRITE`.  With ``"error"`` it
+      always raises.
+    * An update raises it for a missing table under every policy.
+    * ``apply_schema_polars`` and ``apply_schema_spark`` raise it when given
+      no schema under ``SchemaMode.STRICT`` or ``SchemaMode.EVOLVE``.
     """
 
 
