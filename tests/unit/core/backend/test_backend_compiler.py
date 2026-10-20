@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from enum import Enum
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from sqlalchemy import MetaData
@@ -144,6 +144,7 @@ class _DeclaredShadeItem(BaseModel):
     __tablename__ = "test_declared_shade_items"
     id: int = ColumnField(primary_key=True, autoincrement=True)
     shade: _Shade = ColumnField(String(8))
+    mode: Annotated[Literal["a", "b"], String(1)] | None = None
 
 
 class TestUndeclaredColumnTypes:
@@ -161,7 +162,8 @@ class TestUndeclaredColumnTypes:
 
         compile_all(_DeclaredShadeItem, metadata=metadata)
 
-        assert str(metadata.tables["test_declared_shade_items"].c.shade.type) == "VARCHAR(8)"
+        columns = metadata.tables["test_declared_shade_items"].c
+        assert (str(columns.shade.type), str(columns.mode.type)) == ("VARCHAR(8)", "VARCHAR(1)")
 
 
 class TestCompileModel:

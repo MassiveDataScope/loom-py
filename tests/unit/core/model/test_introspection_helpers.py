@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import typing
-from enum import Enum, IntEnum, StrEnum
+from datetime import date
+from decimal import Decimal
+from enum import Enum, IntEnum, IntFlag, StrEnum
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import msgspec
 import pytest
 
-from loom.core.model import BaseModel, ColumnField
+from loom.core.model import BaseModel, ColumnField, Field
+from loom.core.model.field import ColumnType
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
@@ -18,7 +21,7 @@ from loom.core.model.introspection import (
     list_element_type,
     resolve_type_hints,
 )
-from loom.core.model.types import JSON, Integer, String
+from loom.core.model.types import JSON, Float, Integer, Numeric, String
 
 
 class _Note:
@@ -158,6 +161,22 @@ class _Colour(Enum):
     RED = "red"
 
 
+class _Mask(IntFlag):
+    READ = 1
+
+
+class _Ratio(float, Enum):
+    HALF = 0.5
+
+
+class _Amount(Decimal, Enum):
+    ONE = Decimal("1")
+
+
+class _Day(date, Enum):
+    FIRST = (2026, 1, 1)
+
+
 class _Enums(BaseModel):
     __tablename__ = "enums"
     status: _Status
@@ -166,6 +185,18 @@ class _Enums(BaseModel):
     priority: _Priority = _Priority.HIGH
     colour: _Colour = ColumnField(String(8), default=_Colour.RED)
     mode: Annotated[Literal["a", "b"], String(1)] = "a"
+    maybe_mode: Annotated[Literal["a", "b"], String(1)] | None = None
+    annotated_maybe: Annotated[_Status | None, Field(length=12)] = None
+
+
+class _MixedEnums(BaseModel):
+    __tablename__ = "mixed_enums"
+    status: _Status
+    priority: _Priority
+    mask: _Mask
+    ratio: _Ratio
+    amount: _Amount
+    day: _Day
 
 
 class _PlainEnum(BaseModel):
@@ -201,6 +232,30 @@ class TestEnumColumnTypes:
 
         assert fields["colour"].column_type == String(8)
         assert fields["mode"].column_type == String(1)
+
+    def test_annotated_metadata_inside_optional_or_around_it_is_honoured(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["maybe_mode"].column_type == String(1)
+        assert fields["annotated_maybe"].column_type == String(12)
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("status", String()),
+            ("priority", Integer),
+            ("mask", Integer),
+            ("ratio", Float),
+            ("amount", Numeric()),
+            ("day", String(None)),
+        ],
+    )
+    def test_an_enum_follows_the_scalar_type_it_is_mixed_with(
+        self, field: str, expected: ColumnType
+    ) -> None:
+        info = get_column_fields(_MixedEnums)[field]
+
+        assert (info.column_type, info.needs_declared_type) == (expected, False)
 
     @pytest.mark.parametrize(
         ("model", "field"),

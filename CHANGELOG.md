@@ -511,19 +511,27 @@
   its builtins rendering to the cache key rather than the instance's own
   `repr`, a one-time key change.
 - **core:** a model field annotated with an enum and no declared column type
-  takes the column type of the enum's base class, as the base class itself
-  would: a `StrEnum` (any `str` enum) becomes `String`, honouring `length=`,
-  and an `IntEnum` (any `int` enum) becomes `Integer`, instead of `JSON`. The
-  value is stored, not the name (`'paid'`, not `'"paid"'`), so the column can
-  be filtered by equality; `Optional` of either behaves the same. An existing
-  table with such a column needs a migration from `JSON` to the new type. On
-  SQLAlchemy models, a plain `Enum` (neither `str` nor `int`) or a
-  `Literal[...]` field with no declared column type now fails model
-  compilation with a `ValueError` naming the model and the field, instead of
-  becoming a `JSON` column; loom does not infer a type from the values.
-  Declare the column, for example `colour: Colour = ColumnField(String(20))`.
-  Mongo and DynamoDB models keep such fields as they are. Declared column
-  types are unchanged. `ColumnFieldInfo` gains `needs_declared_type`.
+  takes the column type of the scalar the enum is mixed with, the first class
+  of its MRO with a column rule, as that class itself would: a `StrEnum` (any
+  `str` enum) becomes `String`, honouring `length=`, an `IntEnum` or `IntFlag`
+  becomes `Integer`, a `float` enum `Float`, a `Decimal` enum `Numeric`,
+  instead of `JSON`. The value is stored as a plain string or integer, not
+  JSON-encoded, so the column can be filtered by equality; `Optional` of such
+  an enum behaves the same. An existing table with such a column needs a
+  migration that converts the data with a `USING` clause, which Alembic's
+  autogenerate does not write: on Postgres,
+  `ALTER TABLE t ALTER COLUMN c TYPE varchar USING c #>> '{}'` and
+  `ALTER TABLE t ALTER COLUMN c TYPE integer USING (c #>> '{}')::integer`. On
+  SQLAlchemy models, a plain `Enum` (mixed with no scalar) or a `Literal[...]`
+  field with no declared column type now fails model compilation with a
+  `ValueError` naming the model and the field, instead of becoming a `JSON`
+  column; loom does not infer a type from the values. Declare the column, for
+  example `colour: Colour = ColumnField(String(20))`. Mongo and DynamoDB
+  models keep such fields as they are. Declared column types are unchanged,
+  and an `Annotated[...]` column type or `Field` is now read also when the
+  `Annotated` sits inside `Optional` (`Annotated[T, String(1)] | None`), and a
+  `Field` in `Annotated` without a column type is no longer dropped.
+  `ColumnFieldInfo` gains `needs_declared_type`.
 
 ### ai
 
