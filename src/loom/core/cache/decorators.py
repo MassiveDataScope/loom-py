@@ -30,11 +30,10 @@ def cache_query(
     Annotate the return type.  The wrapper derives a codec from it and applies
     it to the cached read and to the fresh one alike, so a hit and a miss
     return the same type; the supported grammar is a :class:`msgspec.Struct`,
-    a scalar, or a ``list``, ``tuple`` or optional of those.  A return type
-    outside it — a mapping, a generic container, ``Any``, a forward reference
-    the defining module cannot resolve — emits a ``DeprecationWarning`` when
-    the repository is wrapped, and keeps the old behaviour, where the cached
-    call returns the decoded payload rather than the declared type.
+    a scalar, or a ``list``, ``tuple`` or optional of those.  A missing return
+    annotation or one outside the grammar — a mapping, a generic container,
+    ``Any``, a forward reference the defining module cannot resolve — makes
+    wrapping the repository raise ``RuntimeError``, naming the method.
 
     The declared type is what the caller gets, on the fresh call as on the
     cached one: a method annotated ``-> Stats`` that returns a subclass of

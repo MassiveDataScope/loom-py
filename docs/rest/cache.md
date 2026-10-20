@@ -35,8 +35,9 @@ class UserRepository(RepositorySQLAlchemy[User, UserCreate, UserUpdate]):
 `@cache_query` marks a custom read method. Annotate its return type: the
 wrapper derives a codec from it, so a hit and a miss return the same type. A
 `msgspec.Struct`, a scalar, or a `list`, `tuple` or optional of those is
-supported; anything else emits a `DeprecationWarning` when the repository is
-wrapped and the cached call returns the decoded payload instead.
+supported. A missing annotation or anything else makes wrapping the repository
+raise `RuntimeError`, naming the method, so the application fails when it
+builds the repository rather than serving a hit of another type.
 
 `scope="entity"` requires the model's primary key as the first positional
 argument — a keyword argument does not count, and the wrapper raises

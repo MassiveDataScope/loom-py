@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import random
-import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial, wraps
@@ -26,7 +25,6 @@ from loom.core.cache.keys import (
     query_index_key,
 )
 from loom.core.cache.result_codec import (
-    PassthroughResultCodec,
     ResultCodec,
     build_result_codec,
     to_payload,
@@ -251,7 +249,6 @@ class CachedRepository(
         self._single_flight = SingleFlight(self._log_abandoned_load)
         self._rng = random.Random()
         self._log = get_logger(__name__).bind(repository=repository.__class__.__name__)
-        self._passthrough_codec = PassthroughResultCodec()
         self._cached_method_wrappers: dict[str, Callable[..., Awaitable[Any]]] = {}
         self._result_codecs = self._build_result_codecs(repository)
         self._pydantic_output_type: LoomType | None = self._resolve_pydantic_output_type(repository)
@@ -603,7 +600,11 @@ class CachedRepository(
         cached read *without* the marker takes the name out of the cache, so
         the base class's decorated version must not be registered — the
         wrapper re-reads the marker on the resolved attribute and would never
-        use that codec, but it would still deprecate the base annotation.
+        use that codec, but it would still refuse the base annotation.
+
+        Raises:
+            RuntimeError: If a cached read declares a return type no codec can
+                be built from.
         """
         owner = type(repository)
         model = getattr(repository, "model", None)
@@ -615,36 +616,8 @@ class CachedRepository(
                     continue
                 declared.add(name)
                 if _is_cached_read(attr):
-                    codecs[name] = self._codec_for(owner.__name__, name, attr, model)
+                    codecs[name] = _codec_for(owner.__qualname__, name, attr, model)
         return codecs
-
-    def _codec_for(
-        self,
-        owner_name: str,
-        method_name: str,
-        method: Callable[..., Any],
-        model: object | None,
-    ) -> ResultCodec:
-        """Codec declared by *method*, or the deprecated pass-through."""
-        codec = build_result_codec(method, model=model)
-        if codec is not None:
-            return codec
-        warnings.warn(
-            f"{owner_name}.{method_name} is decorated with @cache_query but its return "
-            "annotation is missing, unresolvable, or outside the supported grammar "
-            "(a struct, a scalar, or a list, tuple or optional of those). The cached "
-            "call keeps returning the decoded payload, which may not be the type the "
-            "first call returns; annotate the method to get one type on both paths. "
-            "The pass-through will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=4,
-        )
-        self._log.warning(
-            "CacheQueryReturnTypeUnusable",
-            repository=owner_name,
-            method=method_name,
-        )
-        return self._passthrough_codec
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
         self._log.warning("CacheLoadAbandoned", key=key, error=repr(error))
@@ -790,7 +763,14 @@ class CachedRepository(
         method: Callable[..., Awaitable[Any]],
         metadata: dict[str, object],
     ) -> Callable[..., Awaitable[Any]]:
-        codec = self._result_codecs.get(method_name, self._passthrough_codec)
+        codec = self._result_codecs.get(method_name)
+        if codec is None:
+            raise RuntimeError(
+                f"{type(self._repository).__qualname__}.{method_name} is decorated with "
+                "@cache_query but is not defined on the repository class, so CachedRepository "
+                "built no codec for it when the repository was wrapped. Define it as a method "
+                "of the class."
+            )
         signature = inspect.signature(method, follow_wrapped=False)
 
         @wraps(method)
@@ -842,8 +822,8 @@ class CachedRepository(
 
         Returns:
             The decoded value, or the ``_UNDECODABLE`` sentinel, which is not
-            ``None`` because ``None`` is a value the pass-through codec can
-            legitimately return.
+            ``None`` because ``None`` is a value the codec of an optional
+            return type can legitimately return.
         """
         try:
             return codec.decode(payload)
@@ -1282,6 +1262,38 @@ def _require_full_repository(repository: object) -> None:
             f"it does not implement {', '.join(missing)}. A @cached repository must "
             f"implement the full Repository protocol."
         )
+
+
+def _codec_for(
+    owner_name: str,
+    method_name: str,
+    method: Callable[..., Any],
+    model: object | None,
+) -> ResultCodec:
+    """Return the codec the return annotation of a cached read declares.
+
+    Args:
+        owner_name: Qualified name of the wrapped repository class.
+        method_name: Name of the cached read.
+        method: The cached read, taken from the class dictionary.
+        model: Model of the wrapped repository.
+
+    Returns:
+        The codec built from the annotation.
+
+    Raises:
+        RuntimeError: If the annotation is missing, unresolvable, or outside
+            the supported grammar.
+    """
+    codec = build_result_codec(method, model=model)
+    if codec is None:
+        raise RuntimeError(
+            f"{owner_name} cannot be wrapped in CachedRepository: {owner_name}.{method_name} "
+            "is decorated with @cache_query but its return annotation is missing, "
+            "unresolvable, or outside the supported grammar. Annotate its return type with "
+            "a struct, a scalar, or a list, tuple or optional of those."
+        )
+    return codec
 
 
 def _require_reported_scope(repository: object) -> None:
