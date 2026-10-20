@@ -11,6 +11,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Literal,
     Union,
     cast,
@@ -18,6 +19,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from uuid import UUID
 
 import msgspec
 
@@ -38,6 +40,7 @@ from loom.core.model.types import (
     Numeric,
     String,
     Time,
+    Uuid,
 )
 from loom.core.schema_names import sql_identifier
 
@@ -56,8 +59,9 @@ class ColumnFieldInfo:
     """Resolved metadata for a single column field.
 
     ``needs_declared_type`` marks a field whose column type was not declared
-    and cannot be inferred, a plain enum or a ``Literal``: ``column_type`` is
-    then a JSON placeholder.
+    and is not inferred: ``column_type`` is then a placeholder, an unbounded
+    ``Numeric`` for a ``Decimal``, whose precision and scale must be declared,
+    and JSON for a plain enum or a ``Literal``.
     """
 
     name: str
@@ -120,7 +124,7 @@ def _resolve_column_field(
         python_type=_extract_origin_type(annotation),
         column_type=column_type or JSON,
         field=field,
-        needs_declared_type=column_type is None,
+        needs_declared_type=column_type is None or column_type is _UNDECLARED_DECIMAL,
     )
 
 
@@ -414,6 +418,10 @@ def _is_classvar(annotation: Any) -> bool:
     return get_origin(annotation) is ClassVar
 
 
+# The placeholder of a Decimal with no declared column type; the SQLAlchemy
+# compiler refuses such a field, so it is never compiled.
+_UNDECLARED_DECIMAL: Final = Numeric()
+
 _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     int: Integer,
     float: Float,
@@ -422,7 +430,8 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     datetime: DateTime(tz=True),
     date: Date,
     time: Time,
-    Decimal: Numeric(),
+    Decimal: _UNDECLARED_DECIMAL,
+    UUID: Uuid,
 }
 
 

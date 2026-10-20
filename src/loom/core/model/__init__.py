@@ -53,6 +53,7 @@ from loom.core.model.types import (
     String,
     Text,
     Time,
+    Uuid,
 )
 from loom.core.model.types_postgres import Postgres
 
@@ -110,6 +111,7 @@ __all__ = [
     "Text",
     "Time",
     "UnsupportedBoundaryType",
+    "Uuid",
     "get_column_fields",
     "get_id_attribute",
     "get_id_attributes",

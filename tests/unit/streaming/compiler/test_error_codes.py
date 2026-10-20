@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from loom.streaming import (
     Backend,
     BatchExpandStep,
+    BatchStep,
     Broadcast,
     BroadcastRoute,
     CollectBatch,
@@ -35,7 +36,6 @@ from loom.streaming import (
     Route,
     Router,
     StreamFlow,
-    StreamShape,
     WindowStrategy,
     With,
     msg,
@@ -59,8 +59,8 @@ class TestCompilationErrorContract:
     ) -> None:
         flow: StreamFlow[Order, Result] = StreamFlow(
             name="test",
-            source=FromTopic("in", payload=Order, shape=StreamShape.BATCH),
-            process=Process(FakeStep(), IntoTopic("out", payload=Result)),
+            source=FromTopic("in", payload=Order),
+            process=Process(CollectBatch(2, 10), FakeStep(), IntoTopic("out", payload=Result)),
         )
 
         with pytest.raises(CompilationError) as exc_info:
@@ -164,6 +164,23 @@ class TestBranchPrefixing:
         assert branch_issue.message.startswith("fork branch ")
 
 
+class TestRouterBranchTerminals:
+    def test_a_broadcast_followed_by_a_node_in_a_router_branch_is_terminal_not_last(
+        self, streaming_kafka_config: DictConfig
+    ) -> None:
+        """The branch reports the unsafe node and the misplaced terminal, once each."""
+        flow = _flow(_router(_broadcast(FakeStep()), FakeStep()))
+
+        with pytest.raises(CompilationError) as exc_info:
+            compile_flow(flow, config=streaming_kafka_config)
+
+        issues = [(issue.code, issue.component) for issue in exc_info.value.issues]
+        assert issues == [
+            (StreamingErrorCode.TERMINAL_NOT_LAST, "router branch predicate[0] > Broadcast"),
+            (StreamingErrorCode.ROUTER_BRANCH_UNSAFE_NODE, "router branch predicate[0]"),
+        ]
+
+
 class TestBuildPhaseCodes:
     def test_unsupported_storage_sink_raises_coded_error(self) -> None:
         class _NotATable:
@@ -221,10 +238,16 @@ class _Fanout(ExpandStep[Order, Result]):
         return []
 
 
+class _SameBatch(BatchStep[Order, Order]):
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Order]:
+        del kwargs
+        return [message.payload for message in messages]
+
+
 class _BatchFanout(BatchExpandStep[Order, Result]):
-    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[Result]:
-        del messages, kwargs
-        return []
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[list[Result]]:
+        del kwargs
+        return [[] for _ in messages]
 
 
 class _Expander:
@@ -428,12 +451,28 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "ExpandRoutes",
         None,
     ),
-    "broadcast not last inside a router branch": (
+    "topic followed by a step inside a router branch": (
+        lambda: _flow(_router(_out(), FakeStep()), _out()),
+        {},
+        StreamingErrorCode.TERMINAL_NOT_LAST,
+        "router branch predicate[0]: IntoTopic must be the last node in a process",
+        "router branch predicate[0] > IntoTopic",
+        None,
+    ),
+    "collect batch after a batch": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), CollectBatch(3, 50), Drain()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before CollectBatch",
+        "CollectBatch",
+        None,
+    ),
+    "broadcast inside a router branch": (
         lambda: _flow(_router(_broadcast(FakeStep()), FakeStep())),
         {},
-        StreamingErrorCode.BROADCAST_NOT_LAST,
-        "router branch predicate[0]: broadcast must be the last node in a process",
-        "router branch predicate[0] > broadcast",
+        StreamingErrorCode.ROUTER_BRANCH_UNSAFE_NODE,
+        "router branch predicate[0]: node Broadcast is not router-branch safe",
+        "router branch predicate[0]",
         None,
     ),
     "scoped process followed by a step": (
@@ -652,6 +691,74 @@ _COMPILE_PATH_CASES: dict[str, _FlowCase] = {
         "Only WindowStrategy.COLLECT is available in this adapter version.",
         "CollectBatch",
         "window",
+    ),
+    "batch into a topic": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _out()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before IntoTopic",
+        "IntoTopic",
+        None,
+    ),
+    "batch into the flow output": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), output=_out()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before flow.output",
+        "flow.output",
+        "output",
+    ),
+    "batch into a broadcast route output": (
+        lambda: _flow(_broadcast(CollectBatch(3, 50), _SameBatch())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "broadcast branch 0: shape mismatch: expected record but got batch before output",
+        "broadcast branch 0 > output",
+        "output",
+    ),
+    "batch into a table": (
+        lambda: _flow(
+            CollectBatch(3, 50),
+            _SameBatch(),
+            IntoTable(payload=Order, table="t", backend=Backend.DELTA, name="orders"),
+        ),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before IntoTable",
+        "IntoTable",
+        None,
+    ),
+    "batch into a fork": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _fork()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before Fork",
+        "Fork",
+        None,
+    ),
+    "batch into an expand routes": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _expand_routes(_out())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before ExpandRoutes",
+        "ExpandRoutes",
+        None,
+    ),
+    "batch into a broadcast": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), _broadcast(FakeStep())),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before Broadcast",
+        "Broadcast",
+        None,
+    ),
+    "batch into a drain": (
+        lambda: _flow(CollectBatch(3, 50), _SameBatch(), Drain()),
+        {},
+        StreamingErrorCode.SHAPE_MISMATCH,
+        "shape mismatch: expected record but got batch before Drain",
+        "Drain",
+        None,
     ),
     "scoped IntoTopic followed by a step": (
         lambda: _flow(With(process=Process(_out(), FakeStep()))),

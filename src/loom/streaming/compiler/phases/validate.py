@@ -36,7 +36,7 @@ from loom.streaming.nodes._mongo import FromMongoCDC
 from loom.streaming.nodes._router import Router
 from loom.streaming.nodes._shape import CollectBatch, Drain, ForEach, StreamShape, WindowStrategy
 from loom.streaming.nodes._sink import IntoSink
-from loom.streaming.nodes._step import BatchExpandStep, BatchStep, ExpandStep, RecordStep
+from loom.streaming.nodes._step import BatchExpandStep, BatchStep, ExpandStep, RecordStep, Step
 from loom.streaming.nodes._table import Backend, IntoTable
 from loom.streaming.nodes._table.config import (
     resolve_clickhouse_table_config,
@@ -119,7 +119,9 @@ def validate_resources(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
 
 def validate_shapes(flow: StreamFlow[Any, Any]) -> list[CompilationIssue]:
     """Validate shape transitions through the process tree."""
-    errors, _ = _validate_shape_sequence(flow.process.nodes, flow.source.shape)
+    errors, final_shape = _validate_shape_sequence(flow.process.nodes, StreamShape.RECORD)
+    if flow.output is not None:
+        errors.extend(_output_shape_issues(final_shape, "flow.output"))
     errors.extend(_validate_window_strategies(flow.process.nodes))
     errors.extend(_validate_scoped_process_nodes(_walk_all_process_nodes(flow.process.nodes)))
     return errors
@@ -224,24 +226,33 @@ def walk_process_nodes(nodes: Iterable[object]) -> Iterable[object]:
     yield from _walk_all_process_nodes(nodes)
 
 
-def _node_needs_async_bridge(node: object) -> bool:
-    return isinstance(node, WithAsync) or (
-        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
-    )
-
-
 def _check_input_shape(
     node: object,
     current_shape: StreamShape,
     errors: list[CompilationIssue],
 ) -> None:
-    expected = _node_input_shape(node)
+    expected = node_input_shape(node)
     if expected is not None and current_shape != expected:
         errors.append(
             StreamingErrorCode.SHAPE_MISMATCH.issue(
                 expected=expected.value, got=current_shape.value, component=type(node).__name__
             )
         )
+
+
+def _output_shape_issues(shape: StreamShape, component: str) -> list[CompilationIssue]:
+    """Return the mismatch of an output declared after a stream of *shape*.
+
+    An output writes records, so only a ``batch`` is a mismatch. ``none`` is the
+    shape after a node that ends the path, and after ``With`` and ``WithAsync``,
+    whose runtime hands their results on one message at a time.
+    """
+    if shape in (StreamShape.RECORD, StreamShape.NONE):
+        return []
+    issue = StreamingErrorCode.SHAPE_MISMATCH.issue(
+        expected=StreamShape.RECORD.value, got=shape.value, component=component
+    )
+    return [msgspec.structs.replace(issue, field="output")]
 
 
 def _must_be_last_errors(
@@ -351,13 +362,13 @@ def _validate_shape_node(
     if isinstance(node, ExpandRoutes):
         return _validate_expand_routes_node(node, idx, node_list)
     if isinstance(node, Router):
-        router_errors, next_shape = _validate_router_shapes(node, StreamShape.RECORD)
+        router_errors, next_shape = _validate_router_shapes(node)
         if router_ends_every_path(node):
             not_last = StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
             router_errors.extend(_must_be_last_errors(idx, node_list, not_last))
             return router_errors, StreamShape.NONE, True
         return router_errors, next_shape, False
-    return [], _node_output_shape(node, current_shape), False
+    return [], node_output_shape(node, current_shape), False
 
 
 def _validate_leaf_terminal_node(
@@ -421,7 +432,7 @@ def _validate_explode_node(
     if not isinstance(next_node, Router):
         got = type(next_node).__name__ if next_node is not None else "nothing"
         errors.append(StreamingErrorCode.EXPLODE_WITHOUT_ROUTER.issue(got=got))
-    return errors, _node_output_shape(node, current_shape), False
+    return errors, node_output_shape(node, current_shape), False
 
 
 def _prefixed(issue: CompilationIssue, prefix: str) -> CompilationIssue:
@@ -471,7 +482,9 @@ def _validate_broadcast_shapes(
 ) -> tuple[list[CompilationIssue], StreamShape]:
     errors: list[CompilationIssue] = []
     for branch in iter_branches(broadcast):
-        branch_errors, _ = _validate_shape_sequence(branch.nodes, initial_shape)
+        branch_errors, final_shape = _validate_shape_sequence(branch.nodes, initial_shape)
+        if branch.output is not None:
+            branch_errors.extend(_output_shape_issues(final_shape, "output"))
         errors.extend(
             _prefixed(issue, f"broadcast branch {branch.label}") for issue in branch_errors
         )
@@ -487,50 +500,47 @@ def _validate_broadcast_shapes(
 
 def _validate_router_branch_shape_sequence(
     nodes: Iterable[object],
-    initial_shape: StreamShape,
 ) -> tuple[list[CompilationIssue], StreamShape]:
+    """Shape-check the nodes of one Router branch and return the branch's output shape.
+
+    A ``BatchStep`` here is record to record: the runtime runs it on a
+    one-message batch of the routed message
+    (``loom.streaming.bytewax.handlers.routing._execute_router_node``).
+    """
     errors: list[CompilationIssue] = []
-    current_shape = initial_shape
+    current_shape = StreamShape.RECORD
     node_list = tuple(nodes)
 
     for idx, node in enumerate(node_list):
         if isinstance(node, BatchStep):
             current_shape = StreamShape.RECORD
             continue
-        expected = _node_input_shape(node)
-        if expected is not None and current_shape != expected:
-            errors.append(
-                StreamingErrorCode.SHAPE_MISMATCH.issue(
-                    expected=expected.value, got=current_shape.value, component=type(node).__name__
-                )
-            )
+        _check_input_shape(node, current_shape, errors)
         if _is_leaf_terminal(node) and idx != len(node_list) - 1:
-            errors.append(
-                StreamingErrorCode.BROADCAST_NOT_LAST.issue()
-                if isinstance(node, Broadcast)
-                else StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__)
-            )
+            errors.append(StreamingErrorCode.TERMINAL_NOT_LAST.issue(component=type(node).__name__))
             break
-        current_shape = _node_output_shape(node, current_shape)
+        current_shape = node_output_shape(node, current_shape)
 
     return errors, current_shape
 
 
 def _validate_router_shapes(
     router: Router[StreamPayload, StreamPayload],
-    initial_shape: StreamShape,
 ) -> tuple[list[CompilationIssue], StreamShape]:
     """Validate *router*'s branches and return the shape of the messages that continue.
 
     Those are the outputs of the branches that do not end their path and, without
     a default branch, the unmatched input; only they must agree on one shape.
+    A Router takes records, so every branch starts as a record stream.
     """
     errors: list[CompilationIssue] = []
-    outputs: dict[StreamShape, None] = {} if router.default is not None else {initial_shape: None}
+    outputs: dict[StreamShape, None] = (
+        {} if router.default is not None else {StreamShape.RECORD: None}
+    )
 
     for branch in iter_branches(router):
         label, nodes = branch.label, branch.nodes
-        branch_errors, branch_output = _validate_router_branch_shape_sequence(nodes, initial_shape)
+        branch_errors, branch_output = _validate_router_branch_shape_sequence(nodes)
         errors.extend(_prefixed(issue, f"router branch {label}") for issue in branch_errors)
         for node in nodes:
             if not isinstance(node, RouterBranchSafe):
@@ -644,30 +654,6 @@ def _contains_broadcast(nodes: Iterable[object]) -> bool:
     return any(isinstance(node, Broadcast) for node in nodes)
 
 
-def _node_input_shape(node: object) -> StreamShape | None:
-    if isinstance(node, RecordStep):
-        return StreamShape.RECORD
-    if isinstance(node, BatchStep):
-        return StreamShape.BATCH
-    if isinstance(node, ExpandStep):
-        return StreamShape.RECORD
-    if isinstance(node, BatchExpandStep):
-        return StreamShape.BATCH
-    if isinstance(node, Explode):
-        return StreamShape.RECORD
-    if isinstance(node, (With, WithAsync)):
-        return None
-    if isinstance(node, ForEach):
-        return StreamShape.MANY
-    if isinstance(node, Drain):
-        return None
-    if isinstance(node, Fork):
-        return None
-    if isinstance(node, Router):
-        return StreamShape.RECORD
-    return None
-
-
 def _validate_window_strategies(nodes: Iterable[object]) -> list[CompilationIssue]:
     errors: list[CompilationIssue] = []
     for node in nodes:
@@ -702,29 +688,47 @@ def _validate_scoped_process_nodes(nodes: Iterable[object]) -> list[CompilationI
     return errors
 
 
-_FIXED_OUTPUT_SHAPES: dict[type, StreamShape] = {
-    CollectBatch: StreamShape.BATCH,
-    Explode: StreamShape.RECORD,
-    ForEach: StreamShape.RECORD,
-    RecordStep: StreamShape.RECORD,
-    BatchStep: StreamShape.BATCH,
-    ExpandStep: StreamShape.RECORD,
-    BatchExpandStep: StreamShape.RECORD,
-    WithAsync: StreamShape.NONE,
-    Drain: StreamShape.NONE,
-    Fork: StreamShape.NONE,
-    Broadcast: StreamShape.NONE,
-}
+_NODE_SHAPES: tuple[tuple[type, StreamShape | None, StreamShape | None], ...] = (
+    (CollectBatch, StreamShape.RECORD, StreamShape.BATCH),
+    (ForEach, StreamShape.BATCH, StreamShape.RECORD),
+    (Explode, StreamShape.RECORD, None),
+    (Router, StreamShape.RECORD, None),
+    (ExpandRoutes, StreamShape.RECORD, None),
+    (Fork, StreamShape.RECORD, StreamShape.NONE),
+    (Broadcast, StreamShape.RECORD, StreamShape.NONE),
+    (Drain, StreamShape.RECORD, StreamShape.NONE),
+    (IntoTopic, StreamShape.RECORD, StreamShape.NONE),
+    (IntoSink, StreamShape.RECORD, StreamShape.NONE),
+    (With, None, StreamShape.NONE),
+    (WithAsync, None, StreamShape.NONE),
+)
+"""``(node type, input shape, output shape)`` of every non-step node.
+
+``None`` input accepts any shape; ``None`` output keeps the incoming shape.
+A ``Step`` declares both on its class instead.
+"""
 
 
-def _node_output_shape(node: object, current: StreamShape) -> StreamShape:
-    fixed = _FIXED_OUTPUT_SHAPES.get(type(node))
-    if fixed is not None:
-        return fixed
-    if isinstance(node, IntoSink):
-        return StreamShape.NONE
-    if isinstance(node, IntoTopic):
-        return node.shape
-    if isinstance(node, With):
-        return StreamShape.NONE if node.process is not None else StreamShape.MANY
-    return current
+def _non_step_shapes(node: object) -> tuple[StreamShape | None, StreamShape | None]:
+    return next(
+        ((inp, out) for kind, inp, out in _NODE_SHAPES if isinstance(node, kind)), (None, None)
+    )
+
+
+def node_input_shape(node: object) -> StreamShape | None:
+    """Return the shape *node* requires on its input, or ``None`` when it takes any."""
+    if isinstance(node, Step):
+        return node.input_shape
+    return _non_step_shapes(node)[0]
+
+
+def node_output_shape(node: object, current: StreamShape) -> StreamShape:
+    """Return the shape after *node* when it receives *current*.
+
+    In a Router branch a ``BatchStep`` is record to record; the branch walk
+    handles it before calling this.
+    """
+    if isinstance(node, Step):
+        return node.output_shape
+    output = _non_step_shapes(node)[1]
+    return current if output is None else output

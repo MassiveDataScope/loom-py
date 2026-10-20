@@ -103,7 +103,6 @@ def build_compiled_plan(
             ),
             topics=("in",),
             payload_type=Order,
-            shape=StreamShape.RECORD,
             decode_strategy="record",
         ),
         nodes=tuple(compiled_nodes),
@@ -137,7 +136,6 @@ def build_compiled_source(
         ),
         topics=topics or (_ORDERS_IN_TOPIC,),
         payload_type=Order,
-        shape=StreamShape.RECORD,
         decode_strategy="record",
     )
 

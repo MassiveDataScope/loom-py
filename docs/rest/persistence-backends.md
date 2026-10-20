@@ -485,6 +485,33 @@ Four limits decide what does not travel:
   On Postgres (`timestamptz`) and `mongo`, a `datetime` field
   (`DateTime(tz=True)`) keeps the instant, read back in UTC, not the written
   offset.
+- **A `UUID` field is a UUID column on `sqlalchemy`.** A `uuid.UUID` field
+  without a declared type is inferred as a `Uuid` column: `uuid` on
+  Postgres, `CHAR(32)` holding the hex form on a dialect without a native
+  UUID type, such as SQLite. `Postgres.UUID` stays the Postgres-only choice.
+  `mongo` stores a UUID as its text form. On every backend the field is a
+  scalar column, so REST `filterable`, `sortable` and `ALL` take it.
+
+A `Decimal` column declares its column type. `sqlalchemy` refuses a model
+with an undeclared one when it compiles it, naming the field: Postgres rounds
+a value to a `NUMERIC` column's scale and refuses one past its precision, so
+loom does not guess them. Declare the precision and scale, or `Numeric()` for
+an unbounded `NUMERIC`:
+
+```python
+from decimal import Decimal
+from typing import Annotated
+
+from loom.core.model import BaseModel, ColumnField, Numeric
+
+
+class Measurement(BaseModel):
+    __tablename__ = "measurements"
+
+    value: Annotated[Decimal, Numeric(precision=12, scale=2)]
+    exact: Annotated[Decimal, Numeric()]
+    id: int = ColumnField(primary_key=True)
+```
 
 ## Upgrade notes
 

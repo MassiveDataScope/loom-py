@@ -10,6 +10,9 @@ from uuid import UUID
 
 import msgspec
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.command import Command
@@ -41,6 +44,7 @@ class Sample(BaseModel):
     shade: Shade = ColumnField(String(16))
     seen_at: datetime = ColumnField()
     ref: UUID = ColumnField(Postgres.UUID)
+    inferred_ref: UUID = ColumnField()
     due_on: date = ColumnField()
     opens_at: time = ColumnField()
     closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
@@ -50,6 +54,7 @@ class CreateSample(Command, frozen=True):
     shade: Shade
     seen_at: datetime
     ref: UUID
+    inferred_ref: UUID
     due_on: date
     opens_at: time
     closes_at: time
@@ -59,6 +64,7 @@ _FIRST = CreateSample(
     shade=Shade.DARK,
     seen_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
     ref=UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60"),
+    inferred_ref=UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60"),
     due_on=date(2026, 1, 2),
     opens_at=time(8, 30),
     closes_at=time(18, 0, tzinfo=timezone(timedelta(hours=2))),
@@ -67,6 +73,7 @@ _SECOND = CreateSample(
     shade=Shade.LIGHT,
     seen_at=datetime(2026, 2, 3, 4, 5, 6, tzinfo=UTC),
     ref=UUID("0b9d2f1c-1111-4c1e-9d1e-1b2c3d4e5f60"),
+    inferred_ref=UUID("0b9d2f1c-1111-4c1e-9d1e-1b2c3d4e5f60"),
     due_on=date(2026, 2, 3),
     opens_at=time(17, 0),
     closes_at=time(23, 0, tzinfo=UTC),
@@ -98,6 +105,7 @@ async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, 
         ("shade", FilterOp.EQ, Shade.DARK),
         ("seen_at", FilterOp.LTE, datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)),
         ("ref", FilterOp.EQ, UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")),
+        ("inferred_ref", FilterOp.EQ, UUID("6f1c1e0e-7a1b-4c1e-9d1e-1b2c3d4e5f60")),
         ("due_on", FilterOp.LT, date(2026, 2, 1)),
         ("opens_at", FilterOp.EQ, time(8, 30)),
         ("closes_at", FilterOp.EQ, time(18, 0, tzinfo=timezone(timedelta(hours=2)))),
@@ -125,6 +133,30 @@ async def test_date_and_time_values_read_back_as_written(
 
     assert stored is not None
     assert (stored.due_on, stored.opens_at) == (_FIRST.due_on, _FIRST.opens_at)
+
+
+async def test_an_undeclared_uuid_is_a_native_uuid_column_read_back_as_written(
+    repo: RepositorySQLAlchemy[Sample, int], pg_admin_uri: str
+) -> None:
+    created = await repo.create(_FIRST)
+
+    stored = await repo.get_by_id(created.id)
+    engine = create_async_engine(pg_admin_uri, poolclass=NullPool)
+    try:
+        async with engine.connect() as conn:
+            column_type = await conn.scalar(
+                text(
+                    "SELECT data_type FROM information_schema.columns"
+                    " WHERE table_name = :table AND column_name = 'inferred_ref'"
+                ),
+                {"table": Sample.__tablename__},
+            )
+    finally:
+        await engine.dispose()
+
+    assert stored is not None
+    assert stored.inferred_ref == _FIRST.inferred_ref
+    assert column_type == "uuid"
 
 
 async def test_a_time_with_time_zone_column_keeps_the_offset(

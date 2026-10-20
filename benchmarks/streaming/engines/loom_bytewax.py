@@ -99,17 +99,21 @@ class Normalize(RecordStep[BenchEvent, BenchEvent]):
 class ScoreBatch(BatchExpandStep[BenchEvent, ScoredEvent]):
     """Batch step after ``collect``: score each event against its batch, back to records."""
 
-    def execute(self, messages: list[Message[BenchEvent]], **kwargs: object) -> list[ScoredEvent]:
+    def execute(
+        self, messages: list[Message[BenchEvent]], **kwargs: object
+    ) -> list[list[ScoredEvent]]:
         del kwargs
         total = sum(m.payload.amount for m in messages)
         return [
-            ScoredEvent(
-                key=m.payload.key,
-                lane=m.payload.lane,
-                score=(m.payload.amount * 31 + total) % 997,
-                emitted_ns=m.payload.emitted_ns,
-                blob=m.payload.blob,
-            )
+            [
+                ScoredEvent(
+                    key=m.payload.key,
+                    lane=m.payload.lane,
+                    score=(m.payload.amount * 31 + total) % 997,
+                    emitted_ns=m.payload.emitted_ns,
+                    blob=m.payload.blob,
+                )
+            ]
             for m in messages
         ]
 
