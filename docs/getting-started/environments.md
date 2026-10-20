@@ -167,9 +167,10 @@ silently ignored.
 
 ### `LOOM__*` overrides
 
-Any configuration key can be overridden from a variable named `LOOM__` plus
+A configuration key can be overridden from a variable named `LOOM__` plus
 its path, with a double underscore between levels, as in ASP.NET Core and
-pydantic-settings:
+pydantic-settings. In development and test any leaf can; in production and
+staging only an allowlisted key can (below):
 
 ```bash
 LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
@@ -191,12 +192,14 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   parents, stop startup naming both.
 - An override sets one leaf value. A value that is or holds a mapping
   (`{a: 1}`, `[1, {a: 2}]`) is refused, and so is a target the files declare
-  as a mapping, whether the new value is null, a scalar or a list: an
-  override cannot replace a structure. A list of scalars is a leaf.
+  as a mapping or a list holding mappings, whether the new value is null, a
+  scalar or a list: an override cannot replace a structure. A list of
+  scalars is a leaf.
 - In production and staging an override may set only an allowlisted key:
   the operational keys loom ships (log levels, Celery and streaming worker
-  counts and timeouts, SQL pool sizes and timeouts; the full list and the
-  reason for each are in ADR 0005), plus the keys your reviewed files list:
+  counts and timeouts, SQL pool sizes and driver timeouts; the full list and
+  the reason for each are in ADR 0005), plus the keys your reviewed files
+  list:
 
   ```yaml
   # config/base.yaml
@@ -208,8 +211,16 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
 
   Any other key stops startup naming the variable; that includes the
   authentication settings, the deploy checks, the documentation and metrics
-  paths, and any key a placeholder elsewhere points at. `config` itself can
-  never be overridden. In development and test any leaf may be overridden.
+  paths and the per-query time limit (`max_execution_time`). `config` itself
+  can never be overridden. An entry cannot start with `*`, and an entry
+  matching `checks`, `config`, `app.code_path` or `app.rest.auth`, or a key
+  inside them (`app.*` matches `app.code_path`), stops startup naming the
+  entry; the entries are checked at every load, in every environment.
+- An allowlisted key also changes every `${...}` placeholder in the files
+  that references it: overriding `shared.timeout` changes each key set to
+  `${shared.timeout}`. loom does not trace those references, so review them
+  with the list. A key your files set from `${oc.env:...}` is controlled by
+  the process environment because the files chose so.
 - Values are literals. The value is parsed first and any string in it
   holding `${` is refused, however it is written (quoted, escaped as `\x24`,
   inside a list), so an override cannot reach another variable or a secret.
@@ -228,6 +239,10 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   API version published in the OpenAPI document to the string `1.10`.
 - At startup one WARNING line names the keys that came from variables. Their
   values are never logged.
+- In production and staging a log level cannot hide the deploy checks: the
+  `loom.core.checks` logger and loom's handlers keep a WARNING floor, so
+  `LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=CRITICAL` still shows a check's
+  warning and the silenced ids.
 
 What belongs in `LOOM__*`: operational tuning that changes per deployment
 without changing the application: loom's allowlist, and what you add to it
@@ -237,6 +252,12 @@ What does not: secrets, and the structure of the application (discovery,
 routes, authentication mechanism), which belongs in the reviewed files. Do
 not pass secrets through `LOOM__*`: the override line names every key it
 sets.
+
+The allowlist guards against careless per-deploy overrides, not against an
+attacker. Whoever controls the process environment also controls `LOOM_ENV`,
+`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
+`PYTHONPATH`, and so which files load and which code runs; protect the
+environment itself (the task definition, its IAM permissions) for that.
 
 The overrides apply to an application's configuration only. A per-flow
 Prefect YAML defines a flow, not the process's configuration, and is read

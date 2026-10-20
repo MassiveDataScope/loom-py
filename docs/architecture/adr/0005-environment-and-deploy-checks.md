@@ -144,21 +144,31 @@ Within any file, its own values win over its `includes`.
   `observability` are
   decoded in part by several readers and accept keys another reader owns;
   `ai` keeps its own validation.
-- An override sets one leaf value. A value that is or holds a mapping is
-  refused, and so is a target the files declare as a mapping or as a list
-  holding mappings (`app.rest.disable_routes`), whatever the new value: an
-  override cannot replace a structure. Lists of scalars are leaves.
+- An override sets one leaf value. A value that is a mapping, or a list
+  holding one at any depth, is refused, and so is a target the files declare
+  that way (`app.rest.disable_routes`), whatever the new value: an override
+  cannot replace a structure. Lists of scalars are leaves.
 - In production and staging an override may set only an allowlisted key.
-  A denylist of reviewed keys kept missing paths (a placeholder pointing a
-  reviewed key at an overridable one, `prometheus.enabled`, the REST
-  interfaces, `code_path`); an allowlist closes the whole class. loom ships
-  `loom.core.config.overrides.OVERRIDABLE`, below, and an application extends
-  it only in its reviewed files, under `config.overridable`: a literal list
-  of dotted keys, `*` standing for one level. `config` can never be
+  A denylist of reviewed keys kept missing paths (`prometheus.enabled`, the
+  REST interfaces, `code_path`); an allowlist names the keys opened instead
+  of the keys forgotten. loom ships `loom.core.config.overrides.OVERRIDABLE`,
+  below, and an application extends it only in its reviewed files, under
+  `config.overridable`: a literal list of dotted keys, `*` standing for one
+  level but never the first. An entry matching `checks`, `config`,
+  `app.code_path` or `app.rest.auth`, or a key inside them (`app.*` matches
+  `app.code_path`), is a startup error naming the entry. The entries are
+  checked at every load, in every environment and with or without a
+  variable, so a bad entry fails in development first. `config` can never be
   overridden, in any environment. Keys match case-insensitively and exactly;
   an entry covers no sibling or child. In development and test any leaf may
   be overridden. The `checks` section is also read as written, and a
   placeholder anywhere in it is a `ConfigError`.
+- An allowlisted key also changes every `${...}` placeholder in the files
+  that references it: overriding `shared.timeout` changes each key set to
+  `${shared.timeout}`. loom does not trace those references; the files are
+  reviewed for them, as for `config.overridable` itself. A key the files set
+  from `${oc.env:...}` is controlled by the process environment because the
+  files chose so.
 
 | Key | Why it is safe to change per deploy |
 |---|---|
@@ -175,14 +185,20 @@ Within any file, its own values win over its `includes`.
 | `sql.connections.*.executor_threads` | Executor capacity. |
 | `sql.connections.*.connect_timeout` | Network timeout. |
 | `sql.connections.*.send_receive_timeout` | Network timeout. |
-| `sql.connections.*.max_execution_time` | Per-query time limit. |
+
+The SQL timeouts must be above zero; a `0` fails when the section decodes.
 
 Left off on purpose: anything that changes where data goes or who may reach
 it (broker and result URLs, the OTel endpoint, CORS origins, documentation
 and metrics paths, authentication, `checks`), the structure of the
-application (discovery, interfaces, routes, `code_path`) and any key a
-placeholder elsewhere points at, which would let one variable steer a
-reviewed key indirectly.
+application (discovery, interfaces, routes, `code_path`) and
+`sql.connections.*.max_execution_time`, a security limit on every query.
+
+The allowlist guards against careless per-deploy overrides, not against an
+attacker. Whoever controls the process environment also controls `LOOM_ENV`,
+`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
+`PYTHONPATH`, and so which files load and which code runs; the allowlist is
+no boundary against that access.
 
 - Values are literals: each value is parsed first and any string in it
   holding `${` is refused, so a quoted, `\x24`-escaped or nested placeholder
@@ -257,6 +273,12 @@ falling back to defaults.
   `SILENCED_SYSTEM_CHECKS`. The list is visible in the file of the environment
   that accepts the exception, and every deployed startup logs a warning naming
   the silenced ids.
+- In a deployed environment `configure_logging` keeps a WARNING floor on the
+  `loom.core.checks` logger and on the handlers it attaches, so an
+  allowlisted level (`CRITICAL`, top-level or under `named_levels`) cannot
+  hide a check's warning or the silenced ids. A floor rather than running the
+  checks before logging is configured, because every entry point then writes
+  them through the configured handlers whatever order it builds things in.
 - `checks.modules: [dotted.module]` names the modules registering the
   application's own checks. Every run imports them first, so they run at
   startup and in CI alike. `create_app` and the CLI run the checks once
@@ -380,7 +402,10 @@ When #371 rebases on this branch it must also:
   section, or a `LOOM__` variable that names no known section, sets a
   mapping, replaces a declared structure, names `config`, names a key off
   the allowlist in production or staging, or holds `${`
-  stops startup.
+  stops startup, as does a `config.overridable` entry that is malformed or
+  opens a protected key.
+- `sql.connections.*.max_execution_time`, `connect_timeout` and
+  `send_receive_timeout` must be above zero.
 - A consumer's test suite must set `LOOM_ENV=test`, or every application it
   builds starts as production and runs the deploy checks.
 - The migration locator resolves `LOOM_ENV`, applies the `LOOM__*` variables

@@ -496,9 +496,18 @@
   stops startup naming the variable, never the value. In production and
   staging an override may set only an allowlisted key: loom's operational
   keys (`loom.core.config.overrides.OVERRIDABLE`: log levels, Celery and
-  streaming worker counts and timeouts, SQL pool sizes and timeouts) and the
-  keys the reviewed files list under `config.overridable`. A placeholder in the `checks` section is a
-  `ConfigError`. A per-flow Prefect YAML is read without overrides.
+  streaming worker counts and timeouts, SQL pool sizes and driver timeouts)
+  and the keys the reviewed files list under `config.overridable`. A
+  `config.overridable` entry starting with `*`, or matching `checks`,
+  `config`, `app.code_path` or `app.rest.auth` or a key inside them, stops
+  every load. A placeholder in the `checks` section is a `ConfigError`. A
+  per-flow Prefect YAML is read without overrides.
+- **core:** `sql.connections.*.max_execution_time`, `connect_timeout` and
+  `send_receive_timeout` must be above zero; `0`, which disables the limit,
+  fails when the section decodes.
+- **core:** in production and staging the `loom.core.checks` logger and the
+  handlers `configure_logging` attaches keep a WARNING floor, so a configured
+  log level cannot hide a deploy check's warning or the silenced ids.
   `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by nothing, are removed.
 - **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
   sets it in `tests/conftest.py`), or every application it builds starts as
