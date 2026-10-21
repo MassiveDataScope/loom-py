@@ -117,7 +117,7 @@ def enable_repeated_query_params() -> None:
        them.
     """
     if getattr(_ch_http_module, _URLENCODE_ATTR, None) is not None:
-        _ch_http_module.urlencode = partial(urlencode, doseq=True)
+        setattr(_ch_http_module, _URLENCODE_ATTR, partial(urlencode, doseq=True))
 
     if _CHClient is not None and hasattr(_CHClient, "_validate_settings"):
         current = _CHClient._validate_settings
