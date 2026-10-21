@@ -10,7 +10,6 @@ from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     DeltaSinkConfig,
     IntoTable,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
 )
 
@@ -19,6 +18,5 @@ __all__ = [
     "ClickHouseSinkConfig",
     "DeltaSinkConfig",
     "IntoTable",
-    "SqlAlchemyDatabaseConfig",
     "SqlAlchemySinkConfig",
 ]

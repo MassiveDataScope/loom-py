@@ -9,6 +9,7 @@ import pytest
 import loom.core.repository.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
 from loom.core.persistence import PersistenceWiring
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 
 from .conftest import FakeClient
@@ -27,7 +28,7 @@ def _wiring(
             },
         }
     )
-    return DynamoDBBackend().build(ctx, ())
+    return DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
 @pytest.mark.asyncio

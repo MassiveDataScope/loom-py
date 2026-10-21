@@ -24,6 +24,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import NoneBackend, PersistenceWiring
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -218,10 +219,14 @@ class _RecordingBackend:
 
     name: ClassVar[str] = "recording"
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
+    runtimes: ClassVar[list[BackendRuntime]] = []
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
+    ) -> PersistenceWiring:
         self.events.append(("build", tuple(models)))
-        wiring = NoneBackend().build(ctx, models)
+        self.runtimes.append(runtime)
+        wiring = NoneBackend().build(ctx, models, runtime)
         return PersistenceWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
@@ -262,6 +267,20 @@ def test_injected_backend_boots_and_prepares_models_after_build(
     built, prepared = (models for _step, models in _RecordingBackend.events)
     assert built == prepared
     assert [model.__name__ for model in built] == ["ConfigRecord"]
+
+
+def test_create_app_builds_the_backend_with_the_server_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
+    monkeypatch.setattr(_RecordingBackend, "events", [])
+    monkeypatch.setattr(_RecordingBackend, "runtimes", [])
+    config_path = write_project(tmp_path, persistence={"backend": "recording"}, database=None)
+
+    create_app(config_path)
+
+    assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
+    assert _RecordingBackend.runtimes[0].pool_metrics is None
 
 
 def test_discover_components_accepts_agents_only_result(agents_only_discovery: None) -> None:

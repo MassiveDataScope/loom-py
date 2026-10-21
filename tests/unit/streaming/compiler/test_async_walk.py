@@ -7,6 +7,7 @@ from typing import Any, cast
 from omegaconf import DictConfig, OmegaConf
 
 from loom.core.config import ConfigContext
+from loom.core.persistence.database import DatabaseConfig, PoolConfig
 from loom.streaming import (
     Backend,
     Fork,
@@ -17,7 +18,6 @@ from loom.streaming import (
     Process,
     Route,
     Router,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
     StreamFlow,
     WithAsync,
@@ -150,7 +150,7 @@ class TestAsyncBridgeDetection:
                     "database": {
                         "warehouse": {
                             "url": "sqlite+aiosqlite:///:memory:",
-                            "pool_pre_ping": True,
+                            "pool": {"pre_ping": True},
                         }
                     },
                     "streaming": {
@@ -177,11 +177,8 @@ class TestAsyncBridgeDetection:
             },
             default_table="results",
         )
-        expected_db = SqlAlchemyDatabaseConfig.from_config(
-            {
-                "url": "sqlite+aiosqlite:///:memory:",
-                "pool_pre_ping": True,
-            }
+        expected_db = DatabaseConfig(
+            url="sqlite+aiosqlite:///:memory:", pool=PoolConfig(pre_ping=True)
         )
         assert compiled.config == expected_sink
         assert compiled.database_config == expected_db

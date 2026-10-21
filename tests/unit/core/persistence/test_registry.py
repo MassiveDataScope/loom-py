@@ -20,6 +20,7 @@ from loom.core.persistence import (
     PersistenceWiring,
     resolve_backend,
 )
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.plugins.entrypoints import DuplicateEntryPointError
 
 _GROUP = "loom.persistence.backends"
@@ -53,8 +54,10 @@ class _FakeEntryPoints:
 class _FakeBackend:
     name: ClassVar[str] = "fake"
 
-    def build(self, ctx: ConfigContext, models: object) -> PersistenceWiring:
-        return NoneBackend().build(ctx, ())
+    def build(
+        self, ctx: ConfigContext, models: object, runtime: BackendRuntime
+    ) -> PersistenceWiring:
+        return NoneBackend().build(ctx, (), runtime)
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, entries: tuple[_FakeEntryPoint, ...]) -> None:
@@ -119,7 +122,7 @@ class TestResolveBackend:
 class TestNoneBackend:
     def _wiring(self) -> PersistenceWiring:
         backend: PersistenceBackend = NoneBackend()
-        return backend.build(ConfigContext.from_dict({}), ())
+        return backend.build(ConfigContext.from_dict({}), (), BackendRuntime(SERVER_PROFILE))
 
     def test_build_has_no_unit_of_work_and_no_default_repository_type(self) -> None:
         wiring = self._wiring()

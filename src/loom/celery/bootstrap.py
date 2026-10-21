@@ -101,6 +101,8 @@ from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence.database import load_database_config
+from loom.core.persistence.profile import WORKER_PROFILE
 from loom.core.repository.abc import CursorCodec
 from loom.core.runner import shutdown_runner
 from loom.core.uow.abc import UnitOfWorkFactory
@@ -120,32 +122,6 @@ _T = TypeVar("_T")
 # ---------------------------------------------------------------------------
 # Local config structs — private to this module
 # ---------------------------------------------------------------------------
-
-
-class _WorkerSchemaConfig(msgspec.Struct, kw_only=True):
-    """The part of ``database.schema`` the worker compiles models with.
-
-    Attributes:
-        naming_convention: SQLAlchemy naming convention keyed by constraint kind.
-    """
-
-    naming_convention: dict[str, str] | None = None
-
-
-class _WorkerDbConfig(msgspec.Struct, kw_only=True):
-    """Database settings for the worker process.
-
-    Attributes:
-        url: Async SQLAlchemy connection URL.
-        echo: Log all SQL statements when ``True``.
-        pool_pre_ping: Test connections before checkout.
-        schema: Schema settings the models are compiled with.
-    """
-
-    url: str
-    echo: bool = False
-    pool_pre_ping: bool = True
-    schema: _WorkerSchemaConfig = msgspec.field(default_factory=_WorkerSchemaConfig)
 
 
 class _DiscoveryModules(msgspec.Struct, kw_only=True):
@@ -305,13 +281,14 @@ def _resolve_uow_factory(
     This keeps worker bootstrap lightweight for pure jobs that do not use DB.
     """
     config = _ensure_config_context(ctx)
-    try:
-        db_cfg = config.section(ConfigKey.DATABASE, _WorkerDbConfig)
-    except ConfigError:
+    if not _declares_worker_database(config):
         return None, None
+    # Validated strictly: a malformed section fails the worker instead of
+    # silently starting it without its database.
+    db_cfg = load_database_config(config)
 
     try:
-        from loom.core.repository.sqlalchemy.session_manager import SessionManager
+        from loom.core.repository.sqlalchemy.session_manager import build_session_manager
         from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
     except ImportError as exc:
         raise _sqlalchemy_extra_error() from exc
@@ -319,10 +296,37 @@ def _resolve_uow_factory(
     # SessionManager is created pre-fork. The async engine is lazy — no TCP
     # connections are opened until the first async context manager usage in
     # the child process after the async bridge initializes.
-    session_manager = SessionManager(
-        db_cfg.url, echo=db_cfg.echo, pool_pre_ping=db_cfg.pool_pre_ping
-    )
+    session_manager = build_session_manager(db_cfg, WORKER_PROFILE)
     return SQLAlchemyUnitOfWorkFactory(session_manager), session_manager
+
+
+_DATABASE_FIELDS = frozenset({"url", "echo", "pool", "connect_args", "schema"})
+
+
+def _declares_worker_database(config: ConfigContext) -> bool:
+    """Whether ``database`` is the worker's own section rather than absent or named entries.
+
+    A section holding any key of the ``database`` contract is the worker's own
+    and is then decoded strictly, so a missing or misspelt ``url`` fails the
+    worker. A section of named entries only (``database.<name>``) belongs to
+    streaming sinks.
+
+    Raises:
+        ConfigError: When the section is neither: a key outside the contract
+            whose value is not a named database mapping (``URL: ...``).
+    """
+    section = config.raw(ConfigKey.DATABASE)
+    if not isinstance(section, Mapping):
+        return False
+    if _DATABASE_FIELDS.intersection(section):
+        return True
+    stray = sorted(str(key) for key, value in section.items() if not isinstance(value, Mapping))
+    if stray:
+        raise ConfigError(
+            f"database.{stray[0]} is neither a key of the database section "
+            f"({', '.join(sorted(_DATABASE_FIELDS))}) nor a named database"
+        )
+    return False
 
 
 def _sqlalchemy_extra_error() -> ImportError:
@@ -642,8 +646,7 @@ def _register_repositories(
 
 def _worker_naming_convention(ctx: ConfigContext) -> Mapping[str, str] | None:
     """The ``database.schema.naming_convention`` the REST runtime and migrations also read."""
-    db_cfg = ctx.section(ConfigKey.DATABASE, _WorkerDbConfig)
-    return db_cfg.schema.naming_convention
+    return load_database_config(ctx).schema.naming_convention
 
 
 def _compile_models(

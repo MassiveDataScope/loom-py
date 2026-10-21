@@ -104,6 +104,14 @@ OVERRIDABLE: Final = (
     "sql.connections.*.executor_threads",
     "sql.connections.*.connect_timeout",
     "sql.connections.*.send_receive_timeout",
+    "database.pool.size",
+    "database.pool.max_overflow",
+    "database.pool.timeout",
+    "database.pool.recycle",
+    "persistence.dynamodb.max_pool_connections",
+    "persistence.dynamodb.connect_timeout",
+    "persistence.dynamodb.read_timeout",
+    "persistence.dynamodb.max_attempts",
 )
 """Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)

@@ -186,6 +186,7 @@ staging only an allowlisted key can (below):
 ```bash
 LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
 LOOM__SQL__CONNECTIONS__ANALYTICS__POOL_SIZE=20   # sql.connections.analytics.pool_size
+LOOM__DATABASE__POOL__SIZE=1                      # database.pool.size
 LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
 ```
 
@@ -208,7 +209,8 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   scalars is a leaf.
 - In production and staging an override may set only an allowlisted key:
   the operational keys loom ships (log levels, Celery and streaming worker
-  counts and timeouts, SQL pool sizes and driver timeouts; the full list and
+  counts and timeouts, SQL and database pool sizes, driver and DynamoDB
+  timeouts; the full list and
   the reason for each are in ADR 0005), plus the keys your reviewed files
   list:
 

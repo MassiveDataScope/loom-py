@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
+from loom.core.persistence.database import DatabaseConfig
 from loom.streaming.compiler._errors import CompilationIssue
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.kafka._config import ConsumerSettings, ProducerSettings
@@ -17,7 +18,6 @@ from loom.streaming.nodes._shape import StreamShape
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     DeltaSinkConfig,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
 )
 
@@ -106,7 +106,7 @@ class CompiledStorageSink:
 
     node: Any
     config: SqlAlchemySinkConfig | DeltaSinkConfig | ClickHouseSinkConfig
-    database_config: SqlAlchemyDatabaseConfig | None = None
+    database_config: DatabaseConfig | None = None
 
 
 @dataclass(frozen=True)

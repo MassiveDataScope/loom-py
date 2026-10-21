@@ -16,6 +16,7 @@ import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import PersistenceWiring, resolve_backend
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
@@ -75,7 +76,7 @@ def _wiring(
     models: Sequence[type[BaseModel]] = (),
 ) -> PersistenceWiring:
     monkeypatch.setattr(backend_module, "_build_mongo_client", lambda _cfg: fake_client)
-    return MongoBackend().build(_ctx(section), models)
+    return MongoBackend().build(_ctx(section), models, BackendRuntime(SERVER_PROFILE))
 
 
 _SECTION: dict[str, Any] = {"uri": "mongodb://localhost:27017", "database": "demo"}
@@ -91,7 +92,7 @@ def test_missing_section_is_a_config_error() -> None:
     backend = MongoBackend()
 
     with pytest.raises(ConfigError, match="persistence.mongo"):
-        backend.build(ctx, ())
+        backend.build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
 def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(
@@ -101,7 +102,7 @@ def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(
     ctx = _ctx(_SECTION, cursors={})
 
     with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
-        MongoBackend().build(ctx, ())
+        MongoBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
 def test_wiring_shape(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,9 +122,11 @@ def test_client_seam_forwards_only_the_options_set(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(backend_module, "AsyncMongoClient", _record)
 
-    MongoBackend().build(_ctx(_SECTION), ())
+    MongoBackend().build(_ctx(_SECTION), (), BackendRuntime(SERVER_PROFILE))
     MongoBackend().build(
-        _ctx({**_SECTION, "max_pool_size": 8, "server_selection_timeout_ms": 500}), ()
+        _ctx({**_SECTION, "max_pool_size": 8, "server_selection_timeout_ms": 500}),
+        (),
+        BackendRuntime(SERVER_PROFILE),
     )
 
     assert seen == [

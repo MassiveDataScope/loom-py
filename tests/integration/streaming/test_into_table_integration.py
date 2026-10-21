@@ -44,6 +44,7 @@ from loom.core.model import (  # noqa: E402
 )
 from loom.core.model.enums import Cardinality  # noqa: E402
 from loom.core.model.relation import RelationField  # noqa: E402
+from loom.core.repository.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
 from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
@@ -184,7 +185,7 @@ class TestIntoTableSQLAlchemyIntegration:
             "CREATE TABLE orders (order_id INTEGER, amount REAL, status TEXT)",
         )
         bridge = AsyncBridge()
-        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        session_manager = SessionManager(_async_url(path))
         node = IntoTable(payload=_OrderRow, table="orders", backend=Backend.SQLALCHEMY)
         sink_config = SqlAlchemySinkConfig.from_config(
             {"chunk_size": 500, "table": "orders"},
@@ -233,7 +234,7 @@ class TestIntoTableSQLAlchemyIntegration:
         without_note = _NoteRow(note_id=2)
         items = [with_note, without_note] if first_has_note else [without_note, with_note]
         bridge = AsyncBridge()
-        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        session_manager = SessionManager(_async_url(path))
         node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.SQLALCHEMY)
         partition = node.build_partition(
             SqlAlchemySinkConfig.from_config({"table": "notes"}, default_table="notes"),
@@ -260,7 +261,7 @@ class TestIntoTableSQLAlchemyIntegration:
     def test_a_uuid_field_is_written_as_core_writes_a_uuid_column(self, tmp_path: Path) -> None:
         path = _make_db(tmp_path, "CREATE TABLE visits (visit_id CHAR(32), label TEXT)")
         bridge = AsyncBridge()
-        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        session_manager = SessionManager(_async_url(path))
         node = IntoTable(payload=_VisitRow, table="visits", backend=Backend.SQLALCHEMY)
         sink_config = SqlAlchemySinkConfig.from_config({"table": "visits"}, default_table="visits")
         partition = node.build_partition(
@@ -291,7 +292,7 @@ class TestIntoTableSQLAlchemyIntegration:
             "CREATE TABLE orders (order_id INTEGER, amount REAL, status TEXT)",
         )
         bridge = AsyncBridge()
-        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        session_manager = SessionManager(_async_url(path))
         node = IntoTable(payload=_OrderRow, table="orders")
         sink_config = SqlAlchemySinkConfig.from_config(
             {"chunk_size": 500, "table": "orders"},
@@ -324,7 +325,7 @@ class TestIntoTableSQLAlchemyIntegration:
             "CREATE TABLE sink_orders (order_id INTEGER, amount REAL, status TEXT)",
         )
         bridge = AsyncBridge()
-        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        session_manager = SessionManager(_async_url(path))
         node = IntoTable(payload=_OrderRow, table="orders")
         sink_config = SqlAlchemySinkConfig.from_config(
             {"table": "sink_orders", "chunk_size": 500},
@@ -360,7 +361,7 @@ class TestIntoTableSQLAlchemyIntegration:
             tmp_path,
             "CREATE TABLE orders (order_id INTEGER, amount REAL, status TEXT)",
         )
-        session_manager = SessionManager.from_config({"url": _async_url(path)})
+        session_manager = SessionManager(_async_url(path))
         insert_calls: list[int] = []
 
         @event.listens_for(session_manager.engine.sync_engine, "before_cursor_execute")
@@ -377,9 +378,9 @@ class TestIntoTableSQLAlchemyIntegration:
                 insert_calls.append(1)
 
         monkeypatch.setattr(
-            SessionManager,
-            "from_config",
-            classmethod(lambda cls, config, **kwargs: session_manager),
+            session_manager_module,
+            "build_session_manager",
+            lambda config, profile, **kwargs: session_manager,
         )
 
         flow: StreamFlow[_OrderRow, _OrderRow] = StreamFlow(
@@ -710,7 +711,7 @@ def pg_table(pg_uri: str) -> Iterator[str]:
 
 def _write_to_postgres(uri: str, table: str, payload: type[Any], items: list[Any]) -> None:
     bridge = AsyncBridge()
-    session_manager = SessionManager.from_config({"url": uri})
+    session_manager = SessionManager(uri)
     node = IntoTable(payload=payload, table=table, backend=Backend.SQLALCHEMY)
     partition = node.build_partition(
         SqlAlchemySinkConfig.from_config({"table": table}, default_table=table),
