@@ -24,7 +24,7 @@ _INSTALL_HINT = (
 )
 
 try:
-    from clickhouse_connect.driver import httpclient, httputil  # type: ignore[import-untyped]
+    from clickhouse_connect.driver import httputil  # type: ignore[import-untyped]
     from clickhouse_connect.driver.exceptions import (  # type: ignore[import-untyped]
         DatabaseError,
         OperationalError,
@@ -76,23 +76,55 @@ _URL_RE = re.compile(r"https?://\S+")
 # fail closed on a driver that stops exposing the seam, and
 # ``tests/unit/core/sql/test_clickhouse_transport.py`` pins the patch point so
 # the workaround can never degrade silently.
+try:
+    from clickhouse_connect.driver._backend import http_sync as _ch_http_module
+except ImportError:
+    from clickhouse_connect.driver import httpclient as _ch_http_module  # type: ignore[no-redef]
+
+try:
+    from clickhouse_connect.driver.client import Client as _CHClient
+except ImportError:
+    _CHClient = None  # type: ignore[assignment,misc]
+
 _MULTI_ROLE_PROBE: Mapping[str, Any] = {"role": ("loom_probe_a", "loom_probe_b")}
 _MULTI_ROLE_PROBE_ENCODED = "role=loom_probe_a&role=loom_probe_b"
 _URLENCODE_ATTR = "urlencode"
+_LOOM_PATCHED_ATTR = "_loom_repeated_params_patched"
+
+
+def _preserve_transport_sequences(validate_settings_fn: Any) -> Any:
+    def _wrapper(self: Any, settings: dict[str, Any] | None) -> dict[str, Any]:
+        validated = validate_settings_fn(self, settings)
+        if settings:
+            for key in getattr(self, "valid_transport_settings", ()):
+                if key in settings and isinstance(settings[key], (list, tuple)):
+                    validated[key] = settings[key]
+        return validated
+
+    return _wrapper
 
 
 def enable_repeated_query_params() -> None:
     """Make the driver emit one HTTP parameter per sequence-valued setting.
 
-    Idempotent and explicit: rebinds the ``urlencode`` the driver looks up when
-    building a request URL, so a tuple of roles travels as ``role=a&role=b``
-    instead of its ``repr``.  Does nothing when the driver no longer exposes
-    that symbol — callers must then check
-    :func:`supports_repeated_query_params` and fail closed.
+    Idempotent and explicit:
+    1. Rebinds the ``urlencode`` the sync HTTP transport looks up when building
+       request URLs, so a tuple of roles travels with ``doseq=True``
+       (``role=a&role=b``) instead of its ``repr``.
+    2. Wraps ``Client._validate_settings`` (present in clickhouse-connect 1.x)
+       so sequence-valued transport settings like ``role`` are not stringified
+       into ClickHouse map/array literals before the HTTP transport can send
+       them.
     """
-    if getattr(httpclient, _URLENCODE_ATTR, None) is None:
-        return
-    httpclient.urlencode = partial(urlencode, doseq=True)
+    if getattr(_ch_http_module, _URLENCODE_ATTR, None) is not None:
+        setattr(_ch_http_module, _URLENCODE_ATTR, partial(urlencode, doseq=True))
+
+    if _CHClient is not None and hasattr(_CHClient, "_validate_settings"):
+        current = _CHClient._validate_settings
+        if not getattr(current, _LOOM_PATCHED_ATTR, False):
+            wrapped = _preserve_transport_sequences(current)
+            setattr(wrapped, _LOOM_PATCHED_ATTR, True)
+            _CHClient._validate_settings = wrapped
 
 
 def supports_repeated_query_params() -> bool:
@@ -106,7 +138,7 @@ def supports_repeated_query_params() -> bool:
         ``True`` when a sequence-valued setting is serialized as repeated
         parameters, which is what multi-role queries require.
     """
-    encoder = getattr(httpclient, _URLENCODE_ATTR, None)
+    encoder = getattr(_ch_http_module, _URLENCODE_ATTR, None)
     if encoder is None:
         return False
     encoded: str = encoder(_MULTI_ROLE_PROBE)
@@ -184,8 +216,9 @@ class _DriverAsyncClientAdapter:
 
     @property
     def valid_transport_settings(self) -> AbstractSet[str]:
-        """Per-query transport settings reported by the wrapped sync client."""
-        return frozenset(self._async_client.client.valid_transport_settings)
+        """Per-query transport settings reported by the driver client."""
+        target = getattr(self._async_client, "client", self._async_client)
+        return frozenset(target.valid_transport_settings)
 
     async def query(
         self,
