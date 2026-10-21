@@ -12,6 +12,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.persistence.database import PoolConfig
 from loom.core.sql.config import SqlConnectionConfig
 from tests.helpers.version_limited_extras import require_bytewax
 
@@ -20,6 +21,10 @@ _SQL_REQUIRED = {"backend": "clickhouse", "url": "http://localhost:8123"}
 
 def _sql() -> type[Any]:
     return SqlConnectionConfig
+
+
+def _pool() -> type[Any]:
+    return PoolConfig
 
 
 def _celery_runtime() -> type[Any]:
@@ -47,6 +52,9 @@ def _bytewax_runtime() -> type[Any]:
         (_sql, _SQL_REQUIRED, "max_execution_time"),
         (_sql, _SQL_REQUIRED, "connect_timeout"),
         (_sql, _SQL_REQUIRED, "send_receive_timeout"),
+        (_pool, {}, "size"),
+        (_pool, {}, "timeout"),
+        (_pool, {}, "recycle"),
         (_celery_runtime, {}, "shutdown_timeout_ms"),
         (_bytewax_runtime, {}, "epoch_interval_ms"),
         (_bytewax_runtime, {}, "force_shutdown_timeout_ms"),
@@ -57,3 +65,12 @@ def test_zero_or_below_is_refused_at_decode_naming_the_field(
 ) -> None:
     with pytest.raises(msgspec.ValidationError, match=field):
         msgspec.convert({**required, field: value}, struct())
+
+
+def test_a_negative_pool_overflow_is_refused_at_decode_naming_the_field() -> None:
+    with pytest.raises(msgspec.ValidationError, match="max_overflow"):
+        msgspec.convert({"max_overflow": -1}, PoolConfig)
+
+
+def test_a_zero_pool_overflow_is_accepted() -> None:
+    assert msgspec.convert({"max_overflow": 0}, PoolConfig).max_overflow == 0

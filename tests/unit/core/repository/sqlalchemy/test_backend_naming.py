@@ -12,6 +12,7 @@ from sqlalchemy import MetaData
 from loom.core.backend.sqlalchemy import get_metadata, reset_registry
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import load_application
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from tests.integration.agnosticism import rosters
 
@@ -62,7 +63,9 @@ def test_runtime_compilation_names_constraints_as_the_migration_metadata_does(
 ) -> None:
     path = _config_file(tmp_path, rosters.NAMING_CONVENTION)
     application = load_application(str(path))
-    wiring = SQLAlchemyBackend().build(ConfigContext.from_yaml(str(path)), rosters.MODELS)
+    wiring = SQLAlchemyBackend().build(
+        ConfigContext.from_yaml(str(path)), rosters.MODELS, BackendRuntime(SERVER_PROFILE)
+    )
 
     assert wiring.prepare_models is not None
     wiring.prepare_models(rosters.MODELS)
@@ -76,7 +79,7 @@ def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(tmp_path
 
     backend, context = SQLAlchemyBackend(), ConfigContext.from_yaml(str(path))
     with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
-        backend.build(context, rosters.MODELS)
+        backend.build(context, rosters.MODELS, BackendRuntime(SERVER_PROFILE))
 
 
 def test_resetting_the_registry_without_a_convention_keeps_the_one_set() -> None:
@@ -106,7 +109,7 @@ async def test_the_lifespan_teardown_restores_the_default_convention() -> None:
             "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
-    wiring = SQLAlchemyBackend().build(ctx, ())
+    wiring = SQLAlchemyBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
     assert wiring.prepare_models is not None
     assert wiring.lifespan_init is not None
     wiring.prepare_models(())

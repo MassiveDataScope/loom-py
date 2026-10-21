@@ -6,7 +6,6 @@ from loom.streaming.nodes._table import (
     Backend,
     DeltaSinkConfig,
     IntoTable,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
 )
 
@@ -14,6 +13,5 @@ from loom.streaming.nodes._table import (
 def test_table_package_exports_public_contract() -> None:
     assert IntoTable.__module__ == "loom.streaming.nodes._table.common"
     assert Backend.__module__ == "loom.streaming.nodes._table.common"
-    assert SqlAlchemyDatabaseConfig.__module__ == "loom.streaming.nodes._table.common"
     assert SqlAlchemySinkConfig.__module__ == "loom.streaming.nodes._table.common"
     assert DeltaSinkConfig.__module__ == "loom.streaming.nodes._table.common"

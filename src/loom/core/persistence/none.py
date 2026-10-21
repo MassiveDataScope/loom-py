@@ -9,6 +9,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.profile import BackendRuntime
 
 
 class NoneBackend:
@@ -20,17 +21,23 @@ class NoneBackend:
 
     name: ClassVar[str] = "none"
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
+    ) -> PersistenceWiring:
         """Build a wiring in which every hook is a no-op.
 
         Args:
             ctx: Ignored; this backend reads no configuration.
             models: Ignored; this backend serves no repositories.
+            runtime: Ignored; this backend opens no connection.
 
         Returns:
             The no-persistence wiring.
         """
-        del ctx, models
+        del ctx, models, runtime
         return PersistenceWiring(
             uow_factory=None,
             repo_registration_module=_register_no_repositories,

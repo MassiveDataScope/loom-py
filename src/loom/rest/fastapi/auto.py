@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import logging
 import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -52,9 +53,16 @@ from loom.core.job.service import InlineJobService, JobService
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import PersistenceWiring, resolve_backend
+from loom.core.persistence import (
+    SERVER_PROFILE,
+    BackendRuntime,
+    PersistenceWiring,
+    PoolMetricsSink,
+    resolve_backend,
+)
 from loom.core.use_case.constants import CrudOp
 from loom.prometheus import PrometheusMetricsAdapter
+from loom.prometheus.db_pool import PrometheusPoolMetrics
 from loom.prometheus.middleware import PrometheusMiddleware
 from loom.rest._body import DEFAULT_MAX_BODY_BYTES, BodySizeLimitMiddleware
 from loom.rest.auth import (
@@ -220,6 +228,16 @@ def _build_celery_service(
     Returns:
         ``CeleryJobService`` instance, or ``None``.
     """
+    if not ctx.has(ConfigKey.CELERY):
+        # Checked before any import: an application without a celery section
+        # must not pay for loading Celery. find_spec locates without importing.
+        if importlib.util.find_spec("celery") is not None:
+            warnings.warn(
+                "Celery config section is missing — falling back to InlineJobService. "
+                "Add a 'celery' section to your config to suppress this.",
+                stacklevel=3,
+            )
+        return None
     try:
         from loom.celery.config import (  # type: ignore[import-untyped,unused-ignore]
             CeleryConfig as _CC,
@@ -233,14 +251,7 @@ def _build_celery_service(
 
     except ImportError:
         return None
-    celery_cfg = ctx.section_optional(ConfigKey.CELERY, _CC)
-    if celery_cfg is None:
-        warnings.warn(
-            "Celery config section is missing — falling back to InlineJobService. "
-            "Add a 'celery' section to your config to suppress this.",
-            stacklevel=3,
-        )
-        return None
+    celery_cfg = ctx.section(ConfigKey.CELERY, _CC)
     return CeleryJobService(
         create_celery_app(celery_cfg),
         metrics=result.metrics,
@@ -304,6 +315,7 @@ def _build_bootstrap(
     config_interfaces: tuple[type[RestInterface[Any]], ...] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
     environment: Environment = Environment.PRODUCTION,
+    pool_metrics: PoolMetricsSink | None = None,
 ) -> tuple[KernelRuntime, PersistenceWiring, DiscoveryResult, tuple[type[RestInterface[Any]], ...]]:
     discovered = _discover_components(app_cfg)
     # Captured before folding in config_interfaces: the explicit Python-only
@@ -315,7 +327,7 @@ def _build_bootstrap(
     # Runs before the backend allocates resources (e.g. an engine): resolving
     # persistence is what creates them.
     _reject_autocrud_without_model(discovered)
-    wiring = _resolve_persistence(ctx, persistence_cfg, discovered)
+    wiring = _resolve_persistence(ctx, persistence_cfg, discovered, pool_metrics)
     discovered = _gate_autocrud_capabilities(discovered, wiring, persistence_cfg.backend)
     wiring.prepare_models(discovered.models)
     result = _build_kernel_runtime(
@@ -503,13 +515,16 @@ def _resolve_persistence(
     ctx: ConfigContext,
     persistence_cfg: _PersistenceConfig,
     discovered: DiscoveryResult,
+    pool_metrics: PoolMetricsSink | None = None,
 ) -> PersistenceWiring:
     """Build the wiring of the backend registered under ``persistence.backend``.
 
     Raises:
         ConfigError: When no backend is registered under that name.
     """
-    return resolve_backend(persistence_cfg.backend).build(ctx, discovered.models)
+    return resolve_backend(persistence_cfg.backend).build(
+        ctx, discovered.models, BackendRuntime(SERVER_PROFILE, pool_metrics=pool_metrics)
+    )
 
 
 def _documentation_paths(
@@ -561,6 +576,21 @@ def _build_metrics_adapter(
     if not cfg.enabled:
         return None
     return PrometheusMetricsAdapter(registry=registry)
+
+
+def _build_pool_metrics(
+    cfg: PrometheusObservabilityConfig,
+    registry: CollectorRegistry | None,
+    application: str,
+) -> PoolMetricsSink | None:
+    """Return the connection-pool metrics sink when metrics are enabled, else ``None``.
+
+    Shares the registry of :func:`_build_metrics_adapter`, so the pool gauges
+    are served on the same scrape path as every other metric.
+    """
+    if not cfg.enabled:
+        return None
+    return PrometheusPoolMetrics(registry, application=application, entrypoint=SERVER_PROFILE.name)
 
 
 def _metrics_path(cfg: PrometheusObservabilityConfig) -> str:
@@ -845,6 +875,7 @@ def create_app(
     enforce_deploy_checks(ctx, resolved_environment)
 
     metrics_adapter = _build_metrics_adapter(metrics_cfg, metrics_registry)
+    pool_metrics = _build_pool_metrics(metrics_cfg, metrics_registry, app_cfg.name)
 
     # Built ahead of _build_bootstrap so its use cases join discovery (CRUD
     # gating, model registration, kernel compilation) exactly like a
@@ -858,6 +889,7 @@ def create_app(
         config_interfaces=config_interfaces,
         modules=modules,
         environment=resolved_environment,
+        pool_metrics=pool_metrics,
     )
     _configure_job_service(ctx, result, observability_runtime)
     _register_sql_collaborators(result.container, sql, observability_runtime)

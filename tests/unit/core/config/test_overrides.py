@@ -170,6 +170,12 @@ _DEPLOYED_DOCUMENT: dict[str, Any] = {
     },
     "observability": {"log": {"config": {"level": "INFO"}}, "prometheus": {"enabled": True}},
     "checks": {"silenced": ["loom.rest.W001"]},
+    "database": {
+        "url": "postgresql+asyncpg://app@db/app",
+        "pool": {"size": 5},
+        "warehouse": {"url": "postgresql+asyncpg://app@wh/wh", "pool": {"size": 2}},
+    },
+    "persistence": {"dynamodb": {"region": "eu-west-1", "table": "t", "read_timeout": 5}},
 }
 
 
@@ -203,6 +209,22 @@ def deployed_file(tmp_path: Path) -> str:
             "5",
             "sql.connections.analytics.connect_timeout",
         ),
+        ("LOOM__DATABASE__POOL__SIZE", "1", "database.pool.size"),
+        ("LOOM__DATABASE__POOL__MAX_OVERFLOW", "0", "database.pool.max_overflow"),
+        ("LOOM__DATABASE__POOL__TIMEOUT", "5", "database.pool.timeout"),
+        ("LOOM__DATABASE__POOL__RECYCLE", "300", "database.pool.recycle"),
+        ("LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT", "2", "persistence.dynamodb.read_timeout"),
+        (
+            "LOOM__PERSISTENCE__DYNAMODB__CONNECT_TIMEOUT",
+            "1",
+            "persistence.dynamodb.connect_timeout",
+        ),
+        ("LOOM__PERSISTENCE__DYNAMODB__MAX_ATTEMPTS", "2", "persistence.dynamodb.max_attempts"),
+        (
+            "LOOM__PERSISTENCE__DYNAMODB__MAX_POOL_CONNECTIONS",
+            "8",
+            "persistence.dynamodb.max_pool_connections",
+        ),
     ],
 )
 def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
@@ -228,6 +250,9 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
         ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),
         ("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned"),
+        ("LOOM__DATABASE__URL", "postgresql+asyncpg://evil@db/app"),
+        ("LOOM__DATABASE__POOL__PRE_PING", "false"),
+        ("LOOM__DATABASE__WAREHOUSE__POOL__SIZE", "1"),
     ],
     ids=[
         "a key a reviewed key references, off the allowlist",
@@ -242,6 +267,9 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         "the columns a list route filters on",
         "the columns a list route sorts by",
         "cursor signing",
+        "the database url",
+        "the pre-ping safety check",
+        "a named database, which a wildcard would confuse with the section's own keys",
     ],
 )
 def test_a_deployed_environment_refuses_every_key_off_the_allowlist(

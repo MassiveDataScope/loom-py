@@ -188,9 +188,16 @@ Within any file, its own values win over its `includes`.
 | `sql.connections.*.executor_threads` | Executor capacity. |
 | `sql.connections.*.connect_timeout` | Network timeout. |
 | `sql.connections.*.send_receive_timeout` | Network timeout. |
+| `database.pool.{size,max_overflow,timeout,recycle}` | Connection pool capacity, checkout wait and connection age. |
+| `persistence.dynamodb.max_pool_connections` | Connection and thread capacity. |
+| `persistence.dynamodb.{connect_timeout,read_timeout,max_attempts}` | Network timeouts and retry budget. |
 
 The SQL timeouts, `pool_size` and `executor_threads` must be above zero; a
-`0` fails when the section decodes. The Celery and streaming worker counts
+`0` fails when the section decodes. So must `database.pool.size`, `timeout`
+and `recycle` and the DynamoDB timeouts and attempts; `max_overflow` may be
+`0`. `database.url`, `database.connect_args` and `database.pool.pre_ping` stay
+off the list: the first two say where and how to connect, the last is a
+safety check. The Celery and streaming worker counts
 and `worker_prefetch_multiplier` are not constrained.
 
 Left off on purpose: anything that changes where data goes or who may reach

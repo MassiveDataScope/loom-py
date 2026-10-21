@@ -10,6 +10,7 @@ import loom.core.repository.sqlalchemy.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.persistence import PersistenceWiring
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 
@@ -24,7 +25,7 @@ def _wiring(url: str, cursors: dict[str, str] | None = None) -> PersistenceWirin
             "persistence": {"cursors": {"signing": "ephemeral"} if cursors is None else cursors},
         }
     )
-    return SQLAlchemyBackend().build(ctx, ())
+    return SQLAlchemyBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
 def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out() -> None:

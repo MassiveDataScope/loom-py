@@ -14,9 +14,12 @@ persistence:
 ## Writing a backend
 
 A backend is a class with a no-argument constructor, a `name` and one method:
-`build(ctx, models) -> PersistenceWiring`. It reads its own configuration
-section from the context it is given; the host knows nothing about that
-section.
+`build(ctx, models, runtime) -> PersistenceWiring`. It reads its own
+configuration section from the context it is given; the host knows nothing
+about that section. `runtime` is a `BackendRuntime`: the
+`RuntimeProfile` of the entry point building it (`server`, `worker`, ...),
+whose defaults size any connection pool the backend opens, and an optional
+pool-metrics sink. A backend with no pool ignores it.
 
 ```python
 # billing_ledger/backend.py
@@ -31,7 +34,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
-from loom.core.persistence import PersistenceWiring
+from loom.core.persistence import BackendRuntime, PersistenceWiring
 from loom.core.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -46,7 +49,9 @@ class _LedgerConfig(msgspec.Struct, kw_only=True):
 class LedgerBackend:
     name: ClassVar[str] = "ledger"
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
+    ) -> PersistenceWiring:
         cfg = ctx.section_optional("persistence.ledger", _LedgerConfig)
         if cfg is None:
             raise ConfigError("persistence.backend is 'ledger' but 'persistence.ledger' is missing.")
@@ -311,6 +316,96 @@ token carrying another number of key values. Tokens issued before signed cursors
 fate of any invalid token: clients must treat tokens as opaque and restart from
 the first page.
 
+## `sqlalchemy` connection pool
+
+The API, the Celery worker and the streaming SQLAlchemy sinks read the same
+`database` section — at `database`, at `database.<name>` for a shared
+streaming database, or inline in a sink with `url` — and build their engine
+through one constructor. Pool keys live under `database.pool`:
+
+```yaml
+database:
+  url: postgresql+asyncpg://app@db/app
+  connect_args:              # passed to the driver's connect() as written
+    timeout: 5               # asyncpg: seconds to establish a connection
+    command_timeout: 10      # asyncpg: seconds per statement
+  pool:
+    size: 5                  # connections kept open, > 0
+    max_overflow: 5          # extra connections under load, >= 0
+    timeout: 10              # seconds a caller waits for a free connection, > 0
+    recycle: 1800            # seconds before a connection is replaced, > 0
+    pre_ping: true           # check a connection before handing it out
+```
+
+Each key left out takes the default of the entry point, sized for how many
+operations one of its processes runs at once:
+
+| Entry point | `size` | `max_overflow` | `timeout` | `recycle` | `pre_ping` |
+|---|---|---|---|---|---|
+| API (`create_app`) | 5 | 5 | 10 s | 1800 s | on |
+| Celery worker | 2 | 0 | 30 s | 1800 s | on |
+| Streaming sink | 2 | 0 | 30 s | 1800 s | on |
+
+- One process opens at most `size + max_overflow` connections; the instances
+  times that bound must fit the database's `max_connections`. A caller that
+  finds the pool exhausted waits `timeout` seconds, then fails with a
+  checkout timeout rather than hanging.
+- A Celery worker running `worker_pool: threads` or `gevent` with a
+  concurrency above one per process needs `database.pool.size` at least that
+  concurrency.
+- Keep `recycle` below the idle timeout of the server or of any proxy in
+  front of it, so a connection the other side dropped is never reused.
+- In-memory SQLite (`sqlite+aiosqlite:///`) holds a single shared connection:
+  `size`, `max_overflow` and `timeout` do not apply to it and are left out.
+- Unknown keys under `database.pool` stop startup naming the key. The flat
+  keys this section once took (`pool_size`, `max_overflow`, `pool_timeout`,
+  `pool_recycle`, `pool_pre_ping`) stop startup naming their `pool.`
+  replacement. Keys outside `pool` and `schema` are left to the other readers
+  of the section (migrations, row-level security, streaming).
+- The size, overflow, timeout and recycle keys can be overridden per deploy
+  (`LOOM__DATABASE__POOL__SIZE=1`); see [Environments](../getting-started/environments.md).
+
+### Pool metrics
+
+With `observability.prometheus.enabled`, the API publishes, with
+labels `application`, `entrypoint` and `database`:
+
+| Metric | Type | What |
+|---|---|---|
+| `loom_db_pool_size` | gauge | Connections the pool keeps open. |
+| `loom_db_pool_checked_out` | gauge | Connections in use. |
+| `loom_db_pool_overflow` | gauge | Overflow connections in use beyond the size. |
+| `loom_db_pool_checkout_seconds` | histogram | Checkout duration, pre-ping included. |
+| `loom_db_pool_checkout_timeouts_total` | counter | Checkouts that ran out of time. |
+
+Gauges are read when the registry is scraped; the timing exists only when
+metrics are enabled, so a disabled exporter costs nothing per checkout. The
+API publishes on its metrics registry. The Celery worker does not publish pool
+metrics yet: a prefork worker records them in each child process, which needs
+Prometheus multiprocess mode to be scraped.
+
+## `dynamodb` client
+
+Every bound of the boto3 client is finite by default; botocore's own read
+timeout (60 s) is longer than a typical serverless invocation.
+
+```yaml
+persistence:
+  backend: dynamodb
+  dynamodb:
+    region: eu-west-1
+    table: app
+    max_pool_connections: 32   # HTTP connections and worker threads
+    connect_timeout: 2         # seconds
+    read_timeout: 5            # seconds
+    max_attempts: 3            # total, the first attempt included
+    retry_mode: standard       # standard | adaptive
+```
+
+Repository calls run on a thread pool as wide as `max_pool_connections`, so
+that many calls proceed in parallel in one process; the trace id and other
+context variables stay visible inside the threads.
+
 ## Health
 
 `GET /health` aggregates the readiness of the configured backend; its shape, the
@@ -514,6 +609,20 @@ class Measurement(BaseModel):
 ```
 
 ## Upgrade notes
+
+- `database` pool keys moved under `database.pool` (`pool_size` →
+  `pool.size`, `pool_pre_ping` → `pool.pre_ping`, ...), the same in the API,
+  the worker and streaming sinks; the old keys stop startup naming the new
+  one. `SessionManager.from_config` and `loom.streaming.SqlAlchemyDatabaseConfig`
+  are replaced by `build_session_manager(DatabaseConfig, profile)` and
+  `loom.core.persistence.DatabaseConfig`.
+- Pool defaults now come from the entry point. The worker opens at most two
+  connections per process (it allowed thirty); the API keeps five plus five
+  and recycles connections every 1800 s. Declare `database.pool` to keep
+  other values.
+- `PersistenceBackend.build` takes a third argument, the `BackendRuntime`.
+- A worker with a malformed `database` section now fails at startup instead
+  of running without its database.
 
 - Repository outputs are now built through `to_struct`. A struct value held
   in a loosely annotated field (`Any`, `list[dict[str, Any]]`) arrives as a

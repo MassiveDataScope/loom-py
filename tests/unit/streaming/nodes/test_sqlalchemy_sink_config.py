@@ -4,19 +4,80 @@ from __future__ import annotations
 
 import pytest
 
-from loom.streaming.nodes._table import SqlAlchemySinkConfig
+from loom.core.config import ConfigContext, ConfigError
+from loom.core.model import LoomStruct
+from loom.core.persistence.database import PoolConfig
+from loom.streaming.nodes._table import IntoTable, SqlAlchemySinkConfig
+from loom.streaming.nodes._table.config import (
+    ResolvedSqlAlchemyTableConfig,
+    resolve_sqlalchemy_table_config,
+)
 
 
-def test_an_inline_url_sink_accepts_the_pool_keys() -> None:
+class _Row(LoomStruct):
+    id: int
+
+
+def test_an_inline_url_sink_accepts_the_database_keys() -> None:
     config = SqlAlchemySinkConfig.from_config(
-        {"url": "sqlite+aiosqlite:///:memory:", "pool_size": 5}, default_table="orders"
+        {"url": "sqlite+aiosqlite:///:memory:", "pool": {"size": 5}, "echo": False},
+        default_table="orders",
     )
 
     assert config.url == "sqlite+aiosqlite:///:memory:"
 
 
-def test_a_shared_database_sink_refuses_the_pool_keys_it_does_not_read() -> None:
-    with pytest.raises(ValueError, match="unknown key 'pool_size'"):
+def test_a_shared_database_sink_refuses_the_pool_it_does_not_read() -> None:
+    with pytest.raises(ValueError, match="unknown key 'pool'"):
         SqlAlchemySinkConfig.from_config(
-            {"database": "warehouse", "pool_size": 5}, default_table="orders"
+            {"database": "warehouse", "pool": {"size": 5}}, default_table="orders"
+        )
+
+
+def _resolve(config: dict[str, object]) -> ResolvedSqlAlchemyTableConfig:
+    node = IntoTable(payload=_Row, table="orders", name="orders_sink")
+    return resolve_sqlalchemy_table_config(node, ConfigContext.from_dict(config))
+
+
+def test_an_inline_sink_reads_its_pool_through_the_database_contract() -> None:
+    resolved = _resolve(
+        {
+            "streaming": {
+                "sinks": {"orders_sink": {"url": "sqlite+aiosqlite:///", "pool": {"size": 3}}}
+            }
+        }
+    )
+
+    assert resolved.database.pool == PoolConfig(size=3)
+
+
+def test_a_shared_database_reads_its_pool_through_the_database_contract() -> None:
+    resolved = _resolve(
+        {
+            "database": {"warehouse": {"url": "sqlite+aiosqlite:///", "pool": {"size": 4}}},
+            "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+        }
+    )
+
+    assert resolved.database.pool == PoolConfig(size=4)
+
+
+def test_a_retired_flat_key_inline_names_its_replacement() -> None:
+    with pytest.raises(ConfigError, match=r"streaming\.sinks\.orders_sink\.pool\.size"):
+        _resolve(
+            {
+                "streaming": {
+                    "sinks": {"orders_sink": {"url": "sqlite+aiosqlite:///", "pool_size": 3}}
+                }
+            }
+        )
+
+
+def test_a_retired_flat_key_in_a_shared_database_names_its_replacement() -> None:
+    with pytest.raises(ConfigError, match=r"database\.warehouse\.pool\.size"):
+        _resolve(
+            {
+                "database": {"warehouse": {"url": "sqlite+aiosqlite:///", "pool_size": 4}},
+                "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+            }
         )

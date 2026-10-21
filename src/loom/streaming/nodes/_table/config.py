@@ -7,11 +7,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom.core.config import ConfigContext
+from loom.core.persistence.database import (
+    DatabaseConfig,
+    decode_database_config,
+    load_database_config,
+    reject_retired_pool_keys,
+)
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     DeltaSinkConfig,
     IntoTable,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
 )
 
@@ -23,7 +28,7 @@ class ResolvedSqlAlchemyTableConfig:
     """Resolved SQLAlchemy table sink configuration."""
 
     sink: SqlAlchemySinkConfig
-    database: SqlAlchemyDatabaseConfig
+    database: DatabaseConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +62,7 @@ def resolve_sqlalchemy_table_config(
     effective_cfg = dict(sink_cfg)
     if node.table:
         effective_cfg["table"] = node.table
+    reject_retired_pool_keys(effective_cfg, sink_key)
     sink = SqlAlchemySinkConfig.from_config(
         effective_cfg,
         default_table=node.table,
@@ -72,12 +78,17 @@ def resolve_sqlalchemy_table_config(
             raise ValueError(
                 f"IntoTable '{node.name}': missing shared config section at {database_key}"
             )
-        database = SqlAlchemyDatabaseConfig.from_config(
-            ctx.section_or_default(database_key, dict, {})
-        )
+        database = load_database_config(ctx, database_key)
     else:
-        database = SqlAlchemyDatabaseConfig.from_config(effective_cfg)
+        database = decode_database_config(_inline_database(effective_cfg), path=sink_key)
     return ResolvedSqlAlchemyTableConfig(sink=sink, database=database)
+
+
+def _inline_database(sink_cfg: Mapping[str, Any]) -> dict[str, Any]:
+    """The ``database`` keys of a sink that declares its connection inline."""
+    return {
+        key: sink_cfg[key] for key in ("url", "echo", "pool", "connect_args") if key in sink_cfg
+    }
 
 
 def resolve_delta_table_config(

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, Protocol, cast, runtime_checkable
 
+import msgspec
+
 from loom.core.async_bridge import AsyncBridge
+from loom.core.persistence.database import DatabaseConfig
+from loom.core.persistence.profile import STREAMING_PROFILE, RuntimeProfile
 from loom.streaming.bytewax._operators import ResourceLifecycle, lifecycle_for
 from loom.streaming.core._typing import StreamPayload
-from loom.streaming.nodes._table.common import SqlAlchemyDatabaseConfig
 from loom.streaming.nodes._with import With, WithAsync
 
 
@@ -38,22 +41,6 @@ class _SharedSessionManagerProtocol(Protocol):
         ...
 
 
-@runtime_checkable
-class _SessionManagerFactoryProtocol(Protocol):
-    """Factory contract required to build SQLAlchemy session managers."""
-
-    @classmethod
-    def from_config(
-        cls,
-        config: Mapping[str, Any],
-        *,
-        inject_trace_id: bool = True,
-        **engine_kwargs: object,
-    ) -> _SharedSessionManagerProtocol:
-        """Build a session manager from resolved configuration."""
-        ...
-
-
 class ResourceManager:
     """Own the resource lifecycle objects used by scoped nodes."""
 
@@ -77,21 +64,13 @@ class ResourceManager:
             self._managers[idx] = lifecycle_for(node, bridge=self._bridge)
         return self._managers[idx]
 
-    def session_manager_for(
-        self,
-        config: SqlAlchemyDatabaseConfig | Mapping[str, object],
-    ) -> _SharedSessionManagerProtocol:
-        """Get or create one shared SQLAlchemy session manager for a config."""
+    def session_manager_for(self, config: DatabaseConfig) -> _SharedSessionManagerProtocol:
+        """Get or create one shared SQLAlchemy session manager for a database section."""
         if self._bridge is None:
             raise RuntimeError("SQLAlchemy session managers require an async bridge.")
-        resolved: Mapping[str, object]
-        if isinstance(config, SqlAlchemyDatabaseConfig):
-            resolved = config.to_session_manager_config()
-        else:
-            resolved = config
-        key = _session_manager_key(resolved)
+        key = _freeze_mapping(msgspec.to_builtins(config))
         if key not in self._session_managers:
-            self._session_managers[key] = _session_manager_factory().from_config(resolved)
+            self._session_managers[key] = _session_manager_builder()(config, STREAMING_PROFILE)
         return self._session_managers[key]
 
     def shutdown_all(self) -> None:
@@ -123,16 +102,21 @@ class ResourceManager:
             raise ExceptionGroup("shutdown errors", errors)
 
 
-def _session_manager_factory() -> _SessionManagerFactoryProtocol:
-    """Return the SQLAlchemy session-manager class, or fail naming the extra that provides it."""
+def _session_manager_builder() -> Callable[
+    [DatabaseConfig, RuntimeProfile], _SharedSessionManagerProtocol
+]:
+    """Return the configured session-manager constructor, or fail naming its extra."""
     try:
-        from loom.core.repository.sqlalchemy.session_manager import SessionManager
+        from loom.core.repository.sqlalchemy.session_manager import build_session_manager
     except ImportError as exc:
         raise ImportError(
             "IntoTable(backend=SQLALCHEMY) requires SQLAlchemy. "
             "Install loom-kernel[sqlalchemy] to write to SQLAlchemy tables."
         ) from exc
-    return cast(_SessionManagerFactoryProtocol, SessionManager)
+    return cast(
+        Callable[[DatabaseConfig, RuntimeProfile], _SharedSessionManagerProtocol],
+        build_session_manager,
+    )
 
 
 def _freeze_mapping(mapping: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
@@ -150,22 +134,6 @@ def _freeze_value(value: object) -> object:
     if isinstance(value, set):
         return tuple(sorted((_freeze_value(item) for item in value), key=repr))
     return value
-
-
-def _session_manager_key(config: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
-    """Extract the connection settings that define a shared session manager."""
-    return _freeze_mapping(
-        {
-            "url": config.get("url"),
-            "echo": config.get("echo", False),
-            "pool_pre_ping": config.get("pool_pre_ping", True),
-            "pool_size": config.get("pool_size", 10),
-            "max_overflow": config.get("max_overflow", 20),
-            "pool_timeout": config.get("pool_timeout", 30),
-            "pool_recycle": config.get("pool_recycle", 1800),
-            "connect_args": config.get("connect_args") or {},
-        }
-    )
 
 
 __all__ = ["ResourceManager", "_ResourceManagerProtocol"]

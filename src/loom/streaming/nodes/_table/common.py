@@ -24,8 +24,9 @@ Config example (streaming.sinks.<name>)::
     database:
       warehouse:
         url: postgresql+asyncpg://user:pass@host/db
-        pool_pre_ping: true
-        pool_size: 10
+        pool:
+          size: 2
+          pre_ping: true
 
     streaming:
       sinks:
@@ -41,18 +42,17 @@ Config example (streaming.sinks.<name>)::
 SQLAlchemy example::
 
     from loom.core.config import ConfigContext
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
-    from loom.streaming.nodes._table import SqlAlchemyDatabaseConfig, SqlAlchemySinkConfig
+    from loom.core.persistence import STREAMING_PROFILE, load_database_config
+    from loom.core.repository.sqlalchemy import build_session_manager
+    from loom.streaming.nodes._table import SqlAlchemySinkConfig
 
     ctx = ConfigContext.from_yaml("config.yaml")
     sink_cfg = SqlAlchemySinkConfig.from_config(
         ctx.section("streaming.sinks.orders_sink", dict),
         default_table="orders",
     )
-    db_cfg = SqlAlchemyDatabaseConfig.from_config(
-        ctx.section(f"database.{sink_cfg.database}", dict),
-    )
-    session_manager = SessionManager.from_config(db_cfg.to_session_manager_config())
+    db_cfg = load_database_config(ctx, f"database.{sink_cfg.database}")
+    session_manager = build_session_manager(db_cfg, STREAMING_PROFILE)
 
 Delta example::
 
@@ -70,7 +70,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import (
     Any,
@@ -288,75 +288,11 @@ def _optional_int(value: Any, default: int) -> int:
     return int(value)
 
 
-@dataclass(frozen=True, slots=True)
-class SqlAlchemyDatabaseConfig:
-    """Resolved SQLAlchemy connection settings for a shared database entry.
-
-    Args:
-        url: SQLAlchemy async URL.
-        echo: Enable SQL echo logging.
-        pool_pre_ping: Check pooled connections before checkout.
-        pool_size: Base connection pool size.
-        max_overflow: Additional overflow connections.
-        pool_timeout: Seconds to wait for a pooled connection.
-        pool_recycle: Seconds before recycling pooled connections.
-        connect_args: Extra arguments passed to the DBAPI connect call.
-    """
-
-    url: str
-    echo: bool = False
-    pool_pre_ping: bool = True
-    pool_size: int = 10
-    max_overflow: int = 20
-    pool_timeout: int = 30
-    pool_recycle: int = 1800
-    connect_args: dict[str, object] = field(default_factory=dict)
-
-    @classmethod
-    def from_config(cls, config: Mapping[str, Any]) -> Self:
-        """Build a SQLAlchemy connection config from a resolved YAML section."""
-        url = str(config.get("url") or "").strip()
-        if not url:
-            raise ValueError("SQLAlchemy database config requires a non-empty 'url'.")
-        return cls(
-            url=url,
-            echo=bool(config.get("echo", False)),
-            pool_pre_ping=bool(config.get("pool_pre_ping", True)),
-            pool_size=_optional_int(config.get("pool_size"), 10),
-            max_overflow=_optional_int(config.get("max_overflow"), 20),
-            pool_timeout=_optional_int(config.get("pool_timeout"), 30),
-            pool_recycle=_optional_int(config.get("pool_recycle"), 1800),
-            connect_args=dict(config.get("connect_args") or {}),
-        )
-
-    def to_session_manager_config(self) -> dict[str, object]:
-        """Convert the config to ``SessionManager.from_config`` keyword mapping."""
-        return {
-            "url": self.url,
-            "echo": self.echo,
-            "pool_pre_ping": self.pool_pre_ping,
-            "pool_size": self.pool_size,
-            "max_overflow": self.max_overflow,
-            "pool_timeout": self.pool_timeout,
-            "pool_recycle": self.pool_recycle,
-            "connect_args": dict(self.connect_args),
-        }
-
-
 _BUFFER_KEYS: frozenset[str] = frozenset(
     {"buffer_max_records", "buffer_max_bytes", "buffer_max_age_s", "flush_on_shutdown"}
 )
-_SQLALCHEMY_POOL_KEYS: frozenset[str] = frozenset(
-    {
-        "echo",
-        "pool_pre_ping",
-        "pool_size",
-        "max_overflow",
-        "pool_timeout",
-        "pool_recycle",
-        "connect_args",
-    }
-)
+_SQLALCHEMY_INLINE_DATABASE_KEYS: frozenset[str] = frozenset({"echo", "pool", "connect_args"})
+"""Database keys an inline-``url`` sink takes, besides ``url``: the ``database`` contract."""
 _SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "database", "url", "chunk_size"}
 _DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
     "table",
@@ -435,7 +371,11 @@ class SqlAlchemySinkConfig:
         table = str(config.get("table") or default_table).strip()
         database = str(config.get("database") or "").strip()
         url = str(config.get("url") or "").strip()
-        known = _SQLALCHEMY_SINK_KEYS if database else _SQLALCHEMY_SINK_KEYS | _SQLALCHEMY_POOL_KEYS
+        known = (
+            _SQLALCHEMY_SINK_KEYS
+            if database
+            else _SQLALCHEMY_SINK_KEYS | _SQLALCHEMY_INLINE_DATABASE_KEYS
+        )
         _refuse_unknown_keys(config, known, sink="SQLAlchemy")
         if not table:
             raise ValueError("SQLAlchemy sink config requires a non-empty table name.")
@@ -637,6 +577,5 @@ __all__ = [
     "ClickHouseSinkConfig",
     "DeltaSinkConfig",
     "IntoTable",
-    "SqlAlchemyDatabaseConfig",
     "SqlAlchemySinkConfig",
 ]

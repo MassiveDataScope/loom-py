@@ -24,6 +24,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model import BaseModel
 from loom.core.persistence import NoneBackend, PersistenceWiring
+from loom.core.persistence.profile import BackendRuntime
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import health as health_module
@@ -71,8 +72,10 @@ class _ProbedBackend:
     name: ClassVar[str] = "probed"
     ready: ClassVar[bool | None] = None
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
-        wiring = NoneBackend().build(ctx, models)
+    def build(
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
+    ) -> PersistenceWiring:
+        wiring = NoneBackend().build(ctx, models, runtime)
         readiness = None if self.ready is None else self._probe
         return PersistenceWiring(
             uow_factory=wiring.uow_factory,

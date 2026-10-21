@@ -20,6 +20,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.profile import BackendRuntime
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -59,12 +60,18 @@ class MongoBackend:
 
     name: ClassVar[str] = "mongo"
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
+    ) -> PersistenceWiring:
         """Build the Mongo wiring for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``persistence.mongo`` section.
             models: Models whose repositories the DI module registers.
+            runtime: Entry-point defaults; the Mongo client takes none of them yet.
 
         Returns:
             The Mongo wiring.
