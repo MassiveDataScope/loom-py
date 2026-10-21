@@ -24,7 +24,7 @@ _INSTALL_HINT = (
 )
 
 try:
-    from clickhouse_connect.driver import httpclient, httputil  # type: ignore[import-untyped]
+    from clickhouse_connect.driver import httputil  # type: ignore[import-untyped]
     from clickhouse_connect.driver.exceptions import (  # type: ignore[import-untyped]
         DatabaseError,
         OperationalError,
@@ -76,6 +76,11 @@ _URL_RE = re.compile(r"https?://\S+")
 # fail closed on a driver that stops exposing the seam, and
 # ``tests/unit/core/sql/test_clickhouse_transport.py`` pins the patch point so
 # the workaround can never degrade silently.
+try:
+    from clickhouse_connect.driver._backend import http_sync as _ch_http_module
+except ImportError:
+    from clickhouse_connect.driver import httpclient as _ch_http_module  # type: ignore[no-redef]
+
 _MULTI_ROLE_PROBE: Mapping[str, Any] = {"role": ("loom_probe_a", "loom_probe_b")}
 _MULTI_ROLE_PROBE_ENCODED = "role=loom_probe_a&role=loom_probe_b"
 _URLENCODE_ATTR = "urlencode"
@@ -90,9 +95,9 @@ def enable_repeated_query_params() -> None:
     that symbol — callers must then check
     :func:`supports_repeated_query_params` and fail closed.
     """
-    if getattr(httpclient, _URLENCODE_ATTR, None) is None:
+    if getattr(_ch_http_module, _URLENCODE_ATTR, None) is None:
         return
-    httpclient.urlencode = partial(urlencode, doseq=True)
+    _ch_http_module.urlencode = partial(urlencode, doseq=True)
 
 
 def supports_repeated_query_params() -> bool:
@@ -106,7 +111,7 @@ def supports_repeated_query_params() -> bool:
         ``True`` when a sequence-valued setting is serialized as repeated
         parameters, which is what multi-role queries require.
     """
-    encoder = getattr(httpclient, _URLENCODE_ATTR, None)
+    encoder = getattr(_ch_http_module, _URLENCODE_ATTR, None)
     if encoder is None:
         return False
     encoded: str = encoder(_MULTI_ROLE_PROBE)
