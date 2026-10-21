@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import subprocess
 import sys
+from unittest.mock import MagicMock
 from urllib.parse import urlencode
 
 import pytest
@@ -23,6 +24,11 @@ try:
     from clickhouse_connect.driver._backend import http_sync as _ch_http_module
 except ImportError:
     from clickhouse_connect.driver import httpclient as _ch_http_module  # type: ignore[no-redef]
+
+try:
+    from clickhouse_connect.driver.client import Client as _CHClient
+except ImportError:
+    _CHClient = None  # type: ignore[assignment,misc]
 
 from loom.core.config.errors import ConfigError
 from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
@@ -60,6 +66,8 @@ print("stock" if _ch_http_module.urlencode(params) == urlencode(params) else "pa
 def patched_encoder(monkeypatch: pytest.MonkeyPatch) -> None:
     """Enable the workaround for one test; ``monkeypatch`` restores the driver afterwards."""
     monkeypatch.setattr(_ch_http_module, _URLENCODE, getattr(_ch_http_module, _URLENCODE))
+    if _CHClient is not None and hasattr(_CHClient, "_validate_settings"):
+        monkeypatch.setattr(_CHClient, "_validate_settings", _CHClient._validate_settings)
     enable_repeated_query_params()
 
 
@@ -157,6 +165,8 @@ async def test_single_role_connections_do_not_enable_the_workaround(
 ) -> None:
     """One role travels as a plain scalar, so single-role setups never need the shim."""
     monkeypatch.setattr(_ch_http_module, _URLENCODE, urlencode)
+    if _CHClient is not None and hasattr(_CHClient, "_validate_settings"):
+        monkeypatch.setattr(_CHClient, "_validate_settings", _CHClient._validate_settings)
     config = make_sql_config(
         analytics=make_connection_config(allowed_roles=(_ROLE_A,), default_role=_ROLE_A)
     )
@@ -167,3 +177,21 @@ async def test_single_role_connections_do_not_enable_the_workaround(
             True,
             urlencode,
         )
+
+
+def test_validate_settings_preserves_sequence_transport_settings(
+    patched_encoder: None,
+) -> None:
+    """Multi-role settings must remain sequences for the HTTP transport to repeat them."""
+    if _CHClient is None or not hasattr(_CHClient, "_validate_settings"):
+        return
+    client = MagicMock(spec=_CHClient)
+    client.valid_transport_settings = {"role"}
+    client.server_settings = {}
+    client.get_client_setting.return_value = None
+    client.optional_transport_settings = set()
+    client._reserved_setting_names = set()
+    client._reserved_setting_prefixes = ()
+    client._validate_setting = _CHClient._validate_setting.__get__(client, _CHClient)
+    validated = _CHClient._validate_settings(client, {"role": (_ROLE_A, _ROLE_B)})
+    assert validated["role"] == (_ROLE_A, _ROLE_B)

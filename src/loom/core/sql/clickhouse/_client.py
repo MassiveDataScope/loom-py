@@ -81,23 +81,50 @@ try:
 except ImportError:
     from clickhouse_connect.driver import httpclient as _ch_http_module  # type: ignore[no-redef]
 
+try:
+    from clickhouse_connect.driver.client import Client as _CHClient
+except ImportError:
+    _CHClient = None  # type: ignore[assignment,misc]
+
 _MULTI_ROLE_PROBE: Mapping[str, Any] = {"role": ("loom_probe_a", "loom_probe_b")}
 _MULTI_ROLE_PROBE_ENCODED = "role=loom_probe_a&role=loom_probe_b"
 _URLENCODE_ATTR = "urlencode"
+_LOOM_PATCHED_ATTR = "_loom_repeated_params_patched"
+
+
+def _preserve_transport_sequences(validate_settings_fn: Any) -> Any:
+    def _wrapper(self: Any, settings: dict[str, Any] | None) -> dict[str, Any]:
+        validated = validate_settings_fn(self, settings)
+        if settings:
+            for key in getattr(self, "valid_transport_settings", ()):
+                if key in settings and isinstance(settings[key], (list, tuple)):
+                    validated[key] = settings[key]
+        return validated
+
+    return _wrapper
 
 
 def enable_repeated_query_params() -> None:
     """Make the driver emit one HTTP parameter per sequence-valued setting.
 
-    Idempotent and explicit: rebinds the ``urlencode`` the driver looks up when
-    building a request URL, so a tuple of roles travels as ``role=a&role=b``
-    instead of its ``repr``.  Does nothing when the driver no longer exposes
-    that symbol — callers must then check
-    :func:`supports_repeated_query_params` and fail closed.
+    Idempotent and explicit:
+    1. Rebinds the ``urlencode`` the sync HTTP transport looks up when building
+       request URLs, so a tuple of roles travels with ``doseq=True``
+       (``role=a&role=b``) instead of its ``repr``.
+    2. Wraps ``Client._validate_settings`` (present in clickhouse-connect 1.x)
+       so sequence-valued transport settings like ``role`` are not stringified
+       into ClickHouse map/array literals before the HTTP transport can send
+       them.
     """
-    if getattr(_ch_http_module, _URLENCODE_ATTR, None) is None:
-        return
-    _ch_http_module.urlencode = partial(urlencode, doseq=True)
+    if getattr(_ch_http_module, _URLENCODE_ATTR, None) is not None:
+        _ch_http_module.urlencode = partial(urlencode, doseq=True)
+
+    if _CHClient is not None and hasattr(_CHClient, "_validate_settings"):
+        current = _CHClient._validate_settings
+        if not getattr(current, _LOOM_PATCHED_ATTR, False):
+            wrapped = _preserve_transport_sequences(current)
+            setattr(wrapped, _LOOM_PATCHED_ATTR, True)
+            _CHClient._validate_settings = wrapped
 
 
 def supports_repeated_query_params() -> bool:
