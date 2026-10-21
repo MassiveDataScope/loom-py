@@ -1,7 +1,8 @@
 """Public table sink package for streaming nodes.
 
-The user-facing API stays on ``loom.streaming.nodes._table`` while the
-implementation details live in :mod:`loom.streaming.nodes._table.common`.
+The user-facing API stays on ``loom.streaming.nodes._table``. Shared
+contracts live in :mod:`loom.streaming.nodes._table.common`; each storage
+backend has its own private adapter.
 """
 
 from loom.streaming.nodes._table.common import (
