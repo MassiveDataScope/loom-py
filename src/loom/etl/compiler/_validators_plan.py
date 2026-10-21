@@ -210,13 +210,17 @@ def _walk_parallel_process_group_temps(
     for proc in plans:
         proc_seen = dict(snapshot)
         _walk_process_temps(proc, proc_seen)
-        group_seen.update({k: v for k, v in proc_seen.items() if k not in snapshot})
+        new_temps = {k: v for k, v in proc_seen.items() if k not in snapshot}
+        for name, is_fan_in in new_temps.items():
+            if name in group_seen:
+                _CONFLICT[(group_seen[name], is_fan_in)](proc.process_type, name)
+        group_seen.update(new_temps)
     seen.update(group_seen)
 
 
 def _walk_parallel_step_group_temps(plans: tuple[StepPlan, ...], seen: dict[str, bool]) -> None:
     snapshot = dict(seen)
-    group_seen: dict[str, bool] = {}
+    group_seen = dict(snapshot)
     for step in plans:
         _check_temp_sources(step, snapshot)
         _register_step_target(step, group_seen)

@@ -45,12 +45,10 @@ from loom.etl.compiler._plan import (
     StepPlan,
 )
 from loom.etl.compiler._validators import (
-    StepCompilationContext,
     validate_params_compat,
     validate_plan_catalog,
     validate_plan_temps,
     validate_process_catalog,
-    validate_step,
     validate_step_catalog,
 )
 from loom.etl.compiler._validators_agents import (
@@ -63,6 +61,7 @@ from loom.etl.compiler._validators_config import (
     validate_process_config,
     validate_step_config,
 )
+from loom.etl.compiler._validators_step import StepCompilationContext, validate_step
 from loom.etl.declarative.target import AppendSpec
 from loom.etl.pipeline._pipeline import ETLPipeline
 from loom.etl.pipeline._process import ETLProcess
@@ -201,6 +200,11 @@ class ETLCompiler:
         pipeline_params_type: type[Any],
     ) -> PipelineProcessNode:
         if isinstance(item, list):
+            if any(isinstance(sub, list) for sub in item):
+                issue = ETLErrorCode.INVALID_PROCESS_ITEM.issue(
+                    component=pipeline_type, item=repr(item)
+                )
+                raise ETLCompilationError.from_issue(issue)
             return ParallelProcessGroup(
                 plans=cast(
                     "tuple[ProcessPlan, ...]",
@@ -238,6 +242,11 @@ class ETLCompiler:
         process_params_type: type[Any],
     ) -> ProcessStepNode:
         if isinstance(item, list):
+            if any(isinstance(sub, list) for sub in item):
+                issue = ETLErrorCode.INVALID_STEP_ITEM.issue(
+                    component=process_type, item=repr(item)
+                )
+                raise ETLCompilationError.from_issue(issue)
             return ParallelStepGroup(
                 plans=cast(
                     "tuple[StepPlan, ...]",

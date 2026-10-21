@@ -107,7 +107,7 @@ class StepCompilationContext:
 
 
 def validate_step(ctx: StepCompilationContext) -> None:
-    """Run all per-step compile-time validators against *ctx*."""
+    """Validate signature, upsert, history, param expressions, then file paths."""
     validate_execute_signature(
         ctx.step_type,
         ctx.params_type,
@@ -116,6 +116,7 @@ def validate_step(ctx: StepCompilationContext) -> None:
         ctx.agent_bindings,
     )
     validate_upsert_spec(ctx.step_type, ctx.target_binding.spec)
+    validate_historify_spec(ctx.step_type, ctx.target_binding.spec)
     validate_param_exprs(ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding)
     validate_file_path_templates(
         ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding
