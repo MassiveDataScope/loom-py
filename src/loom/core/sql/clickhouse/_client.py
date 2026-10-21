@@ -189,8 +189,9 @@ class _DriverAsyncClientAdapter:
 
     @property
     def valid_transport_settings(self) -> AbstractSet[str]:
-        """Per-query transport settings reported by the wrapped sync client."""
-        return frozenset(self._async_client.client.valid_transport_settings)
+        """Per-query transport settings reported by the driver client."""
+        target = getattr(self._async_client, "client", self._async_client)
+        return frozenset(target.valid_transport_settings)
 
     async def query(
         self,
