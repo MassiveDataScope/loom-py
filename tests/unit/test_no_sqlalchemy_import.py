@@ -15,8 +15,8 @@ its ``__init__``). Every other module is walked, including the Mongo, DynamoDB,
 Prefect, Spark and ETL I/O adapters: an ``ImportError`` there that does not
 mention sqlalchemy is another missing extra and is ignored.
 
-``loom.testing.repository_harness`` is the single allowed SQLAlchemy-hard
-module: ``loom.testing`` exposes it lazily, so importing the package stays safe.
+``loom.testing.repository_harness`` and the selected streaming SQLAlchemy
+island are allowed SQLAlchemy-hard modules: both owning packages import safely.
 """
 
 from __future__ import annotations
@@ -28,7 +28,9 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
-_SQLALCHEMY_HARD_MODULES = frozenset({"loom.testing.repository_harness"})
+_SQLALCHEMY_HARD_MODULES = frozenset(
+    {"loom.testing.repository_harness", "loom.streaming.nodes._table._sqlalchemy"}
+)
 
 _WALK_WITHOUT_SQLALCHEMY_SCRIPT = """
 import importlib

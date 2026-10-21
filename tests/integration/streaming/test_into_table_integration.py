@@ -47,7 +47,8 @@ from loom.core.model.relation import RelationField  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
 from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
-from loom.streaming.nodes._table import common as _table_common  # noqa: E402
+from loom.streaming.nodes._table import _clickhouse as _table_clickhouse  # noqa: E402
+from loom.streaming.nodes._table import _delta as _table_delta  # noqa: E402
 from loom.streaming.nodes._table.common import ClickHouseSinkConfig  # noqa: E402
 from loom.streaming.testing import StreamingTestRunner  # noqa: E402
 
@@ -153,7 +154,9 @@ def _ch_config(table: str = "test_table", **overrides: Any) -> ClickHouseSinkCon
 def mock_ch_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Patch clickhouse_connect.get_client so no server is needed."""
     client = MagicMock()
-    monkeypatch.setattr(_table_common, "_cc", MagicMock(get_client=MagicMock(return_value=client)))
+    monkeypatch.setattr(
+        _table_clickhouse, "_cc", MagicMock(get_client=MagicMock(return_value=client))
+    )
     return client
 
 
@@ -453,8 +456,8 @@ class TestIntoTableSQLAlchemyIntegration:
         uri = str(tmp_path / "events_delta")
         write_calls: list[int] = []
         ipc_batch_calls: list[int] = []
-        original_write_deltalake = cast(Any, _table_common).write_deltalake
-        original_new_stream = cast(Any, _table_common)._pa_ipc.new_stream
+        original_write_deltalake = cast(Any, _table_delta).write_deltalake
+        original_new_stream = cast(Any, _table_delta)._pa_ipc.new_stream
 
         def _counted_write_deltalake(*args: Any, **kwargs: Any) -> Any:
             write_calls.append(1)
@@ -476,8 +479,8 @@ class TestIntoTableSQLAlchemyIntegration:
         def _counted_new_stream(*args: Any, **kwargs: Any) -> _CountingRecordBatchWriter:
             return _CountingRecordBatchWriter(original_new_stream(*args, **kwargs))
 
-        monkeypatch.setattr(cast(Any, _table_common), "write_deltalake", _counted_write_deltalake)
-        monkeypatch.setattr(cast(Any, _table_common)._pa_ipc, "new_stream", _counted_new_stream)
+        monkeypatch.setattr(cast(Any, _table_delta), "write_deltalake", _counted_write_deltalake)
+        monkeypatch.setattr(cast(Any, _table_delta)._pa_ipc, "new_stream", _counted_new_stream)
 
         flow: StreamFlow[_OrderRow, _OrderRow] = StreamFlow(
             name="events_delta_sink_flow",
