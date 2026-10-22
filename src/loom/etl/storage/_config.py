@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 import msgspec
 from deltalake import CommitProperties, WriterProperties
 
+from loom.core.config import reject_retired_keys
+from loom.core.connections import (
+    AwsClientConfig,
+    ClickHouseConnection,
+    ConnectionSettings,
+    MongoConnection,
+)
 from loom.core.model import LoomFrozenStruct
 from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
@@ -217,50 +224,6 @@ class FileRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         self.path.validate(context=f"{context}.path")
 
 
-class ClickHouseConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
-    """Connection settings for ClickHouse targets.
-
-    Args:
-        url: ClickHouse DSN, e.g. ``clickhouse://user:pass@host:8123/default``.
-             When empty, ClickHouse write targets are not available.
-    """
-
-    url: str = ""
-
-
-class MongoConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
-    """Connection settings for MongoDB sources.
-
-    Args:
-        uri:      pymongo connection string, e.g. ``mongodb://user:pass@host:27017``.
-                  When empty, MongoDB read sources are not available.
-        database: Database name to read from.
-    """
-
-    uri: str = ""
-    database: str = ""
-
-
-class DynamoDbConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
-    """Connection settings for DynamoDB sources.
-
-    Args:
-        enabled:      Activate DynamoDB read sources.  When ``False`` (default),
-                      no boto3 client is built at provider wiring time.
-        region:       AWS region name, e.g. ``eu-west-1``.  Empty uses the
-                      default boto3 resolution chain.
-        endpoint_url: Custom endpoint for DynamoDB Local / LocalStack.
-                      Empty uses the real AWS endpoint.
-        profile:      AWS named profile.  Empty uses the default credential
-                      resolution chain.
-    """
-
-    enabled: bool = False
-    region: str = ""
-    endpoint_url: str = ""
-    profile: str = ""
-
-
 class CustomColumnDef(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Definition of one custom audit column injected at write time.
 
@@ -367,6 +330,12 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         profiles: Named partial path settings referenced by ``profile:`` in YAML.
             Applied by :func:`normalise_storage_section`; direct struct
             construction does not apply them.
+        clickhouse: ClickHouse connection of the ClickHouse sources and targets;
+            omitted, they are not available.
+        mongo: MongoDB connection of the Mongo sources; omitted, they are not
+            available.
+        dynamodb: AWS client of the DynamoDB sources; omitted, they are not
+            available.
         audit: Audit-column injection settings.
     """
 
@@ -378,9 +347,9 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     tables: tuple[TableRoute, ...] = ()
     files: tuple[FileRoute, ...] = ()
     profiles: dict[str, StorageProfile] = {}
-    clickhouse: ClickHouseConfig = ClickHouseConfig()
-    mongo: MongoConfig = MongoConfig()
-    dynamodb: DynamoDbConfig = DynamoDbConfig()
+    clickhouse: ClickHouseConnection | None = None
+    mongo: MongoConnection | None = None
+    dynamodb: AwsClientConfig | None = None
     audit: AuditConfig = AuditConfig()
     maintenance: MaintenanceConfig = MaintenanceConfig()
 
@@ -518,16 +487,38 @@ def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
         A new dict ready for :func:`convert_storage_config`.
 
     Raises:
+        ConfigError: When an engine section (``dynamodb``, ``mongo``,
+            ``clickhouse``) holds a retired key, naming its replacement.
         ValueError: When a mapping entry carries a ``name`` different from its
             key, when a ``profile`` is not declared in ``profiles``, or when a
             profile carries ``uri``. Other fields unknown to
             :class:`StorageProfile` are reported by :func:`convert_storage_config`.
     """
+    _refuse_retired_keys(raw)
     normalised = dict(raw)
     for collection in _ROUTE_PROFILE_FIELDS:
         if collection in normalised:
             normalised[collection] = _normalise_routes(normalised[collection], collection)
     return _apply_profiles(normalised)
+
+
+_ENGINE_SECTIONS: Final[Mapping[str, type[ConnectionSettings]]] = {
+    "dynamodb": AwsClientConfig,
+    "mongo": MongoConnection,
+    "clickhouse": ClickHouseConnection,
+}
+
+
+def _refuse_retired_keys(raw: Mapping[str, Any]) -> None:
+    """Name the replacement of a key the engine sections no longer take."""
+    for section, connection in _ENGINE_SECTIONS.items():
+        reject_retired_keys(raw.get(section), f"storage.{section}", connection)
+    dynamodb = raw.get("dynamodb")
+    if isinstance(dynamodb, Mapping) and "enabled" in dynamodb:
+        raise ValueError(
+            "storage.dynamodb.enabled was removed: declaring storage.dynamodb enables "
+            "DynamoDB sources and omitting it disables them; remove the key"
+        )
 
 
 def _apply_profiles(normalised: dict[str, Any]) -> dict[str, Any]:

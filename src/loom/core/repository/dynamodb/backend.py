@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
-import msgspec
-
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
+from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
-from loom.core.model.types import PositiveInt
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.repository.dynamodb.registry import (
@@ -26,33 +25,25 @@ _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 _logger = logging.getLogger(__name__)
 
 
-class _DynamoDBConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    """``persistence.dynamodb``.
+class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
+    """``persistence.dynamodb``: the AWS client settings plus the table backing every model.
 
-    Every bound is finite by default: botocore's own read timeout (60 s) is
-    longer than a typical serverless invocation, so a hung call would consume
-    the whole invocation instead of failing with an error.
+    Every key of :class:`~loom.core.connections.AwsClientConfig` applies, with
+    the same defaults as anywhere else loom calls AWS; this context only adds
+    *table* and requires *region*.
 
     Args:
-        region: AWS region of the table.
         table: Table backing every model.
-        endpoint_url: Override for a local or fake DynamoDB.
-        max_pool_connections: HTTP connections and worker threads; repository
-            calls run in parallel up to this number.
-        connect_timeout: Seconds to establish a connection.
-        read_timeout: Seconds to wait for a response.
-        max_attempts: Total attempts per call, the first one included.
-        retry_mode: botocore retry strategy.
+
+    Raises:
+        ValueError: When *region* is not set: the table lives in one region.
     """
 
-    region: str
     table: str
-    endpoint_url: str | None = None
-    max_pool_connections: PositiveInt = 32
-    connect_timeout: PositiveInt = 2
-    read_timeout: PositiveInt = 5
-    max_attempts: PositiveInt = 3
-    retry_mode: Literal["standard", "adaptive"] = "standard"
+
+    def __post_init__(self) -> None:
+        if self.region is None:
+            raise ValueError("region is required: the table lives in one region")
 
 
 class DynamoDBBackend:
@@ -82,19 +73,23 @@ class DynamoDBBackend:
             The DynamoDB wiring.
 
         Raises:
-            ConfigError: When the ``persistence.dynamodb`` section is missing.
+            ConfigError: When the ``persistence.dynamodb`` section is missing or
+                holds a retired key.
         """
-        dynamo_cfg = ctx.section_optional(_SECTION, _DynamoDBConfig)
+        reject_retired_keys(ctx.raw(_SECTION), _SECTION, DynamoDBRepositoryConfig)
+        dynamo_cfg = ctx.section_optional(_SECTION, DynamoDBRepositoryConfig)
         if dynamo_cfg is None:
             raise ConfigError(
                 f"persistence.backend is {self.name!r} but the {_SECTION!r} "
                 "section (region, table) is missing."
             )
-        client = _build_dynamodb_client(dynamo_cfg)
+        # The low-level client, not the resource: it is thread-safe, and
+        # repository calls share it across the executor's threads.
+        client = build_aws_client("dynamodb", dynamo_cfg)
         # One pool of threads per backend, as wide as the client's connection
         # pool: the default executor would cap parallel calls at cpu + 4.
         executor = ThreadPoolExecutor(
-            max_workers=dynamo_cfg.max_pool_connections, thread_name_prefix="loom-dynamodb"
+            max_workers=dynamo_cfg.pool.size, thread_name_prefix="loom-dynamodb"
         )
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),
@@ -104,38 +99,6 @@ class DynamoDBBackend:
             default_repository_type=RepositoryDynamoDB,
             readiness=lambda: _readiness(client, dynamo_cfg.table, executor),
         )
-
-
-def _build_dynamodb_client(dynamo_cfg: _DynamoDBConfig) -> Any:
-    """Construct a boto3 low-level ``dynamodb`` client from config.
-
-    The low-level client (not the resource) is used because it is thread-safe:
-    repository operations run under ``asyncio.to_thread`` and share one client
-    across worker threads. ``max_pool_connections`` sizes the underlying
-    connection pool to that concurrency.
-
-    Credentials are never taken from config: the client is created without
-    explicit keys so boto3's default credential chain applies — the task role
-    on ECS, or ``endpoint_url`` plus environment credentials against a local /
-    fake DynamoDB in tests.
-    """
-    # Local import: boto3/botocore are optional dependencies (loom[dynamodb])
-    # and the package must stay importable without them.
-    import boto3  # type: ignore[import-untyped]
-    from botocore.config import Config  # type: ignore[import-untyped]
-
-    kwargs: dict[str, Any] = {
-        "region_name": dynamo_cfg.region,
-        "config": Config(
-            max_pool_connections=dynamo_cfg.max_pool_connections,
-            connect_timeout=dynamo_cfg.connect_timeout,
-            read_timeout=dynamo_cfg.read_timeout,
-            retries={"total_max_attempts": dynamo_cfg.max_attempts, "mode": dynamo_cfg.retry_mode},
-        ),
-    }
-    if dynamo_cfg.endpoint_url is not None:
-        kwargs["endpoint_url"] = dynamo_cfg.endpoint_url
-    return boto3.client("dynamodb", **kwargs)
 
 
 async def _readiness(client: Any, table: str, executor: Executor) -> bool:
@@ -155,4 +118,4 @@ async def _readiness(client: Any, table: str, executor: Executor) -> bool:
     return status in _READY_TABLE_STATUSES
 
 
-__all__ = ["DynamoDBBackend"]
+__all__ = ["DynamoDBBackend", "DynamoDBRepositoryConfig"]

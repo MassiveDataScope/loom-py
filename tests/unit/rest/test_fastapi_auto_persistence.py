@@ -54,12 +54,12 @@ def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
 _DYNAMODB_SECTION = {
     "region": "eu-west-1",
     "table": "products",
-    "endpoint_url": "http://localhost:8000",
+    "url": "http://localhost:8000",
 }
 _DYNAMODB_PERSISTENCE = {"backend": "dynamodb", "dynamodb": _DYNAMODB_SECTION}
 _MONGO_PERSISTENCE = {
     "backend": "mongo",
-    "mongo": {"uri": "mongodb://localhost:27017", "database": "demo"},
+    "mongo": {"url": "mongodb://localhost:27017", "database": "demo"},
 }
 
 
@@ -101,7 +101,9 @@ def aws_test_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
     """Serve the Mongo backend an in-memory client so no connection is attempted."""
     client = FakeMongoClient()
-    monkeypatch.setattr(mongo_backend_module, "_build_mongo_client", lambda _cfg: client)
+    monkeypatch.setattr(
+        mongo_backend_module, "build_async_mongo_client", lambda _cfg, **_extra: client
+    )
     return client
 
 

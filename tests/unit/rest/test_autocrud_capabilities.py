@@ -56,7 +56,7 @@ _DYNAMODB_PERSISTENCE = {
     "dynamodb": {
         "region": "eu-west-1",
         "table": "capability_records",
-        "endpoint_url": "http://localhost:8000",
+        "url": "http://localhost:8000",
     },
 }
 _KEY_OPS = {CrudOp.GET, CrudOp.CREATE, CrudOp.UPDATE, CrudOp.DELETE}

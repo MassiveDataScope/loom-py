@@ -9,9 +9,10 @@ from sqlalchemy import MetaData
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.locator import Application, DatabaseConfig, SchemaConfig
+from loom.core.locator import Application
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
+from loom.core.persistence.database import DatabaseConfig, SchemaConfig
 from loom.core.repository.sqlalchemy.rls import (
     register_scope_source,
     rls_session_settings,

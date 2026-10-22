@@ -12,6 +12,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.connections import ConnectionPool
 from loom.core.persistence.database import PoolConfig
 from loom.core.sql.config import SqlConnectionConfig
 from tests.helpers.version_limited_extras import require_bytewax
@@ -25,6 +26,10 @@ def _sql() -> type[Any]:
 
 def _pool() -> type[Any]:
     return PoolConfig
+
+
+def _connection_pool() -> type[Any]:
+    return ConnectionPool
 
 
 def _celery_runtime() -> type[Any]:
@@ -47,11 +52,11 @@ def _bytewax_runtime() -> type[Any]:
 @pytest.mark.parametrize(
     ("struct", "required", "field"),
     [
-        (_sql, _SQL_REQUIRED, "pool_size"),
+        (_connection_pool, {}, "size"),
         (_sql, _SQL_REQUIRED, "executor_threads"),
         (_sql, _SQL_REQUIRED, "max_execution_time"),
         (_sql, _SQL_REQUIRED, "connect_timeout"),
-        (_sql, _SQL_REQUIRED, "send_receive_timeout"),
+        (_sql, _SQL_REQUIRED, "read_timeout"),
         (_pool, {}, "size"),
         (_pool, {}, "timeout"),
         (_pool, {}, "recycle"),

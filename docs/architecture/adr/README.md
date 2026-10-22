@@ -9,4 +9,5 @@ Current status:
 - [ADR 0003: Error placement, codes and mapping](0003-error-placement-codes-and-mapping.md) (Decision A Proposed; Decision B Accepted)
 - [ADR 0004: Signed, strictly decoded pagination cursors](0004-signed-cursors.md) (Accepted)
 - [ADR 0005: One environment selector, layered configuration and deploy checks](0005-environment-and-deploy-checks.md) (Accepted)
+- [ADR 0006: Hexagonal layers and one connection type per engine](0006-hexagonal-layers.md) (Accepted)
 - Decisions tracked meanwhile in `specs/`.

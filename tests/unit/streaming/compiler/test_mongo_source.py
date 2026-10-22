@@ -28,7 +28,7 @@ def test_compile_success_with_mongo_source() -> None:
                 "mongo": {
                     "sources": {
                         "domain_events": {
-                            "uri": "mongodb://localhost:27017",
+                            "url": "mongodb://localhost:27017",
                             "database": "app",
                             "watch_options": {"max_await_time_ms": 1000},
                         }
@@ -40,7 +40,7 @@ def test_compile_success_with_mongo_source() -> None:
 
     assert isinstance(plan.source, CompiledMongoCDCSource)
     assert plan.source.settings == MongoSourceConfig(
-        uri="mongodb://localhost:27017",
+        url="mongodb://localhost:27017",
         database="app",
         watch_options={"max_await_time_ms": 1000},
     )

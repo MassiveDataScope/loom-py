@@ -185,7 +185,7 @@ staging only an allowlisted key can (below):
 
 ```bash
 LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
-LOOM__SQL__CONNECTIONS__ANALYTICS__POOL_SIZE=20   # sql.connections.analytics.pool_size
+LOOM__SQL__CONNECTIONS__ANALYTICS__POOL__SIZE=20  # sql.connections.analytics.pool.size
 LOOM__DATABASE__POOL__SIZE=1                      # database.pool.size
 LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
 ```

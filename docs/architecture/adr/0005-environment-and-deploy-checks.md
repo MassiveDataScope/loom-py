@@ -184,15 +184,15 @@ Within any file, its own values win over its `includes`.
 | `streaming.runtime.workers_per_process` | Capacity of a streaming process. |
 | `streaming.runtime.epoch_interval_ms` | Snapshot cadence; a throughput and recovery trade-off. |
 | `streaming.runtime.force_shutdown_timeout_ms` | How long shutdown waits for in-flight work. |
-| `sql.connections.*.pool_size` | Connection pool capacity. |
+| `sql.connections.*.pool.size` | Connection pool capacity. |
 | `sql.connections.*.executor_threads` | Executor capacity. |
 | `sql.connections.*.connect_timeout` | Network timeout. |
-| `sql.connections.*.send_receive_timeout` | Network timeout. |
+| `sql.connections.*.read_timeout` | Network timeout. |
 | `database.pool.{size,max_overflow,timeout,recycle}` | Connection pool capacity, checkout wait and connection age. |
-| `persistence.dynamodb.max_pool_connections` | Connection and thread capacity. |
+| `persistence.dynamodb.pool.size` | Connection and thread capacity. |
 | `persistence.dynamodb.{connect_timeout,read_timeout,max_attempts}` | Network timeouts and retry budget. |
 
-The SQL timeouts, `pool_size` and `executor_threads` must be above zero; a
+The SQL timeouts, `pool.size` and `executor_threads` must be above zero; a
 `0` fails when the section decodes. So must `database.pool.size`, `timeout`
 and `recycle` and the DynamoDB timeouts and attempts; `max_overflow` may be
 `0`. `database.url`, `database.connect_args` and `database.pool.pre_ping` stay
@@ -429,7 +429,7 @@ unknown fields.
   the allowlist in production or staging, or holds `${`
   stops startup, as does a `config.overridable` entry that is malformed,
   starts with `*`, or lies inside `checks` or `config`.
-- The SQL timeouts, `pool_size` and `executor_threads`, the Celery
+- The SQL timeouts, `pool.size` and `executor_threads`, the Celery
   `runtime.shutdown_timeout_ms` and the streaming runtime's
   `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero.
 - The handlers `configure_logging` attaches pass every record, so a named

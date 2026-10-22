@@ -74,7 +74,7 @@ def _mongo_runner_config() -> dict[str, object]:
         "mongo": {
             "sources": {
                 "domain_events": {
-                    "uri": "mongodb://localhost:27017",
+                    "url": "mongodb://localhost:27017",
                     "database": "app",
                 }
             }

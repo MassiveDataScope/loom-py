@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import socket
-import threading
 import time
-from collections.abc import Iterator
 from typing import Any
 
 import msgspec
 import pytest
 
-import loom.core.repository.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.connections.aws.client import build_aws_client
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.repository.dynamodb.backend import DynamoDBBackend, _DynamoDBConfig
+from loom.core.repository.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
 from .conftest import Product
 
@@ -25,13 +23,17 @@ _REQUIRED = {"region": "eu-west-1", "table": "products"}
 def _build(monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]) -> dict[str, Any]:
     seen: dict[str, Any] = {}
 
-    def _client(service: str, **kwargs: Any) -> object:
-        seen.update(kwargs, service=service)
-        return object()
+    class _Session:
+        def __init__(self, **kwargs: Any) -> None:
+            seen["session"] = kwargs
+
+        def client(self, service: str, **kwargs: Any) -> object:
+            seen.update(kwargs, service=service)
+            return object()
 
     import boto3  # type: ignore[import-untyped]
 
-    monkeypatch.setattr(boto3, "client", _client)
+    monkeypatch.setattr(boto3, "Session", _Session)
     ctx = ConfigContext.from_dict(
         {"persistence": {"backend": "dynamodb", "dynamodb": {**_REQUIRED, **section}}}
     )
@@ -56,7 +58,7 @@ def test_declared_values_reach_the_client(monkeypatch: pytest.MonkeyPatch) -> No
             "read_timeout": 3,
             "max_attempts": 5,
             "retry_mode": "adaptive",
-            "max_pool_connections": 8,
+            "pool": {"size": 8},
         },
     )["config"]
 
@@ -72,12 +74,12 @@ def test_declared_values_reach_the_client(monkeypatch: pytest.MonkeyPatch) -> No
         ({"connect_timeout": 0}, "connect_timeout"),
         ({"read_timeout": 0}, "read_timeout"),
         ({"max_attempts": 0}, "max_attempts"),
-        ({"max_pool_connections": 0}, "max_pool_connections"),
+        ({"pool": {"size": 0}}, "pool.size"),
     ],
 )
 def test_an_invalid_key_is_refused_naming_it(section: dict[str, Any], named: str) -> None:
     with pytest.raises(msgspec.ValidationError, match=named):
-        msgspec.convert({**_REQUIRED, **section}, _DynamoDBConfig)
+        msgspec.convert({**_REQUIRED, **section}, DynamoDBRepositoryConfig)
 
 
 def test_a_missing_section_still_names_the_section() -> None:
@@ -87,52 +89,24 @@ def test_a_missing_section_still_names_the_section() -> None:
         DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
-@pytest.fixture
-def silent_endpoint() -> Iterator[str]:
-    """An HTTP endpoint that accepts connections and never answers."""
-    server = socket.socket()
-    server.bind(("127.0.0.1", 0))
-    server.listen(16)
-    held: list[socket.socket] = []
-    stop = threading.Event()
-
-    def _accept() -> None:
-        server.settimeout(0.1)
-        while not stop.is_set():
-            try:
-                held.append(server.accept()[0])
-            except TimeoutError:
-                continue
-
-    thread = threading.Thread(target=_accept, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.getsockname()[1]}"
-    finally:
-        stop.set()
-        thread.join()
-        for connection in held:
-            connection.close()
-        server.close()
-
-
 async def test_a_silent_service_fails_within_the_declared_bounds(
-    monkeypatch: pytest.MonkeyPatch, silent_endpoint: str
+    monkeypatch: pytest.MonkeyPatch,
+    silent_endpoint: str,  # noqa: F811
 ) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     cfg = msgspec.convert(
         {
             **_REQUIRED,
-            "endpoint_url": silent_endpoint,
+            "url": silent_endpoint,
             "connect_timeout": 1,
             "read_timeout": 1,
             "max_attempts": 2,
         },
-        _DynamoDBConfig,
+        DynamoDBRepositoryConfig,
     )
     repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
-        backend_module._build_dynamodb_client(cfg), "products", Product
+        build_aws_client("dynamodb", cfg), "products", Product
     )
 
     started = time.perf_counter()

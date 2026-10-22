@@ -27,6 +27,31 @@ def test_an_inline_url_sink_accepts_the_database_keys() -> None:
     assert config.url == "sqlite+aiosqlite:///:memory:"
 
 
+def test_an_inline_url_sink_accepts_the_standard_timeouts() -> None:
+    resolved = _resolve(
+        {
+            "streaming": {
+                "sinks": {
+                    "orders_sink": {
+                        "url": "postgresql+asyncpg://h/db",
+                        "connect_timeout": 3,
+                        "read_timeout": 30,
+                    }
+                }
+            }
+        }
+    )
+
+    assert resolved.database.client_options() == {"timeout": 3, "command_timeout": 30}
+
+
+def test_an_inline_url_sink_refuses_the_schema_it_does_not_read() -> None:
+    with pytest.raises(ValueError, match="unknown key 'schema'"):
+        SqlAlchemySinkConfig.from_config(
+            {"url": "sqlite+aiosqlite:///", "schema": {}}, default_table="orders"
+        )
+
+
 def test_a_shared_database_sink_refuses_the_pool_it_does_not_read() -> None:
     with pytest.raises(ValueError, match="unknown key 'pool'"):
         SqlAlchemySinkConfig.from_config(

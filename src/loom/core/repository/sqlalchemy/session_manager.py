@@ -215,7 +215,7 @@ def build_session_manager(
         max_overflow=pool.max_overflow if queued else None,
         pool_timeout=pool.timeout_s if queued else None,
         pool_recycle=pool.recycle_s,
-        connect_args=dict(config.connect_args),
+        connect_args=config.client_options(),
         **manager_kwargs,
     )
     if instrumented:

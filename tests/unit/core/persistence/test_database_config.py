@@ -80,7 +80,7 @@ def test_a_pool_value_out_of_range_is_refused_naming_it(pool: dict[str, int], na
 
 
 def test_an_empty_url_is_refused() -> None:
-    with pytest.raises(ConfigError, match="url"):
+    with pytest.raises(ConfigError, match=r"'database'.*url must not be empty"):
         decode_database_config({"url": "  "}, path="database")
 
 

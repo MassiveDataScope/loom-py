@@ -13,11 +13,12 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Literal
 
-import msgspec
 from pymongo import AsyncMongoClient
 
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
 from loom.core.config.keys import ConfigKey
+from loom.core.connections.mongo import MongoConnection
+from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
@@ -39,14 +40,21 @@ _logger = logging.getLogger(__name__)
 _ID_POLICIES: dict[str, type[IdPolicy]] = {"uuid4": Uuid4IdPolicy, "objectid": ObjectIdPolicy}
 
 
-class _MongoConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    uri: str
-    database: str
+class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
+    """``persistence.mongo``: the Mongo connection plus how the repository uses it.
+
+    Every key of :class:`~loom.core.connections.MongoConnection` applies, as
+    in every other context reading MongoDB.
+
+    Args:
+        transactions: Run each unit of work in a multi-document transaction.
+        collections: Collection name per model, overriding the derived one.
+        id: Identifier policy of the documents.
+    """
+
     transactions: bool = False
     collections: dict[str, str] = {}
     id: Literal["uuid4", "objectid"] = "uuid4"
-    max_pool_size: int | None = None
-    server_selection_timeout_ms: int | None = None
 
 
 class MongoBackend:
@@ -77,17 +85,20 @@ class MongoBackend:
             The Mongo wiring.
 
         Raises:
-            ConfigError: When the ``persistence.mongo`` section is missing, or
-                ``persistence.cursors`` cannot build a cursor codec.
+            ConfigError: When the ``persistence.mongo`` section is missing or
+                holds a retired key, or ``persistence.cursors`` cannot build a
+                cursor codec.
         """
-        mongo_cfg = ctx.section_optional(_SECTION, _MongoConfig)
+        reject_retired_keys(ctx.raw(_SECTION), _SECTION, MongoRepositoryConfig)
+        mongo_cfg = ctx.section_optional(_SECTION, MongoRepositoryConfig)
         if mongo_cfg is None:
             raise ConfigError(
                 f"persistence.backend is {self.name!r} but the {_SECTION!r} "
-                "section (uri, database) is missing."
+                "section (url, database) is missing."
             )
         cursor_codec = CursorCodec.from_context(ctx)
-        client = _build_mongo_client(mongo_cfg)
+        # tz_aware: datetimes read back as aware UTC, the form the repository writes.
+        client = build_async_mongo_client(mongo_cfg, tz_aware=True)
         return PersistenceWiring(
             uow_factory=_unit_of_work_factory(client, mongo_cfg),
             repo_registration_module=build_mongo_repository_registration_module(
@@ -105,22 +116,8 @@ class MongoBackend:
         )
 
 
-def _build_mongo_client(mongo_cfg: _MongoConfig) -> AsyncMongoClient[Any]:
-    """Construct the async client; only the options set in config are forwarded.
-
-    The client is ``tz_aware`` so datetimes read back as aware UTC, the form
-    the repository writes them in.
-    """
-    options: dict[str, Any] = {"tz_aware": True}
-    if mongo_cfg.max_pool_size is not None:
-        options["maxPoolSize"] = mongo_cfg.max_pool_size
-    if mongo_cfg.server_selection_timeout_ms is not None:
-        options["serverSelectionTimeoutMS"] = mongo_cfg.server_selection_timeout_ms
-    return AsyncMongoClient(mongo_cfg.uri, **options)
-
-
 def _unit_of_work_factory(
-    client: AsyncMongoClient[Any], mongo_cfg: _MongoConfig
+    client: AsyncMongoClient[Any], mongo_cfg: MongoRepositoryConfig
 ) -> MongoUnitOfWorkFactory:
     _logger.info("mongo unit of work: transactions=%s", mongo_cfg.transactions)
     if mongo_cfg.transactions:
@@ -156,4 +153,4 @@ async def _lifespan(client: AsyncMongoClient[Any]) -> AsyncIterator[None]:
         await client.close()
 
 
-__all__ = ["MongoBackend"]
+__all__ = ["MongoBackend", "MongoRepositoryConfig"]

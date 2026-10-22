@@ -10,9 +10,10 @@ from sqlalchemy import MetaData
 from loom.core.backend.scoped_ddl import SCHEMA_KEY
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
-from loom.core.locator import Application, DatabaseConfig, SchemaConfig
+from loom.core.locator import Application
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
 from loom.core.model.types import DateTime, String, Text
+from loom.core.persistence.database import DatabaseConfig, SchemaConfig
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
 from loom.core.repository.sqlalchemy.migrations.operations import (
     DetachRangePartitionsOp,

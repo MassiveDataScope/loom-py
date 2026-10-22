@@ -267,7 +267,7 @@ class QuerySpecCompiler:
             stmt = stmt.options(*profile_options)
 
         result = await session.execute(stmt)
-        raw_items = list(result.scalars().all())
+        raw_items: list[Any] = list(result.scalars().all())
 
         page_items, next_cursor, has_next = self.paginate_cursor(raw_items, query)
         return page_items, None, next_cursor, has_next

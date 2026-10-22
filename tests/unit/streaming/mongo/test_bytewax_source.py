@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import builtins
 from typing import Any, Literal
 
 import pytest
 from pymongo.errors import OperationFailure
 
+from tests.helpers.extras import MONGO_ISLAND, without_extra
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
 from loom.streaming.mongo._bytewax_source import (  # noqa: E402
@@ -127,25 +128,14 @@ def test_partition_raises_when_oplog_has_expired_and_policy_is_fail(monkeypatch:
     partition.close()
 
 
-def test_build_mongo_client_raises_helpful_import_error(monkeypatch: Any) -> None:
-    real_import = builtins.__import__
-
-    def _fake_import(
-        name: str,
-        globals: dict[str, object] | None = None,
-        locals: dict[str, object] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if name == "pymongo" or name.startswith("pymongo."):
-            raise ImportError("missing pymongo")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", _fake_import)
+def test_build_mongo_client_names_the_missing_extra(monkeypatch: Any) -> None:
+    without_extra(monkeypatch, ["pymongo"], [MONGO_ISLAND])
 
     source = _compiled_source()
-    with pytest.raises(ImportError, match=r"loom-kernel\[mongo\]"):
+    with pytest.raises(MissingExtraError, match="needs the 'mongo' extra") as raised:
         _build_mongo_client(source)
+
+    assert raised.value.extra == "mongo"
 
 
 def _build_partition(
@@ -176,7 +166,7 @@ def _compiled_source(
 ) -> CompiledMongoCDCSource:
     return CompiledMongoCDCSource(
         settings=MongoSourceConfig(
-            uri="mongodb://localhost:27017",
+            url="mongodb://localhost:27017",
             database="app",
             on_oplog_expired=on_oplog_expired,
         ),

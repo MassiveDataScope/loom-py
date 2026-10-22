@@ -60,7 +60,7 @@ def test_dynamodb_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
             "dynamodb": {
                 "region": "eu-west-1",
                 "table": "records",
-                "endpoint_url": "http://localhost:8000",
+                "url": "http://localhost:8000",
             },
         },
         database=None,
@@ -80,7 +80,7 @@ def test_mongo_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
         tmp_path,
         persistence={
             "backend": "mongo",
-            "mongo": {"uri": "mongodb://localhost:27017", "database": "records"},
+            "mongo": {"url": "mongodb://localhost:27017", "database": "records"},
         },
         database=None,
         id_field=UUID4_ID_FIELD,

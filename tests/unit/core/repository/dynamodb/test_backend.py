@@ -18,7 +18,7 @@ from .conftest import FakeClient
 def _wiring(
     monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, table: str
 ) -> PersistenceWiring:
-    monkeypatch.setattr(backend_module, "_build_dynamodb_client", lambda _cfg: fake_client)
+    monkeypatch.setattr(backend_module, "build_aws_client", lambda _service, _cfg: fake_client)
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},

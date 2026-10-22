@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from time import monotonic, sleep, time_ns
-from typing import Any, Generic, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
 
 from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
@@ -17,6 +17,7 @@ from confluent_kafka.admin import AdminClient
 from loom.core.observability.event import Scope, TerminalReason
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
+from loom.core.plugins.optional import import_optional
 from loom.core.tracing import generate_trace_id
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort, KafkaCommitTracker
@@ -46,10 +47,15 @@ from loom.streaming.kafka._wire import DecodeError
 from loom.streaming.kafka.client._consumer import KafkaConsumerClient
 from loom.streaming.kafka.client._producer import KafkaProducerClient
 from loom.streaming.kafka.message._producer import KafkaMessageProducer
-from loom.streaming.mongo._bytewax_source import MongoCDCSource
 from loom.streaming.nodes._boundary import PartitionPolicy
 
+if TYPE_CHECKING:
+    from loom.streaming.mongo._bytewax_source import MongoCDCSource
+
 logger = logging.getLogger(__name__)
+# The change-stream source imports pymongo: an island of the 'mongo' extra,
+# loaded only when a flow reads MongoDB.
+_MONGO_CDC_ISLAND = "loom.streaming.mongo._bytewax_source"
 ItemT = TypeVar("ItemT")
 PayloadT = TypeVar("PayloadT", bound=StreamPayload)
 _CompiledKafkaSource: TypeAlias = CompiledSingleSource | CompiledMultiSource
@@ -789,9 +795,15 @@ def build_runtime_source(
     commit_tracker: KafkaCommitTracker | None = None,
     observability: Any | None = None,
 ) -> KafkaPartitionedSource | MongoCDCSource:
-    """Build the runtime source for one compiled input."""
+    """Build the runtime source for one compiled input.
+
+    Raises:
+        MissingExtraError: When *source* reads MongoDB and the ``mongo`` extra
+            is not installed.
+    """
     if isinstance(source, CompiledMongoCDCSource):
-        return MongoCDCSource(source)
+        island = import_optional(_MONGO_CDC_ISLAND, extra="mongo")
+        return cast("MongoCDCSource", island.MongoCDCSource(source))
     return KafkaPartitionedSource(source, commit_tracker, observability)
 
 

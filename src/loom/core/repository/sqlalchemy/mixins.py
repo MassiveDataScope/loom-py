@@ -414,7 +414,8 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
         columns = self._id_columns()
         key = columns[0] if len(columns) == 1 else tuple_(*columns)
         result = await session.execute(select(sa_model).where(key.in_(ids)))
-        by_id = {self._key_of(obj): obj for obj in result.scalars()}
+        reselected: list[Any] = list(result.scalars())
+        by_id = {self._key_of(obj): obj for obj in reselected}
         return [by_id[obj_id] for obj_id in ids]
 
     def _record_bulk_create(self, objs: list[Any], rows: list[dict[str, Any]]) -> None:

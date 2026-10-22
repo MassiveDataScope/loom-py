@@ -34,6 +34,7 @@ require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
+from loom.core.connections import ClickHouseConnection  # noqa: E402
 from loom.core.errors.codes import ErrorCode  # noqa: E402
 from loom.core.model import (  # noqa: E402
     BaseModel,
@@ -48,7 +49,6 @@ from loom.core.repository.sqlalchemy import session_manager as session_manager_m
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
 from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow  # noqa: E402
 from loom.streaming.nodes._table import DeltaSinkConfig, SqlAlchemySinkConfig  # noqa: E402
-from loom.streaming.nodes._table import _clickhouse as _table_clickhouse  # noqa: E402
 from loom.streaming.nodes._table import _delta as _table_delta  # noqa: E402
 from loom.streaming.nodes._table.common import ClickHouseSinkConfig  # noqa: E402
 from loom.streaming.testing import StreamingTestRunner  # noqa: E402
@@ -146,18 +146,16 @@ class _CHRow(LoomStruct):
 
 
 def _ch_config(table: str = "test_table", **overrides: Any) -> ClickHouseSinkConfig:
-    cfg: dict[str, Any] = {"url": "clickhouse://default:@localhost:18123/default", "table": table}
-    cfg.update(overrides)
-    return ClickHouseSinkConfig.from_config(cfg, default_table=table)
+    cfg: dict[str, Any] = {"table": table, **overrides}
+    connection = ClickHouseConnection(url="clickhouse://default:@localhost:18123/default")
+    return ClickHouseSinkConfig.from_config(cfg, default_table=table, connection=connection)
 
 
 @pytest.fixture
 def mock_ch_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Patch clickhouse_connect.get_client so no server is needed."""
     client = MagicMock()
-    monkeypatch.setattr(
-        _table_clickhouse, "_cc", MagicMock(get_client=MagicMock(return_value=client))
-    )
+    monkeypatch.setattr("clickhouse_connect.get_client", MagicMock(return_value=client))
     return client
 
 

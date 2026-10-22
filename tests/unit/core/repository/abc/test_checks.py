@@ -17,7 +17,7 @@ from loom.core.config import ConfigContext
 from loom.core.repository.abc import CURSOR_SIGNING_CHECK
 
 _DATABASE = {"database": {"url": "${oc.env:DATABASE_URL}"}}
-_MONGO = {"persistence": {"mongo": {"uri": "${oc.env:MONGO_URI}", "database": "store"}}}
+_MONGO = {"persistence": {"mongo": {"url": "${oc.env:MONGO_URI}", "database": "store"}}}
 _SIGNED = {"current_key_id": "2026-10", "keys": {"2026-10": {"env": "CURSOR_KEY_2026_10"}}}
 
 

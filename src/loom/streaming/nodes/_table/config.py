@@ -6,7 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, reject_retired_keys
+from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.persistence.database import (
     DatabaseConfig,
     decode_database_config,
@@ -14,6 +15,7 @@ from loom.core.persistence.database import (
     reject_retired_pool_keys,
 )
 from loom.streaming.nodes._table.common import (
+    SQLALCHEMY_INLINE_DATABASE_KEYS,
     ClickHouseSinkConfig,
     DeltaSinkConfig,
     IntoTable,
@@ -86,9 +88,7 @@ def resolve_sqlalchemy_table_config(
 
 def _inline_database(sink_cfg: Mapping[str, Any]) -> dict[str, Any]:
     """The ``database`` keys of a sink that declares its connection inline."""
-    return {
-        key: sink_cfg[key] for key in ("url", "echo", "pool", "connect_args") if key in sink_cfg
-    }
+    return {key: sink_cfg[key] for key in SQLALCHEMY_INLINE_DATABASE_KEYS if key in sink_cfg}
 
 
 def resolve_delta_table_config(
@@ -139,10 +139,38 @@ def resolve_clickhouse_table_config(
         raise ValueError(
             f"IntoTable '{node.name}': missing shared config section at {database_key}"
         )
-    db_cfg = ctx.section_or_default(database_key, dict, {})
-    effective_cfg["url"] = str(db_cfg.get("http_url") or db_cfg.get("url") or "").strip()
-    sink = ClickHouseSinkConfig.from_config(effective_cfg, default_table=node.table)
+    connection = _clickhouse_connection(ctx, database_key)
+    effective_cfg.pop("database", None)
+    sink = ClickHouseSinkConfig.from_config(
+        effective_cfg, default_table=node.table, connection=connection
+    )
     return ResolvedClickHouseTableConfig(sink=sink)
+
+
+_CLICKHOUSE_SCHEMES = frozenset({"clickhouse", "clickhouses", "http", "https"})
+
+
+def _clickhouse_connection(ctx: ConfigContext, database_key: str) -> ClickHouseConnection:
+    """Decode ``database.<name>`` as the ClickHouse connection every context shares.
+
+    Raises:
+        ValueError: When the section uses the retired ``http_url`` key or holds
+            a database of another engine, naming the section.
+        ConfigError: When the section holds another retired key or is not a
+            valid ClickHouse connection.
+    """
+    raw = ctx.section_or_default(database_key, dict, {})
+    reject_retired_keys(raw, database_key, ClickHouseConnection)
+    if "http_url" in raw:
+        raise ValueError(f"{database_key}.http_url was renamed to url; rename the key")
+    url = str(raw.get("url") or "")
+    scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+    if scheme and scheme.split("+", 1)[0] not in _CLICKHOUSE_SCHEMES:
+        raise ValueError(
+            f"{database_key} holds a {scheme!r} database, but a ClickHouse sink needs a "
+            "ClickHouse connection (a clickhouse:// or http(s):// url)"
+        )
+    return ctx.section(database_key, ClickHouseConnection)
 
 
 def _refuse_url_and_database(

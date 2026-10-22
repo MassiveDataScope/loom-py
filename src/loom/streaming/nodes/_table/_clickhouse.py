@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-import clickhouse_connect as _cc  # type: ignore[import-untyped]
 import msgspec
 
+from loom.core.connections import ClickHouseConnection
+from loom.core.connections.clickhouse.client import build_clickhouse_client
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     _column_names,
@@ -43,6 +45,17 @@ def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
         else:
             result.append(value)
     return result
+
+
+def _bounded(settings: ClickHouseSinkConfig) -> ClickHouseConnection:
+    """Apply ``insert_timeout`` to a connection that declares no timeout of its own."""
+    connection = settings.connection
+    declares = connection.connect_timeout is not None or connection.read_timeout is not None
+    if settings.insert_timeout is None or declares:
+        return connection
+    # The driver takes whole seconds above zero; round a fraction up, never to 0.
+    seconds = max(1, math.ceil(settings.insert_timeout))
+    return msgspec.structs.replace(connection, connect_timeout=seconds, read_timeout=seconds)
 
 
 class _ClickHouseTablePartition:
@@ -83,11 +96,7 @@ class _ClickHouseTablePartition:
         payload_type: type[Any],
         logger: Any = None,
     ) -> None:
-        kwargs: dict[str, Any] = {}
-        if settings.insert_timeout is not None:
-            t = int(settings.insert_timeout)
-            kwargs = {"connect_timeout": t, "send_receive_timeout": t}
-        self._client = _cc.get_client(dsn=settings.url, **kwargs)
+        self._client = build_clickhouse_client(_bounded(settings))
         self._logger = logger
         self._table = settings.table
         self._target = f"ClickHouse table {settings.table!r}"

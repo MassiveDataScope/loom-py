@@ -39,9 +39,9 @@ def test_parses_defaults_when_connection_is_minimal() -> None:
         conn.max_execution_time,
         conn.max_sql_bytes,
         conn.connect_timeout,
-        conn.send_receive_timeout,
+        conn.read_timeout,
         conn.executor_threads,
-        conn.pool_size,
+        conn.pool.size,
     ) == (True, 1000, 10000, 30, 262144, 10, 60, None, None)
 
 
@@ -152,9 +152,16 @@ def test_parses_explicit_credentials_when_declared() -> None:
 
 
 def test_repr_never_exposes_the_explicit_password() -> None:
-    """The hand-written ``repr`` omits the credential fields entirely."""
+    """The ``repr`` masks the credential fields."""
     conn = _parse(_minimal(username="mcp_reader", password="s3cr3t_pw")).connections["analytics"]
     assert "s3cr3t_pw" not in repr(conn)
+
+
+def test_repr_masks_the_backend_settings() -> None:
+    """``settings`` may carry a credential of the backend; the ``repr`` masks it whole."""
+    conn = _parse(_minimal(settings={"http_password": "s3cr3t_pw"})).connections["analytics"]
+    rendered = repr(conn)
+    assert ("s3cr3t_pw" in rendered, "settings='***'" in rendered) == (False, True)
 
 
 def test_fails_when_auth_has_an_unknown_value() -> None:

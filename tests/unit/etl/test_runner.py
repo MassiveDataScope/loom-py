@@ -362,14 +362,14 @@ class TestRunnerFromConfig:
     ) -> None:
         from unittest.mock import MagicMock
 
+        from loom.core.connections import ClickHouseConnection
         from loom.etl.io.targets._clickhouse import ClickHouseClientExecutor
-        from loom.etl.storage._config import ClickHouseConfig
 
-        monkeypatch.setattr("loom.etl.io.targets._clickhouse._clickhouse_connect", MagicMock())
+        monkeypatch.setattr("clickhouse_connect.get_client", MagicMock())
 
         config = StorageConfig(
             defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            clickhouse=ClickHouseConfig(url="clickhouse://user:pass@host:8123/db"),
+            clickhouse=ClickHouseConnection(url="clickhouse://user:pass@host:8123/db"),
         )
         runner = ETLRunner.from_config(config)
 

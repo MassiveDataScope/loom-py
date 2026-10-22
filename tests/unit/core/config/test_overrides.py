@@ -213,6 +213,8 @@ def deployed_file(tmp_path: Path) -> str:
         ("LOOM__DATABASE__POOL__MAX_OVERFLOW", "0", "database.pool.max_overflow"),
         ("LOOM__DATABASE__POOL__TIMEOUT", "5", "database.pool.timeout"),
         ("LOOM__DATABASE__POOL__RECYCLE", "300", "database.pool.recycle"),
+        ("LOOM__DATABASE__CONNECT_TIMEOUT", "5", "database.connect_timeout"),
+        ("LOOM__DATABASE__READ_TIMEOUT", "30", "database.read_timeout"),
         ("LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT", "2", "persistence.dynamodb.read_timeout"),
         (
             "LOOM__PERSISTENCE__DYNAMODB__CONNECT_TIMEOUT",
@@ -221,9 +223,17 @@ def deployed_file(tmp_path: Path) -> str:
         ),
         ("LOOM__PERSISTENCE__DYNAMODB__MAX_ATTEMPTS", "2", "persistence.dynamodb.max_attempts"),
         (
-            "LOOM__PERSISTENCE__DYNAMODB__MAX_POOL_CONNECTIONS",
+            "LOOM__PERSISTENCE__DYNAMODB__POOL__SIZE",
             "8",
-            "persistence.dynamodb.max_pool_connections",
+            "persistence.dynamodb.pool.size",
+        ),
+        ("LOOM__STORAGE__DYNAMODB__READ_TIMEOUT", "9", "storage.dynamodb.read_timeout"),
+        ("LOOM__STORAGE__DYNAMODB__CONNECT_TIMEOUT", "1", "storage.dynamodb.connect_timeout"),
+        ("LOOM__STORAGE__DYNAMODB__MAX_ATTEMPTS", "2", "storage.dynamodb.max_attempts"),
+        (
+            "LOOM__STORAGE__DYNAMODB__POOL__SIZE",
+            "8",
+            "storage.dynamodb.pool.size",
         ),
     ],
 )
