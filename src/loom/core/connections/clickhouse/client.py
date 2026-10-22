@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import clickhouse_connect  # type: ignore[import-untyped]
 from clickhouse_connect.driver import httputil  # type: ignore[import-untyped]
 
-from loom.core.connections._base import merge_extra
+from loom.core.connections import merge_extra
 from loom.core.connections.clickhouse.config import ClickHouseConnection
 
 if TYPE_CHECKING:

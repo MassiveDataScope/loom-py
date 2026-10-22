@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import boto3  # type: ignore[import-untyped]
 from botocore.config import Config  # type: ignore[import-untyped]
 
-from loom.core.connections._base import merge_extra
+from loom.core.connections import merge_extra
 from loom.core.connections.aws.config import AwsClientConfig
 
 if TYPE_CHECKING:

@@ -18,7 +18,7 @@ from typing import Any, ClassVar, Literal
 
 import msgspec
 
-from loom.core.connections._base import ConnectionPool, ConnectionSettings
+from loom.core.connections._base import ConnectionPool, ConnectionSettings, omit_none
 from loom.core.model.types import PositiveInt
 
 RetryMode = Literal["standard", "adaptive"]
@@ -74,7 +74,7 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
         The island turns ``config`` into a ``botocore.config.Config``; an unset
         ``url`` is left out, so boto3 resolves the regional endpoint.
         """
-        options: dict[str, Any] = {
+        return {
             "config": {
                 "max_pool_connections": self.pool.size,
                 "connect_timeout": self.connect_timeout,
@@ -82,11 +82,9 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
                 # total_max_attempts counts the first request; Config's own
                 # max_attempts would count retries only.
                 "retries": {"total_max_attempts": self.max_attempts, "mode": self.retry_mode},
-            }
+            },
+            **omit_none({"endpoint_url": self.url}),
         }
-        if self.url is not None:
-            options["endpoint_url"] = self.url
-        return options
 
 
 __all__ = ["AwsClientConfig", "AwsPool", "RetryMode"]

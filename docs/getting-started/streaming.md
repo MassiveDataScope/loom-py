@@ -34,7 +34,7 @@ connection keys every loom context shares (`url`, `database`, `username`,
 in seconds, and `pool.size`/`pool.timeout`). A ClickHouse sink's
 `database.<name>` takes the ClickHouse keys (`url`, `username`, `password`,
 `connect_timeout`, `read_timeout`, `pool.size`). See
-[ADR 0006](../architecture/adr/0006-hexagonal-layers.md#connection-standard).
+ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
 
 Upgrade note: `uri` is now `url`, `max_pool_size` is now `pool.size` and
 `server_selection_timeout_ms` is now `server_selection_timeout`, in seconds;

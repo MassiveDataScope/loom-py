@@ -7,8 +7,7 @@ from typing import Literal
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigKey
-from loom.core.connections._base import reject_retired_keys
+from loom.core.config import ConfigContext, ConfigKey, reject_retired_keys
 from loom.core.connections.mongo import MongoConnection
 from loom.core.model import LoomFrozenStruct
 from loom.core.routing import DefaultingRouteResolver, LogicalRef

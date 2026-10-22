@@ -60,13 +60,16 @@ class ConnectionSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unk
     The repr masks the fields named in ``_SECRET_FIELDS`` and the credentials
     of the URIs named in ``_URI_FIELDS``, so a connection is safe in a log
     line, a traceback or a container's repr. ``_RETIRED_KEYS`` maps each key
-    the engine's sections no longer take to its replacement, for
-    :func:`reject_retired_keys`.
+    the engine's sections no longer take to the key path replacing it, and
+    ``_RETIRED_HINTS`` adds a note to the error of a retired key whose
+    replacement needs one (a change of unit), for
+    :func:`loom.core.config.reject_retired_keys`.
     """
 
     _SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"password"})
     _URI_FIELDS: ClassVar[frozenset[str]] = frozenset({"url"})
     _RETIRED_KEYS: ClassVar[Mapping[str, str]] = MappingProxyType({})
+    _RETIRED_HINTS: ClassVar[Mapping[str, str]] = MappingProxyType({})
 
     def __repr__(self) -> str:
         parts = []
@@ -86,6 +89,11 @@ class ConnectionSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unk
         """Return each key this connection's sections no longer take, mapped to its replacement."""
         return cls._RETIRED_KEYS
 
+    @classmethod
+    def retired_hints(cls) -> Mapping[str, str]:
+        """Return the note added to the error of each retired key that needs one."""
+        return cls._RETIRED_HINTS
+
 
 class ConnectionPool(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """The ``pool`` of a connection: what the client keeps open.
@@ -95,31 +103,6 @@ class ConnectionPool(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown
     """
 
     size: PositiveInt | None = None
-
-
-def reject_retired_keys(data: object, path: str, connection: type[ConnectionSettings]) -> None:
-    """Fail when *data*, read from *path*, holds a key *connection* no longer takes.
-
-    msgspec would refuse the key as unknown; this names the replacement
-    instead, at startup.
-
-    Args:
-        data: The section as written; anything but a mapping is left to the decoder.
-        path: Dotted path the section was read from.
-        connection: The connection type the section decodes into.
-
-    Raises:
-        ConfigError: Naming the retired key and its ``<path>.<key>`` replacement.
-    """
-    # Imported here, not at the top: loom.core.config's resolvers read
-    # AwsClientConfig, so the config package imports this one first.
-    from loom.core.config.errors import ConfigError
-
-    if not isinstance(data, Mapping):
-        return
-    for retired, replacement in connection.retired_keys().items():
-        if retired in data:
-            raise ConfigError(f"{path}.{retired} was removed; use {path}.{replacement}")
 
 
 def require_text(value: str, field: str) -> None:
@@ -132,12 +115,18 @@ def require_text(value: str, field: str) -> None:
         raise ValueError(f"{field} must not be empty")
 
 
+def omit_none(options: Mapping[str, Any]) -> dict[str, Any]:
+    """Return *options* without the ones left ``None``, which keep the driver's default."""
+    return {name: value for name, value in options.items() if value is not None}
+
+
 def merge_extra(
     built: Mapping[str, Any],
     extra: Mapping[str, Any],
     connection: ConnectionSettings,
     *,
     reserved: Collection[str] = (),
+    case_insensitive: bool = False,
 ) -> dict[str, Any]:
     """Merge a context's own client options into the options built from a connection.
 
@@ -153,6 +142,8 @@ def merge_extra(
         connection: The connection the options were derived from.
         reserved: Further option names the island decides outside *built*
             (the boto3 session's ``region_name``...).
+        case_insensitive: Compare option names ignoring case, for a driver
+            that reads them so (pymongo: ``maxpoolsize`` is ``maxPoolSize``).
 
     Returns:
         *built* updated with *extra*.
@@ -161,8 +152,9 @@ def merge_extra(
         ValueError: When *extra* names a field of *connection*, an option of
             *built* or a reserved option, naming each.
     """
-    taken = {*connection.__struct_fields__, *built, *reserved}
-    clashes = sorted(name for name in extra if name in taken)
+    fold = str.lower if case_insensitive else str
+    taken = {fold(name) for name in (*connection.__struct_fields__, *built, *reserved)}
+    clashes = sorted(name for name in extra if fold(name) in taken)
     if clashes:
         raise ValueError(
             f"{type(connection).__name__} already decides {', '.join(clashes)}; "
@@ -175,6 +167,7 @@ __all__ = [
     "ConnectionPool",
     "ConnectionSettings",
     "merge_extra",
+    "omit_none",
     "redact_uri",
-    "reject_retired_keys",
+    "require_text",
 ]

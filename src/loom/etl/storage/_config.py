@@ -18,13 +18,13 @@ if TYPE_CHECKING:
 import msgspec
 from deltalake import CommitProperties, WriterProperties
 
+from loom.core.config import reject_retired_keys
 from loom.core.connections import (
     AwsClientConfig,
     ClickHouseConnection,
     ConnectionSettings,
     MongoConnection,
 )
-from loom.core.connections._base import reject_retired_keys
 from loom.core.model import LoomFrozenStruct
 from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator

@@ -16,7 +16,13 @@ resolvers among them, load the persistence layer.
 
 from __future__ import annotations
 
-from loom.core.connections._base import ConnectionPool, ConnectionSettings, redact_uri
+from loom.core.connections._base import (
+    ConnectionPool,
+    ConnectionSettings,
+    merge_extra,
+    redact_uri,
+    require_text,
+)
 from loom.core.connections.aws import AwsClientConfig, RetryMode
 from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.connections.mongo import MongoConnection
@@ -28,5 +34,7 @@ __all__ = [
     "ConnectionSettings",
     "MongoConnection",
     "RetryMode",
+    "merge_extra",
     "redact_uri",
+    "require_text",
 ]

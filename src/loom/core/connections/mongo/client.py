@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pymongo import AsyncMongoClient, MongoClient
 from pymongo.server_api import ServerApi
 
-from loom.core.connections._base import merge_extra
+from loom.core.connections import merge_extra
 from loom.core.connections.mongo.config import MongoConnection
 
 if TYPE_CHECKING:
@@ -59,4 +59,5 @@ def _options(connection: MongoConnection, extra: dict[str, Any]) -> dict[str, An
     built = connection.client_options()
     if connection.server_api_version is not None:
         built["server_api"] = ServerApi(connection.server_api_version)
-    return merge_extra(built, extra, connection)
+    # pymongo reads option names case-insensitively: maxpoolsize is maxPoolSize.
+    return merge_extra(built, extra, connection, case_insensitive=True)

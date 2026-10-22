@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from loom.core.config import ConfigError
@@ -13,7 +15,7 @@ from loom.core.connections import (
 )
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
-from loom.core.persistence.database import DatabaseConfig
+from loom.core.persistence.database import DatabaseConfig, decode_database_config
 
 # --------------------------------------------------------------------------- AWS
 
@@ -124,27 +126,39 @@ def test_a_database_without_timeouts_adds_no_connect_argument() -> None:
     assert DatabaseConfig(url="sqlite+aiosqlite:///:memory:").client_options() == {}
 
 
+def test_the_options_are_the_complete_connect_arguments() -> None:
+    config = DatabaseConfig(
+        url="postgresql+asyncpg://h/db", connect_timeout=3, connect_args={"ssl": "require"}
+    )
+
+    assert config.client_options() == {"ssl": "require", "timeout": 3}
+
+
 @pytest.mark.parametrize(
-    ("config", "field"),
+    ("url", "field"),
     [
-        (DatabaseConfig(url="sqlite+aiosqlite:///:memory:", connect_timeout=3), "connect_timeout"),
-        (DatabaseConfig(url="postgresql+psycopg://h/db", read_timeout=3), "read_timeout"),
+        ("sqlite+aiosqlite:///:memory:", "connect_timeout"),
+        ("postgresql+psycopg://h/db", "read_timeout"),
     ],
 )
-def test_a_timeout_for_another_driver_points_to_connect_args(
-    config: DatabaseConfig, field: str
-) -> None:
-    with pytest.raises(ConfigError, match=rf"{field} applies to postgresql\+asyncpg URLs only"):
-        config.client_options()
+def test_a_timeout_for_another_driver_points_to_connect_args(url: str, field: str) -> None:
+    timeout: dict[str, Any] = {field: 3}
+    with pytest.raises(ValueError, match=rf"{field} applies to postgresql\+asyncpg URLs only"):
+        DatabaseConfig(url=url, **timeout)
 
 
 def test_a_timeout_also_set_in_connect_args_is_refused() -> None:
-    config = DatabaseConfig(
-        url="postgresql+asyncpg://h/db", read_timeout=30, connect_args={"command_timeout": 10}
-    )
+    with pytest.raises(ValueError, match="connect_args sets command_timeout"):
+        DatabaseConfig(
+            url="postgresql+asyncpg://h/db", read_timeout=30, connect_args={"command_timeout": 10}
+        )
 
-    with pytest.raises(ConfigError, match="connect_args sets command_timeout"):
-        config.client_options()
+
+def test_a_decoded_section_names_its_path_when_a_timeout_does_not_apply() -> None:
+    section = {"url": "sqlite+aiosqlite:///:memory:", "connect_timeout": 3}
+
+    with pytest.raises(ConfigError, match=r"'database\.main'.*connect_timeout applies"):
+        decode_database_config(section, path="database.main")
 
 
 def test_the_database_repr_hides_the_url_credentials() -> None:
@@ -154,3 +168,14 @@ def test_the_database_repr_hides_the_url_credentials() -> None:
 
     assert "s3cr3t" not in shown
     assert "postgresql+asyncpg://***@h/db" in shown
+
+
+def test_the_database_repr_hides_a_password_inside_connect_args() -> None:
+    config = DatabaseConfig(
+        url="postgresql+asyncpg://h/db", connect_args={"password": "s3cr3t", "ssl": "require"}
+    )
+
+    shown = repr(config) + repr([config])
+
+    assert "s3cr3t" not in shown
+    assert "connect_args='***'" in shown

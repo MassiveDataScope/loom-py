@@ -213,6 +213,8 @@ def deployed_file(tmp_path: Path) -> str:
         ("LOOM__DATABASE__POOL__MAX_OVERFLOW", "0", "database.pool.max_overflow"),
         ("LOOM__DATABASE__POOL__TIMEOUT", "5", "database.pool.timeout"),
         ("LOOM__DATABASE__POOL__RECYCLE", "300", "database.pool.recycle"),
+        ("LOOM__DATABASE__CONNECT_TIMEOUT", "5", "database.connect_timeout"),
+        ("LOOM__DATABASE__READ_TIMEOUT", "30", "database.read_timeout"),
         ("LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT", "2", "persistence.dynamodb.read_timeout"),
         (
             "LOOM__PERSISTENCE__DYNAMODB__CONNECT_TIMEOUT",

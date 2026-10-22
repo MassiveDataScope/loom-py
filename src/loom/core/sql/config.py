@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from urllib.parse import parse_qs, urlsplit
 
 import msgspec
 
-from loom.core.connections._base import redact_uri, reject_retired_keys
+from loom.core.config import reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
@@ -125,7 +125,8 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
         pool: HTTP connections the client keeps; ``pool.size`` above zero
             (driver default if ``None``).
         settings: Extra backend settings handed to the executor at
-            construction. They can never override the policy.
+            construction. They can never override the policy and never
+            show in a repr.
         sql_endpoint: Optional REST endpoint settings for this connection.
 
     Raises:
@@ -135,6 +136,8 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
             identity. Surfaced as ``ConfigError`` when parsed through the
             config loader.
     """
+
+    _SECRET_FIELDS: ClassVar[frozenset[str]] = ClickHouseConnection._SECRET_FIELDS | {"settings"}
 
     backend: Literal["clickhouse"]
     allowed_roles: tuple[str, ...] = ()
@@ -155,16 +158,6 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
         _validate_roles(self.allowed_roles, self.default_role)
         _validate_limits(self.default_limit, self.max_limit)
         _validate_endpoint(self.sql_endpoint, self.allowed_roles, self.default_role)
-
-    def __repr__(self) -> str:
-        return (
-            f"SqlConnectionConfig(backend={self.backend!r},"
-            f" url={redact_uri(self.url)!r},"
-            f" allowed_roles={self.allowed_roles!r},"
-            f" default_role={self.default_role!r},"
-            f" readonly={self.readonly!r},"
-            f" sql_endpoint={self.sql_endpoint!r})"
-        )
 
 
 class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):

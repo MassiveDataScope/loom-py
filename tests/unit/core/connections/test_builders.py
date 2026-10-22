@@ -16,6 +16,7 @@ from loom.core.connections import (
     ClickHouseConnection,
     ConnectionPool,
     MongoConnection,
+    merge_extra,
 )
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
@@ -128,6 +129,23 @@ def test_mongo_builder_refuses_an_extra_the_connection_decides() -> None:
         island.build_mongo_client(connection, maxPoolSize=1)
     with pytest.raises(ValueError, match="host"):
         island.build_mongo_client(connection, host="mongodb://other")
+
+
+@pytest.mark.parametrize("option", ["maxpoolsize", "MAXPOOLSIZE", "SocketTimeoutMS", "Host"])
+def test_mongo_builder_compares_option_names_ignoring_case(option: str) -> None:
+    island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+    connection = MongoConnection(
+        url="mongodb://h", database="app", read_timeout=5, pool=MongoPool(size=4)
+    )
+
+    with pytest.raises(ValueError, match=option):
+        island.build_mongo_client(connection, **{option: 1})
+
+
+def test_merge_extra_keeps_the_case_of_other_drivers() -> None:
+    connection = ClickHouseConnection(url="clickhouse://h/db")
+
+    assert merge_extra({"dsn": "x"}, {"DSN": "y"}, connection) == {"dsn": "x", "DSN": "y"}
 
 
 # -------------------------------------------------------------------- ClickHouse

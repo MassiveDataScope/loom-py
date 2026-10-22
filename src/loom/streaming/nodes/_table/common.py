@@ -91,6 +91,7 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.model.convert import to_column_value
 from loom.core.model.introspection import get_column_fields
+from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
@@ -292,8 +293,10 @@ def _optional_int(value: Any, default: int) -> int:
 _BUFFER_KEYS: frozenset[str] = frozenset(
     {"buffer_max_records", "buffer_max_bytes", "buffer_max_age_s", "flush_on_shutdown"}
 )
-_SQLALCHEMY_INLINE_DATABASE_KEYS: frozenset[str] = frozenset({"echo", "pool", "connect_args"})
-"""Database keys an inline-``url`` sink takes, besides ``url``: the ``database`` contract."""
+SQLALCHEMY_INLINE_DATABASE_KEYS: frozenset[str] = frozenset(DatabaseConfig.__struct_fields__) - {
+    "schema"
+}
+"""Database keys an inline-``url`` sink takes: the ``database`` contract but ``schema``."""
 _SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "database", "url", "chunk_size"}
 _DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
     "table",
@@ -373,7 +376,7 @@ class SqlAlchemySinkConfig:
         known = (
             _SQLALCHEMY_SINK_KEYS
             if database
-            else _SQLALCHEMY_SINK_KEYS | _SQLALCHEMY_INLINE_DATABASE_KEYS
+            else _SQLALCHEMY_SINK_KEYS | SQLALCHEMY_INLINE_DATABASE_KEYS
         )
         _refuse_unknown_keys(config, known, sink="SQLAlchemy")
         if not table:
@@ -579,6 +582,7 @@ def _validate_delta_mode(value: object) -> Literal["error", "append", "ignore"]:
 
 
 __all__ = [
+    "SQLALCHEMY_INLINE_DATABASE_KEYS",
     "Backend",
     "ClickHouseSinkConfig",
     "DeltaSinkConfig",

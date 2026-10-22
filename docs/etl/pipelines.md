@@ -194,7 +194,7 @@ observability:
 
 `storage.clickhouse`, `storage.mongo` and `storage.dynamodb` take the same keys
 as every other loom context using the engine
-([ADR 0006](../architecture/adr/0006-hexagonal-layers.md#connection-standard));
+(ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`));
 declaring a section enables its sources, omitting it disables them:
 
 ```yaml

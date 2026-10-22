@@ -411,7 +411,7 @@ The section is `AwsClientConfig` plus `table`: the same keys and defaults
 apply wherever loom calls AWS (the ETL's `storage.dynamodb`, the `secrets`
 and `ssm` resolvers, the SNS notifier), and `profile` and `url` (an
 endpoint override; absent, the AWS regional endpoint) are accepted too. Credentials never come from configuration; boto3's default
-chain applies. See [ADR 0006](../architecture/adr/0006-hexagonal-layers.md).
+chain applies. See ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
 
 ## Health
 
@@ -629,7 +629,7 @@ class Measurement(BaseModel):
 ## Upgrade notes
 
 - Every engine's connection follows one standard
-  ([ADR 0006](../architecture/adr/0006-hexagonal-layers.md#connection-standard)):
+  (ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)):
   `url`, `username`/`password`, `connect_timeout` and `read_timeout` in
   seconds, `max_attempts`, and the pool under `pool` (`pool.size`,
   `pool.timeout`). The old keys stop startup naming the new one:
@@ -661,7 +661,7 @@ class Measurement(BaseModel):
   `MissingExtraError` (an `ImportError`) naming the extra, from the ETL
   sources and from the Mongo change-stream source alike.
 - Each engine's connection has one type, shared by every context
-  ([ADR 0006](../architecture/adr/0006-hexagonal-layers.md)):
+  (ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)):
   `AwsClientConfig`, `MongoConnection`, `ClickHouseConnection` and
   `DatabaseConfig`, in `loom.core.connections`. `loom.etl.storage.ClickHouseConfig`
   and `MongoConfig` and the ETL's `DynamoDbConfig` are gone; so are

@@ -51,7 +51,7 @@ Each engine has a package of its own, whose `__init__` only re-exports:
 
 ```text
 loom/core/connections/
-  _base.py            ConnectionSettings, ConnectionPool, merge_extra, redact_uri, reject_retired_keys
+  _base.py            ConnectionSettings, ConnectionPool, merge_extra, redact_uri, require_text
   <engine>/config.py  the connection type(s), the pool type, client_options()
   <engine>/loader.py  the <Engine>Island Protocol and its typed loader
   <engine>/client.py  the island: imports the SDK at its top, builds the client
@@ -74,6 +74,7 @@ it never declares a connection key again. A subclass repeats
 `frozen=True, kw_only=True` (msgspec applies `kw_only` per class, and type
 checkers refuse a non-frozen subclass of a frozen class); it changes a default
 by redeclaring the field. Secrets never show in a repr: `password` is masked
+(and so are the relational `connect_args` and the SQL service's `settings`),
 and the credentials of a URL are replaced by `***`.
 
 ### Connection standard
@@ -103,17 +104,21 @@ Each engine type has one method, `client_options()`, that translates its
 standard and engine fields into the driver's keyword names and units, leaving
 out what is unset: `Session.client` and `botocore.Config` keywords for AWS,
 `MongoClient` keywords in milliseconds for MongoDB, `get_client` keywords for
-ClickHouse (`read_timeout` becomes `send_receive_timeout`), the asyncpg
-`connect()` arguments for `DatabaseConfig` (`timeout` and `command_timeout`,
-for a `postgresql+asyncpg` URL only; another driver keeps its own options in
-`connect_args`). It returns plain data and imports no SDK; the SDK objects
-(`botocore.Config`, `ServerApi`, the urllib3 pool manager) are built only in
-the island, from what `client_options()` returned.
+ClickHouse (`read_timeout` becomes `send_receive_timeout`), the complete
+driver `connect()` arguments for `DatabaseConfig` (`connect_args` plus the
+asyncpg `timeout` and `command_timeout`, for a `postgresql+asyncpg` URL only;
+another driver keeps its own options in `connect_args`). It only translates:
+a combination the driver cannot take fails when the section decodes. It
+returns plain data and imports no SDK; the SDK objects (`botocore.Config`,
+`ServerApi`, the urllib3 pool manager) are built only in the island, from what
+`client_options()` returned.
 
 A key the standard retired (`endpoint_url`, `max_pool_connections`, `uri`,
 `max_pool_size`, `server_selection_timeout_ms`, `send_receive_timeout`,
 `pool_size`) stops startup with a `ConfigError` naming its replacement, in
-every section of the engine.
+every section of the engine. A type lists them in `_RETIRED_KEYS`, as key
+paths; `loom.core.config.reject_retired_keys` reads them, so the connection
+types never import the config layer.
 
 ### One client builder per engine
 
@@ -127,7 +132,8 @@ DynamoDB repository and the SQL service's ClickHouse transport do). A context
 calls the builder passing only options the connection does not decide
 (`tz_aware` for the Mongo repository, `query_retries` for the SQL service); an
 option naming a connection field, or one `client_options()` and the island
-already produced, is refused. boto3 clients get a session of their own, as
+already produced, is refused (for MongoDB whatever its case, as pymongo reads
+option names). boto3 clients get a session of their own, as
 boto3 advises for concurrent use.
 
 Each loader declares the island's surface as a Protocol, with the island's own

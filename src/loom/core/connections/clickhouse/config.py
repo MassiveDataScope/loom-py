@@ -14,7 +14,12 @@ from typing import Any, ClassVar
 
 import msgspec
 
-from loom.core.connections._base import ConnectionPool, ConnectionSettings, require_text
+from loom.core.connections._base import (
+    ConnectionPool,
+    ConnectionSettings,
+    omit_none,
+    require_text,
+)
 from loom.core.model.types import PositiveInt
 
 
@@ -65,7 +70,7 @@ class ClickHouseConnection(
             "connect_timeout": self.connect_timeout,
             "send_receive_timeout": self.read_timeout,
         }
-        return {"dsn": self.url, **{k: v for k, v in named.items() if v is not None}}
+        return {"dsn": self.url, **omit_none(named)}
 
 
 __all__ = ["ClickHouseConnection"]

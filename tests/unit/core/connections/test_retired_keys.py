@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
+from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.sql.config import reject_retired_sql_keys
@@ -20,7 +23,7 @@ _AWS_RETIRED = [
 _MONGO_RETIRED = [
     ("uri", "mongodb://h", "url"),
     ("max_pool_size", 8, "pool.size"),
-    ("server_selection_timeout_ms", 500, "server_selection_timeout, in seconds"),
+    ("server_selection_timeout_ms", 500, "server_selection_timeout"),
 ]
 _CLICKHOUSE_RETIRED = [
     ("send_receive_timeout", 60, "read_timeout"),
@@ -109,6 +112,25 @@ def test_cdc_mongo_sources(path: str, retired: str, value: Any, replacement: str
 
     with pytest.raises(ConfigError, match=_names(path, retired, replacement)):
         load_mongo_config(ctx)
+
+
+def test_a_retired_key_whose_unit_changed_says_so() -> None:
+    source = {"url": "mongodb://h", "database": "app", "server_selection_timeout_ms": 500}
+    ctx = ConfigContext.from_dict({"mongo": {"source": source}})
+
+    with pytest.raises(ConfigError) as caught:
+        load_mongo_config(ctx)
+
+    assert str(caught.value) == (
+        "mongo.source.server_selection_timeout_ms was removed; "
+        "use mongo.source.server_selection_timeout (in seconds)"
+    )
+
+
+def test_every_retired_key_maps_to_a_key_path_only() -> None:
+    for connection in (MongoConnection, ClickHouseConnection, AwsClientConfig, DatabaseConfig):
+        for replacement in connection.retired_keys().values():
+            assert re.fullmatch(r"\w+(\.\w+)*", replacement), (connection, replacement)
 
 
 def test_cdc_mongo_sources_decode_without_a_retired_key() -> None:

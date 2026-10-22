@@ -15,7 +15,12 @@ from typing import Any, ClassVar
 
 import msgspec
 
-from loom.core.connections._base import ConnectionPool, ConnectionSettings, require_text
+from loom.core.connections._base import (
+    ConnectionPool,
+    ConnectionSettings,
+    omit_none,
+    require_text,
+)
 from loom.core.model.types import PositiveInt
 
 _MS_PER_SECOND = 1000
@@ -56,8 +61,11 @@ class MongoConnection(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
         {
             "uri": "url",
             "max_pool_size": "pool.size",
-            "server_selection_timeout_ms": "server_selection_timeout, in seconds",
+            "server_selection_timeout_ms": "server_selection_timeout",
         }
+    )
+    _RETIRED_HINTS: ClassVar[Mapping[str, str]] = MappingProxyType(
+        {"server_selection_timeout_ms": "in seconds"}
     )
 
     url: str
@@ -80,23 +88,24 @@ class MongoConnection(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
         ``server_api_version`` is left to the island, which builds the driver's
         ``ServerApi`` from it.
         """
-        options: dict[str, Any] = {"host": self.url}
         named = {
             "username": self.username,
             "password": self.password,
             "maxPoolSize": self.pool.size,
         }
-        options.update({name: value for name, value in named.items() if value is not None})
-        seconds = {
-            "connectTimeoutMS": self.connect_timeout,
-            "socketTimeoutMS": self.read_timeout,
-            "serverSelectionTimeoutMS": self.server_selection_timeout,
-            "waitQueueTimeoutMS": self.pool.timeout,
-        }
-        options.update(
-            {name: value * _MS_PER_SECOND for name, value in seconds.items() if value is not None}
+        seconds = omit_none(
+            {
+                "connectTimeoutMS": self.connect_timeout,
+                "socketTimeoutMS": self.read_timeout,
+                "serverSelectionTimeoutMS": self.server_selection_timeout,
+                "waitQueueTimeoutMS": self.pool.timeout,
+            }
         )
-        return options
+        return {
+            "host": self.url,
+            **omit_none(named),
+            **{name: value * _MS_PER_SECOND for name, value in seconds.items()},
+        }
 
 
 __all__ = ["MongoConnection", "MongoPool"]

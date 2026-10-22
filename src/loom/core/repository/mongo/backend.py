@@ -15,9 +15,8 @@ from typing import Any, ClassVar, Literal
 
 from pymongo import AsyncMongoClient
 
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
 from loom.core.config.keys import ConfigKey
-from loom.core.connections._base import reject_retired_keys
 from loom.core.connections.mongo import MongoConnection
 from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel

@@ -34,17 +34,6 @@ _DEFINING_MODULES = (
     loom.streaming.mongo._config,
 )
 
-_RETIRED_NAMES = frozenset(
-    {
-        "uri",
-        "endpoint_url",
-        "pool_size",
-        "max_pool_size",
-        "max_pool_connections",
-        "send_receive_timeout",
-    }
-)
-
 
 def _loom_subclasses(root: type) -> list[type]:
     found: list[type] = []
@@ -57,7 +46,25 @@ def _loom_subclasses(root: type) -> list[type]:
     return sorted(found, key=lambda cls: cls.__qualname__)
 
 
-_TYPES = [*_loom_subclasses(ConnectionSettings), *_loom_subclasses(ConnectionPool)]
+_CONNECTION_TYPES = _loom_subclasses(ConnectionSettings)
+_POOL_TYPES = _loom_subclasses(ConnectionPool)
+_TYPES = [*_CONNECTION_TYPES, *_POOL_TYPES]
+
+_RETIRED_NAMES = frozenset(key for cls in _CONNECTION_TYPES for key in cls.retired_keys())
+"""Every key a connection's sections no longer take, as the connection types list them."""
+_MOVED_UNDER_POOL = frozenset(
+    key
+    for cls in _CONNECTION_TYPES
+    for key, replacement in cls.retired_keys().items()
+    if replacement == f"pool.{key}"
+)
+"""Retired top-level keys that moved under ``pool`` keeping their name (``max_overflow``)."""
+
+
+def _banned_names(kind: type) -> frozenset[str]:
+    if kind in _POOL_TYPES:
+        return _RETIRED_NAMES - _MOVED_UNDER_POOL
+    return _RETIRED_NAMES
 
 
 def test_the_walk_finds_every_engine_and_context() -> None:
@@ -78,17 +85,24 @@ def test_the_walk_finds_every_engine_and_context() -> None:
     } <= names
 
 
+def test_the_retired_names_come_from_every_engine() -> None:
+    engines = [cls for cls in _CONNECTION_TYPES if ConnectionSettings in cls.__bases__]
+
+    assert all(cls.retired_keys() for cls in engines)
+
+
 @pytest.mark.parametrize("kind", _TYPES, ids=lambda cls: cls.__name__)
 def test_no_field_uses_a_retired_name_or_milliseconds(kind: type[ConnectionSettings]) -> None:
     offending = sorted(
-        name for name in kind.__struct_fields__ if name in _RETIRED_NAMES or name.endswith("_ms")
+        name
+        for name in kind.__struct_fields__
+        if name in _banned_names(kind) or name.endswith("_ms")
     )
 
     assert offending == []
 
 
-_ENGINE_TYPES = _loom_subclasses(ConnectionSettings)
-_ENGINES = [cls for cls in _ENGINE_TYPES if ConnectionSettings in cls.__bases__]
+_ENGINES = [cls for cls in _CONNECTION_TYPES if ConnectionSettings in cls.__bases__]
 
 
 def test_each_engine_type_translates_its_fields_for_its_driver() -> None:

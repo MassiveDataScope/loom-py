@@ -108,6 +108,8 @@ OVERRIDABLE: Final = (
     "database.pool.max_overflow",
     "database.pool.timeout",
     "database.pool.recycle",
+    "database.connect_timeout",
+    "database.read_timeout",
     "persistence.dynamodb.pool.size",
     "persistence.dynamodb.connect_timeout",
     "persistence.dynamodb.read_timeout",

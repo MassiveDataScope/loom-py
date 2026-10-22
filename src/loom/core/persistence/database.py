@@ -20,8 +20,8 @@ from typing import Any, ClassVar, Final, Literal
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
-from loom.core.connections._base import ConnectionPool, ConnectionSettings, reject_retired_keys
+from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_keys
+from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
 
@@ -119,7 +119,8 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
     Keys outside this contract are tolerated at the top level: the section
     also holds the named databases of streaming sinks (``database.<name>``).
     ``pool`` and ``schema``, each with a single definition, refuse them. The
-    repr hides the credentials of the URL.
+    repr hides the credentials of the URL and the whole ``connect_args``,
+    which may carry a password or a TLS key.
 
     Args:
         url: SQLAlchemy async URL; never empty.
@@ -131,8 +132,15 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
             URLs only (asyncpg ``timeout``).
         read_timeout: Seconds a statement may run; ``postgresql+asyncpg`` URLs
             only (asyncpg ``command_timeout``).
+
+    Raises:
+        ValueError: When the URL is empty, a timeout is set for a URL that is
+            not ``postgresql+asyncpg``, or ``connect_args`` sets the asyncpg
+            argument a timeout decides. Surfaced as ``ConfigError``, naming
+            the section, through :func:`decode_database_config`.
     """
 
+    _SECRET_FIELDS: ClassVar[frozenset[str]] = ConnectionSettings._SECRET_FIELDS | {"connect_args"}
     _RETIRED_KEYS: ClassVar[Mapping[str, str]] = MappingProxyType(
         {
             "pool_pre_ping": "pool.pre_ping",
@@ -151,37 +159,41 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
     connect_timeout: PositiveInt | None = None
     read_timeout: PositiveInt | None = None
 
-    def client_options(self) -> dict[str, Any]:
-        """Return what the standard timeouts add to the driver's ``connect_args``.
-
-        Only asyncpg takes them, as ``timeout`` and ``command_timeout``; any
-        other driver keeps its own option names, set in ``connect_args``.
-
-        Raises:
-            ConfigError: When a timeout is set for a URL that is not
-                ``postgresql+asyncpg``, or ``connect_args`` sets the asyncpg
-                argument that timeout decides.
-        """
-        declared = {
-            field: value
-            for field in _ASYNCPG_TIMEOUTS
-            if (value := getattr(self, field)) is not None
-        }
-        if not declared:
-            return {}
+    def __post_init__(self) -> None:
+        require_text(self.url, "url")
+        timeouts = self._asyncpg_timeouts()
+        if not timeouts:
+            return
         if self.url.split("://", 1)[0].lower() != _ASYNCPG:
-            raise ConfigError(
-                f"{', '.join(declared)} applies to {_ASYNCPG} URLs only; "
+            declared = ", ".join(
+                field for field in _ASYNCPG_TIMEOUTS if getattr(self, field) is not None
+            )
+            raise ValueError(
+                f"{declared} applies to {_ASYNCPG} URLs only; "
                 "set the driver's own timeout in connect_args"
             )
-        options = {_ASYNCPG_TIMEOUTS[field]: value for field, value in declared.items()}
-        clashes = sorted(set(options) & set(self.connect_args))
+        clashes = sorted(set(timeouts) & set(self.connect_args))
         if clashes:
-            raise ConfigError(
+            raise ValueError(
                 f"connect_args sets {', '.join(clashes)}, which connect_timeout and "
                 "read_timeout decide; set each timeout in one place"
             )
-        return options
+
+    def client_options(self) -> dict[str, Any]:
+        """Return the driver's ``connect()`` arguments: ``connect_args`` plus the standard timeouts.
+
+        Only asyncpg takes the timeouts, as ``timeout`` and ``command_timeout``;
+        any other driver keeps its own option names, set in ``connect_args``.
+        """
+        return {**self.connect_args, **self._asyncpg_timeouts()}
+
+    def _asyncpg_timeouts(self) -> dict[str, int]:
+        """Return the declared standard timeouts under their asyncpg argument names."""
+        return {
+            argument: value
+            for field, argument in _ASYNCPG_TIMEOUTS.items()
+            if (value := getattr(self, field)) is not None
+        }
 
 
 def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseConfig:
@@ -204,12 +216,6 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
         config = msgspec.convert(dict(data), DatabaseConfig, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(f"Config section {path!r} failed validation: {exc}") from exc
-    if not config.url.strip():
-        raise ConfigError(f"Config section {path!r}: 'url' must not be empty")
-    try:
-        config.client_options()
-    except ConfigError as exc:
-        raise ConfigError(f"Config section {path!r}: {exc}") from exc
     return config
 
 

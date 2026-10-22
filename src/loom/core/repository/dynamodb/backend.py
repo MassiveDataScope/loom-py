@@ -7,8 +7,7 @@ from collections.abc import Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
-from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections._base import reject_retired_keys
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
