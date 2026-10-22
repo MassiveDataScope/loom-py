@@ -39,7 +39,7 @@ from loom.core.persistence.database import (
     SchemaUser,
     load_database_config,
 )
-from loom.core.schema_names import SchemaNames
+from loom.core.schema_names import SchemaNames, schema_identifier
 
 if TYPE_CHECKING:
     from sqlalchemy import MetaData
@@ -187,8 +187,6 @@ def _discover(discovery: _Discovery) -> DiscoveryResult:
 
 
 def _schema_name(name: str) -> str:
-    from loom.core.backend.scoped_ddl import schema_identifier
-
     try:
         return schema_identifier(name)
     except ValueError as exc:

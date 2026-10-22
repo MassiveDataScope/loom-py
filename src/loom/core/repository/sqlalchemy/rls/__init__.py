@@ -15,7 +15,6 @@ from loom.core.repository.sqlalchemy.rls.config import (
     BootstrapConfig,
     DatabaseRoles,
     DatabaseUser,
-    SchemaNames,
 )
 from loom.core.repository.sqlalchemy.rls.elevate import (
     SQLAlchemyElevationSink,
@@ -30,6 +29,7 @@ from loom.core.repository.sqlalchemy.rls.provider import install_pool_reset, rls
 from loom.core.repository.sqlalchemy.rls.schema import create_schema
 from loom.core.repository.sqlalchemy.rls.sources import register_scope_source
 from loom.core.repository.sqlalchemy.rls.verify import Finding, Report, verify
+from loom.core.schema_names import SchemaNames
 
 __all__ = [
     "MIN_SERVER_VERSION_NUM",
