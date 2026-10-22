@@ -10,24 +10,21 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from typing import Any, Literal
+from urllib.parse import parse_qs, urlsplit
 
 import msgspec
 
+from loom.core.connections import ClickHouseConnection, redact_uri
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
 
 # re.ASCII keeps the exact [A-Za-z0-9_] charset: without it \w would also
 # accept Unicode word characters, widening this security allowlist.
 _ROLE_PATTERN = re.compile(r"^\w+$", re.ASCII)
-_URL_CREDENTIALS_RE = re.compile(r"://[^@]+@")
 
 # The only ``sql_endpoint.auth`` mode carrying a verified caller identity, and
 # therefore the only one able to bind a request to a subset of the allowlist.
 _IDENTITY_BOUND_AUTH = "identity"
-
-
-def _redact_url(url: str) -> str:
-    return _URL_CREDENTIALS_RE.sub("://***@", url)
 
 
 def roles_need_identity_binding(
@@ -85,8 +82,12 @@ class SqlEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkn
         return self.auth == _IDENTITY_BOUND_AUTH
 
 
-class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """Named SQL connection with role policy, limits and driver tuning.
+class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
+    """Named SQL connection: the ClickHouse connection plus role policy and limits.
+
+    Every key of :class:`~loom.core.connections.ClickHouseConnection` applies,
+    as in every other context reading ClickHouse; this context bounds the
+    driver timeouts by default (10 s / 60 s) instead of leaving them to it.
 
     Attributes:
         backend: Backend identifier. Only ``"clickhouse"`` is supported; any
@@ -135,9 +136,6 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
     """
 
     backend: Literal["clickhouse"]
-    url: str
-    username: str | None = None
-    password: str | None = None
     allowed_roles: tuple[str, ...] = ()
     default_role: str | None = None
     readonly: bool = True
@@ -147,12 +145,12 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
     max_sql_bytes: int = 262144
     connect_timeout: PositiveInt = 10
     send_receive_timeout: PositiveInt = 60
-    executor_threads: PositiveInt | None = None
-    pool_size: PositiveInt | None = None
     settings: dict[str, Any] = msgspec.field(default_factory=dict)
     sql_endpoint: SqlEndpointConfig = msgspec.field(default_factory=SqlEndpointConfig)
 
     def __post_init__(self) -> None:
+        super().__post_init__()
+        _refuse_pinned_dsn_options(self.url)
         _validate_roles(self.allowed_roles, self.default_role)
         _validate_limits(self.default_limit, self.max_limit)
         _validate_endpoint(self.sql_endpoint, self.allowed_roles, self.default_role)
@@ -160,7 +158,7 @@ class SqlConnectionConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_un
     def __repr__(self) -> str:
         return (
             f"SqlConnectionConfig(backend={self.backend!r},"
-            f" url={_redact_url(self.url)!r},"
+            f" url={redact_uri(self.url)!r},"
             f" allowed_roles={self.allowed_roles!r},"
             f" default_role={self.default_role!r},"
             f" readonly={self.readonly!r},"
@@ -176,6 +174,34 @@ class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fiel
     """
 
     connections: dict[str, SqlConnectionConfig]
+
+
+# Client options the SQL service decides itself. The driver copies the DSN's
+# query parameters over the arguments it is given, so one written there would
+# silently replace the service's choice (server sessions, write retries, a
+# client-wide role or credentials outside the dedicated fields).
+_PINNED_DSN_OPTIONS = frozenset(
+    {
+        "autogenerate_session_id",
+        "session_id",
+        "query_retries",
+        "role",
+        "readonly",
+        "username",
+        "user",
+        "password",
+    }
+)
+
+
+def _refuse_pinned_dsn_options(url: str) -> None:
+    query = urlsplit(url).query
+    pinned = sorted({name.lower() for name in parse_qs(query)} & _PINNED_DSN_OPTIONS)
+    if pinned:
+        raise ValueError(
+            f"the url's query sets {', '.join(pinned)}, which the SQL service decides; "
+            "remove it from the url (credentials go in 'username' and 'password')"
+        )
 
 
 def _validate_roles(allowed_roles: tuple[str, ...], default_role: str | None) -> None:

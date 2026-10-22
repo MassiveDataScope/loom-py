@@ -2,38 +2,30 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Literal
 
 import msgspec
 
+from loom.core.connections import MongoConnection
 from loom.core.model import LoomFrozenStruct
 from loom.core.routing import DefaultingRouteResolver, LogicalRef
 
-_URI_CREDENTIALS_RE = re.compile(r"://[^@]+@")
 
+class MongoSourceConfig(MongoConnection, frozen=True, kw_only=True):
+    """One MongoDB change-stream source: the Mongo connection plus how to watch it.
 
-def _redact_uri(uri: str) -> str:
-    return _URI_CREDENTIALS_RE.sub("://***@", uri)
+    Every key of :class:`~loom.core.connections.MongoConnection` applies, as
+    in every other context reading MongoDB; the repr hides the URI's
+    credentials.
 
+    Args:
+        watch_options: Options handed to ``watch()``.
+        on_oplog_expired: What to do when the resume token fell off the oplog.
+    """
 
-class MongoSourceConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """Connection settings for one MongoDB CDC source."""
-
-    uri: str
-    database: str
     watch_options: Mapping[str, object] = msgspec.field(default_factory=dict)
-    server_api_version: str | None = None
     on_oplog_expired: Literal["fail", "restart_from_now"] = "fail"
-
-    def __repr__(self) -> str:
-        return (
-            f"MongoSourceConfig(uri={_redact_uri(self.uri)!r},"
-            f" database={self.database!r},"
-            f" server_api_version={self.server_api_version!r},"
-            f" on_oplog_expired={self.on_oplog_expired!r})"
-        )
 
 
 class MongoConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):

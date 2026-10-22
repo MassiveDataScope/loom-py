@@ -15,8 +15,8 @@ Supported backends
   Requires a ``uri`` key in the resolved config section.
   Install: ``pip install deltalake polars``.
 - ``Backend.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
-  Requires a ``database`` reference whose ``database.<name>`` section holds
-  ``http_url`` or ``url``.
+  Requires a ``database`` reference whose ``database.<name>`` section is a
+  ClickHouse connection (``url``, optional credentials and timeouts).
   Install: ``pip install clickhouse-connect``.
 
 Config example (streaming.sinks.<name>)::
@@ -86,6 +86,7 @@ from typing import (
 import msgspec
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.connections import ClickHouseConnection
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.model.convert import to_column_value
@@ -308,8 +309,6 @@ _DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
 _DELTA_STAGING_KEYS: frozenset[str] = frozenset({"compression", "mini_batch_size"})
 _CLICKHOUSE_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
     "table",
-    "database",
-    "url",
     "insert_timeout",
 }
 
@@ -463,43 +462,50 @@ class DeltaSinkConfig:
 class ClickHouseSinkConfig:
     """Resolved ``IntoTable`` settings for the ClickHouse backend.
 
-    Connection is established via ``clickhouse-connect`` using a standard
-    ``clickhouse://`` DSN derived from the ``database.<name>.url`` entry in
-    ``config.yaml``.  The ``clickhouse+asynch://`` scheme used by
-    ``clickhouse-sqlalchemy`` is normalised automatically — no config changes
-    are required.
+    The connection is the ``database.<name>`` section the sink names, decoded
+    as the :class:`~loom.core.connections.ClickHouseConnection` every loom
+    context reading ClickHouse shares: DSN, credentials and bounds.
 
     Args:
-        url:            Normalised ``clickhouse://`` DSN for ``clickhouse-connect``.
+        connection:     ClickHouse connection of the target database.
         table:          Target table name.
         buffer_policy:  Common flush policy (max_records, max_bytes, max_age_s).
-        insert_timeout: Seconds before a single insert call is aborted.
+        insert_timeout: Seconds before a single insert call is aborted, used
+            only when the connection declares no timeout of its own.
             ``None`` disables the timeout (default).
     """
 
-    url: str
+    connection: ClickHouseConnection
     table: str
     buffer_policy: _TableBufferPolicy
     insert_timeout: float | None = None
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any], *, default_table: str) -> Self:
-        """Build ClickHouse sink settings from a resolved sink + database config.
+    def from_config(
+        cls,
+        config: Mapping[str, Any],
+        *,
+        default_table: str,
+        connection: ClickHouseConnection,
+    ) -> Self:
+        """Build ClickHouse sink settings from a resolved sink config.
+
+        Args:
+            config: The sink section.
+            default_table: Table used when the section names none.
+            connection: The ClickHouse connection of the sink's database.
 
         Raises:
-            ValueError: If the table or the url is empty, or the config carries
-                a key the sink does not read.
+            ValueError: If the table is empty or the config carries a key the
+                sink does not read.
         """
         _refuse_unknown_keys(config, _CLICKHOUSE_SINK_KEYS, sink="ClickHouse")
         table = str(config.get("table") or default_table).strip()
-        url = str(config.get("url") or "").strip()
         if not table:
             raise ValueError("ClickHouse sink config requires a non-empty table name.")
-        if not url:
-            raise ValueError("ClickHouse sink config requires a 'url' in the database section.")
         timeout_raw = config.get("insert_timeout")
         return cls(
-            url=url,
+            connection=connection,
             table=table,
             buffer_policy=_TableBufferPolicy.from_config(config),
             insert_timeout=float(timeout_raw) if timeout_raw is not None else None,

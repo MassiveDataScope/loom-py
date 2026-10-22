@@ -86,7 +86,7 @@ class SQLAlchemyBackend:
         db_cfg = load_database_config(ctx)
         postgres = make_url(db_cfg.url).get_backend_name() == POSTGRES_DIALECT
         settings = (
-            DeferredScopedSettings(db_cfg.schema.scopes)
+            DeferredScopedSettings(db_cfg.schema.scopes or {})
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )

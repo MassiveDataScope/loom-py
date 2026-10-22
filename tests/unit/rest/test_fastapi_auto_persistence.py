@@ -101,7 +101,9 @@ def aws_test_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
     """Serve the Mongo backend an in-memory client so no connection is attempted."""
     client = FakeMongoClient()
-    monkeypatch.setattr(mongo_backend_module, "_build_mongo_client", lambda _cfg: client)
+    monkeypatch.setattr(
+        mongo_backend_module, "build_async_mongo_client", lambda _cfg, **_extra: client
+    )
     return client
 
 

@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 
 from loom.etl.io.targets._clickhouse import ClickHouseTableSpec, ClickHouseTargetWriter
+from tests.helpers.extras import CLICKHOUSE_ISLAND, without_extra
 
 _URL = "clickhouse://default:@localhost:8123/default"
 _PARAMS = object()
@@ -95,14 +96,13 @@ class TestLazyFrameInput:
 
 
 class TestMissingDependency:
-    def test_import_error_when_clickhouse_connect_missing(self) -> None:
+    def test_import_error_when_clickhouse_connect_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """ImportError is raised at construction if clickhouse-connect is absent."""
-        import loom.etl.io.targets._clickhouse as _module
+        without_extra(monkeypatch, ["clickhouse_connect"], [CLICKHOUSE_ISLAND])
 
-        with (
-            patch.object(_module, "_clickhouse_connect", None),
-            pytest.raises(ImportError, match="clickhouse-connect"),
-        ):
+        with pytest.raises(ImportError, match=r"clickhouse-connect.*loom-kernel\[clickhouse\]"):
             ClickHouseTargetWriter(_URL)
 
 

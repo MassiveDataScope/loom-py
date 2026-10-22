@@ -406,6 +406,12 @@ Repository calls run on a thread pool as wide as `max_pool_connections`, so
 that many calls proceed in parallel in one process; the trace id and other
 context variables stay visible inside the threads.
 
+The section is `AwsClientConfig` plus `table`: the same keys and defaults
+apply wherever loom calls AWS (the ETL's `storage.dynamodb`, the `secrets`
+and `ssm` resolvers, the SNS notifier), and `profile` and `endpoint_url`
+are accepted too. Credentials never come from configuration; boto3's default
+chain applies. See [ADR 0006](../architecture/adr/0006-hexagonal-layers.md).
+
 ## Health
 
 `GET /health` aggregates the readiness of the configured backend; its shape, the
@@ -458,6 +464,12 @@ persistence:
 The section rejects unknown keys, so a misspelt option is a `ConfigError`
 at startup rather than a silently ignored setting, and startup logs
 `mongo unit of work: transactions=<bool>` once.
+
+The connection keys (`uri`, `database`, `max_pool_size`,
+`server_selection_timeout_ms`, `server_api_version`) are `MongoConnection`'s,
+the same in the ETL's `storage.mongo` and in a change-stream source
+(`mongo.source`); `transactions`, `id` and `collections` belong to the
+repository alone.
 
 **`_id` mapping.** The model's primary key, whatever its name, is stored as
 `_id` and mapped back on read: a model keyed by `slug` never sees `_id`, and
@@ -610,6 +622,29 @@ class Measurement(BaseModel):
 
 ## Upgrade notes
 
+- Each engine's connection has one type, shared by every context
+  ([ADR 0006](../architecture/adr/0006-hexagonal-layers.md)):
+  `AwsClientConfig`, `MongoConnection`, `ClickHouseConnection` and
+  `DatabaseConfig`, in `loom.core.connections`. `loom.etl.storage.ClickHouseConfig`
+  and `MongoConfig` and the ETL's `DynamoDbConfig` are gone; so are
+  `loom.core.locator.DatabaseConfig` and `SchemaConfig`.
+- `storage.dynamodb.enabled` is removed: declaring `storage.dynamodb` enables
+  DynamoDB sources. `storage.mongo` and `storage.clickhouse` are disabled by
+  omitting them; an empty `uri`/`url` fails. The ETL DynamoDB client now fails
+  within 2 s to connect, 5 s to read and three attempts, as the repository's
+  does (`storage.dynamodb.read_timeout` and the other bounds are overridable
+  per environment).
+- A ClickHouse sink's `database.<name>` is a ClickHouse connection:
+  `http_url` is now `url`, and `username`, `password` and timeouts are
+  accepted. The ETL ClickHouse sources, targets and client steps accept
+  `connection=ClickHouseConnection(...)`; `url=` stays as a shortcut.
+- `database.schema` refuses an unknown key.
+- The `secrets`/`ssm` resolvers and the SNS notifier build their boto3
+  client with the same bounds (2 s connect, 5 s read, three attempts).
+- A `sql.connections.<name>.url` whose query sets an option the SQL service
+  decides (`autogenerate_session_id`, `session_id`, `query_retries`, `role`,
+  `readonly`, `username`, `user`, `password`) fails at startup: the driver
+  would let it replace the service's choice.
 - `database` pool keys moved under `database.pool` (`pool_size` →
   `pool.size`, `pool_pre_ping` → `pool.pre_ping`, ...), the same in the API,
   the worker and streaming sinks; the old keys stop startup naming the new

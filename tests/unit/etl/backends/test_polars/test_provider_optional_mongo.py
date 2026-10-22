@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from loom.etl.storage._config import MongoConfig, StorageConfig, StorageDefaults, TablePathConfig
+from loom.core.connections import MongoConnection
+from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig
+from tests.helpers.extras import MONGO_ISLAND, without_extra
 
 
 def test_provider_imports_with_pymongo_hidden(tmp_path: Path) -> None:
@@ -46,11 +48,11 @@ def test_mongo_source_without_pymongo_names_the_extra(
 ) -> None:
     from loom.etl.backends.polars.provider import PolarsProvider
 
-    monkeypatch.setitem(sys.modules, "pymongo", None)
+    without_extra(monkeypatch, ["pymongo"], [MONGO_ISLAND])
     config = StorageConfig(
         engine="polars",
         defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-        mongo=MongoConfig(uri="mongodb://localhost:27017", database="app"),
+        mongo=MongoConnection(uri="mongodb://localhost:27017", database="app"),
     )
 
     provider = PolarsProvider()

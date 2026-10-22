@@ -225,6 +225,14 @@ def deployed_file(tmp_path: Path) -> str:
             "8",
             "persistence.dynamodb.max_pool_connections",
         ),
+        ("LOOM__STORAGE__DYNAMODB__READ_TIMEOUT", "9", "storage.dynamodb.read_timeout"),
+        ("LOOM__STORAGE__DYNAMODB__CONNECT_TIMEOUT", "1", "storage.dynamodb.connect_timeout"),
+        ("LOOM__STORAGE__DYNAMODB__MAX_ATTEMPTS", "2", "storage.dynamodb.max_attempts"),
+        (
+            "LOOM__STORAGE__DYNAMODB__MAX_POOL_CONNECTIONS",
+            "8",
+            "storage.dynamodb.max_pool_connections",
+        ),
     ],
 )
 def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+import loom.core.connections.clients.mongo as mongo_island
 import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
@@ -75,7 +76,9 @@ def _wiring(
     section: dict[str, Any],
     models: Sequence[type[BaseModel]] = (),
 ) -> PersistenceWiring:
-    monkeypatch.setattr(backend_module, "_build_mongo_client", lambda _cfg: fake_client)
+    monkeypatch.setattr(
+        backend_module, "build_async_mongo_client", lambda _cfg, **_extra: fake_client
+    )
     return MongoBackend().build(_ctx(section), models, BackendRuntime(SERVER_PROFILE))
 
 
@@ -98,7 +101,9 @@ def test_missing_section_is_a_config_error() -> None:
 def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(backend_module, "_build_mongo_client", lambda _cfg: FakeMongoClient())
+    monkeypatch.setattr(
+        backend_module, "build_async_mongo_client", lambda _cfg, **_extra: FakeMongoClient()
+    )
     ctx = _ctx(_SECTION, cursors={})
 
     with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
@@ -120,7 +125,7 @@ def test_client_seam_forwards_only_the_options_set(monkeypatch: pytest.MonkeyPat
         seen.append((uri, options))
         return FakeMongoClient()
 
-    monkeypatch.setattr(backend_module, "AsyncMongoClient", _record)
+    monkeypatch.setattr(mongo_island, "AsyncMongoClient", _record)
 
     MongoBackend().build(_ctx(_SECTION), (), BackendRuntime(SERVER_PROFILE))
     MongoBackend().build(

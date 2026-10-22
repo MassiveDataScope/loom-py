@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 
+from loom.core.connections.clients import mongo_island
+from loom.core.plugins.optional import MissingExtraError
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message
 from loom.streaming.mongo._event import MongoCDCEvent
@@ -168,20 +170,19 @@ class MongoCDCSource(FixedPartitionedSource[Message[MongoCDCEvent], dict[str, ob
 
 
 def _build_mongo_client(source: CompiledMongoCDCSource) -> _DatabaseLike:
-    """Build a PyMongo client for one compiled Mongo source."""
+    """Build a PyMongo client for one compiled Mongo source.
+
+    Raises:
+        ImportError: When the ``mongo`` extra is not installed.
+    """
     try:
-        from pymongo import MongoClient
-        from pymongo.server_api import ServerApi
-    except ImportError as exc:
+        island = mongo_island()
+    except MissingExtraError as exc:
         raise ImportError(
             "MongoDB CDC support requires the 'mongo' extra (pymongo). "
             "Install loom-kernel[mongo] to use FromMongoCDC."
         ) from exc
-
-    kwargs: dict[str, Any] = {"datetime_conversion": "DATETIME_AUTO"}
-    if source.settings.server_api_version is not None:
-        kwargs["server_api"] = ServerApi(source.settings.server_api_version)
-    client: MongoClient[Any] = MongoClient(source.settings.uri, **kwargs)
+    client = island.build_mongo_client(source.settings, datetime_conversion="DATETIME_AUTO")
     return cast(_DatabaseLike, client)
 
 

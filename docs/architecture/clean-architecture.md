@@ -32,8 +32,9 @@ uses it follows one pattern, whatever the pillar:
 
 The island needs no `try`/`except` of its own: its `ImportError` is what
 `import_optional` translates. Islands today: the pydantic-ai providers and
-extras (`loom.ai.engines.pydantic_ai.providers`, `.extras`), boto3 for the
-config resolvers (`loom.core.config._boto3`), and the whole-package islands
+extras (`loom.ai.engines.pydantic_ai.providers`, `.extras`), the client
+builders of `loom.core.connections.clients` (boto3, pymongo,
+clickhouse-connect; see [ADR 0006](adr/0006-hexagonal-layers.md)), and the whole-package islands
 that predate the rule (`loom.core.sql.clickhouse`, `loom.streaming.bytewax`,
 `loom.etl.testing`). A dependency listed under `dependencies` is not
 optional and gets no island: import it at the top like any other. A test that stands in for an absent or stubbed SDK

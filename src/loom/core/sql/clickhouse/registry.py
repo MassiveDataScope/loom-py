@@ -16,6 +16,7 @@ from typing import Any, Self
 import msgspec
 
 from loom.core.config.errors import ConfigError
+from loom.core.connections.clients.clickhouse import async_client_options
 from loom.core.sql.abc import UnknownConnectionError
 from loom.core.sql.clickhouse._client import (
     AsyncClickHouseClient,
@@ -23,7 +24,6 @@ from loom.core.sql.clickhouse._client import (
     DatabaseError,
     create_driver_client,
     enable_repeated_query_params,
-    pool_manager,
     sanitize_backend_error,
     supports_repeated_query_params,
 )
@@ -174,25 +174,14 @@ class ClickHouseConnectionRegistry:
 
 def _client_kwargs(connection: SqlConnectionConfig) -> dict[str, Any]:
     """Exact ``get_async_client`` keyword arguments for one connection."""
-    kwargs: dict[str, Any] = {
-        "dsn": connection.url,
-        "connect_timeout": connection.connect_timeout,
-        "send_receive_timeout": connection.send_receive_timeout,
+    extra: dict[str, Any] = {
         # Never rely on the driver's mutable global default (spec §2).
         "autogenerate_session_id": False,
     }
-    if connection.username is not None:
-        kwargs["username"] = connection.username
-    if connection.password is not None:
-        kwargs["password"] = connection.password
     if not connection.readonly:
         # Driver retries could re-run non-idempotent statements (re-INSERT).
-        kwargs["query_retries"] = 0
-    if connection.executor_threads is not None:
-        kwargs["executor_threads"] = connection.executor_threads
-    if connection.pool_size is not None:
-        kwargs["pool_mgr"] = pool_manager(connection.pool_size)
-    return kwargs
+        extra["query_retries"] = 0
+    return async_client_options(connection, **extra)
 
 
 def _roles_configured(connection: SqlConnectionConfig) -> bool:

@@ -72,7 +72,7 @@ def test_the_backend_sizes_its_executor_by_max_pool_connections(
         return real(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
 
     monkeypatch.setattr(backend_module, "ThreadPoolExecutor", _executor)
-    monkeypatch.setattr(backend_module, "_build_dynamodb_client", lambda _cfg: _SlowClient())
+    monkeypatch.setattr(backend_module, "build_aws_client", lambda _service, _cfg: _SlowClient())
     ctx = ConfigContext.from_dict(
         {
             "persistence": {

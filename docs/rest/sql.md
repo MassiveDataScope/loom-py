@@ -103,9 +103,15 @@ at startup, never at request time:
 | `auth: identity` requires an authentication mechanism, `app.rest.auth.jwt.audience` when that mechanism is JWT, and the mounted path must not appear in the auth `exclude_paths` | An identity-bound role is worthless if tokens minted for another service are accepted, or if the path skips authentication altogether |
 
 ```{note}
-The `sql:` section is independent from the ETL `storage.clickhouse` section — they
-serve different purposes (interactive queries vs. pipelines). Share the DSN through a
-single environment variable if both point at the same cluster.
+A connection's address, credentials and transport keys (`url`, `username`,
+`password`, `connect_timeout`, `send_receive_timeout`, `executor_threads`,
+`pool_size`) are `ClickHouseConnection`'s, the same keys the ETL's
+`storage.clickhouse` and a streaming sink's `database.<name>` take (see
+[ADR 0006](../architecture/adr/0006-hexagonal-layers.md)). The SQL service bounds
+the driver at 10 s / 60 s by default; the ETL and the sinks keep the driver's
+own defaults (10 s / 300 s) unless they declare a bound. The sections stay
+separate — interactive queries and pipelines rarely share a policy — so share
+the DSN through a single environment variable when both point at the same cluster.
 ```
 
 ### Query from a use case, as the caller

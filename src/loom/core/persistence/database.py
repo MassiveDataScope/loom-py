@@ -33,17 +33,56 @@ _RETIRED_KEYS: Final = {
 """Flat pool keys a ``database`` section once took, mapped to their ``pool`` key."""
 
 
-class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
-    """``database.schema``: how startup treats the relational schema.
+class SchemaRoles(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``database.schema.roles``: the roles owning and migrating the schema."""
 
-    Unknown keys are tolerated: the migration and row-level-security tooling
-    read further keys of this section (``name``, ``roles``, ``database_users``...).
+    owner: str
+    migrator: str
+
+
+class SchemaUser(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """One entry of ``database.schema.database_users``."""
+
+    login: bool
+    access: str
+
+
+class SchemaGroups(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``database.schema.groups``: the reader and writer group roles."""
+
+    readers: str
+    writers: str
+
+
+class SchemaVersionTables(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``database.schema.version_tables``: where structure and data migrations are recorded."""
+
+    structure: str
+    data: str
+
+
+class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+    """``database.schema``: the one definition every reader of the section shares.
+
+    Startup (``mode``, ``allow_unprotected_dialect``, ``scopes``, ``guard``),
+    the migrations and the row-level-security tooling read it; every name is
+    absent until the product writes it (``loom schema init``). An unknown key
+    fails, naming it.
+
+    ``naming_convention`` is handed to the application's ``MetaData`` as
+    SQLAlchemy's ``naming_convention``, keyed by ``pk``, ``fk``, ``uq``, ``ck``
+    and ``ix``; absent, SQLAlchemy's default applies.
     """
 
     mode: Literal["create_all", "external"] = "create_all"
     allow_unprotected_dialect: bool = False
-    scopes: dict[str, str] = msgspec.field(default_factory=dict)
+    name: str | None = None
+    roles: SchemaRoles | None = None
+    database_users: dict[str, SchemaUser] | None = None
+    scopes: dict[str, str] | None = None
     guard: str | None = None
+    groups: SchemaGroups | None = None
+    version_tables: SchemaVersionTables | None = None
     naming_convention: dict[str, str] | None = None
 
 
@@ -79,8 +118,9 @@ class PoolConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_field
 class DatabaseConfig(msgspec.Struct, kw_only=True, frozen=True):
     """A relational database section.
 
-    Keys outside this contract are tolerated, as before: other readers share
-    the section. ``pool`` alone, owned entirely by this contract, refuses them.
+    Keys outside this contract are tolerated at the top level: the section
+    also holds the named databases of streaming sinks (``database.<name>``).
+    ``pool`` and ``schema``, each with a single definition, refuse them.
 
     Args:
         url: SQLAlchemy async URL; never empty.
@@ -149,6 +189,10 @@ __all__ = [
     "DatabaseConfig",
     "PoolConfig",
     "SchemaConfig",
+    "SchemaGroups",
+    "SchemaRoles",
+    "SchemaUser",
+    "SchemaVersionTables",
     "decode_database_config",
     "load_database_config",
     "reject_retired_pool_keys",

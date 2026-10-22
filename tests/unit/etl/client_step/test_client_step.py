@@ -249,22 +249,20 @@ class TestClientStepExecution:
         """A runner built via from_config with a clickhouse url executes a
         ClientStep without raising the missing-executor TypeError (offline).
         """
+        from loom.core.connections import ClickHouseConnection
         from loom.etl.runner import ETLRunner
         from loom.etl.storage._config import (
-            ClickHouseConfig,
             StorageConfig,
             StorageDefaults,
             TablePathConfig,
         )
 
         fake_client = MagicMock()
-        fake_module = MagicMock()
-        fake_module.get_client.return_value = fake_client
-        monkeypatch.setattr("loom.etl.io.targets._clickhouse._clickhouse_connect", fake_module)
+        monkeypatch.setattr("clickhouse_connect.get_client", MagicMock(return_value=fake_client))
 
         config = StorageConfig(
             defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            clickhouse=ClickHouseConfig(url="clickhouse://user:pass@host:8123/db"),
+            clickhouse=ClickHouseConnection(url="clickhouse://user:pass@host:8123/db"),
         )
         runner = ETLRunner.from_config(config)
 
