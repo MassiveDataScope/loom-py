@@ -90,7 +90,9 @@ class ClickHouseConnectionRegistry:
         """
         reject_retired_sql_keys(raw)
         try:
-            config = msgspec.convert(raw, SqlConfig, strict=False)
+            from loom.core.config.convert import convert_config
+
+            config = convert_config(raw, SqlConfig, strict=False)
         except msgspec.ValidationError as exc:
             raise ConfigError(f"Invalid 'sql' config section: {exc}") from exc
         return cls(config=config)

@@ -20,6 +20,7 @@ from loom.core.connections import (
 )
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
 
 
@@ -50,7 +51,7 @@ def test_aws_builder_uses_a_session_of_its_own_and_every_bound(
     monkeypatch.setattr(island.boto3, "Session", session)
     config = AwsClientConfig(
         region="eu-west-1",
-        url="http://localhost:8000",
+        url=Dsn("http://localhost:8000"),
         profile="dev",
         pool=AwsPool(size=4),
         connect_timeout=1,
@@ -94,7 +95,7 @@ def test_mongo_builders_forward_the_connection_and_the_context_options(
     client = _Recorder()
     monkeypatch.setattr(island, client_name, client)
     connection = MongoConnection(
-        url="mongodb://h:27017",
+        url=Dsn("mongodb://h:27017"),
         database="app",
         pool=MongoPool(size=8),
         server_selection_timeout=3,
@@ -116,14 +117,14 @@ def test_mongo_builder_leaves_unset_options_to_the_driver(monkeypatch: pytest.Mo
     client = _Recorder()
     monkeypatch.setattr(island, "MongoClient", client)
 
-    island.build_mongo_client(MongoConnection(url="mongodb://h", database="app"))
+    island.build_mongo_client(MongoConnection(url=Dsn("mongodb://h"), database="app"))
 
     assert client.kwargs == {"host": "mongodb://h"}
 
 
 def test_mongo_builder_refuses_an_extra_the_connection_decides() -> None:
     island = import_optional("loom.core.connections.mongo.client", extra="mongo")
-    connection = MongoConnection(url="mongodb://h", database="app", pool=MongoPool(size=4))
+    connection = MongoConnection(url=Dsn("mongodb://h"), database="app", pool=MongoPool(size=4))
 
     with pytest.raises(ValueError, match="maxPoolSize"):
         island.build_mongo_client(connection, maxPoolSize=1)
@@ -135,7 +136,7 @@ def test_mongo_builder_refuses_an_extra_the_connection_decides() -> None:
 def test_mongo_builder_compares_option_names_ignoring_case(option: str) -> None:
     island = import_optional("loom.core.connections.mongo.client", extra="mongo")
     connection = MongoConnection(
-        url="mongodb://h", database="app", read_timeout=5, pool=MongoPool(size=4)
+        url=Dsn("mongodb://h"), database="app", read_timeout=5, pool=MongoPool(size=4)
     )
 
     with pytest.raises(ValueError, match=option):
@@ -143,7 +144,7 @@ def test_mongo_builder_compares_option_names_ignoring_case(option: str) -> None:
 
 
 def test_merge_extra_keeps_the_case_of_other_drivers() -> None:
-    connection = ClickHouseConnection(url="clickhouse://h/db")
+    connection = ClickHouseConnection(url=Dsn("clickhouse://h/db"))
 
     assert merge_extra({"dsn": "x"}, {"DSN": "y"}, connection) == {"dsn": "x", "DSN": "y"}
 
@@ -156,7 +157,7 @@ def test_clickhouse_builder_forwards_only_what_is_declared(monkeypatch: pytest.M
     get_client = _Recorder()
     monkeypatch.setattr(island.clickhouse_connect, "get_client", get_client)
 
-    island.build_clickhouse_client(ClickHouseConnection(url="clickhouse://h:8123/db"))
+    island.build_clickhouse_client(ClickHouseConnection(url=Dsn("clickhouse://h:8123/db")))
 
     assert get_client.kwargs == {"dsn": "clickhouse://h:8123/db"}
 
@@ -168,9 +169,9 @@ def test_clickhouse_builder_forwards_credentials_and_bounds(
     get_client = _Recorder()
     monkeypatch.setattr(island.clickhouse_connect, "get_client", get_client)
     connection = ClickHouseConnection(
-        url="clickhouse://h:8123/db",
+        url=Dsn("clickhouse://h:8123/db"),
         username="u",
-        password="p",
+        password=Secret("p"),
         connect_timeout=3,
         read_timeout=40,
         executor_threads=2,
@@ -195,7 +196,7 @@ def test_async_clickhouse_builder_sizes_its_thread_pool(monkeypatch: pytest.Monk
         return "client"
 
     monkeypatch.setattr(island.clickhouse_connect, "get_async_client", get_async_client)
-    connection = ClickHouseConnection(url="clickhouse://h/db", executor_threads=3)
+    connection = ClickHouseConnection(url=Dsn("clickhouse://h/db"), executor_threads=3)
 
     options = island.async_client_options(connection, query_retries=0)
     client = asyncio.run(island.open_async_client(options))
@@ -208,4 +209,6 @@ def test_clickhouse_builder_refuses_an_extra_the_connection_decides() -> None:
     island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
 
     with pytest.raises(ValueError, match="password"):
-        island.build_clickhouse_client(ClickHouseConnection(url="clickhouse://h/db"), password="x")
+        island.build_clickhouse_client(
+            ClickHouseConnection(url=Dsn("clickhouse://h/db")), password="x"
+        )

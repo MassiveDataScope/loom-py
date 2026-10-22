@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:
     from loom.etl.storage._file_locator import MappingFileLocator
 
-import msgspec
 from deltalake import CommitProperties, WriterProperties
 
 from loom.core.config import reject_retired_keys
@@ -467,7 +466,9 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
 
 def convert_storage_config(raw: dict[str, Any]) -> StorageConfig:
     """Convert a resolved plain dict into :class:`StorageConfig`."""
-    return msgspec.convert(raw, StorageConfig)
+    from loom.core.config.convert import convert_config
+
+    return convert_config(raw, StorageConfig, strict=True)
 
 
 def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:

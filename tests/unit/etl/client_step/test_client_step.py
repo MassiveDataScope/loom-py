@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.model.redaction import Dsn
 from loom.etl import ETLParams, ETLPipeline, ETLProcess
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.target._client import ClientSpec, IntoClient
@@ -262,7 +263,7 @@ class TestClientStepExecution:
 
         config = StorageConfig(
             defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            clickhouse=ClickHouseConnection(url="clickhouse://user:pass@host:8123/db"),
+            clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
         )
         runner = ETLRunner.from_config(config)
 

@@ -32,6 +32,7 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
@@ -154,7 +155,7 @@ def _granted_sql_capability() -> CompiledCapability:
         capability,
         config=SqlConnectionConfig(
             backend="clickhouse",
-            url=capability.config.url,
+            url=Dsn(capability.config.url),
             allowed_roles=("analyst",),
             readonly=True,
         ),

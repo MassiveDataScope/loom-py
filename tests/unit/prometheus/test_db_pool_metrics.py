@@ -11,6 +11,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from loom.core.environment import Environment
+from loom.core.model.redaction import Dsn
 from loom.core.persistence.database import DatabaseConfig, PoolConfig
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
@@ -25,7 +26,7 @@ def _manager(
     tmp_path: Path, registry: CollectorRegistry | None, *, size: int = 1
 ) -> SessionManager:
     config = DatabaseConfig(
-        url=f"sqlite+aiosqlite:///{tmp_path / 'app.db'}",
+        url=Dsn(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"),
         pool=PoolConfig(size=size, max_overflow=0, timeout=1),
     )
     sink = (

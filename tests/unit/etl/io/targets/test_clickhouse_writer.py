@@ -11,7 +11,7 @@ from loom.core.plugins.optional import MissingExtraError
 from loom.etl.io.targets._clickhouse import ClickHouseTableSpec, ClickHouseTargetWriter
 from tests.helpers.extras import CLICKHOUSE_ISLAND, without_extra
 
-_URL = "clickhouse://default:@localhost:8123/default"
+_URL = "clickhouse://default@localhost:8123/default"
 _PARAMS = object()
 
 

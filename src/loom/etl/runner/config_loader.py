@@ -149,7 +149,9 @@ def _convert_storage(raw: dict[str, Any]) -> StorageConfig:
         loom.core.config.ConfigError: When the section fails validation.
     """
     try:
-        return msgspec.convert(raw, StorageConfig, strict=False)
+        from loom.core.config.convert import convert_config
+
+        return convert_config(raw, StorageConfig, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(
             f"Config section {ConfigKey.STORAGE.value!r} failed validation as "

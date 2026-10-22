@@ -10,6 +10,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.model.redaction import Dsn
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
@@ -369,7 +370,7 @@ class TestRunnerFromConfig:
 
         config = StorageConfig(
             defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            clickhouse=ClickHouseConnection(url="clickhouse://user:pass@host:8123/db"),
+            clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
         )
         runner = ETLRunner.from_config(config)
 

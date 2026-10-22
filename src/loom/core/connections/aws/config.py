@@ -19,6 +19,7 @@ from typing import Any, ClassVar, Literal
 import msgspec
 
 from loom.core.connections._base import ConnectionPool, ConnectionSettings, omit_none
+from loom.core.model.redaction import Dsn
 from loom.core.model.types import PositiveInt
 
 RetryMode = Literal["standard", "adaptive"]
@@ -60,7 +61,7 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
     )
 
     region: str | None = None
-    url: str | None = None
+    url: Dsn | None = None
     profile: str | None = None
     pool: AwsPool = msgspec.field(default_factory=AwsPool)
     connect_timeout: PositiveInt = 2

@@ -22,7 +22,6 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
@@ -65,11 +64,10 @@ def mongo_database() -> Iterator[_SessionDatabase]:
 
 
 def redact_uri(uri: str) -> str:
-    """Return ``uri`` without its userinfo, for messages that may be logged."""
-    parts = urlsplit(uri)
-    if "@" not in parts.netloc:
-        return uri
-    return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
+    """Return ``uri`` with its password masked, for messages that may be logged."""
+    from loom.core.model.redaction import mask_dsn
+
+    return mask_dsn(uri)
 
 
 def _probe(client: MongoClient[Any], uri: str) -> str | None:

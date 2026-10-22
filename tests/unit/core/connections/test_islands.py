@@ -20,6 +20,7 @@ from loom.core.connections import (
 )
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
 
@@ -36,7 +37,7 @@ def test_botocore_and_boto3_take_the_aws_options() -> None:
     boto3 = pytest.importorskip("boto3")
     from botocore.config import Config
 
-    options = AwsClientConfig(url="http://localhost:8000").client_options()
+    options = AwsClientConfig(url=Dsn("http://localhost:8000")).client_options()
 
     Config(**options["config"])  # an unknown keyword raises TypeError
     assert set(options) <= _parameters(boto3.session.Session.client)
@@ -51,7 +52,7 @@ def test_the_aws_island_builds_a_client_with_every_bound(monkeypatch: pytest.Mon
     island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
     config = AwsClientConfig(
         region="eu-west-1",
-        url="http://localhost:8000",
+        url=Dsn("http://localhost:8000"),
         pool=AwsPool(size=4),
         connect_timeout=1,
         read_timeout=7,
@@ -71,10 +72,10 @@ def test_pymongo_takes_the_mongo_options_in_its_units() -> None:
     pytest.importorskip("pymongo")
     island = import_optional("loom.core.connections.mongo.client", extra="mongo")
     connection = MongoConnection(
-        url="mongodb://h:27017",
+        url=Dsn("mongodb://h:27017"),
         database="app",
         username="u",
-        password="p",
+        password=Secret("p"),
         connect_timeout=2,
         read_timeout=30,
         server_selection_timeout=5,
@@ -101,9 +102,9 @@ def test_clickhouse_connect_takes_the_clickhouse_options(monkeypatch: pytest.Mon
 
     island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
     connection = ClickHouseConnection(
-        url="clickhouse://h:8123/db",
+        url=Dsn("clickhouse://h:8123/db"),
         username="u",
-        password="p",
+        password=Secret("p"),
         connect_timeout=3,
         read_timeout=40,
         executor_threads=2,
@@ -126,6 +127,8 @@ def test_clickhouse_connect_takes_the_clickhouse_options(monkeypatch: pytest.Mon
 
 def test_asyncpg_takes_the_relational_timeouts() -> None:
     asyncpg = pytest.importorskip("asyncpg")
-    config = DatabaseConfig(url="postgresql+asyncpg://h/db", connect_timeout=3, read_timeout=30)
+    config = DatabaseConfig(
+        url=Dsn("postgresql+asyncpg://h/db"), connect_timeout=3, read_timeout=30
+    )
 
     assert set(config.client_options()) <= _parameters(asyncpg.connect)

@@ -12,10 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.connections import AwsClientConfig, ClickHouseConnection
+from loom.core.model.redaction import Dsn, Secret
 from tests.helpers.extras import patched_aws_clients
 
 _CONNECTION = ClickHouseConnection(
-    url="clickhouse://h:8123/db", username="etl", password="pw", read_timeout=600
+    url=Dsn("clickhouse://h:8123/db"), username="etl", password=Secret("pw"), read_timeout=600
 )
 
 
@@ -105,7 +106,7 @@ def test_a_sink_insert_timeout_bounds_a_connection_declaring_none(get_client: Ma
     settings = ClickHouseSinkConfig.from_config(
         {"table": "t", "insert_timeout": 0.5},
         default_table="t",
-        connection=ClickHouseConnection(url="clickhouse://h/db"),
+        connection=ClickHouseConnection(url=Dsn("clickhouse://h/db")),
     )
     _ClickHouseTablePartition(settings, _Row)
 

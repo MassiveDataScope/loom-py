@@ -14,6 +14,7 @@ from tests.helpers.version_limited_extras import require_pyspark
 require_pyspark()
 
 from loom.core.connections import ClickHouseConnection  # noqa: E402
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.etl.backends.spark.provider import SparkProvider  # noqa: E402
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402
@@ -322,7 +323,7 @@ def test_make_client_executor_polars_with_clickhouse_url_returns_executor() -> N
 
     config = StorageConfig(
         engine="polars",
-        clickhouse=ClickHouseConnection(url="clickhouse://user:pass@host:8123/db"),
+        clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
     )
     executor = make_client_executor(config)
 
@@ -340,7 +341,7 @@ def test_make_client_executor_spark_returns_none() -> None:
     spark = MagicMock()
     config = StorageConfig(
         engine="spark",
-        clickhouse=ClickHouseConnection(url="clickhouse://user:pass@host:8123/db"),
+        clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
     )
     assert make_client_executor(config, spark=spark) is None
 

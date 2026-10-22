@@ -12,6 +12,7 @@ import time
 import pytest
 from sqlalchemy import text
 
+from loom.core.model.redaction import Dsn
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.session_manager import build_session_manager
@@ -21,7 +22,7 @@ _SLEEP_SECONDS = 4
 
 
 async def test_a_statement_longer_than_read_timeout_fails_at_the_bound(pg_admin_uri: str) -> None:
-    config = DatabaseConfig(url=pg_admin_uri, connect_timeout=5, read_timeout=_READ_TIMEOUT)
+    config = DatabaseConfig(url=Dsn(pg_admin_uri), connect_timeout=5, read_timeout=_READ_TIMEOUT)
     manager = build_session_manager(config, SERVER_PROFILE)
     started = time.perf_counter()
     try:

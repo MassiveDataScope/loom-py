@@ -13,6 +13,7 @@ from pymongo.server_api import ServerApi
 
 from loom.core.connections import merge_extra
 from loom.core.connections.mongo.config import MongoConnection
+from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
     from loom.core.connections.mongo import client as _self
@@ -56,7 +57,7 @@ def build_async_mongo_client(connection: MongoConnection, **extra: Any) -> Async
 
 
 def _options(connection: MongoConnection, extra: dict[str, Any]) -> dict[str, Any]:
-    built = connection.client_options()
+    built = reveal_for_driver(connection.client_options())
     if connection.server_api_version is not None:
         built["server_api"] = ServerApi(connection.server_api_version)
     # pymongo reads option names case-insensitively: maxpoolsize is maxPoolSize.

@@ -21,6 +21,7 @@ from loom.core.connections._base import (
     omit_none,
     require_text,
 )
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.model.types import PositiveInt
 
 _MS_PER_SECOND = 1000
@@ -68,10 +69,10 @@ class MongoConnection(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
         {"server_selection_timeout_ms": "in seconds"}
     )
 
-    url: str
+    url: Dsn
     database: str
     username: str | None = None
-    password: str | None = None
+    password: Secret[str] | None = None
     connect_timeout: PositiveInt | None = None
     read_timeout: PositiveInt | None = None
     server_selection_timeout: PositiveInt | None = None

@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import sys
 from collections.abc import Mapping
-from typing import TypeVar, get_type_hints
+from typing import Any, TypeVar, cast, get_type_hints
 
 import msgspec
 
@@ -20,7 +20,7 @@ class StructBinder:
     """Strategy: constructor injection from a resolved config mapping.
 
     Converts every annotated ``__init__`` parameter present in *raw* via
-    ``msgspec.convert``.  Supports primitives (``int``, ``str``, ``bool``),
+    ``convert_config``.  Supports primitives (``int``, ``str``, ``bool``),
     ``Literal`` constraints, and ``LoomFrozenStruct`` subclasses uniformly.
     All reflection runs once per ``bind`` call at compile time — never on
     the message-processing hot path.
@@ -89,7 +89,9 @@ def _convert(
     strict: bool,
 ) -> object:
     try:
-        return msgspec.convert(value, annotation, strict=strict)
+        from loom.core.config.convert import convert_config
+
+        return convert_config(value, cast("type[Any]", annotation), strict=strict)
     except msgspec.ValidationError as exc:
         raise ConfigError(f"{target.__name__}.{name}: {exc}") from exc
 

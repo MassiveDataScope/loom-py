@@ -15,6 +15,7 @@ from loom.core.connections import (
 )
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.persistence.database import DatabaseConfig, decode_database_config
 
 # --------------------------------------------------------------------------- AWS
@@ -22,7 +23,7 @@ from loom.core.persistence.database import DatabaseConfig, decode_database_confi
 
 def test_aws_options_name_the_botocore_config_and_count_every_attempt() -> None:
     config = AwsClientConfig(
-        url="http://localhost:8000",
+        url=Dsn("http://localhost:8000"),
         pool=AwsPool(size=4),
         connect_timeout=1,
         read_timeout=7,
@@ -53,10 +54,10 @@ def test_aws_options_leave_the_regional_endpoint_to_boto3() -> None:
 
 def test_mongo_options_are_pymongo_keywords_in_milliseconds() -> None:
     connection = MongoConnection(
-        url="mongodb://h:27017",
+        url=Dsn("mongodb://h:27017"),
         database="app",
         username="u",
-        password="p",
+        password=Secret("p"),
         connect_timeout=2,
         read_timeout=30,
         server_selection_timeout=5,
@@ -77,7 +78,7 @@ def test_mongo_options_are_pymongo_keywords_in_milliseconds() -> None:
 
 
 def test_mongo_options_leave_unset_bounds_to_the_driver() -> None:
-    options = MongoConnection(url="mongodb://h", database="app").client_options()
+    options = MongoConnection(url=Dsn("mongodb://h"), database="app").client_options()
 
     assert options == {"host": "mongodb://h"}
 
@@ -87,9 +88,9 @@ def test_mongo_options_leave_unset_bounds_to_the_driver() -> None:
 
 def test_clickhouse_options_send_read_timeout_as_send_receive_timeout() -> None:
     connection = ClickHouseConnection(
-        url="clickhouse://h:8123/db",
+        url=Dsn("clickhouse://h:8123/db"),
         username="u",
-        password="p",
+        password=Secret("p"),
         connect_timeout=3,
         read_timeout=40,
         executor_threads=2,
@@ -108,7 +109,7 @@ def test_clickhouse_options_send_read_timeout_as_send_receive_timeout() -> None:
 
 
 def test_clickhouse_options_leave_unset_bounds_to_the_driver() -> None:
-    assert ClickHouseConnection(url="clickhouse://h/db").client_options() == {
+    assert ClickHouseConnection(url=Dsn("clickhouse://h/db")).client_options() == {
         "dsn": "clickhouse://h/db"
     }
 
@@ -117,18 +118,22 @@ def test_clickhouse_options_leave_unset_bounds_to_the_driver() -> None:
 
 
 def test_asyncpg_takes_the_timeouts_as_connect_arguments() -> None:
-    config = DatabaseConfig(url="postgresql+asyncpg://h/db", connect_timeout=3, read_timeout=30)
+    config = DatabaseConfig(
+        url=Dsn("postgresql+asyncpg://h/db"), connect_timeout=3, read_timeout=30
+    )
 
     assert config.client_options() == {"timeout": 3, "command_timeout": 30}
 
 
 def test_a_database_without_timeouts_adds_no_connect_argument() -> None:
-    assert DatabaseConfig(url="sqlite+aiosqlite:///:memory:").client_options() == {}
+    assert DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")).client_options() == {}
 
 
 def test_the_options_are_the_complete_connect_arguments() -> None:
     config = DatabaseConfig(
-        url="postgresql+asyncpg://h/db", connect_timeout=3, connect_args={"ssl": "require"}
+        url=Dsn("postgresql+asyncpg://h/db"),
+        connect_timeout=3,
+        connect_args=RedactedMap({"ssl": "require"}),
     )
 
     assert config.client_options() == {"ssl": "require", "timeout": 3}
@@ -144,13 +149,15 @@ def test_the_options_are_the_complete_connect_arguments() -> None:
 def test_a_timeout_for_another_driver_points_to_connect_args(url: str, field: str) -> None:
     timeout: dict[str, Any] = {field: 3}
     with pytest.raises(ValueError, match=rf"{field} applies to postgresql\+asyncpg URLs only"):
-        DatabaseConfig(url=url, **timeout)
+        DatabaseConfig(url=Dsn(url), **timeout)
 
 
 def test_a_timeout_also_set_in_connect_args_is_refused() -> None:
     with pytest.raises(ValueError, match="connect_args sets command_timeout"):
         DatabaseConfig(
-            url="postgresql+asyncpg://h/db", read_timeout=30, connect_args={"command_timeout": 10}
+            url=Dsn("postgresql+asyncpg://h/db"),
+            read_timeout=30,
+            connect_args=RedactedMap({"command_timeout": 10}),
         )
 
 
@@ -162,20 +169,22 @@ def test_a_decoded_section_names_its_path_when_a_timeout_does_not_apply() -> Non
 
 
 def test_the_database_repr_hides_the_url_credentials() -> None:
-    config = DatabaseConfig(url="postgresql+asyncpg://app:s3cr3t@h/db")
+    config = DatabaseConfig(url=Dsn("postgresql+asyncpg://app:s3cr3t@h/db"))
 
     shown = repr(config) + repr([config])
 
     assert "s3cr3t" not in shown
-    assert "postgresql+asyncpg://***@h/db" in shown
+    assert "postgresql+asyncpg://app:***@h/db" in shown
 
 
 def test_the_database_repr_hides_a_password_inside_connect_args() -> None:
     config = DatabaseConfig(
-        url="postgresql+asyncpg://h/db", connect_args={"password": "s3cr3t", "ssl": "require"}
+        url=Dsn("postgresql+asyncpg://h/db"),
+        connect_args=RedactedMap({"password": "s3cr3t", "ssl": "require"}),
     )
 
     shown = repr(config) + repr([config])
 
     assert "s3cr3t" not in shown
-    assert "connect_args='***'" in shown
+    assert "'ssl': 'require'" in shown
+    assert "'password': '***'" in shown

@@ -13,12 +13,17 @@ import msgspec
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.convert import convert_config
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
 from loom.core.persistence.database import load_database_config
 from loom.core.repository.dynamodb.backend import DynamoDBRepositoryConfig
 from loom.core.repository.mongo.backend import MongoRepositoryConfig
 from loom.core.sql.config import SqlConnectionConfig
-from loom.etl.storage._config import StorageConfig, normalise_storage_section
+from loom.etl.storage._config import (
+    StorageConfig,
+    convert_storage_config,
+    normalise_storage_section,
+)
 from loom.streaming.mongo import MongoSourceConfig
 
 _AWS = {"region": "eu-west-1", "url": "http://localhost:8000", "read_timeout": 9}
@@ -27,7 +32,11 @@ _CLICKHOUSE = {"url": "clickhouse://h:8123/db", "username": "u", "password": "p"
 
 
 def _storage(**sections: Any) -> StorageConfig:
-    return msgspec.convert(normalise_storage_section(sections), StorageConfig)
+    return convert_storage_config(normalise_storage_section(sections))
+
+
+def _decode(data: dict[str, Any], kind: type[Any]) -> Any:
+    return convert_config(data, kind, strict=True)
 
 
 def _values(connection: Any, keys: dict[str, Any]) -> dict[str, Any]:
@@ -38,7 +47,7 @@ def _values(connection: Any, keys: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_aws_settings_read_the_same_in_the_repository_and_the_etl() -> None:
-    repository = msgspec.convert({**_AWS, "table": "t"}, DynamoDBRepositoryConfig)
+    repository = _decode({**_AWS, "table": "t"}, DynamoDBRepositoryConfig)
     etl = _storage(dynamodb=_AWS).dynamodb
 
     assert isinstance(repository, AwsClientConfig)
@@ -48,16 +57,16 @@ def test_aws_settings_read_the_same_in_the_repository_and_the_etl() -> None:
 
 
 def test_mongo_settings_read_the_same_in_the_repository_the_etl_and_cdc() -> None:
-    repository = msgspec.convert({**_MONGO, "transactions": True}, MongoRepositoryConfig)
+    repository = _decode({**_MONGO, "transactions": True}, MongoRepositoryConfig)
     etl = _storage(mongo=_MONGO).mongo
-    cdc = msgspec.convert({**_MONGO, "on_oplog_expired": "fail"}, MongoSourceConfig)
+    cdc = _decode({**_MONGO, "on_oplog_expired": "fail"}, MongoSourceConfig)
 
     assert all(isinstance(c, MongoConnection) for c in (repository, etl, cdc))
     assert _values(repository, _MONGO) == _values(etl, _MONGO) == _values(cdc, _MONGO) == _MONGO
 
 
 def test_clickhouse_settings_read_the_same_in_sql_and_the_etl() -> None:
-    sql = msgspec.convert({**_CLICKHOUSE, "backend": "clickhouse"}, SqlConnectionConfig)
+    sql = convert_config({**_CLICKHOUSE, "backend": "clickhouse"}, SqlConnectionConfig, strict=True)
     etl = _storage(clickhouse=_CLICKHOUSE).clickhouse
 
     assert isinstance(sql, ClickHouseConnection)
@@ -66,8 +75,8 @@ def test_clickhouse_settings_read_the_same_in_sql_and_the_etl() -> None:
 
 
 def test_each_context_keeps_its_own_bounds() -> None:
-    sql = msgspec.convert(
-        {"url": "clickhouse://h/db", "backend": "clickhouse"}, SqlConnectionConfig
+    sql = convert_config(
+        {"url": "clickhouse://h/db", "backend": "clickhouse"}, SqlConnectionConfig, strict=True
     )
     etl = _storage(clickhouse={"url": "clickhouse://h/db"}).clickhouse
 
@@ -90,7 +99,7 @@ def test_each_context_keeps_its_own_bounds() -> None:
 )
 def test_an_unknown_key_fails_in_every_context(kind: type[Any], data: dict[str, Any]) -> None:
     with pytest.raises(msgspec.ValidationError, match="unknown field `nope`"):
-        msgspec.convert(data, kind)
+        _decode(data, kind)
 
 
 @pytest.mark.parametrize("section", ["dynamodb", "mongo", "clickhouse"])
@@ -103,7 +112,7 @@ def test_an_unknown_key_in_an_etl_engine_names_its_section(section: str) -> None
 
 def test_the_repository_requires_its_region() -> None:
     with pytest.raises(msgspec.ValidationError, match="region is required"):
-        msgspec.convert({"table": "t"}, DynamoDBRepositoryConfig)
+        _decode({"table": "t"}, DynamoDBRepositoryConfig)
 
 
 # --------------------------------------------------------------- retired keys
@@ -203,10 +212,10 @@ def test_the_sql_url_may_not_set_an_option_the_service_decides(query: str) -> No
     data = {"backend": "clickhouse", "url": f"clickhouse://h:8123/db?{query}"}
 
     with pytest.raises(msgspec.ValidationError, match="which the SQL service decides"):
-        msgspec.convert(data, SqlConnectionConfig)
+        convert_config(data, SqlConnectionConfig, strict=True)
 
 
 def test_the_sql_url_keeps_its_other_query_options() -> None:
     data = {"backend": "clickhouse", "url": "clickhouse://h:8123/db?compress=lz4"}
 
-    assert msgspec.convert(data, SqlConnectionConfig).url.endswith("?compress=lz4")
+    assert str(convert_config(data, SqlConnectionConfig, strict=True).url).endswith("?compress=lz4")

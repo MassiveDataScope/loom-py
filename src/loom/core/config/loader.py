@@ -623,7 +623,9 @@ def _convert_section(data: Any, key: str, target_type: type[T]) -> T:
         ConfigError: When ``msgspec`` validation fails.
     """
     try:
-        return msgspec.convert(data, target_type, strict=False)
+        from loom.core.config.convert import convert_config
+
+        return convert_config(data, target_type, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(
             f"Config section {key!r} failed validation as {target_type.__name__!r}: {exc}"

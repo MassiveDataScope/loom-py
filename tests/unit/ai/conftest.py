@@ -10,6 +10,7 @@ import pytest
 
 from loom.ai.config import A2AAgentConfig, AgentEndpointConfig, AiConfig, McpServerConfig
 from loom.ai.inference import InferenceTarget
+from loom.core.model.redaction import Dsn
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
@@ -145,7 +146,7 @@ def _connection(
 ) -> SqlConnectionConfig:
     return SqlConnectionConfig(
         backend="clickhouse",
-        url="clickhouse://reports.internal:8123/reporting",
+        url=Dsn("clickhouse://reports.internal:8123/reporting"),
         allowed_roles=allowed_roles,
         readonly=readonly,
     )

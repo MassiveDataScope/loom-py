@@ -63,6 +63,7 @@ from loom.ai.errors import AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model import msgspec_type
+from loom.core.model.redaction import Dsn
 from loom.core.sql.config import SqlConnectionConfig
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
@@ -195,7 +196,7 @@ def _canary_capabilities() -> tuple[CompiledCapability, ...]:
             connection="canary_conn",
             config=SqlConnectionConfig(
                 backend="clickhouse",
-                url="clickhouse://canary-db.internal:8123/reporting",
+                url=Dsn("clickhouse://canary-db.internal:8123/reporting"),
             ),
             max_rows=100,
             max_result_bytes=1024,

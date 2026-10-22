@@ -38,6 +38,7 @@ from loom.ai.inference import InferenceTarget, _RedactedOptions
 from loom.core.engine.compilable import Compilable
 from loom.core.introspection import IntrospectionError
 from loom.core.model import LoomFrozenStruct, msgspec_type
+from loom.core.model.redaction import Dsn
 from loom.core.sql.config import SqlConnectionConfig
 
 _AGENT = "describable"
@@ -93,7 +94,7 @@ def _sql_capability() -> CompiledSqlCapability:
         connection=_SQL_CONNECTION,
         config=SqlConnectionConfig(
             backend="clickhouse",
-            url="clickhouse://reports.internal:8123/reporting",
+            url=Dsn("clickhouse://reports.internal:8123/reporting"),
             allowed_roles=(),
             readonly=True,
         ),
