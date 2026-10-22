@@ -16,7 +16,7 @@ from typing import Any, Self
 import msgspec
 
 from loom.core.config.errors import ConfigError
-from loom.core.connections.clients.clickhouse import async_client_options
+from loom.core.connections.clickhouse.client import async_client_options
 from loom.core.sql.abc import UnknownConnectionError
 from loom.core.sql.clickhouse._client import (
     AsyncClickHouseClient,
@@ -28,7 +28,7 @@ from loom.core.sql.clickhouse._client import (
     supports_repeated_query_params,
 )
 from loom.core.sql.clickhouse.executor import ClickHouseSqlExecutor
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.sql.config import SqlConfig, SqlConnectionConfig, reject_retired_sql_keys
 
 _logger = logging.getLogger(__name__)
 
@@ -85,8 +85,10 @@ class ClickHouseConnectionRegistry:
             A registry over the validated configuration.
 
         Raises:
-            ConfigError: When the mapping fails ``SqlConfig`` validation.
+            ConfigError: When the mapping holds a retired key or fails
+                ``SqlConfig`` validation.
         """
+        reject_retired_sql_keys(raw)
         try:
             config = msgspec.convert(raw, SqlConfig, strict=False)
         except msgspec.ValidationError as exc:

@@ -395,21 +395,22 @@ persistence:
   dynamodb:
     region: eu-west-1
     table: app
-    max_pool_connections: 32   # HTTP connections and worker threads
+    pool:
+      size: 32                 # HTTP connections and worker threads
     connect_timeout: 2         # seconds
     read_timeout: 5            # seconds
     max_attempts: 3            # total, the first attempt included
     retry_mode: standard       # standard | adaptive
 ```
 
-Repository calls run on a thread pool as wide as `max_pool_connections`, so
+Repository calls run on a thread pool as wide as `pool.size`, so
 that many calls proceed in parallel in one process; the trace id and other
 context variables stay visible inside the threads.
 
 The section is `AwsClientConfig` plus `table`: the same keys and defaults
 apply wherever loom calls AWS (the ETL's `storage.dynamodb`, the `secrets`
-and `ssm` resolvers, the SNS notifier), and `profile` and `endpoint_url`
-are accepted too. Credentials never come from configuration; boto3's default
+and `ssm` resolvers, the SNS notifier), and `profile` and `url` (an
+endpoint override; absent, the AWS regional endpoint) are accepted too. Credentials never come from configuration; boto3's default
 chain applies. See [ADR 0006](../architecture/adr/0006-hexagonal-layers.md).
 
 ## Health
@@ -442,31 +443,36 @@ backend without it fails at startup naming the extra.
 persistence:
   backend: mongo
   mongo:
-    uri: mongodb://localhost:27017/?replicaSet=rs0
+    url: mongodb://localhost:27017/?replicaSet=rs0
     database: shop
     transactions: false          # true needs a replica set
     id: uuid4                    # or objectid
     collections:                 # optional, keyed by model class name
       Order: orders_v2
-    max_pool_size: 50            # optional; driver default when absent
-    server_selection_timeout_ms: 5000   # optional; driver default when absent
+    pool:
+      size: 50                   # optional; driver default when absent
+      timeout: 2                 # seconds waiting for a free connection; optional
+    server_selection_timeout: 5  # seconds; optional, driver default when absent
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `uri` | required | Connection string handed to `AsyncMongoClient`. |
+| `url` | required | Connection string handed to `AsyncMongoClient`. |
 | `database` | required | Database every collection is taken from. |
 | `transactions` | `false` | `true` runs each unit of work as one client session and transaction; `false` is a no-op unit of work, every write autocommits. |
 | `id` | `uuid4` | How keys are minted when the input carries none (see below). |
 | `collections` | `{}` | Collection name per model **class name**; absent models use `__tablename__`. |
-| `max_pool_size`, `server_selection_timeout_ms` | unset | Forwarded to the driver only when set. |
+| `username`, `password` | unset | Credentials; win over those of the `url`. |
+| `connect_timeout`, `read_timeout`, `server_selection_timeout` | unset | Seconds; forwarded to the driver only when set. |
+| `pool.size`, `pool.timeout` | unset | Connections kept, and seconds a caller waits for one; forwarded only when set. |
 
 The section rejects unknown keys, so a misspelt option is a `ConfigError`
 at startup rather than a silently ignored setting, and startup logs
 `mongo unit of work: transactions=<bool>` once.
 
-The connection keys (`uri`, `database`, `max_pool_size`,
-`server_selection_timeout_ms`, `server_api_version`) are `MongoConnection`'s,
+The connection keys (`url`, `database`, `username`, `password`,
+`connect_timeout`, `read_timeout`, `server_selection_timeout`, `pool`,
+`server_api_version`) are `MongoConnection`'s,
 the same in the ETL's `storage.mongo` and in a change-stream source
 (`mongo.source`); `transactions`, `id` and `collections` belong to the
 repository alone.
@@ -550,7 +556,7 @@ cases and the routes do not change:
 persistence:
   backend: mongo            # was: sqlalchemy
   mongo:
-    uri: mongodb://localhost:27017/?replicaSet=rs0
+    url: mongodb://localhost:27017/?replicaSet=rs0
     database: shop
 ```
 
@@ -622,6 +628,38 @@ class Measurement(BaseModel):
 
 ## Upgrade notes
 
+- Every engine's connection follows one standard
+  ([ADR 0006](../architecture/adr/0006-hexagonal-layers.md#connection-standard)):
+  `url`, `username`/`password`, `connect_timeout` and `read_timeout` in
+  seconds, `max_attempts`, and the pool under `pool` (`pool.size`,
+  `pool.timeout`). The old keys stop startup naming the new one:
+
+  | Section | Old key | New key |
+  |---|---|---|
+  | `persistence.dynamodb`, `storage.dynamodb` | `endpoint_url` | `url` |
+  | `persistence.dynamodb`, `storage.dynamodb` | `max_pool_connections` | `pool.size` |
+  | `persistence.mongo`, `storage.mongo`, `mongo.source(s)` | `uri` | `url` |
+  | `persistence.mongo`, `storage.mongo`, `mongo.source(s)` | `max_pool_size` | `pool.size` (above zero; the old `0` for "no limit" is gone) |
+  | `persistence.mongo`, `storage.mongo`, `mongo.source(s)` | `server_selection_timeout_ms` | `server_selection_timeout`, in seconds |
+  | `sql.connections.<name>`, `storage.clickhouse`, `database.<name>` of a sink | `send_receive_timeout` | `read_timeout` |
+  | `sql.connections.<name>`, `storage.clickhouse`, `database.<name>` of a sink | `pool_size` | `pool.size` |
+
+  The `LOOM__` overrides follow: `LOOM__PERSISTENCE__DYNAMODB__POOL__SIZE`,
+  `LOOM__STORAGE__DYNAMODB__POOL__SIZE`, `LOOM__SQL__CONNECTIONS__<NAME>__POOL__SIZE`
+  and `LOOM__SQL__CONNECTIONS__<NAME>__READ_TIMEOUT`. The Mongo connection also
+  takes `username`, `password`, `connect_timeout`, `read_timeout` and
+  `pool.timeout`.
+- `database` takes `connect_timeout` and `read_timeout` (seconds) for a
+  `postgresql+asyncpg` URL, passed to asyncpg as `timeout` and
+  `command_timeout`. With another driver, set the driver's own option in
+  `connect_args`; setting a timeout in both places stops startup. The
+  `DatabaseConfig` repr now hides the credentials of `url`.
+- The client islands moved: `loom.core.connections.clients.<engine>` is now
+  `loom.core.connections.<engine>.client`, and the loaders `aws_island`,
+  `mongo_island` and `clickhouse_island` are imported from
+  `loom.core.connections.<engine>`. A missing extra now raises loom's
+  `MissingExtraError` (an `ImportError`) naming the extra, from the ETL
+  sources and from the Mongo change-stream source alike.
 - Each engine's connection has one type, shared by every context
   ([ADR 0006](../architecture/adr/0006-hexagonal-layers.md)):
   `AwsClientConfig`, `MongoConnection`, `ClickHouseConnection` and

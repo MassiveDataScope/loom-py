@@ -8,13 +8,14 @@ invalid values abort the parse and surface as
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlsplit
 
 import msgspec
 
-from loom.core.connections import ClickHouseConnection, redact_uri
+from loom.core.connections._base import redact_uri, reject_retired_keys
+from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.types import PositiveInt
 
@@ -117,12 +118,12 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
             zero: ``0`` means no limit to ClickHouse.
         max_sql_bytes: Maximum accepted SQL statement size in bytes.
         connect_timeout: Driver connect timeout in seconds, above zero.
-        send_receive_timeout: Driver send/receive timeout in seconds, above
+        read_timeout: Seconds to send a query or receive its response, above
             zero.
         executor_threads: Async client thread pool size, above zero (driver
             default if ``None``).
-        pool_size: HTTP connection pool size, above zero (driver default if
-            ``None``).
+        pool: HTTP connections the client keeps; ``pool.size`` above zero
+            (driver default if ``None``).
         settings: Extra backend settings handed to the executor at
             construction. They can never override the policy.
         sql_endpoint: Optional REST endpoint settings for this connection.
@@ -144,7 +145,7 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
     max_execution_time: PositiveInt = 30
     max_sql_bytes: int = 262144
     connect_timeout: PositiveInt = 10
-    send_receive_timeout: PositiveInt = 60
+    read_timeout: PositiveInt = 60
     settings: dict[str, Any] = msgspec.field(default_factory=dict)
     sql_endpoint: SqlEndpointConfig = msgspec.field(default_factory=SqlEndpointConfig)
 
@@ -174,6 +175,21 @@ class SqlConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fiel
     """
 
     connections: dict[str, SqlConnectionConfig]
+
+
+def reject_retired_sql_keys(raw: object, path: str = "sql") -> None:
+    """Fail when a connection of the ``sql`` section *raw*, read from *path*, holds a retired key.
+
+    Raises:
+        ConfigError: Naming the retired key and its replacement.
+    """
+    if not isinstance(raw, Mapping):
+        return
+    connections = raw.get("connections")
+    if not isinstance(connections, Mapping):
+        return
+    for name, connection in connections.items():
+        reject_retired_keys(connection, f"{path}.connections.{name}", SqlConnectionConfig)
 
 
 # Client options the SQL service decides itself. The driver copies the DSN's

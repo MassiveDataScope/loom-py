@@ -15,7 +15,7 @@ from loom.core.connections import AwsClientConfig, ClickHouseConnection
 from tests.helpers.extras import patched_aws_clients
 
 _CONNECTION = ClickHouseConnection(
-    url="clickhouse://h:8123/db", username="etl", password="pw", send_receive_timeout=600
+    url="clickhouse://h:8123/db", username="etl", password="pw", read_timeout=600
 )
 
 

@@ -55,8 +55,8 @@ def test_an_unknown_key_names_its_section() -> None:
     ("kind", "data", "field"),
     [
         (ClickHouseConnection, {"url": "  "}, "url"),
-        (MongoConnection, {"uri": "", "database": "app"}, "uri"),
-        (MongoConnection, {"uri": "mongodb://h", "database": " "}, "database"),
+        (MongoConnection, {"url": "", "database": "app"}, "url"),
+        (MongoConnection, {"url": "mongodb://h", "database": " "}, "database"),
     ],
 )
 def test_an_empty_address_is_refused(kind: type[Any], data: dict[str, Any], field: str) -> None:
@@ -68,7 +68,7 @@ def test_aws_bounds_are_finite_by_default() -> None:
     config = AwsClientConfig()
 
     assert (config.connect_timeout, config.read_timeout, config.max_attempts) == (2, 5, 3)
-    assert (config.retry_mode, config.max_pool_connections) == ("standard", 32)
+    assert (config.retry_mode, config.pool.size) == ("standard", 32)
 
 
 @pytest.mark.parametrize(
@@ -76,7 +76,11 @@ def test_aws_bounds_are_finite_by_default() -> None:
     [
         (ClickHouseConnection(url="clickhouse://user:pw1@h/db", password="pw2"), ("pw1", "pw2")),
         (_Context(url="clickhouse://user:pw1@h/db", password="pw2", role="r"), ("pw1", "pw2")),
-        (MongoConnection(uri="mongodb://user:pw1@h:27017", database="app"), ("pw1",)),
+        (MongoConnection(url="mongodb://user:pw1@h:27017", database="app"), ("pw1",)),
+        (
+            MongoConnection(url="mongodb://h:27017", database="app", password="pw2"),
+            ("pw2",),
+        ),
     ],
 )
 def test_the_repr_hides_every_secret(connection: object, secret: tuple[str, ...]) -> None:
@@ -89,7 +93,7 @@ def test_the_repr_hides_every_secret(connection: object, secret: tuple[str, ...]
 def test_a_validation_error_never_quotes_the_secret() -> None:
     with pytest.raises(msgspec.ValidationError) as caught:
         _decode(
-            {"url": "clickhouse://user:pw1@h/db", "password": "pw2", "pool_size": 0},
+            {"url": "clickhouse://user:pw1@h/db", "password": "pw2", "pool": {"size": 0}},
             ClickHouseConnection,
         )
 

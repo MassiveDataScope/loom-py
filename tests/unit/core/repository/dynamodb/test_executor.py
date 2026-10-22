@@ -1,4 +1,4 @@
-"""DynamoDB calls run on the backend's executor, sized by ``max_pool_connections``."""
+"""DynamoDB calls run on the backend's executor, sized by ``pool.size``."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ async def test_the_caller_context_is_visible_inside_the_executor_thread() -> Non
     assert client.seen_requests == ["req-42"]
 
 
-def test_the_backend_sizes_its_executor_by_max_pool_connections(
+def test_the_backend_sizes_its_executor_by_the_pool_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created: list[int] = []
@@ -77,7 +77,7 @@ def test_the_backend_sizes_its_executor_by_max_pool_connections(
         {
             "persistence": {
                 "backend": "dynamodb",
-                "dynamodb": {"region": "eu-west-1", "table": "t", "max_pool_connections": 16},
+                "dynamodb": {"region": "eu-west-1", "table": "t", "pool": {"size": 16}},
             }
         }
     )

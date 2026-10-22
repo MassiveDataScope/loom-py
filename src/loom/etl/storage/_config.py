@@ -18,7 +18,13 @@ if TYPE_CHECKING:
 import msgspec
 from deltalake import CommitProperties, WriterProperties
 
-from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
+from loom.core.connections import (
+    AwsClientConfig,
+    ClickHouseConnection,
+    ConnectionSettings,
+    MongoConnection,
+)
+from loom.core.connections._base import reject_retired_keys
 from loom.core.model import LoomFrozenStruct
 from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
@@ -481,6 +487,8 @@ def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
         A new dict ready for :func:`convert_storage_config`.
 
     Raises:
+        ConfigError: When an engine section (``dynamodb``, ``mongo``,
+            ``clickhouse``) holds a retired key, naming its replacement.
         ValueError: When a mapping entry carries a ``name`` different from its
             key, when a ``profile`` is not declared in ``profiles``, or when a
             profile carries ``uri``. Other fields unknown to
@@ -494,8 +502,17 @@ def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
     return _apply_profiles(normalised)
 
 
+_ENGINE_SECTIONS: Final[Mapping[str, type[ConnectionSettings]]] = {
+    "dynamodb": AwsClientConfig,
+    "mongo": MongoConnection,
+    "clickhouse": ClickHouseConnection,
+}
+
+
 def _refuse_retired_keys(raw: Mapping[str, Any]) -> None:
     """Name the replacement of a key the engine sections no longer take."""
+    for section, connection in _ENGINE_SECTIONS.items():
+        reject_retired_keys(raw.get(section), f"storage.{section}", connection)
     dynamodb = raw.get("dynamodb")
     if isinstance(dynamodb, Mapping) and "enabled" in dynamodb:
         raise ValueError(

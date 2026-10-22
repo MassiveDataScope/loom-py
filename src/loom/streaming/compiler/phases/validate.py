@@ -18,7 +18,7 @@ from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import ConsumerSettings, KafkaSettings
-from loom.streaming.mongo import MongoConfig
+from loom.streaming.mongo._config import load_mongo_config
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import (
     PATH_END_NODE_TYPES,
@@ -91,7 +91,7 @@ def validate_mongo(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[Compi
     if not isinstance(flow.source, FromMongoCDC):
         return []
     try:
-        mongo = ctx.section(ConfigKey.MONGO, MongoConfig)
+        mongo = load_mongo_config(ctx)
         mongo.source_for(flow.source.logical_ref)
         return []
     except (ConfigError, KeyError) as exc:

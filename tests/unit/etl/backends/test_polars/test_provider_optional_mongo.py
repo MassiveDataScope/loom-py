@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from loom.core.connections import MongoConnection
+from loom.core.plugins.optional import MissingExtraError
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig
 from tests.helpers.extras import MONGO_ISLAND, without_extra
 
@@ -52,10 +53,12 @@ def test_mongo_source_without_pymongo_names_the_extra(
     config = StorageConfig(
         engine="polars",
         defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-        mongo=MongoConnection(uri="mongodb://localhost:27017", database="app"),
+        mongo=MongoConnection(url="mongodb://localhost:27017", database="app"),
     )
 
     provider = PolarsProvider()
 
-    with pytest.raises(ImportError, match=r"loom-kernel\[mongo\]"):
+    with pytest.raises(MissingExtraError, match="needs the 'mongo' extra") as raised:
         provider.create_backends(config)
+
+    assert raised.value.extra == "mongo"

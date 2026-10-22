@@ -19,7 +19,7 @@ from loom.core.sql import (
     SqlExecutor,
     SqlQueryService,
 )
-from loom.core.sql.config import roles_need_identity_binding
+from loom.core.sql.config import reject_retired_sql_keys, roles_need_identity_binding
 from loom.rest.auth import Authenticator
 from loom.rest.fastapi._auto_auth import _AuthWiring, _require_jwt_audience
 from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, _roles_mechanism
@@ -82,6 +82,7 @@ def _resolve_sql(ctx: ConfigContext, auth: _AuthWiring) -> _SqlWiring:
     Present section → startup auth gate (spec §4) plus a registry whose
     connections only open inside the app lifespan.
     """
+    reject_retired_sql_keys(ctx.raw(ConfigKey.SQL))
     sql_cfg = ctx.section_optional(ConfigKey.SQL, SqlConfig)
     if sql_cfg is None:
         return _SqlWiring(config=None, registry=None, service=NullSqlQueryService())

@@ -208,7 +208,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                     "ClickHouseSourceReader requires storage.clickhouse to be configured "
                     "or an explicit client injected at construction time."
                 )
-            self._client = open_client(self._connection, owner="ClickHouseSourceReader")
+            self._client = open_client(self._connection)
             return self._client
 
     def _build_query(self, spec: ClickHouseSourceSpec, params_instance: Any) -> str:

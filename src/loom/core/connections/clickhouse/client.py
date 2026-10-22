@@ -4,23 +4,27 @@ Contexts call :func:`build_clickhouse_client`; the asynchronous SQL service
 builds its options with :func:`async_client_options` and opens the client
 with :func:`open_async_client`.
 
-Loaded with ``import_optional("loom.core.connections.clients.clickhouse",
-extra="clickhouse")``. The DSN goes to the driver as written; explicit
-credentials and bounds win over it, as in the driver.
+Loaded with :func:`~loom.core.connections.clickhouse.loader.clickhouse_island`.
+The DSN goes to the driver as written; explicit credentials and bounds win
+over it, as in the driver.
 """
 
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect  # type: ignore[import-untyped]
 from clickhouse_connect.driver import httputil  # type: ignore[import-untyped]
 
 from loom.core.connections._base import merge_extra
-from loom.core.connections.clickhouse import ClickHouseConnection
+from loom.core.connections.clickhouse.config import ClickHouseConnection
 
-_RESERVED = ("dsn", "pool_mgr")
+if TYPE_CHECKING:
+    from loom.core.connections.clickhouse import client as _self
+    from loom.core.connections.clickhouse.loader import ClickHouseIsland
+
+    _conforms: ClickHouseIsland = _self
 
 __all__ = ["async_client_options", "build_clickhouse_client", "open_async_client"]
 
@@ -38,16 +42,9 @@ def build_clickhouse_client(connection: ClickHouseConnection, **extra: Any) -> A
     Raises:
         ValueError: When *extra* names an option *connection* decides.
     """
-    return clickhouse_connect.get_client(**_client_options(connection, **extra))
-
-
-def _client_options(connection: ClickHouseConnection, **extra: Any) -> dict[str, Any]:
-    """Return the ``get_client`` options *connection* and the context's *extra* make.
-
-    Raises:
-        ValueError: When *extra* names an option *connection* decides.
-    """
-    return merge_extra(_connection_options(connection), extra, connection, reserved=_RESERVED)
+    return clickhouse_connect.get_client(
+        **merge_extra(_connection_options(connection), extra, connection)
+    )
 
 
 def async_client_options(connection: ClickHouseConnection, **extra: Any) -> dict[str, Any]:
@@ -59,7 +56,7 @@ def async_client_options(connection: ClickHouseConnection, **extra: Any) -> dict
     built = _connection_options(connection)
     if connection.executor_threads is not None:
         built["executor_threads"] = connection.executor_threads
-    return merge_extra(built, extra, connection, reserved=_RESERVED)
+    return merge_extra(built, extra, connection)
 
 
 async def open_async_client(options: dict[str, Any]) -> Any:
@@ -77,17 +74,9 @@ async def open_async_client(options: dict[str, Any]) -> Any:
         return await clickhouse_connect.get_async_client(**options)
 
 
-def _pool_manager(maxsize: int) -> Any:
-    """Build a urllib3 pool manager holding up to *maxsize* connections."""
-    return httputil.get_pool_manager(maxsize=maxsize)
-
-
 def _connection_options(connection: ClickHouseConnection) -> dict[str, Any]:
-    built: dict[str, Any] = {"dsn": connection.url}
-    for name in ("username", "password", "connect_timeout", "send_receive_timeout"):
-        value = getattr(connection, name)
-        if value is not None:
-            built[name] = value
-    if connection.pool_size is not None:
-        built["pool_mgr"] = _pool_manager(connection.pool_size)
+    """Return the connection's ``client_options()`` plus the urllib3 pool it sizes."""
+    built = connection.client_options()
+    if connection.pool.size is not None:
+        built["pool_mgr"] = httputil.get_pool_manager(maxsize=connection.pool.size)
     return built

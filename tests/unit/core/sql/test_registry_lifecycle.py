@@ -135,11 +135,11 @@ async def test_closes_created_clients_when_the_probe_fails() -> None:
 
 
 async def test_passes_explicit_connection_timeouts_to_the_driver() -> None:
-    """``connect_timeout`` and ``send_receive_timeout`` travel explicitly to the driver."""
+    """``connect_timeout`` and ``read_timeout`` travel explicitly to the driver."""
     factory = RecordingClientFactory()
     registry = _registry(
         factory,
-        analytics=make_connection_config(connect_timeout=5, send_receive_timeout=42),
+        analytics=make_connection_config(connect_timeout=5, read_timeout=42),
     )
     async with registry:
         pass

@@ -105,7 +105,7 @@ class ClickHouseTargetWriter:
         resolved = resolve_connection(url, connection, owner="ClickHouseTargetWriter")
         if resolved is None:
             raise ValueError("ClickHouseTargetWriter requires 'url' or 'connection'")
-        self._client = open_client(resolved, owner="ClickHouseTargetWriter")
+        self._client = open_client(resolved)
 
     def write(
         self,
@@ -244,7 +244,7 @@ class ClickHouseClientExecutor:
                     "ClickHouseClientExecutor requires 'url', 'connection' or 'client' "
                     "at construction time."
                 )
-            self._client = open_client(self._connection, owner="ClickHouseClientExecutor")
+            self._client = open_client(self._connection)
             return self._client
 
 

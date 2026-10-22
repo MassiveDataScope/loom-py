@@ -28,7 +28,7 @@ try:
         OperationalError,
     )
 
-    from loom.core.connections.clients.clickhouse import open_async_client
+    from loom.core.connections.clickhouse.client import open_async_client
 except ImportError as exc:  # pragma: no cover - only without the optional extra
     raise ImportError(_INSTALL_HINT) from exc
 
@@ -207,9 +207,9 @@ class _DriverAsyncClientAdapter:
 async def create_driver_client(**kwargs: Any) -> AsyncClickHouseClient:
     """Create an adapted driver ``AsyncClient`` from ``get_async_client`` kwargs.
 
-    The client is opened by the ClickHouse island of
-    :mod:`loom.core.connections.clients`, the one place loom builds a
-    ClickHouse client.
+    The client is opened by the ClickHouse island,
+    :mod:`loom.core.connections.clickhouse.client`, the one place loom builds
+    a ClickHouse client.
 
     Args:
         **kwargs: Keyword arguments forwarded verbatim to

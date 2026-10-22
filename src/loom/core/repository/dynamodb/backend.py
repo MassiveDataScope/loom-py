@@ -8,8 +8,9 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.connections._base import reject_retired_keys
 from loom.core.connections.aws import AwsClientConfig
-from loom.core.connections.clients.aws import build_aws_client
+from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
@@ -73,8 +74,10 @@ class DynamoDBBackend:
             The DynamoDB wiring.
 
         Raises:
-            ConfigError: When the ``persistence.dynamodb`` section is missing.
+            ConfigError: When the ``persistence.dynamodb`` section is missing or
+                holds a retired key.
         """
+        reject_retired_keys(ctx.raw(_SECTION), _SECTION, DynamoDBRepositoryConfig)
         dynamo_cfg = ctx.section_optional(_SECTION, DynamoDBRepositoryConfig)
         if dynamo_cfg is None:
             raise ConfigError(
@@ -87,7 +90,7 @@ class DynamoDBBackend:
         # One pool of threads per backend, as wide as the client's connection
         # pool: the default executor would cap parallel calls at cpu + 4.
         executor = ThreadPoolExecutor(
-            max_workers=dynamo_cfg.max_pool_connections, thread_name_prefix="loom-dynamodb"
+            max_workers=dynamo_cfg.pool.size, thread_name_prefix="loom-dynamodb"
         )
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),

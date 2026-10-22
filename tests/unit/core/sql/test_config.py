@@ -39,9 +39,9 @@ def test_parses_defaults_when_connection_is_minimal() -> None:
         conn.max_execution_time,
         conn.max_sql_bytes,
         conn.connect_timeout,
-        conn.send_receive_timeout,
+        conn.read_timeout,
         conn.executor_threads,
-        conn.pool_size,
+        conn.pool.size,
     ) == (True, 1000, 10000, 30, 262144, 10, 60, None, None)
 
 

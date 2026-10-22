@@ -6,31 +6,30 @@ inline in a sink — and build their engine through the same constructor. The
 pool keys live under ``database.pool``; each key left out takes the default of
 the entry point's :class:`~loom.core.persistence.profile.RuntimeProfile`.
 
-This module imports no driver: streaming resolves its configuration without
-the SQLAlchemy extra installed.
+The section follows the connection standard of :mod:`loom.core.connections`:
+``url``, ``connect_timeout`` and ``read_timeout`` in seconds, ``pool.size``
+and ``pool.timeout``. This module imports no driver: streaming resolves its
+configuration without the SQLAlchemy extra installed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final, Literal
+from types import MappingProxyType
+from typing import Any, ClassVar, Final, Literal
 
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.connections._base import ConnectionPool, ConnectionSettings, reject_retired_keys
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
 
 EXTERNAL: Final = "external"
 
-_RETIRED_KEYS: Final = {
-    "pool_pre_ping": "pre_ping",
-    "pool_size": "size",
-    "max_overflow": "max_overflow",
-    "pool_timeout": "timeout",
-    "pool_recycle": "recycle",
-}
-"""Flat pool keys a ``database`` section once took, mapped to their ``pool`` key."""
+_ASYNCPG: Final = "postgresql+asyncpg"
+_ASYNCPG_TIMEOUTS: Final = {"connect_timeout": "timeout", "read_timeout": "command_timeout"}
+"""The standard timeouts, mapped to the asyncpg ``connect()`` argument each one sets."""
 
 
 class SchemaRoles(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
@@ -86,7 +85,7 @@ class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fie
     naming_convention: dict[str, str] | None = None
 
 
-class PoolConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
+class PoolConfig(ConnectionPool, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """``database.pool``: connection-pool keys; ``None`` means "not declared".
 
     Args:
@@ -97,7 +96,6 @@ class PoolConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_field
         pre_ping: Whether a connection is checked before it is handed out.
     """
 
-    size: PositiveInt | None = None
     max_overflow: NonNegativeInt | None = None
     timeout: PositiveInt | None = None
     recycle: PositiveInt | None = None
@@ -115,12 +113,13 @@ class PoolConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_field
         )
 
 
-class DatabaseConfig(msgspec.Struct, kw_only=True, frozen=True):
+class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unknown_fields=False):
     """A relational database section.
 
     Keys outside this contract are tolerated at the top level: the section
     also holds the named databases of streaming sinks (``database.<name>``).
-    ``pool`` and ``schema``, each with a single definition, refuse them.
+    ``pool`` and ``schema``, each with a single definition, refuse them. The
+    repr hides the credentials of the URL.
 
     Args:
         url: SQLAlchemy async URL; never empty.
@@ -128,13 +127,61 @@ class DatabaseConfig(msgspec.Struct, kw_only=True, frozen=True):
         pool: Connection-pool keys; see :class:`PoolConfig`.
         connect_args: Passed to the driver's ``connect()`` as written.
         schema: Startup schema handling; see :class:`SchemaConfig`.
+        connect_timeout: Seconds to establish a connection; ``postgresql+asyncpg``
+            URLs only (asyncpg ``timeout``).
+        read_timeout: Seconds a statement may run; ``postgresql+asyncpg`` URLs
+            only (asyncpg ``command_timeout``).
     """
+
+    _RETIRED_KEYS: ClassVar[Mapping[str, str]] = MappingProxyType(
+        {
+            "pool_pre_ping": "pool.pre_ping",
+            "pool_size": "pool.size",
+            "max_overflow": "pool.max_overflow",
+            "pool_timeout": "pool.timeout",
+            "pool_recycle": "pool.recycle",
+        }
+    )
 
     url: str
     echo: bool = False
     pool: PoolConfig = msgspec.field(default_factory=PoolConfig)
     connect_args: dict[str, Any] = msgspec.field(default_factory=dict)
     schema: SchemaConfig = msgspec.field(default_factory=SchemaConfig)
+    connect_timeout: PositiveInt | None = None
+    read_timeout: PositiveInt | None = None
+
+    def client_options(self) -> dict[str, Any]:
+        """Return what the standard timeouts add to the driver's ``connect_args``.
+
+        Only asyncpg takes them, as ``timeout`` and ``command_timeout``; any
+        other driver keeps its own option names, set in ``connect_args``.
+
+        Raises:
+            ConfigError: When a timeout is set for a URL that is not
+                ``postgresql+asyncpg``, or ``connect_args`` sets the asyncpg
+                argument that timeout decides.
+        """
+        declared = {
+            field: value
+            for field in _ASYNCPG_TIMEOUTS
+            if (value := getattr(self, field)) is not None
+        }
+        if not declared:
+            return {}
+        if self.url.split("://", 1)[0].lower() != _ASYNCPG:
+            raise ConfigError(
+                f"{', '.join(declared)} applies to {_ASYNCPG} URLs only; "
+                "set the driver's own timeout in connect_args"
+            )
+        options = {_ASYNCPG_TIMEOUTS[field]: value for field, value in declared.items()}
+        clashes = sorted(set(options) & set(self.connect_args))
+        if clashes:
+            raise ConfigError(
+                f"connect_args sets {', '.join(clashes)}, which connect_timeout and "
+                "read_timeout decide; set each timeout in one place"
+            )
+        return options
 
 
 def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseConfig:
@@ -149,8 +196,8 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
 
     Raises:
         ConfigError: When a retired flat pool key is present (naming its
-            ``pool`` replacement), a key is unknown, a value is out of range or
-            the URL is empty.
+            ``pool`` replacement), a key is unknown, a value is out of range,
+            the URL is empty or a timeout does not apply to the URL's driver.
     """
     reject_retired_pool_keys(data, path)
     try:
@@ -159,6 +206,10 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
         raise ConfigError(f"Config section {path!r} failed validation: {exc}") from exc
     if not config.url.strip():
         raise ConfigError(f"Config section {path!r}: 'url' must not be empty")
+    try:
+        config.client_options()
+    except ConfigError as exc:
+        raise ConfigError(f"Config section {path!r}: {exc}") from exc
     return config
 
 
@@ -179,9 +230,7 @@ def reject_retired_pool_keys(data: Mapping[str, Any], path: str) -> None:
     Raises:
         ConfigError: Naming the retired key and its ``<path>.pool.<key>`` replacement.
     """
-    for retired, replacement in _RETIRED_KEYS.items():
-        if retired in data:
-            raise ConfigError(f"{path}.{retired} was removed; use {path}.pool.{replacement}")
+    reject_retired_keys(data, path, DatabaseConfig)
 
 
 __all__ = [

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from loom.core.connections import AwsClientConfig, MongoConnection
-from loom.core.connections.clients import aws_island, mongo_island
-from loom.core.plugins.optional import MissingExtraError
+from loom.core.connections.aws import AwsClientConfig, aws_island
+from loom.core.connections.mongo import MongoConnection, mongo_island
 from loom.etl.backends.polars._reader import PolarsSourceReader
 from loom.etl.backends.polars._writer import PolarsTargetWriter
 from loom.etl.io._registry import WriterRegistry
@@ -109,32 +108,18 @@ def _build_mongo_client(connection: MongoConnection) -> Any:
     """Build a PyMongo client for the ``storage.mongo`` connection.
 
     Raises:
-        ImportError: When the ``mongo`` extra is not installed.
+        MissingExtraError: When the ``mongo`` extra is not installed.
     """
-    try:
-        island = mongo_island()
-    except MissingExtraError as exc:
-        raise ImportError(
-            "MongoDB sources require the 'mongo' extra (pymongo). "
-            "Install loom-kernel[mongo] to read from storage.mongo."
-        ) from exc
-    return island.build_mongo_client(connection)
+    return mongo_island().build_mongo_client(connection)
 
 
 def _build_dynamodb_client(config: AwsClientConfig) -> Any:
     """Build a boto3 DynamoDB client for the ``storage.dynamodb`` settings.
 
     Raises:
-        ImportError: When the ``dynamodb`` extra is not installed.
+        MissingExtraError: When the ``dynamodb`` extra is not installed.
     """
-    try:
-        island = aws_island(extra="dynamodb")
-    except MissingExtraError as exc:
-        raise ImportError(
-            "DynamoDB sources require the 'dynamodb' extra (boto3). "
-            "Install loom-kernel[dynamodb] to read from storage.dynamodb."
-        ) from exc
-    return island.build_aws_client("dynamodb", config)
+    return aws_island(extra="dynamodb").build_aws_client("dynamodb", config)
 
 
 def _build_polars_locator(config: StorageConfig) -> TableLocator:

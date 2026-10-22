@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-import loom.core.connections.clients.mongo as mongo_island
+import loom.core.connections.mongo.client as mongo_island
 import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
@@ -82,7 +82,7 @@ def _wiring(
     return MongoBackend().build(_ctx(section), models, BackendRuntime(SERVER_PROFILE))
 
 
-_SECTION: dict[str, Any] = {"uri": "mongodb://localhost:27017", "database": "demo"}
+_SECTION: dict[str, Any] = {"url": "mongodb://localhost:27017", "database": "demo"}
 
 
 def test_backend_is_registered_under_its_name() -> None:
@@ -121,15 +121,15 @@ def test_wiring_shape(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_client_seam_forwards_only_the_options_set(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[tuple[str, dict[str, Any]]] = []
 
-    def _record(uri: str, **options: Any) -> FakeMongoClient:
-        seen.append((uri, options))
+    def _record(*, host: str, **options: Any) -> FakeMongoClient:
+        seen.append((host, options))
         return FakeMongoClient()
 
     monkeypatch.setattr(mongo_island, "AsyncMongoClient", _record)
 
     MongoBackend().build(_ctx(_SECTION), (), BackendRuntime(SERVER_PROFILE))
     MongoBackend().build(
-        _ctx({**_SECTION, "max_pool_size": 8, "server_selection_timeout_ms": 500}),
+        _ctx({**_SECTION, "pool": {"size": 8}, "server_selection_timeout": 2}),
         (),
         BackendRuntime(SERVER_PROFILE),
     )
@@ -138,7 +138,7 @@ def test_client_seam_forwards_only_the_options_set(monkeypatch: pytest.MonkeyPat
         ("mongodb://localhost:27017", {"tz_aware": True}),
         (
             "mongodb://localhost:27017",
-            {"tz_aware": True, "maxPoolSize": 8, "serverSelectionTimeoutMS": 500},
+            {"tz_aware": True, "maxPoolSize": 8, "serverSelectionTimeoutMS": 2000},
         ),
     ]
 

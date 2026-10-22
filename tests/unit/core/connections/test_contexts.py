@@ -21,9 +21,9 @@ from loom.core.sql.config import SqlConnectionConfig
 from loom.etl.storage._config import StorageConfig, normalise_storage_section
 from loom.streaming.mongo import MongoSourceConfig
 
-_AWS = {"region": "eu-west-1", "endpoint_url": "http://localhost:8000", "read_timeout": 9}
-_MONGO = {"uri": "mongodb://h:27017", "database": "app", "max_pool_size": 4}
-_CLICKHOUSE = {"url": "clickhouse://h:8123/db", "username": "u", "password": "p", "pool_size": 2}
+_AWS = {"region": "eu-west-1", "url": "http://localhost:8000", "read_timeout": 9}
+_MONGO = {"url": "mongodb://h:27017", "database": "app", "server_selection_timeout": 4}
+_CLICKHOUSE = {"url": "clickhouse://h:8123/db", "username": "u", "password": "p", "read_timeout": 2}
 
 
 def _storage(**sections: Any) -> StorageConfig:
@@ -71,9 +71,9 @@ def test_each_context_keeps_its_own_bounds() -> None:
     )
     etl = _storage(clickhouse={"url": "clickhouse://h/db"}).clickhouse
 
-    assert (sql.connect_timeout, sql.send_receive_timeout) == (10, 60)
+    assert (sql.connect_timeout, sql.read_timeout) == (10, 60)
     assert etl is not None
-    assert (etl.connect_timeout, etl.send_receive_timeout) == (None, None)  # driver defaults
+    assert (etl.connect_timeout, etl.read_timeout) == (None, None)  # driver defaults
 
 
 # ------------------------------------------------------------ same refusals
@@ -116,7 +116,7 @@ def test_storage_dynamodb_enabled_names_its_replacement() -> None:
 
 @pytest.mark.parametrize(
     ("section", "data", "field"),
-    [("mongo", {"uri": "", "database": ""}, "uri"), ("clickhouse", {"url": ""}, "url")],
+    [("mongo", {"url": "", "database": ""}, "url"), ("clickhouse", {"url": ""}, "url")],
 )
 def test_an_empty_address_no_longer_disables_an_etl_engine(
     section: str, data: dict[str, Any], field: str

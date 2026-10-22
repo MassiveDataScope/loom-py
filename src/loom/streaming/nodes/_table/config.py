@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom.core.config import ConfigContext
-from loom.core.connections import ClickHouseConnection
+from loom.core.connections._base import reject_retired_keys
+from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.persistence.database import (
     DatabaseConfig,
     decode_database_config,
@@ -157,9 +158,11 @@ def _clickhouse_connection(ctx: ConfigContext, database_key: str) -> ClickHouseC
     Raises:
         ValueError: When the section uses the retired ``http_url`` key or holds
             a database of another engine, naming the section.
-        ConfigError: When the section is not a valid ClickHouse connection.
+        ConfigError: When the section holds another retired key or is not a
+            valid ClickHouse connection.
     """
     raw = ctx.section_or_default(database_key, dict, {})
+    reject_retired_keys(raw, database_key, ClickHouseConnection)
     if "http_url" in raw:
         raise ValueError(f"{database_key}.http_url was renamed to url; rename the key")
     url = str(raw.get("url") or "")

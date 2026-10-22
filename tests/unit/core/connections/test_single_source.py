@@ -3,8 +3,8 @@
 Both checks walk the source tree. A class declaring the keys that identify an
 engine's connection must be that engine's type; a context extends it instead
 of declaring the keys again (SC-001). A driver client is built only inside
-:mod:`loom.core.connections.clients`; every other module goes through it
-(SC-002).
+the ``client`` island of the engine's package of :mod:`loom.core.connections`;
+every other module goes through it (SC-002).
 """
 
 from __future__ import annotations
@@ -16,19 +16,26 @@ _SRC = Path(__file__).resolve().parents[4] / "src" / "loom"
 
 # The keys that identify each engine's connection, and the one type declaring them.
 _SIGNATURES: dict[frozenset[str], str] = {
-    frozenset({"region", "endpoint_url"}): "core/connections/aws.py:AwsClientConfig",
-    frozenset({"uri", "database"}): "core/connections/mongo.py:MongoConnection",
-    frozenset({"url", "password"}): "core/connections/clickhouse.py:ClickHouseConnection",
-    frozenset({"url", "send_receive_timeout"}): (
-        "core/connections/clickhouse.py:ClickHouseConnection"
+    frozenset({"region", "url"}): "core/connections/aws/config.py:AwsClientConfig",
+    frozenset({"url", "database", "server_selection_timeout"}): (
+        "core/connections/mongo/config.py:MongoConnection"
     ),
-    frozenset({"url", "pool"}): "core/persistence/database.py:DatabaseConfig",
+    frozenset({"url", "password", "executor_threads"}): (
+        "core/connections/clickhouse/config.py:ClickHouseConnection"
+    ),
+    frozenset({"url", "connect_args"}): "core/persistence/database.py:DatabaseConfig",
 }
 
 _DRIVER_MODULES = frozenset({"boto3", "clickhouse_connect", "pymongo"})
 _DRIVER_FACTORIES = frozenset({"client", "resource", "Session", "get_client", "get_async_client"})
 _DRIVER_CLASSES = frozenset({"MongoClient", "AsyncMongoClient"})
-_BUILDERS = "core/connections/clients/"
+_BUILDERS = frozenset(
+    {
+        "core/connections/aws/client.py",
+        "core/connections/clickhouse/client.py",
+        "core/connections/mongo/client.py",
+    }
+)
 
 
 def _modules() -> list[tuple[str, ast.Module]]:
@@ -105,7 +112,7 @@ def _builds_a_driver_client(call: ast.Call, modules: set[str], factories: set[st
 def test_driver_clients_are_built_only_by_the_builders() -> None:
     outside = []
     for relative, tree in _modules():
-        if relative.startswith(_BUILDERS):
+        if relative in _BUILDERS:
             continue
         modules, factories = _driver_bindings(tree)
         outside.extend(

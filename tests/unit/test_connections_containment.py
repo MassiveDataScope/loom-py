@@ -5,7 +5,9 @@ importing them must load no SDK. The import check runs in a clean
 interpreter, since the pytest process has already imported the drivers for
 other suites. The source check walks the tree: a driver SDK appears in an
 ``import`` only inside the modules allowed to hold it (the island rule of
-``docs/architecture/clean-architecture.md``).
+``docs/architecture/clean-architecture.md``). An import under
+``if TYPE_CHECKING:`` loads nothing at run time, so a loader naming the
+driver's types in its Protocol is no island.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -27,9 +30,14 @@ import sys
 
 import loom.core.connections
 import loom.core.connections.aws
+import loom.core.connections.aws.config
+import loom.core.connections.aws.loader
 import loom.core.connections.clickhouse
-import loom.core.connections.clients
+import loom.core.connections.clickhouse.config
+import loom.core.connections.clickhouse.loader
 import loom.core.connections.mongo
+import loom.core.connections.mongo.config
+import loom.core.connections.mongo.loader
 
 sdks = {sdks!r}
 print(json.dumps(sorted(
@@ -44,7 +52,7 @@ print(json.dumps(sorted(
 _ISLANDS: dict[str, frozenset[str]] = {
     "boto3": frozenset(
         {
-            "core/connections/clients/aws.py",
+            "core/connections/aws/client.py",
             "core/repository/dynamodb/repository.py",  # item serializers, conditions
             "etl/io/sources/_dynamodb_items.py",  # item deserializers
             "etl/io/sources/_dynamodb_predicate.py",  # condition builders
@@ -52,20 +60,20 @@ _ISLANDS: dict[str, frozenset[str]] = {
     ),
     "botocore": frozenset(
         {
-            "core/connections/clients/aws.py",
+            "core/connections/aws/client.py",
             "core/repository/dynamodb/repository.py",  # error types
             "prefect/notify/_sns.py",  # error types
         }
     ),
     "clickhouse_connect": frozenset(
         {
-            "core/connections/clients/clickhouse.py",
+            "core/connections/clickhouse/client.py",
             "core/sql/clickhouse/_client.py",  # error types, multi-role transport
         }
     ),
     "pymongo": frozenset(
         {
-            "core/connections/clients/mongo.py",
+            "core/connections/mongo/client.py",
             "core/repository/mongo/backend.py",  # client type of the backend
             "core/repository/mongo/repository.py",  # results, errors
             "core/repository/mongo/uow.py",  # sessions
@@ -89,9 +97,32 @@ def test_importing_the_connection_contracts_loads_no_sdk() -> None:
     assert json.loads(result.stdout.splitlines()[-1]) == []
 
 
+def _is_type_checking_block(node: ast.AST) -> bool:
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    name = test.attr if isinstance(test, ast.Attribute) else getattr(test, "id", None)
+    return name == "TYPE_CHECKING"
+
+
+def _runtime_nodes(tree: ast.AST) -> list[ast.AST]:
+    """Every node of *tree* but those under ``if TYPE_CHECKING:``, which never run."""
+    nodes: list[ast.AST] = []
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        for child in ast.iter_child_nodes(node):
+            if _is_type_checking_block(child):
+                pending.extend(cast(ast.If, child).orelse)
+            else:
+                pending.append(child)
+    return nodes
+
+
 def _imported_roots(tree: ast.AST) -> set[str]:
     roots: set[str] = set()
-    for node in ast.walk(tree):
+    for node in _runtime_nodes(tree):
         if isinstance(node, ast.Import):
             roots.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
@@ -109,6 +140,22 @@ def test_a_driver_sdk_is_imported_only_by_its_islands() -> None:
                 offenders.append(f"{relative} imports {sdk}")
 
     assert offenders == []
+
+
+def test_the_import_check_skips_type_only_imports() -> None:
+    sample = ast.parse(
+        "from typing import TYPE_CHECKING\n"
+        "import typing\n"
+        "if TYPE_CHECKING:\n"
+        "    import pymongo\n"
+        "if typing.TYPE_CHECKING:\n"
+        "    import boto3\n"
+        "else:\n"
+        "    import botocore\n"
+        "import clickhouse_connect\n"
+    )
+
+    assert _imported_roots(sample) == {"typing", "botocore", "clickhouse_connect"}
 
 
 def test_reading_configuration_loads_no_persistence_layer() -> None:

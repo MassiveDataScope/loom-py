@@ -18,9 +18,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-BOTO3_ISLAND = "loom.core.connections.clients.aws"
-MONGO_ISLAND = "loom.core.connections.clients.mongo"
-CLICKHOUSE_ISLAND = "loom.core.connections.clients.clickhouse"
+BOTO3_ISLAND = "loom.core.connections.aws.client"
+MONGO_ISLAND = "loom.core.connections.mongo.client"
+CLICKHOUSE_ISLAND = "loom.core.connections.clickhouse.client"
 ENGINE_EXTRAS = "loom.ai.engines.pydantic_ai.extras"
 ENGINE_PROVIDERS = "loom.ai.engines.pydantic_ai.providers"
 

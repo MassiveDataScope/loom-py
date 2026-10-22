@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import cast
 
 import pytest
 from confluent_kafka import TopicPartition
 
+from tests.helpers.extras import without_extra
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.bytewax import _adapter, _runtime_io  # noqa: E402
 from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E402
 from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
@@ -42,7 +46,7 @@ pytestmark = pytest.mark.bytewax
 class TestRuntimeIOBuilders:
     def test_build_runtime_source_returns_mongo_source_without_commit_tracker(self) -> None:
         source = CompiledMongoCDCSource(
-            settings=MongoSourceConfig(uri="mongodb://localhost:27017", database="app"),
+            settings=MongoSourceConfig(url="mongodb://localhost:27017", database="app"),
             collections=("orders",),
             watch_options={"full_document": "updateLookup"},
         )
@@ -51,6 +55,29 @@ class TestRuntimeIOBuilders:
 
         assert isinstance(runtime_source, MongoCDCSource)
         assert _runtime_io.build_commit_tracker(source) is None
+
+    def test_a_mongo_source_without_pymongo_names_the_extra(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        without_extra(monkeypatch, ["pymongo"], ["loom.streaming.mongo._bytewax_source"])
+        source = CompiledMongoCDCSource(
+            settings=MongoSourceConfig(url="mongodb://localhost:27017", database="app"),
+            collections=("orders",),
+            watch_options={},
+        )
+
+        with pytest.raises(MissingExtraError, match="needs the 'mongo' extra"):
+            _runtime_io.build_runtime_source(source)
+
+    def test_the_runtime_io_loads_without_pymongo(self) -> None:
+        script = (
+            "import sys\nsys.modules['pymongo'] = None\nimport loom.streaming.bytewax._runtime_io\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
 
     def test_build_runtime_source_returns_partitioned_source(
         self,

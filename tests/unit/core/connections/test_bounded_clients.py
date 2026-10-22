@@ -42,7 +42,7 @@ def test_the_etl_dynamodb_client_fails_within_its_bounds(silent_endpoint: str) -
     client = _build_dynamodb_client(
         AwsClientConfig(
             region="eu-west-1",
-            endpoint_url=silent_endpoint,
+            url=silent_endpoint,
             connect_timeout=1,
             read_timeout=1,
             max_attempts=2,

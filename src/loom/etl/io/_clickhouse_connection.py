@@ -2,16 +2,14 @@
 
 All three take the ``storage.clickhouse`` connection, or a bare DSN as a
 shortcut, and open their client through the ClickHouse island of
-:mod:`loom.core.connections.clients`.
+:mod:`loom.core.connections.clickhouse`.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from loom.core.connections import ClickHouseConnection
-from loom.core.connections.clients import clickhouse_island
-from loom.core.plugins.optional import MissingExtraError
+from loom.core.connections.clickhouse import ClickHouseConnection, clickhouse_island
 
 
 def resolve_connection(
@@ -29,21 +27,17 @@ def resolve_connection(
     return ClickHouseConnection(url=url) if url else None
 
 
-def open_client(connection: ClickHouseConnection, *, owner: str) -> Any:
+def open_client(connection: ClickHouseConnection) -> Any:
     """Open a synchronous ClickHouse client for *connection*.
 
+    Args:
+        connection: Address, credentials and bounds.
+
     Raises:
-        ImportError: When ``clickhouse-connect`` is not installed, naming *owner*
-            and the extra.
+        MissingExtraError: When ``clickhouse-connect`` is not installed, naming
+            the ``clickhouse`` extra.
     """
-    try:
-        island = clickhouse_island()
-    except MissingExtraError as exc:
-        raise ImportError(
-            f"{owner} requires 'clickhouse-connect'. "
-            "Install it with: pip install 'loom-kernel[clickhouse]'"
-        ) from exc
-    return island.build_clickhouse_client(connection)
+    return clickhouse_island().build_clickhouse_client(connection)
 
 
 __all__ = ["open_client", "resolve_connection"]

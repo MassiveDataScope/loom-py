@@ -9,7 +9,7 @@ import msgspec
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.connections.clients.aws import build_aws_client
+from loom.core.connections.aws.client import build_aws_client
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
@@ -58,7 +58,7 @@ def test_declared_values_reach_the_client(monkeypatch: pytest.MonkeyPatch) -> No
             "read_timeout": 3,
             "max_attempts": 5,
             "retry_mode": "adaptive",
-            "max_pool_connections": 8,
+            "pool": {"size": 8},
         },
     )["config"]
 
@@ -74,7 +74,7 @@ def test_declared_values_reach_the_client(monkeypatch: pytest.MonkeyPatch) -> No
         ({"connect_timeout": 0}, "connect_timeout"),
         ({"read_timeout": 0}, "read_timeout"),
         ({"max_attempts": 0}, "max_attempts"),
-        ({"max_pool_connections": 0}, "max_pool_connections"),
+        ({"pool": {"size": 0}}, "pool.size"),
     ],
 )
 def test_an_invalid_key_is_refused_naming_it(section: dict[str, Any], named: str) -> None:
@@ -98,7 +98,7 @@ async def test_a_silent_service_fails_within_the_declared_bounds(
     cfg = msgspec.convert(
         {
             **_REQUIRED,
-            "endpoint_url": silent_endpoint,
+            "url": silent_endpoint,
             "connect_timeout": 1,
             "read_timeout": 1,
             "max_attempts": 2,

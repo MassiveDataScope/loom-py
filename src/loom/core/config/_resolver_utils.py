@@ -8,8 +8,7 @@ import re
 from typing import Any
 
 from loom.core.config.errors import ConfigError
-from loom.core.connections.aws import AwsClientConfig
-from loom.core.connections.clients import aws_island
+from loom.core.connections.aws import AwsClientConfig, aws_island
 from loom.core.plugins.optional import MissingExtraError
 
 _AWS_EXTRA = "config-ssm"

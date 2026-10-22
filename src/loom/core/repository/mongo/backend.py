@@ -17,8 +17,9 @@ from pymongo import AsyncMongoClient
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import ConfigKey
-from loom.core.connections.clients.mongo import build_async_mongo_client
+from loom.core.connections._base import reject_retired_keys
 from loom.core.connections.mongo import MongoConnection
+from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
@@ -85,14 +86,16 @@ class MongoBackend:
             The Mongo wiring.
 
         Raises:
-            ConfigError: When the ``persistence.mongo`` section is missing, or
-                ``persistence.cursors`` cannot build a cursor codec.
+            ConfigError: When the ``persistence.mongo`` section is missing or
+                holds a retired key, or ``persistence.cursors`` cannot build a
+                cursor codec.
         """
+        reject_retired_keys(ctx.raw(_SECTION), _SECTION, MongoRepositoryConfig)
         mongo_cfg = ctx.section_optional(_SECTION, MongoRepositoryConfig)
         if mongo_cfg is None:
             raise ConfigError(
                 f"persistence.backend is {self.name!r} but the {_SECTION!r} "
-                "section (uri, database) is missing."
+                "section (url, database) is missing."
             )
         cursor_codec = CursorCodec.from_context(ctx)
         # tz_aware: datetimes read back as aware UTC, the form the repository writes.

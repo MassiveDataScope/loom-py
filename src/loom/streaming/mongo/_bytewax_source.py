@@ -7,20 +7,13 @@ from collections.abc import Mapping
 from typing import Protocol, cast
 
 from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
+from pymongo.errors import OperationFailure
 
-from loom.core.connections.clients import mongo_island
-from loom.core.plugins.optional import MissingExtraError
+from loom.core.connections.mongo import mongo_island
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message
 from loom.streaming.mongo._event import MongoCDCEvent
 from loom.streaming.mongo._normalize import build_mongo_cdc_message
-
-try:
-    from pymongo.errors import OperationFailure as _OperationFailure
-
-    _OPERATION_FAILURE: type[Exception] = _OperationFailure
-except ImportError:
-    _OPERATION_FAILURE = Exception
 
 _logger = logging.getLogger(__name__)
 _MAX_BATCH_SIZE = 500
@@ -86,7 +79,7 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
         while len(messages) < _MAX_BATCH_SIZE:
             try:
                 change = self._stream.try_next()
-            except _OPERATION_FAILURE as exc:
+            except OperationFailure as exc:
                 if not _should_restart_from_now(self._source, exc):
                     raise
                 change = self._restart_from_now()
@@ -173,16 +166,9 @@ def _build_mongo_client(source: CompiledMongoCDCSource) -> _DatabaseLike:
     """Build a PyMongo client for one compiled Mongo source.
 
     Raises:
-        ImportError: When the ``mongo`` extra is not installed.
+        MissingExtraError: When the ``mongo`` extra is not installed.
     """
-    try:
-        island = mongo_island()
-    except MissingExtraError as exc:
-        raise ImportError(
-            "MongoDB CDC support requires the 'mongo' extra (pymongo). "
-            "Install loom-kernel[mongo] to use FromMongoCDC."
-        ) from exc
-    client = island.build_mongo_client(source.settings, datetime_conversion="DATETIME_AUTO")
+    client = mongo_island().build_mongo_client(source.settings, datetime_conversion="DATETIME_AUTO")
     return cast(_DatabaseLike, client)
 
 

@@ -54,12 +54,12 @@ def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
 _DYNAMODB_SECTION = {
     "region": "eu-west-1",
     "table": "products",
-    "endpoint_url": "http://localhost:8000",
+    "url": "http://localhost:8000",
 }
 _DYNAMODB_PERSISTENCE = {"backend": "dynamodb", "dynamodb": _DYNAMODB_SECTION}
 _MONGO_PERSISTENCE = {
     "backend": "mongo",
-    "mongo": {"uri": "mongodb://localhost:27017", "database": "demo"},
+    "mongo": {"url": "mongodb://localhost:27017", "database": "demo"},
 }
 
 

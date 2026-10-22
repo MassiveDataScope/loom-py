@@ -28,7 +28,7 @@ from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import KafkaSettings
 from loom.streaming.kafka._wire import DecodeError, DispatchTable
-from loom.streaming.mongo import MongoConfig
+from loom.streaming.mongo._config import load_mongo_config
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
 from loom.streaming.nodes._mongo import FromMongoCDC
@@ -83,7 +83,7 @@ def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
     source = flow.source
     if not isinstance(source, FromMongoCDC):
         raise TypeError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
-    mongo = ctx.section(ConfigKey.MONGO, MongoConfig)
+    mongo = load_mongo_config(ctx)
     settings = mongo.source_for(source.logical_ref)
     watch_options = {**settings.watch_options, **source.watch_options}
     return CompiledMongoCDCSource(

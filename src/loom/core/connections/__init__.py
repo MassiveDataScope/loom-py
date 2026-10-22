@@ -2,9 +2,11 @@
 
 A context using an engine declares the engine's type here or a subclass
 adding only its own keys, so the same keys validate the same way wherever
-the engine is configured. This package imports no driver: the client
-builders live in the islands of :mod:`loom.core.connections.clients`, loaded
-with :func:`~loom.core.plugins.optional.import_optional`.
+the engine is configured. Each engine has a package of its own
+(:mod:`~loom.core.connections.aws`, :mod:`~loom.core.connections.mongo`,
+:mod:`~loom.core.connections.clickhouse`): its connection type, the typed
+loader of its island and, in ``client``, the island that builds the driver
+client. Importing this package or an engine package loads no driver.
 
 The relational type is not re-exported here: it lives with the persistence
 layer (:mod:`loom.core.connections.relational` names it), and importing it
@@ -14,7 +16,7 @@ resolvers among them, load the persistence layer.
 
 from __future__ import annotations
 
-from loom.core.connections._base import ConnectionSettings, redact_uri
+from loom.core.connections._base import ConnectionPool, ConnectionSettings, redact_uri
 from loom.core.connections.aws import AwsClientConfig, RetryMode
 from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.connections.mongo import MongoConnection
@@ -22,6 +24,7 @@ from loom.core.connections.mongo import MongoConnection
 __all__ = [
     "AwsClientConfig",
     "ClickHouseConnection",
+    "ConnectionPool",
     "ConnectionSettings",
     "MongoConnection",
     "RetryMode",

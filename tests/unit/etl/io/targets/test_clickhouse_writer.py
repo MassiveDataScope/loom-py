@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
+from loom.core.plugins.optional import MissingExtraError
 from loom.etl.io.targets._clickhouse import ClickHouseTableSpec, ClickHouseTargetWriter
 from tests.helpers.extras import CLICKHOUSE_ISLAND, without_extra
 
@@ -99,11 +100,13 @@ class TestMissingDependency:
     def test_import_error_when_clickhouse_connect_missing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """ImportError is raised at construction if clickhouse-connect is absent."""
+        """MissingExtraError names the extra at construction if clickhouse-connect is absent."""
         without_extra(monkeypatch, ["clickhouse_connect"], [CLICKHOUSE_ISLAND])
 
-        with pytest.raises(ImportError, match=r"clickhouse-connect.*loom-kernel\[clickhouse\]"):
+        with pytest.raises(MissingExtraError, match="needs the 'clickhouse' extra") as raised:
             ClickHouseTargetWriter(_URL)
+
+        assert raised.value.extra == "clickhouse"
 
 
 class _DeltaSpec:
