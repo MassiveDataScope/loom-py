@@ -7,7 +7,7 @@ hook a dump of a secret, an address or a redacted mapping fails closed.
 
 from __future__ import annotations
 
-from typing import Any, TypeVar, get_args, get_origin
+from typing import Any, TypeVar, cast, get_args, get_origin
 
 import msgspec
 
@@ -30,10 +30,8 @@ class _Decoder:
         origin = get_origin(typ) or typ
         if origin is Secret:
             return self._secret(typ, value)
-        if typ is Dsn:
-            return self._dsn(value)
-        if typ is RedactedMap:
-            return self._map(value)
+        if typ is Dsn or typ is RedactedMap:
+            return self._typed(value, typ)
         raise TypeError(
             f"Decoding objects of type {getattr(typ, '__name__', typ)!r} is unsupported"
         )
@@ -55,19 +53,23 @@ class _Decoder:
             raise TypeError(str(exc).split(" - at ", 1)[0]) from None
         return Secret(converted)
 
-    def _dsn(self, value: Any) -> Dsn:
-        if isinstance(value, Dsn):
-            return value
-        if not isinstance(value, str):
-            raise TypeError(f"Expected `str`, got `{type(value).__name__}`")
-        return Dsn(value)
+    def _typed(self, value: Any, target: type[Dsn] | type[RedactedMap]) -> Dsn | RedactedMap:
+        """Build ``target`` from a raw value, or return one that already is.
 
-    def _map(self, value: Any) -> RedactedMap:
-        if isinstance(value, RedactedMap):
-            return value
-        if not isinstance(value, dict):
-            raise TypeError(f"Expected `object`, got `{type(value).__name__}`")
-        return RedactedMap(value)
+        A string becomes a ``Dsn``. A dict becomes a ``RedactedMap``. msgspec
+        calls that dict an ``object`` in the error.
+        """
+        if isinstance(value, target):
+            return cast("Dsn | RedactedMap", value)
+        if target is Dsn:
+            accepted: type[Any] = str
+            expected = "str"
+        else:
+            accepted = dict
+            expected = "object"
+        if not isinstance(value, accepted):
+            raise TypeError(f"Expected `{expected}`, got `{type(value).__name__}`")
+        return target(value)
 
 
 def convert_config(data: object, target: type[T], *, strict: bool) -> T:
