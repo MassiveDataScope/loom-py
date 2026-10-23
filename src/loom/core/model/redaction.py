@@ -104,11 +104,14 @@ class Dsn:
 
     def query_names(self) -> frozenset[str]:
         """Names of the query parameters, in any order. Values are not returned."""
-        return frozenset(name for name, _separator, _value in _query_parts(self._value))
+        _body, query, _fragment = _split_address(self._value)
+        return frozenset(name for name, _mark, _item in _query_items(query))
 
     def has_userinfo(self) -> bool:
         """Whether the authority carries a user, with or without a password."""
-        return _userinfo(self._value) is not None
+        body, _query, _fragment = _split_address(self._value)
+        _scheme, separator, rest = body.partition("://")
+        return bool(separator) and _userinfo_at(rest) != -1
 
     def __repr__(self) -> str:
         return mask_dsn(self._value)
@@ -153,6 +156,11 @@ class RedactedMap(Mapping[str, Any]):
         _reject_blank_secret_entries(copied, "")
         self._value = copied
 
+    @classmethod
+    def empty(cls) -> RedactedMap:
+        """A mapping with no entries, for a struct field's default."""
+        return cls({})
+
     def reveal(self) -> dict[str, Any]:
         """Return a copy of the mapping, secrets included."""
         return copy.deepcopy(self._value)
@@ -191,11 +199,6 @@ class RedactedMap(Mapping[str, Any]):
 
     def __deepcopy__(self, memo: dict[int, Any]) -> RedactedMap:
         return RedactedMap(copy.deepcopy(self._value, memo))
-
-
-def empty_redacted_map() -> RedactedMap:
-    """A mapping with no entries, for a struct field's default."""
-    return RedactedMap({})
 
 
 def reveal_for_driver(value: object) -> Any:
@@ -251,16 +254,21 @@ def mask_dsn(value: str) -> str:
     The user, host, port, path and ordinary parameters stay. An ``@`` in the
     path does not hide the host. An address with no secret is returned as written.
     """
-    fragment = ""
-    body = value
-    hash_at = body.find("#")
-    if hash_at != -1:
-        body, fragment = body[:hash_at], body[hash_at:]
-    query = ""
-    query_at = body.find("?")
-    if query_at != -1:
-        body, query = body[:query_at], body[query_at:]
+    body, query, fragment = _split_address(value)
     return _mask_authority(body) + _mask_query(query) + fragment
+
+
+def _split_address(value: str) -> tuple[str, str, str]:
+    """Return the authority, the query including ``?``, and the fragment including ``#``."""
+    hash_at = value.find("#")
+    if hash_at == -1:
+        body, fragment = value, ""
+    else:
+        body, fragment = value[:hash_at], value[hash_at:]
+    query_at = body.find("?")
+    if query_at == -1:
+        return body, "", fragment
+    return body[:query_at], body[query_at:], fragment
 
 
 def mask_structure(value: Any) -> Any:
@@ -279,13 +287,6 @@ def mask_structure(value: Any) -> Any:
     return value
 
 
-def url_embeds_password(value: str) -> bool:
-    """Whether *value* is an address whose display would hide a password."""
-    if "://" not in value:
-        return False
-    return mask_dsn(value) != value
-
-
 def ensure_redacted(struct: msgspec.Struct) -> None:
     """Refuse a secret, address or free mapping stored as plain text.
 
@@ -301,20 +302,17 @@ def ensure_redacted(struct: msgspec.Struct) -> None:
         value = getattr(struct, name)
         if value is None:
             continue
-        if kind == "secret" and not isinstance(value, Secret):
-            raise TypeError(f"{name} must be Secret")
-        if kind == "dsn":
-            if not isinstance(value, Dsn):
-                raise TypeError(f"{name} must be Dsn")
-            if not str(value).strip():
-                raise ValueError(f"{name} must not be empty")
-        if kind == "map" and not isinstance(value, RedactedMap):
-            raise TypeError(f"{name} must be RedactedMap")
+        if not isinstance(value, kind):
+            raise TypeError(f"{name} must be {kind.__name__}")
+        if kind is Dsn and not str(value).strip():
+            raise ValueError(f"{name} must not be empty")
 
 
 @cache
-def _redacted_fields(struct_type: type[msgspec.Struct]) -> tuple[tuple[str, str], ...]:
-    found: list[tuple[str, str]] = []
+def _redacted_fields(
+    struct_type: type[msgspec.Struct],
+) -> tuple[tuple[str, type[Any]], ...]:
+    found: list[tuple[str, type[Any]]] = []
     for field in msgspec.structs.fields(struct_type):
         kind = _redaction_kind(field.type)
         if kind is not None:
@@ -322,15 +320,15 @@ def _redacted_fields(struct_type: type[msgspec.Struct]) -> tuple[tuple[str, str]
     return tuple(found)
 
 
-def _redaction_kind(annotation: Any) -> str | None:
+def _redaction_kind(annotation: Any) -> type[Any] | None:
     for option in _union_members(annotation):
         origin = get_origin(option) or option
         if origin is Secret:
-            return "secret"
+            return Secret
         if option is Dsn:
-            return "dsn"
+            return Dsn
         if option is RedactedMap:
-            return "map"
+            return RedactedMap
     return None
 
 
@@ -343,21 +341,6 @@ def _union_members(annotation: Any) -> tuple[Any, ...]:
 def _tokens(name: str) -> list[str]:
     split = _CAMEL_BOUNDARY.sub(" ", name).lower()
     return [token for token in re.split(r"[^a-z0-9]+", split) if token]
-
-
-def _userinfo(value: str) -> str | None:
-    _scheme, separator, rest = value.partition("://")
-    if not separator:
-        return None
-    cut = len(rest)
-    for index, char in enumerate(rest):
-        if char in "?#":
-            cut = index
-            break
-    at = _userinfo_at(rest[:cut])
-    if at == -1:
-        return None
-    return rest[:at]
 
 
 def _userinfo_at(rest: str) -> int:
@@ -377,36 +360,36 @@ def _userinfo_at(rest: str) -> int:
     if at == -1 or ":" not in rest[:at]:
         return -1
     host = rest[at + 1 :]
-    for index, char in enumerate(host):
-        if char == "/":
-            return at if index else -1
-    return at if host else -1
+    if not host or host.startswith("/"):
+        return -1
+    return at
 
 
 def _reject_empty_password(value: str) -> None:
-    userinfo = _userinfo(value)
-    if userinfo is not None and ":" in userinfo and not userinfo.partition(":")[2]:
-        raise ValueError("password must not be empty")
-    for name, separator, item in _query_parts(value):
-        if separator and is_secret_name(name) and not item.strip():
+    body, query, _fragment = _split_address(value)
+    _scheme, separator, rest = body.partition("://")
+    if separator:
+        at = _userinfo_at(rest)
+        if at != -1:
+            userinfo = rest[:at]
+            if ":" in userinfo and not userinfo.partition(":")[2]:
+                raise ValueError("password must not be empty")
+    for name, mark, item in _query_items(query):
+        if mark and is_secret_name(name) and not item.strip():
             raise ValueError("password must not be empty")
 
 
-def _query_parts(value: str) -> list[tuple[str, str, str]]:
-    query_at = value.find("?")
-    if query_at == -1:
+def _query_items(query: str) -> list[tuple[str, str, str]]:
+    if not query:
         return []
-    query = value[query_at + 1 :]
-    hash_at = query.find("#")
-    if hash_at != -1:
-        query = query[:hash_at]
-    parts: list[tuple[str, str, str]] = []
-    for piece in query.split("&"):
+    body = query[1:] if query.startswith("?") else query
+    items: list[tuple[str, str, str]] = []
+    for piece in body.split("&"):
         if not piece:
             continue
-        name, separator, item = piece.partition("=")
-        parts.append((name, separator, item))
-    return parts
+        name, mark, item = piece.partition("=")
+        items.append((name, mark, item))
+    return items
 
 
 def _mask_authority(body: str) -> str:
@@ -491,11 +474,9 @@ __all__ = [
     "Dsn",
     "RedactedMap",
     "Secret",
-    "empty_redacted_map",
     "ensure_redacted",
     "is_secret_name",
     "mask_dsn",
     "mask_structure",
     "reveal_for_driver",
-    "url_embeds_password",
 ]

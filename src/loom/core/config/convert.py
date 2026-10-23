@@ -16,6 +16,45 @@ from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret, mask_struc
 T = TypeVar("T")
 
 
+class _Decoder:
+    """Build a ``Secret``, ``Dsn`` or ``RedactedMap`` while decoding config."""
+
+    __slots__ = ("_strict",)
+
+    def __init__(self, strict: bool) -> None:
+        self._strict = strict
+
+    def __call__(self, typ: Any, value: Any) -> Any:
+        if typ is object or typ is Any:
+            return value
+        origin = get_origin(typ) or typ
+        if origin is Secret:
+            args = get_args(typ)
+            inner = args[0] if args else str
+            if isinstance(value, str) and not value.strip():
+                raise ValueError("must not be empty")
+            try:
+                converted = msgspec.convert(value, type=inner, strict=self._strict, dec_hook=self)
+            except msgspec.ValidationError as exc:
+                raise TypeError(str(exc).split(" - at ", 1)[0]) from None
+            return Secret(converted)
+        if typ is Dsn:
+            if isinstance(value, Dsn):
+                return value
+            if not isinstance(value, str):
+                raise TypeError(f"Expected `str`, got `{type(value).__name__}`")
+            return Dsn(value)
+        if typ is RedactedMap:
+            if isinstance(value, RedactedMap):
+                return value
+            if not isinstance(value, dict):
+                raise TypeError(f"Expected `object`, got `{type(value).__name__}`")
+            return RedactedMap(value)
+        raise TypeError(
+            f"Decoding objects of type {getattr(typ, '__name__', typ)!r} is unsupported"
+        )
+
+
 def convert_config(data: object, target: type[T], *, strict: bool) -> T:
     """Decode *data* as *target*.
 
@@ -35,11 +74,7 @@ def convert_config(data: object, target: type[T], *, strict: bool) -> T:
     Raises:
         msgspec.ValidationError: When *data* does not match *target*.
     """
-
-    def dec_hook(typ: Any, value: Any) -> Any:
-        return _decode(typ, value, strict=strict, dec_hook=dec_hook)
-
-    return msgspec.convert(data, type=target, strict=strict, dec_hook=dec_hook)
+    return msgspec.convert(data, type=target, strict=strict, dec_hook=_Decoder(strict))
 
 
 def dump_config(value: object) -> Any:
@@ -49,35 +84,6 @@ def dump_config(value: object) -> Any:
         TypeError: When *value* holds a type this encoder does not know.
     """
     return msgspec.to_builtins(value, enc_hook=_encode)
-
-
-def _decode(typ: Any, value: Any, *, strict: bool, dec_hook: Any) -> Any:
-    if typ is object or typ is Any:
-        return value
-    origin = get_origin(typ) or typ
-    if origin is Secret:
-        args = get_args(typ)
-        inner = args[0] if args else str
-        if isinstance(value, str) and not value.strip():
-            raise ValueError("must not be empty")
-        try:
-            converted = msgspec.convert(value, type=inner, strict=strict, dec_hook=dec_hook)
-        except msgspec.ValidationError as exc:
-            raise TypeError(str(exc).split(" - at ", 1)[0]) from None
-        return Secret(converted)
-    if typ is Dsn:
-        if isinstance(value, Dsn):
-            return value
-        if not isinstance(value, str):
-            raise TypeError(f"Expected `str`, got `{type(value).__name__}`")
-        return Dsn(value)
-    if typ is RedactedMap:
-        if isinstance(value, RedactedMap):
-            return value
-        if not isinstance(value, dict):
-            raise TypeError(f"Expected `object`, got `{type(value).__name__}`")
-        return RedactedMap(value)
-    raise TypeError(f"Decoding objects of type {getattr(typ, '__name__', typ)!r} is unsupported")
 
 
 def _encode(value: Any) -> Any:

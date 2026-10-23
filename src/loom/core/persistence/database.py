@@ -23,7 +23,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_keys
 from loom.core.config.convert import convert_config
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
-from loom.core.model.redaction import Dsn, RedactedMap, Secret, empty_redacted_map, is_secret_name
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
 
@@ -162,7 +162,7 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
     password: Secret[str] | None = None
     echo: bool = False
     pool: PoolConfig = msgspec.field(default_factory=PoolConfig)
-    connect_args: RedactedMap = msgspec.field(default_factory=empty_redacted_map)
+    connect_args: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     schema: SchemaConfig = msgspec.field(default_factory=SchemaConfig)
     connect_timeout: PositiveInt | None = None
     read_timeout: PositiveInt | None = None
@@ -192,11 +192,9 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
 
         Only asyncpg takes the timeouts, as ``timeout`` and ``command_timeout``;
         any other driver keeps its own option names, set in ``connect_args``.
+        Entries are returned as stored. The session manager reveals them.
         """
-        options = {
-            str(key): Secret(value) if value is not None and is_secret_name(str(key)) else value
-            for key, value in self.connect_args.items()
-        }
+        options = {str(key): value for key, value in self.connect_args.items()}
         options.update(self._asyncpg_timeouts())
         return options
 

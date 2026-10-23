@@ -14,6 +14,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
 from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.bytewax import _adapter, _runtime_io  # noqa: E402
@@ -46,7 +47,7 @@ pytestmark = pytest.mark.bytewax
 class TestRuntimeIOBuilders:
     def test_build_runtime_source_returns_mongo_source_without_commit_tracker(self) -> None:
         source = CompiledMongoCDCSource(
-            settings=MongoSourceConfig(url="mongodb://localhost:27017", database="app"),
+            settings=MongoSourceConfig(url=Dsn("mongodb://localhost:27017"), database="app"),
             collections=("orders",),
             watch_options={"full_document": "updateLookup"},
         )
@@ -61,7 +62,7 @@ class TestRuntimeIOBuilders:
     ) -> None:
         without_extra(monkeypatch, ["pymongo"], ["loom.streaming.mongo._bytewax_source"])
         source = CompiledMongoCDCSource(
-            settings=MongoSourceConfig(url="mongodb://localhost:27017", database="app"),
+            settings=MongoSourceConfig(url=Dsn("mongodb://localhost:27017"), database="app"),
             collections=("orders",),
             watch_options={},
         )

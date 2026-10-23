@@ -16,7 +16,7 @@ import msgspec
 from loom.core.config import reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.model import LoomFrozenStruct
-from loom.core.model.redaction import Dsn, RedactedMap, empty_redacted_map
+from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.model.types import PositiveInt
 
 # re.ASCII keeps the exact [A-Za-z0-9_] charset: without it \w would also
@@ -147,7 +147,7 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
     max_sql_bytes: int = 262144
     connect_timeout: PositiveInt = 10
     read_timeout: PositiveInt = 60
-    settings: RedactedMap = msgspec.field(default_factory=empty_redacted_map)
+    settings: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     sql_endpoint: SqlEndpointConfig = msgspec.field(default_factory=SqlEndpointConfig)
 
     def __post_init__(self) -> None:

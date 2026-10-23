@@ -18,7 +18,6 @@ from loom.ai.compiler import CompiledMcpCapability, CompiledSqlCapability
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime._grants import McpGrantView, SqlGrantView
 from loom.core.identity import ANONYMOUS, Identity
-from loom.core.model.redaction import Dsn
 from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.sql.service import SqlQueryService
@@ -390,7 +389,7 @@ class TestTheSqlGrantsRoles:
             capability,
             config=SqlConnectionConfig(
                 backend="clickhouse",
-                url=Dsn(capability.config.url),
+                url=capability.config.url,
                 allowed_roles=("analyst", "auditor"),
                 readonly=True,
             ),
@@ -408,7 +407,7 @@ class TestTheSqlGrantsRoles:
             capability,
             config=SqlConnectionConfig(
                 backend="clickhouse",
-                url=Dsn(capability.config.url),
+                url=capability.config.url,
                 allowed_roles=("analyst",),
                 readonly=True,
             ),
@@ -432,7 +431,7 @@ class TestTheSqlResultBounds:
             capability,
             config=SqlConnectionConfig(
                 backend="clickhouse",
-                url=Dsn(capability.config.url),
+                url=capability.config.url,
                 allowed_roles=("analyst",),
                 readonly=True,
             ),
@@ -467,7 +466,7 @@ class TestTheSqlResultBounds:
             capability,
             config=SqlConnectionConfig(
                 backend="clickhouse",
-                url=Dsn(capability.config.url),
+                url=capability.config.url,
                 allowed_roles=("analyst",),
                 readonly=True,
             ),

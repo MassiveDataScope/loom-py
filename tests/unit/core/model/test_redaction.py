@@ -11,7 +11,6 @@ from loom.core.model.redaction import (
     Secret,
     is_secret_name,
     mask_dsn,
-    url_embeds_password,
 )
 
 
@@ -148,12 +147,6 @@ def test_a_blank_secret_entry_is_refused_without_quoting_it() -> None:
 )
 def test_a_name_is_secret_by_token(name: str, secret: bool) -> None:
     assert is_secret_name(name) is secret
-
-
-def test_a_url_with_a_password_is_detected_without_returning_it() -> None:
-    assert url_embeds_password("postgresql://app:s3cr3t@db/app")
-    assert not url_embeds_password("postgresql://app@db/app")
-    assert not url_embeds_password("not a url")
 
 
 def test_a_plain_string_is_refused_on_a_secret_field() -> None:

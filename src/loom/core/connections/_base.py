@@ -15,20 +15,7 @@ from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, mask_dsn
 from loom.core.model.types import PositiveInt
 
-
-def redact_uri(uri: str) -> str:
-    """Return *uri* with its password and secret query values replaced by ``***``.
-
-    The user, host, port, path and ordinary parameters stay. An ``@`` in the
-    path does not hide the host. The same rule is :func:`loom.core.model.redaction.mask_dsn`.
-
-    Args:
-        uri: A connection URI, with or without credentials.
-
-    Returns:
-        The URI, safe to log.
-    """
-    return mask_dsn(uri)
+redact_uri = mask_dsn
 
 
 class ConnectionSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):

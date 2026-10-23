@@ -12,7 +12,7 @@ from loom.core.model.redaction import Dsn, RedactedMap, Secret
 class _Settings(msgspec.Struct, frozen=True, kw_only=True):
     url: Dsn
     password: Secret[str] | None = None
-    headers: RedactedMap = msgspec.field(default_factory=lambda: RedactedMap({}))
+    headers: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
 
 def test_decode_builds_a_secret_and_an_address() -> None:

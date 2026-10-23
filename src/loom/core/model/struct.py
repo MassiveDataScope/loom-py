@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import msgspec
@@ -9,8 +10,52 @@ import msgspec
 from loom.core.model.redaction import ensure_redacted
 
 
+class _BoundPostInit:
+    """The check and the struct method, bound to one instance for ``super()``."""
+
+    __slots__ = ("_instance", "_post_init")
+
+    def __init__(
+        self,
+        post_init: Callable[[msgspec.Struct], None],
+        instance: msgspec.Struct,
+    ) -> None:
+        self._post_init = post_init
+        self._instance = instance
+
+    def __call__(self) -> None:
+        ensure_redacted(self._instance)
+        self._post_init(self._instance)
+
+
+class _CheckedPostInit:
+    """Call the redaction check, then the struct's own ``__post_init__``.
+
+    msgspec calls this with the instance. ``super().__post_init__()`` binds it
+    first, so both paths receive the instance.
+    """
+
+    __slots__ = ("_post_init",)
+
+    def __init__(self, post_init: Callable[[msgspec.Struct], None]) -> None:
+        self._post_init = post_init
+
+    def __get__(
+        self,
+        instance: msgspec.Struct | None,
+        owner: type | None = None,
+    ) -> _BoundPostInit | _CheckedPostInit:
+        if instance is None:
+            return self
+        return _BoundPostInit(self._post_init, instance)
+
+    def __call__(self, struct: msgspec.Struct) -> None:
+        ensure_redacted(struct)
+        self._post_init(struct)
+
+
 class _RedactingStructMeta(msgspec.StructMeta):
-    """Run the redaction check before a struct's own ``__post_init__``."""
+    """Install the redaction check on every frozen struct."""
 
     def __new__(
         mcls,
@@ -20,13 +65,10 @@ class _RedactingStructMeta(msgspec.StructMeta):
         **kwargs: Any,
     ) -> _RedactingStructMeta:
         user_post_init = namespace.get("__post_init__")
-        if user_post_init is not None:
-
-            def __post_init__(self: msgspec.Struct, _user: Any = user_post_init) -> None:
-                ensure_redacted(self)
-                _user(self)
-
-            namespace["__post_init__"] = __post_init__
+        if user_post_init is None:
+            namespace["__post_init__"] = ensure_redacted
+        else:
+            namespace["__post_init__"] = _CheckedPostInit(user_post_init)
         return super().__new__(mcls, name, bases, namespace, **kwargs)
 
 
@@ -53,11 +95,9 @@ class LoomFrozenStruct(msgspec.Struct, frozen=True, metaclass=_RedactingStructMe
     Use this for configuration, DSL declarations, wire envelopes, and other
     value objects that should not expose mutable assignment after creation.
     A secret, address or redacted-mapping field must already hold that type:
-    a frozen struct cannot wrap a plain value after it is built.
+    a frozen struct cannot wrap a plain value after it is built. The check
+    runs before the struct's own ``__post_init__``.
     """
-
-    def __post_init__(self) -> None:
-        ensure_redacted(self)
 
     @classmethod
     def loom_message_type(cls) -> str:
