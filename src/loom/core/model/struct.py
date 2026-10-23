@@ -10,35 +10,23 @@ import msgspec
 from loom.core.model.redaction import ensure_redacted
 
 
-class _BoundPostInit:
-    """The check and the struct method, bound to one instance for ``super()``."""
-
-    __slots__ = ("_instance", "_post_init")
-
-    def __init__(
-        self,
-        post_init: Callable[[msgspec.Struct], None],
-        instance: msgspec.Struct,
-    ) -> None:
-        self._post_init = post_init
-        self._instance = instance
-
-    def __call__(self) -> None:
-        ensure_redacted(self._instance)
-        self._post_init(self._instance)
-
-
-class _CheckedPostInit:
-    """Call the redaction check, then the struct's own ``__post_init__``.
-
-    msgspec calls this with the instance. ``super().__post_init__()`` binds it
-    first, so both paths receive the instance.
-    """
+class _PostInit:
+    """Run the redaction check, then the struct's own ``__post_init__``."""
 
     __slots__ = ("_post_init",)
 
     def __init__(self, post_init: Callable[[msgspec.Struct], None]) -> None:
         self._post_init = post_init
+
+    def _run(self, struct: msgspec.Struct) -> None:
+        ensure_redacted(struct)
+        self._post_init(struct)
+
+
+class _CheckedPostInit(_PostInit):
+    """What msgspec calls, with the instance. ``super()`` binds it first."""
+
+    __slots__ = ()
 
     def __get__(
         self,
@@ -50,8 +38,24 @@ class _CheckedPostInit:
         return _BoundPostInit(self._post_init, instance)
 
     def __call__(self, struct: msgspec.Struct) -> None:
-        ensure_redacted(struct)
-        self._post_init(struct)
+        self._run(struct)
+
+
+class _BoundPostInit(_PostInit):
+    """The same check, bound to one instance for ``super()``."""
+
+    __slots__ = ("_instance",)
+
+    def __init__(
+        self,
+        post_init: Callable[[msgspec.Struct], None],
+        instance: msgspec.Struct,
+    ) -> None:
+        super().__init__(post_init)
+        self._instance = instance
+
+    def __call__(self) -> None:
+        self._run(self._instance)
 
 
 class _RedactingStructMeta(msgspec.StructMeta):
