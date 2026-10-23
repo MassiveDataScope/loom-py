@@ -15,6 +15,7 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.convert import convert_config
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
 from loom.etl._uri import is_cloud_path
@@ -149,8 +150,6 @@ def _convert_storage(raw: dict[str, Any]) -> StorageConfig:
         loom.core.config.ConfigError: When the section fails validation.
     """
     try:
-        from loom.core.config.convert import convert_config
-
         return convert_config(raw, StorageConfig, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(

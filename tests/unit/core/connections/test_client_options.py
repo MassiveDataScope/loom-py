@@ -147,18 +147,19 @@ def test_the_options_are_the_complete_connect_arguments() -> None:
     ],
 )
 def test_a_timeout_for_another_driver_points_to_connect_args(url: str, field: str) -> None:
+    address = Dsn(url)
     timeout: dict[str, Any] = {field: 3}
+
     with pytest.raises(ValueError, match=rf"{field} applies to postgresql\+asyncpg URLs only"):
-        DatabaseConfig(url=Dsn(url), **timeout)
+        DatabaseConfig(url=address, **timeout)
 
 
 def test_a_timeout_also_set_in_connect_args_is_refused() -> None:
+    address = Dsn("postgresql+asyncpg://h/db")
+    connect_args = RedactedMap({"command_timeout": 10})
+
     with pytest.raises(ValueError, match="connect_args sets command_timeout"):
-        DatabaseConfig(
-            url=Dsn("postgresql+asyncpg://h/db"),
-            read_timeout=30,
-            connect_args=RedactedMap({"command_timeout": 10}),
-        )
+        DatabaseConfig(url=address, read_timeout=30, connect_args=connect_args)
 
 
 def test_a_decoded_section_names_its_path_when_a_timeout_does_not_apply() -> None:

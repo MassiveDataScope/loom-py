@@ -9,6 +9,7 @@ from typing import Any, TypeVar, cast, get_type_hints
 
 import msgspec
 
+from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
 
 T = TypeVar("T")
@@ -89,8 +90,6 @@ def _convert(
     strict: bool,
 ) -> object:
     try:
-        from loom.core.config.convert import convert_config
-
         return convert_config(value, cast("type[Any]", annotation), strict=strict)
     except msgspec.ValidationError as exc:
         raise ConfigError(f"{target.__name__}.{name}: {exc}") from exc

@@ -90,6 +90,7 @@ from loom.core.config._includes import (
     is_cloud_uri,
     resolve_include,
 )
+from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -623,8 +624,6 @@ def _convert_section(data: Any, key: str, target_type: type[T]) -> T:
         ConfigError: When ``msgspec`` validation fails.
     """
     try:
-        from loom.core.config.convert import convert_config
-
         return convert_config(data, target_type, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(

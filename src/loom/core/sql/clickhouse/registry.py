@@ -15,6 +15,7 @@ from typing import Any, Self
 
 import msgspec
 
+from loom.core.config.convert import convert_config
 from loom.core.config.errors import ConfigError
 from loom.core.connections.clickhouse.client import async_client_options
 from loom.core.sql.abc import UnknownConnectionError
@@ -90,8 +91,6 @@ class ClickHouseConnectionRegistry:
         """
         reject_retired_sql_keys(raw)
         try:
-            from loom.core.config.convert import convert_config
-
             config = convert_config(raw, SqlConfig, strict=False)
         except msgspec.ValidationError as exc:
             raise ConfigError(f"Invalid 'sql' config section: {exc}") from exc

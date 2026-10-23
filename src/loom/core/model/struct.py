@@ -58,7 +58,7 @@ class _RedactingStructMeta(msgspec.StructMeta):
     """Install the redaction check on every frozen struct."""
 
     def __new__(
-        mcls,
+        cls,
         name: str,
         bases: tuple[type, ...],
         namespace: dict[str, Any],
@@ -69,7 +69,7 @@ class _RedactingStructMeta(msgspec.StructMeta):
             namespace["__post_init__"] = ensure_redacted
         else:
             namespace["__post_init__"] = _CheckedPostInit(user_post_init)
-        return super().__new__(mcls, name, bases, namespace, **kwargs)
+        return super().__new__(cls, name, bases, namespace, **kwargs)
 
 
 class LoomStruct(msgspec.Struct):

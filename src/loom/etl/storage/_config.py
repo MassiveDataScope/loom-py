@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from deltalake import CommitProperties, WriterProperties
 
 from loom.core.config import reject_retired_keys
+from loom.core.config.convert import convert_config
 from loom.core.connections import (
     AwsClientConfig,
     ClickHouseConnection,
@@ -466,8 +467,6 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
 
 def convert_storage_config(raw: dict[str, Any]) -> StorageConfig:
     """Convert a resolved plain dict into :class:`StorageConfig`."""
-    from loom.core.config.convert import convert_config
-
     return convert_config(raw, StorageConfig, strict=True)
 
 

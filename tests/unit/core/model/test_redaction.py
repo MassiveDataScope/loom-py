@@ -34,8 +34,11 @@ def test_reveal_returns_the_secret_and_a_copy_of_a_mapping() -> None:
 
 
 def test_two_secrets_are_equal_by_value() -> None:
-    assert Secret("s3cr3t") == Secret("s3cr3t")
-    assert Secret("s3cr3t") != Secret("other")
+    left = Secret("s3cr3t")
+    right = Secret("s3cr3t")
+
+    assert left == right
+    assert left != Secret("other")
 
 
 def test_a_blank_secret_is_refused() -> None:

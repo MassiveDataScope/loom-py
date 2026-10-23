@@ -29,30 +29,45 @@ class _Decoder:
             return value
         origin = get_origin(typ) or typ
         if origin is Secret:
-            args = get_args(typ)
-            inner = args[0] if args else str
-            if isinstance(value, str) and not value.strip():
-                raise ValueError("must not be empty")
-            try:
-                converted = msgspec.convert(value, type=inner, strict=self._strict, dec_hook=self)
-            except msgspec.ValidationError as exc:
-                raise TypeError(str(exc).split(" - at ", 1)[0]) from None
-            return Secret(converted)
+            return self._secret(typ, value)
         if typ is Dsn:
-            if isinstance(value, Dsn):
-                return value
-            if not isinstance(value, str):
-                raise TypeError(f"Expected `str`, got `{type(value).__name__}`")
-            return Dsn(value)
+            return self._dsn(value)
         if typ is RedactedMap:
-            if isinstance(value, RedactedMap):
-                return value
-            if not isinstance(value, dict):
-                raise TypeError(f"Expected `object`, got `{type(value).__name__}`")
-            return RedactedMap(value)
+            return self._map(value)
         raise TypeError(
             f"Decoding objects of type {getattr(typ, '__name__', typ)!r} is unsupported"
         )
+
+    def _secret(self, typ: Any, value: Any) -> Secret[Any]:
+        """Decode the inner type and wrap it. A blank string is refused.
+
+        The inner convert names a path of its own. Drop that path so the outer
+        convert reports the field that failed, and so the message carries the
+        expected type rather than the rejected value.
+        """
+        args = get_args(typ)
+        inner = args[0] if args else str
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("must not be empty")
+        try:
+            converted = msgspec.convert(value, type=inner, strict=self._strict, dec_hook=self)
+        except msgspec.ValidationError as exc:
+            raise TypeError(str(exc).split(" - at ", 1)[0]) from None
+        return Secret(converted)
+
+    def _dsn(self, value: Any) -> Dsn:
+        if isinstance(value, Dsn):
+            return value
+        if not isinstance(value, str):
+            raise TypeError(f"Expected `str`, got `{type(value).__name__}`")
+        return Dsn(value)
+
+    def _map(self, value: Any) -> RedactedMap:
+        if isinstance(value, RedactedMap):
+            return value
+        if not isinstance(value, dict):
+            raise TypeError(f"Expected `object`, got `{type(value).__name__}`")
+        return RedactedMap(value)
 
 
 def convert_config(data: object, target: type[T], *, strict: bool) -> T:
