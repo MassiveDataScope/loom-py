@@ -32,6 +32,7 @@ from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
+_DriverOptions = dict[str, str]
 """Dotted paths of the ``storage:`` collections merged by key across ``includes``."""
 
 
@@ -116,7 +117,7 @@ class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
         """Convert to :class:`TableLocation`."""
         return TableLocation(
             uri="" if self.uri is None else self.uri.reveal(),
-            storage_options=cast("dict[str, str]", reveal_for_driver(self.storage_options)),
+            storage_options=cast(_DriverOptions, reveal_for_driver(self.storage_options)),
             writer=self.writer,
             target_file_size=self.target_file_size,
             delta_config=self.delta_config,
@@ -382,9 +383,9 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         return "" if self.temp.root is None else self.temp.root.reveal()
 
     @property
-    def checkpoint_storage_options(self) -> dict[str, str]:
+    def checkpoint_storage_options(self) -> _DriverOptions:
         """Checkpoint storage options."""
-        return cast("dict[str, str]", reveal_for_driver(self.temp.storage_options))
+        return cast(_DriverOptions, reveal_for_driver(self.temp.storage_options))
 
     def has_catalog_routes(self) -> bool:
         """Return ``True`` when at least one table route uses ``ref``."""
@@ -407,9 +408,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         mapping = {
             route.name: FileLocation(
                 uri_template="" if route.path.uri is None else route.path.uri.reveal(),
-                storage_options=cast(
-                    "dict[str, str]", reveal_for_driver(route.path.storage_options)
-                ),
+                storage_options=cast(_DriverOptions, reveal_for_driver(route.path.storage_options)),
             )
             for route in self.files
         }

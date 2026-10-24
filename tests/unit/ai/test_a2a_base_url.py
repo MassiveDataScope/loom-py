@@ -36,13 +36,15 @@ def test_accepts_a_clean_https_url() -> None:
 )
 def test_rejects_a_url_that_is_not_publishable(url: str) -> None:
     """Plaintext, embedded credentials, a query string, or no host at all."""
+    address = Dsn(url)
     with pytest.raises(AgentCompilationError) as caught:
-        A2AConfig(base_url=Dsn(url), expose=("triage",))
+        A2AConfig(base_url=address, expose=("triage",))
     assert _codes(caught.value) == [AgentErrorCode.A2A_BASE_URL_INVALID]
 
 
 def test_the_message_does_not_leak_the_credential_it_rejects() -> None:
     """Refusing a leak must not become the leak: the message is redacted."""
+    address = Dsn("https://ada:CANARY_PWD@api.example.com")
     with pytest.raises(AgentCompilationError) as caught:
-        A2AConfig(base_url=Dsn("https://ada:CANARY_PWD@api.example.com"), expose=("triage",))
+        A2AConfig(base_url=address, expose=("triage",))
     assert "CANARY_PWD" not in str(caught.value)

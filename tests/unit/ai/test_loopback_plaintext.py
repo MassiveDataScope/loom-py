@@ -29,8 +29,9 @@ def test_acepta_plaintext_en_loopback(url: str) -> None:
 @pytest.mark.parametrize("url", ["http://api.example.com", "http://192.168.1.10:8000"])
 def test_rechaza_plaintext_fuera_de_loopback(url: str) -> None:
     """A private address is still a network: the refusal stands."""
+    address = Dsn(url)
     with pytest.raises(AgentCompilationError):
-        A2AConfig(base_url=Dsn(url), expose=("triage",))
+        A2AConfig(base_url=address, expose=("triage",))
 
 
 def test_el_permiso_es_audible_no_silencioso(caplog: pytest.LogCaptureFixture) -> None:

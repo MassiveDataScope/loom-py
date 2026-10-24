@@ -232,8 +232,9 @@ class TestLiteralSecretRejection:
 class TestA2AConfig:
     def test_fails_with_a2a_expose_empty_when_expose_is_empty(self) -> None:
         """Empty ``expose`` means none, never all (FR-041a); it must be rejected."""
+        address = Dsn("https://agents.example.com")
         with pytest.raises(AgentCompilationError) as excinfo:
-            A2AConfig(base_url=Dsn("https://agents.example.com"), expose=())
+            A2AConfig(base_url=address, expose=())
 
         assert AgentErrorCode.A2A_EXPOSE_EMPTY in _codes(excinfo.value)
 
