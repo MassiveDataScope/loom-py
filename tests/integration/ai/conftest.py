@@ -694,7 +694,7 @@ def make_mcp_capability(
 
 def make_mcp_servers(*servers: str) -> dict[str, McpServerConfig]:
     """Build the ``ai.mcp_servers`` entries the named grants resolve against."""
-    return {server: McpServerConfig(url=mcp_server_url(server)) for server in servers}
+    return {server: McpServerConfig(url=Dsn(mcp_server_url(server))) for server in servers}
 
 
 def make_sql_connection(*, readonly: bool = True) -> SqlConnectionConfig:

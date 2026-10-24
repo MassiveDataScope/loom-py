@@ -38,6 +38,17 @@ def model_settings(target: InferenceTarget) -> ModelSettings | None:
     return cast(ModelSettings, dict(target.options))
 
 
+def provider_endpoint(target: InferenceTarget) -> str | None:
+    """Return the endpoint string the provider SDK connects to.
+
+    ``None`` leaves the SDK on its own default. The stored address stays a
+    :class:`~loom.core.model.redaction.Dsn`, whose text form hides a password.
+    """
+    if target.endpoint is None:
+        return None
+    return target.endpoint.reveal()
+
+
 def api_key(target: InferenceTarget) -> str | None:
     """Read the API key of a target whose ``credentials_ref`` names a variable.
 

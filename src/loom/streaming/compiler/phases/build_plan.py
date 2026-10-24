@@ -8,6 +8,7 @@ from typing import Any, Literal, get_args, get_origin
 
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
+from loom.core.model.redaction import RedactedMap
 from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,
@@ -85,7 +86,7 @@ def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         raise TypeError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
     mongo = load_mongo_config(ctx)
     settings = mongo.source_for(source.logical_ref)
-    watch_options = {**settings.watch_options, **source.watch_options}
+    watch_options = RedactedMap({**settings.watch_options, **source.watch_options})
     return CompiledMongoCDCSource(
         settings=settings,
         collections=source.collections,

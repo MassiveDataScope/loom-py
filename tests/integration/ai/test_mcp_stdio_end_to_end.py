@@ -24,6 +24,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.model.redaction import RedactedMap
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.integration.ai.conftest import CANARY, CapabilityDepsFactory, ScriptedToolModel, _until
 
@@ -59,7 +60,7 @@ def _config(
                 transport="stdio",
                 command=command,
                 args=(_SCRIPT, str(pid_file), CANARY),
-                env=env,
+                env=None if env is None else RedactedMap(env),
             )
         },
         remote_clients=remote_clients,

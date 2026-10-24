@@ -47,6 +47,7 @@ from loom.ai.compiler import CompiledMcpCapability, mcp_connection
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
+from loom.core.model.redaction import Secret
 
 if TYPE_CHECKING:
     from fastmcp.client.transports import ClientTransport, StdioTransport
@@ -299,7 +300,11 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
     return _sdk().StdioTransport(
         command=command,
         args=list(capability.args),
-        env=dict(capability.env) or None,
+        env={
+            key: value.reveal() if isinstance(value, Secret) else value
+            for key, value in capability.env
+        }
+        or None,
         keep_alive=False,
     )
 

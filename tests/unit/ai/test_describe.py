@@ -38,7 +38,7 @@ from loom.ai.inference import InferenceTarget, _RedactedOptions
 from loom.core.engine.compilable import Compilable
 from loom.core.introspection import IntrospectionError
 from loom.core.model import LoomFrozenStruct, msgspec_type
-from loom.core.model.redaction import Dsn
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.sql.config import SqlConnectionConfig
 
 _AGENT = "describable"
@@ -108,7 +108,7 @@ def _mcp_capability() -> CompiledMcpCapability:
     return CompiledMcpCapability(
         server=_MCP_SERVER,
         url="https://tools.internal/mcp",
-        headers_ref="mcp-headers",
+        headers_ref=Secret("mcp-headers"),
         timeout_ms=15000,
         include=("search_*",),
         exclude=("delete_*",),
@@ -138,7 +138,7 @@ def _a2a_capability() -> CompiledA2ACapability:
     return CompiledA2ACapability(
         agent=_A2A_AGENT,
         url="https://oncall.internal/a2a",
-        headers_ref="a2a-headers",
+        headers_ref=Secret("a2a-headers"),
         include=("page_oncall",),
         exclude=("close_incident",),
     )
@@ -160,7 +160,7 @@ def _make_plan(
             provider="bedrock",
             model="anthropic.claude",
             region="eu-west-1",
-            endpoint="https://bedrock.eu-west-1.amazonaws.com",
+            endpoint=Dsn("https://bedrock.eu-west-1.amazonaws.com"),
             credentials_ref="prod/bedrock",
         ),
         output=CompiledOutput(schema=_OUTPUT_SCHEMA, loom_type=msgspec_type(dict)),

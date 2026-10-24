@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from loom.core.connections.aws import AwsClientConfig, aws_island
 from loom.core.connections.mongo import MongoConnection, mongo_island
+from loom.core.model.redaction import reveal_for_driver
 from loom.etl.backends.polars._reader import PolarsSourceReader
 from loom.etl.backends.polars._writer import PolarsTargetWriter
 from loom.etl.io._registry import WriterRegistry
@@ -81,8 +82,8 @@ class PolarsProvider(BackendProvider):
             )
 
         locator = PrefixLocator(
-            root=lineage.root,
-            storage_options=lineage.storage_options or None,
+            root="" if lineage.root is None else lineage.root.reveal(),
+            storage_options=reveal_for_driver(lineage.storage_options) or None,
             writer=lineage.writer or None,
             delta_config=lineage.delta_config or None,
             commit=lineage.commit or None,
@@ -143,8 +144,8 @@ def _build_polars_locator(config: StorageConfig) -> TableLocator:
         return MappingLocator(mapping=mapping, default=default_location)
     if default_path is not None:
         return PrefixLocator(
-            root=default_path.uri,
-            storage_options=default_path.storage_options or None,
+            root="" if default_path.uri is None else default_path.uri.reveal(),
+            storage_options=reveal_for_driver(default_path.storage_options) or None,
             writer=default_path.writer or None,
             delta_config=default_path.delta_config or None,
             commit=default_path.commit or None,
@@ -188,10 +189,10 @@ def _unity_storage_options(config: StorageConfig, catalog_key: str) -> dict[str,
 
 def _unity_storage_options_from_connection(connection: CatalogConnection) -> dict[str, str]:
     options: dict[str, str] = {}
-    if connection.workspace:
-        options["databricks_workspace_url"] = connection.workspace
-    if connection.token:
-        options["databricks_access_token"] = connection.token
+    if connection.workspace is not None:
+        options["databricks_workspace_url"] = connection.workspace.reveal()
+    if connection.token is not None:
+        options["databricks_access_token"] = connection.token.reveal()
     return options
 
 

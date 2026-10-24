@@ -9,6 +9,7 @@ import pytest
 from loom.core.config.observability import OtelConfig
 from loom.core.environment import Environment
 from loom.core.logger.config import LoggerConfig
+from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
     LogObservabilityConfig,
     ObservabilityConfig,
@@ -145,7 +146,7 @@ class TestFromConfig:
             otel=OtelObservabilityConfig(
                 enabled=True,
                 export_logs=True,
-                config=OtelConfig(endpoint="", service_name="loom"),
+                config=OtelConfig(endpoint=None, service_name="loom"),
             ),
         )
 
@@ -180,7 +181,7 @@ class TestFromConfig:
             otel=OtelObservabilityConfig(
                 enabled=True,
                 export_logs=True,
-                config=OtelConfig(endpoint="", service_name="loom"),
+                config=OtelConfig(endpoint=None, service_name="loom"),
             ),
         )
 
@@ -280,7 +281,7 @@ class TestStartScrapeServer:
         config = ObservabilityConfig(
             prometheus=PrometheusObservabilityConfig(
                 enabled=True,
-                pushgateway_url="https://pushgateway:9091",
+                pushgateway_url=Dsn("https://pushgateway:9091"),
                 config=PrometheusConfig(port=8080),
             )
         )

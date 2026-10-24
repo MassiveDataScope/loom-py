@@ -11,13 +11,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import msgspec
 import pytest
 import yaml
 
 from loom.core.checks import DeployCheckError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
-from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.runner import ETLRunner
 from tests.helpers.deploy_checks import FailingCheckModule, write_failing_check_module
 
@@ -79,11 +77,11 @@ def test_the_logger_takes_the_environment_of_the_runner(
         "loom.core.observability.runtime.configure_logging_from_values",
         lambda **kwargs: captured.update(kwargs),
     )
-    config = msgspec.convert(
-        {"log": {"enabled": True, "config": {"level": "INFO"}}}, ETLObservabilityConfig
+    ETLRunner.from_dict(
+        _storage(tmp_path),
+        {"log": {"enabled": True, "config": {"level": "INFO"}}},
+        environment="test",
     )
-
-    ETLRunner.from_dict(_storage(tmp_path), msgspec.to_builtins(config), environment="test")
 
     assert captured["environment"] is Environment.TEST
 

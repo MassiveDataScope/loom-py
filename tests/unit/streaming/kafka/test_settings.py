@@ -3,6 +3,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
+from loom.core.model.redaction import RedactedMap, Secret
 from loom.core.routing import LogicalRef
 from loom.streaming.kafka import (
     ConsumerSettings,
@@ -28,10 +29,12 @@ def test_producer_settings_compile_to_confluent_config() -> None:
             protocol="SASL_SSL",
             sasl_mechanism="PLAIN",
             sasl_username=_TEST_SASL_USERNAME,
-            sasl_password=_TEST_SASL_SECRET,
+            sasl_password=Secret(_TEST_SASL_SECRET),
             ssl_ca_location=_TEST_CA_LOCATION,
         ),
-        extra={"compression.type": "zstd", "linger.ms": 10, "enable.idempotence": True},
+        extra=RedactedMap(
+            {"compression.type": "zstd", "linger.ms": 10, "enable.idempotence": True}
+        ),
     )
 
     config = settings.to_confluent_config()
@@ -41,7 +44,9 @@ def test_producer_settings_compile_to_confluent_config() -> None:
     assert config["security.protocol"] == "SASL_SSL"
     assert config["sasl.mechanism"] == "PLAIN"
     assert config["sasl.username"] == _TEST_SASL_USERNAME
+    assert isinstance(config["sasl.password"], str)
     assert config["sasl.password"] == _TEST_SASL_SECRET
+    assert _TEST_SASL_SECRET not in repr(settings)
     assert config["ssl.ca.location"] == _TEST_CA_LOCATION
     assert config["compression.type"] == "zstd"
     assert config["linger.ms"] == 10
@@ -55,7 +60,7 @@ def test_consumer_settings_compile_to_confluent_config() -> None:
         topics=("orders",),
         auto_offset_reset="latest",
         delivery="at_least_once",
-        extra={"fetch.min.bytes": 1024},
+        extra=RedactedMap({"fetch.min.bytes": 1024}),
     )
 
     config = settings.to_confluent_config()
@@ -163,7 +168,7 @@ def test_security_settings_omit_unset_optional_values() -> None:
 def test_producer_settings_reject_extra_override_of_typed_keys() -> None:
     settings = ProducerSettings(
         brokers=("k1:9092",),
-        extra={"bootstrap.servers": "other:9092"},
+        extra=RedactedMap({"bootstrap.servers": "other:9092"}),
     )
 
     with pytest.raises(ValueError, match="bootstrap.servers"):
@@ -174,7 +179,7 @@ def test_producer_settings_reject_extra_override_of_security_keys() -> None:
     settings = ProducerSettings(
         brokers=("k1:9092",),
         security=KafkaSecuritySettings(protocol="SSL"),
-        extra={"security.protocol": "PLAINTEXT"},
+        extra=RedactedMap({"security.protocol": "PLAINTEXT"}),
     )
 
     with pytest.raises(ValueError, match="security.protocol"):
@@ -186,7 +191,7 @@ def test_consumer_settings_reject_extra_override_of_typed_keys() -> None:
         brokers=("k1:9092",),
         group_id="g-1",
         topics=("orders",),
-        extra={"group.id": "other-group"},
+        extra=RedactedMap({"group.id": "other-group"}),
         delivery="at_most_once",
     )
 

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from loom.core.model.redaction import Dsn
 from loom.etl.maintenance._ops import CompactSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import (
     DeltaTableMaintainer,
@@ -65,7 +66,7 @@ def stub_maintainer() -> StubMaintainer:
 def simple_config(tmp_path: Any) -> StorageConfig:
     """StorageConfig with a PrefixLocator rooted at a tmp dir."""
     return StorageConfig(
-        defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path) + "/"))
+        defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path) + "/")))
     )
 
 
@@ -73,15 +74,18 @@ def simple_config(tmp_path: Any) -> StorageConfig:
 def routed_config(tmp_path: Any) -> StorageConfig:
     """StorageConfig with explicit table routes under raw.* and staging.*."""
     return StorageConfig(
-        defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path) + "/")),
+        defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path) + "/"))),
         tables=(
-            TableRoute(name="raw.events", path=TablePathConfig(uri=str(tmp_path) + "/raw/events")),
             TableRoute(
-                name="raw.snapshots", path=TablePathConfig(uri=str(tmp_path) + "/raw/snapshots")
+                name="raw.events", path=TablePathConfig(uri=Dsn(str(tmp_path) + "/raw/events"))
+            ),
+            TableRoute(
+                name="raw.snapshots",
+                path=TablePathConfig(uri=Dsn(str(tmp_path) + "/raw/snapshots")),
             ),
             TableRoute(
                 name="staging.events",
-                path=TablePathConfig(uri=str(tmp_path) + "/staging/events"),
+                path=TablePathConfig(uri=Dsn(str(tmp_path) + "/staging/events")),
             ),
         ),
     )
@@ -91,15 +95,18 @@ def routed_config(tmp_path: Any) -> StorageConfig:
 def maintenance_config(tmp_path: Any) -> StorageConfig:
     """StorageConfig with a maintenance block."""
     return StorageConfig(
-        defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path) + "/")),
+        defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path) + "/"))),
         tables=(
-            TableRoute(name="raw.events", path=TablePathConfig(uri=str(tmp_path) + "/raw/events")),
             TableRoute(
-                name="raw.snapshots", path=TablePathConfig(uri=str(tmp_path) + "/raw/snapshots")
+                name="raw.events", path=TablePathConfig(uri=Dsn(str(tmp_path) + "/raw/events"))
+            ),
+            TableRoute(
+                name="raw.snapshots",
+                path=TablePathConfig(uri=Dsn(str(tmp_path) + "/raw/snapshots")),
             ),
             TableRoute(
                 name="staging.events",
-                path=TablePathConfig(uri=str(tmp_path) + "/staging/events"),
+                path=TablePathConfig(uri=Dsn(str(tmp_path) + "/staging/events")),
             ),
         ),
         maintenance=MaintenanceConfig(

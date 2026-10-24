@@ -63,6 +63,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.model.redaction import Dsn
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.integration.ai.conftest import CANARY, CapabilityDepsFactory, ScriptedToolModel
 
@@ -210,7 +211,7 @@ def _config(url: str) -> AiConfig:
         engine="pydantic-ai",
         specs=(),
         models={"default": InferenceTarget(provider="fake", model="fake-model")},
-        mcp_servers={_SERVER: McpServerConfig(url=url)},
+        mcp_servers={_SERVER: McpServerConfig(url=Dsn(url))},
         startup_timeout_ms=20000,
         health_cache_ttl_ms=5000,
     )

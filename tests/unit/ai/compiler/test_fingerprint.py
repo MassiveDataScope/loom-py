@@ -77,6 +77,9 @@ def _policies(**changes: Any) -> AgentPlan:
 
 
 def _target(**changes: Any) -> AgentPlan:
+    endpoint = changes.get("endpoint")
+    if isinstance(endpoint, str):
+        changes["endpoint"] = Dsn(endpoint)
     return msgspec.structs.replace(_BASE, inference=msgspec.structs.replace(_TARGET, **changes))
 
 

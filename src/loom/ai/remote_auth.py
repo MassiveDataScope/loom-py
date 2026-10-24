@@ -82,6 +82,7 @@ from typing import TYPE_CHECKING, Any, Final, cast, get_type_hints
 import msgspec
 
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.core.model.redaction import Secret
 from loom.core.plugins.entrypoints import (
     DuplicateEntryPointError,
     EntryPointNotFoundError,
@@ -154,7 +155,7 @@ def is_strategy_registered(kind: str) -> bool:
     return select_entry_point(REMOTE_AUTH_ENTRY_POINT_GROUP, kind, on_duplicate="error") is not None
 
 
-def headers_from_ref(component: str, headers_ref: str | None) -> dict[str, str]:
+def headers_from_ref(component: str, headers_ref: Secret[str] | str | None) -> dict[str, str]:
     """Read the header a resolved ``headers_ref`` carries.
 
     The deployment's secret resolver has already run — ``${secrets:/path}`` is
@@ -184,7 +185,8 @@ def headers_from_ref(component: str, headers_ref: str | None) -> dict[str, str]:
     """
     if headers_ref is None:
         return {}
-    name, separator, value = headers_ref.partition(_HEADER_SEPARATOR)
+    payload = headers_ref.reveal() if isinstance(headers_ref, Secret) else headers_ref
+    name, separator, value = payload.partition(_HEADER_SEPARATOR)
     if not separator or not name or not value:
         raise AgentCompilationError(
             [AgentErrorCode.MCP_HEADERS_REF_INVALID.issue(component=component)]
@@ -415,7 +417,11 @@ def _build(auth: CompiledRemoteAuth) -> ClientAuth:
     """Load the named strategy and construct it from its settings."""
     strategy = _load_strategy(auth.kind)
     try:
-        settings = _coerce_settings(strategy, dict(auth.settings))
+        plain = {
+            key: value.reveal() if isinstance(value, Secret) else value
+            for key, value in auth.settings
+        }
+        settings = _coerce_settings(strategy, plain)
     except msgspec.ValidationError as exc:
         raise AgentCompilationError(
             [

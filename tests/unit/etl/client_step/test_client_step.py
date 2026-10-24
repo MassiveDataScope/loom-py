@@ -262,7 +262,7 @@ class TestClientStepExecution:
         monkeypatch.setattr("clickhouse_connect.get_client", MagicMock(return_value=fake_client))
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
         )
         runner = ETLRunner.from_config(config)

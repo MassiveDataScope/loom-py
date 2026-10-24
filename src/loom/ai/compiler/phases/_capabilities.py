@@ -49,6 +49,7 @@ from loom.ai.declarative import (
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.engine.compilable import Compilable
+from loom.core.model.redaction import Secret
 from loom.core.sql.config import SqlConfig, roles_need_identity_binding
 from loom.core.symbols import import_symbol
 from loom.core.use_case.registry import UseCaseRegistry
@@ -319,13 +320,13 @@ def compile_mcp_capability(
         CompiledMcpCapability(
             server=server_name,
             transport=server.transport,
-            url=server.url,
+            url=None if server.url is None else server.url.reveal(),
             headers_ref=server.headers_ref,
             auth=_compile_auth(server.auth),
             timeout_ms=server.timeout_ms,
             command=server.command,
             args=server.args,
-            env=tuple(sorted((server.env or {}).items())),
+            env=tuple(sorted((key, _carry(value)) for key, value in (server.env or {}).items())),
             include=include,
             exclude=exclude,
         ),
@@ -343,7 +344,17 @@ def _compile_mcp(capability: McpCapability, context: _Context) -> _HandlerResult
     )
 
 
-def _compile_auth(auth: Mapping[str, str] | None) -> CompiledRemoteAuth | None:
+def _carry(value: object) -> Secret[str] | str:
+    """Hold a resolved setting. A blank string stays text: ``Secret`` rejects it."""
+    if isinstance(value, Secret):
+        return value
+    text = value if isinstance(value, str) else str(value)
+    if text.strip():
+        return Secret(text)
+    return text
+
+
+def _compile_auth(auth: Mapping[str, object] | None) -> CompiledRemoteAuth | None:
     """Split a validated ``auth`` block into the strategy name and its settings.
 
     Shared by the ``mcp`` and ``a2a`` grants: both endpoints declare the same
@@ -354,8 +365,8 @@ def _compile_auth(auth: Mapping[str, str] | None) -> CompiledRemoteAuth | None:
     if auth is None:
         return None
     return CompiledRemoteAuth(
-        kind=auth["kind"],
-        settings=tuple((key, value) for key, value in auth.items() if key != "kind"),
+        kind=str(auth["kind"]),
+        settings=tuple((key, _carry(value)) for key, value in auth.items() if key != "kind"),
     )
 
 
@@ -370,7 +381,7 @@ def _compile_a2a(capability: A2ACapability, context: _Context) -> _HandlerResult
     return (
         CompiledA2ACapability(
             agent=capability.agent,
-            url=agent.url,
+            url=agent.url.reveal(),
             headers_ref=agent.headers_ref,
             auth=_compile_auth(agent.auth),
             include=capability.include,

@@ -7,13 +7,15 @@ hook a dump of a secret, an address or a redacted mapping fails closed.
 
 from __future__ import annotations
 
-from typing import Any, TypeVar, cast, get_args, get_origin
+import types
+from typing import Any, TypeVar, Union, cast, get_args, get_origin
 
 import msgspec
 
 from loom.core.model.redaction import MASK, Dsn, RedactedMap, Secret, mask_structure
 
 T = TypeVar("T")
+_UNION = (Union, types.UnionType)
 
 
 class _Decoder:
@@ -77,8 +79,9 @@ def convert_config(data: object, target: type[T], *, strict: bool) -> T:
 
     ``strict`` is the caller's: the loader stays lax and the sections that
     decode strictly stay strict. A secret, an address or a redacted mapping
-    is built here. The error names the path and the expected type, never the
-    value.
+    is built here. A blank optional address or secret becomes ``None``; a
+    blank required one is an error. The error names the path and the expected
+    type, never the value.
 
     Args:
         data: Resolved configuration, already a builtin.
@@ -91,7 +94,64 @@ def convert_config(data: object, target: type[T], *, strict: bool) -> T:
     Raises:
         msgspec.ValidationError: When *data* does not match *target*.
     """
-    return msgspec.convert(data, type=target, strict=strict, dec_hook=_Decoder(strict))
+    return msgspec.convert(
+        _blank_optional(data, target),
+        type=target,
+        strict=strict,
+        dec_hook=_Decoder(strict),
+    )
+
+
+def _blank_optional(data: object, target: Any) -> object:
+    """Turn a blank optional address or secret into ``None``.
+
+    A required address still reaches the decoder, which refuses it. The input
+    mapping is copied only when a nested value changes.
+    """
+    if _is_blank_optional(target, data):
+        return None
+    origin = get_origin(target)
+    if origin in _UNION:
+        member = next((arg for arg in get_args(target) if arg is not type(None)), None)
+        if member is None:
+            return data
+        return _blank_optional(data, member)
+    if isinstance(data, dict) and isinstance(target, type) and issubclass(target, msgspec.Struct):
+        copied = dict(data)
+        changed = False
+        for field in msgspec.structs.fields(target):
+            if field.name not in copied:
+                continue
+            updated = _blank_optional(copied[field.name], field.type)
+            if updated is not copied[field.name]:
+                copied[field.name] = updated
+                changed = True
+        return copied if changed else data
+    args = get_args(target)
+    if origin in (list, tuple) and isinstance(data, list) and args:
+        items = [_blank_optional(item, args[0]) for item in data]
+        return items if any(new is not old for new, old in zip(items, data, strict=True)) else data
+    if origin is dict and isinstance(data, dict) and len(args) == 2:
+        values = {key: _blank_optional(item, args[1]) for key, item in data.items()}
+        if any(values[key] is not data[key] for key in data):
+            return values
+    return data
+
+
+def _is_blank_optional(target: Any, data: object) -> bool:
+    if not isinstance(data, str) or data.strip():
+        return False
+    if get_origin(target) not in _UNION:
+        return False
+    args = get_args(target)
+    if type(None) not in args:
+        return False
+    return any(_is_address_or_secret(arg) for arg in args)
+
+
+def _is_address_or_secret(annotation: Any) -> bool:
+    origin = get_origin(annotation) or annotation
+    return origin is Secret or annotation is Dsn
 
 
 def dump_config(value: object) -> Any:

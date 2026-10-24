@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any
 from urllib.parse import urlparse
 
+import msgspec
+
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn, RedactedMap
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -35,7 +37,7 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         tracer_name: Tracer instrumentation name.
         tracer_version: Optional tracer instrumentation version.
         protocol: OTLP protocol (``http/protobuf`` or ``grpc``).
-        endpoint: OTLP endpoint URI. When empty, uses global OTel runtime defaults.
+        endpoint: OTLP endpoint URI. When absent, uses global OTel runtime defaults.
         insecure: Exporter transport mode when supported by protocol/exporter.
         headers: Exporter request headers (vendor auth/tags).
         resource_attributes: Additional OTel resource attributes.
@@ -62,13 +64,13 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     tracer_name: str = "loom"
     tracer_version: str = ""
     protocol: str = "http/protobuf"
-    endpoint: str = ""
+    endpoint: Dsn | None = None
     insecure: bool = False
-    headers: dict[str, str] = {}
+    headers: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     resource_attributes: dict[str, str] = {}
     span_attributes: dict[str, str] = {}
-    exporter_kwargs: dict[str, Any] = {}
-    span_processor_kwargs: dict[str, Any] = {}
+    exporter_kwargs: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
+    span_processor_kwargs: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     adopt_host_id_generator: bool = False
     sampler: str = "parentbased_always_on"
     sampler_ratio: float = 1.0
@@ -101,7 +103,11 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
                 "observability.otel_config.max_span_links must be >= 1, "
                 f"got {self.max_span_links!r}."
             )
-        if self.insecure and self.endpoint and not _is_local_endpoint(self.endpoint):
+        if (
+            self.insecure
+            and self.endpoint is not None
+            and not _is_local_endpoint(str(self.endpoint))
+        ):
             warnings.warn(
                 f"OtelConfig.insecure=True on non-local endpoint {self.endpoint!r}."
                 " Set insecure=False for production deployments.",

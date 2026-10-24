@@ -152,7 +152,7 @@ class RedactedMap(Mapping[str, Any]):
     def __init__(self, value: Mapping[str, Any]) -> None:
         if not isinstance(value, Mapping):
             raise TypeError("Expected `object`")
-        copied = copy.deepcopy(dict(value))
+        copied = _owned_mapping(value)
         _reject_blank_secret_entries(copied, "")
         self._value = copied
 
@@ -162,8 +162,12 @@ class RedactedMap(Mapping[str, Any]):
         return cls({})
 
     def reveal(self) -> dict[str, Any]:
-        """Return a copy of the mapping, secrets included."""
-        return copy.deepcopy(self._value)
+        """Return a copy of the mapping, secrets included.
+
+        Dicts, lists and tuples are copied. Any other object is the one that
+        was stored, so a driver keeps a ``mappingproxy`` it was given.
+        """
+        return _owned_mapping(self._value)
 
     def identity(self) -> tuple[tuple[str, object], ...]:
         """Hashable identity. Its ``repr`` hides secret values."""
@@ -198,7 +202,9 @@ class RedactedMap(Mapping[str, Any]):
         return hash(self.identity())
 
     def __deepcopy__(self, memo: dict[int, Any]) -> RedactedMap:
-        return RedactedMap(copy.deepcopy(self._value, memo))
+        cloned = RedactedMap(_owned_mapping(self._value))
+        memo[id(self)] = cloned
+        return cloned
 
 
 def reveal_for_driver(value: object) -> Any:
@@ -429,6 +435,26 @@ def _mask_entry(key: str, value: Any) -> Any:
     if is_secret_name(key):
         return MASK
     return mask_structure(value)
+
+
+def _owned_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy a mapping. Nested containers are copied; other objects stay."""
+    return {key: _owned_copy(item) for key, item in value.items()}
+
+
+def _owned_copy(value: Any) -> Any:
+    """Copy dicts, lists and tuples. Other objects stay the ones stored.
+
+    ``copy.deepcopy`` pickles an object it does not know, and a cache entry
+    may be a ``mappingproxy``. That entry reaches the driver unchanged.
+    """
+    if isinstance(value, dict):
+        return {key: _owned_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_owned_copy(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_owned_copy(item) for item in value)
+    return value
 
 
 def _reject_blank_secret_entries(value: object, prefix: str) -> None:

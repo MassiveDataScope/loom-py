@@ -349,8 +349,10 @@ class TestRunnerFromConfig:
         from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            temp=TempConfig(root="s3://bucket/checkpoints" if checkpoint_enabled else ""),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
+            temp=TempConfig(
+                root=Dsn("s3://bucket/checkpoints") if checkpoint_enabled else None
+            ),
         )
         runner = ETLRunner.from_config(config)
 
@@ -369,7 +371,7 @@ class TestRunnerFromConfig:
         monkeypatch.setattr("clickhouse_connect.get_client", MagicMock())
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
         )
         runner = ETLRunner.from_config(config)
@@ -380,7 +382,7 @@ class TestRunnerFromConfig:
         self, tmp_path: Path
     ) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
         )
         runner = ETLRunner.from_config(config)
 
@@ -443,7 +445,7 @@ class TestAuditColumnsEndToEnd:
         write_deltalake(str(src_path), pl.DataFrame({"id": [1, 2]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
             audit=AuditConfig(enabled=True),
         )
@@ -488,7 +490,7 @@ class TestAuditColumnsEndToEnd:
         write_deltalake(str(src_path), pl.DataFrame({"id": [1]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
             audit=AuditConfig(enabled=False),
         )
@@ -525,8 +527,8 @@ class TestRunnerCleaner:
                 deleted.append(path)
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            temp=TempConfig(root="s3://bucket/checkpoints"),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
+            temp=TempConfig(root=Dsn("s3://bucket/checkpoints")),
         )
         runner = ETLRunner.from_config(config, cleaner=SpyCleaner())
 
@@ -551,9 +553,9 @@ class TestRunnerCleaner:
         write_deltalake(str(src), pl.DataFrame({"id": [1, 2]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
-            temp=TempConfig(root="s3://fake-bucket/checkpoints"),
+            temp=TempConfig(root=Dsn("s3://fake-bucket/checkpoints")),
         )
         runner = ETLRunner.from_config(config, cleaner=SpyCleaner())
 
@@ -594,9 +596,9 @@ class TestRunnerCleaner:
         write_deltalake(str(src), pl.DataFrame({"id": [1]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
-            temp=TempConfig(root="s3://fake-bucket/checkpoints"),
+            temp=TempConfig(root=Dsn("s3://fake-bucket/checkpoints")),
         )
         runner = ETLRunner.from_config(config, cleaner=SpyCleaner())
 
