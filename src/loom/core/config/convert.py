@@ -105,36 +105,66 @@ def convert_config(data: object, target: type[T], *, strict: bool) -> T:
 def _blank_optional(data: object, target: Any) -> object:
     """Turn a blank optional address or secret into ``None``.
 
-    A required address still reaches the decoder, which refuses it. The input
-    mapping is copied only when a nested value changes.
+    A required address still reaches the decoder, which refuses it. Each shape
+    copies its container only when a nested value changes.
     """
     if _is_blank_optional(target, data):
         return None
     origin = get_origin(target)
     if origin in _UNION:
-        member = next((arg for arg in get_args(target) if arg is not type(None)), None)
-        if member is None:
-            return data
-        return _blank_optional(data, member)
-    if isinstance(data, dict) and isinstance(target, type) and issubclass(target, msgspec.Struct):
-        copied = dict(data)
-        changed = False
-        for field in msgspec.structs.fields(target):
-            if field.name not in copied:
-                continue
-            updated = _blank_optional(copied[field.name], field.type)
-            if updated is not copied[field.name]:
-                copied[field.name] = updated
-                changed = True
-        return copied if changed else data
+        return _blank_union(data, target)
+    if origin in (list, tuple):
+        return _blank_sequence(data, target)
+    if origin is dict:
+        return _blank_mapping(data, target)
+    if isinstance(data, dict):
+        return _blank_struct(data, target)
+    return data
+
+
+def _blank_union(data: object, target: Any) -> object:
+    member = next((arg for arg in get_args(target) if arg is not type(None)), None)
+    if member is None:
+        return data
+    return _blank_optional(data, member)
+
+
+def _blank_sequence(data: object, target: Any) -> object:
     args = get_args(target)
-    if origin in (list, tuple) and isinstance(data, list) and args:
-        items = [_blank_optional(item, args[0]) for item in data]
-        return items if any(new is not old for new, old in zip(items, data, strict=True)) else data
-    if origin is dict and isinstance(data, dict) and len(args) == 2:
-        values = {key: _blank_optional(item, args[1]) for key, item in data.items()}
-        if any(values[key] is not data[key] for key in data):
-            return values
+    if not isinstance(data, list) or not args:
+        return data
+    element = args[0]
+    items = [_blank_optional(item, element) for item in data]
+    if all(new is old for new, old in zip(items, data, strict=True)):
+        return data
+    return items
+
+
+def _blank_mapping(data: object, target: Any) -> object:
+    args = get_args(target)
+    if not isinstance(data, dict) or len(args) != 2:
+        return data
+    values = {key: _blank_optional(item, args[1]) for key, item in data.items()}
+    if all(values[key] is data[key] for key in data):
+        return data
+    return values
+
+
+def _blank_struct(data: dict[str, Any], target: object) -> object:
+    if not isinstance(target, type) or not issubclass(target, msgspec.Struct):
+        return data
+    copied = dict(data)
+    changed = False
+    for field in msgspec.structs.fields(target):
+        if field.name not in copied:
+            continue
+        updated = _blank_optional(copied[field.name], field.type)
+        if updated is copied[field.name]:
+            continue
+        copied[field.name] = updated
+        changed = True
+    if changed:
+        return copied
     return data
 
 
