@@ -28,6 +28,7 @@ from loom.ai.config import (
 )
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget, OutputMode
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 
 
 def _codes(error: AgentCompilationError) -> list[AgentErrorCode]:
@@ -231,8 +232,9 @@ class TestLiteralSecretRejection:
 class TestA2AConfig:
     def test_fails_with_a2a_expose_empty_when_expose_is_empty(self) -> None:
         """Empty ``expose`` means none, never all (FR-041a); it must be rejected."""
+        address = Dsn("https://agents.example.com")
         with pytest.raises(AgentCompilationError) as excinfo:
-            A2AConfig(base_url="https://agents.example.com", expose=())
+            A2AConfig(base_url=address, expose=())
 
         assert AgentErrorCode.A2A_EXPOSE_EMPTY in _codes(excinfo.value)
 
@@ -314,7 +316,7 @@ class TestMcpServerRegistry:
     @pytest.mark.parametrize("url", _UNSAFE_URLS, ids=_UNSAFE_URL_IDS)
     def test_fails_with_mcp_url_invalid_when_the_url_is_not_safe(self, url: str) -> None:
         """Only a plain ``https`` URL without userinfo or query string is accepted."""
-        mcp_servers = {"knowledge": McpServerConfig(url=url)}
+        mcp_servers = {"knowledge": McpServerConfig(url=Dsn(url))}
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers=mcp_servers)
@@ -324,7 +326,7 @@ class TestMcpServerRegistry:
     def test_the_message_does_not_contain_the_userinfo_when_the_url_is_rejected(self) -> None:
         """The rejection must not leak the credential embedded in the URL."""
         mcp_servers = {
-            "knowledge": McpServerConfig(url="https://user:s3cr3t@knowledge.example.com/mcp")
+            "knowledge": McpServerConfig(url=Dsn("https://user:s3cr3t@knowledge.example.com/mcp"))
         }
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -335,8 +337,8 @@ class TestMcpServerRegistry:
     def test_fails_with_credentials_inline_when_headers_ref_is_a_literal_secret(self) -> None:
         """``headers_ref`` references headers; it never carries them (FR-018)."""
         server = McpServerConfig(
-            url="https://knowledge.example.com/mcp",
-            headers_ref="sk-abc123def456ghi789",
+            url=Dsn("https://knowledge.example.com/mcp"),
+            headers_ref=Secret("sk-abc123def456ghi789"),
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -347,7 +349,9 @@ class TestMcpServerRegistry:
     def test_the_message_does_not_contain_the_secret_when_headers_ref_is_rejected(self) -> None:
         """The rejection itself must not leak the very secret it rejects."""
         literal = "sk-abc123def456ghi789"
-        server = McpServerConfig(url="https://knowledge.example.com/mcp", headers_ref=literal)
+        server = McpServerConfig(
+            url=Dsn("https://knowledge.example.com/mcp"), headers_ref=Secret(literal)
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers={"knowledge": server})
@@ -360,7 +364,9 @@ class TestMcpServerRegistry:
         timeout_ms: int,
     ) -> None:
         """A per-call deadline outside ``1..600000`` is a configuration fault."""
-        server = McpServerConfig(url="https://knowledge.example.com/mcp", timeout_ms=timeout_ms)
+        server = McpServerConfig(
+            url=Dsn("https://knowledge.example.com/mcp"), timeout_ms=timeout_ms
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers={"knowledge": server})
@@ -370,8 +376,8 @@ class TestMcpServerRegistry:
     def test_accepts_the_server_when_the_url_and_the_reference_are_valid(self) -> None:
         """The happy case: an https URL, a reference-shaped secret and a sane deadline."""
         server = McpServerConfig(
-            url="https://knowledge.example.com/mcp",
-            headers_ref="ai/knowledge/headers",
+            url=Dsn("https://knowledge.example.com/mcp"),
+            headers_ref=Secret("ai/knowledge/headers"),
             timeout_ms=15000,
         )
 
@@ -381,11 +387,27 @@ class TestMcpServerRegistry:
 
     def test_timeout_ms_defaults_when_not_declared(self) -> None:
         """The documented per-call deadline applies when the deployment stays silent."""
-        assert McpServerConfig(url="https://knowledge.example.com/mcp").timeout_ms == 20000
+        assert McpServerConfig(url=Dsn("https://knowledge.example.com/mcp")).timeout_ms == 20000
 
     def test_mcp_servers_is_empty_when_not_declared(self) -> None:
         """No server is reachable by default; every name must be declared."""
         assert dict(_config_with().mcp_servers) == {}
+
+
+def _mcp_fields(fields: dict[str, object]) -> dict[str, object]:
+    """Wrap address, header reference and free mappings the struct now stores."""
+    prepared = dict(fields)
+    url = prepared.get("url")
+    if isinstance(url, str):
+        prepared["url"] = Dsn(url)
+    headers_ref = prepared.get("headers_ref")
+    if isinstance(headers_ref, str):
+        prepared["headers_ref"] = Secret(headers_ref)
+    for name in ("auth", "env"):
+        value = prepared.get(name)
+        if isinstance(value, dict):
+            prepared[name] = RedactedMap(value)
+    return prepared
 
 
 def _stdio_server(**overrides: object) -> McpServerConfig:
@@ -396,7 +418,7 @@ def _stdio_server(**overrides: object) -> McpServerConfig:
         "args": ("mcp-server-fetch",),
     }
     fields.update(overrides)
-    return McpServerConfig(**fields)  # type: ignore[arg-type]
+    return McpServerConfig(**_mcp_fields(fields))  # type: ignore[arg-type]
 
 
 def _issues_with(error: AgentCompilationError, code: AgentErrorCode) -> list[str]:
@@ -475,7 +497,7 @@ class TestMcpStdioTransport:
         """http requires ``url`` and refuses the subprocess fields (FR-003)."""
         fields: dict[str, object] = {"url": "https://search.example.com/mcp"}
         fields.update(overrides)
-        mcp_servers = {"search": McpServerConfig(**fields)}  # type: ignore[arg-type]
+        mcp_servers = {"search": McpServerConfig(**_mcp_fields(fields))}  # type: ignore[arg-type]
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers=mcp_servers)
@@ -486,7 +508,7 @@ class TestMcpStdioTransport:
         self,
     ) -> None:
         """An unknown transport is refused and the message names the accepted ones (FR-002)."""
-        server = McpServerConfig(transport="ws", url="wss://search.example.com/mcp")
+        server = McpServerConfig(transport="ws", url=Dsn("wss://search.example.com/mcp"))
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers={"search": server})
@@ -543,7 +565,7 @@ class TestMcpStdioTransport:
 
     def test_transport_defaults_to_http_when_not_declared(self) -> None:
         """A server declared today keeps its meaning: an HTTP endpoint (FR-001)."""
-        assert McpServerConfig(url="https://search.example.com/mcp").transport == "http"
+        assert McpServerConfig(url=Dsn("https://search.example.com/mcp")).transport == "http"
 
 
 class TestA2AAgentRegistry:
@@ -552,7 +574,7 @@ class TestA2AAgentRegistry:
     @pytest.mark.parametrize("url", _UNSAFE_URLS, ids=_UNSAFE_URL_IDS)
     def test_fails_with_a2a_url_invalid_when_the_url_is_not_safe(self, url: str) -> None:
         """Remote agents are held to the same URL rules as remote tool servers."""
-        a2a_agents = {"translations": A2AAgentConfig(url=url)}
+        a2a_agents = {"translations": A2AAgentConfig(url=Dsn(url))}
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(a2a_agents=a2a_agents)
@@ -562,8 +584,8 @@ class TestA2AAgentRegistry:
     def test_fails_with_credentials_inline_when_headers_ref_is_a_literal_secret(self) -> None:
         """``headers_ref`` references headers; it never carries them (FR-018)."""
         agent = A2AAgentConfig(
-            url="https://translations.example.com/a2a",
-            headers_ref="AKIAIOSFODNN7EXAMPLE",
+            url=Dsn("https://translations.example.com/a2a"),
+            headers_ref=Secret("AKIAIOSFODNN7EXAMPLE"),
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -574,8 +596,8 @@ class TestA2AAgentRegistry:
     def test_accepts_the_agent_when_the_url_and_the_reference_are_valid(self) -> None:
         """The happy case: an https URL and a reference-shaped secret."""
         agent = A2AAgentConfig(
-            url="https://translations.example.com/a2a",
-            headers_ref="ai/translations/headers",
+            url=Dsn("https://translations.example.com/a2a"),
+            headers_ref=Secret("ai/translations/headers"),
         )
 
         config = _config_with(a2a_agents={"translations": agent})
@@ -600,8 +622,10 @@ class TestSkillsRoot:
 class TestAggregatedRegistryIssues:
     def test_accumulates_one_issue_per_invalid_registry_entry_when_both_fail(self) -> None:
         """One raise reports every faulty entry, never the first one only (FR-011)."""
-        mcp_servers = {"knowledge": McpServerConfig(url="http://knowledge.example.com/mcp")}
-        a2a_agents = {"translations": A2AAgentConfig(url="http://translations.example.com/a2a")}
+        mcp_servers = {"knowledge": McpServerConfig(url=Dsn("http://knowledge.example.com/mcp"))}
+        a2a_agents = {
+            "translations": A2AAgentConfig(url=Dsn("http://translations.example.com/a2a"))
+        }
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(mcp_servers=mcp_servers, a2a_agents=a2a_agents)

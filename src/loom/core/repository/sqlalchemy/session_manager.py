@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.logger import get_logger
+from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
@@ -198,7 +199,7 @@ def build_session_manager(
         A session manager whose engine has not opened any connection yet.
     """
     pool = config.pool.resolve(profile)
-    pool_class = manager_kwargs.get("poolclass") or _default_pool_class(config.url)
+    pool_class = manager_kwargs.get("poolclass") or _default_pool_class(str(config.url))
     queued = issubclass(pool_class, QueuePool)
     if not queued:
         _log.debug("PoolSizingOmitted", reason="dialect pool holds no queue")
@@ -208,19 +209,31 @@ def build_session_manager(
             pool_class, cast(PoolMetricsSink, pool_metrics), database
         )
     manager = SessionManager(
-        config.url,
+        _engine_url(config),
         echo=config.echo,
         pool_pre_ping=pool.pre_ping,
         pool_size=pool.size if queued else None,
         max_overflow=pool.max_overflow if queued else None,
         pool_timeout=pool.timeout_s if queued else None,
         pool_recycle=pool.recycle_s,
-        connect_args=config.client_options(),
+        connect_args=reveal_for_driver(config.client_options()),
         **manager_kwargs,
     )
     if instrumented:
         cast(PoolMetricsSink, pool_metrics).register_engine(manager.engine.sync_engine, database)
     return manager
+
+
+def _engine_url(config: DatabaseConfig) -> str:
+    """Return the URL the driver dials. Explicit credentials win over the address."""
+    parsed = make_url(config.url.reveal())
+    if config.username is None and config.password is None:
+        return parsed.render_as_string(hide_password=False)
+    parsed = parsed.set(
+        username=config.username if config.username is not None else parsed.username,
+        password=config.password.reveal() if config.password is not None else parsed.password,
+    )
+    return parsed.render_as_string(hide_password=False)
 
 
 def _default_pool_class(url: str) -> type[Pool]:

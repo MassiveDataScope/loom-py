@@ -10,6 +10,7 @@ import pytest
 
 from loom.ai.config import A2AAgentConfig, AgentEndpointConfig, AiConfig, McpServerConfig
 from loom.ai.inference import InferenceTarget
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
@@ -107,8 +108,8 @@ def _corpus_mcp_servers() -> dict[str, McpServerConfig]:
     """
     servers = {
         name: McpServerConfig(
-            url=f"https://{name}.example.com/mcp",
-            headers_ref=f"{name}_server_headers",
+            url=Dsn(f"https://{name}.example.com/mcp"),
+            headers_ref=Secret(f"{name}_server_headers"),
         )
         for name in _CORPUS_MCP_SERVERS
     }
@@ -116,7 +117,7 @@ def _corpus_mcp_servers() -> dict[str, McpServerConfig]:
         transport="stdio",
         command="npx",
         args=("-y", "@modelcontextprotocol/server-filesystem", "/srv/data"),
-        env={"ROOT_DIR": "/srv/data", "LOG_LEVEL": "warn"},
+        env=RedactedMap({"ROOT_DIR": "/srv/data", "LOG_LEVEL": "warn"}),
     )
     return servers
 
@@ -125,8 +126,8 @@ def _corpus_a2a_agents() -> dict[str, A2AAgentConfig]:
     """Locate every remote agent the corpus names; artifacts carry no URL."""
     return {
         name: A2AAgentConfig(
-            url=f"https://{name}.example.com/a2a",
-            headers_ref=f"{name}_agent_headers",
+            url=Dsn(f"https://{name}.example.com/a2a"),
+            headers_ref=Secret(f"{name}_agent_headers"),
         )
         for name in _CORPUS_A2A_AGENTS
     }
@@ -145,7 +146,7 @@ def _connection(
 ) -> SqlConnectionConfig:
     return SqlConnectionConfig(
         backend="clickhouse",
-        url="clickhouse://reports.internal:8123/reporting",
+        url=Dsn("clickhouse://reports.internal:8123/reporting"),
         allowed_roles=allowed_roles,
         readonly=readonly,
     )

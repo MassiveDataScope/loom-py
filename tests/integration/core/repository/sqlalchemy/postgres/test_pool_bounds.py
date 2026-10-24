@@ -18,6 +18,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.persistence.database import DatabaseConfig, PoolConfig
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
@@ -58,9 +59,9 @@ async def _peak_connections(admin_uri: str, application: str, stop: asyncio.Even
 async def test_the_pool_never_opens_more_than_size_plus_overflow(pg_admin_uri: str) -> None:
     application = f"loom-it-pool-{uuid.uuid4().hex[:8]}"
     config = DatabaseConfig(
-        url=pg_admin_uri,
+        url=Dsn(pg_admin_uri),
         pool=PoolConfig(size=2, max_overflow=1, timeout=_TIMEOUT_SECONDS),
-        connect_args={"server_settings": {"application_name": application}},
+        connect_args=RedactedMap({"server_settings": {"application_name": application}}),
     )
     manager = build_session_manager(config, SERVER_PROFILE)
     outcomes: list[str] = []

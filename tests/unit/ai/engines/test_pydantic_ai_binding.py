@@ -24,6 +24,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.config import ConfigError
 from loom.core.di import LoomContainer
+from loom.core.model.redaction import Dsn
 from tests.helpers.pydantic_ai_engine import (
     STRICT_SCHEMA,
     NullDeps,
@@ -122,7 +123,7 @@ class TestModelBinding:
         target = InferenceTarget(
             provider="typesafe",
             model="jev-latest",
-            endpoint="https://gateway.example.com/v1",
+            endpoint=Dsn("https://gateway.example.com/v1"),
             credentials_ref="VENDOR_API_KEY",
         )
 
@@ -186,7 +187,7 @@ class TestModelBinding:
         target = InferenceTarget(
             provider=provider,
             model="a-model",
-            endpoint="https://gateway.example.com/v1" if provider == "gateway" else None,
+            endpoint=Dsn("https://gateway.example.com/v1") if provider == "gateway" else None,
             credentials_ref="VENDOR_API_KEY",
         )
 

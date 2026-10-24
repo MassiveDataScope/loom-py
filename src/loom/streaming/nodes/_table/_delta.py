@@ -13,6 +13,7 @@ import pyarrow as _pa
 import pyarrow.ipc as _pa_ipc
 from deltalake.writer import WriterProperties, write_deltalake
 
+from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.nodes._table.common import (
     DeltaSinkConfig,
     _column_names,
@@ -201,7 +202,7 @@ class _DeltaTablePartition:
     ) -> None:
         kwargs: dict[str, Any] = {
             "mode": self._mode,
-            "storage_options": self._storage_options or None,
+            "storage_options": reveal_for_driver(self._storage_options) or None,
         }
         if self._partition_by:
             kwargs["partition_by"] = list(self._partition_by)
@@ -216,7 +217,7 @@ class _DeltaTablePartition:
                 records=n,
                 mode=self._mode,
             )
-        write_deltalake(self._uri, reader, **kwargs)
+        write_deltalake(self._uri.reveal(), reader, **kwargs)
         if self._logger is not None:
             self._logger.info(
                 "sink_flush",

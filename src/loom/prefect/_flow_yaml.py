@@ -15,6 +15,7 @@ import msgspec
 
 from loom.core.config import is_cloud_uri, load_config
 from loom.core.environment import Environment, parse_environment
+from loom.core.model.redaction import RedactedMap
 from loom.prefect._meta import FlowTrigger
 
 _ENV_INTERPOLATION = re.compile(r"\$\{oc\.[^}]*\}")
@@ -82,9 +83,13 @@ def extract_pool_config(raw_cfg: Mapping[str, Any]) -> dict[Environment, dict[st
         environment = parse_environment(str(env_name), source="the environments block")
         if not isinstance(env_block, dict):
             continue
+        raw_variables = env_block.get("job_variables", {}) or {}
+        variables = (
+            RedactedMap(raw_variables) if isinstance(raw_variables, Mapping) else raw_variables
+        )
         out[environment] = {
             "work_pool": env_block.get("work_pool"),
-            "job_variables": env_block.get("job_variables", {}) or {},
+            "job_variables": variables,
         }
     return out
 

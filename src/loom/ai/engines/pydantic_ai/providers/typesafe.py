@@ -11,7 +11,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.typesafe import TypeSafeModel
 from pydantic_ai.providers.typesafe import TypeSafeProvider
 
-from loom.ai.engines.pydantic_ai.providers._shared import api_key, model_settings
+from loom.ai.engines.pydantic_ai.providers._shared import api_key, model_settings, provider_endpoint
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 
@@ -31,5 +31,5 @@ def build(target: InferenceTarget) -> Model:
                 )
             ]
         )
-    provider = TypeSafeProvider(api_key=api_key(target), base_url=target.endpoint)
+    provider = TypeSafeProvider(api_key=api_key(target), base_url=provider_endpoint(target))
     return TypeSafeModel(target.model, provider=provider, settings=model_settings(target))

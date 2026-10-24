@@ -7,7 +7,9 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.config.convert import convert_config
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.model.types import PositiveInt
 
 
@@ -23,7 +25,7 @@ class _Section(msgspec.Struct, kw_only=True):
 
 
 def _decode(data: dict[str, Any], kind: type[Any]) -> Any:
-    return msgspec.convert(data, kind)
+    return convert_config(data, kind, strict=True)
 
 
 def test_a_context_inherits_every_key_and_adds_its_own() -> None:
@@ -74,11 +76,17 @@ def test_aws_bounds_are_finite_by_default() -> None:
 @pytest.mark.parametrize(
     ("connection", "secret"),
     [
-        (ClickHouseConnection(url="clickhouse://user:pw1@h/db", password="pw2"), ("pw1", "pw2")),
-        (_Context(url="clickhouse://user:pw1@h/db", password="pw2", role="r"), ("pw1", "pw2")),
-        (MongoConnection(url="mongodb://user:pw1@h:27017", database="app"), ("pw1",)),
         (
-            MongoConnection(url="mongodb://h:27017", database="app", password="pw2"),
+            ClickHouseConnection(url=Dsn("clickhouse://user:pw1@h/db"), password=Secret("pw2")),
+            ("pw1", "pw2"),
+        ),
+        (
+            _Context(url=Dsn("clickhouse://user:pw1@h/db"), password=Secret("pw2"), role="r"),
+            ("pw1", "pw2"),
+        ),
+        (MongoConnection(url=Dsn("mongodb://user:pw1@h:27017"), database="app"), ("pw1",)),
+        (
+            MongoConnection(url=Dsn("mongodb://h:27017"), database="app", password=Secret("pw2")),
             ("pw2",),
         ),
     ],

@@ -9,6 +9,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from loom.core.model.redaction import Dsn
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.session_manager import (
@@ -79,7 +80,7 @@ def test_session_settings_on_a_non_postgres_url_is_rejected_at_construction() ->
 def test_the_configured_constructor_rejects_session_settings_on_a_non_postgres_url() -> None:
     with pytest.raises(ValueError, match="postgresql"):
         build_session_manager(
-            DatabaseConfig(url="sqlite+aiosqlite:///:memory:"),
+            DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")),
             SERVER_PROFILE,
             session_settings=lambda: None,
         )
@@ -184,7 +185,7 @@ async def test_a_provider_on_a_postgres_url_installs_a_dedicated_session_class()
 
 async def test_the_configured_constructor_installs_the_provider_on_a_postgres_url() -> None:
     manager = build_session_manager(
-        DatabaseConfig(url="postgresql+asyncpg://user:secret@localhost/db"),
+        DatabaseConfig(url=Dsn("postgresql+asyncpg://user:secret@localhost/db")),
         SERVER_PROFILE,
         session_settings=lambda: None,
     )

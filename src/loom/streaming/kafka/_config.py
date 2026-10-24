@@ -10,6 +10,7 @@ import msgspec
 from loom.core.config import ConfigResolver
 from loom.core.config.overrides import load_application_config
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import RedactedMap, Secret, reveal_for_driver
 from loom.core.routing import DefaultingRouteResolver, LogicalRef, as_logical_ref
 
 KafkaConfigValue: TypeAlias = str | int | float | bool
@@ -31,7 +32,7 @@ class KafkaSecuritySettings(
     protocol: Literal["PLAINTEXT", "SSL", "SASL_SSL", "SASL_PLAINTEXT"]
     sasl_mechanism: str | None = None
     sasl_username: str | None = None
-    sasl_password: str | None = None
+    sasl_password: Secret[str] | None = None
     ssl_ca_location: str | None = None
 
     def to_confluent_config(self) -> dict[str, KafkaConfigValue]:
@@ -41,12 +42,13 @@ class KafkaSecuritySettings(
             String-keyed Confluent security configuration mapping.
         """
 
+        password = None if self.sasl_password is None else self.sasl_password.reveal()
         return _without_none(
             {
                 "security.protocol": self.protocol,
                 "sasl.mechanism": self.sasl_mechanism,
                 "sasl.username": self.sasl_username,
-                "sasl.password": self.sasl_password,
+                "sasl.password": password,
                 "ssl.ca.location": self.ssl_ca_location,
             }
         )
@@ -67,7 +69,7 @@ class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
     client_id: str | None = None
     topic: str | None = None
     security: KafkaSecuritySettings | None = None
-    extra: dict[str, KafkaConfigValue] = msgspec.field(default_factory=dict)
+    extra: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def to_confluent_config(self) -> dict[str, KafkaConfigValue]:
         """Compile settings to a Confluent-compatible config mapping.
@@ -84,7 +86,7 @@ class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
             **_without_none({"client.id": self.client_id}),
             **_security_config(self.security),
         }
-        return _merge_extra_config(managed, self.extra)
+        return _merge_extra_config(managed, reveal_for_driver(self.extra))
 
 
 class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -120,7 +122,7 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
     poll_backoff_ms: int = 50
     commit_keepalive_ms: int = 1_800_000
     security: KafkaSecuritySettings | None = None
-    extra: dict[str, KafkaConfigValue] = msgspec.field(default_factory=dict)
+    extra: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def __post_init__(self) -> None:
         """Validate batch consumption parameters.
@@ -157,7 +159,7 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
             "enable.auto.commit": self.delivery == "at_most_once",
             **_security_config(self.security),
         }
-        return _merge_extra_config(managed, self.extra)
+        return _merge_extra_config(managed, reveal_for_driver(self.extra))
 
 
 class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):

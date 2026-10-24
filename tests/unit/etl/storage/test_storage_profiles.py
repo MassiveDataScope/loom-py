@@ -10,6 +10,7 @@ import msgspec
 import pytest
 
 from loom.core.config import load_config
+from loom.core.model.redaction import RedactedMap
 from loom.etl.runner.core import ETLRunner
 from loom.etl.storage import (
     STORAGE_KEYED_COLLECTIONS,
@@ -26,6 +27,12 @@ _LARGE: dict[str, Any] = {
     "delta_config": {"delta.appendOnly": "true"},
     "commit": {"custom_metadata": {"team": "billing"}},
 }
+
+
+def _large_profile() -> StorageProfile:
+    fields = dict(_LARGE)
+    fields["storage_options"] = RedactedMap(fields["storage_options"])
+    return StorageProfile(**fields)
 
 
 def _resolve(raw: dict[str, Any]) -> StorageConfig:
@@ -69,7 +76,7 @@ def test_profile_fills_every_field_the_table_did_not_set() -> None:
 def test_profiles_bind_to_storage_config() -> None:
     config = _resolve(_with_profiles())
 
-    assert config.profiles == {"large": StorageProfile(**_LARGE)}
+    assert config.profiles == {"large": _large_profile()}
 
 
 def test_profile_never_reaches_the_structs() -> None:
@@ -303,7 +310,7 @@ def test_from_dict_applies_the_profile() -> None:
 
     assert config.tables[0].path is not None
     assert config.tables[0].path.writer == _LARGE["writer"]
-    assert config.profiles == {"large": StorageProfile(**_LARGE)}
+    assert config.profiles == {"large": _large_profile()}
 
 
 def test_from_yaml_coerces_a_profile_target_file_size_from_env(

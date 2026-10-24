@@ -12,6 +12,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
+from loom.core.model.redaction import Dsn, RedactedMap  # noqa: E402
 from loom.core.persistence.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.core.persistence.profile import STREAMING_PROFILE, RuntimeProfile  # noqa: E402
 from loom.core.repository.sqlalchemy import session_manager as session_manager_module  # noqa: E402
@@ -34,10 +35,14 @@ def test_session_manager_for_reuses_same_config(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(session_manager_module, "build_session_manager", _build)
 
     manager = ResourceManager(cast(AsyncBridge, object()))
-    config = DatabaseConfig(url="sqlite+aiosqlite:///:memory:", connect_args={"timeout": 1})
+    config = DatabaseConfig(
+        url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
+    )
     first = manager.session_manager_for(config)
     second = manager.session_manager_for(
-        DatabaseConfig(url="sqlite+aiosqlite:///:memory:", connect_args={"timeout": 1})
+        DatabaseConfig(
+            url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
+        )
     )
 
     assert first is second
@@ -50,9 +55,9 @@ def test_a_different_pool_gets_its_own_session_manager(monkeypatch: pytest.Monke
     )
     manager = ResourceManager(cast(AsyncBridge, object()))
 
-    first = manager.session_manager_for(DatabaseConfig(url="sqlite+aiosqlite:///"))
+    first = manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")))
     second = manager.session_manager_for(
-        DatabaseConfig(url="sqlite+aiosqlite:///", pool=PoolConfig(size=1))
+        DatabaseConfig(url=Dsn("sqlite+aiosqlite:///"), pool=PoolConfig(size=1))
     )
 
     assert first is not second

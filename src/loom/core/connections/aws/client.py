@@ -13,6 +13,7 @@ from botocore.config import Config  # type: ignore[import-untyped]
 
 from loom.core.connections import merge_extra
 from loom.core.connections.aws.config import AwsClientConfig
+from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
     from loom.core.connections.aws import client as _self
@@ -42,7 +43,7 @@ def build_aws_client(service: str, config: AwsClientConfig, **extra: Any) -> Any
     Raises:
         ValueError: When *extra* names an option *config* decides.
     """
-    options = config.client_options()
+    options = reveal_for_driver(config.client_options())
     built = {**options, "config": Config(**options["config"])}
     session_options = {"profile_name": config.profile, "region_name": config.region}
     merged = merge_extra(built, extra, config, reserved=tuple(session_options))

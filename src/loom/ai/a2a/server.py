@@ -221,5 +221,8 @@ def bind_a2a_endpoints(
             methods=["POST"],
         )
         announce_publication(
-            agent, base_url=config.a2a.base_url, mechanism=mechanism, prefix=prefix
+            agent,
+            base_url=str(config.a2a.base_url),
+            mechanism=mechanism,
+            prefix=prefix,
         )

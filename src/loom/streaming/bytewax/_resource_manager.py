@@ -49,10 +49,7 @@ class ResourceManager:
     def __init__(self, bridge: AsyncBridge | None) -> None:
         self._bridge = bridge
         self._managers: dict[int, ResourceLifecycle] = {}
-        self._session_managers: dict[
-            tuple[tuple[str, object], ...],
-            _SharedSessionManagerProtocol,
-        ] = {}
+        self._session_managers: dict[tuple[object, ...], _SharedSessionManagerProtocol] = {}
 
     def manager_for(
         self,
@@ -68,7 +65,7 @@ class ResourceManager:
         """Get or create one shared SQLAlchemy session manager for a database section."""
         if self._bridge is None:
             raise RuntimeError("SQLAlchemy session managers require an async bridge.")
-        key = _freeze_mapping(msgspec.to_builtins(config))
+        key = _database_identity(config)
         if key not in self._session_managers:
             self._session_managers[key] = _session_manager_builder()(config, STREAMING_PROFILE)
         return self._session_managers[key]
@@ -116,6 +113,21 @@ def _session_manager_builder() -> Callable[
     return cast(
         Callable[[DatabaseConfig, RuntimeProfile], _SharedSessionManagerProtocol],
         build_session_manager,
+    )
+
+
+def _database_identity(config: DatabaseConfig) -> tuple[object, ...]:
+    """Hashable identity of a database section. Its repr hides credentials."""
+    return (
+        config.url,
+        config.username,
+        config.password,
+        config.echo,
+        config.connect_timeout,
+        config.read_timeout,
+        config.connect_args.identity(),
+        _freeze_mapping(msgspec.to_builtins(config.pool)),
+        _freeze_mapping(msgspec.to_builtins(config.schema)),
     )
 
 

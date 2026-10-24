@@ -67,6 +67,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
 from loom.core.model import loom_type, msgspec_type
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import LifecycleEvent
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.use_case import Agent, Caller, Input, UseCase
@@ -693,14 +694,14 @@ def make_mcp_capability(
 
 def make_mcp_servers(*servers: str) -> dict[str, McpServerConfig]:
     """Build the ``ai.mcp_servers`` entries the named grants resolve against."""
-    return {server: McpServerConfig(url=mcp_server_url(server)) for server in servers}
+    return {server: McpServerConfig(url=Dsn(mcp_server_url(server))) for server in servers}
 
 
 def make_sql_connection(*, readonly: bool = True) -> SqlConnectionConfig:
     """Build a SQL connection configuration with an explicit read-only state."""
     return SqlConnectionConfig(
         backend="clickhouse",
-        url="clickhouse://reports.internal:8123/reporting",
+        url=Dsn("clickhouse://reports.internal:8123/reporting"),
         allowed_roles=(),
         readonly=readonly,
     )

@@ -134,7 +134,7 @@ def test_repr_redacts_the_dsn_credentials() -> None:
         _minimal(url="clickhouse://loom_user:s3cr3t_pw@ch.internal:8123/analytics")
     ).connections["analytics"]
     rendered = repr(conn)
-    assert ("s3cr3t_pw" in rendered, "://***@ch.internal" in rendered) == (False, True)
+    assert ("s3cr3t_pw" in rendered, "://loom_user:***@ch.internal" in rendered) == (False, True)
 
 
 def test_credentials_default_to_none_when_not_declared() -> None:
@@ -158,10 +158,10 @@ def test_repr_never_exposes_the_explicit_password() -> None:
 
 
 def test_repr_masks_the_backend_settings() -> None:
-    """``settings`` may carry a credential of the backend; the ``repr`` masks it whole."""
+    """``settings`` may carry a credential; the repr keeps the key and masks the value."""
     conn = _parse(_minimal(settings={"http_password": "s3cr3t_pw"})).connections["analytics"]
     rendered = repr(conn)
-    assert ("s3cr3t_pw" in rendered, "settings='***'" in rendered) == (False, True)
+    assert ("s3cr3t_pw" in rendered, "'http_password': '***'" in rendered) == (False, True)
 
 
 def test_fails_when_auth_has_an_unknown_value() -> None:

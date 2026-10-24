@@ -91,6 +91,7 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
 from loom.core.model.convert import to_column_value
 from loom.core.model.introspection import get_column_fields
+from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
 from loom.streaming.core._message import StreamPayload
@@ -362,7 +363,7 @@ class SqlAlchemySinkConfig:
     """
 
     database: str
-    url: str
+    url: Dsn | None
     table: str
     chunk_size: int
     buffer_policy: _TableBufferPolicy
@@ -372,7 +373,8 @@ class SqlAlchemySinkConfig:
         """Build SQLAlchemy sink settings from a resolved sink config."""
         table = str(config.get("table") or default_table).strip()
         database = str(config.get("database") or "").strip()
-        url = str(config.get("url") or "").strip()
+        url_text = str(config.get("url") or "").strip()
+        url = Dsn(url_text) if url_text else None
         known = (
             _SQLALCHEMY_SINK_KEYS
             if database
@@ -407,10 +409,10 @@ class DeltaSinkConfig:
         buffer_policy: Common flush policy shared with other backends.
     """
 
-    uri: str
+    uri: Dsn
     table: str
     mode: Literal["error", "append", "ignore"]
-    storage_options: dict[str, str]
+    storage_options: RedactedMap
     partition_by: tuple[str, ...]
     target_file_size: int | None
     staging_compression: Literal["uncompressed", "lz4", "zstd"]
@@ -445,10 +447,12 @@ class DeltaSinkConfig:
         )
         target_file_size_raw = config.get("target_file_size")
         return cls(
-            uri=uri,
+            uri=Dsn(uri),
             table=table,
             mode=_validate_delta_mode(config.get("mode", "append")),
-            storage_options={k: str(v) for k, v in (config.get("storage_options") or {}).items()},
+            storage_options=RedactedMap(
+                {k: str(v) for k, v in (config.get("storage_options") or {}).items()}
+            ),
             partition_by=tuple(str(c) for c in raw_partition_by),
             target_file_size=int(target_file_size_raw)
             if target_file_size_raw is not None

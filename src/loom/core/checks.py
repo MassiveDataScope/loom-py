@@ -333,6 +333,13 @@ def _skipped(check_id: str, skip: Collection[str]) -> bool:
     return any(check_id == entry or check_id.startswith(f"{entry}.") for entry in skip)
 
 
+# The configuration package is loaded above, while this module is still
+# starting, so its check cannot be imported from that package's ``__init__``.
+import loom.core.config.checks as _config_checks  # noqa: E402
+
+_ = _config_checks
+
+
 __all__ = [
     "CHECK_ID",
     "DEPLOY_CHECKS",

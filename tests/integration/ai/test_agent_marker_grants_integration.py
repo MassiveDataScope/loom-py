@@ -32,6 +32,7 @@ from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.sql.abc.contracts import SqlColumn, SqlQueryResult
@@ -163,7 +164,7 @@ def _granted_sql_capability() -> CompiledCapability:
 
 def _ai_config(*, granted_mcp: bool) -> AiConfig:
     mcp_servers = (
-        {_MCP_SERVER: McpServerConfig(url="https://tools.internal/mcp")} if granted_mcp else {}
+        {_MCP_SERVER: McpServerConfig(url=Dsn("https://tools.internal/mcp"))} if granted_mcp else {}
     )
     return make_ai_config(mcp_servers=mcp_servers)
 

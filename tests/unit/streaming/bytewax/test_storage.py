@@ -12,6 +12,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
 from loom.core.persistence.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
@@ -84,7 +85,7 @@ class TestStorageDynamicSink:
                 default_table="results",
             ),
             database_config=DatabaseConfig(
-                url="sqlite:///:memory:", pool=PoolConfig(pre_ping=True)
+                url=Dsn("sqlite:///:memory:"), pool=PoolConfig(pre_ping=True)
             ),
         )
         bridge = cast(AsyncBridge, object())
@@ -102,7 +103,7 @@ class TestStorageDynamicSink:
         fake_ctx = cast(Any, dynamic_sink._ctx)
         assert captured["session_manager"] is fake_ctx._session_manager
         assert fake_ctx.session_manager_calls == [
-            DatabaseConfig(url="sqlite:///:memory:", pool=PoolConfig(pre_ping=True))
+            DatabaseConfig(url=Dsn("sqlite:///:memory:"), pool=PoolConfig(pre_ping=True))
         ]
 
     def test_sqlalchemy_table_partition_requires_async_bridge(
@@ -135,7 +136,7 @@ class TestStorageDynamicSink:
                 {"url": "sqlite:///:memory:", "table": "results", "chunk_size": 500},
                 default_table="results",
             ),
-            database_config=DatabaseConfig(url="sqlite:///:memory:"),
+            database_config=DatabaseConfig(url=Dsn("sqlite:///:memory:")),
         )
         dynamic_sink = _storage._StorageDynamicSink(compiled, cast(Any, _FakeCtx(bridge=None)))
 

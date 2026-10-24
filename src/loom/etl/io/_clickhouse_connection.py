@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from loom.core.connections.clickhouse import ClickHouseConnection, clickhouse_island
+from loom.core.model.redaction import Dsn
 
 
 def resolve_connection(
@@ -24,7 +25,7 @@ def resolve_connection(
         raise ValueError(f"{owner} takes 'url' or 'connection', not both")
     if connection is not None:
         return connection
-    return ClickHouseConnection(url=url) if url else None
+    return ClickHouseConnection(url=Dsn(url)) if url else None
 
 
 def open_client(connection: ClickHouseConnection) -> Any:

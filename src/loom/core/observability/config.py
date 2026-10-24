@@ -7,6 +7,7 @@ import msgspec
 from loom.core.config.observability import OtelConfig
 from loom.core.logger.config import LoggerConfig
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn
 
 
 class PrometheusConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -77,7 +78,7 @@ class PrometheusObservabilityConfig(
     """
 
     enabled: bool = False
-    pushgateway_url: str | None = None
+    pushgateway_url: Dsn | None = None
     config: PrometheusConfig | None = None
 
 

@@ -21,7 +21,9 @@ from typing import Any, ClassVar, Final, Literal
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_keys
+from loom.core.config.convert import convert_config
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
 
@@ -119,14 +121,19 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
     Keys outside this contract are tolerated at the top level: the section
     also holds the named databases of streaming sinks (``database.<name>``).
     ``pool`` and ``schema``, each with a single definition, refuse them. The
-    repr hides the credentials of the URL and the whole ``connect_args``,
-    which may carry a password or a TLS key.
+    address hides its password, and ``connect_args`` hides its secret-named
+    values. ``username`` and ``password``, when set, win over credentials in
+    the URL.
 
     Args:
         url: SQLAlchemy async URL; never empty.
+        username: Driver username. Wins over the one in ``url``.
+        password: Driver password. Wins over the one in ``url`` and is never
+            shown.
         echo: Log every statement.
         pool: Connection-pool keys; see :class:`PoolConfig`.
-        connect_args: Passed to the driver's ``connect()`` as written.
+        connect_args: Passed to the driver's ``connect()`` as written. Secret
+            names in it are hidden.
         schema: Startup schema handling; see :class:`SchemaConfig`.
         connect_timeout: Seconds to establish a connection; ``postgresql+asyncpg``
             URLs only (asyncpg ``timeout``).
@@ -140,7 +147,6 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
             the section, through :func:`decode_database_config`.
     """
 
-    _SECRET_FIELDS: ClassVar[frozenset[str]] = ConnectionSettings._SECRET_FIELDS | {"connect_args"}
     _RETIRED_KEYS: ClassVar[Mapping[str, str]] = MappingProxyType(
         {
             "pool_pre_ping": "pool.pre_ping",
@@ -151,10 +157,12 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
         }
     )
 
-    url: str
+    url: Dsn
+    username: str | None = None
+    password: Secret[str] | None = None
     echo: bool = False
     pool: PoolConfig = msgspec.field(default_factory=PoolConfig)
-    connect_args: dict[str, Any] = msgspec.field(default_factory=dict)
+    connect_args: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     schema: SchemaConfig = msgspec.field(default_factory=SchemaConfig)
     connect_timeout: PositiveInt | None = None
     read_timeout: PositiveInt | None = None
@@ -164,7 +172,7 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
         timeouts = self._asyncpg_timeouts()
         if not timeouts:
             return
-        if self.url.split("://", 1)[0].lower() != _ASYNCPG:
+        if self.url.scheme.lower() != _ASYNCPG:
             declared = ", ".join(
                 field for field in _ASYNCPG_TIMEOUTS if getattr(self, field) is not None
             )
@@ -184,8 +192,11 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
 
         Only asyncpg takes the timeouts, as ``timeout`` and ``command_timeout``;
         any other driver keeps its own option names, set in ``connect_args``.
+        Entries are returned as stored. The session manager reveals them.
         """
-        return {**self.connect_args, **self._asyncpg_timeouts()}
+        options = {str(key): value for key, value in self.connect_args.items()}
+        options.update(self._asyncpg_timeouts())
+        return options
 
     def _asyncpg_timeouts(self) -> dict[str, int]:
         """Return the declared standard timeouts under their asyncpg argument names."""
@@ -213,7 +224,7 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
     """
     reject_retired_pool_keys(data, path)
     try:
-        config = msgspec.convert(dict(data), DatabaseConfig, strict=False)
+        config = convert_config(dict(data), DatabaseConfig, strict=False)
     except msgspec.ValidationError as exc:
         raise ConfigError(f"Config section {path!r} failed validation: {exc}") from exc
     return config

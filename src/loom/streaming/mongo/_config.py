@@ -10,6 +10,7 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigKey, reject_retired_keys
 from loom.core.connections.mongo import MongoConnection
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import RedactedMap
 from loom.core.routing import DefaultingRouteResolver, LogicalRef
 
 
@@ -21,11 +22,12 @@ class MongoSourceConfig(MongoConnection, frozen=True, kw_only=True):
     credentials.
 
     Args:
-        watch_options: Options handed to ``watch()``.
+        watch_options: Options handed to ``watch()``. Secret-named entries stay
+            masked until the change stream is opened.
         on_oplog_expired: What to do when the resume token fell off the oplog.
     """
 
-    watch_options: Mapping[str, object] = msgspec.field(default_factory=dict)
+    watch_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     on_oplog_expired: Literal["fail", "restart_from_now"] = "fail"
 
 

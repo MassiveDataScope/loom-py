@@ -23,6 +23,7 @@ from fastapi import FastAPI
 
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
+from loom.core.model.redaction import Dsn
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
 from loom.core.sql.service import NullSqlQueryService
 from loom.rest.auth import AuthenticationMiddleware, RequestCredentials
@@ -362,7 +363,7 @@ def test_binder_refuses_a_multi_role_endpoint_without_an_identity_binding() -> N
         connections={
             "analytics": SqlConnectionConfig(
                 backend="clickhouse",
-                url="clickhouse://user:pw@host:8123/default",
+                url=Dsn("clickhouse://user:pw@host:8123/default"),
                 allowed_roles=("role_a", "role_b"),
                 sql_endpoint=SqlEndpointConfig(enabled=True, auth="identity"),
             )

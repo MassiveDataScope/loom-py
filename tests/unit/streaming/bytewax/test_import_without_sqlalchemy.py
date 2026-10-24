@@ -19,6 +19,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.persistence.database import DatabaseConfig  # noqa: E402
 from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E402
 
@@ -58,4 +59,4 @@ def test_session_manager_for_names_sqlalchemy_extra_when_missing(
     manager = ResourceManager(cast(AsyncBridge, object()))
 
     with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        manager.session_manager_for(DatabaseConfig(url="sqlite+aiosqlite:///:memory:"))
+        manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")))

@@ -24,6 +24,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.config import ConfigContext
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.plan import McpBinding
+from loom.core.model.redaction import Dsn
 from loom.core.use_case import Mcp, UseCase
 from loom.core.use_case.keys import use_case_key
 from loom.core.use_case.mcp_markers import DeclaringMcpBindings
@@ -184,7 +185,9 @@ class TestCompileUseCaseMcpPreservaElInclude:
 
     def test_el_include_del_binding_llega_intacto_a_la_capacidad_compilada(self) -> None:
         registry = UseCaseRegistry.build([KnownServerUseCase])
-        servers = {_KNOWN_SERVER: McpServerConfig(url=f"https://{_KNOWN_SERVER}.example.com/mcp")}
+        servers = {
+            _KNOWN_SERVER: McpServerConfig(url=Dsn(f"https://{_KNOWN_SERVER}.example.com/mcp"))
+        }
         binding = McpBinding(name="gateway", server=_KNOWN_SERVER, include=("search_*", "fetch"))
         declaring: DeclaringMcpBindings = [(KnownServerUseCase, (binding,))]
 
@@ -207,7 +210,9 @@ class TestCompileUseCaseMcpPreservaElInclude:
                 return gateway
 
         registry = UseCaseRegistry.build([RegisteredGatewayUseCase])
-        servers = {_KNOWN_SERVER: McpServerConfig(url=f"https://{_KNOWN_SERVER}.example.com/mcp")}
+        servers = {
+            _KNOWN_SERVER: McpServerConfig(url=Dsn(f"https://{_KNOWN_SERVER}.example.com/mcp"))
+        }
         binding = McpBinding(name="gateway", server=_KNOWN_SERVER, include=("search_*",))
         declaring: DeclaringMcpBindings = [(RegisteredGatewayUseCase, (binding,))]
 

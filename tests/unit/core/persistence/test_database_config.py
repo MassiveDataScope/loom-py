@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.persistence.database import (
     DatabaseConfig,
     PoolConfig,
@@ -35,9 +36,9 @@ def test_the_contract_section_decodes() -> None:
     )
 
     assert config == DatabaseConfig(
-        url=_URL,
+        url=Dsn(_URL),
         echo=False,
-        connect_args={"command_timeout": 5},
+        connect_args=RedactedMap({"command_timeout": 5}),
         pool=PoolConfig(size=5, max_overflow=5, timeout=10, recycle=1800, pre_ping=True),
         schema=config.schema,
     )

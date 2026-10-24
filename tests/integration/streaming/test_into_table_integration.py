@@ -44,6 +44,7 @@ from loom.core.model import (  # noqa: E402
     Text,
 )
 from loom.core.model.enums import Cardinality  # noqa: E402
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.model.relation import RelationField  # noqa: E402
 from loom.core.repository.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
@@ -147,7 +148,7 @@ class _CHRow(LoomStruct):
 
 def _ch_config(table: str = "test_table", **overrides: Any) -> ClickHouseSinkConfig:
     cfg: dict[str, Any] = {"table": table, **overrides}
-    connection = ClickHouseConnection(url="clickhouse://default:@localhost:18123/default")
+    connection = ClickHouseConnection(url=Dsn("clickhouse://default@localhost:18123/default"))
     return ClickHouseSinkConfig.from_config(cfg, default_table=table, connection=connection)
 
 

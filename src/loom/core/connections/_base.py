@@ -7,41 +7,15 @@ same type or a subclass adding only its own keys. This module imports no driver.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Collection, Mapping
 from types import MappingProxyType
 from typing import Any, ClassVar
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn, mask_dsn
 from loom.core.model.types import PositiveInt
 
-# Everything up to the last "@" before the query: a raw "@" or "/" in a
-# password belongs to the credentials. A path holding an "@" is masked too,
-# which only hides more than needed.
-_AUTHORITY_CREDENTIALS = re.compile(r"://[^?#]*@")
-# Query parameters carrying a secret: their value is masked, their name kept.
-_SECRET_QUERY_VALUE = re.compile(
-    r"([?&](?:[^=&#]*(?:pass|pwd|secret|token|key)[^=&#]*|authMechanismProperties)=)[^&#]*",
-    re.IGNORECASE,
-)
-_MASK = "***"
-
-
-def redact_uri(uri: str) -> str:
-    """Return *uri* with its credentials replaced by ``***``.
-
-    The userinfo of the authority is masked whole, and so is the value of
-    every query parameter whose name carries a secret (``password``,
-    ``tlsCertificateKeyFilePassword``, ``token``, ``authMechanismProperties``...).
-
-    Args:
-        uri: A connection URI, with or without credentials.
-
-    Returns:
-        The URI, safe to log.
-    """
-    masked = _AUTHORITY_CREDENTIALS.sub(f"://{_MASK}@", uri)
-    return _SECRET_QUERY_VALUE.sub(rf"\g<1>{_MASK}", masked)
+redact_uri = mask_dsn
 
 
 class ConnectionSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -57,32 +31,16 @@ class ConnectionSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unk
     ``frozen=True, kw_only=True``: msgspec applies ``kw_only`` per class only,
     and type checkers refuse a subclass of a frozen class not declared frozen.
 
-    The repr masks the fields named in ``_SECRET_FIELDS`` and the credentials
-    of the URIs named in ``_URI_FIELDS``, so a connection is safe in a log
-    line, a traceback or a container's repr. ``_RETIRED_KEYS`` maps each key
-    the engine's sections no longer take to the key path replacing it, and
-    ``_RETIRED_HINTS`` adds a note to the error of a retired key whose
-    replacement needs one (a change of unit), for
-    :func:`loom.core.config.reject_retired_keys`.
+    A password is a :class:`~loom.core.model.redaction.Secret` and an address
+    is a :class:`~loom.core.model.redaction.Dsn`, so the struct's own repr
+    hides them. ``_RETIRED_KEYS`` maps each key the engine's sections no
+    longer take to the key path replacing it, and ``_RETIRED_HINTS`` adds a
+    note to the error of a retired key whose replacement needs one (a change
+    of unit), for :func:`loom.core.config.reject_retired_keys`.
     """
 
-    _SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"password"})
-    _URI_FIELDS: ClassVar[frozenset[str]] = frozenset({"url"})
     _RETIRED_KEYS: ClassVar[Mapping[str, str]] = MappingProxyType({})
     _RETIRED_HINTS: ClassVar[Mapping[str, str]] = MappingProxyType({})
-
-    def __repr__(self) -> str:
-        parts = []
-        for name in self.__struct_fields__:
-            value = getattr(self, name)
-            if name in self._SECRET_FIELDS and value is not None:
-                shown = repr(_MASK)
-            elif name in self._URI_FIELDS and isinstance(value, str):
-                shown = repr(redact_uri(value))
-            else:
-                shown = repr(value)
-            parts.append(f"{name}={shown}")
-        return f"{type(self).__name__}({', '.join(parts)})"
 
     @classmethod
     def retired_keys(cls) -> Mapping[str, str]:
@@ -105,13 +63,16 @@ class ConnectionPool(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown
     size: PositiveInt | None = None
 
 
-def require_text(value: str, field: str) -> None:
+def require_text(value: str | Dsn, field: str) -> None:
     """Refuse an empty or blank *value*; msgspec reports the ``ValueError`` with its path.
+
+    An address is judged on its display form, which is the address itself
+    when it holds no secret.
 
     Raises:
         ValueError: When *value* holds no text, naming *field*.
     """
-    if not value.strip():
+    if not str(value).strip():
         raise ValueError(f"{field} must not be empty")
 
 

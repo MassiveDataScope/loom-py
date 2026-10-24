@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from loom.core.connections import MongoConnection
+from loom.core.model.redaction import Dsn
 from loom.core.plugins.optional import MissingExtraError
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig
 from tests.helpers.extras import MONGO_ISLAND, without_extra
@@ -21,12 +22,13 @@ def test_provider_imports_with_pymongo_hidden(tmp_path: Path) -> None:
         import sys
 
         sys.modules["pymongo"] = None
+        from loom.core.model.redaction import Dsn
         from loom.etl.backends.polars.provider import PolarsProvider
         from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig
 
         config = StorageConfig(
             engine="polars",
-            defaults=StorageDefaults(table_path=TablePathConfig(uri={str(tmp_path)!r})),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn({str(tmp_path)!r}))),
         )
         reader, writer = PolarsProvider().create_backends(config)
         print(type(reader).__name__, type(writer).__name__)
@@ -52,8 +54,8 @@ def test_mongo_source_without_pymongo_names_the_extra(
     without_extra(monkeypatch, ["pymongo"], [MONGO_ISLAND])
     config = StorageConfig(
         engine="polars",
-        defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-        mongo=MongoConnection(url="mongodb://localhost:27017", database="app"),
+        defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
+        mongo=MongoConnection(url=Dsn("mongodb://localhost:27017"), database="app"),
     )
 
     provider = PolarsProvider()

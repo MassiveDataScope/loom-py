@@ -20,6 +20,7 @@ from loom.core.connections._base import (
     omit_none,
     require_text,
 )
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.model.types import PositiveInt
 
 
@@ -47,9 +48,9 @@ class ClickHouseConnection(
         {"send_receive_timeout": "read_timeout", "pool_size": "pool.size"}
     )
 
-    url: str
+    url: Dsn
     username: str | None = None
-    password: str | None = None
+    password: Secret[str] | None = None
     connect_timeout: PositiveInt | None = None
     read_timeout: PositiveInt | None = None
     executor_threads: PositiveInt | None = None

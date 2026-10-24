@@ -99,7 +99,7 @@ print("OBSERVERS:" + str([type(o).__name__ for o in runtime.observers]))
         assert _marked_lines(result, "OBSERVERS") == ["['StructlogLifecycleObserver']"]
 
     def test_otel_with_shared_global_provider_works_without_the_sdk(self) -> None:
-        """``endpoint=""`` shares whatever provider the process already has.
+        """An absent endpoint shares whatever provider the process already has.
 
         That path only touches ``opentelemetry-api``, so a core-only install can
         enable OTEL and emit spans — they land in the API's no-op tracer unless
@@ -112,7 +112,7 @@ from loom.core.observability import ObservabilityConfig, ObservabilityRuntime, S
 from loom.core.observability.config import OtelObservabilityConfig
 
 config = ObservabilityConfig(
-    otel=OtelObservabilityConfig(enabled=True, config=OtelConfig(endpoint=""))
+    otel=OtelObservabilityConfig(enabled=True, config=OtelConfig())
 )
 runtime = ObservabilityRuntime.from_config(config)
 with runtime.span(Scope.JOB, "sdk-less"):
@@ -144,13 +144,14 @@ class TestOtelRequestedWithoutTheSdk:
         result = _run_without_sdk(
             """
 from loom.core.config.observability import OtelConfig
+from loom.core.model.redaction import Dsn
 from loom.core.observability import ObservabilityConfig, ObservabilityRuntime
 from loom.core.observability.config import OtelObservabilityConfig
 
 config = ObservabilityConfig(
     otel=OtelObservabilityConfig(
         enabled=True,
-        config=OtelConfig(endpoint="http://collector:4318/v1/traces"),
+        config=OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces")),
     )
 )
 try:
@@ -180,7 +181,7 @@ from loom.core.observability.config import LogObservabilityConfig, OtelObservabi
 config = ObservabilityConfig(
     log=LogObservabilityConfig(enabled=True, config=LoggerConfig()),
     otel=OtelObservabilityConfig(
-        enabled=True, export_logs=True, config=OtelConfig(endpoint="")
+        enabled=True, export_logs=True, config=OtelConfig()
     ),
 )
 try:

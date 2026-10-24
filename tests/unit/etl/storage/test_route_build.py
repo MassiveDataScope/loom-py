@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.model.redaction import Dsn
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.schema import ColumnSchema, LoomDtype
 from loom.etl.storage._config import (
@@ -43,7 +44,7 @@ def test_build_table_resolver_uses_default_catalog_for_two_part_refs() -> None:
 def test_path_override_resolves_to_physical_location() -> None:
     config = StorageConfig(
         engine="spark",
-        tables=(TableRoute(name="raw.orders", path=TablePathConfig(uri="s3://raw/orders")),),
+        tables=(TableRoute(name="raw.orders", path=TablePathConfig(uri=Dsn("s3://raw/orders"))),),
     )
     target = build_table_resolver(config).resolve(TableRef("raw.orders"))
 
@@ -62,7 +63,7 @@ def test_missing_polars_route_raises_actionable_key_error() -> None:
 
 def test_composite_resolver_prefers_override_over_default_path() -> None:
     config = StorageConfig(
-        defaults=StorageDefaults(table_path=TablePathConfig(uri="s3://lake")),
+        defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("s3://lake"))),
         tables=(TableRoute(name="raw.orders", ref="main.raw.orders"),),
     )
     resolver = build_table_resolver(config)
@@ -124,7 +125,9 @@ def test_routed_catalog_dispatches_catalog_targets_to_catalog_ref() -> None:
 def test_routed_catalog_requires_path_catalog_for_path_targets() -> None:
     routed = RoutedCatalog(
         build_table_resolver(
-            StorageConfig(defaults=StorageDefaults(table_path=TablePathConfig(uri="s3://lake")))
+            StorageConfig(
+                defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("s3://lake")))
+            )
         ),
         catalog=_SpyCatalog(),
     )
@@ -138,7 +141,9 @@ def test_routed_catalog_dispatches_path_targets_to_path_catalog() -> None:
     path_catalog = _SpyCatalog()
     routed = RoutedCatalog(
         build_table_resolver(
-            StorageConfig(defaults=StorageDefaults(table_path=TablePathConfig(uri="s3://lake")))
+            StorageConfig(
+                defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("s3://lake")))
+            )
         ),
         catalog=_SpyCatalog(),
         path=path_catalog,

@@ -10,6 +10,7 @@ from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 from pymongo.errors import OperationFailure
 
 from loom.core.connections.mongo import mongo_island
+from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message
 from loom.streaming.mongo._event import MongoCDCEvent
@@ -205,7 +206,8 @@ def _resolve_watch_options(
     resume_state: dict[str, object] | None,
 ) -> dict[str, object]:
     """Resolve watch kwargs for one Mongo change stream open."""
-    resolved = {key: value for key, value in watch_options.items() if key != "pipeline"}
+    revealed = cast("dict[str, object]", reveal_for_driver(watch_options))
+    resolved = {key: value for key, value in revealed.items() if key != "pipeline"}
     if resume_state is not None:
         resolved["resume_after"] = resume_state
     return resolved

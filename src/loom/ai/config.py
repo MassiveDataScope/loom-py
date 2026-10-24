@@ -25,6 +25,7 @@ from loom.ai.inference import OUTPUT_MODES, InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.ai.remote_auth import is_strategy_registered, registered_strategy_names
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 
 # Conservative allowlist for a secret *reference*: a name, path, ARN or key id
 # the secrets resolver can look up.  It excludes whitespace, newlines, quotes,
@@ -241,13 +242,13 @@ class McpServerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     transport: str = "http"
-    url: str | None = None
-    headers_ref: str | None = None
-    auth: dict[str, str] | None = None
+    url: Dsn | None = None
+    headers_ref: Secret[str] | None = None
+    auth: RedactedMap | None = None
     timeout_ms: int = 20000
     command: str | None = None
     args: tuple[str, ...] = ()
-    env: dict[str, str] | None = None
+    env: RedactedMap | None = None
 
 
 class A2AAgentConfig(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -270,9 +271,9 @@ class A2AAgentConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             Mutually exclusive with ``headers_ref``.
     """
 
-    url: str
-    headers_ref: str | None = None
-    auth: dict[str, str] | None = None
+    url: Dsn
+    headers_ref: Secret[str] | None = None
+    auth: RedactedMap | None = None
 
 
 class AgentEndpointConfig(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -306,7 +307,7 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             when ``expose`` names no agent.
     """
 
-    base_url: str
+    base_url: Dsn
     expose: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -317,15 +318,17 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         # advertise a plaintext channel to every discovering client, and
         # userinfo would publish a credential outright. Same rule the compiler
         # already applies to the remote URLs it validates, applied where this
-        # one actually lives (FR-038).
-        fault = _url_fault(self.base_url)
+        # one actually lives (FR-038). The check reads the address; the card
+        # and the error publish only the redacted form.
+        address = self.base_url.reveal()
+        fault = _url_fault(address)
         if fault is None:
-            _warn_plaintext_loopback("ai.a2a.base_url", self.base_url)
+            _warn_plaintext_loopback("ai.a2a.base_url", address)
         if fault is not None:
             raise AgentCompilationError(
                 [
                     AgentErrorCode.A2A_BASE_URL_INVALID.issue(
-                        url=_redact_url(self.base_url), reason=fault
+                        url=_redact_url(address), reason=fault
                     )
                 ]
             )
@@ -450,21 +453,27 @@ def _warn_unused_prices(
 
 
 def _validate_remote_url(
-    component: str, url: str, invalid: AgentErrorCode
+    component: str, url: Dsn | str, invalid: AgentErrorCode
 ) -> list[AgentCompilationIssue]:
     """Collect the fault of one remote URL, redacted so it cannot leak a secret.
 
     The *invalid* code takes ``component, url, reason``.
     """
-    fault = _url_fault(url)
+    address = url.reveal() if isinstance(url, Dsn) else url
+    fault = _url_fault(address)
     if fault is None:
-        _warn_plaintext_loopback(component, url)
+        _warn_plaintext_loopback(component, address)
         return []
-    return [invalid.issue(component=component, url=_redact_url(url), reason=fault)]
+    return [invalid.issue(component=component, url=_redact_url(address), reason=fault)]
 
 
-def _validate_headers_ref(component: str, headers_ref: str | None) -> list[AgentCompilationIssue]:
-    if headers_ref is None or _is_credentials_reference(headers_ref):
+def _validate_headers_ref(
+    component: str, headers_ref: Secret[str] | str | None
+) -> list[AgentCompilationIssue]:
+    if headers_ref is None:
+        return []
+    text = headers_ref.reveal() if isinstance(headers_ref, Secret) else headers_ref
+    if _is_credentials_reference(text):
         return []
     # The rejected value is deliberately absent: the message must not leak the
     # very secret it rejects.
@@ -472,7 +481,9 @@ def _validate_headers_ref(component: str, headers_ref: str | None) -> list[Agent
 
 
 def _validate_auth(
-    component: str, headers_ref: str | None, auth: Mapping[str, str] | None
+    component: str,
+    headers_ref: Secret[str] | str | None,
+    auth: Mapping[str, object] | None,
 ) -> list[AgentCompilationIssue]:
     """Collect the issues of one endpoint's ``auth`` block.
 
@@ -493,9 +504,11 @@ def _validate_auth(
         # ``headers_ref``: the message must not leak what it rejects.
         AgentErrorCode.MCP_CREDENTIALS_INLINE.issue(component=component, field=f"auth.{key}")
         for key, value in auth.items()
-        if key != _AUTH_KIND_KEY and not _is_credentials_reference(value)
+        if key != _AUTH_KIND_KEY
+        and not (isinstance(value, str) and _is_credentials_reference(value))
     ]
-    kind = auth.get(_AUTH_KIND_KEY, "")
+    raw_kind = auth.get(_AUTH_KIND_KEY, "")
+    kind = raw_kind if isinstance(raw_kind, str) else ""
     if not is_strategy_registered(kind):
         issues.append(
             AgentErrorCode.MCP_AUTH_STRATEGY_UNKNOWN.issue(
@@ -582,7 +595,9 @@ def _validate_stdio_server(component: str, server: McpServerConfig) -> list[Agen
     return issues
 
 
-def _validate_mcp_env(component: str, env: Mapping[str, str] | None) -> list[AgentCompilationIssue]:
+def _validate_mcp_env(
+    component: str, env: Mapping[str, object] | None
+) -> list[AgentCompilationIssue]:
     """Collect the issues of a subprocess ``env`` block: valid names, single-token values."""
     if env is None:
         return []
@@ -596,7 +611,7 @@ def _validate_mcp_env(component: str, env: Mapping[str, str] | None) -> list[Age
                     reason=f"'{name}' is not a valid environment variable name",
                 )
             )
-        if not _has_reference_shape(value):
+        if not isinstance(value, str) or not _has_reference_shape(value):
             # The rejected value is deliberately absent: a broken interpolation
             # may still contain part of the secret it failed to resolve.
             issues.append(

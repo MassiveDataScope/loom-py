@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, Literal
-from urllib.parse import parse_qs, urlsplit
+from typing import Literal
 
 import msgspec
 
 from loom.core.config import reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.model.types import PositiveInt
 
 # re.ASCII keeps the exact [A-Za-z0-9_] charset: without it \w would also
@@ -137,8 +137,6 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
             config loader.
     """
 
-    _SECRET_FIELDS: ClassVar[frozenset[str]] = ClickHouseConnection._SECRET_FIELDS | {"settings"}
-
     backend: Literal["clickhouse"]
     allowed_roles: tuple[str, ...] = ()
     default_role: str | None = None
@@ -149,7 +147,7 @@ class SqlConnectionConfig(ClickHouseConnection, frozen=True, kw_only=True):
     max_sql_bytes: int = 262144
     connect_timeout: PositiveInt = 10
     read_timeout: PositiveInt = 60
-    settings: dict[str, Any] = msgspec.field(default_factory=dict)
+    settings: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     sql_endpoint: SqlEndpointConfig = msgspec.field(default_factory=SqlEndpointConfig)
 
     def __post_init__(self) -> None:
@@ -203,9 +201,8 @@ _PINNED_DSN_OPTIONS = frozenset(
 )
 
 
-def _refuse_pinned_dsn_options(url: str) -> None:
-    query = urlsplit(url).query
-    pinned = sorted({name.lower() for name in parse_qs(query)} & _PINNED_DSN_OPTIONS)
+def _refuse_pinned_dsn_options(url: Dsn) -> None:
+    pinned = sorted({name.lower() for name in url.query_names()} & _PINNED_DSN_OPTIONS)
     if pinned:
         raise ValueError(
             f"the url's query sets {', '.join(pinned)}, which the SQL service decides; "

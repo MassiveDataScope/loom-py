@@ -12,6 +12,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.config.convert import convert_config
 from loom.core.connections import ConnectionPool
 from loom.core.persistence.database import PoolConfig
 from loom.core.sql.config import SqlConnectionConfig
@@ -69,7 +70,7 @@ def test_zero_or_below_is_refused_at_decode_naming_the_field(
     struct: Callable[[], type[Any]], required: dict[str, Any], field: str, value: int
 ) -> None:
     with pytest.raises(msgspec.ValidationError, match=field):
-        msgspec.convert({**required, field: value}, struct())
+        convert_config({**required, field: value}, struct(), strict=True)
 
 
 def test_a_negative_pool_overflow_is_refused_at_decode_naming_the_field() -> None:

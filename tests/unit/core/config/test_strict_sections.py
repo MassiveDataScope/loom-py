@@ -12,6 +12,7 @@ import msgspec
 import pytest
 
 from loom.celery.config import CeleryConfig
+from loom.core.config.convert import convert_config
 from loom.core.observability.config import (
     LogObservabilityConfig,
     OtelObservabilityConfig,
@@ -41,4 +42,4 @@ from loom.rest.fastapi.auto import _RestAuthConfig, _RestConfig
 )
 def test_a_misspelt_key_is_refused(struct: type[Any], document: dict[str, Any], typo: str) -> None:
     with pytest.raises(msgspec.ValidationError, match=typo):
-        msgspec.convert(document, struct)
+        convert_config(document, struct, strict=True)

@@ -12,6 +12,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
@@ -166,7 +167,7 @@ def _compiled_source(
 ) -> CompiledMongoCDCSource:
     return CompiledMongoCDCSource(
         settings=MongoSourceConfig(
-            url="mongodb://localhost:27017",
+            url=Dsn("mongodb://localhost:27017"),
             database="app",
             on_oplog_expired=on_oplog_expired,
         ),

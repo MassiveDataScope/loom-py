@@ -9,6 +9,7 @@ from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.convert import convert_config
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.persistence.database import DatabaseConfig, SchemaConfig
@@ -52,7 +53,7 @@ def _scoped() -> dict:
 
 
 def test_schema_config_defaults_and_is_frozen() -> None:
-    config = msgspec.convert({"url": "sqlite+aiosqlite://"}, DatabaseConfig)
+    config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
 
     assert config.schema.mode == "create_all"
     assert config.schema.allow_unprotected_dialect is False
@@ -66,14 +67,14 @@ def test_schema_config_reads_mode_and_the_dialect_opt_out() -> None:
         "schema": {"mode": "external", "allow_unprotected_dialect": True},
     }
 
-    config = msgspec.convert(raw, DatabaseConfig)
+    config = convert_config(raw, DatabaseConfig, strict=True)
 
     assert config.schema == SchemaConfig(mode="external", allow_unprotected_dialect=True)
 
 
 def test_an_unknown_mode_is_rejected() -> None:
     with pytest.raises(msgspec.ValidationError):
-        msgspec.convert({"url": "x", "schema": {"mode": "drop"}}, DatabaseConfig)
+        convert_config({"url": "x", "schema": {"mode": "drop"}}, DatabaseConfig, strict=True)
 
 
 def test_has_session_settings_is_false_without_a_provider_and_true_with_one() -> None:
@@ -213,7 +214,7 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
     from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 
     sink = SQLAlchemyElevationSink()
-    config = msgspec.convert({"url": "sqlite+aiosqlite://"}, DatabaseConfig)
+    config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
 
     def register(container: LoomContainer) -> None:
         container.register_instance(ElevationSink, sink)

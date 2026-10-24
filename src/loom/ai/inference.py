@@ -25,6 +25,7 @@ from typing import Any, Final, Literal, get_args
 from msgspec import field, structs
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn
 
 OutputMode = Literal["tool", "native"]
 """How the engine asks the model for the structured answer.
@@ -131,7 +132,7 @@ class InferenceTarget(LoomFrozenStruct, frozen=True, kw_only=True):
     provider: str
     model: str
     region: str | None = None
-    endpoint: str | None = None
+    endpoint: Dsn | None = None
     output_mode: str | None = None
     streaming: bool = True
     credentials_ref: str | None = None

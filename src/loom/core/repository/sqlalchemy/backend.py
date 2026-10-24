@@ -84,7 +84,7 @@ class SQLAlchemyBackend:
                 or ``persistence.cursors`` cannot build a cursor codec.
         """
         db_cfg = load_database_config(ctx)
-        postgres = make_url(db_cfg.url).get_backend_name() == POSTGRES_DIALECT
+        postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
             DeferredScopedSettings(db_cfg.schema.scopes or {})
             if db_cfg.schema.mode == EXTERNAL and postgres

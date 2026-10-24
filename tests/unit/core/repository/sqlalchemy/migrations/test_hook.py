@@ -12,6 +12,7 @@ from loom.core.backend.scoped_ddl import SCHEMA_KEY
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.locator import Application
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopedField
+from loom.core.model.redaction import Dsn
 from loom.core.model.types import Integer as LoomInteger
 from loom.core.model.types import String
 from loom.core.model.types import Text as LoomText
@@ -59,7 +60,7 @@ def _application() -> Application:
         models=(Note, Kind),
         metadata=metadata,
         database=DatabaseConfig(
-            url="postgresql+asyncpg://u:p@localhost/db",
+            url=Dsn("postgresql+asyncpg://u:p@localhost/db"),
             schema=SchemaConfig(mode="external", name=SCHEMA),
         ),
         bootstrap=BootstrapConfig(

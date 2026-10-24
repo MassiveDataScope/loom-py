@@ -9,6 +9,7 @@ import msgspec
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.convert import convert_config
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
@@ -79,7 +80,7 @@ def test_declared_values_reach_the_client(monkeypatch: pytest.MonkeyPatch) -> No
 )
 def test_an_invalid_key_is_refused_naming_it(section: dict[str, Any], named: str) -> None:
     with pytest.raises(msgspec.ValidationError, match=named):
-        msgspec.convert({**_REQUIRED, **section}, DynamoDBRepositoryConfig)
+        convert_config({**_REQUIRED, **section}, DynamoDBRepositoryConfig, strict=True)
 
 
 def test_a_missing_section_still_names_the_section() -> None:
@@ -95,7 +96,7 @@ async def test_a_silent_service_fails_within_the_declared_bounds(
 ) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-    cfg = msgspec.convert(
+    cfg = convert_config(
         {
             **_REQUIRED,
             "url": silent_endpoint,
@@ -104,6 +105,7 @@ async def test_a_silent_service_fails_within_the_declared_bounds(
             "max_attempts": 2,
         },
         DynamoDBRepositoryConfig,
+        strict=True,
     )
     repository: RepositoryDynamoDB[Any, Any] = RepositoryDynamoDB(
         build_aws_client("dynamodb", cfg), "products", Product

@@ -7,13 +7,12 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-import msgspec
-
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
 from loom.core.checks import REST_CHECKS, enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigResolver
+from loom.core.config.convert import convert_config
 from loom.core.environment import Environment, resolve_environment
 from loom.core.observability.protocol import LifecycleObserver
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -301,7 +300,7 @@ class ETLRunner:
         storage_config = convert_storage_config(normalise_storage_section(storage))
         storage_config.validate()
         obs_config = (
-            msgspec.convert(observability, ETLObservabilityConfig)
+            convert_config(observability, ETLObservabilityConfig, strict=True)
             if observability is not None
             else ETLObservabilityConfig()
         )

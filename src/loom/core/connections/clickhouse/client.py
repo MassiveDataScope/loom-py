@@ -19,6 +19,7 @@ from clickhouse_connect.driver import httputil  # type: ignore[import-untyped]
 
 from loom.core.connections import merge_extra
 from loom.core.connections.clickhouse.config import ClickHouseConnection
+from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
     from loom.core.connections.clickhouse import client as _self
@@ -76,7 +77,7 @@ async def open_async_client(options: dict[str, Any]) -> Any:
 
 def _connection_options(connection: ClickHouseConnection) -> dict[str, Any]:
     """Return the connection's ``client_options()`` plus the urllib3 pool it sizes."""
-    built = connection.client_options()
+    built: dict[str, Any] = reveal_for_driver(connection.client_options())
     if connection.pool.size is not None:
         built["pool_mgr"] = httputil.get_pool_manager(maxsize=connection.pool.size)
     return built

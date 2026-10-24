@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -19,6 +19,7 @@ import msgspec
 from deltalake import CommitProperties, WriterProperties
 
 from loom.core.config import reject_retired_keys
+from loom.core.config.convert import convert_config
 from loom.core.connections import (
     AwsClientConfig,
     ClickHouseConnection,
@@ -26,10 +27,12 @@ from loom.core.connections import (
     MongoConnection,
 )
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn, RedactedMap, Secret, reveal_for_driver
 from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
+_DriverOptions = dict[str, str]
 """Dotted paths of the ``storage:`` collections merged by key across ``includes``."""
 
 
@@ -58,8 +61,8 @@ class CatalogConnection(LoomFrozenStruct, frozen=True, forbid_unknown_fields=Tru
     """
 
     provider: Literal["unity"] = "unity"
-    workspace: str = ""
-    token: str = ""
+    workspace: Dsn | None = None
+    token: Secret[str] | None = None
 
 
 class StorageProfile(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
@@ -76,7 +79,7 @@ class StorageProfile(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         commit: Delta commit metadata.
     """
 
-    storage_options: dict[str, str] = {}
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     writer: dict[str, Any] = {}
     target_file_size: int | None = None
     delta_config: dict[str, str | None] = {}
@@ -95,8 +98,8 @@ class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
         commit: Delta commit metadata.
     """
 
-    uri: str = ""
-    storage_options: dict[str, str] = {}
+    uri: Dsn | None = None
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     writer: dict[str, Any] = {}
     target_file_size: int | None = None
     delta_config: dict[str, str | None] = {}
@@ -104,7 +107,7 @@ class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
 
     def validate(self, *, context: str) -> None:
         """Validate path config and delta-rs option dictionaries."""
-        if not self.uri.strip():
+        if self.uri is None:
             raise ValueError(f"storage.{context}.uri must be a non-empty string")
         _validate_writer(self.writer, context=f"{context}.writer")
         _validate_target_file_size(self.target_file_size, context=f"{context}.target_file_size")
@@ -113,8 +116,8 @@ class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
     def to_location(self) -> TableLocation:
         """Convert to :class:`TableLocation`."""
         return TableLocation(
-            uri=self.uri,
-            storage_options=self.storage_options,
+            uri="" if self.uri is None else self.uri.reveal(),
+            storage_options=cast(_DriverOptions, reveal_for_driver(self.storage_options)),
             writer=self.writer,
             target_file_size=self.target_file_size,
             delta_config=self.delta_config,
@@ -130,12 +133,12 @@ class FilePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         storage_options: Object-store credentials/options.
     """
 
-    uri: str = ""
-    storage_options: dict[str, str] = {}
+    uri: Dsn | None = None
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def validate(self, *, context: str) -> None:
         """Validate file path config."""
-        if not self.uri.strip():
+        if self.uri is None:
             raise ValueError(f"storage.{context}.uri must be a non-empty string")
 
 
@@ -155,11 +158,11 @@ class StorageDefaults(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True)
 class TempConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Checkpoint / temporary storage settings."""
 
-    root: str = ""
-    storage_options: dict[str, str] = {}
+    root: Dsn | None = None
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def validate(self) -> None:
-        if self.root and not _is_cloud_uri(self.root):
+        if self.root is not None and not _is_cloud_uri(self.root.reveal()):
             raise ValueError(
                 "storage.temp.root must be a cloud URI (s3://, gs://, abfss://, ...). "
                 "Local checkpoint roots are not supported."
@@ -377,12 +380,12 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     @property
     def checkpoint_root(self) -> str:
         """Checkpoint root URI."""
-        return self.temp.root
+        return "" if self.temp.root is None else self.temp.root.reveal()
 
     @property
-    def checkpoint_storage_options(self) -> dict[str, str]:
+    def checkpoint_storage_options(self) -> _DriverOptions:
         """Checkpoint storage options."""
-        return self.temp.storage_options
+        return cast(_DriverOptions, reveal_for_driver(self.temp.storage_options))
 
     def has_catalog_routes(self) -> bool:
         """Return ``True`` when at least one table route uses ``ref``."""
@@ -404,8 +407,8 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
             return None
         mapping = {
             route.name: FileLocation(
-                uri_template=route.path.uri,
-                storage_options=route.path.storage_options,
+                uri_template="" if route.path.uri is None else route.path.uri.reveal(),
+                storage_options=cast(_DriverOptions, reveal_for_driver(route.path.storage_options)),
             )
             for route in self.files
         }
@@ -458,7 +461,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
                     "Set tables[].catalog or define matching storage.catalogs entry."
                 )
             connection = self.catalogs[catalog_key]
-            if not connection.workspace.strip() or not connection.token.strip():
+            if connection.workspace is None or connection.token is None:
                 raise ValueError(
                     f"storage.catalogs[{catalog_key!r}] must define non-empty workspace and token "
                     "for Polars UC routes."
@@ -467,7 +470,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
 
 def convert_storage_config(raw: dict[str, Any]) -> StorageConfig:
     """Convert a resolved plain dict into :class:`StorageConfig`."""
-    return msgspec.convert(raw, StorageConfig)
+    return convert_config(raw, StorageConfig, strict=True)
 
 
 def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
