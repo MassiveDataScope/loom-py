@@ -6,10 +6,11 @@ import functools
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import ClassVar, Final
+from typing import Any, ClassVar, Final
 
 from sqlalchemy import MetaData, Time, inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.pool import QueuePool
 
 from loom.core.authz.elevation import ElevationSink
 from loom.core.authz.product import load_authz_product
@@ -62,6 +63,7 @@ class SQLAlchemyBackend:
     """
 
     name: ClassVar[str] = "sqlalchemy"
+    repository_type: ClassVar[type[Any] | None] = RepositorySQLAlchemy
 
     def build(
         self,
@@ -108,9 +110,11 @@ class SQLAlchemyBackend:
                 ),
                 enabled=settings is not None,
             ),
-            lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema, settings),
-            default_repository_type=RepositorySQLAlchemy,
-            prepare_models=functools.partial(_prepare_models, convention=convention),
+            lifespan_init=lambda: _lifespan(session_manager),
+            prepare_models=functools.partial(
+                _prepare_models, convention=convention, settings=settings
+            ),
+            startup_checks=lambda: _run_startup_checks(session_manager, db_cfg.schema),
             readiness=lambda: _readiness(session_manager),
         )
 
@@ -129,9 +133,16 @@ def _with_elevation_sink(
 
 
 def _prepare_models(
-    models: Sequence[type[BaseModel]], *, convention: Mapping[str, str] | None = None
+    models: Sequence[type[BaseModel]],
+    *,
+    convention: Mapping[str, str] | None = None,
+    settings: DeferredScopedSettings | None = None,
 ) -> None:
-    """Compile the discovered models into the shared registry under the declared convention."""
+    """Compile the discovered models and bind in-memory row-level security.
+
+    The database is not contacted. A later ``startup_checks`` is what creates
+    or verifies the schema.
+    """
     if not models:
         _logger.warning(
             "no BaseModel classes discovered: the application starts with an empty "
@@ -140,6 +151,13 @@ def _prepare_models(
         )
     reset_registry(naming_convention=convention)
     compile_all(*models)
+    if settings is None:
+        return
+    scoped = scoped_tables()
+    settings.bind(scoped)
+    product = load_authz_product()
+    if product is not None:
+        validate_elevations(product, scoped)
 
 
 async def _readiness(session_manager: SessionManager) -> bool:
@@ -213,39 +231,48 @@ def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
         )
 
 
-@asynccontextmanager
-async def _lifespan(
-    session_manager: SessionManager,
-    config: SchemaConfig,
-    settings: DeferredScopedSettings | None,
-) -> AsyncIterator[None]:
+async def _run_startup_checks(session_manager: SessionManager, config: SchemaConfig) -> None:
+    """Create or verify the schema, then drop queued connections.
+
+    An in-memory SQLite pool is the database itself, so that connection stays.
+    A failed check releases a queued pool too: the connection must not sit
+    there after the error.
+    """
     scoped = scoped_tables()
-    if settings is not None:
-        settings.bind(scoped)
-        product = load_authz_product()
-        if product is not None:
-            validate_elevations(product, scoped)
+    dialect = session_manager.engine.dialect.name
     unprotected = startup_checks(
         config,
-        session_manager.engine.dialect.name,
+        dialect,
         scoped,
         has_session_settings=session_manager.has_session_settings,
     )
-    check_time_zone_columns(session_manager.engine.dialect.name, get_metadata())
+    check_time_zone_columns(dialect, get_metadata())
     if unprotected:
         _logger.warning(
             "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)
         )
-    async with session_manager.engine.begin() as connection:
-        if config.mode == EXTERNAL:
-            await _check_external(connection, scoped, config.guard)
-        else:
-            await connection.run_sync(get_metadata().create_all)
+    try:
+        async with session_manager.engine.begin() as connection:
+            if config.mode == EXTERNAL:
+                await _check_external(connection, scoped, config.guard)
+            else:
+                await connection.run_sync(get_metadata().create_all)
+    finally:
+        if isinstance(session_manager.engine.sync_engine.pool, QueuePool):
+            await session_manager.dispose()
+
+
+@asynccontextmanager
+async def _lifespan(session_manager: SessionManager) -> AsyncIterator[None]:
+    """Open nothing up front and release the engine on the way out.
+
+    Schema checks belong to ``startup_checks``. The compiled registry stays:
+    the next ``prepare_models`` is what resets it.
+    """
     try:
         yield
     finally:
         await session_manager.dispose()
-        reset_registry(naming_convention=None)
 
 
 async def _check_external(

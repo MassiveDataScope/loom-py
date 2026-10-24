@@ -104,7 +104,12 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         async def _lifespan() -> AsyncIterator[None]:
             yield
 
-        wiring = SimpleNamespace(lifespan_init=_lifespan, readiness=None)
+        async def _startup_checks() -> None:
+            return None
+
+        wiring = SimpleNamespace(
+            lifespan_init=_lifespan, readiness=None, startup_checks=_startup_checks
+        )
         python_interfaces = (type("DummyRestInterface", (), {}),)
         discovered = SimpleNamespace(
             use_cases=(object(),),

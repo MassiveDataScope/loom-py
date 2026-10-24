@@ -70,6 +70,7 @@ class _ProbedBackend:
     """Backend delegating to ``none`` with a readiness result set by the test."""
 
     name: ClassVar[str] = "probed"
+    repository_type: ClassVar[type[Any] | None] = None
     ready: ClassVar[bool | None] = None
 
     def build(
@@ -81,7 +82,6 @@ class _ProbedBackend:
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
             lifespan_init=wiring.lifespan_init,
-            default_repository_type=wiring.default_repository_type,
             prepare_models=wiring.prepare_models,
             readiness=readiness,
         )

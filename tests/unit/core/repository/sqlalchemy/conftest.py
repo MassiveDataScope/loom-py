@@ -42,7 +42,7 @@ def _compiled_dummy_model() -> Any:
     reset_registry()
     compile_all(_DummyModel)
     yield
-    reset_registry()
+    reset_registry(naming_convention=None)
 
 
 @pytest.fixture

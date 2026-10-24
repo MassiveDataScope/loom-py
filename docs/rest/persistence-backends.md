@@ -13,8 +13,11 @@ persistence:
 
 ## Writing a backend
 
-A backend is a class with a no-argument constructor, a `name` and one method:
-`build(ctx, models, runtime) -> PersistenceWiring`. It reads its own
+A backend is a class with a no-argument constructor, a `name`, a
+`repository_type` and one method:
+`build(ctx, models, runtime) -> PersistenceWiring`. `repository_type` is the
+repository class the auto-CRUD gate inspects, and it is known before `build`.
+`None` means the backend serves no repositories. The class reads its own
 configuration section from the context it is given; the host knows nothing
 about that section. `runtime` is a `BackendRuntime`: the
 `RuntimeProfile` of the entry point building it (`server`, `worker`, ...),
@@ -48,6 +51,7 @@ class _LedgerConfig(msgspec.Struct, kw_only=True):
 
 class LedgerBackend:
     name: ClassVar[str] = "ledger"
+    repository_type: ClassVar[type[Any] | None] = RepositoryLedger
 
     def build(
         self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
@@ -64,7 +68,6 @@ class LedgerBackend:
                 default_repository_type=RepositoryLedger,
             ),
             lifespan_init=lambda: _lifespan(client),
-            default_repository_type=RepositoryLedger,
             prepare_models=_validate_identifiers,
             readiness=client.ping,
         )
@@ -99,16 +102,15 @@ startup: the host fails closed instead of picking one.
 
 ### The wiring
 
-`PersistenceWiring` is a frozen dataclass; every field is consumed once, by
-the host, in this order:
+`PersistenceWiring` is a frozen dataclass. The host uses each field once:
 
 | Field | What the host does with it |
 |---|---|
 | `uow_factory` | Bound to the kernel executor. `None` means "no unit of work": use cases run without one, and deferred job dispatch never fires. |
-| `prepare_models` | Called right after `build` with the discovered models — the slot where SQLAlchemy compiles its tables and where a document store validates identifiers. Raise `ConfigError` for a model the backend cannot serve. Defaults to `no_model_preparation`. |
-| `default_repository_type` | The class whose declared capabilities decide which auto-CRUD operations a model gets (see below). `None` means the backend serves no repositories, and an interface with `auto_crud_model` refuses to boot. |
+| `prepare_models` | Called right after `build` with the discovered models — the slot where SQLAlchemy compiles its tables, binds in-memory row-level settings and where a document store validates identifiers. Raise `ConfigError` for a model the backend cannot serve. Defaults to `no_model_preparation`. |
 | `repo_registration_module` | A DI module run against the container; registers one repository per model. |
-| `lifespan_init` | An async context manager entered at application startup and exited at shutdown, after the SQL registry and the AI runtime so their clients close even when it fails. Defaults to `no_lifespan`. |
+| `startup_checks` | Awaited before `lifespan_init`. Schema and role checks. When they finish, a queued pool holds no connection; an in-memory pool is the database and stays open. Defaults to `no_startup_checks`. |
+| `lifespan_init` | An async context manager entered at application startup and exited at shutdown, after the SQL registry and the AI runtime so their clients close even when it fails. It does not check the schema and it does not reset the compiled registry. Defaults to `no_lifespan`. |
 | `readiness` | Optional `async () -> bool`. Aggregated by `GET /health`; absent, the route reports no backends. |
 
 A readiness probe never raises: log the failure and answer `False`, so the
@@ -136,7 +138,7 @@ protocol, and the auto-CRUD gate mounts one operation per protocol:
 
 The gate looks at the class that will serve the model — the explicit
 `repository_for` registration when there is one, else the backend's
-`default_repository_type` — and:
+`repository_type` — and:
 
 - narrows an interface with an empty `include` to the supported operations
   (an `OrderInterface` over `dynamodb` mounts get, create, update and delete);
@@ -151,8 +153,10 @@ capabilities_of(RepositoryLedger)   # (Readable, Creatable, BulkCreatable)
 ```
 
 Swapping the `DefaultRepositoryBuilder` does not move the gate: it keeps
-reading `default_repository_type`, so a custom builder must declare the same
-capabilities or register its repositories explicitly.
+reading the backend's `repository_type`, so a custom builder must declare the
+same capabilities or register its repositories explicitly. The registration
+helper still takes `default_repository_type`: that argument only chooses which
+repository the DI module builds, and it is the same class.
 
 ### `BulkCreatable`
 

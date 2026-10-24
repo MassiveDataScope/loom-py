@@ -3,8 +3,9 @@
 A backend is resolved by name from the ``loom.persistence.backends`` entry
 point group and asked once, at bootstrap, for everything the host needs to
 wire persistence: the unit-of-work factory, the DI module registering
-repositories, the startup lifespan, the default repository type the
-capability gate inspects, and a model preparation step.
+repositories, the startup checks, the open/close lifespan, and a model
+preparation step. The repository class the capability gate inspects is a
+class fact of the backend, known before ``build``.
 """
 
 from __future__ import annotations
@@ -35,6 +36,10 @@ async def no_lifespan() -> AsyncIterator[None]:
     yield
 
 
+async def no_startup_checks() -> None:
+    """Check nothing: the default for a backend that does not verify a schema."""
+
+
 @dataclass(frozen=True)
 class PersistenceWiring:
     """Everything a host needs from a persistence backend, resolved once at bootstrap.
@@ -44,23 +49,23 @@ class PersistenceWiring:
             the backend has no persistence, which the kernel executor accepts
             by running use cases without a unit of work.
         repo_registration_module: DI module registering model repositories.
-        default_repository_type: Repository class whose capabilities decide
-            which auto-CRUD operations a model supports; ``None`` when the
-            backend serves no repositories.
-        lifespan_init: Async context manager driving backend startup and
-            shutdown (schema creation, resource disposal, ...); defaults to
+        lifespan_init: Async context manager that opens the backend and
+            releases it on the way out. It does not check the schema and it
+            does not reset the compiled registry. Defaults to
             :func:`no_lifespan`.
         prepare_models: Step run on the discovered models after ``build``
             (schema compilation, identifier validation, ...); defaults to
             :func:`no_model_preparation`.
+        startup_checks: Schema and role checks. When they finish, a queued
+            pool holds no connection. Defaults to :func:`no_startup_checks`.
         readiness: Optional asynchronous readiness probe.
     """
 
     uow_factory: UnitOfWorkFactory | None
     repo_registration_module: Callable[[LoomContainer], None]
-    default_repository_type: type[Any] | None
     lifespan_init: Callable[[], AbstractAsyncContextManager[None]] = no_lifespan
     prepare_models: Callable[[Sequence[type[BaseModel]]], None] = no_model_preparation
+    startup_checks: Callable[[], Awaitable[None]] = no_startup_checks
     readiness: Callable[[], Awaitable[bool]] | None = None
 
 
@@ -73,6 +78,7 @@ class PersistenceBackend(Protocol):
     """
 
     name: ClassVar[str]
+    repository_type: ClassVar[type[Any] | None]
 
     def build(
         self,
@@ -94,4 +100,10 @@ class PersistenceBackend(Protocol):
         ...
 
 
-__all__ = ["PersistenceBackend", "PersistenceWiring", "no_lifespan", "no_model_preparation"]
+__all__ = [
+    "PersistenceBackend",
+    "PersistenceWiring",
+    "no_lifespan",
+    "no_model_preparation",
+    "no_startup_checks",
+]

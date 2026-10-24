@@ -67,6 +67,7 @@ class MongoBackend:
     """
 
     name: ClassVar[str] = "mongo"
+    repository_type: ClassVar[type[Any] | None] = RepositoryMongo
 
     def build(
         self,
@@ -109,7 +110,6 @@ class MongoBackend:
                 session_provider=active_session,
                 cursor_codec=cursor_codec,
             ),
-            default_repository_type=RepositoryMongo,
             lifespan_init=lambda: _lifespan(client),
             prepare_models=_prepare_models,
             readiness=lambda: _readiness(client),

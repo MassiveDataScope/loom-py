@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
@@ -15,11 +15,12 @@ from loom.core.persistence.profile import BackendRuntime
 class NoneBackend:
     """Backend for ``persistence.backend: none``.
 
-    No unit-of-work factory, no repositories, no startup resource, no default
-    repository type; a ``database`` section, if present, is ignored.
+    No unit-of-work factory, no repositories, no startup resource; a
+    ``database`` section, if present, is ignored.
     """
 
     name: ClassVar[str] = "none"
+    repository_type: ClassVar[type[Any] | None] = None
 
     def build(
         self,
@@ -41,7 +42,6 @@ class NoneBackend:
         return PersistenceWiring(
             uow_factory=None,
             repo_registration_module=_register_no_repositories,
-            default_repository_type=None,
         )
 
 
