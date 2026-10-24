@@ -53,6 +53,7 @@ class _FakeEntryPoints:
 
 class _FakeBackend:
     name: ClassVar[str] = "fake"
+    repository_type: ClassVar[type | None] = None
 
     def build(
         self, ctx: ConfigContext, models: object, runtime: BackendRuntime
@@ -128,7 +129,7 @@ class TestNoneBackend:
         wiring = self._wiring()
 
         assert wiring.uow_factory is None
-        assert wiring.default_repository_type is None
+        assert NoneBackend.repository_type is None
         assert wiring.readiness is None
 
     def test_registration_module_registers_nothing(self) -> None:

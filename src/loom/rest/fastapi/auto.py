@@ -56,6 +56,7 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import (
     SERVER_PROFILE,
     BackendRuntime,
+    PersistenceBackend,
     PersistenceWiring,
     PoolMetricsSink,
     resolve_backend,
@@ -327,8 +328,8 @@ def _build_bootstrap(
     # Runs before the backend allocates resources (e.g. an engine): resolving
     # persistence is what creates them.
     _reject_autocrud_without_model(discovered)
-    wiring = _resolve_persistence(ctx, persistence_cfg, discovered, pool_metrics)
-    discovered = _gate_autocrud_capabilities(discovered, wiring, persistence_cfg.backend)
+    backend, wiring = _resolve_persistence(ctx, persistence_cfg, discovered, pool_metrics)
+    discovered = _gate_autocrud_capabilities(discovered, backend, persistence_cfg.backend)
     wiring.prepare_models(discovered.models)
     result = _build_kernel_runtime(
         app_cfg,
@@ -411,15 +412,15 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
 
 
 def _gate_autocrud_capabilities(
-    discovered: DiscoveryResult, wiring: PersistenceWiring, backend: str
+    discovered: DiscoveryResult, backend: PersistenceBackend, backend_name: str
 ) -> DiscoveryResult:
     """Mount only the CRUD operations the serving repository class declares.
 
     The repository is the explicit ``repository_for`` class when there is one,
-    else the backend's default repository type. An empty ``include`` is
-    recomputed from scratch and narrowed to the declared capabilities, so a
-    later boot on another backend in the same process sees its own routes;
-    an explicit ``include`` is honoured verbatim or refused.
+    else ``backend.repository_type``. An empty ``include`` is recomputed from
+    scratch and narrowed to the declared capabilities, so a later boot on
+    another backend in the same process sees its own routes; an explicit
+    ``include`` is honoured verbatim or refused.
 
     Returns:
         The discovery result without the use cases of the routes that were
@@ -433,7 +434,9 @@ def _gate_autocrud_capabilities(
     pruned: set[type[Any]] = set()
     for interface in discovered.interfaces:
         if interface.auto_crud_model is not None:
-            pruned.update(_gate_interface(interface, interface.auto_crud_model, wiring, backend))
+            pruned.update(
+                _gate_interface(interface, interface.auto_crud_model, backend, backend_name)
+            )
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
     # ``replace`` copies fields added later.
@@ -446,49 +449,56 @@ def _gate_autocrud_capabilities(
 def _gate_interface(
     interface: type[RestInterface[Any]],
     model: type[Any],
-    wiring: PersistenceWiring,
-    backend: str,
+    backend: PersistenceBackend,
+    backend_name: str,
 ) -> frozenset[type[Any]]:
     """Narrow one interface's generated routes; return the use cases pruned from it."""
-    repository_type = _serving_repository_type(model, wiring)
+    repository_type = _serving_repository_type(model, backend)
     if repository_type is None:
         raise RuntimeError(
             f"{interface.__name__} generates CRUD routes over {model.__name__}, but "
-            f"persistence.backend {backend!r} serves no repositories."
+            f"persistence.backend {backend_name!r} serves no repositories."
         )
     supported = supported_crud_ops(repository_type)
     if interface.include:
-        _reject_unsupported_include(interface, model, backend, supported)
+        _reject_unsupported_include(interface, model, backend_name, supported)
         return frozenset()
     generated = build_auto_routes(model, ())
     interface.routes = tuple(r for r in generated if crud_op_of(r.use_case) in supported)
     if not interface.routes:
         raise RuntimeError(
             f"{interface.__name__} generates CRUD routes over {model.__name__}, but "
-            f"backend {backend!r} ({repository_type.__name__}) supports none of "
+            f"backend {backend_name!r} ({repository_type.__name__}) supports none of "
             f"{sorted(op.value for op in CRUD_OP_CAPABILITY)}."
         )
     kept = {route.use_case for route in interface.routes}
     return frozenset(route.use_case for route in generated if route.use_case not in kept)
 
 
-def _serving_repository_type(model: type[Any], wiring: PersistenceWiring) -> type[Any] | None:
-    """Return the repository class that will serve *model* under *wiring*."""
+def _serving_repository_type(model: type[Any], backend: PersistenceBackend) -> type[Any] | None:
+    """Return the repository class that will serve *model* on *backend*."""
     registered = registered_repository_type(model)
-    return registered if registered is not None else wiring.default_repository_type
+    if registered is not None:
+        return registered
+    try:
+        return backend.repository_type
+    except AttributeError as exc:
+        raise ConfigError(
+            f"persistence backend {type(backend).__name__} does not declare repository_type"
+        ) from exc
 
 
 def _reject_unsupported_include(
     interface: type[RestInterface[Any]],
     model: type[Any],
-    backend: str,
+    backend_name: str,
     supported: frozenset[CrudOp],
 ) -> None:
     missing = [op for op in interface.include if op in CRUD_OP_CAPABILITY and op not in supported]
     if missing:
         raise RuntimeError(
             f"{interface.__name__} includes {missing[0]!r} over {model.__name__}, which "
-            f"backend {backend!r} does not support (missing: {missing})."
+            f"backend {backend_name!r} does not support (missing: {missing})."
         )
 
 
@@ -516,13 +526,17 @@ def _resolve_persistence(
     persistence_cfg: _PersistenceConfig,
     discovered: DiscoveryResult,
     pool_metrics: PoolMetricsSink | None = None,
-) -> PersistenceWiring:
-    """Build the wiring of the backend registered under ``persistence.backend``.
+) -> tuple[PersistenceBackend, PersistenceWiring]:
+    """Build the backend registered under ``persistence.backend`` and its wiring.
+
+    The instance is kept: the capability gate reads ``repository_type`` from
+    it, and resolving the name again would build a second backend.
 
     Raises:
         ConfigError: When no backend is registered under that name.
     """
-    return resolve_backend(persistence_cfg.backend).build(
+    backend = resolve_backend(persistence_cfg.backend)
+    return backend, backend.build(
         ctx, discovered.models, BackendRuntime(SERVER_PROFILE, pool_metrics=pool_metrics)
     )
 
@@ -930,6 +944,7 @@ def create_app(
                 await stack.enter_async_context(sql.registry)
             if ai.runtime is not None:
                 await stack.enter_async_context(ai.runtime)
+            await wiring.startup_checks()
             await stack.enter_async_context(wiring.lifespan_init())
             yield
 

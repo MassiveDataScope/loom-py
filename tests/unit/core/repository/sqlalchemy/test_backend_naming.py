@@ -98,7 +98,7 @@ def test_resetting_the_registry_with_none_restores_the_default_convention() -> N
     assert get_metadata().naming_convention == MetaData().naming_convention
 
 
-async def test_the_lifespan_teardown_restores_the_default_convention() -> None:
+async def test_closing_leaves_the_compiled_naming_convention() -> None:
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
@@ -117,4 +117,4 @@ async def test_the_lifespan_teardown_restores_the_default_convention() -> None:
     async with wiring.lifespan_init():
         assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
 
-    assert get_metadata().naming_convention == MetaData().naming_convention
+    assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"

@@ -136,6 +136,7 @@ async def test_create_all_mode_creates_unscoped_tables_as_before() -> None:
     wiring = _wiring("sqlite+aiosqlite://", Plain)
     wiring.prepare_models((Plain,))
 
+    await wiring.startup_checks()
     async with wiring.lifespan_init():
         assert await wiring.readiness()
 
@@ -147,8 +148,10 @@ async def test_create_all_mode_with_the_dialect_opt_out_warns_and_creates_plain_
     wiring.prepare_models((Scoped,))
 
     with caplog.at_level(logging.WARNING):
-        async with wiring.lifespan_init():
-            pass
+        await wiring.startup_checks()
+
+    async with wiring.lifespan_init():
+        pass
 
     assert any("scoped_items" in record.getMessage() for record in caplog.records)
 
@@ -157,9 +160,10 @@ async def test_external_mode_fails_at_startup_when_a_table_is_missing() -> None:
     wiring = _wiring("sqlite+aiosqlite://", Plain, mode="external")
     wiring.prepare_models((Plain,))
 
+    async with wiring.lifespan_init():
+        pass
     with pytest.raises(ConfigError, match="plain_items"):
-        async with wiring.lifespan_init():
-            pass
+        await wiring.startup_checks()
 
 
 def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
@@ -199,11 +203,8 @@ async def test_external_mode_validates_scope_bindings_at_startup() -> None:
         mode="external",
         scopes={"holder": "request.unregistered_source"},
     )
-    wiring.prepare_models((Scoped,))
-
     with pytest.raises(ConfigError, match="unregistered_source"):
-        async with wiring.lifespan_init():
-            pass
+        wiring.prepare_models((Scoped,))
 
 
 def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> None:
@@ -240,5 +241,4 @@ async def test_startup_refuses_a_time_with_time_zone_column_on_another_dialect()
     wiring.prepare_models((Zoned,))
 
     with pytest.raises(ConfigError, match=r"zoned_items\.closes_at"):
-        async with wiring.lifespan_init():
-            pass
+        await wiring.startup_checks()

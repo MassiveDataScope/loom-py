@@ -55,6 +55,7 @@ class DynamoDBBackend:
     """
 
     name: ClassVar[str] = "dynamodb"
+    repository_type: ClassVar[type[Any] | None] = RepositoryDynamoDB
 
     def build(
         self,
@@ -96,7 +97,6 @@ class DynamoDBBackend:
             repo_registration_module=build_dynamodb_repository_registration_module(
                 client, dynamo_cfg.table, models, executor=executor
             ),
-            default_repository_type=RepositoryDynamoDB,
             readiness=lambda: _readiness(client, dynamo_cfg.table, executor),
         )
 
