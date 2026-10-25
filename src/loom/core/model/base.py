@@ -136,7 +136,10 @@ class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass
     """Base for all loom domain models.
 
     Subclasses must declare ``__tablename__`` and provide typed attributes.
-    Column metadata is optional via ``ColumnField(...)``.
+    Column metadata is optional via ``ColumnField(...)``. ``__database__``
+    names the ``database.<name>`` section this model is stored in; absent, the
+    model uses the ``database`` section.
     """
 
     __tablename__: ClassVar[str]
+    __database__: ClassVar[str | None] = None

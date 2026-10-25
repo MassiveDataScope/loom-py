@@ -118,9 +118,30 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         method for that; it is not superseded.
 
         Returns:
-            ``True`` when a caller-scoped session is bound to the context.
+            ``True`` when the active session is bound to this repository's engine.
         """
-        return get_active_session() is not None
+        session = get_active_session()
+        return session is not None and self._bound_to_this_engine(session)
+
+    def _bound_to_this_engine(self, session: AsyncSession) -> bool:
+        """Whether *session* belongs to this repository's engine.
+
+        A unit of work publishes one session for every repository. A repository
+        whose engine is a different one must not join that transaction: the
+        two databases do not commit together. SQLAlchemy 2.1 reports the async
+        engine or connection. 2.0 keeps that async object on the session and
+        the sync engine on ``sync_session``. A connection counts when its
+        engine is either of those. A session with no bind is not reused.
+        """
+        engine = self.session_manager.engine
+        bind: object = getattr(session, "bind", None)
+        if bind is None:
+            sync = getattr(session, "sync_session", None)
+            bind = getattr(sync, "bind", None)
+        if bind is engine or bind is engine.sync_engine:
+            return True
+        nested = getattr(bind, "engine", None)
+        return nested is engine or nested is engine.sync_engine
 
     async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
         """Handle post-commit mutation events (cache invalidation hook)."""
@@ -130,13 +151,13 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
     async def _session_scope(
         self, session: AsyncSession | None = None
     ) -> AsyncIterator[AsyncSession]:
-        """Reuse active transaction session or create a scoped one."""
+        """Reuse the active session when it is bound to this engine, or open one."""
         if session is not None:
             yield session
             return
 
         context_session = get_active_session()
-        if context_session is not None:
+        if context_session is not None and self._bound_to_this_engine(context_session):
             yield context_session
             return
 

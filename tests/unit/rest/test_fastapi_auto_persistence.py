@@ -25,6 +25,7 @@ from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import NoneBackend, PersistenceWiring
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.repository import RepositoryToken
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -386,3 +387,88 @@ def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
 
     assert runtime is not None
     assert discovered.models == ()
+
+
+def test_an_unnamed_application_does_not_assemble(
+    agents_only_discovery: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("assembled")
+
+    monkeypatch.setattr(sqlalchemy_backend_module, "assemble_databases", explode)
+
+    _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
+        _AppConfig(name="demo"), _ctx()
+    )
+
+    assert isinstance(wiring.uow_factory, SQLAlchemyUnitOfWorkFactory)
+
+
+def test_a_named_database_on_mongo_opens_no_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Tracked(BaseModel):
+        __tablename__ = "mongo_tracked"
+        __database__ = "tracking"
+        id: int = ColumnField(primary_key=True)
+
+    def explode(self: object, *_args: object, **_kwargs: object) -> None:
+        raise AssertionError("mongo backend built")
+
+    monkeypatch.setattr(mongo_backend_module.MongoBackend, "build", explode)
+    monkeypatch.setattr(
+        auto,
+        "_build_discovery_result",
+        lambda _cfg: DiscoveryResult(
+            models=(Tracked,),
+            use_cases=(),
+            interfaces=(),
+            agent_specs=("agents/*.yaml",),
+        ),
+    )
+
+    with pytest.raises(ConfigError, match="__database__ = 'tracking'"):
+        _build_bootstrap(_AppConfig(name="demo"), _ctx(persistence=_MONGO_PERSISTENCE))
+
+
+async def test_a_named_database_opens_its_own_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Item(BaseModel):
+        __tablename__ = "boot_items"
+        id: int = ColumnField(primary_key=True)
+
+    class Event(BaseModel):
+        __tablename__ = "boot_events"
+        __database__ = "tracking"
+        id: int = ColumnField(primary_key=True)
+
+    monkeypatch.setattr(
+        auto,
+        "_build_discovery_result",
+        lambda _cfg: DiscoveryResult(
+            models=(Item, Event),
+            use_cases=(),
+            interfaces=(),
+            agent_specs=("agents/*.yaml",),
+        ),
+    )
+    ctx = ConfigContext.from_dict(
+        {
+            "app": {"name": "demo"},
+            "database": {
+                "url": "sqlite+aiosqlite://",
+                "tracking": {"url": "sqlite+aiosqlite://"},
+            },
+            "persistence": {"cursors": {"signing": "ephemeral"}},
+        }
+    )
+
+    runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
+        _AppConfig(name="demo"), ctx
+    )
+    item = runtime.container.resolve(RepositoryToken(Item))
+    event = runtime.container.resolve(RepositoryToken(Event))
+    try:
+        assert item.session_manager is not event.session_manager
+        assert wiring.uow_factory is not None
+        assert wiring.uow_factory._session_manager is item.session_manager  # type: ignore[attr-defined]
+    finally:
+        await item.session_manager.dispose()
+        await event.session_manager.dispose()

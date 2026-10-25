@@ -74,21 +74,19 @@ def build_sqlalchemy_repository_registration_module(
     *,
     cursor_codec: CursorCodec,
     logical_models: Sequence[type[Any]] = (),
+    default_builder: Callable[[RepositoryBuildContext], Any] | None = None,
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers model repositories and their capability bindings.
 
-    The module self-declares its infrastructure dependencies: it registers
-    ``SessionManager``, ``CursorCodec`` and ``DefaultRepositoryBuilder`` in the
-    container so that the bootstrap does not need to know about SQLAlchemy
-    internals, and a service paginating by hand resolves the codec the
-    repositories sign with. ``cursor_codec`` is the process's one codec: the
-    module raises ``ConfigError`` when another is already registered. A custom
-    ``builder`` builds its repository with that codec too: resolve
-    ``CursorCodec`` from ``context.container``.
-
-    To swap the default builder, register your own ``DefaultRepositoryBuilder``
-    in the container *before* loading this module — the module will not
-    overwrite an existing registration.
+    The module self-declares its infrastructure dependencies. Without a
+    ``default_builder`` it registers ``SessionManager`` and
+    ``DefaultRepositoryBuilder`` when the container does not already hold
+    them, so a caller can install its own builder first. A passed
+    ``default_builder`` builds the models of this module that have no
+    ``@repository_for`` and leaves those two container slots untouched.
+    ``CursorCodec`` is always the process's one codec: the module raises
+    ``ConfigError`` when another is already registered. A custom builder
+    resolves that codec from ``context.container``.
     """
 
     def _registered_builder(
@@ -120,12 +118,16 @@ def build_sqlalchemy_repository_registration_module(
         explicit_models=logical_models,
         build_registered_repository=_registered_builder,
         default_repository_type=RepositorySQLAlchemy,
+        default_builder=default_builder,
     )
 
     def _register_with_session(container: LoomContainer) -> None:
+        register_cursor_codec(container, cursor_codec)
+        if default_builder is not None:
+            register(container)
+            return
         if not container.is_registered(SessionManager):
             container.register_instance(SessionManager, session_manager)
-        register_cursor_codec(container, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(
                 DefaultRepositoryBuilder,

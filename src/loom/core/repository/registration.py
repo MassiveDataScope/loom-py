@@ -203,6 +203,7 @@ def _build_repository_provider(
     model: type[LoomStruct],
     registration: RepositoryRegistration | None,
     build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
+    default_builder: Callable[[RepositoryBuildContext], Any] | None,
 ) -> Callable[[], Any]:
     """Return the provider shared by every DI key of *model* this module registers.
 
@@ -219,12 +220,14 @@ def _build_repository_provider(
     def _build() -> Any:
         if registration is not None:
             return build_registered_repository(context, registration)
+        if default_builder is not None:
+            return default_builder(context)
         if not issubclass(model, BaseModel):
             raise RuntimeError(
                 f"No default repository can be built for non-persistible type {model.__qualname__}"
             )
-        default_builder = container.resolve(DefaultRepositoryBuilder)
-        return default_builder(context)
+        builder = container.resolve(DefaultRepositoryBuilder)
+        return builder(context)
 
     def _decorate(repository: Any) -> Any:
         if not container.is_registered(RepositoryDecorator):
@@ -263,12 +266,15 @@ def build_repository_registration_module(
     explicit_models: Sequence[type[LoomStruct]] = (),
     build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
     default_repository_type: type | None = None,
+    default_builder: Callable[[RepositoryBuildContext], Any] | None = None,
 ) -> Callable[[LoomContainer], None]:
     """Build a container module that registers main repositories.
 
     Explicit registrations declared with ``repository_for(...)`` are preferred.
-    Persistible ``BaseModel`` types without an explicit registration use the
-    provided default repository builder.
+    Persistible ``BaseModel`` types without an explicit registration use
+    ``default_builder`` when one is passed, and the container's
+    ``DefaultRepositoryBuilder`` when it is not. The passed builder is not
+    installed in the container.
 
     Capability DI keys (standard ``-able`` generics and custom Protocol bases)
     are auto-detected and registered alongside the primary binding key so that
@@ -289,6 +295,7 @@ def build_repository_registration_module(
                 model=model,
                 registration=spec.registration,
                 build_registered_repository=build_registered_repository,
+                default_builder=default_builder,
             )
             _register_repository_binding(
                 container=container,

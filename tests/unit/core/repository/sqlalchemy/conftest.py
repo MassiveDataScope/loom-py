@@ -28,6 +28,8 @@ class _DummyModel(BaseModel):
 class MockSessionManager:
     def __init__(self, session: Any) -> None:
         self._session = session
+        self.engine = object()
+        session.bind = self.engine
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

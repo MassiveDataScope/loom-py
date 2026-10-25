@@ -9,7 +9,7 @@ import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
 import prometheus_client
@@ -61,6 +61,7 @@ from loom.core.persistence import (
     PoolMetricsSink,
     resolve_backend,
 )
+from loom.core.persistence.routing import first_named_database
 from loom.core.use_case.constants import CrudOp
 from loom.prometheus import PrometheusMetricsAdapter
 from loom.prometheus.db_pool import PrometheusPoolMetrics
@@ -328,7 +329,7 @@ def _build_bootstrap(
     # Runs before the backend allocates resources (e.g. an engine): resolving
     # persistence is what creates them.
     _reject_autocrud_without_model(discovered)
-    backend, wiring = _resolve_persistence(ctx, persistence_cfg, discovered, pool_metrics)
+    backend, wiring = _persistence_for(ctx, persistence_cfg, discovered, pool_metrics)
     discovered = _gate_autocrud_capabilities(discovered, backend, persistence_cfg.backend)
     wiring.prepare_models(discovered.models)
     result = _build_kernel_runtime(
@@ -519,6 +520,41 @@ def _discover_components(app_cfg: _AppConfig) -> DiscoveryResult:
 
 def _load_persistence_config(ctx: ConfigContext) -> _PersistenceConfig:
     return ctx.section_or_default(ConfigKey.PERSISTENCE, _PersistenceConfig, _PersistenceConfig())
+
+
+def _persistence_for(
+    ctx: ConfigContext,
+    persistence_cfg: _PersistenceConfig,
+    discovered: DiscoveryResult,
+    pool_metrics: PoolMetricsSink | None,
+) -> tuple[PersistenceBackend, PersistenceWiring]:
+    """Build the one backend. A named model also opens ``database.<name>``.
+
+    An application whose models omit ``__database__`` stays on ``build``.
+    A backend with no ``assemble_databases`` serves one section, so a named
+    model is refused before that backend opens a client.
+    """
+    named = first_named_database(discovered.models)
+    if named is None:
+        return _resolve_persistence(ctx, persistence_cfg, discovered, pool_metrics)
+    backend = resolve_backend(persistence_cfg.backend)
+    assemble = getattr(type(backend), "assemble_databases", None)
+    if assemble is None:
+        model, name = named
+        raise ConfigError(
+            f"{model.__qualname__} declares __database__ = {name!r}; "
+            f"persistence.backend {persistence_cfg.backend!r} serves one section, "
+            "so the extra database is not opened"
+        )
+    wiring = cast(
+        PersistenceWiring,
+        assemble(
+            ctx,
+            discovered.models,
+            BackendRuntime(SERVER_PROFILE, pool_metrics=pool_metrics),
+        ),
+    )
+    return backend, wiring
 
 
 def _resolve_persistence(

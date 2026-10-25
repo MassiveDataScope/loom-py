@@ -369,6 +369,17 @@ operations one of its processes runs at once:
 - The size, overflow, timeout and recycle keys can be overridden per deploy
   (`LOOM__DATABASE__POOL__SIZE=1`); see [Environments](../getting-started/environments.md).
 
+A model is stored in the `database` section. Set `__database__ = "warehouse"`
+on the class to store it in `database.warehouse`, the same named section a
+streaming sink selects with its `database` key. A named section that no model
+declares does not open a pool. Two models that share a table name, or a
+foreign key that crosses two names, stop startup before serving. The kernel
+unit of work is the default section's; when every model names a section, the
+kernel runs without a unit of work and the default pool stays closed. A
+repository on another name commits on its own connection. Any
+`persistence.backend` other than `sqlalchemy` serves one section, and a model
+that names another database stops startup before that backend opens a client.
+
 ### Pool metrics
 
 With `observability.prometheus.enabled`, the API publishes, with
