@@ -11,7 +11,16 @@ from typing import TYPE_CHECKING
 from loom.composition.resources import Resource, in_opening_order
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from loom.composition._ai import AiWiring
+    from loom.composition._sql import SqlWiring
     from loom.core.bootstrap.kernel import KernelRuntime
+    from loom.core.config import ConfigContext
+    from loom.core.discovery.base import DiscoveryResult
+    from loom.core.environment import Environment
+    from loom.core.observability.runtime import ObservabilityRuntime
+    from loom.core.persistence.abc import PersistenceWiring
 
 _Exit = Callable[
     [type[BaseException] | None, BaseException | None, TracebackType | None],
@@ -20,7 +29,7 @@ _Exit = Callable[
 """The ``__aexit__`` shape :meth:`AsyncExitStack.push_async_exit` takes."""
 
 
-@dataclass(eq=False)
+@dataclass(eq=False, kw_only=True)
 class Application:
     """A compiled kernel and the resources it owns, independent of any transport.
 
@@ -31,10 +40,27 @@ class Application:
 
     Args:
         kernel: Compiled kernel.
+        config: Loaded configuration.
+        environment: Environment the application runs in.
+        code_path: Application code directory.
+        discovered: What discovery found, as the adapter's recipe left it.
+        observability: Logging, tracing and metrics runtime.
+        sql: SQL registry and services.
+        ai: Agent runtime and its plans.
+        persistence: Wiring of the one store this delivery serves; the
+            catalogue of named stores replaces it.
         resources: What the application owns, in any order.
     """
 
     kernel: KernelRuntime
+    config: ConfigContext
+    environment: Environment
+    code_path: Path
+    discovered: DiscoveryResult
+    observability: ObservabilityRuntime
+    sql: SqlWiring
+    ai: AiWiring
+    persistence: PersistenceWiring
     resources: tuple[Resource, ...] = ()
     _open: bool = field(default=False, init=False)
 

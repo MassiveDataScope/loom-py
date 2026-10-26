@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -50,8 +50,21 @@ class Journal:
         self.step("check:persistence")
 
 
-def _kernel() -> KernelRuntime:
-    return cast(KernelRuntime, SimpleNamespace())
+def _of(*resources: Resource) -> Application:
+    """An application whose composition facts play no part in its lifecycle."""
+    unused = cast(Any, SimpleNamespace())
+    return Application(
+        kernel=cast(KernelRuntime, SimpleNamespace()),
+        config=unused,
+        environment=unused,
+        code_path=unused,
+        discovered=unused,
+        observability=unused,
+        sql=unused,
+        ai=unused,
+        persistence=unused,
+        resources=resources,
+    )
 
 
 def _store(journal: Journal, *, startup_checks: bool = True) -> Resource:
@@ -78,10 +91,7 @@ def _application(
             Resource(kind=ResourceKind.AGENTS, name="ai", manager=lambda: journal.resource("ai")),
         )
     gateways = (journal.closer("cache"), journal.closer("counters")) if cache else ()
-    return Application(
-        kernel=_kernel(),
-        resources=(*gateways, *resources, _store(journal, startup_checks=startup_checks)),
-    )
+    return _of(*gateways, *resources, _store(journal, startup_checks=startup_checks))
 
 
 OPEN = ["open:sql", "open:ai", "check:persistence", "open:persistence"]
@@ -281,7 +291,7 @@ async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
 
 
 async def test_an_application_without_resources_opens_nothing() -> None:
-    application = Application(kernel=_kernel())
+    application = _of()
 
     async with application.running():
         assert application.is_open
@@ -293,7 +303,7 @@ async def test_the_kind_decides_the_order_whatever_order_the_resources_come_in()
     journal = Journal()
     given = _application(journal).resources
 
-    application = Application(kernel=_kernel(), resources=tuple(reversed(given)))
+    application = _of(*reversed(given))
     async with application.running():
         pass
 

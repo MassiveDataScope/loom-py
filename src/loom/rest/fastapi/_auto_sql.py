@@ -4,28 +4,25 @@ from __future__ import annotations
 
 import warnings
 
-from loom.composition._sql import SqlWiring, resolve_sql
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.sql import SqlConfig
-from loom.core.sql.config import roles_need_identity_binding
+from loom.core.sql.config import reject_retired_sql_keys, roles_need_identity_binding
 from loom.rest.auth import Authenticator
 from loom.rest.fastapi._auto_auth import _AuthWiring, _require_jwt_audience
 from loom.rest.fastapi.sql import _connection_mechanism, _role_exposure_notice, _roles_mechanism
 
 
-def _resolve_sql(ctx: ConfigContext, auth: _AuthWiring) -> SqlWiring:
-    """Load the optional ``sql:`` section into its registry and service.
+def _check_sql_section(ctx: ConfigContext, auth: _AuthWiring) -> None:
+    """Refuse an ``sql:`` section whose endpoints the authentication cannot guard.
 
-    Absent section → no registry and the null service, keeping
-    ``SqlQueryService`` always resolvable with an actionable error (spec M5).
-    Present section → startup auth gate (spec §4) plus a registry whose
-    connections only open inside the app lifespan.
+    Runs before discovery, so a misdeclared endpoint fails first. The registry
+    and services are built later by the composition (spec §4).
     """
-    sql = resolve_sql(ctx)
-    if sql.config is not None:
-        _validate_sql_endpoint_auth(sql.config, auth)
-    return sql
+    reject_retired_sql_keys(ctx.raw(ConfigKey.SQL))
+    sql_cfg = ctx.section_optional(ConfigKey.SQL, SqlConfig)
+    if sql_cfg is not None:
+        _validate_sql_endpoint_auth(sql_cfg, auth)
 
 
 def _validate_sql_endpoint_auth(sql_cfg: SqlConfig, auth: _AuthWiring) -> None:

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
@@ -405,3 +406,20 @@ def verify_agent_markers(
 
     plans_by_name = {plan.name: plan for plan in ai.plans}
     verify_agent_markers(declaring, registry, plans_by_name)
+
+
+def reject_manifest_agents_without_ai_section(
+    ctx: ConfigContext,
+    manifest_agent_specs: tuple[str, ...],
+) -> None:
+    """Refuse a manifest declaring agents in an application with no ``ai:`` section.
+
+    Raises:
+        ConfigError: When ``AGENTS`` names artifacts nothing can compile.
+    """
+    if manifest_agent_specs and not ctx.has(ConfigKey.AI):
+        raise ConfigError(
+            "The manifest declares AGENTS but the configuration has no 'ai:' section: "
+            "agent artifacts need an engine and its model bindings to compile. Add the "
+            "'ai:' section, or remove AGENTS from the manifest."
+        )
