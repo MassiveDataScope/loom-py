@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import math
+from types import ModuleType
 from typing import Any
 
 import pytest
 
+import loom.core.use_case as use_case_package
 from loom.core.errors import (
     Conflict,
     DomainError,
@@ -19,6 +21,7 @@ from loom.core.errors import (
     Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
+from loom.core.use_case import rule as rule_module
 
 # ---------------------------------------------------------------------------
 # LoomError base
@@ -199,11 +202,6 @@ class TestRuleViolation:
         with pytest.raises(DomainError):
             raise RuleViolation("x", "y")
 
-    def test_backward_compat_import_from_rule_module(self) -> None:
-        from loom.core.use_case.rule import RuleViolation as RuleViolationFromRule
-
-        assert RuleViolationFromRule is RuleViolation
-
 
 # ---------------------------------------------------------------------------
 # RuleViolations
@@ -227,10 +225,11 @@ class TestRuleViolations:
         with pytest.raises(DomainError):
             raise error
 
-    def test_backward_compat_import_from_rule_module(self) -> None:
-        from loom.core.use_case.rule import RuleViolations as RVFromRule
 
-        assert RVFromRule is RuleViolations
+@pytest.mark.parametrize("name", ["RuleViolation", "RuleViolations"])
+@pytest.mark.parametrize("module", [use_case_package, rule_module])
+def test_rule_errors_are_public_only_from_loom_core_errors(module: ModuleType, name: str) -> None:
+    assert name not in module.__all__
 
 
 # ---------------------------------------------------------------------------

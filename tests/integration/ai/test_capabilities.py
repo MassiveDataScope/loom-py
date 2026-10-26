@@ -63,6 +63,7 @@ from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.errors import Forbidden
 from loom.core.identity import ANONYMOUS, Identity, current_identity
+from loom.core.model.redaction import Dsn
 from loom.core.sql.abc import SqlColumn, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 from loom.core.sql.service import SqlQueryService
@@ -165,7 +166,7 @@ def bound_connection(*, max_sql_bytes: int = 262144) -> SqlConnectionConfig:
     """
     return SqlConnectionConfig(
         backend="clickhouse",
-        url="clickhouse://reports.internal:8123/reporting",
+        url=Dsn("clickhouse://reports.internal:8123/reporting"),
         allowed_roles=(ALLOWED_ROLE,),
         default_role=SHARED_DEFAULT_ROLE,
         readonly=True,

@@ -37,8 +37,9 @@ from loom.core.backend.scoped_ddl import (
 from loom.core.config import ConfigError
 from loom.core.model.scoped import registered_model_tables
 from loom.core.repository.sqlalchemy.migrations.hook import scope_protection_hook
-from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, SchemaNames
+from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision_sync
+from loom.core.schema_names import SchemaNames
 
 if TYPE_CHECKING:
     from loom.core.locator import Application

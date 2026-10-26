@@ -16,7 +16,7 @@ from loom.core.use_case.markers import Query
 from loom.core.use_case.use_case import UseCase
 
 
-class GrantQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+class OrderQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     limit: int = 50
 
 
@@ -24,18 +24,18 @@ class LaxQuery(msgspec.Struct, frozen=True):
     limit: int = 50
 
 
-class ListGrants(UseCase[Any, int]):
-    async def execute(self, query: GrantQuery = Query()) -> int:
+class ListOrders(UseCase[Any, int]):
+    async def execute(self, query: OrderQuery = Query()) -> int:
         return query.limit
 
 
-class ListGrantsJob(Job[int]):
-    async def execute(self, query: GrantQuery = Query()) -> int:  # type: ignore[override]
+class ListOrdersJob(Job[int]):
+    async def execute(self, query: OrderQuery = Query()) -> int:  # type: ignore[override]
         return query.limit
 
 
 class TwoQueries(UseCase[Any, int]):
-    async def execute(self, first: GrantQuery = Query(), second: GrantQuery = Query()) -> int:
+    async def execute(self, first: OrderQuery = Query(), second: OrderQuery = Query()) -> int:
         return first.limit
 
 
@@ -50,10 +50,10 @@ class DictQueryUseCase(UseCase[Any, int]):
 
 
 def test_query_compiles_to_a_param_binding_and_a_query_binding() -> None:
-    plan = UseCaseCompiler().compile(ListGrants)
+    plan = UseCaseCompiler().compile(ListOrders)
 
-    assert plan.param_bindings == (ParamBinding(name="query", annotation=GrantQuery),)
-    assert plan.query_binding == QueryBinding(name="query", query_type=GrantQuery)
+    assert plan.param_bindings == (ParamBinding(name="query", annotation=OrderQuery),)
+    assert plan.query_binding == QueryBinding(name="query", query_type=OrderQuery)
 
 
 def test_two_query_parameters_are_refused() -> None:
@@ -78,19 +78,19 @@ def test_a_query_type_that_is_not_a_strict_model_is_refused(
 
 async def test_a_query_that_is_not_an_instance_of_its_type_is_refused() -> None:
     compiler = UseCaseCompiler()
-    compiler.compile(ListGrants)
+    compiler.compile(ListOrders)
     executor = RuntimeExecutor(compiler)
-    use_case = ListGrants()
+    use_case = ListOrders()
 
     with pytest.raises(ParameterBindingError) as excinfo:
         await executor.execute(use_case, params={"query": 424242})
     assert "'query'" in str(excinfo.value)
-    assert "GrantQuery" in str(excinfo.value)
+    assert "OrderQuery" in str(excinfo.value)
     assert "424242" not in str(excinfo.value)
 
 
 def test_a_job_that_declares_query_is_refused() -> None:
     compiler = UseCaseCompiler()
 
-    with pytest.raises(CompilationError, match=r"ListGrantsJob\.execute: a Job cannot"):
-        compiler.compile(ListGrantsJob)
+    with pytest.raises(CompilationError, match=r"ListOrdersJob\.execute: a Job cannot"):
+        compiler.compile(ListOrdersJob)

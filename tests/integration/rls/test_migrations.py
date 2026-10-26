@@ -20,7 +20,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from loom.core.config import ConfigError
-from loom.core.locator import CONFIG_ENV_VAR, Application
+from loom.core.environment import CONFIG_VARIABLE
+from loom.core.locator import Application
 from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH, alembic_config, check
 from loom.core.repository.sqlalchemy.rls import integrity
 from loom.core.repository.sqlalchemy.rls.guard_manifest import GUARD_REVISIONS
@@ -116,7 +117,7 @@ async def _upgrade_in_subprocess(location: Path, url: str, config_path: Path) ->
         "-c",
         code,
         cwd=Path(__file__).parents[3],
-        env={**os.environ, CONFIG_ENV_VAR: str(config_path)},
+        env={**os.environ, CONFIG_VARIABLE: str(config_path)},
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

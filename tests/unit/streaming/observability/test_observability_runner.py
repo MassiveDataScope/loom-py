@@ -27,7 +27,12 @@ def test_unrouted_error_notifies_observer(
     """Unrouted task errors are logged rather than fanned out."""
     config = {
         "kafka": {
-            "consumer": {"brokers": ["localhost:9092"], "group_id": "g", "topics": ["items"]},
+            "consumer": {
+                "brokers": ["localhost:9092"],
+                "group_id": "g",
+                "delivery": "at_most_once",
+                "topics": ["items"],
+            },
             "producer": {"brokers": ["localhost:9092"], "topic": "items.out"},
         }
     }
@@ -88,7 +93,12 @@ def test_the_observer_event_sequence_is_the_old_one_plus_the_new_deaths(
     """
     config = {
         "kafka": {
-            "consumer": {"brokers": ["localhost:9092"], "group_id": "g", "topics": ["items"]},
+            "consumer": {
+                "brokers": ["localhost:9092"],
+                "group_id": "g",
+                "delivery": "at_most_once",
+                "topics": ["items"],
+            },
             "producer": {"brokers": ["localhost:9092"], "topic": "items.out"},
         }
     }
@@ -120,7 +130,12 @@ def test_streaming_test_runner_reset_clears_buffers(
 ) -> None:
     config = {
         "kafka": {
-            "consumer": {"brokers": ["localhost:9092"], "group_id": "g", "topics": ["items"]},
+            "consumer": {
+                "brokers": ["localhost:9092"],
+                "group_id": "g",
+                "delivery": "at_most_once",
+                "topics": ["items"],
+            },
             "producer": {"brokers": ["localhost:9092"], "topic": "items.out"},
         }
     }

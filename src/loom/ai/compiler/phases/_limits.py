@@ -29,7 +29,7 @@ from loom.ai.declarative._v1 import (
     TOOL_TIMEOUT_MS_MAX,
     TOOL_TIMEOUT_MS_MIN,
 )
-from loom.ai.errors import AgentCompilationIssue, policy_out_of_range
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 
 # Every policy field whose value is an ``int``. ``max_usd`` is deliberately
 # absent: it is a ``Decimal`` on ``PolicySpec`` and gets its own check below
@@ -72,9 +72,19 @@ def validate_policies(policies: PolicySpec, component: str) -> list[AgentCompila
         if value is None:
             continue
         if value < minimum or value > maximum:
-            issues.append(policy_out_of_range(component, name, value, minimum, maximum))
+            issues.append(
+                AgentErrorCode.POLICY_OUT_OF_RANGE.issue(
+                    component=component, policy=name, value=value, minimum=minimum, maximum=maximum
+                )
+            )
     if policies.max_usd is not None and not MAX_USD_MIN <= policies.max_usd <= MAX_USD_MAX:
         issues.append(
-            policy_out_of_range(component, "max_usd", policies.max_usd, MAX_USD_MIN, MAX_USD_MAX)
+            AgentErrorCode.POLICY_OUT_OF_RANGE.issue(
+                component=component,
+                policy="max_usd",
+                value=policies.max_usd,
+                minimum=MAX_USD_MIN,
+                maximum=MAX_USD_MAX,
+            )
         )
     return issues

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
+from loom.core.connections import AwsClientConfig
 from loom.prefect.notify import (
     NotifyEvent,
     SlackNotifier,
@@ -78,13 +79,13 @@ class TestSlackNotifier:
             state="Failed",
             correlation_id="corr-1",
             duration_seconds=65,
-            env="prod",
+            env="production",
             message="boom",
         )
         SlackNotifier(webhook_url="https://hooks.slack.com/X", http_post=http).notify(event)
         assert http.call_args.kwargs["json"]["text"] == (
             ":x: *etl-x* → `Failed`\n"
-            "run: `run-1`  env: `prod`  correlation: `corr-1`  duration: `1m 05s`\n"
+            "run: `run-1`  env: `production`  correlation: `corr-1`  duration: `1m 05s`\n"
             "boom\n"
             "<https://prefect/runs/1|Open in Prefect>"
         )
@@ -206,14 +207,14 @@ class TestSnsNotifier:
 
     def test_default_client_uses_the_topic_region(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = MagicMock()
-        monkeypatch.setattr(sns_module.boto3, "client", factory)
+        monkeypatch.setattr(sns_module, "build_aws_client", factory)
         SnsNotifier(topic_arn=_TOPIC)
-        factory.assert_called_once_with("sns", region_name="eu-west-1")
+        factory.assert_called_once_with("sns", AwsClientConfig(region="eu-west-1"))
 
 
 class TestBuildSnsNotifier:
     def test_builds_sns_notifier_from_yaml_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sns_module.boto3, "client", MagicMock())
+        monkeypatch.setattr(sns_module, "build_aws_client", MagicMock())
         block = [{"kind": "sns", "topic_arn": _TOPIC, "on_failure": True}]
         (notifier,) = build_notifiers(block)
         assert isinstance(notifier, SnsNotifier)

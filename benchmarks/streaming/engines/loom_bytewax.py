@@ -99,17 +99,21 @@ class Normalize(RecordStep[BenchEvent, BenchEvent]):
 class ScoreBatch(BatchExpandStep[BenchEvent, ScoredEvent]):
     """Batch step after ``collect``: score each event against its batch, back to records."""
 
-    def execute(self, messages: list[Message[BenchEvent]], **kwargs: object) -> list[ScoredEvent]:
+    def execute(
+        self, messages: list[Message[BenchEvent]], **kwargs: object
+    ) -> list[list[ScoredEvent]]:
         del kwargs
         total = sum(m.payload.amount for m in messages)
         return [
-            ScoredEvent(
-                key=m.payload.key,
-                lane=m.payload.lane,
-                score=(m.payload.amount * 31 + total) % 997,
-                emitted_ns=m.payload.emitted_ns,
-                blob=m.payload.blob,
-            )
+            [
+                ScoredEvent(
+                    key=m.payload.key,
+                    lane=m.payload.lane,
+                    score=(m.payload.amount * 31 + total) % 997,
+                    emitted_ns=m.payload.emitted_ns,
+                    blob=m.payload.blob,
+                )
+            ]
             for m in messages
         ]
 
@@ -140,7 +144,12 @@ def flow_config() -> dict[str, Any]:
     producers = {topic: {"brokers": [_BROKER], "topic": topic} for topic in BRANCH_TOPICS.values()}
     return {
         "kafka": {
-            "consumer": {"brokers": [_BROKER], "group_id": "bench", "topics": [SOURCE_TOPIC]},
+            "consumer": {
+                "brokers": [_BROKER],
+                "group_id": "bench",
+                "delivery": "at_most_once",
+                "topics": [SOURCE_TOPIC],
+            },
             "producers": producers,
         }
     }

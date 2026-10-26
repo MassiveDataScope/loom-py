@@ -41,6 +41,7 @@ from loom.ai.remote_auth import (
     standard_oauth,
     static_headers,
 )
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 
 from ...helpers.remote_auth_plugin import third_party_strategy
 
@@ -94,7 +95,7 @@ class TestAuthBlockConfiguration:
         self,
     ) -> None:
         """A name nobody registers must fail at compile, not at the first message."""
-        server = McpServerConfig(url=_URL, auth={"kind": "nobody-registers-this"})
+        server = McpServerConfig(url=Dsn(_URL), auth=RedactedMap({"kind": "nobody-registers-this"}))
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(server)
@@ -103,7 +104,7 @@ class TestAuthBlockConfiguration:
 
     def test_the_message_names_the_strategy_and_the_registered_ones(self) -> None:
         """The operator must be able to act on the message without reading loom."""
-        server = McpServerConfig(url=_URL, auth={"kind": "nobody-registers-this"})
+        server = McpServerConfig(url=Dsn(_URL), auth=RedactedMap({"kind": "nobody-registers-this"}))
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(server)
@@ -115,7 +116,9 @@ class TestAuthBlockConfiguration:
 
     def test_fails_with_auth_strategy_unknown_when_the_block_declares_no_kind(self) -> None:
         """A block without ``kind`` names no strategy at all."""
-        server = McpServerConfig(url=_URL, auth={"session_url": "https://auth.example.com/token"})
+        server = McpServerConfig(
+            url=Dsn(_URL), auth=RedactedMap({"session_url": "https://auth.example.com/token"})
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(server)
@@ -125,7 +128,8 @@ class TestAuthBlockConfiguration:
     def test_fails_with_credentials_inline_when_a_setting_carries_a_literal_secret(self) -> None:
         """The inline-credential rule covers the whole block, not just ``headers_ref``."""
         server = McpServerConfig(
-            url=_URL, auth={"kind": "oauth", "bootstrap_ref": "sk-abc123def456ghi789"}
+            url=Dsn(_URL),
+            auth=RedactedMap({"kind": "oauth", "bootstrap_ref": "sk-abc123def456ghi789"}),
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -136,7 +140,9 @@ class TestAuthBlockConfiguration:
     def test_the_message_does_not_contain_the_secret_it_rejects(self) -> None:
         """The rejection must not leak the very secret it rejects."""
         literal = "sk-abc123def456ghi789"
-        server = McpServerConfig(url=_URL, auth={"kind": "oauth", "bootstrap_ref": literal})
+        server = McpServerConfig(
+            url=Dsn(_URL), auth=RedactedMap({"kind": "oauth", "bootstrap_ref": literal})
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(server)
@@ -145,7 +151,11 @@ class TestAuthBlockConfiguration:
 
     def test_fails_with_auth_conflict_alongside_headers_ref(self) -> None:
         """Two credentials on one connection is ambiguous, so it is refused."""
-        server = McpServerConfig(url=_URL, headers_ref="X-API-Key=abc123", auth={"kind": "oauth"})
+        server = McpServerConfig(
+            url=Dsn(_URL),
+            headers_ref=Secret("X-API-Key=abc123"),
+            auth=RedactedMap({"kind": "oauth"}),
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with(server)
@@ -155,8 +165,10 @@ class TestAuthBlockConfiguration:
     def test_accepts_a_jwt_shaped_token_as_a_setting(self) -> None:
         """A JWT is base64url with dots: the inline-credential test must let it through."""
         server = McpServerConfig(
-            url=_URL,
-            auth={"kind": "bearer", "token_ref": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhLWIifQ.s_g-9"},
+            url=Dsn(_URL),
+            auth=RedactedMap(
+                {"kind": "bearer", "token_ref": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhLWIifQ.s_g-9"}
+            ),
         )
 
         config = _config_with(server)
@@ -166,7 +178,8 @@ class TestAuthBlockConfiguration:
     def test_rejects_a_setting_with_spaces_even_a_composed_bearer_header(self) -> None:
         """The composed header is exactly what must not live in configuration."""
         server = McpServerConfig(
-            url=_URL, auth={"kind": "bearer", "token_ref": "Bearer eyJhbGciOiJIUzI1NiJ9"}
+            url=Dsn(_URL),
+            auth=RedactedMap({"kind": "bearer", "token_ref": "Bearer eyJhbGciOiJIUzI1NiJ9"}),
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -176,7 +189,7 @@ class TestAuthBlockConfiguration:
 
     def test_accepts_the_server_when_the_strategy_is_registered(self) -> None:
         """``oauth`` ships with loom, so it decodes without complaint."""
-        server = McpServerConfig(url=_URL, auth={"kind": "oauth"})
+        server = McpServerConfig(url=Dsn(_URL), auth=RedactedMap({"kind": "oauth"}))
 
         config = _config_with(server)
 
@@ -187,12 +200,14 @@ class TestAuthBlockConfiguration:
     ) -> None:
         """A deployment's own strategy is as valid as loom's own."""
         server = McpServerConfig(
-            url=_URL,
-            auth={
-                "kind": "agent-session",
-                "session_url": "https://orders.example.com/auth/agent/session",
-                "bootstrap_ref": "/agents/prod/agent-sales",
-            },
+            url=Dsn(_URL),
+            auth=RedactedMap(
+                {
+                    "kind": "agent-session",
+                    "session_url": "https://orders.example.com/auth/agent/session",
+                    "bootstrap_ref": "/agents/prod/agent-sales",
+                }
+            ),
         )
 
         with third_party_strategy(tmp_path, name="agent-session"):
@@ -481,7 +496,9 @@ class TestAuthBlockConfigurationForARemoteAgent:
 
     def test_fails_with_auth_strategy_unknown_when_the_strategy_is_not_registered(self) -> None:
         """Otherwise the agent would connect unauthenticated at the first delegation."""
-        agent = A2AAgentConfig(url=_AGENT_URL, auth={"kind": "nobody-registers-this"})
+        agent = A2AAgentConfig(
+            url=Dsn(_AGENT_URL), auth=RedactedMap({"kind": "nobody-registers-this"})
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with_agent(agent)
@@ -489,7 +506,9 @@ class TestAuthBlockConfigurationForARemoteAgent:
         assert AgentErrorCode.MCP_AUTH_STRATEGY_UNKNOWN in _codes(excinfo.value)
 
     def test_the_message_names_the_strategy_and_the_registered_ones(self) -> None:
-        agent = A2AAgentConfig(url=_AGENT_URL, auth={"kind": "nobody-registers-this"})
+        agent = A2AAgentConfig(
+            url=Dsn(_AGENT_URL), auth=RedactedMap({"kind": "nobody-registers-this"})
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with_agent(agent)
@@ -501,7 +520,8 @@ class TestAuthBlockConfigurationForARemoteAgent:
 
     def test_fails_with_credentials_inline_when_a_setting_carries_a_literal_secret(self) -> None:
         agent = A2AAgentConfig(
-            url=_AGENT_URL, auth={"kind": "bearer", "token_ref": "sk-abc123def456ghi789"}
+            url=Dsn(_AGENT_URL),
+            auth=RedactedMap({"kind": "bearer", "token_ref": "sk-abc123def456ghi789"}),
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -511,7 +531,9 @@ class TestAuthBlockConfigurationForARemoteAgent:
 
     def test_the_message_does_not_contain_the_secret_it_rejects(self) -> None:
         literal = "sk-abc123def456ghi789"
-        agent = A2AAgentConfig(url=_AGENT_URL, auth={"kind": "bearer", "token_ref": literal})
+        agent = A2AAgentConfig(
+            url=Dsn(_AGENT_URL), auth=RedactedMap({"kind": "bearer", "token_ref": literal})
+        )
 
         with pytest.raises(AgentCompilationError) as excinfo:
             _config_with_agent(agent)
@@ -521,7 +543,9 @@ class TestAuthBlockConfigurationForARemoteAgent:
     def test_fails_with_auth_conflict_alongside_headers_ref(self) -> None:
         """Two credentials on one connection is as ambiguous here as it is for MCP."""
         agent = A2AAgentConfig(
-            url=_AGENT_URL, headers_ref="X-API-Key=abc123", auth={"kind": "bearer"}
+            url=Dsn(_AGENT_URL),
+            headers_ref=Secret("X-API-Key=abc123"),
+            auth=RedactedMap({"kind": "bearer"}),
         )
 
         with pytest.raises(AgentCompilationError) as excinfo:
@@ -530,7 +554,9 @@ class TestAuthBlockConfigurationForARemoteAgent:
         assert AgentErrorCode.MCP_AUTH_CONFLICT in _codes(excinfo.value)
 
     def test_accepts_the_agent_when_the_strategy_is_registered(self) -> None:
-        agent = A2AAgentConfig(url=_AGENT_URL, auth={"kind": "bearer", "token_ref": "a.b-c_1"})
+        agent = A2AAgentConfig(
+            url=Dsn(_AGENT_URL), auth=RedactedMap({"kind": "bearer", "token_ref": "a.b-c_1"})
+        )
 
         config = _config_with_agent(agent)
 
@@ -541,12 +567,14 @@ class TestAuthBlockConfigurationForARemoteAgent:
     ) -> None:
         """One group: a strategy registered for MCP is offered to A2A unchanged."""
         agent = A2AAgentConfig(
-            url=_AGENT_URL,
-            auth={
-                "kind": "agent-session",
-                "session_url": "https://market.example.com/auth/agent/session",
-                "bootstrap_ref": "/agents/prod/agent-sales",
-            },
+            url=Dsn(_AGENT_URL),
+            auth=RedactedMap(
+                {
+                    "kind": "agent-session",
+                    "session_url": "https://market.example.com/auth/agent/session",
+                    "bootstrap_ref": "/agents/prod/agent-sales",
+                }
+            ),
         )
 
         with third_party_strategy(tmp_path, name="agent-session"):

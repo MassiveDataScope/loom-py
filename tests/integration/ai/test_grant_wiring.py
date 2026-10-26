@@ -39,6 +39,7 @@ from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _capabilities
 from loom.ai.inference import InferenceTarget
 from loom.ai.runtime import AgentRuntime
 from loom.core.di import LoomContainer
+from loom.core.model.redaction import Dsn
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.integration.ai.conftest import RecordingMcpSession, StubDepsFactory
 
@@ -106,8 +107,8 @@ def _config() -> AiConfig:
         engine="pydantic-ai",
         specs=(),
         models={"default": InferenceTarget(provider="fake", model="fake-model")},
-        mcp_servers={_SERVER: McpServerConfig(url=_SERVER_URL)},
-        a2a_agents={_REMOTE: A2AAgentConfig(url=_REMOTE_URL)},
+        mcp_servers={_SERVER: McpServerConfig(url=Dsn(_SERVER_URL))},
+        a2a_agents={_REMOTE: A2AAgentConfig(url=Dsn(_REMOTE_URL))},
         startup_timeout_ms=2000,
         health_cache_ttl_ms=5000,
     )

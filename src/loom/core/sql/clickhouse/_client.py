@@ -10,11 +10,9 @@ DSN or stack trace).
 from __future__ import annotations
 
 import re
-import warnings
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from functools import partial
-from types import ModuleType
 from typing import Any, Protocol, cast
 from urllib.parse import urlencode
 
@@ -24,11 +22,13 @@ _INSTALL_HINT = (
 )
 
 try:
-    from clickhouse_connect.driver import httpclient, httputil  # type: ignore[import-untyped]
+    from clickhouse_connect.driver import httpclient  # type: ignore[import-untyped]
     from clickhouse_connect.driver.exceptions import (  # type: ignore[import-untyped]
         DatabaseError,
         OperationalError,
     )
+
+    from loom.core.connections.clickhouse.client import open_async_client
 except ImportError as exc:  # pragma: no cover - only without the optional extra
     raise ImportError(_INSTALL_HINT) from exc
 
@@ -41,7 +41,6 @@ __all__ = [
     "OperationalError",
     "create_driver_client",
     "enable_repeated_query_params",
-    "pool_manager",
     "sanitize_backend_error",
     "supports_repeated_query_params",
 ]
@@ -208,29 +207,18 @@ class _DriverAsyncClientAdapter:
 async def create_driver_client(**kwargs: Any) -> AsyncClickHouseClient:
     """Create an adapted driver ``AsyncClient`` from ``get_async_client`` kwargs.
 
+    The client is opened by the ClickHouse island,
+    :mod:`loom.core.connections.clickhouse.client`, the one place loom builds
+    a ClickHouse client.
+
     Args:
         **kwargs: Keyword arguments forwarded verbatim to
             ``clickhouse_connect.get_async_client``.
 
     Returns:
         The created client adapted to :class:`AsyncClickHouseClient`.
-
-    Raises:
-        ImportError: When ``clickhouse-connect`` is not installed, with the
-            ``loom-kernel[clickhouse]`` install hint.
     """
-    module = _import_driver()
-    with warnings.catch_warnings():
-        # The 0.15.x AsyncClient is a thread-pool wrapper and warns about the
-        # upcoming native client; migration to 1.0 is tracked debt (spec §5).
-        warnings.simplefilter("ignore", FutureWarning)
-        async_client = await module.get_async_client(**kwargs)
-    return _DriverAsyncClientAdapter(async_client)
-
-
-def pool_manager(maxsize: int) -> Any:
-    """Build a urllib3 pool manager sized for one connection (``pool_size``)."""
-    return httputil.get_pool_manager(maxsize=maxsize)
+    return _DriverAsyncClientAdapter(await open_async_client(kwargs))
 
 
 def sanitize_backend_error(message: str) -> str:
@@ -252,14 +240,3 @@ def sanitize_backend_error(message: str) -> str:
         lines = message.splitlines()
         line = lines[0] if lines else "unknown backend error"
     return _URL_RE.sub("<redacted>", line).strip()
-
-
-def _import_driver() -> ModuleType:
-    # Local import on purpose: a missing optional extra must fail here, at
-    # client creation time, with an actionable hint — even when this module
-    # was imported while the extra was still available.
-    try:
-        import clickhouse_connect  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise ImportError(_INSTALL_HINT) from exc
-    return cast(ModuleType, clickhouse_connect)

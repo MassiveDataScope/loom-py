@@ -284,11 +284,17 @@ LoomType = (
 
 
 class SchemaNotFoundError(Exception):
-    """Raised when a write is attempted but no schema is registered for the table.
+    """Raised when a table's schema is needed but the table does not exist.
 
-    Register the schema via :meth:`~loom.etl._io.TableDiscovery.update_schema`
-    before the first write, or use a backend that creates the table explicitly
-    (for example with :attr:`~loom.etl._target.SchemaMode.OVERWRITE` on first write).
+    * A write that may create its table (append, replace, replace_partitions,
+      replace_where, upsert, historify) raises it for a missing table unless
+      ``storage.missing_table_policy`` is ``"create"``, or is
+      ``"schema_mode"`` (the default) and the write uses
+      :attr:`~loom.core.schema.SchemaMode.OVERWRITE`.  With ``"error"`` it
+      always raises.
+    * An update raises it for a missing table under every policy.
+    * ``apply_schema_polars`` and ``apply_schema_spark`` raise it when given
+      no schema under ``SchemaMode.STRICT`` or ``SchemaMode.EVOLVE``.
     """
 
 

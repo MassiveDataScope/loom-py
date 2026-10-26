@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.etl.compiler import ETLCompilationError, ETLCompiler, validate_plan_catalog
+from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode, validate_plan_catalog
 from loom.etl.compiler._plan import PipelinePlan
 from loom.etl.declarative.target import SchemaMode
 from loom.etl.testing import StubCatalog
@@ -76,14 +76,18 @@ class TestValidatePlanCatalogErrors:
     def test_missing_source_raises(self) -> None:
         catalog = StubCatalog({"staging.out": (), "mart.summary": ()})
         plan = _plan(ReplacePipeline)
-        with pytest.raises(ETLCompilationError, match="raw.orders"):
+        with pytest.raises(ETLCompilationError, match="raw.orders") as exc_info:
             validate_plan_catalog(plan, catalog)
+
+        assert exc_info.value.code is ETLErrorCode.UNKNOWN_SOURCE_TABLE
 
     def test_missing_non_overwrite_target_raises(self) -> None:
         catalog = StubCatalog({"raw.orders": (), "mart.summary": ()})
         plan = _plan(ReplacePipeline)
-        with pytest.raises(ETLCompilationError, match="staging.out"):
+        with pytest.raises(ETLCompilationError, match="staging.out") as exc_info:
             validate_plan_catalog(plan, catalog)
+
+        assert exc_info.value.code is ETLErrorCode.UNKNOWN_TARGET_TABLE
 
     def test_error_message_includes_table_name(self) -> None:
         catalog = StubCatalog({"staging.out": (), "mart.summary": ()})

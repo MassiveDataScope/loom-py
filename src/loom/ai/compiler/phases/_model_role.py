@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from loom.ai.errors import AgentCompilationIssue, model_role_unbound
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 
 _ResolveResult = tuple[InferenceTarget | None, list[AgentCompilationIssue]]
@@ -28,5 +28,5 @@ def resolve_model_role(
     """
     target = models.get(role)
     if target is None:
-        return None, [model_role_unbound(component, role)]
+        return None, [AgentErrorCode.MODEL_ROLE_UNBOUND.issue(component=component, role=role)]
     return target, []

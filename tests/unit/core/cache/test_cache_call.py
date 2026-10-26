@@ -39,6 +39,7 @@ from loom.core.cache.calls import _ConfiguredCalls, _render, _UnconfiguredCalls
 from loom.core.cache.decorators import cache_call
 from loom.core.cache.result_codec import EncodedResult
 from loom.core.di.container import LoomContainer
+from loom.core.model.redaction import RedactedMap
 
 from ._doubles import SERIALIZED_BACKEND, CountingCacheBackend
 
@@ -120,7 +121,7 @@ def _calls(
 def _gateway(alias: str) -> CacheGateway:
     """Open a serialized memory alias, as a deployment's data gateway is."""
     CacheGateway.apply_config(
-        CacheConfig(aiocache_alias=alias, aiocache_config={alias: SERIALIZED_BACKEND})
+        CacheConfig(aiocache_alias=alias, aiocache_config=RedactedMap({alias: SERIALIZED_BACKEND}))
     )
     return CacheGateway(alias=alias)
 

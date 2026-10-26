@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 from omegaconf import DictConfig
 
-from loom.streaming import CollectBatch, Drain, FromTopic, Process, StreamFlow, WindowStrategy
+from loom.streaming import (
+    CollectBatch,
+    Drain,
+    ForEach,
+    FromTopic,
+    Process,
+    StreamFlow,
+    WindowStrategy,
+)
 from loom.streaming.compiler import CompilationError, compile_flow
 from tests.unit.streaming.compiler.cases import Order, Result
 
@@ -34,6 +42,7 @@ class TestWindowStrategyValidation:
             source=FromTopic("in", payload=Order),
             process=Process(
                 CollectBatch(max_records=10, timeout_ms=500, window=strategy),
+                ForEach(),
                 Drain(),
             ),
         )

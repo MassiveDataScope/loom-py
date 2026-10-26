@@ -12,6 +12,7 @@ import pytest
 from loom.ai.engines.pydantic_ai._models import model_class_for, resolve_model
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
+from loom.core.model.redaction import Dsn
 from tests.helpers.extras import ENGINE_PROVIDERS, without_extra
 
 
@@ -60,7 +61,7 @@ class TestAProviderWithoutItsSdk:
             [f"{ENGINE_PROVIDERS}.openai", f"{ENGINE_PROVIDERS}.gateway"],
         )
         target = InferenceTarget(
-            provider="gateway", model="m", endpoint="https://gw.example.com/v1"
+            provider="gateway", model="m", endpoint=Dsn("https://gw.example.com/v1")
         )
 
         with pytest.raises(AgentCompilationError) as failure:

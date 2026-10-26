@@ -33,6 +33,7 @@ from opentelemetry.trace import StatusCode
 
 from loom.ai._transport import always_closed
 from loom.core.config.observability import OtelConfig
+from loom.core.model.redaction import Dsn
 from loom.core.observability.config import ObservabilityConfig, OtelObservabilityConfig
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.observer import otel as _otel_module
@@ -549,7 +550,7 @@ class TestHostProviderCoexistence:
 
         runtime = ObservabilityRuntime.from_config(
             ObservabilityConfig(
-                otel=OtelObservabilityConfig(enabled=True, config=OtelConfig(endpoint=""))
+                otel=OtelObservabilityConfig(enabled=True, config=OtelConfig(endpoint=None))
             )
         )
 
@@ -580,7 +581,7 @@ class TestHostProviderCoexistence:
             ObservabilityConfig(
                 otel=OtelObservabilityConfig(
                     enabled=True,
-                    config=OtelConfig(endpoint="http://collector.invalid:4318/v1/traces"),
+                    config=OtelConfig(endpoint=Dsn("http://collector.invalid:4318/v1/traces")),
                 )
             )
         )

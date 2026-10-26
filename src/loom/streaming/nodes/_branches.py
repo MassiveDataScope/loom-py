@@ -20,6 +20,8 @@ from loom.streaming.nodes._expand_routes import ExpandRoutes
 from loom.streaming.nodes._expr_eval import PredicateSpec
 from loom.streaming.nodes._fork import Fork, ForkKind
 from loom.streaming.nodes._router import Router
+from loom.streaming.nodes._shape import Drain
+from loom.streaming.nodes._sink import IntoSink
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,26 @@ class Branch:
 BRANCHING_NODE_TYPES: Final = (Fork, Router, Broadcast, ExpandRoutes)
 """Node types whose branches occupy their own path segment."""
 
+PATH_END_NODE_TYPES: Final = (IntoTopic, IntoSink, Drain, Broadcast)
+"""Node types that end the path of every message they receive; validation keeps them last."""
+
 _DEFAULT_LABEL: Final = "default"
+
+
+def branch_ends_path(branch: Branch) -> bool:
+    """Return whether *branch* ends in a node of :data:`PATH_END_NODE_TYPES`."""
+    return bool(branch.nodes) and isinstance(branch.nodes[-1], PATH_END_NODE_TYPES)
+
+
+def router_ends_every_path(router: Router[Any, Any]) -> bool:
+    """Return whether *router* ends the path of every message it receives.
+
+    It does when it has a default branch, so every message takes a branch, and
+    every branch ends the path (:func:`branch_ends_path`).
+    """
+    return router.default is not None and all(
+        branch_ends_path(branch) for branch in iter_branches(router)
+    )
 
 
 def is_branching_node(node: object) -> bool:
@@ -141,4 +162,12 @@ def _default_branch(index: int, nodes: tuple[object, ...]) -> Branch:
     return Branch(index=index, label=_DEFAULT_LABEL, nodes=nodes, is_default=True)
 
 
-__all__ = ["BRANCHING_NODE_TYPES", "Branch", "is_branching_node", "iter_branches"]
+__all__ = [
+    "BRANCHING_NODE_TYPES",
+    "PATH_END_NODE_TYPES",
+    "Branch",
+    "branch_ends_path",
+    "is_branching_node",
+    "iter_branches",
+    "router_ends_every_path",
+]

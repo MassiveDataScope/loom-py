@@ -23,19 +23,19 @@ from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
 
-class GrantView(msgspec.Struct, frozen=True):
-    grant_id: str
+class OrderView(msgspec.Struct, frozen=True):
+    order_id: str
 
 
-class CreateGrant(UseCase[Any, GrantView | Created[GrantView]]):
-    async def execute(self, grant_id: str) -> GrantView | Created[GrantView]:
-        view = GrantView(grant_id=grant_id)
-        return Created(view) if grant_id.startswith("fresh") else view
+class CreateOrder(UseCase[Any, OrderView | Created[OrderView]]):
+    async def execute(self, order_id: str) -> OrderView | Created[OrderView]:
+        view = OrderView(order_id=order_id)
+        return Created(view) if order_id.startswith("fresh") else view
 
 
-class ReadGrant(UseCase[Any, GrantView]):
-    async def execute(self, grant_id: str) -> GrantView:
-        return GrantView(grant_id=grant_id)
+class ReadOrder(UseCase[Any, OrderView]):
+    async def execute(self, order_id: str) -> OrderView:
+        return OrderView(order_id=order_id)
 
 
 class Opaque:
@@ -60,17 +60,17 @@ class Undocumented(RestInterface[Any]):
     )
 
 
-class Grants(RestInterface[Any]):
-    prefix = "/grants"
+class Orders(RestInterface[Any]):
+    prefix = "/orders"
     routes = (
-        RestRoute(use_case=CreateGrant, method="PUT", path="/{grant_id}"),
-        RestRoute(use_case=ReadGrant, method="GET", path="/{grant_id}"),
+        RestRoute(use_case=CreateOrder, method="PUT", path="/{order_id}"),
+        RestRoute(use_case=ReadOrder, method="GET", path="/{order_id}"),
     )
 
 
-class AcceptedGrants(RestInterface[Any]):
+class AcceptedOrders(RestInterface[Any]):
     prefix = "/accepted"
-    routes = (RestRoute(use_case=CreateGrant, method="PUT", path="/{grant_id}", status_code=202),)
+    routes = (RestRoute(use_case=CreateOrder, method="PUT", path="/{order_id}", status_code=202),)
 
 
 def _client(interface: type[RestInterface[Any]]) -> TestClient:
@@ -94,7 +94,7 @@ def _client(interface: type[RestInterface[Any]]) -> TestClient:
 
 
 def test_a_created_result_without_location_sends_no_location() -> None:
-    response = _client(Grants).put("/grants/fresh-1")
+    response = _client(Orders).put("/orders/fresh-1")
 
     assert response.status_code == 201
     assert "Location" not in response.headers
@@ -102,24 +102,24 @@ def test_a_created_result_without_location_sends_no_location() -> None:
 
 @pytest.mark.parametrize(
     ("interface", "url", "status"),
-    [(Grants, "/grants/old-1", 200), (AcceptedGrants, "/accepted/old-1", 202)],
+    [(Orders, "/orders/old-1", 200), (AcceptedOrders, "/accepted/old-1", 202)],
 )
 def test_any_other_result_answers_the_route_status(
     interface: type[RestInterface[Any]], url: str, status: int
 ) -> None:
     response = _client(interface).put(url)
 
-    assert (response.status_code, response.json()) == (status, {"grant_id": "old-1"})
+    assert (response.status_code, response.json()) == (status, {"order_id": "old-1"})
 
 
 def test_openapi_documents_both_statuses_with_the_same_schema() -> None:
     responses = (
-        _client(Grants)
+        _client(Orders)
         .get("/openapi.json")
-        .json()["paths"]["/grants/{grant_id}"]["put"]["responses"]
+        .json()["paths"]["/orders/{order_id}"]["put"]["responses"]
     )
 
-    expected = {"$ref": "#/components/schemas/GrantView"}
+    expected = {"$ref": "#/components/schemas/OrderView"}
     assert responses["200"]["content"]["application/json"]["schema"] == expected
     assert responses["201"]["content"]["application/json"]["schema"] == expected
     assert responses["201"]["headers"] == {
@@ -133,14 +133,14 @@ def test_openapi_documents_both_statuses_with_the_same_schema() -> None:
 
 def test_openapi_of_a_route_without_created_is_unchanged() -> None:
     responses = (
-        _client(Grants)
+        _client(Orders)
         .get("/openapi.json")
-        .json()["paths"]["/grants/{grant_id}"]["get"]["responses"]
+        .json()["paths"]["/orders/{order_id}"]["get"]["responses"]
     )
 
     assert "201" not in responses
     assert responses["200"]["content"]["application/json"]["schema"] == {
-        "$ref": "#/components/schemas/GrantView"
+        "$ref": "#/components/schemas/OrderView"
     }
 
 

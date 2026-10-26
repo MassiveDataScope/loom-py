@@ -68,6 +68,15 @@ Config
 
    loom.core.config
 
+Environment and deploy checks
+-----------------------------
+
+.. autosummary::
+   :toctree: generated
+
+   loom.core.environment
+   loom.core.checks
+
 SQL
 ---
 

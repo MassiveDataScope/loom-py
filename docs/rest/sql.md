@@ -65,10 +65,11 @@ sql:
       max_limit: 10000
       max_execution_time: 30          # seconds
       max_sql_bytes: 262144
-      connect_timeout: 10
-      send_receive_timeout: 60
+      connect_timeout: 10             # seconds
+      read_timeout: 60                # seconds to send a query or receive its response
       executor_threads: null          # driver default when null
-      pool_size: null                 # driver default when null
+      pool:
+        size: null                    # HTTP connections kept; driver default when null
       settings: {}                    # extra ClickHouse settings — can never override policy
       sql_endpoint:
         enabled: true                 # opt-in (default false)
@@ -103,9 +104,18 @@ at startup, never at request time:
 | `auth: identity` requires an authentication mechanism, `app.rest.auth.jwt.audience` when that mechanism is JWT, and the mounted path must not appear in the auth `exclude_paths` | An identity-bound role is worthless if tokens minted for another service are accepted, or if the path skips authentication altogether |
 
 ```{note}
-The `sql:` section is independent from the ETL `storage.clickhouse` section — they
-serve different purposes (interactive queries vs. pipelines). Share the DSN through a
-single environment variable if both point at the same cluster.
+A connection's address, credentials and transport keys (`url`, `username`,
+`password`, `connect_timeout`, `read_timeout`, `executor_threads`,
+`pool.size`) are `ClickHouseConnection`'s, the same keys the ETL's
+`storage.clickhouse` and a streaming sink's `database.<name>` take (see
+ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)). The SQL service bounds
+the driver at 10 s / 60 s by default; the ETL and the sinks keep the driver's
+own defaults (10 s / 300 s) unless they declare a bound. The sections stay
+separate — interactive queries and pipelines rarely share a policy — so share
+the DSN through a single environment variable when both point at the same cluster.
+
+`send_receive_timeout` is now `read_timeout` and `pool_size` is now
+`pool.size`; the old keys stop startup naming the new one.
 ```
 
 ### Query from a use case, as the caller
@@ -181,9 +191,8 @@ A connection mounts `POST /sql/{connection}` only with **double opt-in**:
 
 | `auth` value | Meaning |
 |--------------|---------|
-| `identity` | Requires a configured authentication mechanism — the built-in `app.rest.auth.jwt` section (with a validated `audience`) or a `create_app(authenticator=...)` of your own; startup fails with `ConfigError` otherwise. The only mode that can bind roles to an identity |
+| `identity` | Requires a configured authentication mechanism — the built-in `app.rest.auth.jwt` section (with a validated `audience`) or `app.rest.auth.custom: true` with a `create_app(authenticator=...)` of your own; startup fails with `ConfigError` otherwise. The only mode that can bind roles to an identity |
 | `external` | Explicit acknowledgement that the operator provides authentication in front of the app. No identity the framework can read, therefore no allowlist: single-role endpoint only |
-| `jwt` | Deprecated alias of `identity`, kept for existing configs. It named a mechanism where the contract only needs "the framework knows the caller" |
 
 `auth` decides **who gets in**; the authentication mechanism decides **what they may
 become** once in — for JWT, through `app.rest.auth.jwt.roles_claim`.
@@ -483,9 +492,9 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:LOOM_JWT_SECRET_PATH}   # HS256 — a path, not the value
+        secret_path: ${oc.env:JWT_SECRET_PATH}   # HS256 — a path, not the value
         # public_keys:                      # RS256/ES256/EdDSA — one PEM per key id
-        #   "2026-08": ${oc.env:LOOM_JWT_PUBLIC_KEY_PEM}
+        #   "2026-08": ${oc.env:JWT_PUBLIC_KEY_PEM}
         algorithms: [HS256]                 # explicit allowlist; 'none' always rejected
         audience: loom-api                  # REQUIRED by any sql_endpoint with auth: identity
         issuer: null                        # validated only when set

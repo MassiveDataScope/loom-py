@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, TypeVar
 
 from bytewax.operators import branch, flat_map
 
@@ -19,6 +19,7 @@ from loom.streaming.core._typing import StreamPayload
 
 Stream: TypeAlias = Any
 NodeResult: TypeAlias = Message[StreamPayload] | ErrorEnvelope[StreamPayload]
+ResultT = TypeVar("ResultT")
 logger = get_logger(__name__)
 
 
@@ -87,9 +88,9 @@ def _build_error_envelope(
 def _execute_in_boundary(
     classify: Callable[[Exception], ErrorKind],
     original: Message[StreamPayload],
-    fn: Callable[[], Message[StreamPayload]],
+    fn: Callable[[], ResultT],
     boundary: ErrorBoundary,
-) -> NodeResult:
+) -> ResultT | ErrorEnvelope[StreamPayload]:
     """Execute one message node and capture failures as error envelopes."""
     try:
         return fn()

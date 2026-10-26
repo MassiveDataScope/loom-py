@@ -20,12 +20,7 @@ from loom.ai.compiler._plan import (
 )
 from loom.ai.compiler.phases._feedable import feedable_input, is_granted
 from loom.ai.declarative import AgentSpecV1
-from loom.ai.errors import (
-    AgentCompilationIssue,
-    on_output_input_unsatisfied,
-    on_output_usecase_also_granted,
-    on_output_usecase_unknown,
-)
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 from loom.core.use_case.registry import UseCaseRegistry
 
 _HookResult = tuple[CompiledOutputHook | None, list[AgentCompilationIssue]]
@@ -55,15 +50,21 @@ def compile_output_hook(
     key = spec.on_output.usecase
     issues: list[AgentCompilationIssue] = []
     if is_granted(spec.capabilities, key):
-        issues.append(on_output_usecase_also_granted(component, key))
+        issues.append(
+            AgentErrorCode.ON_OUTPUT_USECASE_ALSO_GRANTED.issue(component=component, key=key)
+        )
     try:
         use_case = registry.resolve(key)
     except KeyError:
-        issues.append(on_output_usecase_unknown(component, key))
+        issues.append(AgentErrorCode.ON_OUTPUT_USECASE_UNKNOWN.issue(component=component, key=key))
         return None, issues
     accepted, reason = feedable_input(use_case, _OFFERED)
     if reason is not None:
-        issues.append(on_output_input_unsatisfied(component, key, reason))
+        issues.append(
+            AgentErrorCode.ON_OUTPUT_INPUT_UNSATISFIED.issue(
+                component=component, key=key, reason=reason
+            )
+        )
     if issues:
         return None, issues
     return CompiledOutputHook(usecase=key, use_case=use_case, accepted=accepted), []

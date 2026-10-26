@@ -7,21 +7,20 @@ in the consumer that reads an attribute off it. The codec is derived from the
 declared return annotation and applied on both paths, so the two calls are
 indistinguishable in value *and* in type.
 
-Methods the grammar cannot describe are not an error: ``@cache_query`` is
-public and accepts any return type today, so they warn and keep the old
-pass-through behaviour.
+A method the grammar cannot describe is refused when the repository is
+wrapped, so the application fails at boot rather than serving a hit whose
+type differs from the miss.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
 from loom.core.cache import CacheConfig, CachedRepository
-from loom.core.cache import repository as repository_module
+from loom.core.cache.decorators import cache_query
 from loom.core.cache.result_codec import build_result_codec
 from loom.core.model import BoundaryValidationError
 
@@ -32,6 +31,7 @@ from ._doubles import (
     EvolvedStats,
     LateStats,
     LyingRepository,
+    OutOfGrammarReadRepository,
     Stats,
     UnmarkedOverrideRepository,
     Widget,
@@ -201,93 +201,35 @@ class TestAuditFinding05:
 
 
 class TestUnusableAnnotations:
-    """A declared type outside the grammar warns and keeps working."""
+    """A declared type outside the grammar is refused when the repository is wrapped."""
 
-    @pytest.mark.parametrize(
-        "method_name",
-        ["unannotated", "unresolvable", "out_of_grammar"],
-    )
-    def test_construction_warns_naming_the_repository_and_the_method(
+    def test_wrapping_names_the_method_and_what_to_annotate(
         self,
         cache_config: CacheConfig,
-        method_name: str,
     ) -> None:
-        repository = CodecRepository(_widgets(ROW_COUNT), Widget)
+        repository = OutOfGrammarReadRepository(_widgets(ROW_COUNT), Widget)
 
-        with pytest.warns(DeprecationWarning) as records:
+        with pytest.raises(RuntimeError) as excinfo:
             wrap_with_cache(repository, cache_config)
 
-        messages = [str(record.message) for record in records]
-        assert any(
-            "CodecRepository" in message and method_name in message for message in messages
-        ), messages
+        message = str(excinfo.value)
+        assert "OutOfGrammarReadRepository.out_of_grammar" in message
+        assert "Annotate its return type" in message
 
-    @pytest.mark.parametrize(
-        ("method_name", "expected"),
-        [
-            ("unannotated", Stats(total=ROW_COUNT, label="unannotated")),
-            ("unresolvable", Stats(total=ROW_COUNT, label="unresolvable")),
-            ("out_of_grammar", {"total": ROW_COUNT}),
-        ],
-    )
-    async def test_the_first_call_still_returns_what_the_method_returned(
+    def test_a_cached_read_absent_from_the_class_is_refused_when_reached(
         self,
         codec_env: CachedEnv[Widget],
-        method_name: str,
-        expected: Any,
     ) -> None:
-        method = getattr(codec_env.wrapper, method_name)
+        """A read set on the instance escapes the wrap-time scan of the class."""
 
-        assert await method() == expected
+        @cache_query(scope="list")
+        async def attached() -> Stats:
+            return Stats(total=0, label="attached")
 
-    @pytest.mark.parametrize(
-        ("method_name", "expected"),
-        [
-            ("unannotated", {"total": ROW_COUNT, "label": "unannotated"}),
-            ("unresolvable", {"total": ROW_COUNT, "label": "unresolvable"}),
-            ("out_of_grammar", {"total": ROW_COUNT}),
-        ],
-    )
-    async def test_the_cached_call_keeps_returning_the_decoded_payload(
-        self,
-        codec_env: CachedEnv[Widget],
-        codec_repository: CodecRepository[Widget],
-        method_name: str,
-        expected: Any,
-    ) -> None:
-        _first, second = await _call_twice(codec_env.wrapper, method_name)
+        codec_env.repository.attached = attached  # type: ignore[attr-defined]
 
-        assert second == expected
-        assert codec_repository.custom_calls[method_name] == 1
-
-    def test_an_operator_sees_it_in_the_logs_too(
-        self,
-        cache_config: CacheConfig,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """``DeprecationWarning`` is filtered out by default; the log line is not."""
-        repository = CodecRepository(_widgets(ROW_COUNT), Widget)
-
-        with (
-            caplog.at_level(logging.WARNING, logger=repository_module.__name__),
-            pytest.warns(DeprecationWarning),
-        ):
-            wrap_with_cache(repository, cache_config)
-
-        assert "CacheQueryReturnTypeUnusable" in caplog.text
-        assert "out_of_grammar" in caplog.text
-
-    def test_a_read_inside_the_grammar_warns_about_nothing(
-        self,
-        cache_config: CacheConfig,
-    ) -> None:
-        repository = CodecRepository(_widgets(ROW_COUNT), Widget)
-
-        with pytest.warns(DeprecationWarning) as records:
-            wrap_with_cache(repository, cache_config)
-
-        named = [str(record.message) for record in records]
-        assert not [message for message in named if "stats_list" in message], named
+        with pytest.raises(RuntimeError, match="attached"):
+            _ = codec_env.wrapper.attached
 
 
 class TestCodecConstruction:
@@ -311,8 +253,7 @@ class TestCodecConstruction:
     ) -> None:
         repository = ExplodingAttributeRepository(_widgets(ROW_COUNT), Widget)
 
-        with pytest.warns(DeprecationWarning):
-            wrap_with_cache(repository, cache_config)
+        wrap_with_cache(repository, cache_config)
 
         assert repository.property_reads == 0
 
@@ -466,20 +407,17 @@ class TestUnmarkedOverride:
     def override_env(self, cache_config: CacheConfig) -> CachedEnv[Widget]:
         repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), Widget)
 
-        with pytest.warns(DeprecationWarning):
-            return wrap_with_cache(repository, cache_config)
+        return wrap_with_cache(repository, cache_config)
 
-    def test_the_base_annotation_of_an_overridden_read_deprecates_nothing(
+    def test_the_base_annotation_of_an_overridden_read_is_not_refused(
         self,
         cache_config: CacheConfig,
     ) -> None:
         repository = UnmarkedOverrideRepository(_widgets(ROW_COUNT), Widget)
 
-        with pytest.warns(DeprecationWarning) as records:
-            wrap_with_cache(repository, cache_config)
+        env = wrap_with_cache(repository, cache_config)
 
-        messages = [str(record.message) for record in records]
-        assert not [message for message in messages if "out_of_grammar" in message], messages
+        assert env.wrapper.out_of_grammar == repository.out_of_grammar
 
     async def test_the_overridden_read_is_not_cached(
         self,
@@ -517,6 +455,14 @@ def _returns_optional_list() -> list[Stats] | None:
     raise NotImplementedError
 
 
+def _returns_nothing():  # type: ignore[no-untyped-def]
+    raise NotImplementedError
+
+
+def _returns_unknown() -> UnknownStats:  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+    raise NotImplementedError
+
+
 class TestGrammarBoundaries:
     """Where the grammar stops, asserted on the builder rather than end to end."""
 
@@ -528,6 +474,8 @@ class TestGrammarBoundaries:
             _returns_bare_list,
             _returns_sequence,
             _returns_any,
+            _returns_nothing,
+            _returns_unknown,
         ],
     )
     def test_an_annotation_outside_the_grammar_gets_no_codec(

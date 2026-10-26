@@ -17,7 +17,7 @@ from loom.etl import (
     IntoTable,
     IntoTemp,
 )
-from loom.etl.compiler import ETLCompilationError, ETLCompiler
+from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.compiler._validators import validate_plan_temps
 
 
@@ -74,8 +74,10 @@ class ConsumeFirstPipeline(ETLPipeline[P]):
 
 def test_forward_temp_reference_raises() -> None:
     compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError, match="orders_temp"):
+    with pytest.raises(ETLCompilationError, match="orders_temp") as exc_info:
         compiler.compile(ConsumeFirstPipeline)
+
+    assert exc_info.value.code is ETLErrorCode.TEMP_NOT_PRODUCED
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +95,10 @@ class OrphanConsumePipeline(ETLPipeline[P]):
 
 def test_orphan_temp_reference_raises() -> None:
     compiler = ETLCompiler()
-    with pytest.raises(ETLCompilationError, match="orders_temp"):
+    with pytest.raises(ETLCompilationError, match="orders_temp") as exc_info:
         compiler.compile(OrphanConsumePipeline)
+
+    assert exc_info.value.code is ETLErrorCode.TEMP_NOT_PRODUCED
 
 
 # ---------------------------------------------------------------------------

@@ -44,9 +44,10 @@ from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
 from loom.ai.abc import ConcurrentMcpSession, McpToolCallResult, McpToolInfo
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
-from loom.ai.errors import AgentCompilationError, mcp_transport_invalid
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
+from loom.core.model.redaction import Secret
 
 if TYPE_CHECKING:
     from fastmcp.client.transports import ClientTransport, StdioTransport
@@ -281,7 +282,13 @@ def _mcp_client(component: str, capability: CompiledMcpCapability) -> str | Clie
     if capability.transport == "stdio" and capability.command is not None:
         return _stdio_transport(capability.command, capability)
     reason = f"transport {capability.transport!r} is not served by the pydantic-ai engine"
-    raise AgentCompilationError([mcp_transport_invalid(component, reason)])
+    raise AgentCompilationError(
+        [
+            AgentErrorCode.MCP_TRANSPORT_INVALID.issue(
+                component=component, field="transport", reason=reason
+            )
+        ]
+    )
 
 
 def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientTransport:
@@ -293,19 +300,12 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
     return _sdk().StdioTransport(
         command=command,
         args=list(capability.args),
-        env=dict(capability.env) or None,
+        env={
+            key: value.reveal() if isinstance(value, Secret) else value
+            for key, value in capability.env
+        }
+        or None,
         keep_alive=False,
-    )
-
-
-def _unopened_connection(agent: str, server: str) -> str:
-    """Describe the wiring that would give an agent an unvalidated connection."""
-    return (
-        f"{agent}: the runtime never opened mcp server '{server}' through this engine's "
-        f"shared toolsets. The runtime's 'mcp_client_factory' must be the "
-        f"'mcp_client_factory' of the very provider instance that builds the engines, "
-        f"or the run would hold a second connection whose tool filters start-up never "
-        f"validated"
     )
 
 
@@ -402,7 +402,13 @@ class SharedMcpToolsets:
         """
         connection = mcp_connection(capability)
         if connection not in self._opened:
-            raise AgentCompilationError([_unopened_connection(agent, capability.server)])
+            raise AgentCompilationError(
+                [
+                    AgentErrorCode.MCP_CONNECTION_NOT_OPENED.issue(
+                        component=agent, server=capability.server
+                    )
+                ]
+            )
         return self._toolset(connection)
 
     def _toolset(self, connection: CompiledMcpCapability) -> MCPToolset[Any]:

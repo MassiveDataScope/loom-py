@@ -450,6 +450,7 @@ def _streaming_kafka_config() -> dict[str, Any]:
             "consumer": {
                 "brokers": [_KAFKA_BROKER],
                 "group_id": "test",
+                "delivery": "at_most_once",
                 "topics": [_ORDERS_RAW_TOPIC],
             },
             "producer": {"brokers": [_KAFKA_BROKER], "topic": _ORDERS_VALIDATED_TOPIC},

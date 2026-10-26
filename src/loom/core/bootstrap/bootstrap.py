@@ -33,6 +33,7 @@ from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
+from loom.core.environment import Environment, resolve_environment
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.use_case.factory import UseCaseFactory
 
@@ -77,6 +78,7 @@ def bootstrap_app(
     modules: Sequence[Callable[[LoomContainer], None]] = (),
     logger: LoggerPort | None = None,
     metrics: MetricsAdapter | None = None,
+    environment: Environment | str | None = None,
 ) -> BootstrapResult:
     """Run the deterministic Loom bootstrap pipeline.
 
@@ -97,6 +99,11 @@ def bootstrap_app(
             Executed in declaration order before compilation.
         logger: Optional logger.  Falls back to the framework default.
         metrics: Optional metrics adapter passed to the compiler.
+        environment: Environment of the application, resolved like
+            :func:`~loom.core.environment.resolve_environment` (``LOOM_ENV``,
+            else production) when ``None``. Registered at ``APPLICATION``
+            scope with the configuration, before the modules run, so a
+            module's service can resolve it.
 
     Returns:
         :class:`BootstrapResult` with container, compiler, and factory.
@@ -117,12 +124,14 @@ def bootstrap_app(
         app = create_fastapi_app(result, RouteSources(python=[OrderRestInterface]))
     """
     _logger = logger or get_logger("loom.bootstrap")
+    resolved_environment = resolve_environment(environment)
 
     try:
         # Step 1 — Container + config binding
         _logger.info("[BOOT] Initialising DI container")
         container = LoomContainer()
         container.register(type(config), lambda: config, scope=Scope.APPLICATION)
+        container.register(Environment, lambda: resolved_environment, scope=Scope.APPLICATION)
 
         # Step 2 — User module bindings
         for module in modules:

@@ -252,7 +252,7 @@ def test_job_variables_env_as_a_list_is_rejected_naming_etl_and_environment(
         etl: orders
         pipeline: {PIPELINES}.OrdersPipeline
         environments:
-          prod:
+          production:
             job_variables:
               env: [FOO=bar]
         """,
@@ -271,7 +271,7 @@ def test_job_variables_as_a_list_is_rejected_naming_etl_and_environment(
         etl: orders
         pipeline: {PIPELINES}.OrdersPipeline
         environments:
-          prod:
+          production:
             job_variables: [cpu, 512]
         """,
     )

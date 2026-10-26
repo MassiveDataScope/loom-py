@@ -59,6 +59,7 @@ def bytewax_runtime_config_dict() -> dict[str, object]:
             "consumer": {
                 "brokers": ["localhost:9092"],
                 "group_id": "test",
+                "delivery": "at_most_once",
                 "topics": ["orders.in"],
             },
             "producer": {

@@ -161,7 +161,7 @@ def test_no_client_created_without_placeholders(
     cfg = load_config(plain_yaml, resolvers=default_resolvers())
 
     assert cfg.app.name == "demo"
-    boto3.client.assert_not_called()
+    boto3.Session.assert_not_called()
 
 
 def test_default_secrets_resolver_reports_the_extra_on_access(

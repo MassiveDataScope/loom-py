@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from loom.core.logger import get_logger
+from loom.core.model.redaction import Dsn
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
 
@@ -35,7 +36,7 @@ class SlackNotifier:
     def __init__(
         self,
         *,
-        webhook_url: str,
+        webhook_url: Dsn | str,
         on_failure: bool = True,
         on_completion: bool = False,
         channel: str | None = None,
@@ -54,8 +55,10 @@ class SlackNotifier:
         ):
             return
         payload = self._render(event)
+        url = self._webhook_url
+        webhook = url.reveal() if isinstance(url, Dsn) else url
         try:
-            self._http_post(self._webhook_url, json=payload, timeout=5.0)
+            self._http_post(webhook, json=payload, timeout=5.0)
         except (urllib.error.URLError, TimeoutError, RuntimeError):
             _log.warning(
                 "Slack post failed",

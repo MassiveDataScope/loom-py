@@ -14,6 +14,8 @@ from typing import Any
 import msgspec
 
 from loom.core.config import is_cloud_uri, load_config
+from loom.core.environment import Environment, parse_environment
+from loom.core.model.redaction import RedactedMap
 from loom.prefect._meta import FlowTrigger
 
 _ENV_INTERPOLATION = re.compile(r"\$\{oc\.[^}]*\}")
@@ -22,6 +24,8 @@ _ENV_INTERPOLATION = re.compile(r"\$\{oc\.[^}]*\}")
 def read_yaml(config_path: str) -> dict[str, Any]:
     """Load a per-flow YAML via ``loom.core.config.load_config``.
 
+    A per-flow YAML defines a flow, not the process's application
+    configuration, so the ``LOOM__*`` overrides do not apply to it.
     ``${oc.*}`` interpolations are resolved against the host env at load
     time; loom placeholders (``${now}``, ``${today-1d}``, …) are kept
     verbatim so :func:`resolve_placeholder` resolves them at flow-run
@@ -58,25 +62,34 @@ def resolve_config_uri(config_path: str) -> str:
     return str(Path(config_path).resolve())
 
 
-def extract_pool_config(raw_cfg: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def extract_pool_config(raw_cfg: Mapping[str, Any]) -> dict[Environment, dict[str, Any]]:
     """Return per-environment work-pool overrides from the per-flow YAML.
 
     Args:
         raw_cfg: Top-level YAML mapping returned by :func:`read_yaml`.
 
     Returns:
-        Mapping ``environment → {"work_pool": str | None,
+        Mapping ``Environment → {"work_pool": str | None,
         "job_variables": dict}``. Empty when the YAML has no
         ``environments`` block.
+
+    Raises:
+        ConfigError: When a key of ``environments`` names no
+            :class:`~loom.core.environment.Environment`.
     """
     environments = raw_cfg.get("environments") or {}
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[Environment, dict[str, Any]] = {}
     for env_name, env_block in environments.items():
+        environment = parse_environment(str(env_name), source="the environments block")
         if not isinstance(env_block, dict):
             continue
-        out[env_name] = {
+        raw_variables = env_block.get("job_variables", {}) or {}
+        variables = (
+            RedactedMap(raw_variables) if isinstance(raw_variables, Mapping) else raw_variables
+        )
+        out[environment] = {
             "work_pool": env_block.get("work_pool"),
-            "job_variables": env_block.get("job_variables", {}) or {},
+            "job_variables": variables,
         }
     return out
 

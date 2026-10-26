@@ -7,7 +7,6 @@ import os
 import pkgutil
 import sys
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
@@ -18,7 +17,13 @@ from prefect.events import DeploymentEventTrigger
 from prefect.exceptions import ScriptError
 from prefect.utilities.importtools import load_script_as_module
 
-from loom.prefect._meta import LOOM_ETL_CONFIG, LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
+from loom.core.environment import (
+    ETL_CONFIG_VARIABLE,
+    Environment,
+    resolve_environment,
+    scoped_loom_variable,
+)
+from loom.prefect._meta import LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
 from loom.prefect.deploy import entrypoint
 from loom.prefect.deploy._schedule import build_cron_schedule
 from loom.prefect.deploy._yaml_etls import EtlDeclaration, read_declarations
@@ -30,16 +35,18 @@ def discover_and_deploy_etls(
     flows_package: str | None = None,
     config: str | None = None,
     work_pool: str = "loom-fargate",
-    env: str = "prod",
+    env: Environment | str | None = None,
 ) -> list[str]:
     """Register one Prefect Deployment per ETL.
 
     ETLs come either from ``flows_package`` (one module per ETL calling
     ``etl_flow``) or from ``config`` (YAML declarations rebuilt at run time
     through :mod:`loom.prefect.deploy.entrypoint`). Each deployment targets
-    ``work_pool`` (an ECS-typed pool in prod, a docker-typed pool in local
-    dev) and carries the per-ETL ``job_variables`` from the YAML's
-    ``environments.<env>`` block.
+    ``work_pool`` (an ECS-typed pool in production, a docker-typed pool in
+    development) and carries the per-ETL ``job_variables`` from the YAML's
+    ``environments.<env>`` block. Each deployment records the environment
+    as its ``env`` parameter; a run confirms it against the worker's
+    ``LOOM_ENV`` and fails on a worker in another environment.
 
     The ``config`` path exports ``LOOM_ETL_CONFIG`` in the process
     environment around each ``from_source`` call, so it is not thread-safe.
@@ -47,10 +54,11 @@ def discover_and_deploy_etls(
     Args:
         flows_package: Dotted package containing one module per ETL.
         config: Local path, cloud URI or glob of ETL declaration files.
-        work_pool: Prefect work pool name. Default matches the prod ECS
-            pool; override with ``loom-docker`` for local dev.
-        env: Environment key used to pull ``job_variables`` from each
-            ETL's YAML.
+        work_pool: Prefect work pool name. Default matches the production
+            ECS pool; override with ``loom-docker`` for development.
+        env: Environment to deploy for: picks ``environments.<env>`` from
+            each ETL's YAML. ``None`` resolves it like any loom process
+            (``LOOM_ENV``, else production).
 
     Returns:
         List of deployment ids.
@@ -62,18 +70,25 @@ def discover_and_deploy_etls(
             cannot be imported or is not exposed under its attribute name, as
             :func:`deploy_flow` checks; raised before any deployment is
             registered.
-        ConfigError: When a declaration in ``config`` is invalid or sets
+        ConfigError: When ``env`` names no environment, or a declaration in
+            ``config`` is invalid or sets
             ``LOOM_ETL_CONFIG`` under ``job_variables.env``; raised before
             any deployment is registered.
     """
     if (flows_package is None) == (config is None):
         raise ValueError("pass exactly one of flows_package= or config=")
+    environment = resolve_environment(env)
     if flows_package is not None:
-        return _deploy_package(flows_package, work_pool, env)
-    return [_deploy_declaration(d, work_pool, env) for d in read_declarations(str(config))]
+        return _deploy_package(flows_package, work_pool, environment)
+    return [_deploy_declaration(d, work_pool, environment) for d in read_declarations(str(config))]
 
 
-def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None) -> str:
+def deploy_flow(
+    flow: Flow[..., Any],
+    *,
+    env: Environment | str | None = None,
+    work_pool: str | None = None,
+) -> str:
     """Register the Prefect Deployment of one flow built by a loom flow factory.
 
     Registers exactly what :func:`discover_and_deploy_etls` registers for the
@@ -96,8 +111,10 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
         flow: A flow returned by :func:`~loom.prefect.etl_flow`,
             :func:`~loom.prefect.backfill_flow` or
             :func:`~loom.prefect.maintenance_flow`.
-        env: Environment key used to pull ``work_pool`` and
-            ``job_variables`` from the flow's YAML.
+        env: Environment to deploy for: picks ``work_pool`` and
+            ``job_variables`` from ``environments.<env>`` of the flow's YAML
+            and becomes the deployment's ``env`` parameter. ``None`` resolves
+            it like any loom process (``LOOM_ENV``, else production).
         work_pool: Prefect work pool name, used when the YAML sets no
             ``work_pool`` for ``env``.
 
@@ -108,6 +125,7 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
         TypeError: When ``flow`` was not built by a loom flow factory, or was
             built from a YAML declaration, which
             ``discover_and_deploy_etls(config=...)`` deploys.
+        ConfigError: When ``env`` names no environment.
         ValueError: When neither ``work_pool`` nor the YAML names a work pool
             for ``env``, when ``source_file`` cannot be imported, or when it
             does not expose the flow under its attribute name.
@@ -117,7 +135,7 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
         from loom.prefect import deploy_flow, etl_flow
 
         daily_orders = etl_flow(name="daily-orders", ...)
-        deployment_id = deploy_flow(daily_orders, env="dev", work_pool="loom-docker")
+        deployment_id = deploy_flow(daily_orders, env="development", work_pool="loom-docker")
     """
     meta = getattr(flow, LOOM_ETL_META_ATTR, None)
     if not isinstance(meta, ETLFlowMeta):
@@ -130,7 +148,7 @@ def deploy_flow(flow: Flow[..., Any], *, env: str, work_pool: str | None = None)
             f"deploy_flow() cannot deploy {meta.name!r}: it was built from a YAML "
             f"declaration; deploy it with discover_and_deploy_etls(config=...)."
         )
-    plan = _plan(meta, work_pool, env)
+    plan = _plan(meta, work_pool, resolve_environment(env))
     _check_exposed(meta)
     return _deploy_single(flow, meta, plan)
 
@@ -178,14 +196,16 @@ def _loaded_module_name(source_file: str) -> str | None:
     a symlinked directory matches the file it resolves to.
     """
     source = os.path.realpath(source_file)
-    for name, module in list(sys.modules.items()):
+    # Iterates a copy: another thread can import while this loop runs, and so
+    # can reading ``__file__`` on a lazily loaded module.
+    for name, module in sys.modules.copy().items():
         module_file = getattr(module, "__file__", None)
         if module_file is not None and os.path.realpath(module_file) == source:
             return name
     return None
 
 
-def _deploy_package(flows_package: str, work_pool: str, env: str) -> list[str]:
+def _deploy_package(flows_package: str, work_pool: str, env: Environment) -> list[str]:
     pkg = importlib.import_module(flows_package)
     pkg_path = getattr(pkg, "__path__", None)
     if pkg_path is None:
@@ -220,13 +240,14 @@ class _DeploymentPlan:
     working_dir: str
     image: str | None
     job_variables: dict[str, Any]
+    environment: Environment
 
 
-def _deploy_declaration(declaration: EtlDeclaration, work_pool: str, env: str) -> str:
+def _deploy_declaration(declaration: EtlDeclaration, work_pool: str, env: Environment) -> str:
     flow_obj = entrypoint.build_flow(declaration)
     meta = getattr(flow_obj, LOOM_ETL_META_ATTR)
     plan = _with_recorded_env(_plan(meta, work_pool, env), declaration.config_uri)
-    with _exported(LOOM_ETL_CONFIG, declaration.config_uri):
+    with scoped_loom_variable(ETL_CONFIG_VARIABLE, declaration.config_uri):
         sourced = flow_obj.from_source(
             source=plan.working_dir,
             entrypoint=f"{entrypoint.__name__}.{declaration.attribute}",
@@ -237,23 +258,9 @@ def _deploy_declaration(declaration: EtlDeclaration, work_pool: str, env: str) -
 def _with_recorded_env(plan: _DeploymentPlan, config_uri: str) -> _DeploymentPlan:
     """Record the declaration file under ``job_variables.env`` for the worker."""
     user_env = plan.job_variables.get("env") or {}
-    env = {**user_env, LOOM_ETL_CONFIG: config_uri}
-    # ``replace`` copies fields added later; the cast Sonar asks for fails mypy.
+    env = {**user_env, ETL_CONFIG_VARIABLE: config_uri}
+    # ``replace`` copies fields added later.
     return replace(plan, job_variables={**plan.job_variables, "env": env})
-
-
-@contextmanager
-def _exported(name: str, value: str) -> Iterator[None]:
-    """Set ``name`` in the process environment, restoring the previous state on exit."""
-    previous = os.environ.get(name)
-    os.environ[name] = value
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = previous
 
 
 def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, plan: _DeploymentPlan) -> str:
@@ -271,13 +278,13 @@ def _deploy_single(flow_obj: Any, meta: ETLFlowMeta, plan: _DeploymentPlan) -> s
     return _register(sourced, meta, plan)
 
 
-def _plan(meta: ETLFlowMeta, work_pool: str | None, env: str) -> _DeploymentPlan:
+def _plan(meta: ETLFlowMeta, work_pool: str | None, env: Environment) -> _DeploymentPlan:
     """Resolve the pool, image and job variables of ``meta`` for ``env``."""
     pool_env_config = meta.pool_config.get(env, {})
     resolved_pool = pool_env_config.get("work_pool") or work_pool
     if not resolved_pool:
         raise ValueError(
-            f"no work pool for flow {meta.name!r} in env {env!r}: pass work_pool= "
+            f"no work pool for flow {meta.name!r} in env {str(env)!r}: pass work_pool= "
             f"or set environments.{env}.work_pool in its YAML."
         )
     job_variables = dict(pool_env_config.get("job_variables") or {})
@@ -287,6 +294,7 @@ def _plan(meta: ETLFlowMeta, work_pool: str | None, env: str) -> _DeploymentPlan
         working_dir=job_variables.get("working_dir", "/app/src"),
         image=image,
         job_variables=job_variables,
+        environment=env,
     )
 
 
@@ -297,7 +305,7 @@ def _register(sourced: Any, meta: ETLFlowMeta, plan: _DeploymentPlan) -> str:
         "build": False,
         "push": False,
         "tags": [meta.name, *meta.tags],
-        "parameters": dict(meta.raw_params),
+        "parameters": {**meta.raw_params, "env": plan.environment.value},
         "job_variables": plan.job_variables,
         "enforce_parameter_schema": False,
     }

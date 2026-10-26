@@ -30,6 +30,7 @@ from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.core.engine.compilable import Compilable
 from loom.core.model import LoomFrozenStruct, LoomType
+from loom.core.model.redaction import Secret
 from loom.core.sql.config import SqlConnectionConfig
 
 
@@ -111,11 +112,12 @@ class CompiledRemoteAuth(LoomFrozenStruct, frozen=True, kw_only=True):
     Attributes:
         kind: Strategy name registered in the ``loom.ai.remote_auth`` group.
         settings: The rest of the ``auth`` block, passed to the strategy as
-            keyword arguments in declaration order.
+            keyword arguments in declaration order. A repr masks them; the
+            strategy receives the text when it is built.
     """
 
     kind: str
-    settings: tuple[tuple[str, str], ...] = ()
+    settings: tuple[tuple[str, Secret[str] | str], ...] = ()
 
 
 class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
@@ -139,7 +141,8 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
             of this worker.
         url: Validated ``https://`` server URL, free of inline credentials;
             ``None`` under ``stdio``.
-        headers_ref: Reference to deployment-resolved headers; never a secret.
+        headers_ref: Resolved header payload. A repr masks it; the client
+            reveals it when the connection opens.
         auth: Named authentication strategy, mutually exclusive with
             ``headers_ref``; ``None`` when the server needs no credential.
         timeout_ms: Deadline of a single call to this server.
@@ -148,6 +151,7 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
         args: Arguments passed to ``command``.
         env: Environment handed to the subprocess as key-sorted pairs, so the
             plan stays a hashable value whatever order the operator wrote.
+            Values are masked in a repr and revealed when the process starts.
         include: Tool names or glob patterns to expose; empty means all.
         exclude: Tool names or glob patterns to omit, applied after ``include``.
     """
@@ -157,12 +161,12 @@ class CompiledMcpCapability(LoomFrozenStruct, frozen=True, kw_only=True):
     server: str
     transport: str = "http"
     url: str | None = None
-    headers_ref: str | None = None
+    headers_ref: Secret[str] | None = None
     auth: CompiledRemoteAuth | None = None
     timeout_ms: int = 20000
     command: str | None = None
     args: tuple[str, ...] = ()
-    env: tuple[tuple[str, str], ...] = ()
+    env: tuple[tuple[str, Secret[str] | str], ...] = ()
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
@@ -244,7 +248,8 @@ class CompiledA2ACapability(LoomFrozenStruct, frozen=True, kw_only=True):
     Attributes:
         agent: Configured agent name, carried for the self-description.
         url: Validated ``https://`` remote agent URL, free of credentials.
-        headers_ref: Reference to deployment-resolved headers; never a secret.
+        headers_ref: Resolved header payload. A repr masks it; the client
+            reveals it when the connection opens.
             Applied to every request the client makes, the card fetch included.
         auth: Named authentication strategy, mutually exclusive with
             ``headers_ref``; ``None`` when the agent needs no credential.
@@ -256,7 +261,7 @@ class CompiledA2ACapability(LoomFrozenStruct, frozen=True, kw_only=True):
 
     agent: str
     url: str
-    headers_ref: str | None = None
+    headers_ref: Secret[str] | None = None
     auth: CompiledRemoteAuth | None = None
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()

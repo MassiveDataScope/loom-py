@@ -26,6 +26,7 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -86,7 +87,9 @@ async def sa_env(tmp_path: Path):  # type: ignore[no-untyped-def]
     async with manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().create_all)
 
-    repo_module = build_sqlalchemy_repository_registration_module(manager, (Product,))
+    repo_module = build_sqlalchemy_repository_registration_module(
+        manager, (Product,), cursor_codec=CursorCodec(signing="ephemeral")
+    )
 
     try:
         yield manager, repo_module

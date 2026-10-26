@@ -34,6 +34,7 @@ from .target import (
     DeletePolicy,
     EmptyReplaceError,
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
     HistorifyRepairReport,
@@ -91,6 +92,7 @@ __all__ = [
     # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
+    "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
     # write errors
     "EmptyReplaceError",

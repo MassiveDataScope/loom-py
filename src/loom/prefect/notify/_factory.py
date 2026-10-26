@@ -5,17 +5,18 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from loom.core.model.redaction import Dsn
 from loom.prefect.notify._port import Notifier
 from loom.prefect.notify._slack import SlackNotifier
 from loom.prefect.notify._sns import SnsNotifier
 
 
 def _build_slack(cfg: dict[str, Any]) -> Notifier | None:
-    webhook = cfg.get("webhook_url") or ""
-    if not webhook.strip():
+    webhook = str(cfg.get("webhook_url") or "").strip()
+    if not webhook:
         return None
     return SlackNotifier(
-        webhook_url=webhook,
+        webhook_url=Dsn(webhook),
         on_failure=bool(cfg.get("on_failure", True)),
         on_completion=bool(cfg.get("on_completion", False)),
         channel=cfg.get("channel"),

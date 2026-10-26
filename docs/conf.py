@@ -126,10 +126,6 @@ _AI_COMPILER_REEXPORTED_NAMES = (
 )
 
 _DUPLICATED_REEXPORTS = {
-    ("loom.core.errors", "RuleViolation"),
-    ("loom.core.errors", "RuleViolations"),
-    ("loom.core.use_case", "RuleViolation"),
-    ("loom.core.use_case", "RuleViolations"),
     ("loom.etl.compiler", "InvalidStageError"),
     ("loom.etl.lineage", "ETLObservabilityConfig"),
     ("loom.testing", "CompilationError"),
