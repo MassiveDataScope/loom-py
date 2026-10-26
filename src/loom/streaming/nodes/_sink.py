@@ -26,26 +26,39 @@ class SinkPartition(Protocol[EventT_contra]):
 
     The adapter calls write_batch() once per Bytewax epoch and close() on
     shutdown. Implementations must be sync-safe — use AsyncBridge for storage
-    targets that require async I/O (e.g. SQLAlchemy async sessions).
+    targets that require async I/O (e.g. SQLAlchemy async sessions). After a
+    call raises, the counts later calls return complete nothing.
 
     Args:
         EventT_contra: Contravariant event type this partition accepts.
     """
 
-    def write_batch(self, items: Sequence[EventT_contra]) -> None:
-        """Write a batch of events for this epoch.
+    def write_batch(self, items: Sequence[EventT_contra]) -> int:
+        """Write or buffer a batch of events for this epoch.
 
         Args:
             items: Events delivered by Bytewax for the current epoch.
+
+        Returns:
+            How many of the oldest events not yet reported durable are durable
+            now, across this and earlier calls; ``0`` when this call only
+            buffered. Under at-least-once delivery the adapter completes the
+            source offsets of exactly that many events, oldest first, so events
+            must become durable in the order they arrived.
         """
         ...
 
-    def close(self) -> None:
+    def close(self) -> int:
         """Release resources and flush any pending data.
 
         Called once per worker on shutdown or after a failed run. Must be
         idempotent — the adapter may call close() even when write_batch()
         was never invoked.
+
+        Returns:
+            How many buffered events this call made durable, as for
+            :meth:`write_batch`. Events still buffered and not flushed here are
+            never completed, so their offsets are consumed again.
         """
         ...
 
@@ -83,6 +96,8 @@ class IntoSink(Protocol[EventT]):
                 bridge=None,
                 session_manager=None,
             ):
+                # MongoPartition.write_batch and .close return how many events
+                # they made durable; see SinkPartition.
                 return MongoPartition(url=config["url"], collection=self.collection)
 
     Args:
@@ -101,7 +116,10 @@ class IntoSink(Protocol[EventT]):
 
     @property
     def router_branch_safe(self) -> bool:
-        """Whether the same sink may terminate more than one router branch."""
+        """Whether this sink may appear inside a Router branch.
+
+        Only the attribute's presence is checked.
+        """
         ...
 
     def build_partition(

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from loom.core.connections.aws import AwsClientConfig, aws_island
+from loom.core.connections.mongo import MongoConnection, mongo_island
+from loom.core.model.redaction import reveal_for_driver
 from loom.etl.backends.polars._reader import PolarsSourceReader
 from loom.etl.backends.polars._writer import PolarsTargetWriter
 from loom.etl.io._registry import WriterRegistry
@@ -15,7 +18,7 @@ from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import RecordFrameTargetWriter, TargetLineageWriter
 from loom.etl.runner._providers import BackendProvider
 from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader, TargetWriter
-from loom.etl.storage._config import CatalogConnection, DynamoDbConfig, MongoConfig, StorageConfig
+from loom.etl.storage._config import CatalogConnection, StorageConfig
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 
@@ -32,13 +35,13 @@ class PolarsProvider(BackendProvider):
         file_locator = config.to_file_locator()
         mongo_reader = (
             MongoSourceReader(_build_mongo_client(config.mongo), config.mongo.database)
-            if config.mongo.uri
+            if config.mongo is not None
             else MongoSourceReader()
         )
-        clickhouse_reader = ClickHouseSourceReader(config.clickhouse.url or None)
+        clickhouse_reader = ClickHouseSourceReader(connection=config.clickhouse)
         dynamodb_reader = (
             DynamoDbSourceReader(_build_dynamodb_client(config.dynamodb))
-            if config.dynamodb.enabled
+            if config.dynamodb is not None
             else DynamoDbSourceReader()
         )
         polars_reader = PolarsSourceReader(
@@ -55,10 +58,10 @@ class PolarsProvider(BackendProvider):
             audit_config=config.audit,
         )
         writer: TargetWriter
-        if config.clickhouse.url:
+        if config.clickhouse is not None:
             writer = WriterRegistry(
                 polars_writer,
-                extra={"clickhouse": ClickHouseTargetWriter(config.clickhouse.url)},
+                extra={"clickhouse": ClickHouseTargetWriter(connection=config.clickhouse)},
             )
         else:
             writer = polars_writer
@@ -79,8 +82,8 @@ class PolarsProvider(BackendProvider):
             )
 
         locator = PrefixLocator(
-            root=lineage.root,
-            storage_options=lineage.storage_options or None,
+            root="" if lineage.root is None else lineage.root.reveal(),
+            storage_options=reveal_for_driver(lineage.storage_options) or None,
             writer=lineage.writer or None,
             delta_config=lineage.delta_config or None,
             commit=lineage.commit or None,
@@ -97,39 +100,27 @@ class PolarsProvider(BackendProvider):
         spark: Any = None,
     ) -> ClientCommandExecutor | None:
         _ = spark
-        if config.clickhouse.url:
-            return ClickHouseClientExecutor(url=config.clickhouse.url)
+        if config.clickhouse is not None:
+            return ClickHouseClientExecutor(connection=config.clickhouse)
         return None
 
 
-def _build_mongo_client(cfg: MongoConfig) -> Any:
-    """Build a PyMongo client for the configured Mongo source.
+def _build_mongo_client(connection: MongoConnection) -> Any:
+    """Build a PyMongo client for the ``storage.mongo`` connection.
 
     Raises:
-        ImportError: When the ``mongo`` extra is not installed.
+        MissingExtraError: When the ``mongo`` extra is not installed.
     """
-    try:
-        from pymongo import MongoClient
-    except ImportError as exc:
-        raise ImportError(
-            "MongoDB sources require the 'mongo' extra (pymongo). "
-            "Install loom-kernel[mongo] to read from storage.mongo."
-        ) from exc
-
-    return MongoClient(cfg.uri)
+    return mongo_island().build_mongo_client(connection)
 
 
-def _build_dynamodb_client(cfg: DynamoDbConfig) -> Any:
-    # Local import: boto3 is an optional dependency (loom-kernel[dynamodb]) and
-    # must only be required when DynamoDB sources are enabled in the config.
-    import boto3  # type: ignore[import-untyped]
+def _build_dynamodb_client(config: AwsClientConfig) -> Any:
+    """Build a boto3 DynamoDB client for the ``storage.dynamodb`` settings.
 
-    session = boto3.Session(profile_name=cfg.profile) if cfg.profile else boto3.Session()
-    return session.client(
-        "dynamodb",
-        region_name=cfg.region or None,
-        endpoint_url=cfg.endpoint_url or None,
-    )
+    Raises:
+        MissingExtraError: When the ``dynamodb`` extra is not installed.
+    """
+    return aws_island(extra="dynamodb").build_aws_client("dynamodb", config)
 
 
 def _build_polars_locator(config: StorageConfig) -> TableLocator:
@@ -153,8 +144,8 @@ def _build_polars_locator(config: StorageConfig) -> TableLocator:
         return MappingLocator(mapping=mapping, default=default_location)
     if default_path is not None:
         return PrefixLocator(
-            root=default_path.uri,
-            storage_options=default_path.storage_options or None,
+            root="" if default_path.uri is None else default_path.uri.reveal(),
+            storage_options=reveal_for_driver(default_path.storage_options) or None,
             writer=default_path.writer or None,
             delta_config=default_path.delta_config or None,
             commit=default_path.commit or None,
@@ -198,10 +189,10 @@ def _unity_storage_options(config: StorageConfig, catalog_key: str) -> dict[str,
 
 def _unity_storage_options_from_connection(connection: CatalogConnection) -> dict[str, str]:
     options: dict[str, str] = {}
-    if connection.workspace:
-        options["databricks_workspace_url"] = connection.workspace
-    if connection.token:
-        options["databricks_access_token"] = connection.token
+    if connection.workspace is not None:
+        options["databricks_workspace_url"] = connection.workspace.reveal()
+    if connection.token is not None:
+        options["databricks_access_token"] = connection.token.reveal()
     return options
 
 

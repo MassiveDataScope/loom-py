@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from loom.core.model.redaction import reveal_for_driver
 from loom.etl.backends.spark._reader import SparkSourceReader
 from loom.etl.backends.spark._writer import SparkTargetWriter
 from loom.etl.lineage._config import LineageConfig
@@ -62,8 +63,8 @@ class SparkProvider(BackendProvider):
             return TargetLineageWriter(cast(RecordFrameTargetWriter, target_writer))
 
         locator = PrefixLocator(
-            root=lineage.root,
-            storage_options=lineage.storage_options or None,
+            root="" if lineage.root is None else lineage.root.reveal(),
+            storage_options=reveal_for_driver(lineage.storage_options) or None,
             writer=lineage.writer or None,
             delta_config=lineage.delta_config or None,
             commit=lineage.commit or None,

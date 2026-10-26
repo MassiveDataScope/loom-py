@@ -6,13 +6,7 @@ from collections.abc import Mapping
 from typing import Any, TypeGuard
 
 from loom.core.config import ConfigBinding, ConfigContext, ConfigError
-from loom.streaming.compiler._errors import (
-    CompilationIssue,
-    binding_not_process_node,
-    binding_resolution_failed,
-    fork_selector_missing,
-    step_instantiation_failed,
-)
+from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.graph._flow import Process, ProcessNode, StreamFlow
 from loom.streaming.nodes._boundary import IntoTopic
 from loom.streaming.nodes._broadcast import Broadcast, BroadcastRoute
@@ -70,14 +64,16 @@ def _resolve_process_node(
         try:
             return node()
         except TypeError as exc:
-            errors.append(step_instantiation_failed(node, exc))
+            errors.append(
+                StreamingErrorCode.STEP_INSTANTIATION_FAILED.issue(component=node, exc=exc)
+            )
             return node
     if isinstance(node, ConfigBinding):
         resolved = _resolve_binding(node, ctx, errors)
         if _is_process_node(resolved):
             return resolved
         binding_name = node.config_path or node.target.__name__
-        errors.append(binding_not_process_node(binding_name))
+        errors.append(StreamingErrorCode.BINDING_NOT_PROCESS_NODE.issue(component=binding_name))
         return node
     if isinstance(node, With):
         return _resolve_with(node, ctx, errors)
@@ -103,7 +99,9 @@ def _resolve_binding(
         return ctx.resolve(binding)
     except (ConfigError, TypeError, ValueError) as exc:
         binding_name = binding.config_path or binding.target.__name__
-        errors.append(binding_resolution_failed(binding_name, exc))
+        errors.append(
+            StreamingErrorCode.BINDING_RESOLUTION_FAILED.issue(component=binding_name, exc=exc)
+        )
         return binding
 
 
@@ -165,7 +163,7 @@ def _resolve_fork(
     if node.kind is ForkKind.KEYED:
         selector = node.selector
         if selector is None:
-            errors.append(fork_selector_missing())
+            errors.append(StreamingErrorCode.FORK_SELECTOR_MISSING.issue())
             return node
         routes = {
             key: _resolve_process(process, ctx, errors) for key, process in node.routes.items()

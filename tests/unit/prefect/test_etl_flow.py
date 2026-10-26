@@ -58,12 +58,12 @@ def _write_cfg(tmp_path: Path) -> Path:
           updated_at_from: ${now-1d}
           updated_at_to: ${now}
         environments:
-          prod:
+          production:
             work_pool: loom-fargate
             job_variables:
               task_definition_arn: arn:aws:ecs:::task-definition/sample:1
               cpu: "1024"
-          local:
+          development:
             work_pool: loom-docker
             job_variables:
               image: sample:dev
@@ -103,7 +103,7 @@ def test_etl_flow_synthesizes_typed_signature(tmp_path: Path) -> None:
         "processes",
     ]
     assert parameters["updated_at_from"].annotation is datetime
-    assert parameters["env"].default == "prod"
+    assert parameters["env"].default is None
     assert parameters["correlation_id"].default is None
     assert parameters["processes"].default is None
     assert parameters["processes"].annotation == list[str] | None
@@ -132,10 +132,10 @@ def test_etl_flow_attaches_discovery_metadata(tmp_path: Path) -> None:
         "updated_at_from": "${now-1d}",
         "updated_at_to": "${now}",
     }
-    assert meta.pool_config["prod"]["work_pool"] == "loom-fargate"
-    assert meta.pool_config["prod"]["job_variables"]["cpu"] == "1024"
-    assert meta.pool_config["local"]["work_pool"] == "loom-docker"
-    assert meta.pool_config["local"]["job_variables"]["image"] == "sample:dev"
+    assert meta.pool_config["production"]["work_pool"] == "loom-fargate"
+    assert meta.pool_config["production"]["job_variables"]["cpu"] == "1024"
+    assert meta.pool_config["development"]["work_pool"] == "loom-docker"
+    assert meta.pool_config["development"]["job_variables"]["image"] == "sample:dev"
 
 
 def test_etl_flow_captures_tags_when_present(tmp_path: Path) -> None:
@@ -189,7 +189,7 @@ def test_deploy_passes_meta_name_and_yaml_tags_no_loom_etl(
           - daily
         params: {}
         environments:
-          prod:
+          production:
             work_pool: loom-fargate
             job_variables:
               image: sample:dev
@@ -211,7 +211,7 @@ def test_deploy_passes_meta_name_and_yaml_tags_no_loom_etl(
     sourced.deploy = MagicMock(return_value="deployment-id-abc")
     flow_obj.from_source = MagicMock(return_value=sourced)
 
-    deployment_id = deploy_flow(flow_obj, env="prod", work_pool="default-pool")
+    deployment_id = deploy_flow(flow_obj, env="production", work_pool="default-pool")
 
     assert deployment_id == "deployment-id-abc"
     deploy_kwargs = sourced.deploy.call_args.kwargs

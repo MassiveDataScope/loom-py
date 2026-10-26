@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 import loom.celery.bootstrap as boot
+from loom.core.config import ConfigContext
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
 
@@ -96,4 +97,5 @@ def test_compile_db_layer_names_sqlalchemy_extra_when_missing(
             [boot.BaseModel],
             (),
             naming_convention=None,
+            ctx=ConfigContext.from_dict({"persistence": {"cursors": {"signing": "unsigned"}}}),
         )

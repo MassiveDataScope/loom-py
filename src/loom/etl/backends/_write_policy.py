@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from loom.core.logger import get_logger
+from loom.etl.backends._historify import HistorifyBackend, scd2_transform
 from loom.etl.declarative.target import (
     AppendSpec,
     ClientSpec,
@@ -67,10 +68,19 @@ def _ensure_can_create_missing_table(
         schema_mode=schema_mode, missing_table_policy=missing_table_policy
     ):
         return
-    raise SchemaNotFoundError(
-        f"Destination table does not yet exist: {target}. "
-        "Use SchemaMode.OVERWRITE or set storage.missing_table_policy='create'."
-    )
+    advice = _missing_table_advice(missing_table_policy)
+    raise SchemaNotFoundError(f"Destination table does not yet exist: {target}. {advice}")
+
+
+def _missing_table_advice(missing_table_policy: MissingTablePolicy) -> str:
+    """Return the ways to create a missing table that work under *missing_table_policy*."""
+    if missing_table_policy is MissingTablePolicy.ERROR:
+        return (
+            "storage.missing_table_policy='error' never creates it: "
+            "set storage.missing_table_policy='create' "
+            "(or 'schema_mode' with SchemaMode.OVERWRITE), or create the table first."
+        )
+    return "Use SchemaMode.OVERWRITE or set storage.missing_table_policy='create'."
 
 
 def _can_create_missing_table(
@@ -421,9 +431,11 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
     ) -> HistorifyRepairReport | None:
         """SCD Type 2 historify policy: read existing, validate, transform, write.
 
-        Reads existing target data, validates creation rights when absent, then
-        delegates to :meth:`_historify` with the existing frame so the backend
-        only handles the transform + write — not the read.
+        Reads existing target data, validates creation rights when absent, runs
+        :func:`~loom.etl.backends._historify.scd2_transform` with the engine's
+        :meth:`_historify_backend`, then writes the rebuilt history. The existing
+        frame is dropped before the write, so eager backends release the table
+        snapshot instead of holding it alongside the rebuilt history.
 
         Args:
             frame:           Incoming input frame.
@@ -435,18 +447,59 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         Returns:
             A :class:`~loom.etl.HistorifyRepairReport` when a re-weave was
             performed, or ``None`` for a normal forward-only run.
+
+        Raises:
+            HistorifyDeleteMarkerError:     ``delete_marker`` missing or not boolean.
+            HistorifyKeyConflictError:      Duplicate entity state vectors.
+            HistorifyDateCollisionError:    Same-date ties in LOG mode.
+            HistorifyTemporalConflictError: Future-open records detected.
         """
         existing = self._read_existing_data(target, frame, spec)
-        if existing is None:
+        create = existing is None
+        if create:
             _ensure_can_create_missing_table(
                 target=target,
                 schema_mode=spec.schema_mode,
                 missing_table_policy=self._missing_table_policy,
             )
         materialized = self._materialize_checked(frame, target, streaming=False)
-        return self._historify(
-            materialized, existing, target, spec=spec, params_instance=params_instance
+        result, report = scd2_transform(
+            self._historify_backend(), materialized, existing, spec, params_instance
         )
+        del existing
+        if report is not None:
+            _log.warning(
+                "historify_temporal_rerun",
+                target=target.logical_ref.ref,
+                affected_key_count=len(report.affected_keys),
+                dates_requiring_rerun=[str(d) for d in report.dates_requiring_rerun],
+                warnings=list(report.warnings),
+            )
+        self._write_history(result, target, spec=spec, create=create)
+        return report
+
+    def _write_history(
+        self,
+        result: WriteFrameT,
+        target: ResolvedTarget,
+        *,
+        spec: HistorifySpec,
+        create: bool,
+    ) -> None:
+        """Write rebuilt history: create the table, or replace its scoped content."""
+        if create:
+            self._create(
+                result,
+                target,
+                schema_mode=spec.schema_mode,
+                partition_cols=spec.partition_scope or (),
+            )
+        elif spec.partition_scope:
+            self._replace_partitions(
+                result, target, partition_cols=spec.partition_scope, schema_mode=spec.schema_mode
+            )
+        else:
+            self._replace(result, target, schema_mode=spec.schema_mode)
 
     # ========================================================================
     # Audit Hook (overrideable — default is a no-op)
@@ -664,42 +717,8 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """Matched-only merge into existing table — never inserts."""
 
     @abstractmethod
-    def _historify(
-        self,
-        frame: WriteFrameT,
-        existing: WriteFrameT | None,
-        target: ResolvedTarget,
-        *,
-        spec: HistorifySpec,
-        params_instance: Any,
-    ) -> HistorifyRepairReport | None:
-        """Apply SCD Type 2 transform and write result to target.
-
-        Called after :meth:`_read_existing_data` has already fetched the current
-        target state.  The implementation must:
-
-        * Run the SCD2 algorithm (via :func:`~loom.etl.backends._historify.scd2_transform`).
-        * Write the result using the existing write hooks (``_create``,
-          ``_replace``, or ``_replace_partitions``).
-
-        Args:
-            frame:           Materialised incoming frame (write-ready).
-            existing:        Current target frame, or ``None`` for first run.
-            target:          Resolved Delta target.
-            spec:            Compiled historify spec.
-            params_instance: Runtime params; used to resolve
-                             ``spec.effective_date`` when it is a
-                             :class:`~loom.etl.ParamExpr`.
-
-        Returns:
-            A :class:`~loom.etl.HistorifyRepairReport` when re-weave was
-            triggered, or ``None`` for a normal forward-only run.
-
-        Raises:
-            HistorifyKeyConflictError:     Duplicate entity state vectors.
-            HistorifyDateCollisionError:   Same-date ties in LOG mode.
-            HistorifyTemporalConflictError: Future-open records detected.
-        """
+    def _historify_backend(self) -> HistorifyBackend[WriteFrameT]:
+        """Return the SCD2 primitives of this engine."""
 
     @abstractmethod
     def _write_file(

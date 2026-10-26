@@ -190,6 +190,38 @@ observability:
     # database: ops
 ```
 
+### Engine connections
+
+`storage.clickhouse`, `storage.mongo` and `storage.dynamodb` take the same keys
+as every other loom context using the engine
+(ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`));
+declaring a section enables its sources, omitting it disables them:
+
+```yaml
+storage:
+  clickhouse:
+    url: ${oc.env:CLICKHOUSE_URL}
+    read_timeout: 300            # seconds
+    pool:
+      size: 4
+  mongo:
+    url: ${oc.env:MONGO_URL}
+    database: app
+    server_selection_timeout: 5  # seconds
+  dynamodb:
+    region: eu-west-1
+    read_timeout: 5              # seconds
+    pool:
+      size: 32
+```
+
+Upgrade note: `endpoint_url` is now `url` and `max_pool_connections` is now
+`pool.size` (`storage.dynamodb`); `uri` is now `url`, `max_pool_size` is now
+`pool.size` and `server_selection_timeout_ms` is now `server_selection_timeout`
+in seconds (`storage.mongo`); `send_receive_timeout` is now `read_timeout` and
+`pool_size` is now `pool.size` (`storage.clickhouse`). An old key stops the run
+naming the new one.
+
 Server-side encryption declared in `storage.temp.storage_options` is honoured by
 the Polars engine only; with `engine: spark` the checkpoint write goes through
 Hadoop's S3A, which takes it from `fs.s3a.server-side-encryption-*` on the

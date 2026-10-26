@@ -13,12 +13,16 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Literal
 
-import msgspec
 from pymongo import AsyncMongoClient
 
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
+from loom.core.config.keys import ConfigKey
+from loom.core.connections.mongo import MongoConnection
+from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.profile import BackendRuntime
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
     ObjectIdPolicy,
@@ -29,53 +33,72 @@ from loom.core.repository.mongo.registry import build_mongo_repository_registrat
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
 
-_SECTION = "persistence.mongo"
+_SECTION = ConfigKey.PERSISTENCE_MONGO.value
 
 _logger = logging.getLogger(__name__)
 
 _ID_POLICIES: dict[str, type[IdPolicy]] = {"uuid4": Uuid4IdPolicy, "objectid": ObjectIdPolicy}
 
 
-class _MongoConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    uri: str
-    database: str
+class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
+    """``persistence.mongo``: the Mongo connection plus how the repository uses it.
+
+    Every key of :class:`~loom.core.connections.MongoConnection` applies, as
+    in every other context reading MongoDB.
+
+    Args:
+        transactions: Run each unit of work in a multi-document transaction.
+        collections: Collection name per model, overriding the derived one.
+        id: Identifier policy of the documents.
+    """
+
     transactions: bool = False
     collections: dict[str, str] = {}
     id: Literal["uuid4", "objectid"] = "uuid4"
-    max_pool_size: int | None = None
-    server_selection_timeout_ms: int | None = None
 
 
 class MongoBackend:
     """Backend for ``persistence.backend: mongo``.
 
-    Reads the ``persistence.mongo`` section, opens one async client shared by
-    the unit of work and every repository, binds each model to a collection
-    of the configured database and closes the client at shutdown.
+    Reads the ``persistence.mongo`` and ``persistence.cursors`` sections,
+    opens one async client shared by the unit of work and every repository,
+    binds each model to a collection of the configured database and closes
+    the client at shutdown.
     """
 
     name: ClassVar[str] = "mongo"
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
+    ) -> PersistenceWiring:
         """Build the Mongo wiring for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``persistence.mongo`` section.
             models: Models whose repositories the DI module registers.
+            runtime: Entry-point defaults; the Mongo client takes none of them yet.
 
         Returns:
             The Mongo wiring.
 
         Raises:
-            ConfigError: When the ``persistence.mongo`` section is missing.
+            ConfigError: When the ``persistence.mongo`` section is missing or
+                holds a retired key, or ``persistence.cursors`` cannot build a
+                cursor codec.
         """
-        mongo_cfg = ctx.section_optional(_SECTION, _MongoConfig)
+        reject_retired_keys(ctx.raw(_SECTION), _SECTION, MongoRepositoryConfig)
+        mongo_cfg = ctx.section_optional(_SECTION, MongoRepositoryConfig)
         if mongo_cfg is None:
             raise ConfigError(
                 f"persistence.backend is {self.name!r} but the {_SECTION!r} "
-                "section (uri, database) is missing."
+                "section (url, database) is missing."
             )
-        client = _build_mongo_client(mongo_cfg)
+        cursor_codec = CursorCodec.from_context(ctx)
+        # tz_aware: datetimes read back as aware UTC, the form the repository writes.
+        client = build_async_mongo_client(mongo_cfg, tz_aware=True)
         return PersistenceWiring(
             uow_factory=_unit_of_work_factory(client, mongo_cfg),
             repo_registration_module=build_mongo_repository_registration_module(
@@ -84,6 +107,7 @@ class MongoBackend:
                 collections=mongo_cfg.collections,
                 id_policy=_ID_POLICIES[mongo_cfg.id](),
                 session_provider=active_session,
+                cursor_codec=cursor_codec,
             ),
             default_repository_type=RepositoryMongo,
             lifespan_init=lambda: _lifespan(client),
@@ -92,22 +116,8 @@ class MongoBackend:
         )
 
 
-def _build_mongo_client(mongo_cfg: _MongoConfig) -> AsyncMongoClient[Any]:
-    """Construct the async client; only the options set in config are forwarded.
-
-    The client is ``tz_aware`` so datetimes read back as aware UTC, the form
-    the repository writes them in.
-    """
-    options: dict[str, Any] = {"tz_aware": True}
-    if mongo_cfg.max_pool_size is not None:
-        options["maxPoolSize"] = mongo_cfg.max_pool_size
-    if mongo_cfg.server_selection_timeout_ms is not None:
-        options["serverSelectionTimeoutMS"] = mongo_cfg.server_selection_timeout_ms
-    return AsyncMongoClient(mongo_cfg.uri, **options)
-
-
 def _unit_of_work_factory(
-    client: AsyncMongoClient[Any], mongo_cfg: _MongoConfig
+    client: AsyncMongoClient[Any], mongo_cfg: MongoRepositoryConfig
 ) -> MongoUnitOfWorkFactory:
     _logger.info("mongo unit of work: transactions=%s", mongo_cfg.transactions)
     if mongo_cfg.transactions:
@@ -143,4 +153,4 @@ async def _lifespan(client: AsyncMongoClient[Any]) -> AsyncIterator[None]:
         await client.close()
 
 
-__all__ = ["MongoBackend"]
+__all__ = ["MongoBackend", "MongoRepositoryConfig"]

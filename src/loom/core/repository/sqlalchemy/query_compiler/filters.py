@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from sqlalchemy import and_, or_
+from sqlalchemy.sql.expression import ClauseElement
 
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
@@ -14,6 +15,7 @@ from loom.core.repository.sqlalchemy.query_compiler.subquery import (
     compile_exists,
     compile_not_exists,
 )
+from loom.core.repository.sqlalchemy.values import to_comparison_value
 
 _RELATION_OPS = frozenset([FilterOp.EXISTS, FilterOp.NOT_EXISTS])
 _SIMPLE_OPS: dict[FilterOp, Callable[[Any, Any], Any]] = {
@@ -48,6 +50,8 @@ def compile_filter_group(
     Raises:
         UnsafeFilterError: If a field is not in ``allowed_fields``.
         FilterPathError: If a field path cannot be resolved.
+        BoundaryValidationError: ``query_validation``, for a ``time`` whose
+            offset the compared column cannot take.
     """
     clauses = [_compile_spec(sa_model, spec, allowed_fields) for spec in group.filters]
     if group.op == "OR":
@@ -74,7 +78,24 @@ def _compile_spec(
 
 
 def _apply_op(col: Any, op: FilterOp, value: Any) -> Any:
+    """Apply *op*, converting *value* as the repository converts a value it writes.
+
+    A ``time`` whose offset the column cannot take is refused, as
+    :func:`to_comparison_value` refuses it. A SQLAlchemy expression, and an
+    ``IN`` value that is a string or not iterable, reach SQLAlchemy as they
+    are.
+
+    Raises:
+        ValueError: If *op* is not a supported operator.
+        BoundaryValidationError: ``query_validation``, for a refused ``time``.
+    """
     handler = _SIMPLE_OPS.get(op)
-    if handler is not None:
+    if handler is None:
+        raise ValueError(f"Unsupported FilterOp: {op!r}")
+    if isinstance(value, ClauseElement):
         return handler(col, value)
-    raise ValueError(f"Unsupported FilterOp: {op!r}")
+    if op is not FilterOp.IN:
+        return handler(col, to_comparison_value(col, value))
+    if isinstance(value, str | bytes) or not isinstance(value, Iterable):
+        return handler(col, value)
+    return handler(col, [to_comparison_value(col, item) for item in value])

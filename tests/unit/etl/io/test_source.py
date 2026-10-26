@@ -222,7 +222,7 @@ class TestSources:
         sources = Sources(events=FromClickHouse("analytics.cdc_events").unbounded())
         specs = sources._to_specs()
         assert specs[0].kind is SourceKind.CLICKHOUSE
-        assert specs[0].table == "analytics.cdc_events"
+        assert specs[0].table_ref.ref == "analytics.cdc_events"
 
     def test_repr_lists_aliases(self) -> None:
         sources = Sources(orders=FromTable("raw.orders"), customers=FromTable("raw.customers"))

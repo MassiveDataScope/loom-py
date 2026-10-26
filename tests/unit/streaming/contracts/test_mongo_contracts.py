@@ -27,7 +27,6 @@ from loom.streaming import (
     build_mongo_cdc_message,
     normalize_bson_value,
 )
-from loom.streaming.nodes._shape import StreamShape
 
 
 class TestMongoBoundaryContracts:
@@ -44,13 +43,11 @@ class TestMongoBoundaryContracts:
             "domain_events",
             collections=("orders", "payments"),
             watch_options={"full_document": "updateLookup"},
-            shape=StreamShape.BATCH,
         )
 
         assert source.name == "domain_events"
         assert source.collections == ("orders", "payments")
         assert source.watch_options == {"full_document": "updateLookup"}
-        assert source.shape is StreamShape.BATCH
 
     def test_from_mongo_cdc_uses_logical_ref(self) -> None:
         source = FromMongoCDC("domain_events")
@@ -62,7 +59,6 @@ class TestMongoBoundaryContracts:
 
         assert source.collections == ()
         assert source.watch_options == {}
-        assert source.shape is StreamShape.RECORD
 
     def test_from_mongo_cdc_unparametrized_is_instantiable(self) -> None:
         source = FromMongoCDC("events")

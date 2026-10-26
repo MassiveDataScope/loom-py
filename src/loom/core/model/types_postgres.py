@@ -8,6 +8,7 @@ class _PostgresTypes:
 
     JSONB = ColumnType("Postgres.JSONB")
     UUID = ColumnType("Postgres.UUID")
+    """Postgres only; :data:`loom.core.model.Uuid` is the portable UUID column."""
     TSVECTOR = ColumnType("Postgres.TSVECTOR")
     INET = ColumnType("Postgres.INET")
 

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import event
 from sqlalchemy.engine import make_url
+from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,62 +14,24 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import Pool, QueuePool
 
 from loom.core.logger import get_logger
+from loom.core.model.redaction import reveal_for_driver
+from loom.core.persistence.database import DatabaseConfig
+from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
+from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
     install_session_settings,
 )
 from loom.core.tracing import get_trace_id
 
+_log = get_logger(__name__).bind(module="session_manager")
+
 
 class SessionManager:
     """Async SQLAlchemy session manager with pooling support."""
-
-    @classmethod
-    def from_config(
-        cls,
-        config: Mapping[str, Any],
-        *,
-        inject_trace_id: bool = True,
-        session_settings: SessionSettings | None = None,
-        **engine_kwargs: object,
-    ) -> SessionManager:
-        """Build a session manager from a resolved SQLAlchemy config mapping.
-
-        Args:
-            config: Resolved config mapping containing a ``url`` entry and
-                optional pool tuning keys.
-            inject_trace_id: When ``True``, prefixes SQL statements with the
-                active trace id when available.
-            session_settings: Optional provider of transaction-local Postgres
-                settings; see :meth:`SessionManager.__init__` for the contract.
-            **engine_kwargs: Additional keyword arguments forwarded to the
-                async engine constructor.
-
-        Returns:
-            A configured :class:`SessionManager`.
-
-        Raises:
-            ValueError: If ``url`` is missing or empty, or if ``session_settings``
-                is given and ``url`` is not a Postgres URL.
-        """
-        url = config.get("url")
-        if not url:
-            raise ValueError("SQLAlchemy sink config requires a 'url'.")
-        return cls(
-            str(url),
-            echo=bool(config.get("echo", False)),
-            pool_pre_ping=bool(config.get("pool_pre_ping", True)),
-            pool_size=_optional_int(config.get("pool_size"), 10),
-            max_overflow=_optional_int(config.get("max_overflow"), 20),
-            pool_timeout=_optional_int(config.get("pool_timeout"), 30),
-            pool_recycle=_optional_int(config.get("pool_recycle"), 1800),
-            connect_args=dict(config.get("connect_args") or {}),
-            inject_trace_id=inject_trace_id,
-            session_settings=session_settings,
-            **engine_kwargs,
-        )
 
     def __init__(
         self,
@@ -144,7 +107,7 @@ class SessionManager:
 
         self._log = get_logger(__name__).bind(module="session_manager")
         self._engine = create_async_engine(url, **engine_config)
-        self._has_session_settings = session_settings is not None
+        self._session_settings = session_settings
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -169,7 +132,13 @@ class SessionManager:
     @property
     def has_session_settings(self) -> bool:
         """Whether every transaction of this manager starts with the product's settings."""
-        return self._has_session_settings
+        return self._session_settings is not None
+
+    def current_settings(self) -> Mapping[str, str]:
+        """The settings a transaction opened now would start with; empty without a provider."""
+        if self._session_settings is None:
+            return {}
+        return self._session_settings() or {}
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -200,6 +169,78 @@ class SessionManager:
     def session_factory(self) -> async_sessionmaker[AsyncSession]:
         """The configured async session factory bound to the engine."""
         return self._session_factory
+
+
+def build_session_manager(
+    config: DatabaseConfig,
+    profile: RuntimeProfile,
+    *,
+    pool_metrics: PoolMetricsSink | None = None,
+    database: str = "default",
+    **manager_kwargs: Any,
+) -> SessionManager:
+    """Build the session manager of a ``database`` section for one entry point.
+
+    The single constructor every runtime entry point uses: each pool key the
+    section declares wins, the rest come from *profile*. A dialect whose
+    default pool holds no queue (in-memory SQLite) takes neither size, overflow
+    nor timeout, so a profile never breaks a test or a local run.
+
+    Args:
+        config: The decoded ``database`` section.
+        profile: Defaults of the entry point building the engine.
+        pool_metrics: Receiver of pool measurements; ``None`` keeps the
+            dialect's pool class untouched.
+        database: Label the measurements carry (``default`` or a shared name).
+        **manager_kwargs: Further :class:`SessionManager` options
+            (``session_settings``, ``inject_trace_id``, engine keywords).
+
+    Returns:
+        A session manager whose engine has not opened any connection yet.
+    """
+    pool = config.pool.resolve(profile)
+    pool_class = manager_kwargs.get("poolclass") or _default_pool_class(str(config.url))
+    queued = issubclass(pool_class, QueuePool)
+    if not queued:
+        _log.debug("PoolSizingOmitted", reason="dialect pool holds no queue")
+    instrumented = pool_metrics is not None and queued
+    if instrumented:
+        manager_kwargs["poolclass"] = instrumented_pool_class(
+            pool_class, cast(PoolMetricsSink, pool_metrics), database
+        )
+    manager = SessionManager(
+        _engine_url(config),
+        echo=config.echo,
+        pool_pre_ping=pool.pre_ping,
+        pool_size=pool.size if queued else None,
+        max_overflow=pool.max_overflow if queued else None,
+        pool_timeout=pool.timeout_s if queued else None,
+        pool_recycle=pool.recycle_s,
+        connect_args=reveal_for_driver(config.client_options()),
+        **manager_kwargs,
+    )
+    if instrumented:
+        cast(PoolMetricsSink, pool_metrics).register_engine(manager.engine.sync_engine, database)
+    return manager
+
+
+def _engine_url(config: DatabaseConfig) -> str:
+    """Return the URL the driver dials. Explicit credentials win over the address."""
+    parsed = make_url(config.url.reveal())
+    if config.username is None and config.password is None:
+        return parsed.render_as_string(hide_password=False)
+    parsed = parsed.set(
+        username=config.username if config.username is not None else parsed.username,
+        password=config.password.reveal() if config.password is not None else parsed.password,
+    )
+    return parsed.render_as_string(hide_password=False)
+
+
+def _default_pool_class(url: str) -> type[Pool]:
+    parsed = make_url(url)
+    # Every concrete dialect derives from DefaultDialect, which owns get_pool_class.
+    dialect = cast("type[DefaultDialect]", parsed.get_dialect())
+    return dialect.get_pool_class(parsed)
 
 
 def _register_trace_id_listener(async_engine: AsyncEngine) -> None:
@@ -239,9 +280,3 @@ def _autocommit(engine_kwargs: Mapping[str, object]) -> bool:
         else None,
     )
     return any(isinstance(level, str) and level.upper() == "AUTOCOMMIT" for level in levels)
-
-
-def _optional_int(value: Any, default: int) -> int:
-    if value is None:
-        return default
-    return int(value)

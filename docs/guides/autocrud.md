@@ -128,6 +128,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 ```
@@ -138,6 +142,11 @@ from loom.rest.fastapi.auto import create_app
 
 app = create_app("config/api.yaml")
 ```
+
+Run it with `LOOM_ENV=development`. Without it loom starts as production, runs
+the deploy checks, and refuses an API that authenticates nobody
+(`loom.rest.E001`). See
+[Environments, configuration and deploy checks](../getting-started/environments.md).
 
 Three lines of application code. The framework handles DB wiring, DI, and route mounting.
 

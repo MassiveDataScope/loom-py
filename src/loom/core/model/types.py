@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
+import msgspec
+
 from loom.core.model.field import ColumnType
 
 
@@ -18,14 +20,25 @@ Boolean = ColumnType("Boolean")
 Text = ColumnType("Text")
 JSON = ColumnType("JSON")
 Bytes = ColumnType("Bytes")
+Date = ColumnType("Date")
+Time = ColumnType("Time")
+Uuid = ColumnType("Uuid")
 
 
 def DateTime(*, tz: bool = True) -> ColumnType:
     return ColumnType("DateTime", kwargs={"timezone": tz})
 
 
-def Numeric(*, precision: int = 10, scale: int = 2) -> ColumnType:
-    return ColumnType("Numeric", args=(precision, scale))
+def Numeric(*, precision: int | None = None, scale: int | None = None) -> ColumnType:
+    """A ``NUMERIC`` column; with no precision it is unbounded.
+
+    Raises:
+        ValueError: A scale is given without a precision; SQLAlchemy would
+            ignore it.
+    """
+    if scale is not None and precision is None:
+        raise ValueError("Numeric: a scale needs a precision")
+    return ColumnType("Numeric", kwargs={"precision": precision, "scale": scale})
 
 
 class _JsonMarker:
@@ -35,3 +48,9 @@ class _JsonMarker:
 
 
 JsonStr = Annotated[str, _JsonMarker()]
+
+PositiveInt = Annotated[int, msgspec.Meta(gt=0)]
+"""An integer above zero: a size, a count or a timeout where zero makes no sense."""
+
+NonNegativeInt = Annotated[int, msgspec.Meta(ge=0)]
+"""An integer at or above zero: an extra allowance where none at all is valid."""

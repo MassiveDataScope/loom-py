@@ -19,6 +19,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import ProxyTracerProvider
 
 from loom.core.config.observability import OtelConfig
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import Scope
 from loom.core.observability.observer import otel as _otel
 from loom.core.observability.otel_ids import LoomMessageIdGenerator
@@ -55,7 +56,9 @@ class TestLoomOwnedProvider:
         exporter = InMemorySpanExporter()
         monkeypatch.setattr(_otel, "_build_exporter", lambda _config: exporter)
 
-        tracer, flusher = _otel.build_tracer(OtelConfig(endpoint="http://collector:4318/v1/traces"))
+        tracer, flusher = _otel.build_tracer(
+            OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
+        )
         _emit(tracer, _TRACE_A)
         assert flusher is not None
         flusher.force_flush()
@@ -73,7 +76,7 @@ class TestLoomOwnedProvider:
 
         tracer, flusher = _otel.build_tracer(
             OtelConfig(
-                endpoint="http://collector:4318/v1/traces",
+                endpoint=Dsn("http://collector:4318/v1/traces"),
                 sampler="always_off",
                 sampler_ratio=0.0,
             )
@@ -92,7 +95,7 @@ class TestHostProviderWithoutAdoption:
         exporter = _host_provider(monkeypatch)
 
         with caplog.at_level(logging.INFO, logger=_otel.__name__):
-            tracer, flusher = _otel.build_tracer(OtelConfig(endpoint=""))
+            tracer, flusher = _otel.build_tracer(OtelConfig(endpoint=None))
         _emit(tracer, _TRACE_A)
 
         assert flusher is None, "Loom must not offer to flush a provider it does not own"
@@ -113,7 +116,7 @@ class TestHostProviderWithAdoption:
         host_tracer = trace.get_tracer_provider().get_tracer("host")
         host_tracer.start_span("host.before").end()
 
-        tracer, _ = _otel.build_tracer(OtelConfig(endpoint="", adopt_host_id_generator=True))
+        tracer, _ = _otel.build_tracer(OtelConfig(endpoint=None, adopt_host_id_generator=True))
         _emit(tracer, _TRACE_A)
         host_tracer.start_span("host.after").end()
         trace.get_tracer_provider().get_tracer("host2").start_span("host.fresh").end()
@@ -131,7 +134,7 @@ class TestHostProviderWithAdoption:
     ) -> None:
         _host_provider(monkeypatch)
 
-        _otel.build_tracer(OtelConfig(endpoint="", adopt_host_id_generator=True))
+        _otel.build_tracer(OtelConfig(endpoint=None, adopt_host_id_generator=True))
 
         provider = trace.get_tracer_provider()
         assert isinstance(provider, TracerProvider)
@@ -148,7 +151,7 @@ class TestAdoptionOnAProxyProvider:
 
         with caplog.at_level(logging.WARNING, logger="loom.core.observability.otel_ids"):
             tracer, flusher = _otel.build_tracer(
-                OtelConfig(endpoint="", adopt_host_id_generator=True)
+                OtelConfig(endpoint=None, adopt_host_id_generator=True)
             )
 
         assert flusher is None

@@ -7,8 +7,9 @@ and the bootstrap steps around them.
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -20,8 +21,10 @@ import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import NoneBackend, PersistenceWiring
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -29,13 +32,18 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi import auto
 from loom.rest.fastapi.auto import (
     _AppConfig,
-    _build_bootstrap,
     _discover_components,
     create_app,
+)
+from loom.rest.fastapi.auto import (
+    _build_bootstrap as _build_bootstrap_in,
 )
 from loom.rest.model import RestInterface, RestRoute
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
 from tests.unit.rest._fixture_app import UUID4_ID_FIELD, write_project
+
+# The fixture apps opt out of cursor signing, which a deployed environment refuses.
+_build_bootstrap = functools.partial(_build_bootstrap_in, environment=Environment.TEST)
 
 
 def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
@@ -46,12 +54,12 @@ def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
 _DYNAMODB_SECTION = {
     "region": "eu-west-1",
     "table": "products",
-    "endpoint_url": "http://localhost:8000",
+    "url": "http://localhost:8000",
 }
 _DYNAMODB_PERSISTENCE = {"backend": "dynamodb", "dynamodb": _DYNAMODB_SECTION}
 _MONGO_PERSISTENCE = {
     "backend": "mongo",
-    "mongo": {"uri": "mongodb://localhost:27017", "database": "demo"},
+    "mongo": {"url": "mongodb://localhost:27017", "database": "demo"},
 }
 
 
@@ -62,11 +70,13 @@ class PersistenceNoneRecord(BaseModel):
     name: str = ColumnField(length=50)
 
 
-def _ctx(**sections: object) -> ConfigContext:
+def _ctx(persistence: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
+    cursors = {"cursors": {"signing": "ephemeral"}}
     return ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
             "database": {"url": "sqlite+aiosqlite:///"},
+            "persistence": {**cursors, **(persistence or {})},
             **sections,
         }
     )
@@ -91,7 +101,9 @@ def aws_test_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
     """Serve the Mongo backend an in-memory client so no connection is attempted."""
     client = FakeMongoClient()
-    monkeypatch.setattr(mongo_backend_module, "_build_mongo_client", lambda _cfg: client)
+    monkeypatch.setattr(
+        mongo_backend_module, "build_async_mongo_client", lambda _cfg, **_extra: client
+    )
     return client
 
 
@@ -209,10 +221,14 @@ class _RecordingBackend:
 
     name: ClassVar[str] = "recording"
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
+    runtimes: ClassVar[list[BackendRuntime]] = []
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
+    ) -> PersistenceWiring:
         self.events.append(("build", tuple(models)))
-        wiring = NoneBackend().build(ctx, models)
+        self.runtimes.append(runtime)
+        wiring = NoneBackend().build(ctx, models, runtime)
         return PersistenceWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
@@ -253,6 +269,20 @@ def test_injected_backend_boots_and_prepares_models_after_build(
     built, prepared = (models for _step, models in _RecordingBackend.events)
     assert built == prepared
     assert [model.__name__ for model in built] == ["ConfigRecord"]
+
+
+def test_create_app_builds_the_backend_with_the_server_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
+    monkeypatch.setattr(_RecordingBackend, "events", [])
+    monkeypatch.setattr(_RecordingBackend, "runtimes", [])
+    config_path = write_project(tmp_path, persistence={"backend": "recording"}, database=None)
+
+    create_app(config_path)
+
+    assert [runtime.profile for runtime in _RecordingBackend.runtimes] == [SERVER_PROFILE]
+    assert _RecordingBackend.runtimes[0].pool_metrics is None
 
 
 def test_discover_components_accepts_agents_only_result(agents_only_discovery: None) -> None:

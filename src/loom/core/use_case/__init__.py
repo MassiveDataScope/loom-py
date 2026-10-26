@@ -12,7 +12,7 @@ from loom.core.use_case.markers import (
     Query,
 )
 from loom.core.use_case.outcome import Created
-from loom.core.use_case.rule import Rule, RuleFn, RuleViolation, RuleViolations
+from loom.core.use_case.rule import Rule, RuleFn
 from loom.core.use_case.use_case import UseCase
 
 __all__ = [
@@ -33,7 +33,5 @@ __all__ = [
     "Query",
     "Rule",
     "RuleFn",
-    "RuleViolation",
-    "RuleViolations",
     "UseCase",
 ]

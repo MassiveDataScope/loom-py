@@ -18,8 +18,12 @@ key attribute is the model's ``primary_key`` field, resolved via
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
+from collections.abc import Callable
+from concurrent.futures import Executor
 from decimal import Decimal
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 import msgspec
 
@@ -38,6 +42,8 @@ from loom.core.repository.abc import (
     Updatable,
 )
 
+_ResultT = TypeVar("_ResultT")
+
 # DynamoDB error code returned when a ``ConditionExpression`` is not satisfied.
 _CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailedException"
 
@@ -52,7 +58,7 @@ class RepositoryDynamoDB(
     """Key-value repository backed by a single boto3 low-level ``dynamodb`` client.
 
     The low-level client (not the resource) is used because it is thread-safe:
-    every operation runs under :func:`asyncio.to_thread`, and a shared client
+    every operation runs on a worker thread, and a shared client
     can be called from multiple worker threads concurrently. Items cross the
     wire as low-level ``AttributeValue`` dicts (``{"S": ...}``, ``{"N": ...}``);
     :class:`boto3.dynamodb.types.TypeSerializer` /
@@ -71,6 +77,8 @@ class RepositoryDynamoDB(
         table_name: Name of the DynamoDB table backing this repository.
         model: The Loom struct model this repository is bound to. Its
             ``primary_key`` field becomes the DynamoDB partition key.
+        executor: Threads the blocking client calls run on; ``None`` uses the
+            event loop's default executor.
 
     Raises:
         ConfigError: If the model's primary key is composite.
@@ -78,7 +86,9 @@ class RepositoryDynamoDB(
 
     backend_name: ClassVar[str] = "dynamodb"
 
-    def __init__(self, client: Any, table_name: str, model: type) -> None:
+    def __init__(
+        self, client: Any, table_name: str, model: type, *, executor: Executor | None = None
+    ) -> None:
         # Lazy import: boto3 is an optional dependency (loom[dynamodb]) and must
         # not be required at module import time by SQLAlchemy-backed apps.
         from boto3.dynamodb.types import (  # type: ignore[import-untyped]
@@ -88,6 +98,7 @@ class RepositoryDynamoDB(
         from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
         self._client = client
+        self._executor = executor
         self._table_name = table_name
         self._model = model
         self._id_attr = _single_id_attribute(model)
@@ -113,8 +124,11 @@ class RepositoryDynamoDB(
 
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
         """Fetch one entity by its partition key via ``GetItem``."""
-        response = await asyncio.to_thread(
-            self._client.get_item, TableName=self._table_name, Key=self._encode_key(obj_id)
+        response = await run_in_executor(
+            self._executor,
+            self._client.get_item,
+            TableName=self._table_name,
+            Key=self._encode_key(obj_id),
         )
         item = response.get("Item")
         if item is None:
@@ -136,8 +150,11 @@ class RepositoryDynamoDB(
         """Return whether an item exists for ``field == value`` (primary key only)."""
         if field != self._id_attr:
             raise self._unsupported_field("exists_by", field)
-        response = await asyncio.to_thread(
-            self._client.get_item, TableName=self._table_name, Key=self._encode_key(value)
+        response = await run_in_executor(
+            self._executor,
+            self._client.get_item,
+            TableName=self._table_name,
+            Key=self._encode_key(value),
         )
         return "Item" in response
 
@@ -150,7 +167,8 @@ class RepositoryDynamoDB(
         """
         internal = self._to_internal(data)
         try:
-            await asyncio.to_thread(
+            await run_in_executor(
+                self._executor,
                 self._client.put_item,
                 TableName=self._table_name,
                 Item=self._encode_item(internal),
@@ -174,17 +192,21 @@ class RepositoryDynamoDB(
         ``None`` when no item exists for ``obj_id`` — whether detected by the
         initial read or by the conditional write losing the race.
         """
-        response = await asyncio.to_thread(
-            self._client.get_item, TableName=self._table_name, Key=self._encode_key(obj_id)
+        response = await run_in_executor(
+            self._executor,
+            self._client.get_item,
+            TableName=self._table_name,
+            Key=self._encode_key(obj_id),
         )
         existing = response.get("Item")
         if existing is None:
             return None
         changes = self._to_internal(data)
         changes.pop(self._id_attr, None)
-        merged = {**self._decode_item(existing), **changes, self._id_attr: obj_id}
+        merged = {**self._decode_item(existing), **changes}
         try:
-            await asyncio.to_thread(
+            await run_in_executor(
+                self._executor,
                 self._client.put_item,
                 TableName=self._table_name,
                 Item=self._encode_item(merged),
@@ -199,7 +221,8 @@ class RepositoryDynamoDB(
 
     async def delete(self, obj_id: IdT) -> bool:
         """Delete an item by partition key, returning whether it existed."""
-        response = await asyncio.to_thread(
+        response = await run_in_executor(
+            self._executor,
             self._client.delete_item,
             TableName=self._table_name,
             Key=self._encode_key(obj_id),
@@ -260,8 +283,28 @@ class RepositoryDynamoDB(
         return {key: self._decode_value(value) for key, value in item.items()}
 
     def _encode_key(self, obj_id: Any) -> dict[str, Any]:
-        """Build the low-level ``Key`` dict for the partition key."""
-        return {self._id_attr: self._encode_value(obj_id)}
+        """Build the low-level ``Key`` dict for the partition key.
+
+        The key is converted with :func:`msgspec.to_builtins`, as ``create``
+        stores it, so a key such as a ``UUID`` matches its stored form.
+        """
+        return {self._id_attr: self._encode_value(msgspec.to_builtins(obj_id))}
+
+
+async def run_in_executor(
+    executor: Executor | None, call: Callable[..., _ResultT], /, *args: Any, **kwargs: Any
+) -> _ResultT:
+    """Run a blocking client *call* on *executor*, carrying the caller's context.
+
+    Like :func:`asyncio.to_thread` — the trace id and every other context
+    variable stay visible inside the thread — but on a chosen executor, so the
+    parallelism follows the client's connection pool instead of the CPU count.
+    """
+    context = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        executor, functools.partial(context.run, call, *args, **kwargs)
+    )
 
 
 def _single_id_attribute(model: type) -> str:

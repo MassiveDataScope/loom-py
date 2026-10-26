@@ -87,11 +87,14 @@ class JsonlPartition:
     def __init__(self, path: str) -> None:
         self._path, self._buffer = path, []
 
-    def write_batch(self, items: Sequence[IncidentEvent]) -> None:
+    def write_batch(self, items: Sequence[IncidentEvent]) -> int:
         self._buffer.extend(items)   # once per Bytewax epoch
+        return 0                     # buffered, nothing durable yet
 
-    def close(self) -> None:
+    def close(self) -> int:
         flush(self._path, self._buffer)   # must be idempotent
+        flushed, self._buffer = len(self._buffer), []
+        return flushed               # how many buffered events are now durable
 ```
 
 `Process(IntoJsonl(payload=IncidentEvent))` type-checks under `mypy --strict`:
@@ -99,7 +102,10 @@ the three attributes are read-only in the protocol, so a frozen dataclass, a
 msgspec struct or a class variable all satisfy them, and `config` and
 `session_manager` are opaque, so your sink narrows them to whatever its backend
 resolves. `write_batch` runs per epoch, per worker; `close` may be called even
-when `write_batch` never was.
+when `write_batch` never was. Both return how many of the oldest events not yet
+reported durable they made durable, `0` when they only buffered: under
+at-least-once delivery loom completes the source offsets of exactly those
+events, so a crash before the flush consumes them again.
 
 ## Booting from YAML (`resolvers=`)
 
@@ -117,6 +123,7 @@ kafka:
       - ${ssm:/prod/incidents/kafka-broker}
     group_id: incidents-service
     topics: ["incidents.in"]
+    delivery: at_most_once
     security:
       protocol: SASL_SSL
       sasl_mechanism: SCRAM-SHA-512

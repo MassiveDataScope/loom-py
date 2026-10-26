@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager
+from datetime import time
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from loom.core.bootstrap.bootstrap import bootstrap_app
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -44,6 +46,7 @@ class AutoProduct(BaseModel):
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
     name: str = ColumnField(length=120)
+    opens_at: time | None = ColumnField(nullable=True, default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +58,7 @@ class AutoProductInterface(RestInterface[AutoProduct]):
     prefix = "/auto-products"
     tags = ("AutoProducts",)
     auto = True
+    filterable = ("opens_at",)
 
 
 class TaskViewInterface(RestInterface[TaskView]):
@@ -79,6 +83,7 @@ def _make_register_repos(
     repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
         session_manager=session_manager,
         model=AutoProduct,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     def _provider() -> RepositorySQLAlchemy[Any, int]:
@@ -155,6 +160,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
                 session_manager,
                 (),
                 logical_models=(TaskView,),
+                cursor_codec=CursorCodec(signing="ephemeral"),
             )
         ],
     )
@@ -297,3 +303,35 @@ class TestAutoInterfaceInclude:
         methods = {r.method for r in ReadOnlyInterface.routes}
         assert "POST" not in methods
         assert "DELETE" not in methods
+
+
+# ---------------------------------------------------------------------------
+# TestAwareTimeRefusal
+# ---------------------------------------------------------------------------
+
+
+class TestAwareTimeRefusal:
+    """A time with a UTC offset never reaches a Time column; the client gets a 4xx."""
+
+    def test_an_aware_time_filter_value_answers_400(self, client: TestClient) -> None:
+        resp = client.get("/auto-products/", params={"opensAt": "08:30:00+02:00"})
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "query_validation"
+        assert "08:30" not in resp.text
+
+    def test_an_aware_time_in_a_create_body_answers_422(self, client: TestClient) -> None:
+        resp = client.post("/auto-products/", json={"name": "Shop", "opensAt": "08:30:00+02:00"})
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "boundary_validation"
+        assert "08:30" not in resp.text
+
+    def test_an_aware_time_in_an_update_body_answers_422(self, client: TestClient) -> None:
+        item_id = client.post("/auto-products/", json={"name": "Shop"}).json()["id"]
+
+        resp = client.patch(f"/auto-products/{item_id}", json={"opensAt": "08:30:00+02:00"})
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "boundary_validation"
+        assert "08:30" not in resp.text

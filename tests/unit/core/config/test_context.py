@@ -113,3 +113,29 @@ class TestConfigContextCustomBinder:
         strict_ctx = ConfigContext(cfg, binder=StructBinder(strict=True))
         with pytest.raises(ConfigError):
             strict_ctx.bind(_Worker, path="worker")
+
+
+class TestConfigContextRaw:
+    def test_a_value_is_read_as_written_without_resolving_it(self) -> None:
+        ctx = ConfigContext.from_dict(
+            {"rest": {"docs_url": None, "secret": "${secrets:/api/key}", "auth": {"jwt": {}}}}
+        )
+
+        assert ctx.raw("rest") == {
+            "docs_url": None,
+            "secret": "${secrets:/api/key}",
+            "auth": {"jwt": {}},
+        }
+
+    def test_an_absent_key_returns_the_default(self) -> None:
+        ctx = ConfigContext.from_dict({"rest": {"title": "API"}})
+
+        assert ctx.raw("rest.auth.jwt", "absent") == "absent"
+
+    def test_a_key_set_to_null_is_none_not_the_default(self) -> None:
+        ctx = ConfigContext.from_dict({"rest": {"docs_url": None}})
+
+        assert (ctx.raw("rest.docs_url", "absent"), ctx.raw("rest.redoc_url", "absent")) == (
+            None,
+            "absent",
+        )

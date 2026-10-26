@@ -21,6 +21,19 @@ from loom.ai.compiler import (
 )
 from loom.ai.config import A2AAgentConfig, AiConfig, McpServerConfig
 from loom.ai.declarative import A2ACapability, AgentSpecV1, McpCapability
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
+
+
+def _remote_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a header reference and an auth block before the struct stores them."""
+    prepared = dict(settings)
+    headers_ref = prepared.get("headers_ref")
+    if isinstance(headers_ref, str):
+        prepared["headers_ref"] = Secret(headers_ref)
+    auth = prepared.get("auth")
+    if isinstance(auth, dict):
+        prepared["auth"] = RedactedMap(auth)
+    return prepared
 
 _SERVER = "knowledge"
 _URL = "https://knowledge.example.com/mcp"
@@ -47,7 +60,9 @@ def config_naming(ai_config_factory: Callable[..., AiConfig]) -> Callable[..., A
 
     def _make(**server_settings: Any) -> AiConfig:
         return ai_config_factory(
-            mcp_servers={_SERVER: McpServerConfig(url=_URL, **server_settings)}
+            mcp_servers={
+                _SERVER: McpServerConfig(url=Dsn(_URL), **_remote_settings(server_settings))
+            }
         )
 
     return _make
@@ -130,7 +145,9 @@ def config_naming_agent(ai_config_factory: Callable[..., AiConfig]) -> Callable[
 
     def _make(**agent_settings: Any) -> AiConfig:
         return ai_config_factory(
-            a2a_agents={_AGENT: A2AAgentConfig(url=_AGENT_URL, **agent_settings)}
+            a2a_agents={
+                _AGENT: A2AAgentConfig(url=Dsn(_AGENT_URL), **_remote_settings(agent_settings))
+            }
         )
 
     return _make

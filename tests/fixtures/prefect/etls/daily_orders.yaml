@@ -11,7 +11,7 @@ params:
   run_date: ${today-1d}
 tags: [orders, daily]
 environments:
-  prod:
+  production:
     work_pool: loom-fargate
     job_variables:
       cpu: 1024

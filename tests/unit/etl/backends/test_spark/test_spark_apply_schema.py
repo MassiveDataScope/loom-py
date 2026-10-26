@@ -9,8 +9,9 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from loom.etl import ETLParams, ETLStep, FromTable, IntoTable
-from loom.etl.backends.spark._schema import SchemaNotFoundError, apply_schema_spark
+from loom.etl.backends.spark._schema import apply_schema_spark
 from loom.etl.declarative.target import SchemaMode
+from loom.etl.schema import SchemaNotFoundError
 from loom.etl.testing import ETLScenario
 
 _ID_AMOUNT_SCHEMA = T.StructType(

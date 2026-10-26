@@ -5,7 +5,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from loom.core.model import TimestampedModel
+from loom.core.model import TimestampedModel, get_column_fields
 from loom.core.model.enums import ServerDefault, ServerOnUpdate
 from loom.core.model.field import ColumnField
 
@@ -37,12 +37,10 @@ class TestTimestampedModelFields:
         assert spec.field.server_onupdate == ServerOnUpdate.NOW
 
     def test_created_at_is_nullable(self) -> None:
-        spec = TimestampedModel.__loom_columns__["created_at"]
-        assert spec.field.nullable is True
+        assert get_column_fields(Order)["created_at"].field.nullable is True
 
     def test_updated_at_is_nullable(self) -> None:
-        spec = TimestampedModel.__loom_columns__["updated_at"]
-        assert spec.field.nullable is True
+        assert get_column_fields(Order)["updated_at"].field.nullable is True
 
 
 class TestTimestampedModelSerialization:

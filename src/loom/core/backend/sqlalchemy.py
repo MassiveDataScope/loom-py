@@ -15,6 +15,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     Constraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -27,7 +28,9 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    Time,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -80,8 +83,11 @@ _SA_TYPE_MAP: dict[str, type] = {
     "Text": Text,
     "JSON": JSON,
     "Bytes": LargeBinary,
+    "Date": Date,
     "DateTime": DateTime,
+    "Time": Time,
     "Numeric": Numeric,
+    "Uuid": Uuid,
     "Postgres.JSONB": PG_JSONB,
     "Postgres.UUID": PG_UUID,
     "Postgres.TSVECTOR": PG_TSVECTOR,
@@ -234,6 +240,7 @@ def _compile_model(
 
     table_name = get_table_name(struct_cls)
     column_fields = get_column_fields(struct_cls)
+    _refuse_undeclared_column_types(struct_cls, column_fields)
     scopes = scope_columns(struct_cls)
     boundary = next((scope for scope in scopes if scope.is_boundary), None)
     constraints, composite_columns = _foreign_key_constraints(
@@ -282,6 +289,47 @@ def _compile_model(
             privileges=declared_privileges(struct_cls),
         )
     return sa_cls
+
+
+def _refuse_undeclared_column_types(
+    struct_cls: type, column_fields: Mapping[str, ColumnFieldInfo]
+) -> None:
+    """Refuse a ``Decimal``, plain enum or ``Literal`` field whose column type is not declared.
+
+    loom does not infer a SQL type from the values of an enum or a ``Literal``,
+    nor a precision and scale for a ``Decimal``: Postgres rounds a value to the
+    declared scale and refuses one past the declared precision.
+    """
+    for name, info in column_fields.items():
+        if info.needs_declared_type:
+            raise ValueError(
+                f"{struct_cls.__name__}.{name}: no column type is inferred from a Decimal, "
+                "plain Enum or Literal annotation; declare it, e.g. "
+                "`Annotated[Decimal, Numeric(precision=12, scale=2)]` for a Decimal, "
+                "`ColumnField(String(20))` for an Enum or Literal"
+            )
+
+
+def sa_table_for(struct_cls: type, name: str) -> Table:
+    """Return a Core ``Table`` named *name* whose columns are those of *struct_cls*.
+
+    Each column has the type :func:`compile_model` gives the field; keys,
+    constraints and defaults are left out, and so is nullability: every column
+    is nullable, since the table is built for inserts and no DDL is issued
+    from it. The table is bound to a fresh ``MetaData`` and registered
+    nowhere.
+
+    Raises:
+        ValueError: If a ``Decimal``, plain enum or ``Literal`` field declares no
+            column type.
+    """
+    column_fields = get_column_fields(struct_cls)
+    _refuse_undeclared_column_types(struct_cls, column_fields)
+    columns = [
+        Column(field_name, _build_sa_column_type(info.column_type))
+        for field_name, info in column_fields.items()
+    ]
+    return Table(name, MetaData(), *columns)
 
 
 def _declared_constraints(struct_cls: type, table_name: str) -> list[Constraint | Index]:

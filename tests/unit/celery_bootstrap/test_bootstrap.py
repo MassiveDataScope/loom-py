@@ -66,6 +66,7 @@ def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
             "task_always_eager": True,
         },
         "database": {"url": "sqlite+aiosqlite:///test.db"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if extra:
         base.update(extra)
@@ -141,6 +142,7 @@ class TestBootstrapWorkerTaskRegistration:
                 "task_always_eager": True,
             },
             "database": {"url": "sqlite+aiosqlite:///test.db"},
+            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         if extra_cfg:
             cfg.update(extra_cfg)

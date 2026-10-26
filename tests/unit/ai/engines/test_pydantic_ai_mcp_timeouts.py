@@ -31,6 +31,7 @@ from loom.ai.engines.pydantic_ai._mcp import (
     SharedMcpToolsets,
     build_mcp_toolset,
 )
+from loom.core.model.redaction import Secret
 
 pytest.importorskip(
     "pydantic_ai.mcp",
@@ -50,7 +51,7 @@ _SSE_NO_CREDENTIAL = CompiledMcpCapability(
 _SSE_WITH_HEADERS = CompiledMcpCapability(
     server="orders",
     url="https://orders.example.com/sse",
-    headers_ref="X-Key=abc123",
+    headers_ref=Secret("X-Key=abc123"),
     timeout_ms=20000,
 )
 

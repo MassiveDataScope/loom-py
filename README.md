@@ -333,6 +333,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
@@ -359,6 +363,10 @@ from loom.rest.fastapi.auto import create_app
 
 app = create_app("config/api.yaml")
 ```
+
+Run it with `LOOM_ENV=development`: an unset `LOOM_ENV` means production, where
+the deploy checks refuse an API that authenticates nobody (`loom.rest.E001`).
+See [Environments and deploy checks](docs/getting-started/environments.md).
 
 For larger projects, use `mode: manifest` and a manifest module:
 
@@ -400,8 +408,8 @@ class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
         ),
     )
     rules = (
-        Rule.check(F(PricingCommand).unit_price, via=lambda v: v <= 0, message="unit_price must be > 0"),
-        Rule.check(F(PricingCommand).country, via=lambda v: v not in TAX_RATES, message="Unsupported country"),
+        Rule.check(F(PricingCommand).unit_price, via=lambda v: "unit_price must be > 0" if v <= 0 else None),
+        Rule.check(F(PricingCommand).country, via=lambda v: None if v in TAX_RATES else "Unsupported country"),
     )
 
     async def execute(self, record_id: int, cmd: PricingCommand = Input()) -> PricingPreviewResponse:

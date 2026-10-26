@@ -28,8 +28,8 @@ from loom.etl.backends.polars._writer import PolarsTargetWriter  # noqa: E402
 from loom.etl.declarative.expr._refs import TableRef  # noqa: E402
 from loom.etl.declarative.target._history import (  # noqa: E402
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
-    HistorifyKeyConflictError,
     HistorifySpec,
     HistoryDateType,
 )
@@ -37,6 +37,7 @@ from loom.etl.storage._config import MissingTablePolicy  # noqa: E402
 from tests.unit.etl.backends._historify_contract import (  # noqa: E402
     HistorifyContractTests,
     _log_spec,
+    _replacement_spec,
     _snapshot_spec,
 )
 
@@ -71,6 +72,43 @@ class TestHistorifyPolars(HistorifyContractTests):
         return lambda uri: pl.scan_delta(uri).collect().to_dicts()
 
 
+class TestLogDeleteMarkerDtype:
+    def test_all_null_marker_is_rejected_with_its_dtype(self) -> None:
+        frame = pl.DataFrame(
+            {"wo": ["W1"], "rid": ["R1"], "event_ts": [datetime(2026, 10, 10)], "cost": [1]}
+        ).with_columns(pl.lit(None).alias("is_deleted"))
+        backend = PolarsHistorifyBackend()
+        spec = _replacement_spec()
+        with pytest.raises(HistorifyDeleteMarkerError, match="dtype Null.*cast it to Boolean"):
+            scd2_transform(backend, frame, None, spec, None)
+
+
+class TestLogDeleteMarkerZeroWidthVector:
+    def test_zero_width_vector_does_not_close_the_open_one_on_rerun(self, tmp_path: Path) -> None:
+        """Two events one nanosecond apart share a microsecond: the earlier vector is
+        zero width and must not read as a deletion when the entity is rebuilt."""
+        writer = PolarsTargetWriter(str(tmp_path), missing_table_policy=MissingTablePolicy.CREATE)
+        instant = datetime(2026, 10, 10)
+        frame = pl.DataFrame(
+            {
+                "wo": ["W1", "W1"],
+                "rid": ["R1", "R1"],
+                "event_ts": pl.Series([instant, instant]).cast(pl.Datetime("ns"))
+                + pl.Series([100, 200]).cast(pl.Duration("ns")),
+                "cost": [1, 2],
+                "is_deleted": [False, False],
+            }
+        )
+        expected = [
+            (1, datetime(2026, 10, 10, tzinfo=UTC), datetime(2026, 10, 10, tzinfo=UTC)),
+            (2, datetime(2026, 10, 10, tzinfo=UTC), None),
+        ]
+        for _ in range(2):
+            writer.write(frame.lazy(), _replacement_spec(), None)
+            rows = pl.scan_delta(str(tmp_path / "dim_replacements")).collect()
+            assert sorted(rows.select("cost", "valid_from", "valid_to").iter_rows()) == expected
+
+
 # ---------------------------------------------------------------------------
 # Polars-specific helper tests (backend-specific operations)
 # ---------------------------------------------------------------------------
@@ -83,16 +121,16 @@ def _stamp_new_rows(frame: pl.DataFrame, spec: HistorifySpec, eff_date: Any) -> 
     return ops.stamp_col(frame, spec.valid_to, None, dtype)
 
 
-class TestAssertUniqueEntityState:
-    def test_unique_frame_passes(self) -> None:
+class TestDuplicateKeys:
+    def test_unique_frame_has_none(self) -> None:
         frame = pl.DataFrame({"player_id": [1, 2], "team_id": ["RM", "BCA"]})
-        PolarsHistorifyBackend().assert_unique_keys(frame, ["player_id", "team_id"])
+        assert PolarsHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"]) is None
 
-    def test_duplicate_raises(self) -> None:
+    def test_duplicates_are_described(self) -> None:
         frame = pl.DataFrame({"player_id": [1, 1], "team_id": ["RM", "RM"]})
-        backend = PolarsHistorifyBackend()
-        with pytest.raises(HistorifyKeyConflictError):
-            backend.assert_unique_keys(frame, ["player_id", "team_id"])
+        described = PolarsHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"])
+        assert described is not None
+        assert "'player_id': 1" in described
 
 
 class TestAssertNoDateCollisions:
@@ -172,6 +210,35 @@ class TestBackendHelpers:
             datetime(2024, 1, 1, 8, tzinfo=UTC),
             datetime(2024, 1, 2, 8, tzinfo=UTC),
         ]
+
+
+_CLOSURE_HISTORY = [
+    # Contiguous, open tail: no deletion.
+    {"id": 1, "valid_from": date(2024, 1, 1), "valid_to": date(2024, 1, 31)},
+    {"id": 1, "valid_from": date(2024, 2, 1), "valid_to": None},
+    # Zero-width vector sharing valid_from with the open one: no deletion.
+    {"id": 2, "valid_from": date(2024, 1, 1), "valid_to": date(2024, 1, 1)},
+    {"id": 2, "valid_from": date(2024, 1, 1), "valid_to": None},
+    # Gap before a reopen, then a closed tail: two deletions.
+    {"id": 3, "valid_from": date(2024, 1, 1), "valid_to": date(2024, 1, 31)},
+    {"id": 3, "valid_from": date(2024, 3, 1), "valid_to": date(2024, 3, 31)},
+]
+_CLOSURE_EVENTS = [(3, date(2024, 2, 1)), (3, date(2024, 4, 1))]
+_CLOSURE_SPEC = HistorifySpec(
+    table_ref=TableRef("t"),
+    keys=("id",),
+    effective_date="event_date",
+    mode=HistorifyInputMode.LOG,
+    track=("state",),
+    delete_marker="is_deleted",
+)
+
+
+class TestClosureEvents:
+    def test_returns_tombstone_after_each_closure_without_successor(self) -> None:
+        frame = pl.DataFrame(_CLOSURE_HISTORY)
+        result = PolarsHistorifyBackend().closure_events(frame, _CLOSURE_SPEC)
+        assert sorted(result.iter_rows()) == _CLOSURE_EVENTS
 
 
 class TestTimestampBoundariesAreUtcAware:

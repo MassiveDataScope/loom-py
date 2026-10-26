@@ -235,7 +235,9 @@ before `execute()` is called.
 ### Rule.check — field validation
 
 `Rule.check` validates a single field. The `via=` function returns an error
-string when the value is invalid, or `None` when it is valid:
+string (or a `RuleViolation`) when the value is invalid, or `None` when it is
+valid. Any other result, a `bool` included, raises `TypeError`; a boolean
+condition belongs in `Rule.forbid`:
 
 ```python
 from loom.core.use_case import Rule, F
@@ -466,7 +468,7 @@ await self._app.entity(Product).update(params={"id": product_id}, payload={"stoc
 | `Exists(Model, from_param=..., against=...)` | Check existence; 404 on missing if `RAISE` |
 | `Compute.set(F).from_command(...)` | Derive/normalise a command field |
 | `Compute.set(F).from_params(...)` | Include path params in derive computation |
-| `Rule.check(F, via=fn)` | Validate a field; `fn` returns error string or `None` |
+| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolation`, or `None` |
 | `Rule.forbid(predicate, message=...)` | Enforce invariant; predicate returns `True` to fail |
 | `.from_command(F1, F2, ...)` | Pass command fields to rule predicate |
 | `.from_params("name")` | Pass path parameter to rule predicate |

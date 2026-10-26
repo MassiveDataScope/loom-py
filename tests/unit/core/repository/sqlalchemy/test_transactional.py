@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import DateTime  # noqa: F401
 
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.transactional import record_mutation, transactional
@@ -109,7 +110,9 @@ class TestCallerScopedSessionProbe:
     async def test_it_reports_the_session_the_decorator_binds(
         self, mock_session_manager: Any, dummy_model: type
     ) -> None:
-        repository = RepositorySQLAlchemy(mock_session_manager, dummy_model)
+        repository = RepositorySQLAlchemy(
+            mock_session_manager, dummy_model, cursor_codec=CursorCodec(signing="ephemeral")
+        )
         service = _ServiceProbingItsRepository(mock_session_manager, repository)
 
         assert repository.has_caller_scoped_session() is False
@@ -121,7 +124,9 @@ class TestCallerScopedSessionProbe:
     async def test_the_binding_does_not_leak_past_the_transaction(
         self, mock_session_manager: Any, dummy_model: type
     ) -> None:
-        repository = RepositorySQLAlchemy(mock_session_manager, dummy_model)
+        repository = RepositorySQLAlchemy(
+            mock_session_manager, dummy_model, cursor_codec=CursorCodec(signing="ephemeral")
+        )
         service = _ServiceProbingItsRepository(mock_session_manager, repository)
 
         await service.execute()

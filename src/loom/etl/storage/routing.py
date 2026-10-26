@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from loom.core.model.redaction import reveal_for_driver
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.runtime.contracts import TableDiscovery
 from loom.etl.schema._schema import ColumnSchema
@@ -190,8 +191,8 @@ def _default_resolver(config: StorageConfig) -> TableRouteResolver:
     if default_path is not None:
         return PathRouteResolver(
             PrefixLocator(
-                root=default_path.uri,
-                storage_options=default_path.storage_options or None,
+                root="" if default_path.uri is None else default_path.uri.reveal(),
+                storage_options=reveal_for_driver(default_path.storage_options) or None,
                 writer=default_path.writer or None,
                 delta_config=default_path.delta_config or None,
                 commit=default_path.commit or None,

@@ -1,4 +1,4 @@
-"""Direct coverage for Bytewax DLQ helpers."""
+"""DLQ records derived from the sink's own send requests."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.streaming.bytewax import _dlq  # noqa: E402
+from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.core._errors import (  # noqa: E402
     ErrorEnvelope,
     ErrorKind,
@@ -25,33 +25,31 @@ from loom.streaming.kafka._message import (  # noqa: E402
     HEADER_PARENT_TRACE_ID,
     HEADER_TRACE_ID,
 )
+from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from loom.streaming.kafka._wire import DecodeError  # noqa: E402
-from tests.unit.streaming.bytewax.cases import Order, build_message  # noqa: E402
+from tests.unit.streaming.bytewax.cases import Order, build_compiled_sink  # noqa: E402
+from tests.unit.streaming.kafka.fakes import RawProducerStub  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
 
-class _RecordingProducer:
-    def __init__(self, *, fail_on: int | None = None) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self.fail_on = fail_on
-
-    def send(self, **kwargs: Any) -> None:
-        if self.fail_on is not None and len(self.calls) == self.fail_on:
-            raise RuntimeError("boom")
-        self.calls.append(kwargs)
+def _failing_sink_producer(monkeypatch: pytest.MonkeyPatch) -> RawProducerStub:
+    """Install a raw producer whose first flush, the sink's, fails."""
+    raw = RawProducerStub()
+    raw.flush_errors = [KafkaDeliveryError("broker down")]
+    monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: raw)
+    return raw
 
 
-def test_decode_str_header_handles_missing_and_present_values() -> None:
-    headers = {"x": b"value"}
-
-    assert _dlq._decode_str_header(headers, "x") == "value"
-    assert _dlq._decode_str_header(headers, "missing") is None
+def _dlq_records(raw: RawProducerStub) -> list[KafkaRecord[bytes]]:
+    return [record for record in raw.sent if record.topic == "orders.dlq"]
 
 
-def test_send_batch_to_dlq_preserves_trace_lineage() -> None:
-    producer = _RecordingProducer()
-
+def test_message_dlq_records_keep_the_failed_message_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _failing_sink_producer(monkeypatch)
+    sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
     messages = [
         Message(
             payload=Order(order_id="a"),
@@ -83,47 +81,35 @@ def test_send_batch_to_dlq_preserves_trace_lineage() -> None:
         ),
     ]
 
-    _dlq.send_batch_to_dlq(
-        cast(Any, producer),
-        "orders.dlq",
-        cast(Any, messages),
-        KafkaDeliveryError("broker down"),
+    sink.write_batch(cast(Any, messages))
+
+    first, second = _dlq_records(raw)
+    assert first.headers[HEADER_TRACE_ID] == b"trace-old-1"
+    assert second.headers[HEADER_TRACE_ID] == b"trace-old-2"
+    assert first.headers[HEADER_PARENT_TRACE_ID] == b"grandparent-1"
+    assert second.headers[HEADER_PARENT_TRACE_ID] == b"grandparent-2"
+    assert first.headers["x-dlq-error"] == b"broker down"
+
+
+def test_message_dlq_record_keeps_the_message_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = _failing_sink_producer(monkeypatch)
+    sink = _runtime_io._KafkaMessageSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
+    message = Message(
+        payload=Order(order_id="a"),
+        meta=MessageMeta(message_id="m-1", topic="orders.in", key=b"tenant-a"),
     )
 
-    assert [call["topic"] for call in producer.calls] == ["orders.dlq", "orders.dlq"]
-    assert producer.calls[0]["parent_trace_id"] == "grandparent-1"
-    assert producer.calls[1]["parent_trace_id"] == "grandparent-2"
-    assert producer.calls[0]["trace_id"] == "trace-old-1"
-    assert producer.calls[1]["trace_id"] == "trace-old-2"
-    assert producer.calls[0]["headers"]["x-dlq-error"] == b"broker down"
+    sink.write_batch(cast(Any, [message]))
+
+    (record,) = _dlq_records(raw)
+    assert record.key == b"tenant-a"
 
 
-def test_send_batch_to_dlq_swallows_per_item_errors(
+def test_error_envelope_dlq_records_carry_the_sink_record_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    producer = _RecordingProducer(fail_on=0)
-    warnings: list[dict[str, Any]] = []
-    monkeypatch.setattr(_dlq.logger, "warning", lambda *args, **kwargs: warnings.append(kwargs))
-
-    _dlq.send_batch_to_dlq(
-        cast(Any, producer),
-        "orders.dlq",
-        cast(
-            Any,
-            [
-                build_message(Order(order_id="a")),
-            ],
-        ),
-        KafkaDeliveryError("broker down"),
-    )
-
-    assert warnings
-    assert warnings[0]["extra"]["dlq_topic"] == "orders.dlq"
-
-
-def test_send_error_batch_to_dlq_handles_original_and_missing_messages() -> None:
-    producer = _RecordingProducer()
-
+    raw = _failing_sink_producer(monkeypatch)
+    sink = _runtime_io._KafkaErrorEnvelopeSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
     original = Message(
         payload=Order(order_id="a"),
         meta=MessageMeta(
@@ -168,50 +154,26 @@ def test_send_error_batch_to_dlq_handles_original_and_missing_messages() -> None
         reason="missing route",
     )
 
-    _dlq.send_error_batch_to_dlq(
-        cast(Any, producer),
-        "orders.dlq",
-        cast(Any, [with_original, without_original]),
-        KafkaDeliveryError("broker down"),
-    )
+    sink.write_batch(cast(Any, [with_original, without_original]))
 
-    assert [call["trace_id"] for call in producer.calls] == ["trace-old", None]
-    assert producer.calls[0]["parent_trace_id"] == "parent-trace"
-    assert producer.calls[0]["correlation_id"] == "corr-1"
-    assert producer.calls[0]["key"] == b"tenant-a"
-    assert producer.calls[0]["headers"]["x-error-kind"] == b"task"
-    assert producer.calls[1]["parent_trace_id"] is None
-    assert producer.calls[1]["correlation_id"] is None
-    assert producer.calls[1]["key"] is None
+    first, second = _dlq_records(raw)
+    assert first.headers[HEADER_TRACE_ID] == b"trace-old"
+    assert first.headers[HEADER_PARENT_TRACE_ID] == b"parent-trace"
+    assert first.headers[HEADER_CORRELATION_ID] == b"corr-1"
+    assert first.key == b"tenant-a"
+    assert first.headers["x-error-kind"] == b"task"
+    assert first.headers["x-error-reason"] == b"boom"
+    assert first.headers["x-dlq-error"] == b"broker down"
+    assert HEADER_PARENT_TRACE_ID not in second.headers
+    assert HEADER_CORRELATION_ID not in second.headers
+    assert second.key is None
 
 
-def test_send_error_batch_to_dlq_swallows_per_item_errors(
+def test_decode_error_dlq_record_uses_the_original_record_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    producer = _RecordingProducer(fail_on=0)
-    warnings: list[dict[str, Any]] = []
-    monkeypatch.setattr(_dlq.logger, "warning", lambda *args, **kwargs: warnings.append(kwargs))
-
-    envelope: ErrorEnvelope[Order] = ErrorEnvelope(
-        kind=ErrorKind.TASK,
-        reason="boom",
-        payload_type="order.created",
-    )
-
-    _dlq.send_error_batch_to_dlq(
-        cast(Any, producer),
-        "orders.dlq",
-        cast(Any, [envelope]),
-        KafkaDeliveryError("broker down"),
-    )
-
-    assert warnings
-    assert warnings[0]["extra"]["dlq_topic"] == "orders.dlq"
-
-
-def test_send_decode_error_batch_to_dlq_uses_original_headers_and_trace_id() -> None:
-    producer = _RecordingProducer()
-
+    raw = _failing_sink_producer(monkeypatch)
+    sink = _runtime_io._KafkaDecodeErrorSinkPartition(build_compiled_sink(dlq_topic="orders.dlq"))
     decode_error = DecodeError(
         error=ErrorEnvelope(kind=ErrorKind.WIRE, reason="bad wire"),
         raw=b"raw",
@@ -228,44 +190,14 @@ def test_send_decode_error_batch_to_dlq_uses_original_headers_and_trace_id() -> 
         timestamp_ms=4,
     )
 
-    _dlq.send_decode_error_batch_to_dlq(
-        cast(Any, producer),
-        "orders.dlq",
-        cast(Any, [decode_error]),
-        KafkaDeliveryError("broker down"),
-    )
+    sink.write_batch([decode_error])
 
-    assert len(producer.calls) == 1
-    call = producer.calls[0]
-    assert call["trace_id"] == "trace-old"
-    assert call["parent_trace_id"] == "parent-trace"
-    assert call["correlation_id"] == "corr-1"
-    assert call["causation_id"] == "cause-1"
-    assert call["headers"]["x-error-kind"] == b"wire"
-    assert call["headers"]["x-error-reason"] == b"bad wire"
-
-
-def test_send_decode_error_batch_to_dlq_swallows_per_item_errors(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    producer = _RecordingProducer(fail_on=0)
-    warnings: list[dict[str, Any]] = []
-    monkeypatch.setattr(_dlq.logger, "warning", lambda *args, **kwargs: warnings.append(kwargs))
-
-    decode_error = DecodeError(
-        error=ErrorEnvelope(kind=ErrorKind.WIRE, reason="bad wire"),
-        raw=b"raw",
-        topic="orders.in",
-        key=b"tenant-a",
-        headers={},
-    )
-
-    _dlq.send_decode_error_batch_to_dlq(
-        cast(Any, producer),
-        "orders.dlq",
-        cast(Any, [decode_error]),
-        KafkaDeliveryError("broker down"),
-    )
-
-    assert warnings
-    assert warnings[0]["extra"]["dlq_topic"] == "orders.dlq"
+    (record,) = _dlq_records(raw)
+    assert record.key == b"tenant-a"
+    assert record.headers[HEADER_TRACE_ID] == b"trace-old"
+    assert record.headers[HEADER_PARENT_TRACE_ID] == b"parent-trace"
+    assert record.headers[HEADER_CORRELATION_ID] == b"corr-1"
+    assert record.headers[HEADER_CAUSATION_ID] == b"cause-1"
+    assert record.headers["x-error-kind"] == b"wire"
+    assert record.headers["x-error-reason"] == b"bad wire"
+    assert record.headers["x-dlq-error"] == b"broker down"
