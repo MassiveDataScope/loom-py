@@ -2,23 +2,37 @@
 
 from __future__ import annotations
 
+from loom.etl.declarative.target._history._enums import HistorifyInputMode
+
 
 class HistorifyKeyConflictError(ValueError):
-    """Raised when the incoming snapshot contains duplicate ``keys + track`` combinations.
+    """Raised when the incoming frame repeats an entity state vector or event.
 
-    SCD2 semantics require that each entity state vector is unique within a
-    snapshot. Duplicates indicate a data-modelling error: the distinguishing
-    dimension must be included in ``keys`` or ``track``.
+    In SNAPSHOT mode each ``keys + track`` combination must be unique: duplicates
+    indicate a data-modelling error, and the distinguishing dimension must be
+    included in ``keys`` or ``track``. If the same entity legitimately belongs to
+    multiple simultaneous states (e.g. a player on loan to two clubs at once),
+    include the distinguishing column in ``track`` — both vectors will then be
+    tracked independently.
 
-    If the same entity legitimately belongs to multiple simultaneous states
-    (e.g. a player on loan to two clubs at once), include the distinguishing
-    column in ``track`` — both vectors will then be tracked independently.
+    In LOG mode each ``keys + effective_date`` combination must be unique,
+    tombstones flagged by ``delete_marker`` included.
 
     Args:
         duplicates: Human-readable representation of the conflicting key tuples.
+        mode: Input mode whose uniqueness rule was violated.
     """
 
-    def __init__(self, duplicates: str) -> None:
+    def __init__(
+        self, duplicates: str, *, mode: HistorifyInputMode = HistorifyInputMode.SNAPSHOT
+    ) -> None:
+        if mode is HistorifyInputMode.LOG:
+            super().__init__(
+                f"IntoHistory (LOG mode): duplicate events found — each "
+                f"(keys + effective_date) combination must be unique, including "
+                f"delete_marker tombstones. Conflicting rows: {duplicates}."
+            )
+            return
         super().__init__(
             f"IntoHistory: duplicate entity state vectors found in snapshot — "
             f"each (keys + track) combination must be unique. Conflicting rows: {duplicates}. "
@@ -50,6 +64,21 @@ class HistorifyDateCollisionError(ValueError):
         )
 
 
+class HistorifyDeleteMarkerError(ValueError):
+    """Raised in LOG mode when the ``delete_marker`` column is missing or not boolean.
+
+    Args:
+        column: Declared ``delete_marker`` column name.
+        problem: What is wrong with the column in the incoming frame.
+    """
+
+    def __init__(self, column: str, problem: str) -> None:
+        super().__init__(
+            f"IntoHistory (LOG mode): delete_marker column {column!r} {problem}. "
+            f"The incoming frame must carry it as a boolean column (True = tombstone)."
+        )
+
+
 class HistorifyTemporalConflictError(ValueError):
     """Raised when the target contains future-open vectors and re-weave is disabled.
 
@@ -74,5 +103,6 @@ class HistorifyTemporalConflictError(ValueError):
 __all__ = [
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
+    "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
 ]

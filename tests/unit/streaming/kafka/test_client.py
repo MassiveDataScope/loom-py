@@ -201,7 +201,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
         fake.next_message = FakeKafkaMessage(value=b"raw-bytes")
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         record = consumer.poll(500)
@@ -227,7 +229,9 @@ class TestKafkaConsumerClient:
         fake = installer.stub
         assert fake is not None
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
         assert consumer.poll(100) is None
 
@@ -251,7 +255,9 @@ class TestKafkaConsumerClient:
                 events.append(event)
 
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
             obs=ObservabilityRuntime([_RecordingObserver()]),
         )
 
@@ -268,7 +274,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
         fake.next_message = FakeKafkaMessage(error=_FakeError())
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
         with pytest.raises(KafkaPollError, match="boom"):
             consumer.poll(100)
@@ -278,7 +286,9 @@ class TestKafkaConsumerClient:
         fake = installer.stub
         assert fake is not None
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         consumer.commit(asynchronous=True)
@@ -293,7 +303,9 @@ class TestKafkaConsumerClient:
         fake = installer.stub
         assert fake is not None
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         consumer.commit_offset([TopicPartition("orders", 1, 12)])
@@ -312,7 +324,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
         fake.commit_error = RuntimeError("commit-boom")
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         partitions = [TopicPartition("orders", 1, 12)]
@@ -325,7 +339,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
         fake.commit_error = RuntimeError("commit-boom")
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         with pytest.raises(KafkaCommitError, match="commit-boom"):
@@ -343,7 +359,9 @@ class TestKafkaConsumerClient:
         fake = _InterruptingConsumer({})
         monkeypatch.setattr("loom.streaming.kafka.client._consumer._Consumer", lambda config: fake)
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         with pytest.raises(KeyboardInterrupt):
@@ -360,7 +378,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
         fake.next_message = FakeKafkaMessage(value=b"data")
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
             obs=ObservabilityRuntime([kafka_metrics]),
         )
 
@@ -378,7 +398,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
 
         with KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         ) as consumer:
             consumer.poll(100)
 
@@ -396,7 +418,9 @@ class TestKafkaConsumerClient:
             FakeKafkaMessage(value=b"second", offset=8),
         ]
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         records = consumer.consume_batch(10)
@@ -411,7 +435,9 @@ class TestKafkaConsumerClient:
     ) -> None:
         install_raw_consumer_stub(monkeypatch)
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         assert consumer.consume_batch(5) == []
@@ -425,7 +451,9 @@ class TestKafkaConsumerClient:
         assert fake is not None
         fake.queued_messages = [FakeKafkaMessage(error=_FakeError())]
         consumer = KafkaConsumerClient(
-            ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+            ConsumerSettings(
+                brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+            ),
         )
 
         with pytest.raises(KafkaPollError, match="boom"):
@@ -443,7 +471,9 @@ class TestKafkaConsumerClient:
         with (
             pytest.raises(ValueError, match="body-boom"),
             KafkaConsumerClient(
-                ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=("orders",)),
+                ConsumerSettings(
+                    brokers=("k1:9092",), group_id="g1", topics=("orders",), delivery="at_most_once"
+                ),
             ),
         ):
             raise ValueError("body-boom")
@@ -454,6 +484,7 @@ def _consumer_settings() -> ConsumerSettings:
         brokers=("localhost:9092",),
         group_id="test",
         topics=("orders",),
+        delivery="at_most_once",
     )
 
 

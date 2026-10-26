@@ -255,6 +255,7 @@ Conceptually, the current SQLAlchemy fallback is:
 from dataclasses import dataclass
 
 from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -262,13 +263,20 @@ from loom.core.repository.sqlalchemy.session_manager import SessionManager
 @dataclass(frozen=True)
 class SQLAlchemyDefaultRepositoryBuilder:
     session_manager: SessionManager
+    cursor_codec: CursorCodec
 
     def __call__(self, context: RepositoryBuildContext) -> object:
         return RepositorySQLAlchemy(
             session_manager=self.session_manager,
             model=context.model,
+            cursor_codec=self.cursor_codec,
         )
 ```
+
+A builder that constructs a `RepositorySQLAlchemy` or a `RepositoryMongo`
+itself passes the shared `CursorCodec`: resolve it from
+`context.container`, where the backend registers the one it built from
+`persistence.cursors`.
 
 An application that wants a different project-wide base repository can
 register another `DefaultRepositoryBuilder` implementation in the container.
@@ -623,6 +631,11 @@ from loom.rest.fastapi.auto import create_app
 
 app = create_app("config/api.yaml")
 ```
+
+Run it with `LOOM_ENV=development`. Without it loom starts as production, runs
+the deploy checks, and refuses an API that authenticates nobody
+(`loom.rest.E001`). See
+[Environments, configuration and deploy checks](../getting-started/environments.md).
 
 ---
 

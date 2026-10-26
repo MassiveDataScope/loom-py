@@ -27,7 +27,6 @@ Usage::
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -39,7 +38,7 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.rest.compiler import RestInterfaceCompiler, RouteSources
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.router_runtime import bind_interfaces
-from loom.rest.model import RestApiDefaults, RestInterface
+from loom.rest.model import RestApiDefaults
 
 # Type alias for ASGI middleware classes accepted by FastAPI.add_middleware.
 _MiddlewareClass = Any
@@ -55,53 +54,28 @@ def _resolve_executor(result: BootstrapResult) -> RuntimeExecutor:
     return cast(RuntimeExecutor, result.container.resolve(RuntimeExecutor))
 
 
-def _resolve_route_sources(
-    routes: RouteSources | None,
-    interfaces: Sequence[type[RestInterface[Any]]] | None,
-) -> RouteSources:
-    """Resolve the deprecated *interfaces* alias into *routes*.
+def _require_route_sources(routes: object) -> RouteSources:
+    """Return *routes*, refusing anything that is not a ``RouteSources``.
 
-    Exactly one of the two must be given: neither leaves nothing to compile,
-    and both leave two conflicting answers with no rule to prefer one over
-    the other. Warns when *interfaces* is used, since ``RouteSources`` is the
-    replacement.
-
-    A caller who passed the old second positional argument reaches this with a
-    sequence where *routes* is expected, so that case is named here too: left
-    alone it would surface much later as an attribute error on the sequence,
-    which says nothing about how to fix the call.
+    A bare sequence of interfaces would otherwise surface much later as an
+    attribute error on the sequence, which says nothing about how to fix the
+    call.
 
     Raises:
-        TypeError: If neither or both are given, or if *routes* is not a
-            ``RouteSources`` instance (e.g. a bare sequence of interfaces).
+        TypeError: If *routes* is not a ``RouteSources`` instance.
     """
-    if routes is not None and not isinstance(routes, RouteSources):
+    if not isinstance(routes, RouteSources):
         raise TypeError(
-            "create_fastapi_app()'s 'routes' parameter no longer accepts a bare sequence "
-            "of interfaces. Pass RouteSources(python=[...]) instead."
+            "create_fastapi_app()'s 'routes' must be a RouteSources, "
+            f"got {type(routes).__name__}. Pass RouteSources(python=[...])."
         )
-    if routes is not None and interfaces is not None:
-        raise TypeError(
-            "create_fastapi_app() accepts either 'routes' or the deprecated 'interfaces', not both."
-        )
-    if routes is not None:
-        return routes
-    if interfaces is not None:
-        warnings.warn(
-            "create_fastapi_app(interfaces=...) is deprecated and will be removed in 2.0. "
-            "Use create_fastapi_app(routes=RouteSources(python=interfaces)) instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        return RouteSources(python=interfaces)
-    raise TypeError("create_fastapi_app() requires 'routes' (RouteSources).")
+    return routes
 
 
 def create_fastapi_app(
     result: BootstrapResult,
-    routes: RouteSources | None = None,
+    routes: RouteSources,
     *,
-    interfaces: Sequence[type[RestInterface[Any]]] | None = None,
     observability_runtime: ObservabilityRuntime | None = None,
     middleware: Sequence[_MiddlewareClass] = (),
     defaults: RestApiDefaults | None = None,
@@ -129,15 +103,7 @@ def create_fastapi_app(
             to ``routes.python`` before the merge, so a disabled Python
             route can be redeclared in ``routes.config`` without colliding
             with itself; an entry matching no Python-declared route aborts
-            startup instead of doing nothing. Required unless *interfaces*
-            is given instead.
-        interfaces: Deprecated keyword-only alias for
-            ``routes=RouteSources(python=interfaces)``. Kept only so code
-            written before ``RouteSources`` existed keeps working when it
-            called ``create_fastapi_app(result, interfaces=[...])`` —
-            every published example did; emits a ``DeprecationWarning``
-            naming *routes* as the replacement. Mutually exclusive with
-            *routes*.
+            startup instead of doing nothing.
         observability_runtime: Shared runtime used to emit lifecycle events
             around each request.
         middleware: ASGI middleware classes to register on the application.
@@ -166,7 +132,7 @@ def create_fastapi_app(
 
     Raises:
         InterfaceCompilationError: If any interface fails structural validation.
-        TypeError: If neither *routes* nor *interfaces* is given, or both are.
+        TypeError: If *routes* is not a ``RouteSources``.
 
     Example::
 
@@ -179,7 +145,7 @@ def create_fastapi_app(
             version="2.0.0",
         )
     """
-    resolved_routes = _resolve_route_sources(routes, interfaces)
+    resolved_routes = _require_route_sources(routes)
     runtime = observability_runtime or ObservabilityRuntime.noop()
     app = FastAPI(**fastapi_kwargs)
     register_error_handlers(app)

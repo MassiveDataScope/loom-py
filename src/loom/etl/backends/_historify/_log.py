@@ -24,6 +24,9 @@ def apply_log(
     history is rebuilt from the union of existing events and incoming events.
     Incoming events win on same ``(entity key, effective date)`` conflicts, so
     a correction with different tracked values replaces the stored event.
+    With ``delete_marker`` set, every stored closure without a successor is
+    replayed as a tombstone so the rebuild keeps it closed. Removing the marker
+    later would merge those closures back into open history.
     """
     eff_col = str(spec.effective_date)
     entity_keys = list(spec.keys)
@@ -36,6 +39,12 @@ def apply_log(
         c for c in [spec.valid_to, spec.deleted_at] if c in ops.columns(existing_events)
     ]
     existing_events = ops.drop(existing_events, boundary_cols)
+    marker = spec.delete_marker
+    if marker is not None:
+        stored_tombstones = ops.stamp_col(
+            ops.closure_events(affected_keys, spec), marker, True, None
+        )
+        existing_events = ops.union([existing_events, stored_tombstones])
 
     all_events = ops.union(
         [
@@ -46,5 +55,21 @@ def apply_log(
     deduped = ops.dedup_priority(all_events, entity_keys + [eff_col], _ORIGIN_COL)
     deduped = ops.drop(deduped, [_ORIGIN_COL])
 
-    rebuilt = ops.build_log_boundaries(deduped, spec)
+    rebuilt = build_log_history(ops, deduped, spec)
     return ops.union([untouched, rebuilt])
+
+
+def build_log_history(ops: HistorifyBackend[F], events: F, spec: HistorifySpec) -> F:
+    """Build LOG history vectors from an event frame, resolving tombstones.
+
+    Tombstones take part in boundary computation as events of their own, so the
+    vector before each one closes a period earlier; the tombstone rows and the
+    ``delete_marker`` column are then dropped, leaving the entity without an
+    open vector until its next regular event.
+    """
+    marker = spec.delete_marker
+    if marker is None:
+        return ops.build_log_boundaries(events, spec)
+    flagged = ops.fill_null(events, marker, False)
+    history = ops.build_log_boundaries(flagged, spec)
+    return ops.drop(ops.filter_eq(history, marker, False, None), [marker])

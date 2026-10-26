@@ -10,6 +10,7 @@ from loom.core.cache.errors import CacheWriteError
 from loom.core.cache.serializer import MsgspecSerializer
 from loom.core.config.errors import ConfigError
 from loom.core.model import loom_type_of
+from loom.core.model.redaction import reveal_for_driver
 
 if TYPE_CHECKING:
     from loom.core.cache.abc.config import CacheConfig
@@ -166,9 +167,10 @@ class CacheGateway:
             CacheGateway.apply_config(cache_cfg)
         """
         _require_declared_aliases(config)
+        revealed = cast("dict[str, Any]", reveal_for_driver(config.aiocache_config))
         raw: dict[str, Any] = {
             alias: _translate_backend(backend_cfg, config)
-            for alias, backend_cfg in config.aiocache_config.items()
+            for alias, backend_cfg in revealed.items()
         }
         if _DEFAULT_ALIAS not in raw:
             raw[_DEFAULT_ALIAS] = dict(raw.get(config.aiocache_alias) or _MEMORY_FALLBACK)

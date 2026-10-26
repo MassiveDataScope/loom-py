@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from datetime import date, datetime, time
-from decimal import Decimal
-from typing import Any, ClassVar, Generic, cast
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
 import msgspec
 from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
@@ -14,14 +11,17 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import get_compiled_core
-from loom.core.model.convert import to_struct
+from loom.core.errors.codes import ErrorCode
+from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
     get_column_fields,
     get_id_attributes,
     get_relations,
     get_table_name,
+    scalar_column_annotations,
 )
 from loom.core.repository.abc import (
+    CursorCodec,
     CursorResult,
     FilterParams,
     IdT,
@@ -35,12 +35,18 @@ from loom.core.repository.abc import (
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.integrity import handle_integrity_errors
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
+from loom.core.repository.sqlalchemy.rls.provider import SCOPE_PREFIX
 from loom.core.repository.sqlalchemy.transactional import record_mutation
+from loom.core.repository.sqlalchemy.values import (
+    check_time_offsets,
+    is_json_column,
+    to_comparison_value,
+)
+
+if TYPE_CHECKING:
+    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 _SENTINEL = object()
-# Values SQLAlchemy binds natively; encoding them to strings breaks typed columns.
-_NATIVE_COLUMN_TYPES = (bytes, datetime, date, time, Decimal, UUID)
-_JSON_TYPE_NAMES = frozenset({"JSON", "Postgres.JSONB"})
 _TOTAL_COUNT_ALIAS = "__loom_total_count"
 
 
@@ -49,10 +55,13 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     backend_name: ClassVar[str]
     model: type[Any]
+    session_manager: SessionManager
+    cursor_codec: CursorCodec
     _sa_model: type[Any] | None = None
     _id_attrs: tuple[str, ...] | None = None
     _column_field_names: frozenset[str] | None = None
     _json_column_names: frozenset[str] = frozenset()
+    _cursor_columns: Mapping[str, Any]
     # Pre-computed at init to avoid per-request/per-object reflection.
     _output_column_keys: tuple[str, ...] | None = None
     _all_sa_column_keys: tuple[str, ...] | None = None
@@ -77,10 +86,9 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         column_field_names = frozenset(column_fields.keys())
         self._column_field_names = column_field_names
         self._json_column_names = frozenset(
-            name
-            for name, info in column_fields.items()
-            if info.column_type.type_name in _JSON_TYPE_NAMES
+            name for name in column_fields if is_json_column(getattr(sa, name, None))
         )
+        self._cursor_columns = scalar_column_annotations(self.model)
         self._relations_cache = get_relations(self.model)
         self._core_model = get_compiled_core(self.model)
         if self._core_model is None:
@@ -165,26 +173,34 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     def _serialize_input(self, data: msgspec.Struct | dict[str, Any]) -> dict[str, Any]:
         if isinstance(data, msgspec.Struct):
-            builtins = msgspec.to_builtins(data, builtin_types=_NATIVE_COLUMN_TYPES)
+            builtins = to_column_value(data)
             if not isinstance(builtins, dict):
                 raise TypeError("Struct payload must serialize to dict")
-            return self._encode_json_columns(_to_internal_field_names(type(data), builtins))
+            values = self._encode_json_columns(_to_internal_field_names(type(data), builtins))
+            sa_model = self._effective_sa_model
+            names = (self._column_field_names or frozenset()).intersection(values)
+            check_time_offsets(
+                ((getattr(sa_model, name), values[name]) for name in names),
+                code=ErrorCode.BOUNDARY_VALIDATION,
+            )
+            return values
         return data
 
     def _encode_json_columns(self, values: dict[str, Any]) -> dict[str, Any]:
         """Reduce JSON-column payloads to JSON-serialisable builtins."""
         for key in self._json_column_names.intersection(values):
-            values[key] = msgspec.to_builtins(values[key])
+            values[key] = to_column_value(values[key], json=True)
         return values
 
     def _column_for_field(self, field: str) -> Any:
         """Resolve a model column attribute by field name.
 
         Raises:
-            ValueError: If ``field`` does not exist on the SQLAlchemy model.
+            ValueError: If ``field`` is not a mapped column of the SQLAlchemy
+                model.
         """
         sa_model = self._effective_sa_model
-        if not hasattr(sa_model, field):
+        if field not in inspect(sa_model).column_attrs:
             raise ValueError(f"Unknown field '{field}' for model '{self.model.__name__}'")
         return getattr(sa_model, field)
 
@@ -196,7 +212,12 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         """Apply page-mode filters to an offset items statement."""
         if not filter_params or not filter_params.filters:
             return items_stmt
-        return items_stmt.filter_by(**filter_params.filters)
+        return items_stmt.filter_by(
+            **{
+                name: to_comparison_value(self._column_for_field(name), value)
+                for name, value in filter_params.filters.items()
+            }
+        )
 
     def _to_output(
         self,
@@ -393,7 +414,8 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
         columns = self._id_columns()
         key = columns[0] if len(columns) == 1 else tuple_(*columns)
         result = await session.execute(select(sa_model).where(key.in_(ids)))
-        by_id = {self._key_of(obj): obj for obj in result.scalars()}
+        reselected: list[Any] = list(result.scalars())
+        by_id = {self._key_of(obj): obj for obj in reselected}
         return [by_id[obj_id] for obj_id in ids]
 
     def _record_bulk_create(self, objs: list[Any], rows: list[dict[str, Any]]) -> None:
@@ -448,7 +470,9 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         """Fetch one entity by equality over an arbitrary column field."""
         async with self._session_scope() as scoped_session:
             core_model = self._effective_core_model
-            stmt = core_model.select(profile).where(self._column_for_field(field) == value).limit(1)
+            column = self._column_for_field(field)
+            stmt = core_model.select(profile).where(column == to_comparison_value(column, value))
+            stmt = stmt.limit(1)
             loaded = await core_model.fetch_one(scoped_session, stmt, profile=profile)
             return cast(OutputT | None, loaded)
 
@@ -506,7 +530,10 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 self._id_columns(),
                 self.allowed_filter_fields,
                 backend=self.backend_name,
-                model_name=self.model.__qualname__,
+                model=self.model,
+                cursor_codec=self.cursor_codec,
+                scope=self._cursor_scope(),
+                columns=self._cursor_columns,
             )
             core_model = self._effective_core_model
 
@@ -526,6 +553,21 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 compiler=compiler,
                 core_model=core_model,
             )
+
+    def cache_scope(self) -> str:
+        """Every session setting the caller's transactions start with; ``""`` when none.
+
+        Implements :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`.
+        A row-level policy may read any setting, not only ``loom.scope.*``, so
+        all of them partition the cache; the ``loom.scope.*`` ones are among
+        them, so this tells apart every caller the cursor tokens do.
+        """
+        return _encode_settings(self.session_manager.current_settings())
+
+    def _cursor_scope(self) -> str:
+        """The row-level-security scope values cursors are bound to; ``""`` when unscoped."""
+        settings = self.session_manager.current_settings()
+        return _encode_settings({k: v for k, v in settings.items() if k.startswith(SCOPE_PREFIX)})
 
     async def _list_with_query_cursor(
         self,
@@ -582,7 +624,8 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
 
     async def exists_by(self, field: str, value: Any) -> bool:
         """Check whether an entity exists by an arbitrary column field."""
-        return await self._exists_where(self._column_for_field(field) == value)
+        column = self._column_for_field(field)
+        return await self._exists_where(column == to_comparison_value(column, value))
 
     async def _exists_where(self, clause: Any) -> bool:
         async with self._session_scope() as scoped_session:
@@ -694,3 +737,8 @@ def _to_internal_field_names(
         for field in msgspec.structs.fields(struct_type)
     }
     return {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+
+
+def _encode_settings(settings: Mapping[str, str]) -> str:
+    """Encode *settings* as a canonical string, sorted JSON pairs; ``""`` when empty."""
+    return msgspec.json.encode(sorted(settings.items())).decode() if settings else ""

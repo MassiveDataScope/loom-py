@@ -56,6 +56,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
@@ -72,6 +76,10 @@ from loom.rest.fastapi.auto import create_app
 
 app = create_app("config/api.yaml")
 ```
+
+Run it with `LOOM_ENV=development`. Without the variable loom starts in
+production and runs the deploy checks, and this API authenticates nobody
+(`loom.rest.E001`). See [Environments and deploy checks](environments.md).
 
 Five endpoints (`GET /`, `GET /:id`, `POST /`, `PATCH /:id`, `DELETE /:id`) are
 live with zero hand-written use-case code.
@@ -333,6 +341,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
@@ -397,6 +409,14 @@ recipe for a model that runs unchanged on every backend are described in
 persistence:
   backend: none
 ```
+
+A backend that serves repositories (`sqlalchemy`, `mongo`) signs its
+pagination cursors and fails at startup without a signing key, in every
+environment. The samples on this page are development configurations and opt
+out with `persistence.cursors.signing: ephemeral`, which logs a WARNING;
+`production.yaml` configures keys instead. Keys, rotation and the opt-outs are
+described in
+[Cursor tokens](../rest/persistence-backends.md#cursor-tokens).
 
 `none` is for an application whose only content is agents (see
 [An application that is only agents](../ai/overview.md#an-application-that-is-only-agents)).
@@ -545,11 +565,11 @@ def _compute_subtotal(unit_price: float, quantity: int) -> float:
 def _compute_tax(subtotal: float, tax_rate: float) -> float:
     return subtotal * tax_rate
 
-def _unit_price_invalid(unit_price: float) -> bool:
-    return unit_price <= 0
+def _unit_price_must_be_positive(unit_price: float) -> str | None:
+    return None if unit_price > 0 else "unit_price must be > 0"
 
-def _country_unsupported(country: str) -> bool:
-    return country not in TAX_RATES
+def _country_must_be_supported(country: str) -> str | None:
+    return None if country in TAX_RATES else "Unsupported country"
 
 class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
     computes = (
@@ -566,8 +586,8 @@ class PricingPreviewUseCase(UseCase[Record, PricingPreviewResponse]):
         ),
     )
     rules = (
-        Rule.check(F(PricingCommand).unit_price, via=_unit_price_invalid, message="unit_price must be > 0"),
-        Rule.check(F(PricingCommand).country, via=_country_unsupported, message="Unsupported country"),
+        Rule.check(F(PricingCommand).unit_price, via=_unit_price_must_be_positive),
+        Rule.check(F(PricingCommand).country, via=_country_must_be_supported),
     )
 
     async def execute(self, record_id: int, cmd: PricingCommand = Input()) -> PricingPreviewResponse:

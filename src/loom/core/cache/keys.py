@@ -18,11 +18,39 @@ def stable_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+def full_hash(value: str) -> str:
+    """Produce the full SHA-256 hex digest of *value*.
+
+    Used instead of :func:`stable_hash` wherever the input is chosen by a
+    caller — a filter, a query, a scope — since two such inputs sharing a
+    digest would share a cache entry.
+
+    Args:
+        value: Arbitrary string to hash.
+
+    Returns:
+        The 64-character hexadecimal SHA-256 digest.
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _scope_digest(scope: str) -> str:
+    """Render a caller scope for a cache key: ``""`` stays ``""``, any other value is hashed.
+
+    The values, such as a tenant id, are hashed but not secret: the digest is
+    an unsalted SHA-256 of low-entropy values, so anyone reading the logs or
+    the backend's key names can recover them by trying candidates.
+    """
+    return full_hash(scope) if scope else ""
+
+
 def entity_key(
     entity: str,
     entity_id: object,
     profile: str,
     deps_fingerprint: str,
+    *,
+    scope: str,
 ) -> str:
     """Build the cache key for a single entity lookup.
 
@@ -31,11 +59,16 @@ def entity_key(
         entity_id: Primary key of the entity.
         profile: Loading profile name (e.g. ``"default"``).
         deps_fingerprint: Dependency fingerprint for generational invalidation.
+        scope: The caller's cache scope, ``""`` when unscoped;
+            a row cached for one scope is never served to another.
 
     Returns:
         A composite cache key string.
     """
-    return f"{entity}:{entity_id}:profile={profile}:deps={deps_fingerprint}"
+    return (
+        f"{entity}:{entity_id}:profile={profile}:deps={deps_fingerprint}"
+        f":scope={_scope_digest(scope)}"
+    )
 
 
 def list_index_key(
@@ -45,6 +78,8 @@ def list_index_key(
     limit: int,
     profile: str,
     deps_fingerprint: str,
+    *,
+    scope: str,
 ) -> str:
     """Build the cache key for a paginated list/index query.
 
@@ -55,13 +90,69 @@ def list_index_key(
         limit: Maximum number of items per page.
         profile: Loading profile name.
         deps_fingerprint: Dependency fingerprint for generational invalidation.
+        scope: The caller's cache scope, ``""`` when unscoped;
+            a page of ids cached for one scope is never served to another.
 
     Returns:
         A composite cache key string.
     """
     return (
         f"{entity}:list:filters={filter_fingerprint}:page={page}:limit={limit}:"
-        f"profile={profile}:deps={deps_fingerprint}"
+        f"profile={profile}:deps={deps_fingerprint}:scope={_scope_digest(scope)}"
+    )
+
+
+def query_index_key(
+    entity: str,
+    query_fingerprint: str,
+    profile: str,
+    deps_fingerprint: str,
+    *,
+    scope: str,
+) -> str:
+    """Build the cache key for one ``list_with_query`` page.
+
+    Args:
+        entity: Normalized entity name.
+        query_fingerprint: Hash of the serialized query.
+        profile: Loading profile name.
+        deps_fingerprint: Dependency fingerprint for generational invalidation.
+        scope: The caller's cache scope, ``""`` when unscoped; a page cached
+            for one scope is never served to another.
+
+    Returns:
+        A composite cache key string.
+    """
+    return (
+        f"{entity}:query:{query_fingerprint}:profile={profile}:deps={deps_fingerprint}"
+        f":scope={_scope_digest(scope)}"
+    )
+
+
+def custom_query_key(
+    entity: str,
+    method_name: str,
+    arguments_hash: str,
+    deps_fingerprint: str,
+    *,
+    scope: str,
+) -> str:
+    """Build the cache key for one call to a ``@cache_query`` repository read.
+
+    Args:
+        entity: Normalized entity name.
+        method_name: Name of the decorated repository method.
+        arguments_hash: Hash of the call's arguments.
+        deps_fingerprint: Dependency fingerprint for generational invalidation.
+        scope: The caller's cache scope, ``""`` when unscoped;
+            a result cached for one scope is never served to another.
+
+    Returns:
+        A composite cache key string.
+    """
+    return (
+        f"{entity}:custom:{method_name}:{arguments_hash}:deps={deps_fingerprint}"
+        f":scope={_scope_digest(scope)}"
     )
 
 
@@ -70,8 +161,7 @@ def call_key(*, module: str, qualname: str, version: int, arguments: Any) -> str
 
     The digest is the **full** SHA-256 of the canonically rendered arguments,
     not :func:`stable_hash`: the arguments of a cached call are often chosen by
-    a model or an end user, and 64 bits over a space someone else influences is
-    not the problem an internal filter fingerprint solves.
+    a model or an end user.
 
     Args:
         module: ``__module__`` of the decorated coroutine, so two homonyms in

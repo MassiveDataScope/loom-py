@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeGuard, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeGuard, TypeVar
 
 from loom.core.config import Configurable
 from loom.core.logger import LoggerPort, get_logger
@@ -103,7 +103,6 @@ class _WithBase(Generic[InT, OutT]):
         "process",
         "scope",
     )
-    router_branch_safe: ClassVar[bool] = True
 
     def __init__(
         self,

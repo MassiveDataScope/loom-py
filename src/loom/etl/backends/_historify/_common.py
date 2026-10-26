@@ -42,7 +42,18 @@ def resolve_track_cols(spec: HistorifySpec, frame_cols: list[str]) -> tuple[str,
     if spec.track is not None:
         return spec.track
     excluded = set(spec.keys) | {spec.valid_from, spec.valid_to}
+    if spec.delete_marker is not None:
+        excluded.add(spec.delete_marker)
     return tuple(c for c in frame_cols if c not in excluded)
+
+
+def log_run_cols(spec: HistorifySpec) -> list[str]:
+    """Return the columns whose change starts a new LOG run: ``track`` plus the delete marker.
+
+    Including the marker keeps a tombstone from collapsing into the run it closes.
+    """
+    marker = [spec.delete_marker] if spec.delete_marker is not None else []
+    return [*(spec.track or ()), *marker]
 
 
 def prev_period_value(eff_date: Any, spec: HistorifySpec) -> Any:

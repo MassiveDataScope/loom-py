@@ -12,7 +12,8 @@
 #   docker compose -f docker-compose.local.yaml up -d
 #   docker build -t loom-etl-daily-orders:dev -f Dockerfile.daily_orders .
 #   python -m my_app.deploy
-#   prefect deployment run "daily-orders/daily-orders" -p env=local
+#   The worker runs with LOOM_ENV=development; a run's env only confirms it:
+#   prefect deployment run "daily-orders/daily-orders" -p env=development
 
 networks:
   loom_net:
@@ -183,3 +184,4 @@ services:
     working_dir: /workspace
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
+      LOOM_ENV: development

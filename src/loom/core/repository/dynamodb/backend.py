@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
+from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
-import msgspec
-
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
+from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.profile import BackendRuntime
 from loom.core.repository.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from loom.core.repository.dynamodb.repository import RepositoryDynamoDB, run_in_executor
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 
 _SECTION = "persistence.dynamodb"
@@ -24,11 +25,25 @@ _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 _logger = logging.getLogger(__name__)
 
 
-class _DynamoDBConfig(msgspec.Struct, kw_only=True):
-    region: str
+class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
+    """``persistence.dynamodb``: the AWS client settings plus the table backing every model.
+
+    Every key of :class:`~loom.core.connections.AwsClientConfig` applies, with
+    the same defaults as anywhere else loom calls AWS; this context only adds
+    *table* and requires *region*.
+
+    Args:
+        table: Table backing every model.
+
+    Raises:
+        ValueError: When *region* is not set: the table lives in one region.
+    """
+
     table: str
-    endpoint_url: str | None = None
-    max_pool_connections: int = 32
+
+    def __post_init__(self) -> None:
+        if self.region is None:
+            raise ValueError("region is required: the table lives in one region")
 
 
 class DynamoDBBackend:
@@ -41,64 +56,52 @@ class DynamoDBBackend:
 
     name: ClassVar[str] = "dynamodb"
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
+    ) -> PersistenceWiring:
         """Build the DynamoDB wiring for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``persistence.dynamodb`` section.
             models: Models whose repositories the DI module registers.
+            runtime: Entry-point defaults; the DynamoDB client takes none of them yet.
 
         Returns:
             The DynamoDB wiring.
 
         Raises:
-            ConfigError: When the ``persistence.dynamodb`` section is missing.
+            ConfigError: When the ``persistence.dynamodb`` section is missing or
+                holds a retired key.
         """
-        dynamo_cfg = ctx.section_optional(_SECTION, _DynamoDBConfig)
+        reject_retired_keys(ctx.raw(_SECTION), _SECTION, DynamoDBRepositoryConfig)
+        dynamo_cfg = ctx.section_optional(_SECTION, DynamoDBRepositoryConfig)
         if dynamo_cfg is None:
             raise ConfigError(
                 f"persistence.backend is {self.name!r} but the {_SECTION!r} "
                 "section (region, table) is missing."
             )
-        client = _build_dynamodb_client(dynamo_cfg)
+        # The low-level client, not the resource: it is thread-safe, and
+        # repository calls share it across the executor's threads.
+        client = build_aws_client("dynamodb", dynamo_cfg)
+        # One pool of threads per backend, as wide as the client's connection
+        # pool: the default executor would cap parallel calls at cpu + 4.
+        executor = ThreadPoolExecutor(
+            max_workers=dynamo_cfg.pool.size, thread_name_prefix="loom-dynamodb"
+        )
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),
             repo_registration_module=build_dynamodb_repository_registration_module(
-                client, dynamo_cfg.table, models
+                client, dynamo_cfg.table, models, executor=executor
             ),
             default_repository_type=RepositoryDynamoDB,
-            readiness=lambda: _readiness(client, dynamo_cfg.table),
+            readiness=lambda: _readiness(client, dynamo_cfg.table, executor),
         )
 
 
-def _build_dynamodb_client(dynamo_cfg: _DynamoDBConfig) -> Any:
-    """Construct a boto3 low-level ``dynamodb`` client from config.
-
-    The low-level client (not the resource) is used because it is thread-safe:
-    repository operations run under ``asyncio.to_thread`` and share one client
-    across worker threads. ``max_pool_connections`` sizes the underlying
-    connection pool to that concurrency.
-
-    Credentials are never taken from config: the client is created without
-    explicit keys so boto3's default credential chain applies — the task role
-    on ECS, or ``endpoint_url`` plus environment credentials against a local /
-    fake DynamoDB in tests.
-    """
-    # Local import: boto3/botocore are optional dependencies (loom[dynamodb])
-    # and the package must stay importable without them.
-    import boto3  # type: ignore[import-untyped]
-    from botocore.config import Config  # type: ignore[import-untyped]
-
-    kwargs: dict[str, Any] = {
-        "region_name": dynamo_cfg.region,
-        "config": Config(max_pool_connections=dynamo_cfg.max_pool_connections),
-    }
-    if dynamo_cfg.endpoint_url is not None:
-        kwargs["endpoint_url"] = dynamo_cfg.endpoint_url
-    return boto3.client("dynamodb", **kwargs)
-
-
-async def _readiness(client: Any, table: str) -> bool:
+async def _readiness(client: Any, table: str, executor: Executor) -> bool:
     """Probe the configured table with ``DescribeTable``.
 
     Ready when the table is ``ACTIVE`` or ``UPDATING`` (a table serves reads
@@ -107,7 +110,7 @@ async def _readiness(client: Any, table: str) -> bool:
     never to raise.
     """
     try:
-        response = await asyncio.to_thread(client.describe_table, TableName=table)
+        response = await run_in_executor(executor, client.describe_table, TableName=table)
         status = response["Table"]["TableStatus"]
     except Exception:
         _logger.warning("dynamodb readiness probe failed for table %r", table, exc_info=True)
@@ -115,4 +118,4 @@ async def _readiness(client: Any, table: str) -> bool:
     return status in _READY_TABLE_STATUSES
 
 
-__all__ = ["DynamoDBBackend"]
+__all__ = ["DynamoDBBackend", "DynamoDBRepositoryConfig"]

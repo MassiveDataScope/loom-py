@@ -174,7 +174,7 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:LOOM_JWT_SECRET_PATH}
+        secret_path: ${oc.env:JWT_SECRET_PATH}
         algorithms: [HS256]
         audience: loom-api
         roles_claim: loom_roles
@@ -257,8 +257,15 @@ class ApiKeyAuthenticator:
         )
 
 
+# config/app.yaml declares it: app.rest.auth.custom: true
 app = create_app("config/app.yaml", authenticator=ApiKeyAuthenticator(store))
 ```
+
+The configuration names the mechanism: `app.rest.auth.custom: true` says an
+authenticator is passed in code, so `loom check --deploy` sees authentication
+the way `create_app` builds it. `create_app` refuses an `authenticator`
+without `custom: true`, `custom: true` without an `authenticator`, and
+`custom: true` beside `app.rest.auth.jwt`.
 
 - `RequestCredentials` exposes headers (case-insensitive), path and peer address —
   and deliberately not the body, which would have to be buffered before deciding
@@ -399,8 +406,7 @@ sources of truth for who the caller is were the defect this design closes.
 
 Other renames in the same change:
 
-- `sql_endpoint.auth: jwt` → `auth: identity` (`jwt` still works, with a
-  `DeprecationWarning`).
+- `auth: jwt` → `auth: identity`; `jwt` is no longer accepted.
 - The `401` error code is now `unauthenticated`, matching
   `ErrorCode`, and the response carries a
   `WWW-Authenticate: Bearer` challenge.

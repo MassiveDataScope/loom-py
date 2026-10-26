@@ -19,6 +19,7 @@ from typing import Any, get_type_hints
 import msgspec
 import prefect
 
+from loom.core.environment import Environment
 from loom.prefect._config import FlowConfig, flow_config_from_mapping
 from loom.prefect._flow_yaml import (
     extract_pool_config,
@@ -42,7 +43,7 @@ class FlowSettings:
     correlation_field: str | None
     schedule: dict[str, Any] | None
     raw_params: dict[str, Any]
-    pool_config: dict[str, dict[str, Any]]
+    pool_config: dict[Environment, dict[str, Any]]
     tags: tuple[str, ...]
     notifiers: tuple[Notifier, ...]
     retry_policy: FlowConfig

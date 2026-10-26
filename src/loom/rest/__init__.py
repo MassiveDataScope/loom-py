@@ -9,6 +9,7 @@ factory) see :mod:`loom.rest.fastapi`.
 """
 
 from loom.rest.adapter import PydanticAdapter
+from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.compiler import (
     CompiledRoute,
     InterfaceCompilationError,
@@ -19,6 +20,7 @@ from loom.rest.config import RestInterfaceConfigError
 from loom.rest.errors import HttpErrorMapper
 from loom.rest.middleware import TraceIdMiddleware
 from loom.rest.model import (
+    ALL,
     PaginationMode,
     RestApiDefaults,
     RestInterface,
@@ -27,6 +29,9 @@ from loom.rest.model import (
 from loom.rest.rest_adapter import LoomRestAdapter
 
 __all__ = [
+    "ALL",
+    "AUTHENTICATION_CHECK",
+    "SCHEMA_CHECK",
     "CompiledRoute",
     "HttpErrorMapper",
     "InterfaceCompilationError",

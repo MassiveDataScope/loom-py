@@ -167,17 +167,17 @@ from typing import Annotated
 import msgspec
 from loom.core.use_case import Query
 
-class GrantQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
+class OrderQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
                  forbid_unknown_fields=True):
-    membership_id: UUID | None = None
-    state: GrantState | None = None
+    customer_id: UUID | None = None
+    status: OrderStatus | None = None
     changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
         default=None, name="changed_since")
     cursor: str | None = None
     limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
 
-class ListGrants(UseCase[Grant, GrantPage]):
-    async def execute(self, query: GrantQuery = Query()) -> GrantPage: ...
+class ListOrders(UseCase[Order, OrderPage]):
+    async def execute(self, query: OrderQuery = Query()) -> OrderPage: ...
 ```
 
 The route accepts exactly the declared wire names, plus `profile` when it
@@ -592,7 +592,9 @@ by the message text:
 ### Rule.check — field validation
 
 `Rule.check` validates a single field. The `via=` function returns an error
-string when the value is invalid, or `None` when it is valid:
+string (or a `RuleViolation`) when the value is invalid, or `None` when it is
+valid. Any other result, a `bool` included, raises `TypeError`; a boolean
+condition belongs in `Rule.forbid`:
 
 ```python
 from loom.core.use_case import Rule, F
@@ -773,17 +775,17 @@ create or find the resource already there returns `Created` when it created:
 ```python
 from loom.core.use_case import Created, Input
 
-class CreateGrant(UseCase[Grant, GrantView | Created[GrantView]]):
-    async def execute(self, cmd: CreateGrantCommand = Input()) -> GrantView | Created[GrantView]:
-        view, changed = await self._grants.grant(cmd)
-        return Created(view, location=f"/grants/{view.grant_id}") if changed else view
+class CreateOrder(UseCase[Order, OrderView | Created[OrderView]]):
+    async def execute(self, cmd: CreateOrderCommand = Input()) -> OrderView | Created[OrderView]:
+        view, changed = await self._orders.place(cmd)
+        return Created(view, location=f"/orders/{view.order_id}") if changed else view
 ```
 
 The route answers `Created(view)` with `201` and `view` as the body, and a
 plain `view` with its `status_code`. With `location`, the `201` also carries a
 `Location` header. The location, absolute or relative, must be non-empty and
 hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
-`ValueError`. OpenAPI documents both statuses with the `GrantView` schema and
+`ValueError`. OpenAPI documents both statuses with the `OrderView` schema and
 declares `Location` on the `201`. `Created` must wrap one of the other members
 of the result, and a route whose `status_code` is already `201` cannot return
 it; either fails at startup. `LoomRestAdapter` answers a `Created` the same
@@ -879,20 +881,11 @@ the duplicate declaration instead.
 > duplicate is removed. This applies whether or not any YAML interface is in
 > use.
 
-> **Breaking change:** `create_fastapi_app`'s second parameter used to be
-> `interfaces: Sequence[type[RestInterface]]`; it is now
-> `routes: RouteSources`. Code that called it as documented —
-> `create_fastapi_app(result, interfaces=[...])`, keyword form, every
-> published example — still works: a deprecated `interfaces=` keyword wraps
-> the list in `RouteSources(python=interfaces)` and emits a
-> `DeprecationWarning` naming `routes` as the replacement (the keyword will
-> be removed in 2.0). A call that passed the list *positionally* now binds
-> it to `routes`, which requires a `RouteSources` instance:
-> `create_fastapi_app` raises `TypeError` immediately, naming
-> `RouteSources(python=[...])` as the replacement — it does not wait for
-> compilation to fail on a missing attribute. Passing both `routes` and
-> `interfaces`, or neither, also raises `TypeError`. Migrate by replacing
-> `interfaces=[...]` with `routes=RouteSources(python=[...])`.
+> **Breaking change:** `create_fastapi_app`'s second parameter is
+> `routes: RouteSources`, and it is required. The `interfaces=` keyword is
+> removed: replace `interfaces=[...]` with `routes=RouteSources(python=[...])`.
+> A list passed positionally raises `TypeError` immediately, naming
+> `RouteSources(python=[...])` as the replacement.
 
 ### Disabling a route per environment (`app.rest.disable_routes`)
 
@@ -1166,7 +1159,7 @@ methods stay on the protocol. Closing is the context manager's job
 | `Exists(Model, from_param=..., against=...)` | Check existence; 404 on missing if `RAISE` |
 | `Compute.set(F).from_command(...)` | Derive/normalise a command field |
 | `Compute.set(F).from_params(...)` | Include path params in derive computation |
-| `Rule.check(F, via=fn)` | Validate a field; `fn` returns error string or `None` |
+| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolation`, or `None` |
 | `Rule.forbid(predicate, message=...)` | Enforce invariant; predicate returns `True` to fail |
 | `.from_command(F1, F2, ...)` | Pass command fields to rule predicate |
 | `.from_params("name")` | Pass path parameter to rule predicate |

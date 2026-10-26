@@ -43,7 +43,12 @@ _TRACES = tuple(f"{index:032x}".replace("0", "a", 1) for index in range(1, 9))
 
 _CONFIG = {
     "kafka": {
-        "consumer": {"brokers": ["localhost:9092"], "group_id": "g", "topics": ["items"]},
+        "consumer": {
+            "brokers": ["localhost:9092"],
+            "group_id": "g",
+            "delivery": "at_most_once",
+            "topics": ["items"],
+        },
         "producer": {"brokers": ["localhost:9092"], "topic": "items.out"},
     }
 }

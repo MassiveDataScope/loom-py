@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -18,11 +18,21 @@ if TYPE_CHECKING:
 import msgspec
 from deltalake import CommitProperties, WriterProperties
 
+from loom.core.config import reject_retired_keys
+from loom.core.config.convert import convert_config
+from loom.core.connections import (
+    AwsClientConfig,
+    ClickHouseConnection,
+    ConnectionSettings,
+    MongoConnection,
+)
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn, RedactedMap, Secret, reveal_for_driver
 from loom.etl._uri import CLOUD_SCHEMES
 from loom.etl.storage._locator import MappingLocator, PrefixLocator, TableLocation, TableLocator
 
 STORAGE_KEYED_COLLECTIONS: Final = ("storage.tables", "storage.files", "storage.profiles")
+_DriverOptions = dict[str, str]
 """Dotted paths of the ``storage:`` collections merged by key across ``includes``."""
 
 
@@ -41,7 +51,7 @@ class MissingTablePolicy(StrEnum):
     ERROR = "error"
 
 
-class CatalogConnection(LoomFrozenStruct, frozen=True):
+class CatalogConnection(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Catalog connection settings.
 
     Args:
@@ -51,8 +61,8 @@ class CatalogConnection(LoomFrozenStruct, frozen=True):
     """
 
     provider: Literal["unity"] = "unity"
-    workspace: str = ""
-    token: str = ""
+    workspace: Dsn | None = None
+    token: Secret[str] | None = None
 
 
 class StorageProfile(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
@@ -69,14 +79,14 @@ class StorageProfile(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
         commit: Delta commit metadata.
     """
 
-    storage_options: dict[str, str] = {}
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     writer: dict[str, Any] = {}
     target_file_size: int | None = None
     delta_config: dict[str, str | None] = {}
     commit: dict[str, Any] = {}
 
 
-class TablePathConfig(LoomFrozenStruct, frozen=True):
+class TablePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Physical Delta path settings for table storage.
 
     Args:
@@ -88,8 +98,8 @@ class TablePathConfig(LoomFrozenStruct, frozen=True):
         commit: Delta commit metadata.
     """
 
-    uri: str = ""
-    storage_options: dict[str, str] = {}
+    uri: Dsn | None = None
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     writer: dict[str, Any] = {}
     target_file_size: int | None = None
     delta_config: dict[str, str | None] = {}
@@ -97,7 +107,7 @@ class TablePathConfig(LoomFrozenStruct, frozen=True):
 
     def validate(self, *, context: str) -> None:
         """Validate path config and delta-rs option dictionaries."""
-        if not self.uri.strip():
+        if self.uri is None:
             raise ValueError(f"storage.{context}.uri must be a non-empty string")
         _validate_writer(self.writer, context=f"{context}.writer")
         _validate_target_file_size(self.target_file_size, context=f"{context}.target_file_size")
@@ -106,8 +116,8 @@ class TablePathConfig(LoomFrozenStruct, frozen=True):
     def to_location(self) -> TableLocation:
         """Convert to :class:`TableLocation`."""
         return TableLocation(
-            uri=self.uri,
-            storage_options=self.storage_options,
+            uri="" if self.uri is None else self.uri.reveal(),
+            storage_options=cast(_DriverOptions, reveal_for_driver(self.storage_options)),
             writer=self.writer,
             target_file_size=self.target_file_size,
             delta_config=self.delta_config,
@@ -115,7 +125,7 @@ class TablePathConfig(LoomFrozenStruct, frozen=True):
         )
 
 
-class FilePathConfig(LoomFrozenStruct, frozen=True):
+class FilePathConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Physical path settings for FILE sources/targets.
 
     Args:
@@ -123,12 +133,12 @@ class FilePathConfig(LoomFrozenStruct, frozen=True):
         storage_options: Object-store credentials/options.
     """
 
-    uri: str = ""
-    storage_options: dict[str, str] = {}
+    uri: Dsn | None = None
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def validate(self, *, context: str) -> None:
         """Validate file path config."""
-        if not self.uri.strip():
+        if self.uri is None:
             raise ValueError(f"storage.{context}.uri must be a non-empty string")
 
 
@@ -139,27 +149,27 @@ _ROUTE_PROFILE_FIELDS: Final[dict[str, frozenset[str]]] = {
 """Route collections normalised by key, each with the profile fields it takes."""
 
 
-class StorageDefaults(LoomFrozenStruct, frozen=True):
+class StorageDefaults(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Default resolution settings used when no per-name override is declared."""
 
     table_path: TablePathConfig | None = None
 
 
-class TempConfig(LoomFrozenStruct, frozen=True):
+class TempConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Checkpoint / temporary storage settings."""
 
-    root: str = ""
-    storage_options: dict[str, str] = {}
+    root: Dsn | None = None
+    storage_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def validate(self) -> None:
-        if self.root and not _is_cloud_uri(self.root):
+        if self.root is not None and not _is_cloud_uri(self.root.reveal()):
             raise ValueError(
                 "storage.temp.root must be a cloud URI (s3://, gs://, abfss://, ...). "
                 "Local checkpoint roots are not supported."
             )
 
 
-class TableRoute(LoomFrozenStruct, frozen=True):
+class TableRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Route one logical table name to catalog ref or physical path.
 
     Args:
@@ -199,7 +209,7 @@ class TableRoute(LoomFrozenStruct, frozen=True):
             self.path.validate(context=f"{context}.path")
 
 
-class FileRoute(LoomFrozenStruct, frozen=True):
+class FileRoute(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Route one logical file name to a physical file URI.
 
     Args:
@@ -217,51 +227,7 @@ class FileRoute(LoomFrozenStruct, frozen=True):
         self.path.validate(context=f"{context}.path")
 
 
-class ClickHouseConfig(LoomFrozenStruct, frozen=True):
-    """Connection settings for ClickHouse targets.
-
-    Args:
-        url: ClickHouse DSN, e.g. ``clickhouse://user:pass@host:8123/default``.
-             When empty, ClickHouse write targets are not available.
-    """
-
-    url: str = ""
-
-
-class MongoConfig(LoomFrozenStruct, frozen=True):
-    """Connection settings for MongoDB sources.
-
-    Args:
-        uri:      pymongo connection string, e.g. ``mongodb://user:pass@host:27017``.
-                  When empty, MongoDB read sources are not available.
-        database: Database name to read from.
-    """
-
-    uri: str = ""
-    database: str = ""
-
-
-class DynamoDbConfig(LoomFrozenStruct, frozen=True):
-    """Connection settings for DynamoDB sources.
-
-    Args:
-        enabled:      Activate DynamoDB read sources.  When ``False`` (default),
-                      no boto3 client is built at provider wiring time.
-        region:       AWS region name, e.g. ``eu-west-1``.  Empty uses the
-                      default boto3 resolution chain.
-        endpoint_url: Custom endpoint for DynamoDB Local / LocalStack.
-                      Empty uses the real AWS endpoint.
-        profile:      AWS named profile.  Empty uses the default credential
-                      resolution chain.
-    """
-
-    enabled: bool = False
-    region: str = ""
-    endpoint_url: str = ""
-    profile: str = ""
-
-
-class CustomColumnDef(LoomFrozenStruct, frozen=True):
+class CustomColumnDef(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Definition of one custom audit column injected at write time.
 
     Exactly one of ``value`` or ``from_param`` must be set.
@@ -278,7 +244,7 @@ class CustomColumnDef(LoomFrozenStruct, frozen=True):
     from_param: str | None = None
 
 
-class AuditConfig(LoomFrozenStruct, frozen=True):
+class AuditConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Configuration for automatic audit columns injected at write time.
 
     When ``enabled=True`` the writer stamps each written frame with
@@ -299,7 +265,7 @@ class AuditConfig(LoomFrozenStruct, frozen=True):
     custom: tuple[CustomColumnDef, ...] = ()
 
 
-class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True):
+class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Vacuum settings for the config-driven maintenance block.
 
     Args:
@@ -320,7 +286,7 @@ class MaintenanceVacuumConfig(LoomFrozenStruct, frozen=True):
     full: bool = False
 
 
-class MaintenanceConfig(LoomFrozenStruct, frozen=True):
+class MaintenanceConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Config-driven Delta table maintenance settings.
 
     Declaring this section in the storage YAML allows :meth:`MaintenanceRunner.run_from_config`
@@ -353,7 +319,7 @@ class MaintenanceConfig(LoomFrozenStruct, frozen=True):
     z_order_by: tuple[str, ...] = ()
 
 
-class StorageConfig(LoomFrozenStruct, frozen=True):
+class StorageConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """Canonical storage configuration used by ETL runner/factory.
 
     Args:
@@ -367,6 +333,12 @@ class StorageConfig(LoomFrozenStruct, frozen=True):
         profiles: Named partial path settings referenced by ``profile:`` in YAML.
             Applied by :func:`normalise_storage_section`; direct struct
             construction does not apply them.
+        clickhouse: ClickHouse connection of the ClickHouse sources and targets;
+            omitted, they are not available.
+        mongo: MongoDB connection of the Mongo sources; omitted, they are not
+            available.
+        dynamodb: AWS client of the DynamoDB sources; omitted, they are not
+            available.
         audit: Audit-column injection settings.
     """
 
@@ -378,9 +350,9 @@ class StorageConfig(LoomFrozenStruct, frozen=True):
     tables: tuple[TableRoute, ...] = ()
     files: tuple[FileRoute, ...] = ()
     profiles: dict[str, StorageProfile] = {}
-    clickhouse: ClickHouseConfig = ClickHouseConfig()
-    mongo: MongoConfig = MongoConfig()
-    dynamodb: DynamoDbConfig = DynamoDbConfig()
+    clickhouse: ClickHouseConnection | None = None
+    mongo: MongoConnection | None = None
+    dynamodb: AwsClientConfig | None = None
     audit: AuditConfig = AuditConfig()
     maintenance: MaintenanceConfig = MaintenanceConfig()
 
@@ -408,12 +380,12 @@ class StorageConfig(LoomFrozenStruct, frozen=True):
     @property
     def checkpoint_root(self) -> str:
         """Checkpoint root URI."""
-        return self.temp.root
+        return "" if self.temp.root is None else self.temp.root.reveal()
 
     @property
-    def checkpoint_storage_options(self) -> dict[str, str]:
+    def checkpoint_storage_options(self) -> _DriverOptions:
         """Checkpoint storage options."""
-        return self.temp.storage_options
+        return cast(_DriverOptions, reveal_for_driver(self.temp.storage_options))
 
     def has_catalog_routes(self) -> bool:
         """Return ``True`` when at least one table route uses ``ref``."""
@@ -435,8 +407,8 @@ class StorageConfig(LoomFrozenStruct, frozen=True):
             return None
         mapping = {
             route.name: FileLocation(
-                uri_template=route.path.uri,
-                storage_options=route.path.storage_options,
+                uri_template="" if route.path.uri is None else route.path.uri.reveal(),
+                storage_options=cast(_DriverOptions, reveal_for_driver(route.path.storage_options)),
             )
             for route in self.files
         }
@@ -489,7 +461,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True):
                     "Set tables[].catalog or define matching storage.catalogs entry."
                 )
             connection = self.catalogs[catalog_key]
-            if not connection.workspace.strip() or not connection.token.strip():
+            if connection.workspace is None or connection.token is None:
                 raise ValueError(
                     f"storage.catalogs[{catalog_key!r}] must define non-empty workspace and token "
                     "for Polars UC routes."
@@ -498,7 +470,7 @@ class StorageConfig(LoomFrozenStruct, frozen=True):
 
 def convert_storage_config(raw: dict[str, Any]) -> StorageConfig:
     """Convert a resolved plain dict into :class:`StorageConfig`."""
-    return msgspec.convert(raw, StorageConfig)
+    return convert_config(raw, StorageConfig, strict=True)
 
 
 def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -518,16 +490,38 @@ def normalise_storage_section(raw: Mapping[str, Any]) -> dict[str, Any]:
         A new dict ready for :func:`convert_storage_config`.
 
     Raises:
+        ConfigError: When an engine section (``dynamodb``, ``mongo``,
+            ``clickhouse``) holds a retired key, naming its replacement.
         ValueError: When a mapping entry carries a ``name`` different from its
             key, when a ``profile`` is not declared in ``profiles``, or when a
             profile carries ``uri``. Other fields unknown to
             :class:`StorageProfile` are reported by :func:`convert_storage_config`.
     """
+    _refuse_retired_keys(raw)
     normalised = dict(raw)
     for collection in _ROUTE_PROFILE_FIELDS:
         if collection in normalised:
             normalised[collection] = _normalise_routes(normalised[collection], collection)
     return _apply_profiles(normalised)
+
+
+_ENGINE_SECTIONS: Final[Mapping[str, type[ConnectionSettings]]] = {
+    "dynamodb": AwsClientConfig,
+    "mongo": MongoConnection,
+    "clickhouse": ClickHouseConnection,
+}
+
+
+def _refuse_retired_keys(raw: Mapping[str, Any]) -> None:
+    """Name the replacement of a key the engine sections no longer take."""
+    for section, connection in _ENGINE_SECTIONS.items():
+        reject_retired_keys(raw.get(section), f"storage.{section}", connection)
+    dynamodb = raw.get("dynamodb")
+    if isinstance(dynamodb, Mapping) and "enabled" in dynamodb:
+        raise ValueError(
+            "storage.dynamodb.enabled was removed: declaring storage.dynamodb enables "
+            "DynamoDB sources and omitting it disables them; remove the key"
+        )
 
 
 def _apply_profiles(normalised: dict[str, Any]) -> dict[str, Any]:

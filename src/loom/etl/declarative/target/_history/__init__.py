@@ -11,6 +11,7 @@ from loom.etl.declarative.target._history._enums import (
 )
 from loom.etl.declarative.target._history._errors import (
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyKeyConflictError,
     HistorifyTemporalConflictError,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "HistorifyRepairReport",
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
+    "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
     "IntoHistory",
 ]

@@ -54,6 +54,92 @@ class ProductInterface(RestInterface[Product]):
 
 Valid values: `"get"`, `"list"`, `"create"`, `"update"`, `"delete"`.
 
+## Filter and sort list routes
+
+A list route filters and sorts only on the columns it declares `filterable`
+and `sortable`. Declare them on the interface (its auto-CRUD `list` route
+included) or on a `RestRoute`, which overrides the interface. A field
+reference rooted at the model is the primary form; the column name is the
+same column:
+
+```python
+from loom.core.use_case.field_ref import F
+
+
+class ProductInterface(RestInterface[Product]):
+    prefix = "/products"
+    auto = True
+    filterable = (F(Product).sku, F(Product).price_cents, "stock")
+    sortable = (F(Product).price_cents,)
+```
+
+Callers filter with `field=value` or `field__op=value`, the operator one of
+`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in` (comma-separated), `like` and
+`ilike` (on `str` columns) and `is_null`, and sort with `sort=` and
+`direction=`; a camelCase name reads as snake_case:
+
+```
+GET /products?price_cents__lte=500&sku__in=A-01,A-02&sort=price_cents&direction=DESC
+```
+
+Each value is converted by its column's type with the strict grammar of
+`Query()` (a boolean is `true` or `false`, a number follows the JSON number
+grammar, a `str` column keeps the text as sent). A value the type refuses
+answers `400 query_validation`. A column the route does not declare answers
+`400 unsupported_query`, the same answer whether or not the column exists.
+The primary key, the route's default order, is always sortable. Ordering by
+a column reveals its values, through the order of the rows and through the
+cursor token, which carries them; so a `sortable` column must be a field of
+the items the route answers with (`PageResult[T]`, `CursorResult[T]` or
+`list[T]`), and compilation fails naming the route and the field otherwise.
+In cursor mode a sort column must also hold no null. A `filterable` column
+follows the same rule, since the rows a filter keeps reveal its values too.
+"Shown" is decided by field name; a pydantic field declared `exclude=True`
+is the only one treated as hidden. A route that can serve cursor pages must
+also show its primary key, which every token carries, and the key must be a
+scalar column of a type a token can carry; otherwise the route serves offset
+pages only (`pagination_mode` offset and `allow_pagination_override=False`).
+
+Only scalar columns of the use case's own model qualify; a related model's
+column, a JSON, array or text-search column, and a field reference rooted at
+another model fail compilation. An enum mixed with a scalar type, such as a
+`StrEnum` or `IntEnum`, is a scalar column of that type; a plain `Enum` or a
+`Literal` needs a declared column type (e.g. `ColumnField(String(16))`), and
+a SQLAlchemy model refuses one without it. `ALL` (from `loom.rest`)
+declares every scalar column, those the response does not show included, and
+logs a warning naming the route at startup.
+
+A `date` or `time` field is a `Date` or `Time` column on a SQLAlchemy model
+and takes ISO 8601 text. The inferred `Time` column has no time zone and
+holds no UTC offset, so a `time` with an offset answers
+`400 query_validation` as a filter value and `422 boundary_validation` in a
+create or update body. A `Time` column with time zone
+(`ColumnField(ColumnType("Time", kwargs={"timezone": True}))`) keeps the
+written offset on Postgres (`timetz`; startup refuses it on any other
+dialect) and takes only a `time` with an offset, answering the same `400` or
+`422` for a naive one; a JSON column keeps the offset as ISO text. On
+Postgres (`timestamptz`) and MongoDB, a `datetime` field keeps the instant,
+read back in UTC, not the written offset.
+
+A `uuid.UUID` field is a `Uuid` column on a SQLAlchemy model: `uuid` on
+Postgres, `CHAR(32)` holding the hex form on a dialect without a native UUID
+type, such as SQLite. It is a scalar column, so `filterable`, `sortable` and
+`ALL` take it.
+
+In `app.rest.interfaces`, both take column names, or `all`:
+
+```yaml
+app:
+  rest:
+    interfaces:
+      products:
+        prefix: /products
+        auto: true
+        model: app.product.model:Product
+        filterable: [sku, price_cents, stock]
+        sortable: [price_cents]
+```
+
 ## Multiple read profiles
 
 Expose a `profile` query parameter so callers choose the loading depth:
@@ -128,6 +214,10 @@ app:
     title: My Store API
     version: 0.1.0
 
+persistence:
+  cursors:
+    signing: ephemeral   # development.yaml only; production.yaml configures keys
+
 database:
   url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 ```
@@ -138,6 +228,11 @@ from loom.rest.fastapi.auto import create_app
 
 app = create_app("config/api.yaml")
 ```
+
+Run it with `LOOM_ENV=development`. Without it loom starts as production, runs
+the deploy checks, and refuses an API that authenticates nobody
+(`loom.rest.E001`). See
+[Environments, configuration and deploy checks](../getting-started/environments.md).
 
 Three lines of application code. The framework handles DB wiring, DI, and route mounting.
 

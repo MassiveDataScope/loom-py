@@ -172,11 +172,6 @@ class ClickHouseSourceSpec:
         """Physical kind — always :attr:`SourceKind.CLICKHOUSE`."""
         return SourceKind.CLICKHOUSE
 
-    @property
-    def table(self) -> str:
-        """Compatibility alias for the ClickHouse table/view name."""
-        return self.table_ref.ref
-
 
 @dataclass(frozen=True)
 class MongoSourceSpec:

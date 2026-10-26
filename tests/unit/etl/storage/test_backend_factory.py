@@ -6,7 +6,6 @@ import importlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -14,6 +13,8 @@ from tests.helpers.version_limited_extras import require_pyspark
 
 require_pyspark()
 
+from loom.core.connections import ClickHouseConnection  # noqa: E402
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.etl.backends.spark.provider import SparkProvider  # noqa: E402
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402
@@ -29,7 +30,6 @@ from loom.etl.runner._wiring import (  # noqa: E402
 )
 from loom.etl.storage._config import (  # noqa: E402
     CatalogConnection,
-    ClickHouseConfig,
     MissingTablePolicy,
     StorageConfig,
     StorageDefaults,
@@ -40,7 +40,7 @@ from loom.etl.storage._config import (  # noqa: E402
 
 
 def _path_defaults(root: str) -> StorageDefaults:
-    return StorageDefaults(table_path=TablePathConfig(uri=root))
+    return StorageDefaults(table_path=TablePathConfig(uri=Dsn(root)))
 
 
 class _DummyTargetWriter:
@@ -95,7 +95,9 @@ def test_make_backends_polars_catalog_route_builds_backends() -> None:
 
     config = StorageConfig(
         catalogs={
-            "unity": CatalogConnection(workspace="https://dbc.example", token="token-123"),
+            "unity": CatalogConnection(
+                workspace=Dsn("https://dbc.example"), token=Secret("token-123")
+            ),
         },
         tables=(TableRoute(name="raw.orders", ref="raw.orders", catalog="unity"),),
     )
@@ -111,12 +113,14 @@ def test_make_backends_polars_mixed_routes_builds_backends(tmp_path: Path) -> No
     config = StorageConfig(
         defaults=_path_defaults(str(tmp_path / "lake")),
         catalogs={
-            "unity": CatalogConnection(workspace="https://dbc.example", token="token-123"),
+            "unity": CatalogConnection(
+                workspace=Dsn("https://dbc.example"), token=Secret("token-123")
+            ),
         },
         tables=(
             TableRoute(
                 name="raw.path_orders",
-                path=TablePathConfig(uri=str(tmp_path / "explicit" / "orders")),
+                path=TablePathConfig(uri=Dsn(str(tmp_path / "explicit" / "orders"))),
             ),
             TableRoute(name="raw.uc_orders", ref="raw.orders", catalog="unity"),
         ),
@@ -144,7 +148,9 @@ def test_make_backends_spark_catalog_route_builds_backends() -> None:
     config = StorageConfig(
         engine="spark",
         catalogs={
-            "unity": CatalogConnection(workspace="https://dbc.example", token="token-123"),
+            "unity": CatalogConnection(
+                workspace=Dsn("https://dbc.example"), token=Secret("token-123")
+            ),
         },
         tables=(TableRoute(name="raw.orders", ref="raw.orders", catalog="unity"),),
     )
@@ -173,26 +179,6 @@ def test_load_backend_provider_names_the_registered_engines_when_rejecting() -> 
     assert "spark" in message
 
 
-def test_load_backend_provider_legacy_entry_points_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _DummyEP:
-        name = "polars"
-
-        def load(self) -> type[Any]:
-            from loom.etl.backends.polars.provider import PolarsProvider
-
-            return PolarsProvider
-
-    entrypoints_module = importlib.import_module("loom.core.plugins.entrypoints")
-    monkeypatch.setattr(
-        entrypoints_module,
-        "entry_points",
-        lambda: {"loom.etl.backends": [_DummyEP()]},
-    )
-
-    provider = load_backend_provider("polars")
-    assert type(provider).__name__ == "PolarsProvider"
-
-
 # ---------------------------------------------------------------------------
 # lineage wiring
 # ---------------------------------------------------------------------------
@@ -206,7 +192,7 @@ def test_make_lineage_writer_rejects_database_destination_for_polars_engine() ->
 
 
 def test_make_lineage_writer_polars_root_returns_writer() -> None:
-    lineage = LineageConfig(enabled=True, root="s3://bucket/runs")
+    lineage = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
     writer = make_lineage_writer(StorageConfig(engine="polars"), lineage)
     assert writer is not None
     assert type(writer).__name__ == "TargetLineageWriter"
@@ -224,7 +210,7 @@ def test_spark_provider_lineage_writer_root_returns_target_writer_wrapper() -> N
 
     spark = MagicMock()
     provider = SparkProvider()
-    store = LineageConfig(enabled=True, root="s3://bucket/runs")
+    store = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
 
     writer = provider.create_lineage_writer(
         StorageConfig(engine="spark"),
@@ -254,7 +240,7 @@ def test_spark_provider_lineage_writer_honors_missing_table_policy() -> None:
 
     spark = MagicMock()
     provider = SparkProvider()
-    store = LineageConfig(enabled=True, root="s3://bucket/runs")
+    store = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
     config = StorageConfig(engine="spark", missing_table_policy=MissingTablePolicy.CREATE)
 
     monkeypatch = pytest.MonkeyPatch()
@@ -287,7 +273,7 @@ def test_polars_provider_lineage_writer_honors_missing_table_policy() -> None:
             captured["policy"] = missing_table_policy
 
     provider = PolarsProvider()
-    store = LineageConfig(enabled=True, root="s3://bucket/runs")
+    store = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
     config = StorageConfig(engine="polars", missing_table_policy=MissingTablePolicy.CREATE)
 
     monkeypatch = pytest.MonkeyPatch()
@@ -328,7 +314,7 @@ def test_target_lineage_writer_direct_module_import_executes_frame_and_append() 
 
 
 def test_make_lineage_store_returns_table_store_when_enabled() -> None:
-    lineage = LineageConfig(enabled=True, root="s3://bucket/runs")
+    lineage = LineageConfig(enabled=True, root=Dsn("s3://bucket/runs"))
     store = make_lineage_store(StorageConfig(engine="polars"), lineage)
     assert isinstance(store, TableLineageStore)
 
@@ -343,7 +329,7 @@ def test_make_client_executor_polars_with_clickhouse_url_returns_executor() -> N
 
     config = StorageConfig(
         engine="polars",
-        clickhouse=ClickHouseConfig(url="clickhouse://user:pass@host:8123/db"),
+        clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
     )
     executor = make_client_executor(config)
 
@@ -361,7 +347,7 @@ def test_make_client_executor_spark_returns_none() -> None:
     spark = MagicMock()
     config = StorageConfig(
         engine="spark",
-        clickhouse=ClickHouseConfig(url="clickhouse://user:pass@host:8123/db"),
+        clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
     )
     assert make_client_executor(config, spark=spark) is None
 
@@ -381,7 +367,7 @@ def test_make_checkpoint_store_no_root_returns_none() -> None:
 def test_make_checkpoint_store_with_root_returns_store() -> None:
     from loom.etl.checkpoint import CheckpointStore
 
-    config = StorageConfig(temp=TempConfig(root="s3://bucket/checkpoints"))
+    config = StorageConfig(temp=TempConfig(root=Dsn("s3://bucket/checkpoints")))
     result = make_checkpoint_store(config)
 
     assert isinstance(result, CheckpointStore)
@@ -390,11 +376,13 @@ def test_make_checkpoint_store_with_root_returns_store() -> None:
 def test_make_checkpoint_store_uses_the_polars_backend_for_temp_storage_options() -> None:
     config = StorageConfig(
         temp=TempConfig(
-            root="s3://bucket/checkpoints",
-            storage_options={
-                "aws_server_side_encryption": "aws:kms",
-                "aws_sse_kms_key_id": "alias/loom-temp",
-            },
+            root=Dsn("s3://bucket/checkpoints"),
+            storage_options=RedactedMap(
+                {
+                    "aws_server_side_encryption": "aws:kms",
+                    "aws_sse_kms_key_id": "alias/loom-temp",
+                }
+            ),
         )
     )
 
@@ -412,8 +400,8 @@ def test_make_checkpoint_store_warns_encryption_is_lost_on_spark(
     config = StorageConfig(
         engine="spark",
         temp=TempConfig(
-            root="s3://bucket/checkpoints",
-            storage_options={"aws_server_side_encryption": "aws:kms"},
+            root=Dsn("s3://bucket/checkpoints"),
+            storage_options=RedactedMap({"aws_server_side_encryption": "aws:kms"}),
         ),
     )
 
@@ -421,13 +409,3 @@ def test_make_checkpoint_store_warns_encryption_is_lost_on_spark(
         make_checkpoint_store(config, spark=MagicMock())
 
     assert any("ignored by the Spark backend" in r.message for r in caplog.records)
-
-
-def test_schema_mode_module_import_exports_expected_values() -> None:
-    schema_mode_module = importlib.reload(
-        importlib.import_module("loom.etl.declarative.target._schema_mode")
-    )
-    assert schema_mode_module.SchemaMode.STRICT.value == "strict"
-    assert schema_mode_module.SchemaMode.EVOLVE.value == "evolve"
-    assert schema_mode_module.SchemaMode.OVERWRITE.value == "overwrite"
-    assert schema_mode_module.__all__ == ["SchemaMode"]

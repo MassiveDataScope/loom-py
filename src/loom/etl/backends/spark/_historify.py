@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
+from pyspark.sql.types import BooleanType
 from pyspark.sql.window import Window
 
-from loom.etl.backends._historify._common import prev_period_value
+from loom.etl.backends._historify._common import log_run_cols, prev_period_value
 from loom.etl.declarative.target._history import (
     DeletePolicy,
     HistorifyDateCollisionError,
-    HistorifyKeyConflictError,
     HistorifySpec,
     HistoryDateType,
 )
@@ -22,11 +22,21 @@ def _history_boundary_dtype_sql(spec: HistorifySpec) -> str:
     return "date" if spec.date_type is HistoryDateType.DATE else "timestamp"
 
 
+def _next_period(col: Column, spec: HistorifySpec) -> Column:
+    if spec.date_type is HistoryDateType.DATE:
+        return F.date_add(col, 1)
+    return col + F.expr("INTERVAL 1 MICROSECOND")
+
+
 class SparkHistorifyBackend:
     """Spark implementation of HistorifyBackend."""
 
     def columns(self, frame: DataFrame) -> list[str]:
         return list(frame.columns)
+
+    def non_boolean_dtype(self, frame: DataFrame, col: str) -> str | None:
+        dtype = frame.schema[col].dataType
+        return None if isinstance(dtype, BooleanType) else dtype.simpleString()
 
     def history_dtype(self, spec: HistorifySpec) -> str:
         return _history_boundary_dtype_sql(spec)
@@ -76,6 +86,9 @@ class SparkHistorifyBackend:
 
     def null_col(self, frame: DataFrame, name: str, dtype: Any) -> DataFrame:
         return frame.withColumn(name, F.lit(None).cast(dtype))
+
+    def fill_null(self, frame: DataFrame, col: str, value: Any) -> DataFrame:
+        return frame.withColumn(col, F.coalesce(F.col(col), F.lit(value)))
 
     def rename(self, frame: DataFrame, rename_map: dict[str, str]) -> DataFrame:
         result = frame
@@ -199,6 +212,25 @@ class SparkHistorifyBackend:
             .drop(eff_col)
         )
 
+    def closure_events(self, history: DataFrame, spec: HistorifySpec) -> DataFrame:
+        entity_key = list(spec.keys)
+        # Nulls last: a zero-width vector sorts before the vector sharing its valid_from.
+        window = Window.partitionBy(entity_key).orderBy(
+            F.col(spec.valid_from), F.col(spec.valid_to).asc_nulls_last()
+        )
+        closed_at = _next_period(F.col(spec.valid_to), spec)
+        next_from = F.col("__next_from__")
+        return (
+            history.withColumn("__next_from__", F.lead(spec.valid_from).over(window))
+            .filter(
+                F.col(spec.valid_to).isNotNull() & (next_from.isNull() | (next_from > closed_at))
+            )
+            .select(
+                *entity_key,
+                closed_at.cast(_history_boundary_dtype_sql(spec)).alias(str(spec.effective_date)),
+            )
+        )
+
     @staticmethod
     def _collapse_same_track_runs(
         frame: DataFrame,
@@ -215,9 +247,8 @@ class SparkHistorifyBackend:
         if spec.track is None:
             return frame
 
-        track = list(spec.track)
         overwrite = list(spec.overwrite or ())
-        track_struct = F.struct(*[F.col(c) for c in track])
+        track_struct = F.struct(*[F.col(c) for c in log_run_cols(spec)])
 
         order_w = Window.partitionBy(entity_key).orderBy(eff_col)
         prev_struct = F.lag(track_struct).over(order_w)
@@ -264,15 +295,11 @@ class SparkHistorifyBackend:
         boundary_dtype = _history_boundary_dtype_sql(spec)
         return result.withColumn(spec.deleted_at, F.lit(None).cast(boundary_dtype))
 
-    def assert_unique_keys(self, frame: DataFrame, keys: list[str]) -> None:
-        n_rows = frame.count()
-        n_unique = frame.select(keys).distinct().count()
-        if n_rows == n_unique:
-            return
+    def duplicate_keys(self, frame: DataFrame, keys: list[str]) -> str | None:
         dupes = (
             frame.groupBy(keys).count().filter(F.col("count") > 1).drop("count").limit(5).collect()
         )
-        raise HistorifyKeyConflictError(str([row.asDict() for row in dupes]))
+        return str([row.asDict() for row in dupes]) if dupes else None
 
     def assert_no_date_collisions(
         self,

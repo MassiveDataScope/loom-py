@@ -5,8 +5,21 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
+from enum import Enum
 from types import UnionType
-from typing import Any, ClassVar, Union, cast, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Final,
+    Literal,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+from uuid import UUID
 
 import msgspec
 
@@ -20,11 +33,14 @@ from loom.core.model.types import (
     JSON,
     Boolean,
     Bytes,
+    Date,
     DateTime,
     Float,
     Integer,
     Numeric,
     String,
+    Time,
+    Uuid,
 )
 from loom.core.schema_names import sql_identifier
 
@@ -40,12 +56,19 @@ class PartialUnique:
 
 @dataclass(frozen=True, slots=True)
 class ColumnFieldInfo:
-    """Resolved metadata for a single column field."""
+    """Resolved metadata for a single column field.
+
+    ``needs_declared_type`` marks a field whose column type was not declared
+    and is not inferred: ``column_type`` is then a placeholder, an unbounded
+    ``Numeric`` for a ``Decimal``, whose precision and scale must be declared,
+    and JSON for a plain enum or a ``Literal``.
+    """
 
     name: str
     python_type: type
     column_type: ColumnType
     field: Field
+    needs_declared_type: bool = False
 
 
 def _collect_inherited_dict_metadata(cls: type, attr: str) -> dict[str, Any]:
@@ -86,45 +109,57 @@ def _resolve_column_field(
     struct_default: Any,
     declared: ColumnFieldSpec | None,
 ) -> ColumnFieldInfo:
-    """Build the column metadata for one field, declared or inferred."""
-    python_type = _extract_origin_type(annotation)
+    """Build the column metadata for one field, declared or inferred.
+
+    A ``ColumnField`` supplies the ``Field``; its column type, else the one in
+    ``Annotated``, else the inferred one is used.
+    """
+    annotated_type, field = _extract_annotated_column(annotation)
     if declared is not None:
-        return ColumnFieldInfo(
-            name=name,
-            python_type=python_type,
-            column_type=declared.column_type
-            or _infer_column_type(annotation, field=declared.field),
-            field=_with_struct_default(declared.field, struct_default),
-        )
-
-    annotated_type, annotated_field = _extract_annotated_column(annotation)
-    if annotated_type is not None:
-        return ColumnFieldInfo(
-            name=name,
-            python_type=python_type,
-            column_type=annotated_type,
-            field=_with_struct_default(annotated_field, struct_default),
-        )
-
-    inferred_field = _with_struct_default(Field(), struct_default)
+        annotated_type, field = declared.column_type or annotated_type, declared.field
+    field = _with_nullable(_with_struct_default(field, struct_default), annotation)
+    column_type = annotated_type or _infer_column_type(annotation, field=field)
     return ColumnFieldInfo(
         name=name,
-        python_type=python_type,
-        column_type=_infer_column_type(annotation, field=inferred_field),
-        field=inferred_field,
+        python_type=_extract_origin_type(annotation),
+        column_type=column_type or JSON,
+        field=field,
+        needs_declared_type=column_type is None or column_type is _UNDECLARED_DECIMAL,
     )
 
 
 def _extract_annotated_column(annotation: Any) -> tuple[ColumnType | None, Field]:
-    """Read the ``ColumnType`` and ``Field`` carried by ``Annotated[T, ...]``."""
+    """Read the ``ColumnType`` and ``Field`` carried by ``Annotated[T, ...]``, optional or not."""
     column_type: ColumnType | None = None
     field = Field()
-    for entry in _extract_metadata(annotation):
+    _, metadata = _column_base(annotation)
+    for entry in metadata:
         if isinstance(entry, ColumnType):
             column_type = entry
         elif isinstance(entry, Field):
             field = entry
     return column_type, field
+
+
+def _with_nullable(field: Field, annotation: Any) -> Field:
+    """Resolve an undeclared ``nullable`` from the annotation; primary keys stay NOT NULL."""
+    if field.nullable is not None:
+        return field
+    nullable = not field.primary_key and _admits_none(annotation)
+    return cast(Field, replace(field, nullable=nullable))  # type: ignore[redundant-cast]
+
+
+def _admits_none(annotation: Any) -> bool:
+    """Whether ``annotation`` accepts ``None``, through ``Annotated``, ``Literal`` and unions."""
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _admits_none(get_args(annotation)[0])
+    if origin is Literal:
+        return None in get_args(annotation)
+    members = _union_members(annotation)
+    if members is None:
+        return annotation is type(None)
+    return any(_admits_none(member) for member in members)
 
 
 def _with_struct_default(field: Field, struct_default: Any) -> Field:
@@ -168,11 +203,6 @@ def get_table_name(cls: type) -> str:
     if not isinstance(table, str):
         raise ValueError(f"{cls.__name__} does not declare __tablename__")
     return table
-
-
-def _extract_metadata(annotation: Any) -> tuple[Any, ...]:
-    """Pull metadata entries from ``Annotated[T, ...]``."""
-    return getattr(annotation, "__metadata__", ())
 
 
 def resolve_type_hints(obj: Any, *, include_extras: bool = False) -> dict[str, Any]:
@@ -316,6 +346,47 @@ def generic_type_arg(annotation: Any, origin: Any) -> type | None:
     return args[0]
 
 
+_NON_SCALAR_COLUMN_TYPES = frozenset(
+    {"JSON", "Postgres.JSONB", "Postgres.ARRAY", "Postgres.TSVECTOR"}
+)
+
+
+def column_annotations(model: type) -> dict[str, Any]:
+    """Return the annotation of every column of *model*, ``Annotated`` metadata removed.
+
+    Args:
+        model: Model whose columns are read.
+
+    Returns:
+        Mapping of column name to its annotation, in declaration order.
+    """
+    hints = get_type_hints(model)
+    return {name: hints[name] for name in get_column_fields(model)}
+
+
+def scalar_column_annotations(model: type) -> dict[str, Any]:
+    """Return the annotation of each scalar column of *model*, ``Annotated`` metadata removed.
+
+    A JSON, array or text-search column is not scalar; lists, dicts and
+    structs are inferred as JSON. An enum mixed with a scalar type, such as a
+    ``StrEnum`` or ``IntEnum``, takes that type's column and is scalar. No
+    column type can be inferred for a plain ``Enum`` or a ``Literal`` declared
+    without one; its ``column_type`` is a JSON placeholder and it is not listed.
+
+    Args:
+        model: Model whose columns are read.
+
+    Returns:
+        Mapping of column name to its annotation, in declaration order.
+    """
+    fields = get_column_fields(model)
+    return {
+        name: annotation
+        for name, annotation in column_annotations(model).items()
+        if fields[name].column_type.type_name not in _NON_SCALAR_COLUMN_TYPES
+    }
+
+
 def _extract_origin_type(annotation: Any) -> type[Any]:
     """Return the base type from ``Annotated[T, ...]``."""
     origin = getattr(annotation, "__origin__", None)
@@ -338,18 +409,44 @@ def _extract_origin_type(annotation: Any) -> type[Any]:
 
 
 def _unwrap_optional(annotation: Any) -> Any:
-    members = _union_members(annotation)
-    if members is None:
+    """Return the single type of a union once ``None`` and ``UnsetType`` are dropped.
+
+    ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
+    and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
+    is decided apart, by :func:`_admits_none`.
+    """
+    args = _union_inner_args(annotation)
+    if args is None:
         return annotation
-    args = tuple(arg for arg in members if arg is not type(None))
     if len(args) == 1:
         return args[0]
     return annotation
 
 
+def _column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
+    """Strip ``Optional`` and ``Annotated`` layers, in either order.
+
+    Returns:
+        The inner annotation and the metadata of the ``Annotated`` layers.
+    """
+    metadata: tuple[Any, ...] = ()
+    while True:
+        unwrapped = _unwrap_optional(annotation)
+        if get_origin(unwrapped) is Annotated:
+            metadata += unwrapped.__metadata__
+            unwrapped = get_args(unwrapped)[0]
+        if unwrapped is annotation:
+            return annotation, metadata
+        annotation = unwrapped
+
+
 def _is_classvar(annotation: Any) -> bool:
     return get_origin(annotation) is ClassVar
 
+
+# The placeholder of a Decimal with no declared column type; the SQLAlchemy
+# compiler refuses such a field, so it is never compiled.
+_UNDECLARED_DECIMAL: Final = Numeric()
 
 _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     int: Integer,
@@ -357,20 +454,47 @@ _SCALAR_TYPE_MAP: dict[type, ColumnType] = {
     bool: Boolean,
     bytes: Bytes,
     datetime: DateTime(tz=True),
-    Decimal: Numeric(),
+    date: Date,
+    time: Time,
+    Decimal: _UNDECLARED_DECIMAL,
+    UUID: Uuid,
 }
 
 
-def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType:
-    base = _unwrap_optional(annotation)
-    if get_origin(base) in (list, tuple, set, dict):
+_COLUMN_RULE_TYPES = frozenset({str, *_SCALAR_TYPE_MAP})
+
+
+def _column_rule_type(annotation: Any) -> type:
+    """The class whose column rule the annotation follows.
+
+    An enum follows the first class of its MRO that has a rule, the scalar it is
+    mixed with; a plain enum has none and is returned as it is.
+    """
+    python_type = _extract_origin_type(annotation)
+    if not issubclass(python_type, Enum):
+        return python_type
+    return next((t for t in python_type.__mro__ if t in _COLUMN_RULE_TYPES), python_type)
+
+
+def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType | None:
+    """Infer the column type from the annotation; an enum follows its scalar mixin.
+
+    Returns:
+        The column type, or ``None`` for a plain enum or a ``Literal``, which
+        have no scalar type to follow.
+    """
+    base, _ = _column_base(annotation)
+    origin = get_origin(base)
+    if origin is Literal:
+        return None
+    if origin in (list, tuple, set, dict):
         return JSON
-    python_type = _extract_origin_type(base)
-    if python_type is str:
+    rule_type = _column_rule_type(base)
+    if rule_type is str:
         return String(field.length)
-    if python_type in (date, time):
-        return String(None)
-    return _SCALAR_TYPE_MAP.get(python_type, JSON)
+    if issubclass(rule_type, Enum):
+        return None
+    return _SCALAR_TYPE_MAP.get(rule_type, JSON)
 
 
 _SCOPE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")

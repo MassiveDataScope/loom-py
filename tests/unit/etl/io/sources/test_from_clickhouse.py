@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from loom.etl.declarative.source._specs import SourceKind
-from loom.etl.io.sources._clickhouse import ClickHouseSourceSpec, FromClickHouse  # noqa: F401
+from loom.etl.declarative.source._from_clickhouse import FromClickHouse
+from loom.etl.declarative.source._specs import ClickHouseSourceSpec, SourceKind
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 
 # A minimal predicate stand-in — just a truthy object that can be stored in a
@@ -33,7 +33,6 @@ class TestToSpecWithWhere:
 
         assert isinstance(spec, ClickHouseSourceSpec)
         assert spec.alias == "cdc"
-        assert spec.table == "cdc_events"
         assert len(spec.predicates) == 1
         assert spec.predicates[0] is _PRED
         assert spec.table_ref.ref == "cdc_events"
@@ -54,11 +53,6 @@ class TestSelectColumns:
         builder = FromClickHouse("cdc_events").where(_PRED).columns("a", "b")
         spec = builder._to_spec("cdc")
 
-        assert spec.columns == ("a", "b")
-
-    def test_select_is_compatibility_alias(self) -> None:
-        builder = FromClickHouse("cdc_events").where(_PRED).select(["a", "b"])
-        spec = builder._to_spec("cdc")
         assert spec.columns == ("a", "b")
 
 

@@ -1,0 +1,231 @@
+{
+  "operations": {
+    "DELETE /v1/orders/{order_id}": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "order_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          }
+        }
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderView"
+              }
+            }
+          },
+          "description": "Successful Response"
+        }
+      }
+    },
+    "GET /v1/orders": {
+      "parameters": [
+        {
+          "in": "query",
+          "name": "customerId",
+          "required": false,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "channel",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/OrderChannel"
+          }
+        },
+        {
+          "in": "query",
+          "name": "status",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/OrderStatus"
+          }
+        },
+        {
+          "in": "query",
+          "name": "changed_since",
+          "required": false,
+          "schema": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderPage"
+              }
+            }
+          },
+          "description": "Successful Response"
+        }
+      }
+    },
+    "POST /v1/orders": {
+      "parameters": [],
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CreateOrderCommandRequest"
+            }
+          }
+        },
+        "required": true
+      },
+      "responses": {
+        "200": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderView"
+              }
+            }
+          },
+          "description": "Successful Response"
+        },
+        "201": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderView"
+              }
+            }
+          },
+          "description": "Created",
+          "headers": {
+            "Location": {
+              "description": "URI of the created resource, when the use case gives one.",
+              "schema": {
+                "format": "uri-reference",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "schemas": {
+    "CreateOrderCommandRequest": {
+      "properties": {
+        "channel": {
+          "$ref": "#/components/schemas/OrderChannel"
+        },
+        "customerId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "customerId",
+        "channel"
+      ],
+      "title": "CreateOrderCommandRequest",
+      "type": "object"
+    },
+    "OrderChannel": {
+      "enum": [
+        "store",
+        "web"
+      ],
+      "title": "OrderChannel"
+    },
+    "OrderPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/components/schemas/OrderView"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "OrderPage",
+      "type": "object"
+    },
+    "OrderStatus": {
+      "enum": [
+        "cancelled",
+        "open",
+        "shipped"
+      ],
+      "title": "OrderStatus"
+    },
+    "OrderView": {
+      "properties": {
+        "channel": {
+          "$ref": "#/components/schemas/OrderChannel"
+        },
+        "customerId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "orderId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/components/schemas/OrderStatus"
+        }
+      },
+      "required": [
+        "orderId",
+        "customerId",
+        "channel",
+        "status"
+      ],
+      "title": "OrderView",
+      "type": "object"
+    }
+  }
+}

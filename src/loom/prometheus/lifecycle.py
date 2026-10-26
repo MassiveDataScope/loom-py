@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent
 from loom.prometheus._instruments import cached_instruments, counter_spec, histogram_spec
 
@@ -61,7 +62,7 @@ class PrometheusLifecycleAdapter:
         self,
         registry: CollectorRegistry | None = None,
         *,
-        pushgateway_url: str | None = None,
+        pushgateway_url: Dsn | str | None = None,
     ) -> None:
         instruments = cached_instruments(registry, _INSTRUMENTS)
         self._duration = instruments[_DURATION_SECONDS]
@@ -93,7 +94,8 @@ class PrometheusLifecycleAdapter:
         Raises:
             RuntimeError: If ``prometheus_client.push_to_gateway`` fails.
         """
-        if self._pushgateway_url is None:
+        url = self._pushgateway_url
+        if url is None:
             return
         from prometheus_client import push_to_gateway
 
@@ -102,7 +104,8 @@ class PrometheusLifecycleAdapter:
             from prometheus_client import REGISTRY
 
             registry = REGISTRY
-        push_to_gateway(self._pushgateway_url, job=job_name, registry=registry)
+        gateway = url.reveal() if isinstance(url, Dsn) else url
+        push_to_gateway(gateway, job=job_name, registry=registry)
 
 
 __all__ = ["PrometheusLifecycleAdapter"]

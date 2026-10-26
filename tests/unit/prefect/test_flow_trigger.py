@@ -56,7 +56,7 @@ params:
   run_day: ${yesterday}
   source: web
 environments:
-  prod:
+  production:
     work_pool: loom-fargate
     job_variables:
       image: sample:dev
@@ -88,7 +88,7 @@ def _deploy_kwargs(flow: Any) -> dict[str, Any]:
     flow.from_source = MagicMock(return_value=sourced)
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(sys.modules[__name__], "conversations", flow, raising=False)
-        deploy_flow(flow, env="prod", work_pool="default")
+        deploy_flow(flow, env="production", work_pool="default")
     kwargs: dict[str, Any] = sourced.deploy.call_args.kwargs
     return kwargs
 
@@ -210,6 +210,7 @@ def test_deploy_without_trigger_passes_the_same_kwargs(tmp_path: Path) -> None:
             "updated_at_to": "${today}",
             "run_day": "${yesterday}",
             "source": "web",
+            "env": "production",
         },
         "job_variables": {"cpu": "1024"},
         "enforce_parameter_schema": False,

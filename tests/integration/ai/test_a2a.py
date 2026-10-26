@@ -49,6 +49,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
 from loom.core.model import loom_type
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.rest.auth.abc import RequestCredentials
@@ -188,7 +189,7 @@ async def _serving(
     plans = list(plans if plans is not None else (make_plan(_AGENT),))
     config = make_ai_config(
         endpoints=dict(endpoints if endpoints is not None else {_AGENT: make_endpoint()}),
-        a2a=a2a if a2a is not None else A2AConfig(base_url=_BASE_URL, expose=(_AGENT,)),
+        a2a=a2a if a2a is not None else A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
         max_prompt_bytes=max_prompt_bytes,
     )
     runtime = AgentRuntime(
@@ -256,7 +257,7 @@ async def _bind_a2a(
     """Bind the A2A surface of one agent under a chosen HTTP agents prefix."""
     config = make_ai_config(
         endpoints={_AGENT: make_endpoint()},
-        a2a=A2AConfig(base_url=_BASE_URL, expose=(_AGENT,)),
+        a2a=A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
     )
     plans = [make_plan(_AGENT)]
     authenticator = HeaderAuthenticator()
@@ -294,7 +295,7 @@ async def _serving_anonymously(
     """
     config = make_ai_config(
         endpoints=dict(endpoints),
-        a2a=A2AConfig(base_url=_BASE_URL, expose=(_AGENT,)),
+        a2a=A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
     )
     plans = [make_plan(_AGENT)]
     runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
@@ -432,7 +433,7 @@ class TestOptionality:
         self, deps: StubDepsFactory, container: LoomContainer
     ) -> None:
         """A name in ``expose`` with no compiled agent is not published."""
-        a2a = A2AConfig(base_url=_BASE_URL, expose=(_AGENT, "ghost"))
+        a2a = A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT, "ghost"))
         async with _serving(deps=deps, container=container, a2a=a2a) as (app, _client):
             paths = _route_paths(app)
 
@@ -465,7 +466,7 @@ class TestStateSurfaceRefusal:
     ) -> None:
         """The same declared state boots when ``ai.a2a.expose`` does not name it."""
         plans = [make_plan(_AGENT, state=make_state_shape())]
-        a2a = A2AConfig(base_url=_BASE_URL, expose=("other",))
+        a2a = A2AConfig(base_url=Dsn(_BASE_URL), expose=("other",))
         async with _serving(deps=deps, container=container, plans=plans, a2a=a2a) as (
             app,
             _client,

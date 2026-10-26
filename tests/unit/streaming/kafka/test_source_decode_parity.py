@@ -39,7 +39,9 @@ pytestmark = pytest.mark.kafka
 _TOPIC = "orders.events"
 _ORDER_MT = "order.created"
 _PRODUCT_MT = "product.event"
-_SETTINGS = ConsumerSettings(brokers=("k1:9092",), group_id="g1", topics=(_TOPIC,))
+_SETTINGS = ConsumerSettings(
+    brokers=("k1:9092",), group_id="g1", topics=(_TOPIC,), delivery="at_most_once"
+)
 
 
 def _build_consumer(

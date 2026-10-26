@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock, Mock
 import msgspec
 import pytest
 
-from loom.core.repository.abc import PageParams, PageResult, PaginationMode, QuerySpec, SortSpec
+from loom.core.repository.abc import (
+    CursorCodec,
+    PageParams,
+    PageResult,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
+)
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -20,7 +27,9 @@ class TestRepositorySessionScope:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         mock_session.new = {"pending"}
 
@@ -38,7 +47,9 @@ class TestRepositorySessionScope:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         mock_session.new = set()
         mock_session.dirty = set()
@@ -58,7 +69,9 @@ class TestRepositorySessionScope:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
         scope = repo._session_scope(None)
@@ -75,7 +88,9 @@ class TestRepositorySessionScope:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         explicit_session = AsyncMock()
 
@@ -101,7 +116,9 @@ class TestWithSessionScopeDecorator:
                 return value + 1
 
         repo = _CustomRepo(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
         result = await repo.custom_operation(41)
@@ -123,7 +140,9 @@ class TestWithSessionScopeDecorator:
                 return value + 1
 
         repo = _CustomRepo(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         explicit_session = AsyncMock()
 
@@ -144,7 +163,9 @@ class TestRepositoryCoreReadFastPath:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         mock_session.get = AsyncMock(side_effect=AssertionError("ORM get should not be used"))
 
@@ -169,7 +190,9 @@ class TestRepositoryCoreReadFastPath:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
         item_mappings = Mock()
@@ -199,7 +222,9 @@ class TestRepositoryCoreReadFastPath:
         dummy_model: type,
     ) -> None:
         repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
         )
         mappings = Mock()
         mappings.__iter__ = Mock(return_value=iter([{"id": 1, "__loom_total_count": 1}]))

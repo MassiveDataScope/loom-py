@@ -10,6 +10,7 @@ import pytest
 from pymongo import AsyncMongoClient
 
 import loom.core.repository.mongo.uow as uow_module
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
 from loom.core.transaction import in_atomic_transaction
@@ -31,7 +32,12 @@ def _transactional(client: FakeMongoClient) -> MongoUnitOfWorkFactory:
 
 
 def _repository(client: FakeMongoClient) -> RepositoryMongo[Article, str]:
-    return RepositoryMongo(Article, client.collection("articles"), session_provider=active_session)
+    return RepositoryMongo(
+        Article,
+        client.collection("articles"),
+        session_provider=active_session,
+        cursor_codec=CursorCodec(signing="ephemeral"),
+    )
 
 
 class TestWithoutTransactions:
@@ -307,7 +313,9 @@ class TestCallerScopedSessionProbe:
 
     async def test_a_repository_with_the_default_provider_never_reports_one(self) -> None:
         client = FakeMongoClient()
-        repository = RepositoryMongo(Article, client.collection("articles"))
+        repository = RepositoryMongo(
+            Article, client.collection("articles"), cursor_codec=CursorCodec(signing="ephemeral")
+        )
         factory = _transactional(client)
 
         async with factory.create():

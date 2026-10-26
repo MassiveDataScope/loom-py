@@ -7,6 +7,7 @@ from pathlib import Path
 import msgspec
 import pytest
 
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.etl.storage._config import (
     AuditConfig,
     CatalogConnection,
@@ -27,7 +28,7 @@ from loom.etl.storage._locator import MappingLocator, PrefixLocator
 
 
 def _default_path(uri: str) -> StorageDefaults:
-    return StorageDefaults(table_path=TablePathConfig(uri=uri))
+    return StorageDefaults(table_path=TablePathConfig(uri=Dsn(uri)))
 
 
 class TestStorageConfig:
@@ -51,25 +52,25 @@ class TestStorageConfig:
 
     def test_validate_rejects_local_checkpoint_root(self, tmp_path: Path) -> None:
         local_path = tmp_path / "loom-checkpoints"
-        config = StorageConfig(temp=TempConfig(root=str(local_path)))
+        config = StorageConfig(temp=TempConfig(root=Dsn(str(local_path))))
         with pytest.raises(ValueError, match="cloud URI"):
             config.validate()
 
     @pytest.mark.parametrize("root", ["s3://", "gs://", "abfss://", "file:///tmp/loom"])
     def test_validate_rejects_invalid_checkpoint_cloud_uri(self, root: str) -> None:
-        config = StorageConfig(temp=TempConfig(root=root))
+        config = StorageConfig(temp=TempConfig(root=Dsn(root)))
         with pytest.raises(ValueError, match="cloud URI"):
             config.validate()
 
     def test_validate_accepts_r2_checkpoint_root(self) -> None:
-        config = StorageConfig(temp=TempConfig(root="r2://my-bucket/checkpoints"))
+        config = StorageConfig(temp=TempConfig(root=Dsn("r2://my-bucket/checkpoints")))
         config.validate()
 
     def test_validate_rejects_duplicate_table_names(self) -> None:
         config = StorageConfig(
             tables=(
-                TableRoute(name="raw.orders", path=TablePathConfig(uri="s3://raw/orders")),
-                TableRoute(name="raw.orders", path=TablePathConfig(uri="s3://raw/orders-v2")),
+                TableRoute(name="raw.orders", path=TablePathConfig(uri=Dsn("s3://raw/orders"))),
+                TableRoute(name="raw.orders", path=TablePathConfig(uri=Dsn("s3://raw/orders-v2"))),
             )
         )
         with pytest.raises(ValueError, match="duplicate name"):
@@ -78,8 +79,8 @@ class TestStorageConfig:
     def test_validate_rejects_duplicate_file_names(self) -> None:
         config = StorageConfig(
             files=(
-                FileRoute(name="daily.csv", path=FilePathConfig(uri="s3://a/daily.csv")),
-                FileRoute(name="daily.csv", path=FilePathConfig(uri="s3://b/daily.csv")),
+                FileRoute(name="daily.csv", path=FilePathConfig(uri=Dsn("s3://a/daily.csv"))),
+                FileRoute(name="daily.csv", path=FilePathConfig(uri=Dsn("s3://b/daily.csv"))),
             )
         )
         with pytest.raises(ValueError, match="duplicate name"):
@@ -96,7 +97,7 @@ class TestStorageConfig:
                 TableRoute(
                     name="raw.orders",
                     ref="main.raw.orders",
-                    path=TablePathConfig(uri="s3://raw/orders"),
+                    path=TablePathConfig(uri=Dsn("s3://raw/orders")),
                 ),
             )
         )
@@ -119,8 +120,8 @@ class TestStorageConfig:
         config = StorageConfig(
             catalogs={
                 "default": CatalogConnection(
-                    workspace="https://dbc.example",
-                    token="token-123",
+                    workspace=Dsn("https://dbc.example"),
+                    token=Secret("token-123"),
                 )
             },
             tables=(TableRoute(name="raw.orders", ref="raw.orders", catalog="default"),),
@@ -151,8 +152,8 @@ class TestStorageConfig:
         config = StorageConfig(
             catalogs={
                 "unity": CatalogConnection(
-                    workspace="https://dbc.example",
-                    token="token-123",
+                    workspace=Dsn("https://dbc.example"),
+                    token=Secret("token-123"),
                 )
             },
             tables=(TableRoute(name="raw.orders", ref="main.raw.orders", catalog="unity"),),
@@ -169,7 +170,7 @@ class TestStorageConfig:
             (
                 StorageConfig(
                     defaults=StorageDefaults(
-                        table_path=TablePathConfig(uri="s3://lake", writer={"bad": 1})
+                        table_path=TablePathConfig(uri=Dsn("s3://lake"), writer={"bad": 1})
                     )
                 ),
                 "writer",
@@ -177,7 +178,7 @@ class TestStorageConfig:
             (
                 StorageConfig(
                     defaults=StorageDefaults(
-                        table_path=TablePathConfig(uri="s3://lake", commit={"bad": 1})
+                        table_path=TablePathConfig(uri=Dsn("s3://lake"), commit={"bad": 1})
                     )
                 ),
                 "commit",
@@ -198,7 +199,7 @@ class TestStorageConfig:
     def test_validate_rejects_non_positive_target_file_size(self) -> None:
         config = StorageConfig(
             defaults=StorageDefaults(
-                table_path=TablePathConfig(uri="s3://lake", target_file_size=0)
+                table_path=TablePathConfig(uri=Dsn("s3://lake"), target_file_size=0)
             )
         )
         with pytest.raises(ValueError, match="target_file_size"):
@@ -224,7 +225,7 @@ class TestStorageConfig:
                     tables=(
                         TableRoute(
                             name="raw.orders",
-                            path=TablePathConfig(uri="s3://finance/raw/orders"),
+                            path=TablePathConfig(uri=Dsn("s3://finance/raw/orders")),
                         ),
                     ),
                 ),
@@ -288,7 +289,7 @@ class TestToFileLocator:
             files=(
                 FileRoute(
                     name="events_raw",
-                    path=FilePathConfig(uri="s3://raw/events/"),
+                    path=FilePathConfig(uri=Dsn("s3://raw/events/")),
                 ),
             )
         )
@@ -301,8 +302,8 @@ class TestToFileLocator:
                 FileRoute(
                     name="events_raw",
                     path=FilePathConfig(
-                        uri="s3://raw/events/",
-                        storage_options={"AWS_REGION": "eu-west-1"},
+                        uri=Dsn("s3://raw/events/"),
+                        storage_options=RedactedMap({"AWS_REGION": "eu-west-1"}),
                     ),
                 ),
             )
@@ -315,7 +316,7 @@ class TestToFileLocator:
 
     def test_locator_raises_on_unknown_alias(self) -> None:
         config = StorageConfig(
-            files=(FileRoute(name="events_raw", path=FilePathConfig(uri="s3://raw/events/")),)
+            files=(FileRoute(name="events_raw", path=FilePathConfig(uri=Dsn("s3://raw/events/"))),)
         )
         locator = config.to_file_locator()
         assert locator is not None
@@ -360,7 +361,9 @@ class TestMappingFileLocator:
         assert loc.storage_options == {"AWS_REGION": "us-east-1"}
 
     def test_target_file_size_preserved_on_location(self) -> None:
-        loc = TablePathConfig(uri="s3://bucket/path/", target_file_size=268435456).to_location()
+        loc = TablePathConfig(
+            uri=Dsn("s3://bucket/path/"), target_file_size=268435456
+        ).to_location()
         assert loc.target_file_size == 268435456
 
 

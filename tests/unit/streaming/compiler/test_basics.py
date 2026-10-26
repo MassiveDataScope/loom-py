@@ -5,7 +5,17 @@ from __future__ import annotations
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
-from loom.streaming import Drain, FromTopic, IntoTopic, Process, StreamFlow, StreamShape
+from loom.streaming import (
+    BatchExpandStep,
+    CollectBatch,
+    Drain,
+    FromTopic,
+    IntoTopic,
+    Message,
+    Process,
+    StreamFlow,
+    StreamShape,
+)
 from loom.streaming.compiler import CompilationError, CompiledSingleSource, compile_flow
 from tests.unit.streaming.compiler.cases import FakeStep, Order, Result
 
@@ -22,7 +32,6 @@ def test_compile_success_with_minimal_flow(streaming_kafka_config: DictConfig) -
     assert plan.name == "test"
     assert isinstance(plan.source, CompiledSingleSource)
     assert plan.source.payload_type is Order
-    assert plan.source.shape is StreamShape.RECORD
     assert plan.source.decode_strategy == "record"
     assert plan.output is None
 
@@ -68,12 +77,37 @@ def test_compile_succeeds_when_kafka_present(streaming_kafka_config: DictConfig)
     assert plan.name == "test"
 
 
-def test_compile_fails_on_shape_mismatch(streaming_kafka_config: DictConfig) -> None:
-    """Step expects RECORD but source is BATCH without CollectBatch."""
+class _EachTwice(BatchExpandStep[Order, Order]):
+    def execute(self, messages: list[Message[Order]], **kwargs: object) -> list[list[Order]]:
+        del kwargs
+        return [[message.payload, message.payload] for message in messages]
+
+
+def test_a_record_step_follows_a_batch_expand_step(streaming_kafka_config: DictConfig) -> None:
+    """A BatchExpandStep subclass turns the batch back into records."""
     flow: StreamFlow[Order, Result] = StreamFlow(
         name="test",
-        source=FromTopic("in", payload=Order, shape=StreamShape.BATCH),
-        process=Process(FakeStep(), IntoTopic("out", payload=Result)),
+        source=FromTopic("in", payload=Order),
+        process=Process(
+            CollectBatch(2, 10), _EachTwice(), FakeStep(), IntoTopic("out", payload=Result)
+        ),
+    )
+
+    plan = compile_flow(flow, config=streaming_kafka_config)
+
+    assert [node.output_shape for node in plan.nodes[:3]] == [
+        StreamShape.BATCH,
+        StreamShape.RECORD,
+        StreamShape.RECORD,
+    ]
+
+
+def test_compile_fails_on_shape_mismatch(streaming_kafka_config: DictConfig) -> None:
+    """A record step after CollectBatch receives a batch."""
+    flow: StreamFlow[Order, Result] = StreamFlow(
+        name="test",
+        source=FromTopic("in", payload=Order),
+        process=Process(CollectBatch(2, 10), FakeStep(), IntoTopic("out", payload=Result)),
     )
 
     with pytest.raises(CompilationError) as exc_info:

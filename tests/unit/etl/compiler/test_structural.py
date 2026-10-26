@@ -9,6 +9,7 @@ import pytest
 
 from loom.etl import ETLParams, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompilationError
+from loom.etl.compiler._errors import ETLErrorCode
 from loom.etl.compiler._plan import SourceBinding
 from loom.etl.compiler._validators import (
     validate_execute_signature,
@@ -47,14 +48,12 @@ def test_params_compat_subclass_passes() -> None:
     validate_params_compat(object, BaseParams, ExtendedParams)
 
 
-def test_params_compat_missing_field_raises() -> None:
-    with pytest.raises(ETLCompilationError, match="run_date"):
+def test_params_compat_missing_field_raises_naming_the_field_and_the_type() -> None:
+    with pytest.raises(ETLCompilationError, match="run_date") as exc_info:
         validate_params_compat(object, BaseParams, UnrelatedParams)
 
-
-def test_params_compat_error_includes_type_name() -> None:
-    with pytest.raises(ETLCompilationError, match="UnrelatedParams"):
-        validate_params_compat(object, BaseParams, UnrelatedParams)
+    assert exc_info.value.code is ETLErrorCode.MISSING_PARAMS_FIELDS
+    assert "UnrelatedParams" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +107,10 @@ class _MissingFrameStep(ETLStep[BaseParams]):
 
 def test_missing_frame_raises() -> None:
     bindings = _bindings_for(_MissingFrameStep)
-    with pytest.raises(ETLCompilationError, match="orders"):
+    with pytest.raises(ETLCompilationError, match="orders") as exc_info:
         validate_execute_signature(_MissingFrameStep, BaseParams, bindings)
+
+    assert exc_info.value.code is ETLErrorCode.MISSING_SOURCE_PARAMS
 
 
 class _ExtraFrameStep(ETLStep[BaseParams]):
@@ -120,8 +121,10 @@ class _ExtraFrameStep(ETLStep[BaseParams]):
 
 
 def test_extra_frame_raises() -> None:
-    with pytest.raises(ETLCompilationError, match="ghost"):
+    with pytest.raises(ETLCompilationError, match="ghost") as exc_info:
         validate_execute_signature(_ExtraFrameStep, BaseParams, ())
+
+    assert exc_info.value.code is ETLErrorCode.EXTRA_SOURCE_PARAMS
 
 
 class _WrongParamNameStep(ETLStep[BaseParams]):
@@ -132,5 +135,7 @@ class _WrongParamNameStep(ETLStep[BaseParams]):
 
 
 def test_wrong_params_name_raises() -> None:
-    with pytest.raises(ETLCompilationError, match="named 'params'"):
+    with pytest.raises(ETLCompilationError, match="named 'params'") as exc_info:
         validate_execute_signature(_WrongParamNameStep, BaseParams, ())
+
+    assert exc_info.value.code is ETLErrorCode.INVALID_PARAMS_NAME

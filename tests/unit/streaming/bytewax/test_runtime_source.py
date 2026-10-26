@@ -15,7 +15,6 @@ require_bytewax()
 
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E402
-from loom.streaming.kafka._config import ConsumerSettings  # noqa: E402
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import build_compiled_source  # noqa: E402
@@ -241,18 +240,6 @@ class TestKafkaSourcePartition:
 
         assert stub.closed is True, "the consumer leaked when the final flush raised"
 
-    def test_warns_on_deprecated_poll_timeout(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        _install_clients(monkeypatch, PartitionClientStub())
-
-        with caplog.at_level(logging.WARNING):
-            _runtime_io.KafkaPartitionedSource(build_compiled_source(poll_timeout_ms=250))
-
-        assert any("poll_timeout_ms is deprecated" in r.message for r in caplog.records)
-
 
 class TestListParts:
     def test_lists_one_key_per_kafka_partition(
@@ -382,17 +369,6 @@ class TestListParts:
             source.list_parts()
 
         assert _Admin.fetches == 1
-
-
-class TestConsumerSettings:
-    def test_poll_timeout_ms_defaults_to_100(self) -> None:
-        settings = ConsumerSettings(
-            brokers=("localhost:9092",),
-            group_id="test",
-            topics=("orders.in",),
-        )
-
-        assert settings.poll_timeout_ms == 100
 
 
 class TestSnapshotSeeding:

@@ -7,14 +7,18 @@ from typing import Literal, TypeAlias
 
 import msgspec
 
-from loom.core.config import ConfigResolver, load_config, section
+from loom.core.config import ConfigResolver
+from loom.core.config.overrides import load_application_config
 from loom.core.model import LoomFrozenStruct
-from loom.core.routing import DefaultingRouteResolver, LogicalRef
+from loom.core.model.redaction import RedactedMap, Secret, reveal_for_driver
+from loom.core.routing import DefaultingRouteResolver, LogicalRef, as_logical_ref
 
 KafkaConfigValue: TypeAlias = str | int | float | bool
 
 
-class KafkaSecuritySettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class KafkaSecuritySettings(
+    LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True
+):
     """Optional Kafka security settings.
 
     Attributes:
@@ -28,7 +32,7 @@ class KafkaSecuritySettings(LoomFrozenStruct, frozen=True, kw_only=True):
     protocol: Literal["PLAINTEXT", "SSL", "SASL_SSL", "SASL_PLAINTEXT"]
     sasl_mechanism: str | None = None
     sasl_username: str | None = None
-    sasl_password: str | None = None
+    sasl_password: Secret[str] | None = None
     ssl_ca_location: str | None = None
 
     def to_confluent_config(self) -> dict[str, KafkaConfigValue]:
@@ -38,18 +42,19 @@ class KafkaSecuritySettings(LoomFrozenStruct, frozen=True, kw_only=True):
             String-keyed Confluent security configuration mapping.
         """
 
+        password = None if self.sasl_password is None else self.sasl_password.reveal()
         return _without_none(
             {
                 "security.protocol": self.protocol,
                 "sasl.mechanism": self.sasl_mechanism,
                 "sasl.username": self.sasl_username,
-                "sasl.password": self.sasl_password,
+                "sasl.password": password,
                 "ssl.ca.location": self.ssl_ca_location,
             }
         )
 
 
-class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Typed Kafka producer settings.
 
     Attributes:
@@ -64,7 +69,7 @@ class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
     client_id: str | None = None
     topic: str | None = None
     security: KafkaSecuritySettings | None = None
-    extra: dict[str, KafkaConfigValue] = msgspec.field(default_factory=dict)
+    extra: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def to_confluent_config(self) -> dict[str, KafkaConfigValue]:
         """Compile settings to a Confluent-compatible config mapping.
@@ -81,10 +86,10 @@ class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
             **_without_none({"client.id": self.client_id}),
             **_security_config(self.security),
         }
-        return _merge_extra_config(managed, self.extra)
+        return _merge_extra_config(managed, reveal_for_driver(self.extra))
 
 
-class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Typed Kafka consumer settings.
 
     Attributes:
@@ -92,9 +97,6 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
         group_id: Consumer group identifier.
         topics: Topics to subscribe to.
         auto_offset_reset: Offset reset policy.
-        poll_timeout_ms: Maximum milliseconds to block waiting for a message on
-            each poll call.  Higher values reduce CPU usage when the topic is
-            idle; lower values decrease end-to-end latency.  Defaults to 100.
         batch_size: Maximum records returned by one batch consume call.
             Defaults to 500.
         poll_backoff_ms: Milliseconds to back off after an empty batch consume
@@ -104,11 +106,9 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
             after ``offsets.retention.minutes`` (default 7 days), so idle
             partitions re-commit their watermark periodically to refresh
             retention.  Defaults to 30 minutes.
-        delivery: Explicit delivery semantics.  ``None`` (default) keeps the
-            legacy resolution derived from ``enable_auto_commit``.
-        enable_auto_commit: Whether Kafka should auto-commit offsets.
-            Deprecated in favor of ``delivery`` but honored for the whole 1.x
-            line.  ``None`` means unset.
+        delivery: Delivery semantics, required.  ``"at_least_once"`` commits
+            an offset once its record is written; ``"at_most_once"`` lets
+            Kafka auto-commit offsets.
         security: Optional security configuration.
         extra: Optional extra Confluent settings.
     """
@@ -116,15 +116,13 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
     brokers: tuple[str, ...]
     group_id: str
     topics: tuple[str, ...]
+    delivery: Literal["at_least_once", "at_most_once"]
     auto_offset_reset: Literal["earliest", "latest"] = "earliest"
-    poll_timeout_ms: int = 100
     batch_size: int = 500
     poll_backoff_ms: int = 50
     commit_keepalive_ms: int = 1_800_000
-    delivery: Literal["at_least_once", "at_most_once"] | None = None
-    enable_auto_commit: bool | None = None
     security: KafkaSecuritySettings | None = None
-    extra: dict[str, KafkaConfigValue] = msgspec.field(default_factory=dict)
+    extra: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
 
     def __post_init__(self) -> None:
         """Validate batch consumption parameters.
@@ -140,24 +138,10 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
         if self.commit_keepalive_ms < 1:
             raise ValueError("ConsumerSettings.commit_keepalive_ms must be greater than zero.")
 
-    def effective_delivery(self) -> Literal["at_least_once", "at_most_once"]:
-        """Resolve the effective delivery semantics.
-
-        Returns:
-            ``delivery`` when set explicitly; otherwise the legacy resolution
-            from ``enable_auto_commit``: ``False`` maps to ``"at_least_once"``
-            while ``True`` or unset maps to ``"at_most_once"``.
-        """
-        if self.delivery is not None:
-            return self.delivery
-        if self.enable_auto_commit is False:
-            return "at_least_once"
-        return "at_most_once"
-
     def to_confluent_config(self) -> dict[str, KafkaConfigValue]:
         """Compile settings to a Confluent-compatible config mapping.
 
-        ``enable.auto.commit`` is derived from :meth:`effective_delivery`:
+        ``enable.auto.commit`` is derived from ``delivery``:
         ``"at_most_once"`` maps to ``True`` and ``"at_least_once"`` to
         ``False``.
 
@@ -172,13 +156,13 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True):
             "bootstrap.servers": _broker_list(self.brokers),
             "group.id": self.group_id,
             "auto.offset.reset": self.auto_offset_reset,
-            "enable.auto.commit": self.effective_delivery() == "at_most_once",
+            "enable.auto.commit": self.delivery == "at_most_once",
             **_security_config(self.security),
         }
-        return _merge_extra_config(managed, self.extra)
+        return _merge_extra_config(managed, reveal_for_driver(self.extra))
 
 
-class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True):
+class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Typed Kafka settings loaded from a YAML config section.
 
     Args:
@@ -235,6 +219,19 @@ class KafkaSettings(LoomFrozenStruct, frozen=True, kw_only=True):
         )
         return resolver.resolve(ref)
 
+    def consumer_key_for(self, ref: str | LogicalRef) -> str:
+        """Name the field :meth:`consumer_for` resolves *ref* from.
+
+        Args:
+            ref: Logical input reference.
+
+        Returns:
+            ``"consumers.<ref>"`` when a specific consumer is configured for
+            *ref*, otherwise ``"consumer"``; both relative to this section.
+        """
+        logical = as_logical_ref(ref).ref
+        return f"consumers.{logical}" if logical in self.consumers else "consumer"
+
 
 def resolve_producer_topic(ref: str | LogicalRef, settings: ProducerSettings) -> str:
     """Resolve physical producer topic from settings or logical fallback.
@@ -278,7 +275,9 @@ def load_kafka_settings(
     section_name: str = "kafka",
     resolvers: Sequence[ConfigResolver] = (),
 ) -> KafkaSettings:
-    """Load Kafka settings from YAML using the shared core config loader.
+    """Load Kafka settings from YAML as an application's configuration.
+
+    The ``LOOM__*`` variables merge last (see :mod:`loom.core.config.overrides`).
 
     Args:
         *config_files: One or more local paths or cloud URIs.
@@ -294,8 +293,9 @@ def load_kafka_settings(
             is missing, or the section fails validation.
     """
 
-    cfg = load_config(*config_files, resolvers=resolvers)
-    return section(cfg, section_name, KafkaSettings)
+    return load_application_config(*config_files, resolvers=resolvers).section(
+        section_name, KafkaSettings
+    )
 
 
 def _merge_extra_config(

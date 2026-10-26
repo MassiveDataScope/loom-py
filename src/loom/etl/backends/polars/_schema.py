@@ -15,13 +15,12 @@ from deltalake.exceptions import TableNotFoundError
 from polars.datatypes import DataTypeClass
 
 from loom.etl.declarative.target import SchemaMode
-from loom.etl.schema._schema import SchemaError, SchemaNotFoundError
+from loom.etl.schema._schema import SchemaError
 
 _log = logging.getLogger(__name__)
 
 __all__ = [
     "PolarsPhysicalSchema",
-    "SchemaNotFoundError",
     "apply_schema_polars",
     "read_delta_physical_schema",
 ]
