@@ -47,6 +47,9 @@ def imported_modules(tree: ast.AST, *, package: str) -> set[str]:
                 continue
             if not package:
                 continue
-            base = package.split(".")[: len(package.split(".")) - node.level + 1]
-            modules.add(".".join([*base, node.module] if node.module else base))
+            base = package.rsplit(".", node.level - 1)[0]
+            if node.module:
+                modules.add(f"{base}.{node.module}")
+            else:
+                modules.add(base)
     return modules

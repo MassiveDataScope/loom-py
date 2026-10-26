@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, cast
@@ -14,7 +14,7 @@ from loom.composition import Application
 from loom.core.bootstrap.kernel import KernelRuntime
 from loom.core.cache.wiring import CacheGateways
 from loom.core.di.container import LoomContainer
-from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.abc import PersistenceWiring, no_startup_checks
 
 
 class Journal:
@@ -29,12 +29,12 @@ class Journal:
         if event in self.fail:
             raise RuntimeError(event)
 
-    def resource(self, name: str) -> AbstractAsyncContextManager[object]:
+    def resource(self, name: str) -> AbstractAsyncContextManager[None]:
         @asynccontextmanager
-        async def resource() -> AsyncIterator[object]:
+        async def resource() -> AsyncIterator[None]:
             self.step(f"open:{name}")
             try:
-                yield self
+                yield
             finally:
                 self.step(f"close:{name}")
 
@@ -42,17 +42,6 @@ class Journal:
 
     async def check(self) -> None:
         self.step("check:persistence")
-
-    def lifespan(self) -> AbstractAsyncContextManager[None]:
-        @asynccontextmanager
-        async def lifespan() -> AsyncIterator[None]:
-            self.step("open:persistence")
-            try:
-                yield
-            finally:
-                self.step("close:persistence")
-
-        return lifespan()
 
 
 class Gateway:
@@ -64,7 +53,26 @@ class Gateway:
         self.journal.step(f"close:{self.name}")
 
 
-def _application(journal: Journal, *, cache: bool = True) -> Application:
+def _kernel(container: LoomContainer) -> KernelRuntime:
+    return cast(KernelRuntime, SimpleNamespace(container=container))
+
+
+def _persistence(journal: Journal, *, startup_checks: bool = True) -> PersistenceWiring:
+    return PersistenceWiring(
+        uow_factory=None,
+        repo_registration_module=lambda _container: None,
+        lifespan_init=lambda: journal.resource("persistence"),
+        startup_checks=journal.check if startup_checks else no_startup_checks,
+    )
+
+
+def _application(
+    journal: Journal,
+    *,
+    cache: bool = True,
+    resources: Callable[[], Sequence[AbstractAsyncContextManager[object]]] | None = None,
+    startup_checks: bool = True,
+) -> Application:
     container = LoomContainer()
     if cache:
         container.register_instance(
@@ -74,17 +82,11 @@ def _application(journal: Journal, *, cache: bool = True) -> Application:
                 counters=cast(Any, Gateway(journal, "counters")),
             ),
         )
-    persistence = PersistenceWiring(
-        uow_factory=None,
-        repo_registration_module=lambda _container: None,
-        lifespan_init=journal.lifespan,
-        startup_checks=journal.check,
-    )
     # Fresh resources on every open, as a registry or runtime context manager is.
     return Application(
-        kernel=cast(KernelRuntime, SimpleNamespace(container=container)),
-        persistence=persistence,
-        resources=lambda: (journal.resource("sql"), journal.resource("ai")),
+        kernel=_kernel(container),
+        persistence=_persistence(journal, startup_checks=startup_checks),
+        resources=resources or (lambda: (journal.resource("sql"), journal.resource("ai"))),
     )
 
 
@@ -213,8 +215,7 @@ async def test_running_without_check_does_not_run_the_startup_checks() -> None:
     async with application.running(check=False):
         pass
 
-    assert "check:persistence" not in journal.events
-    assert journal.events[: len(OPEN) - 1] == ["open:sql", "open:ai", "open:persistence"]
+    assert journal.events == ["open:sql", "open:ai", "open:persistence", *CLOSE]
 
 
 async def test_check_runs_the_startup_checks_and_opens_nothing() -> None:
@@ -272,13 +273,10 @@ class Witness:
 async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
     witness = Witness()
     journal = Journal()
-    application = Application(
-        kernel=cast(KernelRuntime, SimpleNamespace(container=LoomContainer())),
-        persistence=PersistenceWiring(
-            uow_factory=None,
-            repo_registration_module=lambda _container: None,
-            lifespan_init=journal.lifespan,
-        ),
+    application = _application(
+        journal,
+        cache=False,
+        startup_checks=False,
         resources=lambda: (witness, journal.resource("sql")),
     )
     boom = ValueError("boom")
@@ -294,15 +292,8 @@ async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
 
 async def test_without_resources_only_persistence_opens() -> None:
     journal = Journal()
-    application = Application(
-        kernel=cast(KernelRuntime, SimpleNamespace(container=LoomContainer())),
-        persistence=PersistenceWiring(
-            uow_factory=None,
-            repo_registration_module=lambda _container: None,
-            lifespan_init=journal.lifespan,
-            startup_checks=journal.check,
-        ),
-    )
+    # No resources argument: the default factory is what is under test.
+    application = Application(kernel=_kernel(LoomContainer()), persistence=_persistence(journal))
 
     async with application.running():
         pass

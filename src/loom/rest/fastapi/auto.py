@@ -934,10 +934,11 @@ def create_app(
 
     # The registry opens before persistence, so its clients close even when
     # the persistence lifespan fails to start or to shut down.
+    resources = tuple(r for r in (sql.registry, ai.runtime) if r is not None)
     application = Application(
         kernel=result,
         persistence=wiring,
-        resources=lambda: [r for r in (sql.registry, ai.runtime) if r is not None],
+        resources=lambda: resources,
     )
 
     @asynccontextmanager
