@@ -114,7 +114,7 @@ class SQLAlchemyBackend:
             prepare_models=functools.partial(
                 _prepare_models, convention=convention, settings=settings
             ),
-            startup_checks=lambda: _run_startup_checks(session_manager, db_cfg.schema),
+            startup_checks=functools.partial(_run_startup_checks, session_manager, db_cfg.schema),
             readiness=lambda: _readiness(session_manager),
         )
 
