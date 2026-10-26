@@ -7,13 +7,14 @@ its backend definitions in silence and failed on first use.
 
 from __future__ import annotations
 
-import msgspec
 import pytest
 
 from loom.core.cache import CacheGateway
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.config.convert import convert_config
 from loom.core.config.keys import ConfigKey
+from loom.core.model.redaction import RedactedMap
 
 from ._doubles import MEMORY_BACKEND
 
@@ -22,7 +23,9 @@ def _named_aliases() -> CacheConfig:
     return CacheConfig(
         aiocache_alias="cache",
         counter_alias="counters",
-        aiocache_config={"cache": dict(MEMORY_BACKEND), "counters": dict(MEMORY_BACKEND)},
+        aiocache_config=RedactedMap(
+            {"cache": dict(MEMORY_BACKEND), "counters": dict(MEMORY_BACKEND)}
+        ),
     )
 
 
@@ -44,10 +47,12 @@ def test_the_injected_default_serves_the_data_alias() -> None:
 def test_an_explicit_default_is_not_overwritten() -> None:
     config = CacheConfig(
         aiocache_alias="cache",
-        aiocache_config={
-            "cache": dict(MEMORY_BACKEND),
-            "default": {"cache": "aiocache.SimpleMemoryCache", "namespace": "mine"},
-        },
+        aiocache_config=RedactedMap(
+            {
+                "cache": dict(MEMORY_BACKEND),
+                "default": {"cache": "aiocache.SimpleMemoryCache", "namespace": "mine"},
+            }
+        ),
     )
 
     CacheGateway.apply_config(config)
@@ -69,7 +74,7 @@ def test_a_yaml_section_keeps_its_backends() -> None:
         "aiocache_config": {"sessions": dict(MEMORY_BACKEND)},
     }
 
-    config = msgspec.convert(parsed, CacheConfig)
+    config = convert_config(parsed, CacheConfig, strict=False)
 
     assert config.aiocache_config == {"sessions": dict(MEMORY_BACKEND)}
 

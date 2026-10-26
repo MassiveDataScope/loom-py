@@ -24,6 +24,7 @@ from typing import Self
 from opentelemetry.trace import Link, NoOpTracer, Span, Tracer
 from prometheus_client import start_http_server
 
+from loom.core.environment import Environment, resolve_environment
 from loom.core.logger.config import configure_logging_from_values
 from loom.core.observability.config import (
     ObservabilityConfig,
@@ -67,7 +68,7 @@ def _resolve_scrape_addr(cfg: PrometheusObservabilityConfig) -> str:
     return cfg.config.bind_address
 
 
-def _configure_structlog_logging(config: ObservabilityConfig) -> None:
+def _configure_structlog_logging(config: ObservabilityConfig, environment: Environment) -> None:
     """Configure structlog when the observability config owns logging setup."""
     logger_config = config.log.config
     if logger_config is None:
@@ -81,7 +82,7 @@ def _configure_structlog_logging(config: ObservabilityConfig) -> None:
         extra_processors = (build_log_correlation_processor(),)
     configure_logging_from_values(
         name=logger_config.name,
-        environment=logger_config.environment,
+        environment=environment,
         renderer=logger_config.renderer,
         colors=logger_config.colors,
         level=logger_config.level,
@@ -117,11 +118,13 @@ def _resolve_tracer(config: OtelObservabilityConfig) -> tuple[Tracer, SpanFlushe
     return build_tracer(config.config)
 
 
-def _build_observers(config: ObservabilityConfig) -> list[LifecycleObserver]:
+def _build_observers(
+    config: ObservabilityConfig, environment: Environment
+) -> list[LifecycleObserver]:
     """Build the observer chain declared by the observability config."""
     observers: list[LifecycleObserver] = []
     if config.log.enabled:
-        _configure_structlog_logging(config)
+        _configure_structlog_logging(config, environment)
         observers.append(StructlogLifecycleObserver())
     if config.prometheus.enabled:
         observers.append(
@@ -388,7 +391,12 @@ class ObservabilityRuntime:
         self.emit(event)
 
     @classmethod
-    def from_config(cls, config: ObservabilityConfig) -> Self:
+    def from_config(
+        cls,
+        config: ObservabilityConfig,
+        *,
+        environment: Environment | str | None = None,
+    ) -> Self:
         """Build an ``ObservabilityRuntime`` from an ``ObservabilityConfig``.
 
         Observers are instantiated in order: structlog → Prometheus. When no
@@ -406,6 +414,9 @@ class ObservabilityRuntime:
 
         Args:
             config: Unified observability configuration.
+            environment: Environment of the process; drives the logger's
+                renderer and colour defaults. Resolved like
+                :func:`~loom.core.environment.resolve_environment` when ``None``.
 
         Returns:
             Configured ``ObservabilityRuntime`` ready for use.
@@ -428,7 +439,7 @@ class ObservabilityRuntime:
                 "observability.otel.export_logs requires observability.otel.config to be provided."
             )
 
-        observers = _build_observers(config)
+        observers = _build_observers(config, resolve_environment(environment))
         tracer, flusher = _resolve_tracer(config.otel)
         scrape_port = _resolve_scrape_port(config.prometheus)
         scrape_addr = _resolve_scrape_addr(config.prometheus)

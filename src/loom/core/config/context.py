@@ -67,7 +67,9 @@ class ConfigContext:
         """Build a :class:`ConfigContext` from one or more YAML files.
 
         Files are merged left-to-right; later files override earlier ones.
-        Accepts local paths and cloud URIs (``s3://``, ``gs://``, …).
+        Accepts local paths and cloud URIs (``s3://``, ``gs://``, …). The
+        ``LOOM__*`` variables are not applied: an application's configuration
+        loads through :func:`loom.core.config.overrides.load_application_config`.
 
         Args:
             *paths: One or more local paths or cloud URIs.
@@ -130,6 +132,28 @@ class ConfigContext:
         from omegaconf import OmegaConf
 
         return OmegaConf.select(self._config, _key_str(key), default=None) is not None
+
+    def raw(self, key: str | ConfigKey, default: Any = None) -> Any:
+        """Return the value at the dot-separated *key* as written, resolving nothing.
+
+        Interpolations stay as their ``${...}`` text and sections come back
+        as plain dicts and lists, so reading a key never calls a resolver.
+
+        Args:
+            key: Dot-separated path (e.g. ``"app.rest.auth"``).
+            default: Returned when the key is absent.
+
+        Returns:
+            The value as written, or *default*.
+        """
+        from omegaconf import OmegaConf
+
+        node: Any = OmegaConf.to_container(self._config, resolve=False)
+        for part in _key_str(key).split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
 
     def section_optional(self, key: str | ConfigKey, target: type[T]) -> T | None:
         """Extract *key* as *target* when present, otherwise return ``None``.

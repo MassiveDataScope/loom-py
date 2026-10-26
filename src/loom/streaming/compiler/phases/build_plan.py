@@ -8,11 +8,8 @@ from typing import Any, Literal, get_args, get_origin
 
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
-from loom.streaming.compiler._errors import (
-    error_envelope_unparameterized,
-    payload_type_invalid,
-    storage_sink_unsupported,
-)
+from loom.core.model.redaction import RedactedMap
+from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,
     CompiledMongoCDCSource,
@@ -25,19 +22,18 @@ from loom.streaming.compiler._plan import (
     CompiledStorageSink,
 )
 from loom.streaming.compiler.phases.validate import (
-    _node_needs_async_bridge,
-    _node_output_shape,
-    _walk_all_process_nodes,
+    node_output_shape,
+    walk_process_nodes,
 )
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import KafkaSettings
 from loom.streaming.kafka._wire import DecodeError, DispatchTable
-from loom.streaming.mongo import MongoConfig
+from loom.streaming.mongo._config import load_mongo_config
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
 from loom.streaming.nodes._mongo import FromMongoCDC
-from loom.streaming.nodes._shape import CollectBatch
+from loom.streaming.nodes._shape import CollectBatch, StreamShape
 from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._table import Backend, IntoTable
 from loom.streaming.nodes._table.config import (
@@ -64,7 +60,7 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
     terminal_sinks, terminal_storage_sinks = _build_terminal_sinks(flow.process.nodes, ctx)
     error_routes = {kind: _build_sink(topic, ctx) for kind, topic in flow.errors.items()}
     needs_async = any(
-        _node_needs_async_bridge(node) for node in _walk_all_process_nodes(flow.process.nodes)
+        _node_needs_async_bridge(node) for node in walk_process_nodes(flow.process.nodes)
     )
     return CompiledPlan(
         name=flow.name,
@@ -78,18 +74,23 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
     )
 
 
+def _node_needs_async_bridge(node: object) -> bool:
+    return isinstance(node, WithAsync) or (
+        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
+    )
+
+
 def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledMongoCDCSource:
     source = flow.source
     if not isinstance(source, FromMongoCDC):
         raise TypeError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
-    mongo = ctx.section(ConfigKey.MONGO, MongoConfig)
+    mongo = load_mongo_config(ctx)
     settings = mongo.source_for(source.logical_ref)
-    watch_options = {**settings.watch_options, **source.watch_options}
+    watch_options = RedactedMap({**settings.watch_options, **source.watch_options})
     return CompiledMongoCDCSource(
         settings=settings,
         collections=source.collections,
         watch_options=watch_options,
-        shape=source.shape,
     )
 
 
@@ -104,8 +105,8 @@ def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Comp
         settings=consumer,
         topics=consumer.topics,
         payload_type=source.payload,
-        shape=source.shape,
         decode_strategy=decode_strategy,
+        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
@@ -121,8 +122,8 @@ def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         settings=consumer,
         topics=consumer.topics,
         dispatch=dispatch,
-        shape=source.shape,
         decode_strategy=decode_strategy,
+        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
@@ -151,13 +152,11 @@ def _build_dispatch_table(payloads: tuple[type[Any], ...]) -> DispatchTable:
         if isinstance(t, type) and issubclass(t, DecodeError):
             wire[t.loom_message_type()] = t
             continue
-        origin = get_origin(t)
-        if origin is ErrorEnvelope:
-            args = get_args(t)
-            if not args:
-                raise CompilationError([error_envelope_unparameterized(t)])
-            inner_type = args[0]
-            key = _require_message_type(inner_type)
+        if t is ErrorEnvelope:
+            issue = StreamingErrorCode.ERROR_ENVELOPE_UNPARAMETERIZED.issue(payload=repr(t))
+            raise CompilationError([issue])
+        if get_origin(t) is ErrorEnvelope:
+            key = _require_message_type(get_args(t)[0])
             error[key] = t
         else:
             key = _require_message_type(t)
@@ -169,15 +168,16 @@ def _require_message_type(t: type[Any]) -> str:
     try:
         return str(t.loom_message_type())
     except AttributeError:
-        raise CompilationError([payload_type_invalid(t)]) from None
+        issue = StreamingErrorCode.PAYLOAD_TYPE_INVALID.issue(payload=repr(t))
+        raise CompilationError([issue]) from None
 
 
 def _build_nodes(flow: StreamFlow[Any, Any]) -> list[CompiledNode]:
     nodes: list[CompiledNode] = []
-    current_shape = flow.source.shape
+    current_shape = StreamShape.RECORD
     for node in flow.process.nodes:
         input_shape = current_shape
-        output_shape = _node_output_shape(node, current_shape)
+        output_shape = node_output_shape(node, current_shape)
         nodes.append(
             CompiledNode(
                 node=node,
@@ -278,4 +278,6 @@ def _build_storage_sink(node: IntoSink[Any], ctx: ConfigContext) -> CompiledStor
                 config=ch_resolved.sink,
                 database_config=None,
             )
-    raise CompilationError([storage_sink_unsupported(node)])
+    raise CompilationError(
+        [StreamingErrorCode.STORAGE_SINK_UNSUPPORTED.issue(component=type(node).__name__)]
+    )

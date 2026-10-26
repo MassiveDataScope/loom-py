@@ -70,11 +70,13 @@ class _HistorifySpecLike(Protocol):
     effective_date: Any
     mode: Any
     track: tuple[str, ...] | None
+    overwrite: tuple[str, ...] | None
     valid_from: str
     valid_to: str
     deleted_at: str
     partition_scope: tuple[str, ...] | None
     allow_temporal_rerun: bool
+    delete_marker: str | None
 
 
 class _PredicateShape(Enum):
@@ -105,7 +107,7 @@ class StepCompilationContext:
 
 
 def validate_step(ctx: StepCompilationContext) -> None:
-    """Run all per-step compile-time validators against *ctx*."""
+    """Validate signature, upsert, history, param expressions, then file paths."""
     validate_execute_signature(
         ctx.step_type,
         ctx.params_type,
@@ -114,6 +116,7 @@ def validate_step(ctx: StepCompilationContext) -> None:
         ctx.agent_bindings,
     )
     validate_upsert_spec(ctx.step_type, ctx.target_binding.spec)
+    validate_historify_spec(ctx.step_type, ctx.target_binding.spec)
     validate_param_exprs(ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding)
     validate_file_path_templates(
         ctx.step_type, ctx.params_type, ctx.source_bindings, ctx.target_binding
@@ -160,8 +163,12 @@ def validate_params_compat(
     context_fields = {f.name for f in msgspec.structs.fields(context_params)}
     missing = component_fields - context_fields
     if missing:
-        raise ETLCompilationError.missing_params_fields(
-            component_type, frozenset(missing), context_params
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.MISSING_PARAMS_FIELDS.issue(
+                component=component_type,
+                missing=str(sorted(missing)),
+                context=context_params.__name__,
+            )
         )
 
 
@@ -176,10 +183,16 @@ def _validate_params_arg(
     }
     positional = [p for p in params if p.kind in positional_kinds and p.name != "self"]
     if not positional:
-        raise ETLCompilationError.invalid_params_type(step_type, params_type)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.INVALID_PARAMS_TYPE.issue(
+                component=step_type, expected=params_type.__name__
+            )
+        )
     first = positional[0]
     if first.name != "params":
-        raise ETLCompilationError.invalid_params_name(step_type, first.name)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.INVALID_PARAMS_NAME.issue(component=step_type, got=first.name)
+        )
 
 
 def _collect_kw_only_frames(params: list[inspect.Parameter]) -> dict[str, inspect.Parameter]:
@@ -198,9 +211,13 @@ def _check_no_injected_values(
     step_type: type[Any], config_aliases: set[str], agent_aliases: set[str]
 ) -> None:
     if config_aliases:
-        raise ETLCompilationError.unsupported_config_value(step_type)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UNSUPPORTED_CONFIG_VALUE.issue(component=step_type, marker="FromConfig")
+        )
     if agent_aliases:
-        raise ETLCompilationError.unsupported_config_value(step_type, marker="WithAgent")
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UNSUPPORTED_CONFIG_VALUE.issue(component=step_type, marker="WithAgent")
+        )
 
 
 def _check_injected_params(
@@ -225,10 +242,18 @@ def _check_config_params(
 ) -> None:
     conflict = aliases & taken
     if conflict:
-        raise ETLCompilationError.config_alias_conflict(step_type, frozenset(conflict), marker)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.CONFIG_ALIAS_CONFLICT.issue(
+                component=step_type, marker=marker, aliases=str(sorted(conflict))
+            )
+        )
     missing = aliases - set(kw_only)
     if missing:
-        raise ETLCompilationError.missing_config_params(step_type, frozenset(missing), marker)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.MISSING_CONFIG_PARAMS.issue(
+                component=step_type, marker=marker, missing=str(sorted(missing))
+            )
+        )
 
 
 def _check_missing_frames(
@@ -238,7 +263,11 @@ def _check_missing_frames(
 ) -> None:
     missing = source_aliases - set(kw_only)
     if missing:
-        raise ETLCompilationError.missing_source_params(step_type, frozenset(missing))
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.MISSING_SOURCE_PARAMS.issue(
+                component=step_type, missing=str(sorted(missing))
+            )
+        )
 
 
 def _check_extra_frames(
@@ -248,7 +277,9 @@ def _check_extra_frames(
 ) -> None:
     extra = set(kw_only) - source_aliases
     if extra:
-        raise ETLCompilationError.extra_source_params(step_type, frozenset(extra))
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.EXTRA_SOURCE_PARAMS.issue(component=step_type, extra=str(sorted(extra)))
+        )
 
 
 def validate_param_exprs(
@@ -285,7 +316,11 @@ def validate_param_exprs(
     for expr in exprs:
         field_name = expr.path[0]
         if field_name not in known:
-            raise ETLCompilationError.unknown_param_field(step_type, field_name, params_type)
+            raise ETLCompilationError.from_issue(
+                ETLErrorCode.UNKNOWN_PARAM_FIELD.issue(
+                    component=step_type, field_name=field_name, params_type=params_type.__name__
+                )
+            )
 
 
 def validate_file_path_templates(
@@ -319,8 +354,13 @@ def validate_file_path_templates(
     for path in paths:
         for field_name in extract_template_fields(path):
             if field_name not in known:
-                raise ETLCompilationError.unknown_template_field(
-                    step_type, field_name, path, params_type
+                raise ETLCompilationError.from_issue(
+                    ETLErrorCode.UNKNOWN_TEMPLATE_FIELD.issue(
+                        component=step_type,
+                        field_name=field_name,
+                        path=path,
+                        params_type=params_type.__name__,
+                    )
                 )
 
 
@@ -452,6 +492,7 @@ def validate_historify_spec(step_type: type[Any], spec: TargetSpec) -> None:
     _check_historify_effective_date_not_in_track(step_type, historify)
     _check_historify_boundary_cols_disjoint(step_type, historify)
     _check_historify_log_mode_not_param_expr(step_type, historify)
+    _check_historify_delete_marker(step_type, historify)
     _warn_historify_no_partition_scope(step_type, historify)
     _warn_historify_rerun_without_scope(step_type, historify)
     _warn_historify_track_none(step_type, historify)
@@ -459,14 +500,8 @@ def validate_historify_spec(step_type: type[Any], spec: TargetSpec) -> None:
 
 def _check_historify_keys_non_empty(step_type: type[Any], spec: _HistorifySpecLike) -> None:
     if not spec.keys:
-        raise ETLCompilationError(
-            code=ETLErrorCode.INVALID_TARGET_TYPE,
-            component=step_type.__qualname__,
-            field="keys",
-            message=(
-                f"{step_type.__qualname__}: IntoHistory 'keys' must contain "
-                "at least one column name."
-            ),
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_KEYS_EMPTY.issue(component=step_type)
         )
 
 
@@ -475,14 +510,10 @@ def _check_historify_keys_track_disjoint(step_type: type[Any], spec: _HistorifyS
         return
     overlap = frozenset(spec.keys) & frozenset(spec.track)
     if overlap:
-        raise ETLCompilationError(
-            code=ETLErrorCode.INVALID_TARGET_TYPE,
-            component=step_type.__qualname__,
-            field="track",
-            message=(
-                f"{step_type.__qualname__}: IntoHistory 'keys' and 'track' "
-                f"must not overlap. Conflicting columns: {sorted(overlap)}"
-            ),
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_KEYS_TRACK_OVERLAP.issue(
+                component=step_type, overlap=str(sorted(overlap))
+            )
         )
 
 
@@ -493,15 +524,10 @@ def _check_historify_effective_date_not_in_track(
     if spec.track is None or not isinstance(spec.effective_date, str):
         return
     if spec.effective_date in spec.track:
-        raise ETLCompilationError(
-            code=ETLErrorCode.INVALID_TARGET_TYPE,
-            component=step_type.__qualname__,
-            field="effective_date",
-            message=(
-                f"{step_type.__qualname__}: IntoHistory 'effective_date' column "
-                f"{spec.effective_date!r} cannot appear in 'track'. "
-                "The effective_date is a temporal axis, not a dimension being tracked."
-            ),
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_EFFECTIVE_DATE_IN_TRACK.issue(
+                component=step_type, effective_date=spec.effective_date
+            )
         )
 
 
@@ -510,26 +536,18 @@ def _check_historify_boundary_cols_disjoint(step_type: type[Any], spec: _Histori
     boundary = {spec.valid_from, spec.valid_to, spec.deleted_at}
     overlap_keys = boundary & frozenset(spec.keys)
     if overlap_keys:
-        raise ETLCompilationError(
-            code=ETLErrorCode.INVALID_TARGET_TYPE,
-            component=step_type.__qualname__,
-            field="valid_from",
-            message=(
-                f"{step_type.__qualname__}: IntoHistory boundary columns "
-                f"{sorted(overlap_keys)} cannot appear in 'keys'."
-            ),
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_BOUNDARY_IN_KEYS.issue(
+                component=step_type, overlap=str(sorted(overlap_keys))
+            )
         )
     if spec.track is not None:
         overlap_track = boundary & frozenset(spec.track)
         if overlap_track:
-            raise ETLCompilationError(
-                code=ETLErrorCode.INVALID_TARGET_TYPE,
-                component=step_type.__qualname__,
-                field="track",
-                message=(
-                    f"{step_type.__qualname__}: IntoHistory boundary columns "
-                    f"{sorted(overlap_track)} cannot appear in 'track'."
-                ),
+            raise ETLCompilationError.from_issue(
+                ETLErrorCode.HISTORIFY_BOUNDARY_IN_TRACK.issue(
+                    component=step_type, overlap=str(sorted(overlap_track))
+                )
             )
 
 
@@ -540,15 +558,35 @@ def _check_historify_log_mode_not_param_expr(
     if str(spec.mode) != "log":
         return
     if _is_param_expr(spec.effective_date):
-        raise ETLCompilationError(
-            code=ETLErrorCode.INVALID_TARGET_TYPE,
-            component=step_type.__qualname__,
-            field="effective_date",
-            message=(
-                f"{step_type.__qualname__}: IntoHistory LOG mode requires "
-                "'effective_date' to be a column name (str), not a ParamExpr. "
-                "In LOG mode each row carries its own timestamp."
-            ),
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN.issue(component=step_type)
+        )
+
+
+def _check_historify_delete_marker(step_type: type[Any], spec: _HistorifySpecLike) -> None:
+    """Raise if delete_marker is set outside LOG mode or names a declared column."""
+    marker = spec.delete_marker
+    if marker is None:
+        return
+    if str(spec.mode) != "log":
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_DELETE_MARKER_REQUIRES_LOG.issue(component=step_type)
+        )
+    declared = {
+        *spec.keys,
+        *(spec.track or ()),
+        *(spec.overwrite or ()),
+        str(spec.effective_date),
+        spec.valid_from,
+        spec.valid_to,
+        spec.deleted_at,
+        *(spec.partition_scope or ()),
+    }
+    if marker in declared:
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.HISTORIFY_DELETE_MARKER_DECLARED_COLUMN.issue(
+                component=step_type, marker=marker
+            )
         )
 
 
@@ -584,14 +622,18 @@ def _warn_historify_track_none(step_type: type[Any], spec: _HistorifySpecLike) -
 
 def _check_upsert_keys_non_empty(step_type: type[Any], spec: _UpsertSpecLike, method: str) -> None:
     if not spec.upsert_keys:
-        raise ETLCompilationError.upsert_no_keys(step_type, method)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UPSERT_NO_KEYS.issue(component=step_type, method=method)
+        )
 
 
 def _check_upsert_exclude_include_exclusive(
     step_type: type[Any], spec: _UpsertSpecLike, method: str
 ) -> None:
     if spec.upsert_exclude and spec.upsert_include:
-        raise ETLCompilationError.upsert_exclude_include_conflict(step_type, method)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT.issue(component=step_type, method=method)
+        )
 
 
 def _check_upsert_exclude_keys_disjoint(
@@ -599,7 +641,11 @@ def _check_upsert_exclude_keys_disjoint(
 ) -> None:
     overlap = frozenset(spec.upsert_exclude) & frozenset(spec.upsert_keys)
     if overlap:
-        raise ETLCompilationError.upsert_key_in_exclude(step_type, overlap, method)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UPSERT_KEY_IN_EXCLUDE.issue(
+                component=step_type, overlap=str(sorted(overlap)), method=method
+            )
+        )
 
 
 def _check_update_include_not_absorbed(step_type: type[Any], spec: _UpsertSpecLike) -> None:
@@ -613,7 +659,11 @@ def _check_update_include_not_absorbed(step_type: type[Any], spec: _UpsertSpecLi
         return
     always_excluded = frozenset(spec.upsert_keys) | frozenset(spec.partition_cols)
     if frozenset(spec.upsert_include) <= always_excluded:
-        raise ETLCompilationError.update_empty_update_set(step_type, spec.upsert_include)
+        raise ETLCompilationError.from_issue(
+            ETLErrorCode.UPDATE_EMPTY_UPDATE_SET.issue(
+                component=step_type, include=str(sorted(spec.upsert_include))
+            )
+        )
 
 
 def _is_upsert_like(spec: object) -> bool:

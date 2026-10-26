@@ -22,14 +22,7 @@ if TYPE_CHECKING:  # import cycle at runtime: runtime.py imports the compiler,
 from types import ModuleType
 
 from loom.ai.abc import AgentEngineProvider, NativeToolSupport
-from loom.ai.errors import (
-    AgentCompilationError,
-    engine_api_mismatch,
-    engine_duplicate,
-    engine_not_found,
-    provider_not_installed,
-    provider_setting_missing,
-)
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.plugins.entrypoints import (
     ApiVersionMismatchError,
@@ -81,9 +74,13 @@ def resolve_engine_provider(name: str) -> AgentEngineProvider:
     try:
         loaded = load_entry_point(ENGINE_ENTRY_POINT_GROUP, name, on_duplicate="error")
     except DuplicateEntryPointError as exc:
-        raise AgentCompilationError([engine_duplicate(name, exc.distributions)]) from exc
+        raise AgentCompilationError(
+            [AgentErrorCode.ENGINE_DUPLICATE.issue(component=name, distributions=exc.distributions)]
+        ) from exc
     except EntryPointNotFoundError as exc:
-        raise AgentCompilationError([engine_not_found(name, exc.available)]) from exc
+        raise AgentCompilationError(
+            [AgentErrorCode.ENGINE_NOT_FOUND.issue(component=name, available=exc.available)]
+        ) from exc
     provider = loaded() if isinstance(loaded, type) else loaded
     _verify_engine_api(name, provider)
     # The handshake above is the structural runtime check; the protocol is not
@@ -113,7 +110,9 @@ def require_provider_sdk(provider: str, module: str, extra: str) -> ModuleType:
     try:
         return import_optional(module, extra=extra)
     except MissingExtraError as exc:
-        raise AgentCompilationError([provider_not_installed(provider, extra)]) from exc
+        raise AgentCompilationError(
+            [AgentErrorCode.PROVIDER_NOT_INSTALLED.issue(component=provider, extra=extra)]
+        ) from exc
 
 
 def require_provider_setting(provider: str, setting: str, value: object | None) -> None:
@@ -133,7 +132,9 @@ def require_provider_setting(provider: str, setting: str, value: object | None) 
             setting when the value is absent.
     """
     if value is None or value == "":
-        raise AgentCompilationError([provider_setting_missing(provider, setting)])
+        raise AgentCompilationError(
+            [AgentErrorCode.PROVIDER_SETTING_MISSING.issue(component=provider, setting=setting)]
+        )
 
 
 def _verify_engine_api(name: str, provider: object) -> None:
@@ -145,7 +146,11 @@ def _verify_engine_api(name: str, provider: object) -> None:
         # "cannot speak it", and there is no version to name.
         found = exc.declared if type(exc.declared) is int else 0
         raise AgentCompilationError(
-            [engine_api_mismatch(name, found, sorted(SUPPORTED_ENGINE_APIS))]
+            [
+                AgentErrorCode.ENGINE_API_MISMATCH.issue(
+                    component=name, found=found, supported=sorted(SUPPORTED_ENGINE_APIS)
+                )
+            ]
         ) from exc
 
 

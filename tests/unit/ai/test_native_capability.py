@@ -11,12 +11,7 @@ from loom.ai.compiler import CompiledCapability, CompiledNativeCapability
 from loom.ai.compiler.phases._capabilities import compile_capabilities
 from loom.ai.config import AgentEndpointConfig, AiConfig
 from loom.ai.declarative import AgentSpecV1, JsonSchemaOutput, NativeCapability
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentCompilationIssue,
-    AgentErrorCode,
-    provider_not_installed,
-)
+from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.use_case.registry import UseCaseRegistry
 
@@ -110,7 +105,9 @@ def test_propagates_the_oracles_issue_when_the_sdk_is_missing() -> None:
     """A provider SDK missing is the oracle's issue, not a traceback."""
 
     def _missing(_target: InferenceTarget) -> frozenset[str]:
-        raise AgentCompilationError([provider_not_installed("openai", "ai-openai")])
+        raise AgentCompilationError(
+            [AgentErrorCode.PROVIDER_NOT_INSTALLED.issue(component="openai", extra="ai-openai")]
+        )
 
     _compiled, issues = _compile(_spec("web_search"), inference=_BEDROCK, native_tools=_missing)
 

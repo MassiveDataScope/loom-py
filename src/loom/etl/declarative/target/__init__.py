@@ -34,6 +34,7 @@ SCD2 support types:
 * :class:`HistorifyRepairReport`       — re-weave operation report
 * :class:`HistorifyKeyConflictError`   — duplicate entity state vectors
 * :class:`HistorifyDateCollisionError` — same-date LOG mode collisions
+* :class:`HistorifyDeleteMarkerError`  — LOG mode delete marker missing or not boolean
 * :class:`HistorifyTemporalConflictError` — future-open records without re-weave
 
 Write errors:
@@ -41,12 +42,14 @@ Write errors:
 * :class:`EmptyReplaceError` — ``replace(allow_empty=False)`` received no rows
 """
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.target._client import ClientSpec, IntoClient
 from loom.etl.declarative.target._errors import EmptyReplaceError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import (
     DeletePolicy,
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
     HistorifyRepairReport,
@@ -56,7 +59,6 @@ from loom.etl.declarative.target._history import (
     IntoHistory,
 )
 from loom.etl.declarative.target._into import IntoFile, IntoTable, IntoTemp
-from loom.etl.declarative.target._schema_mode import SchemaMode
 from loom.etl.declarative.target._table import (
     AppendSpec,
     ReplacePartitionsSpec,
@@ -131,6 +133,7 @@ __all__ = [
     # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
+    "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
     # write errors
     "EmptyReplaceError",

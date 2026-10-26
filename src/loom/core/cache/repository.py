@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import random
-import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial, wraps
 from types import GenericAlias
-from typing import Any, Generic, NamedTuple, TypeVar, cast
+from typing import Any, Generic, NamedTuple, cast
 
 import msgspec
 
@@ -18,9 +17,14 @@ from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.abc.dependency import BatchFingerprintResolver, DependencyResolver
 from loom.core.cache.decorators import declares_cache_policy
-from loom.core.cache.keys import entity_key, list_index_key, stable_hash
+from loom.core.cache.keys import (
+    custom_query_key,
+    entity_key,
+    full_hash,
+    list_index_key,
+    query_index_key,
+)
 from loom.core.cache.result_codec import (
-    PassthroughResultCodec,
     ResultCodec,
     build_result_codec,
     to_payload,
@@ -51,10 +55,11 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.repository.abc.repo_for import BulkCreatable
 from loom.core.repository.abc.repository import CreateT, IdT, OutputT, UpdateT
-from loom.core.repository.abc.session_scope import SupportsCallerScopedSession
+from loom.core.repository.abc.session_scope import (
+    SupportsCacheScope,
+    SupportsCallerScopedSession,
+)
 from loom.core.transaction import in_atomic_transaction
-
-LoadT = TypeVar("LoadT")
 
 
 def _infer_otm_cache_dep(model: type, attr_name: str, rel: Relation) -> str | None:
@@ -189,29 +194,30 @@ class CachedRepository(
     Concurrent misses of the same key on the entity read and on a
     ``@cache_query`` read are coalesced inside the process: the first caller
     loads and the rest await that result, so a burst on a hot key costs one
-    repository call.  Two conditions bound that:
+    repository call.  The wrapper must be application-scoped for that: a
+    wrapper built per request has a coalescing group of one, so it never
+    coalesces anything and only pays the bookkeeping.
 
-    * The wrapper must be application-scoped.  A wrapper built per request has
-      a coalescing group of one, so it never coalesces anything and only pays
-      the bookkeeping.
-    * Coalescing is skipped while the wrapped repository reports a
-      caller-scoped session (``has_caller_scoped_session()``), which is what a
-      ``@transactional`` scope or a unit of work binds.  A coalesced load runs
-      in its own task and outlives the caller that started it, so inside a
-      transaction it would query a session already closed by that caller's
-      teardown, and would serve another caller the uncommitted writes of the
-      first.  Inside a transaction the read runs inline.
+    The cache takes no part inside a caller-owned transaction.  While the
+    wrapped repository reports a caller-scoped session
+    (``has_caller_scoped_session()``, which a ``@transactional`` scope or a
+    unit of work binds), every cached read — ``get_by_id``,
+    ``list_paginated``, ``list_with_query`` and the ``@cache_query`` methods —
+    goes straight to the repository, with no lookup, no store and no
+    coalescing; so does a call to a ``@cache_query`` method whose ``session``
+    parameter, passed by position or by name, is not ``None``.  Such a read
+    may see the transaction's uncommitted writes and the settings the
+    transaction started with, neither of which the caller's cache scope
+    describes, and a coalesced load would outlive the caller's session.
+    Writes still publish their invalidation.
 
     Callers that miss together are served the *same object* by the coalesced
     load, on the entity read as on a ``@cache_query`` read, while a caller
     served from the cache gets a freshly decoded one; treat a cached result as
     immutable, since a ``BaseModel`` struct is mutable unless declared frozen.
 
-    The cached list and query reads are deliberately left out of the
-    coalescing: their miss path is not a pure loader — it caches the page's
-    entities as a side effect — and its result feeds ``_load_items_from_index``,
-    which re-enters the coalesced entity read, so the herd is already collapsed
-    one level down.
+    The cached list and query reads are not coalesced: their miss path caches
+    the page's entities as a side effect, so it is not a pure loader.
 
     Every TTL is spread inside
     :attr:`~loom.core.cache.abc.config.CacheConfig.ttl_jitter` as it reaches
@@ -231,6 +237,7 @@ class CachedRepository(
         dependency_resolver: DependencyResolver,
     ) -> None:
         _require_full_repository(repository)
+        _require_reported_scope(repository)
         self._repository = repository
         self._config = config
         self._cache = cache
@@ -242,7 +249,6 @@ class CachedRepository(
         self._single_flight = SingleFlight(self._log_abandoned_load)
         self._rng = random.Random()
         self._log = get_logger(__name__).bind(repository=repository.__class__.__name__)
-        self._passthrough_codec = PassthroughResultCodec()
         self._cached_method_wrappers: dict[str, Callable[..., Awaitable[Any]]] = {}
         self._result_codecs = self._build_result_codecs(repository)
         self._pydantic_output_type: LoomType | None = self._resolve_pydantic_output_type(repository)
@@ -262,11 +268,54 @@ class CachedRepository(
         """Normalized name of the cached entity."""
         return self._entity_name
 
+    def cache_scope(self) -> str:
+        """The caller's scope every cache key carries; ``""`` when unscoped.
+
+        Forwards the wrapped repository's
+        :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`,
+        so a wrapper around this one keys its entries by the same scope.  Read
+        once per cache operation, and every key of that operation is built
+        from the value read.  The scope stays out of the dependency tags: a
+        write bumps the same generation counters whatever its scope, so the
+        bump reaches the keys of every scope.
+
+        It and :meth:`has_caller_scoped_session` are declared here rather than
+        left to ``__getattr__``: from Python 3.12 a runtime-checkable protocol
+        is matched with ``inspect.getattr_static``, which does not see
+        attributes ``__getattr__`` forwards.
+        """
+        repository = self._repository
+        return repository.cache_scope() if isinstance(repository, SupportsCacheScope) else ""
+
+    def has_caller_scoped_session(self) -> bool:
+        """Whether the wrapped repository reports a session owned by the caller.
+
+        Implements
+        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`
+        by forwarding it, so a wrapper around this one stays out of the
+        caller's transaction too.  A repository that does not declare the
+        capability is taken to own the scope of its own reads.
+
+        This wrapper asks "am I in a transaction?" two ways for two different
+        reasons: this one keeps the cache out of the caller's transaction,
+        while :func:`loom.core.transaction.in_atomic_transaction` in
+        :meth:`_publish_invalidation` guards the bump (must it wait for a
+        commit?). They read different signals and answer different questions;
+        neither substitutes for the other.
+        """
+        repository = self._repository
+        if not isinstance(repository, SupportsCallerScopedSession):
+            return False
+        return repository.has_caller_scoped_session()
+
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
+        if self.has_caller_scoped_session():
+            return await self._repository.get_by_id(obj_id, profile=profile)
         tags = self._resolver.entity_tags(self.entity_name, obj_id)
         tags.extend(self._entity_dependency_tags(obj_id))
         fingerprint = await self._resolver.fingerprint(tags)
-        key = entity_key(self.entity_name, obj_id, profile, fingerprint)
+        scope = self.cache_scope()
+        key = entity_key(self.entity_name, obj_id, profile, fingerprint, scope=scope)
 
         cached_payload = await self._cache.get_value(key)
         if cached_payload is not None:
@@ -274,9 +323,9 @@ class CachedRepository(
             return self._to_output_from_cache(cached_payload)
 
         self._log.debug("CacheMissEntity", key=key)
-        return await self._coalesced(
+        return await self._single_flight.run(
             key,
-            lambda: self._load_and_store_entity(key, obj_id, profile),
+            lambda: self._load_and_store_entity(key, obj_id, profile, scope),
         )
 
     async def get_by(
@@ -317,11 +366,16 @@ class CachedRepository(
         filter_params: FilterParams | None = None,
         profile: str = "default",
     ) -> PageResult[OutputT]:
+        if self.has_caller_scoped_session():
+            return await self._repository.list_paginated(
+                page_params, filter_params=filter_params, profile=profile
+            )
         filters_payload = self._serialize_filters(filter_params)
-        filter_fingerprint = stable_hash(filters_payload)
+        filter_fingerprint = full_hash(filters_payload)
         tags = self._resolver.list_tags(self.entity_name, filter_fingerprint)
         tags.extend(self._list_dependency_tags())
         fingerprint = await self._resolver.fingerprint(tags)
+        scope = self.cache_scope()
         index_key = list_index_key(
             self.entity_name,
             filter_fingerprint,
@@ -329,12 +383,13 @@ class CachedRepository(
             limit=page_params.limit,
             profile=profile,
             deps_fingerprint=fingerprint,
+            scope=scope,
         )
         cached_index = await self._cache.get_value(index_key, type=_ListIndexPayload)
         entity_ids = None if cached_index is None else self._index_ids(cached_index.ids)
         if cached_index is not None and entity_ids is not None:
             total_count = cached_index.total_count
-            items = await self._load_items_from_index(entity_ids, profile=profile)
+            items = await self._load_items_from_index(entity_ids, profile=profile, scope=scope)
             if len(items) == len(entity_ids):
                 self._log.debug("CacheHitList", key=index_key)
                 return PageResult(
@@ -358,11 +413,13 @@ class CachedRepository(
             for entity_id in [self._extract_entity_id(item)]
             if entity_id is not None
         ]
+        if not self._still_in_scope(scope):
+            return page
         index_to_store = _ListIndexPayload(ids=ids, total_count=page.total_count)
         ttl = self._write_ttl(self._config.ttl_for_list(self.entity_name))
         await self._cache.set_value(index_key, index_to_store, ttl=ttl)
 
-        await self._cache_entity_batch(page.items, profile=profile)
+        await self._cache_entity_batch(page.items, profile=profile, scope=scope)
         return page
 
     async def list_with_query(
@@ -374,23 +431,22 @@ class CachedRepository(
         # For cursor pagination, cache only the first page to avoid
         # unbounded key growth and low-hit deep-page caches.
         should_cache = not is_cursor or query.cursor is None
-        if not should_cache:
+        if not should_cache or self.has_caller_scoped_session():
             return await self._repository.list_with_query(query, profile=profile)
 
-        query_payload = self._serialize_query(query)
-        query_fingerprint = stable_hash(repr(query_payload))
+        scope = self.cache_scope()
+        query_fingerprint = full_hash(repr(self._serialize_query(query)))
         tags = self._resolver.list_tags(self.entity_name, query_fingerprint)
         tags.extend(self._list_dependency_tags())
         deps_fingerprint = await self._resolver.fingerprint(tags)
-        query_key = (
-            f"{self.entity_name}:query:{query_fingerprint}:"
-            f"profile={profile}:deps={deps_fingerprint}"
+        query_key = query_index_key(
+            self.entity_name, query_fingerprint, profile, deps_fingerprint, scope=scope
         )
 
         cached_index = await self._cache.get_value(query_key, type=_QueryIndexPayload)
         entity_ids = None if cached_index is None else self._index_ids(cached_index.ids)
         if cached_index is not None and entity_ids is not None:
-            items = await self._load_items_from_index(entity_ids, profile=profile)
+            items = await self._load_items_from_index(entity_ids, profile=profile, scope=scope)
             if len(items) == len(entity_ids):
                 self._log.debug("CacheHitQuery", key=query_key)
                 if is_cursor:
@@ -409,37 +465,36 @@ class CachedRepository(
 
         self._log.debug("CacheMissQuery", key=query_key)
         loaded = await self._repository.list_with_query(query, profile=profile)
+        await self._store_query_page(query_key, loaded, profile, scope)
+        return loaded
+
+    async def _store_query_page(
+        self,
+        key: str,
+        loaded: PageResult[OutputT] | CursorResult[OutputT],
+        profile: str,
+        scope: str,
+    ) -> None:
+        """Cache a freshly loaded query page and its entities, if still in *scope*."""
+        if not self._still_in_scope(scope):
+            return
         ids = [
             cast(IdT, entity_id)
             for item in loaded.items
             for entity_id in [self._extract_entity_id(item)]
             if entity_id is not None
         ]
-        ttl = self._write_ttl(self._config.ttl_for_list(self.entity_name))
         if isinstance(loaded, CursorResult):
-            await self._cache.set_value(
-                query_key,
-                _QueryIndexPayload(
-                    ids=ids,
-                    next_cursor=loaded.next_cursor,
-                    has_next=loaded.has_next,
-                ),
-                ttl=ttl,
+            index = _QueryIndexPayload(
+                ids=ids, next_cursor=loaded.next_cursor, has_next=loaded.has_next
             )
-            await self._cache_entity_batch(loaded.items, profile=profile)
-            return loaded
-
-        await self._cache.set_value(
-            query_key,
-            _QueryIndexPayload(
-                ids=ids,
-                total_count=loaded.total_count,
-                has_next=loaded.has_next,
-            ),
-            ttl=ttl,
-        )
-        await self._cache_entity_batch(loaded.items, profile=profile)
-        return loaded
+        else:
+            index = _QueryIndexPayload(
+                ids=ids, total_count=loaded.total_count, has_next=loaded.has_next
+            )
+        ttl = self._write_ttl(self._config.ttl_for_list(self.entity_name))
+        await self._cache.set_value(key, index, ttl=ttl)
+        await self._cache_entity_batch(loaded.items, profile=profile, scope=scope)
 
     async def create(self, data: CreateT) -> OutputT:
         created = await self._repository.create(data)
@@ -545,7 +600,11 @@ class CachedRepository(
         cached read *without* the marker takes the name out of the cache, so
         the base class's decorated version must not be registered — the
         wrapper re-reads the marker on the resolved attribute and would never
-        use that codec, but it would still deprecate the base annotation.
+        use that codec, but it would still refuse the base annotation.
+
+        Raises:
+            RuntimeError: If a cached read declares a return type no codec can
+                be built from.
         """
         owner = type(repository)
         model = getattr(repository, "model", None)
@@ -557,69 +616,8 @@ class CachedRepository(
                     continue
                 declared.add(name)
                 if _is_cached_read(attr):
-                    codecs[name] = self._codec_for(owner.__name__, name, attr, model)
+                    codecs[name] = _codec_for(owner.__qualname__, name, attr, model)
         return codecs
-
-    def _codec_for(
-        self,
-        owner_name: str,
-        method_name: str,
-        method: Callable[..., Any],
-        model: object | None,
-    ) -> ResultCodec:
-        """Codec declared by *method*, or the deprecated pass-through."""
-        codec = build_result_codec(method, model=model)
-        if codec is not None:
-            return codec
-        warnings.warn(
-            f"{owner_name}.{method_name} is decorated with @cache_query but its return "
-            "annotation is missing, unresolvable, or outside the supported grammar "
-            "(a struct, a scalar, or a list, tuple or optional of those). The cached "
-            "call keeps returning the decoded payload, which may not be the type the "
-            "first call returns; annotate the method to get one type on both paths. "
-            "The pass-through will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=4,
-        )
-        self._log.warning(
-            "CacheQueryReturnTypeUnusable",
-            repository=owner_name,
-            method=method_name,
-        )
-        return self._passthrough_codec
-
-    async def _coalesced(self, key: str, loader: Callable[[], Awaitable[LoadT]]) -> LoadT:
-        """Run *loader* once per key, unless the caller owns the session it uses.
-
-        Coalescing detaches the load into its own task so it survives the
-        cancellation of the caller that started it.  Inside a caller-scoped
-        transaction that is exactly wrong: the task would inherit a session
-        that is closed when the caller unwinds, and a waiter from another
-        request would read the caller's uncommitted writes.  The load then runs
-        inline, as it did before coalescing existed.
-        """
-        if self._runs_in_caller_scoped_transaction():
-            return await loader()
-        return await self._single_flight.run(key, loader)
-
-    def _runs_in_caller_scoped_transaction(self) -> bool:
-        """Whether the wrapped repository reports a session owned by the caller.
-
-        The capability is optional: a repository that does not declare
-        :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`
-        is taken to own the scope of its own reads.
-
-        This wrapper asks "am I in a transaction?" two ways for two different
-        reasons: this one guards coalescing (may a read safely detach into
-        its own task?), while :func:`loom.core.transaction.in_atomic_transaction`
-        in :meth:`_publish_invalidation` guards the bump (must it wait for a
-        commit?). They read different signals and answer different questions;
-        neither substitutes for the other.
-        """
-        repository = self._repository
-        if not isinstance(repository, SupportsCallerScopedSession):
-            return False
-        return repository.has_caller_scoped_session()
 
     def _log_abandoned_load(self, key: str, error: BaseException) -> None:
         self._log.warning("CacheLoadAbandoned", key=key, error=repr(error))
@@ -671,11 +669,13 @@ class CachedRepository(
             )
             raise
 
-    async def _load_and_store_entity(self, key: str, obj_id: IdT, profile: str) -> OutputT | None:
-        """Read one entity from the wrapped repository and cache it."""
+    async def _load_and_store_entity(
+        self, key: str, obj_id: IdT, profile: str, scope: str
+    ) -> OutputT | None:
+        """Read one entity from the wrapped repository and cache it, if still in *scope*."""
         loaded = await self._repository.get_by_id(obj_id, profile=profile)
-        if loaded is None:
-            return None
+        if loaded is None or not self._still_in_scope(scope):
+            return loaded
         ttl = self._write_ttl(self._config.ttl_for_single(self.entity_name))
         await self._cache.set_value(key, self._entity_payload(loaded), ttl=ttl)
         return loaded
@@ -763,11 +763,23 @@ class CachedRepository(
         method: Callable[..., Awaitable[Any]],
         metadata: dict[str, object],
     ) -> Callable[..., Awaitable[Any]]:
-        codec = self._result_codecs.get(method_name, self._passthrough_codec)
+        codec = self._result_codecs.get(method_name)
+        if codec is None:
+            raise RuntimeError(
+                f"{type(self._repository).__qualname__}.{method_name} is decorated with "
+                "@cache_query but is not defined on the repository class, so CachedRepository "
+                "built no codec for it when the repository was wrapped. Define it as a method "
+                "of the class."
+            )
+        signature = inspect.signature(method, follow_wrapped=False)
 
         @wraps(method)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
-            key, ttl = await self._custom_cache_entry(method_name, metadata, args, kwargs)
+            # A session passed by hand runs under settings the cache cannot see.
+            if _passes_a_session(signature, args, kwargs) or self.has_caller_scoped_session():
+                return await method(*args, **kwargs)
+            scope = self.cache_scope()
+            key, ttl = await self._custom_cache_entry(method_name, metadata, args, kwargs, scope)
             cached_payload = await self._cache.get_value(key)
             if cached_payload is not None:
                 decoded = self._decode_cached_result(codec, method_name, key, cached_payload)
@@ -782,10 +794,11 @@ class CachedRepository(
                 if result is None:
                     return None
                 encoded = codec.encode(result)
-                await self._cache.set_value(key, encoded.payload, ttl=self._write_ttl(ttl))
+                if self._still_in_scope(scope):
+                    await self._cache.set_value(key, encoded.payload, ttl=self._write_ttl(ttl))
                 return encoded.value
 
-            return await self._coalesced(key, load)
+            return await self._single_flight.run(key, load)
 
         return wrapped
 
@@ -809,8 +822,8 @@ class CachedRepository(
 
         Returns:
             The decoded value, or the ``_UNDECODABLE`` sentinel, which is not
-            ``None`` because ``None`` is a value the pass-through codec can
-            legitimately return.
+            ``None`` because ``None`` is a value the codec of an optional
+            return type can legitimately return.
         """
         try:
             return codec.decode(payload)
@@ -829,14 +842,15 @@ class CachedRepository(
         metadata: dict[str, object],
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
+        scope: str,
     ) -> tuple[str, int]:
         """Resolve the cache key and the TTL of one call to a cached read."""
-        scope = cast(str, metadata.get("scope") or "list")
+        read_scope = cast(str, metadata.get("scope") or "list")
         ttl_key = cast(str | None, metadata.get("ttl_key"))
         raw = {"args": to_payload(args), "kwargs": to_payload(kwargs)}
-        raw_hash = stable_hash(repr(raw))
+        raw_hash = full_hash(repr(raw))
 
-        if scope == "entity":
+        if read_scope == "entity":
             entity_id = self._entity_scope_id(method_name, args)
             tags = self._resolver.entity_tags(self.entity_name, entity_id)
             tags.extend(self._entity_dependency_tags(entity_id))
@@ -847,7 +861,8 @@ class CachedRepository(
             ttl = self._config.ttl_for_list(ttl_key or self.entity_name)
 
         fingerprint = await self._resolver.fingerprint(tags)
-        return f"{self.entity_name}:custom:{method_name}:{raw_hash}:deps={fingerprint}", ttl
+        key = custom_query_key(self.entity_name, method_name, raw_hash, fingerprint, scope=scope)
+        return key, ttl
 
     def _entity_scope_id(self, method_name: str, args: tuple[Any, ...]) -> object:
         """Return the primary key a ``scope="entity"`` read is keyed by, or raise.
@@ -886,14 +901,16 @@ class CachedRepository(
             )
         return args[0]
 
-    async def _load_items_from_index(self, ids: list[IdT], profile: str) -> list[OutputT]:
+    async def _load_items_from_index(
+        self, ids: list[IdT], profile: str, scope: str
+    ) -> list[OutputT]:
         tags_by_id = [
             self._resolver.entity_tags(self.entity_name, eid) + self._entity_dependency_tags(eid)
             for eid in ids
         ]
         fingerprints = await self._resolve_fingerprints(tags_by_id)
         entity_keys = [
-            entity_key(self.entity_name, eid, profile, fp)
+            entity_key(self.entity_name, eid, profile, fp, scope=scope)
             for eid, fp in zip(ids, fingerprints, strict=True)
         ]
         cached_values = await self._cache.multi_get_values(entity_keys)
@@ -918,7 +935,8 @@ class CachedRepository(
             restored[position] = loaded
             refill.append((entity_keys[position], loaded))
 
-        await self._refill_cache(refill)
+        if self._still_in_scope(scope):
+            await self._refill_cache(refill)
         return cast(list[OutputT], restored)
 
     def _restore_cached_page(self, cached_values: list[Any]) -> list[OutputT | None]:
@@ -1001,7 +1019,7 @@ class CachedRepository(
             return await resolver.fingerprint_many(tags_by_id)
         return list(await asyncio.gather(*(resolver.fingerprint(tags) for tags in tags_by_id)))
 
-    async def _cache_entity_batch(self, items: Sequence[OutputT], profile: str) -> None:
+    async def _cache_entity_batch(self, items: Sequence[OutputT], profile: str, scope: str) -> None:
         keyed = self._items_with_key(items)
         if not keyed:
             return
@@ -1015,7 +1033,7 @@ class CachedRepository(
 
         pairs: list[tuple[str, Any]] = []
         for (item, entity_id), fingerprint in zip(keyed, fingerprints, strict=True):
-            key = entity_key(self.entity_name, entity_id, profile, fingerprint)
+            key = entity_key(self.entity_name, entity_id, profile, fingerprint, scope=scope)
             pairs.append((key, self._entity_payload(item)))
         await self._cache.multi_set_values(pairs, ttl=ttl)
 
@@ -1078,16 +1096,19 @@ class CachedRepository(
     def _list_dependency_tags(self) -> list[str]:
         tags: list[str] = []
         for dependency in self._depends_on:
-            tags.append(dependency.entity)
-            tags.append(f"{dependency.entity}:list")
+            tags.extend((dependency.entity, f"{dependency.entity}:list"))
         return tags
 
     def _entity_dependency_tags(self, obj_id: object) -> list[str]:
         tags: list[str] = []
         for dependency in self._depends_on:
-            tags.append(dependency.entity)
-            tags.append(f"{dependency.entity}:list")
-            tags.append(f"{dependency.entity}:{dependency.fk_field}:{obj_id}")
+            tags.extend(
+                (
+                    dependency.entity,
+                    f"{dependency.entity}:list",
+                    f"{dependency.entity}:{dependency.fk_field}:{obj_id}",
+                )
+            )
         return tags
 
     def _parse_dependency_specs(self, specs: tuple[str, ...]) -> list[_DependencySpec]:
@@ -1136,7 +1157,20 @@ class CachedRepository(
             return "{}"
         return repr(to_payload(filter_params.filters))
 
+    def _still_in_scope(self, scope: str) -> bool:
+        """Whether the caller's scope is still *scope*, the one the operation's keys carry.
+
+        Checked again just before each write: an entry whose scope changed
+        between the key and the load would store one scope's result under
+        another scope's key, so that write is skipped.
+        """
+        if self.cache_scope() == scope:
+            return True
+        self._log.warning("CacheScopeChangedWriteSkipped", entity=self.entity_name)
+        return False
+
     def _serialize_query(self, query: QuerySpec) -> dict[str, Any]:
+        """The query cache key's payload: the query alone, without the caller's scope."""
         return {
             "pagination": query.pagination.value,
             "limit": query.limit,
@@ -1228,3 +1262,84 @@ def _require_full_repository(repository: object) -> None:
             f"it does not implement {', '.join(missing)}. A @cached repository must "
             f"implement the full Repository protocol."
         )
+
+
+def _codec_for(
+    owner_name: str,
+    method_name: str,
+    method: Callable[..., Any],
+    model: object | None,
+) -> ResultCodec:
+    """Return the codec the return annotation of a cached read declares.
+
+    Args:
+        owner_name: Qualified name of the wrapped repository class.
+        method_name: Name of the cached read.
+        method: The cached read, taken from the class dictionary.
+        model: Model of the wrapped repository.
+
+    Returns:
+        The codec built from the annotation.
+
+    Raises:
+        RuntimeError: If the annotation is missing, unresolvable, or outside
+            the supported grammar.
+    """
+    codec = build_result_codec(method, model=model)
+    if codec is None:
+        raise RuntimeError(
+            f"{owner_name} cannot be wrapped in CachedRepository: {owner_name}.{method_name} "
+            "is decorated with @cache_query but its return annotation is missing, "
+            "unresolvable, or outside the supported grammar. Annotate its return type with "
+            "a struct, a scalar, or a list, tuple or optional of those."
+        )
+    return codec
+
+
+def _require_reported_scope(repository: object) -> None:
+    """Refuse a repository whose sessions carry settings but which reports no cache scope.
+
+    Every cache key carries the scope the wrapped repository reports through
+    :class:`~loom.core.repository.abc.session_scope.SupportsCacheScope`; a
+    repository whose ``session_manager`` applies session settings but reports
+    none would key every caller under ``""``, so it is refused.  A wrapper
+    exposing neither ``cache_scope`` nor ``session_manager`` is not detected.
+
+    Args:
+        repository: The instance about to be wrapped.
+
+    Raises:
+        RuntimeError: If the repository's session manager has session settings
+            and the repository does not implement ``cache_scope``.
+    """
+    if isinstance(repository, SupportsCacheScope):
+        return
+    session_manager = getattr(repository, "session_manager", None)
+    if getattr(session_manager, "has_session_settings", False) is True:
+        raise RuntimeError(
+            f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
+            "its sessions carry session settings but it does not implement cache_scope(), "
+            "so its cache entries could not be kept apart by scope."
+        )
+
+
+def _passes_a_session(signature: inspect.Signature, args: tuple[Any, ...], kwargs: Any) -> bool:
+    """Whether a call hands the method a ``session`` that is not ``None``.
+
+    *signature* is the method's own, not the one ``functools.wraps`` exposes,
+    so a method decorated with
+    :func:`~loom.core.repository.sqlalchemy.repository.with_session_scope`
+    is read as it is called: its ``session`` is a keyword-only parameter.
+    A method whose outermost wrapper takes ``(*args, **kwargs)`` exposes no
+    positional ``session``, so only a ``session=`` keyword is seen there.
+    A call the signature cannot bind is passed through, to fail in the method.
+    """
+    if kwargs.get("session") is not None:
+        return True
+    if "session" not in signature.parameters:
+        return False
+    try:
+        bound = signature.bind(*args, **kwargs)
+    except TypeError:
+        return True
+    return bound.arguments.get("session") is not None

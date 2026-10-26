@@ -47,10 +47,11 @@ the public API and may change without notice.
 from loom.core.observability.config import OtelConfig
 from loom.etl.backends._format_registry import UnsupportedFormatError
 from loom.etl.checkpoint import (
-    CheckpointCleaner,
     CheckpointScope,
     CheckpointStore,
+    FsspecTempCleaner,
 )
+from loom.etl.compiler import InvalidStageError
 from loom.etl.declarative import (
     CsvReadOptions,
     CsvWriteOptions,
@@ -63,6 +64,7 @@ from loom.etl.declarative import (
     FromTable,
     FromTemp,
     HistorifyDateCollisionError,
+    HistorifyDeleteMarkerError,
     HistorifyInputMode,
     HistorifyKeyConflictError,
     HistorifyRepairReport,
@@ -117,7 +119,7 @@ from loom.etl.pipeline import (
     StepSQL,
     params,
 )
-from loom.etl.runner import ETLRunner, InvalidStageError
+from loom.etl.runner import ETLRunner
 from loom.etl.runtime.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
@@ -203,10 +205,11 @@ __all__ = [
     # SCD2 errors
     "HistorifyKeyConflictError",
     "HistorifyDateCollisionError",
+    "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
     "EmptyReplaceError",
     # intermediates
-    "CheckpointCleaner",
+    "FsspecTempCleaner",
     "CheckpointScope",
     "CheckpointStore",
     # format

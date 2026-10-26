@@ -31,7 +31,7 @@ from typing import NamedTuple, Protocol, cast
 from pydantic_ai.models import Model
 
 from loom.ai.engines.pydantic_ai.providers._shared import ProviderIsland
-from loom.ai.errors import AgentCompilationError, provider_unknown
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.registry import require_provider_sdk
 
@@ -96,7 +96,13 @@ def _island_for(provider: str) -> ProviderIsland:
     """
     binding = _BINDINGS.get(provider)
     if binding is None:
-        raise AgentCompilationError([provider_unknown(provider, sorted(SUPPORTED_PROVIDERS))])
+        raise AgentCompilationError(
+            [
+                AgentErrorCode.PROVIDER_UNKNOWN.issue(
+                    component=provider, supported=sorted(SUPPORTED_PROVIDERS)
+                )
+            ]
+        )
     module = require_provider_sdk(provider, f"{_ISLANDS}.{binding.island}", binding.extra)
     # Every island publishes the protocol's two names; the cast records that
     # contract for the type checker, as ``resolve_engine_provider`` does for

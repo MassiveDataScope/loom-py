@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from loom.core.config.observability import OtelConfig
+from loom.core.model.redaction import Dsn
 from loom.core.observability.observer import otel
 
 _GRPC = "opentelemetry.exporter.otlp.proto.grpc"
@@ -93,24 +94,25 @@ class TestBuildTracerSdkGuard:
     """``_build_tracer`` resolves the exporter before the SDK, and says so."""
 
     def test_returns_the_ambient_tracer_without_an_endpoint(self) -> None:
-        tracer, provider = otel.build_tracer(OtelConfig(endpoint=""))
+        tracer, provider = otel.build_tracer(OtelConfig(endpoint=None))
         assert provider is None
         assert tracer is not None
 
     def test_names_the_missing_exporter_before_the_missing_sdk(self) -> None:
-        config = OtelConfig(endpoint="http://collector:4318/v1/traces")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
         with _without(_HTTP, "opentelemetry.sdk"), pytest.raises(ValueError) as excinfo:
             otel.build_tracer(config)
         assert "http" in str(excinfo.value)
 
     def test_names_the_missing_sdk_when_the_exporter_is_present(self) -> None:
-        config = OtelConfig(endpoint="http://collector:4318/v1/traces")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
+        importlib.import_module(f"{_HTTP}.trace_exporter")
         with _without("opentelemetry.sdk"), pytest.raises(ImportError) as excinfo:
             otel.build_tracer(config)
         assert "opentelemetry-sdk" in str(excinfo.value)
 
     def test_builds_a_private_provider_when_both_are_present(self) -> None:
-        config = OtelConfig(endpoint="http://collector:4318/v1/traces")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
         tracer, provider = otel.build_tracer(config)
         assert provider is not None
         assert tracer is not None
@@ -121,31 +123,31 @@ class TestLogEndpointResolution:
     """The logs endpoint is derived from the traces one, or overridden."""
 
     def test_derives_the_logs_path_from_a_traces_endpoint(self) -> None:
-        config = OtelConfig(endpoint="http://collector:4318/v1/traces")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
         assert otel._resolve_log_endpoint(config) == "http://collector:4318/v1/logs"
 
     def test_keeps_an_endpoint_that_already_names_logs(self) -> None:
-        config = OtelConfig(endpoint="http://collector:4318/v1/logs")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/logs"))
         assert otel._resolve_log_endpoint(config) == "http://collector:4318/v1/logs"
 
     def test_appends_the_logs_path_to_a_bare_endpoint(self) -> None:
-        config = OtelConfig(endpoint="http://collector:4318/")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/"))
         assert otel._resolve_log_endpoint(config) == "http://collector:4318/v1/logs"
 
     def test_returns_none_without_an_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", raising=False)
-        assert otel._resolve_log_endpoint(OtelConfig(endpoint="")) is None
+        assert otel._resolve_log_endpoint(OtelConfig(endpoint=None)) is None
 
     def test_prefers_the_logs_specific_environment_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://elsewhere:4318/v1/logs")
-        config = OtelConfig(endpoint="http://collector:4318/v1/traces")
+        config = OtelConfig(endpoint=Dsn("http://collector:4318/v1/traces"))
         assert otel._resolve_log_endpoint(config) == "http://elsewhere:4318/v1/logs"
 
     def test_prefers_the_logs_specific_protocol_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "grpc")
-        assert otel._resolve_log_protocol(OtelConfig(endpoint="")) == "grpc"
+        assert otel._resolve_log_protocol(OtelConfig(endpoint=None)) == "grpc"

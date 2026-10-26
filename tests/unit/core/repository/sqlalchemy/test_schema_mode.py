@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import time
 
 import msgspec
 import pytest
@@ -8,12 +9,14 @@ from sqlalchemy import MetaData
 
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
+from loom.core.config.convert import convert_config
+from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
+from loom.core.persistence.database import DatabaseConfig, SchemaConfig
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
-    _DatabaseConfig,
-    _SchemaConfig,
+    check_time_zone_columns,
     startup_checks,
 )
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -31,6 +34,18 @@ class Scoped(BaseModel, RowScoped):
     id: int = ColumnField(Integer, primary_key=True)
 
 
+class Zoned(BaseModel):
+    __tablename__ = "zoned_items"
+    id: int = ColumnField(Integer, primary_key=True)
+    closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+
+
+def _zoned() -> MetaData:
+    metadata = MetaData()
+    compile_all(Zoned, metadata=metadata)
+    return metadata
+
+
 def _scoped() -> dict:
     metadata = MetaData()
     compile_all(Scoped, metadata=metadata)
@@ -38,7 +53,7 @@ def _scoped() -> dict:
 
 
 def test_schema_config_defaults_and_is_frozen() -> None:
-    config = msgspec.convert({"url": "sqlite+aiosqlite://"}, _DatabaseConfig)
+    config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
 
     assert config.schema.mode == "create_all"
     assert config.schema.allow_unprotected_dialect is False
@@ -52,14 +67,14 @@ def test_schema_config_reads_mode_and_the_dialect_opt_out() -> None:
         "schema": {"mode": "external", "allow_unprotected_dialect": True},
     }
 
-    config = msgspec.convert(raw, _DatabaseConfig)
+    config = convert_config(raw, DatabaseConfig, strict=True)
 
-    assert config.schema == _SchemaConfig(mode="external", allow_unprotected_dialect=True)
+    assert config.schema == SchemaConfig(mode="external", allow_unprotected_dialect=True)
 
 
 def test_an_unknown_mode_is_rejected() -> None:
     with pytest.raises(msgspec.ValidationError):
-        msgspec.convert({"url": "x", "schema": {"mode": "drop"}}, _DatabaseConfig)
+        convert_config({"url": "x", "schema": {"mode": "drop"}}, DatabaseConfig, strict=True)
 
 
 def test_has_session_settings_is_false_without_a_provider_and_true_with_one() -> None:
@@ -72,11 +87,11 @@ def test_has_session_settings_is_false_without_a_provider_and_true_with_one() ->
 
 
 def test_startup_without_scoped_models_changes_nothing() -> None:
-    assert startup_checks(_SchemaConfig(), "sqlite", {}, has_session_settings=False) == ()
+    assert startup_checks(SchemaConfig(), "sqlite", {}, has_session_settings=False) == ()
 
 
 def test_startup_refuses_create_all_with_scoped_models_on_postgres() -> None:
-    schema_config = _SchemaConfig()
+    schema_config = SchemaConfig()
     scoped_models = _scoped()
 
     with pytest.raises(ConfigError, match=r"create_schema\(migrator_url"):
@@ -84,9 +99,9 @@ def test_startup_refuses_create_all_with_scoped_models_on_postgres() -> None:
 
 
 def test_startup_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
-    schema_config = _SchemaConfig()
+    schema_config = SchemaConfig()
     scoped_models = _scoped()
-    allowed = _SchemaConfig(allow_unprotected_dialect=True)
+    allowed = SchemaConfig(allow_unprotected_dialect=True)
 
     with pytest.raises(ConfigError, match=r"sqlite.*scoped_items"):
         startup_checks(schema_config, "sqlite", scoped_models, has_session_settings=False)
@@ -97,8 +112,8 @@ def test_startup_refuses_scoped_models_on_another_dialect_unless_allowed() -> No
 
 
 def test_startup_never_creates_the_schema_with_the_application_session() -> None:
-    schema_config = _SchemaConfig()
-    external = _SchemaConfig(mode="external")
+    schema_config = SchemaConfig()
+    external = SchemaConfig(mode="external")
 
     with pytest.raises(ConfigError, match="session settings"):
         startup_checks(schema_config, "sqlite", {}, has_session_settings=True)
@@ -107,8 +122,14 @@ def test_startup_never_creates_the_schema_with_the_application_session() -> None
 
 
 def _wiring(url: str, *models: type, **schema: object):
-    config = {"app": {"name": "demo"}, "database": {"url": url, "schema": schema}}
-    return SQLAlchemyBackend().build(ConfigContext.from_dict(config), models)
+    config = {
+        "app": {"name": "demo"},
+        "database": {"url": url, "schema": schema},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
+    }
+    return SQLAlchemyBackend().build(
+        ConfigContext.from_dict(config), models, BackendRuntime(SERVER_PROFILE)
+    )
 
 
 async def test_create_all_mode_creates_unscoped_tables_as_before() -> None:
@@ -142,9 +163,9 @@ async def test_external_mode_fails_at_startup_when_a_table_is_missing() -> None:
 
 
 def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
-    external = _SchemaConfig(mode="external")
+    external = SchemaConfig(mode="external")
     scoped_models = _scoped()
-    allowed = _SchemaConfig(mode="external", allow_unprotected_dialect=True)
+    allowed = SchemaConfig(mode="external", allow_unprotected_dialect=True)
 
     with pytest.raises(ConfigError, match="scoped_items"):
         startup_checks(external, "sqlite", scoped_models, has_session_settings=True)
@@ -193,7 +214,7 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
     from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 
     sink = SQLAlchemyElevationSink()
-    config = msgspec.convert({"url": "sqlite+aiosqlite://"}, _DatabaseConfig)
+    config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
 
     def register(container: LoomContainer) -> None:
         container.register_instance(ElevationSink, sink)
@@ -203,3 +224,21 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
 
     assert with_sink.container.resolve(RuntimeExecutor)._elevation_sink is sink
     assert without_sink.container.resolve(RuntimeExecutor)._elevation_sink is None
+
+
+def test_a_time_with_time_zone_column_is_refused_on_a_dialect_that_drops_its_offset() -> None:
+    with pytest.raises(ConfigError, match=r"zoned_items\.closes_at.*offset"):
+        check_time_zone_columns("sqlite", _zoned())
+
+
+def test_a_time_with_time_zone_column_is_accepted_on_postgres() -> None:
+    check_time_zone_columns("postgresql", _zoned())
+
+
+async def test_startup_refuses_a_time_with_time_zone_column_on_another_dialect() -> None:
+    wiring = _wiring("sqlite+aiosqlite://", Zoned)
+    wiring.prepare_models((Zoned,))
+
+    with pytest.raises(ConfigError, match=r"zoned_items\.closes_at"):
+        async with wiring.lifespan_init():
+            pass

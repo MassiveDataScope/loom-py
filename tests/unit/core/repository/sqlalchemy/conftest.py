@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import compile_all, reset_registry
 from loom.core.model import BaseModel, Field, Integer
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -31,6 +32,9 @@ class MockSessionManager:
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
         yield self._session
+
+    def current_settings(self) -> dict[str, str]:
+        return {}
 
 
 @pytest.fixture(autouse=True)
@@ -211,7 +215,9 @@ def repository_owner(
     mock_session_manager: MockSessionManager, dummy_model: type
 ) -> RepositoryWithTransactionalMethod:
     return RepositoryWithTransactionalMethod(
-        session_manager=cast(SessionManager, mock_session_manager), model=dummy_model
+        session_manager=cast(SessionManager, mock_session_manager),
+        model=dummy_model,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
 

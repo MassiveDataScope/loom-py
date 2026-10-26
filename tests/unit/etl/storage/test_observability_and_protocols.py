@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import msgspec
-
+from loom.core.config.convert import convert_config
+from loom.core.model.redaction import Dsn
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import SourceSpec, TableSourceSpec
 from loom.etl.declarative.target._table import ReplaceSpec
@@ -21,7 +21,7 @@ def test_etl_observability_config_defaults_and_conversion() -> None:
     assert default.prometheus.enabled is False
     assert default.lineage.enabled is False
 
-    cfg = msgspec.convert(
+    cfg = convert_config(
         {
             "log": {"enabled": True},
             "otel": {
@@ -40,6 +40,7 @@ def test_etl_observability_config_defaults_and_conversion() -> None:
             "lineage": {"enabled": True, "root": "s3://lake/runs"},
         },
         ETLObservabilityConfig,
+        strict=True,
     )
 
     assert cfg.log.enabled is True
@@ -50,7 +51,7 @@ def test_etl_observability_config_defaults_and_conversion() -> None:
 
 def test_lineage_config_validate_requires_exactly_one_destination() -> None:
     LineageConfig().validate()
-    LineageConfig(enabled=True, root="s3://lake/runs").validate()
+    LineageConfig(enabled=True, root=Dsn("s3://lake/runs")).validate()
     LineageConfig(enabled=True, database="ops").validate()
 
     try:
@@ -61,7 +62,7 @@ def test_lineage_config_validate_requires_exactly_one_destination() -> None:
         raise AssertionError("Expected ValueError for empty destination")
 
     try:
-        LineageConfig(enabled=True, root="s3://lake/runs", database="ops").validate()
+        LineageConfig(enabled=True, root=Dsn("s3://lake/runs"), database="ops").validate()
     except ValueError as exc:
         assert "exactly one destination" in str(exc)
     else:  # pragma: no cover - defensive branch

@@ -15,6 +15,7 @@ def _spec(
     mode: HistorifyInputMode = HistorifyInputMode.SNAPSHOT,
     effective_date: str | ParamExpr = "run_date",
     track: tuple[str, ...] | None = None,
+    delete_marker: str | None = None,
 ) -> HistorifySpec:
     return HistorifySpec(
         table_ref=TableRef("t"),
@@ -22,6 +23,7 @@ def _spec(
         effective_date=effective_date,
         mode=mode,
         track=track,
+        delete_marker=delete_marker,
     )
 
 
@@ -50,3 +52,7 @@ class TestResolveTrackCols:
     def test_auto_excludes_keys_and_boundaries(self) -> None:
         spec = _spec(track=None)
         assert resolve_track_cols(spec, ["id", "valid_from", "valid_to", "a", "b"]) == ("a", "b")
+
+    def test_auto_excludes_delete_marker(self) -> None:
+        spec = _spec(mode=HistorifyInputMode.LOG, effective_date="event_date", delete_marker="gone")
+        assert resolve_track_cols(spec, ["id", "a", "gone"]) == ("a",)

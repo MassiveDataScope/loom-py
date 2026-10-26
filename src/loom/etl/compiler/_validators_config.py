@@ -6,7 +6,7 @@ Internal module — consumed only by :mod:`loom.etl.compiler._compiler`.
 from __future__ import annotations
 
 from loom.core.config import ConfigContext
-from loom.etl.compiler._errors import ETLCompilationError
+from loom.etl.compiler._errors import ETLCompilationError, ETLErrorCode
 from loom.etl.compiler._plan import (
     PipelinePlan,
     ProcessPlan,
@@ -33,7 +33,11 @@ def validate_step_config(plan: StepPlan, context: ConfigContext) -> None:
     for binding in plan.config_bindings:
         reason = _failure_reason(context, binding.key, binding.value_type)
         if reason is not None:
-            raise ETLCompilationError.unresolved_config_value(plan.step_type, binding.alias, reason)
+            raise ETLCompilationError.from_issue(
+                ETLErrorCode.UNRESOLVED_CONFIG_VALUE.issue(
+                    component=plan.step_type, alias=binding.alias, reason=reason
+                )
+            )
 
 
 def _failure_reason(context: ConfigContext, key: str, value_type: object) -> str | None:

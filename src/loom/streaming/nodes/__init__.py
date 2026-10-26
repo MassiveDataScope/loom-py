@@ -40,7 +40,6 @@ from loom.streaming.nodes._table import (
     Backend,
     DeltaSinkConfig,
     IntoTable,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
 )
 from loom.streaming.nodes._with import (
@@ -92,7 +91,6 @@ __all__ = [
     "SyncContextDependency",
     "Step",
     "StepContext",
-    "SqlAlchemyDatabaseConfig",
     "SqlAlchemySinkConfig",
     "WindowStrategy",
     "With",

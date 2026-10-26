@@ -1,5 +1,10 @@
 # Unreleased
 
+# 🚀 Releases 2.1.3 to 9.0.0
+
+Entries from 2.1.3 to 9.0.0 were kept under one heading and are not split
+by version; each release's own list is in its GitHub Release notes.
+
 ## ✨ Features
 
 ### core
@@ -87,6 +92,18 @@
 - **core:** `section(cfg, key, T)` and `ConfigContext.section` accept a key
   naming a scalar leaf (`"api.token"`) and convert that value; before, they
   failed on anything but a mapping.
+
+- **core:** compile-issue catalogues as data (ADR 0003, part B).
+  `loom.core.errors.codes` gains `IssueCode`, `Template` and `CompileIssue`.
+  An `IssueCode` member is declared as `NAME = "NAME", Template(text,
+  field=..., component=...)`, and `Code.NAME.issue(**params)` builds its
+  `CompileIssue` (`code`, `message`, `component`, `field`). Each part of the
+  template is a `str.format` template. A sequence parameter is joined with
+  `", "` and renders `none` when empty, a set is ordered by the text of its
+  items, and a type renders as its `__qualname__`. A missing or unknown
+  parameter raises a `TypeError` naming the code. `AgentErrorCode`,
+  `StreamingErrorCode` and `ETLErrorCode` are such catalogues, and
+  `ETLCompilationError.from_issue(issue)` raises the ETL error for an issue.
 
 ### ai
 
@@ -400,7 +417,7 @@
   selection can be checked without running it. A bare string as `include`
   raises `TypeError`. The runner now filters through it. `InvalidStageError`
   is exported from `loom.etl.compiler` as well; it is the same class as
-  `loom.etl.runner.InvalidStageError` and `loom.etl.InvalidStageError`.
+  `loom.etl.InvalidStageError`.
 - **etl:** `iter_processes`, `iter_steps_in_process` and `iter_all_steps` are
   exported from `loom.etl.compiler`. They flatten a compiled plan in
   execution order, parallel groups in declaration order, so code that walks
@@ -447,6 +464,244 @@
 
 ### core
 
+- **core:** `RuleViolation` and `RuleViolations` are no longer exported by
+  `loom.core.use_case` or `loom.core.use_case.rule`. Import them from
+  `loom.core.errors`, their only public home.
+- **core:** wrapping a repository in `CachedRepository` raises `RuntimeError`
+  when one of its `@cache_query` reads has a missing return annotation, one
+  the defining module cannot resolve, or one outside the supported grammar,
+  naming the repository and the method; a `@cached` repository therefore fails
+  when it is built. Before, wrapping emitted a `DeprecationWarning` and logged
+  `CacheQueryReturnTypeUnusable`, and the cached call returned the decoded
+  payload instead of the declared type. Annotate the read's return type with a
+  struct, a scalar, or a `list`, `tuple` or optional of those. A
+  `@cache_query` coroutine that is not defined on the repository class, such
+  as one set on the instance, raises `RuntimeError` when it is looked up on
+  the wrapper, since no codec was built for it; define it as a method of the
+  class.
+- **core:** a field annotated `X | UnsetType` infers `X`'s column type.
+  `UNSET` means "not provided", not another type, so `str | UnsetType` now
+  compiles to `String` and `int | UnsetType` to `Integer` instead of `JSON`,
+  and `Annotated[str, String(20)] | UnsetType` reads its declared type. Such
+  a column is scalar: a REST route may declare it filterable, `like` and
+  `ilike` included for text, and sortable by offset; a cursor sort on it is
+  still refused, since a cursor key must be a bare type. Nullability is
+  unchanged: `str | None | UnsetType` admits `None` and is nullable,
+  `UnsetType` alone keeps the column `NOT NULL`. An undeclared
+  `Decimal | UnsetType`, plain `Enum | UnsetType` or `Literal[...] | UnsetType`
+  now needs a declared column type, as it does without `UnsetType`. On Mongo,
+  a `str | UnsetType` or `UUID | UnsetType` primary key is now accepted, and
+  a range filter or sort on a `Decimal | UnsetType` field is refused, as on a
+  `Decimal` field. Alembic autogenerate will show the type change from `JSON`
+  for existing tables with such columns.
+- **core:** a column's nullability follows its field's annotation. A field
+  whose annotation admits `None` (`x: int | None = None`, also inside
+  `Annotated`) compiles to a nullable column; any other field compiles to
+  `NOT NULL`, and a primary key column is `NOT NULL` whatever its annotation.
+  Before, every column was `NOT NULL` unless declared otherwise, so the model
+  accepted `None` and the database refused it on insert. `nullable=` on
+  `ColumnField`, `ScopedField` or `Field` now defaults to `None` (follow the
+  annotation) and a declared `True` or `False` still wins. Alembic
+  autogenerate will propose `nullable` changes for existing tables whose
+  Optional fields were created `NOT NULL`; to keep such a column `NOT NULL`,
+  declare `nullable=False`. ETL schema contracts keep their own rule (a
+  column is nullable unless declared otherwise), which this change does not
+  touch.
+- **core:** a `uuid.UUID` field without a declared column type is now a
+  `Uuid` column (`loom.core.model.Uuid`, SQLAlchemy `Uuid`) instead of
+  `JSON`: `UUID` on Postgres, `CHAR(32)` holding the hex form on dialects
+  without a native UUID type, such as SQLite. Such a field is now a scalar
+  column, so REST `filterable`, `sortable` and `ALL` accept it on every
+  backend, `mongo` included; on SQLite a cursor walk sorted by it pages in
+  UUID order and an equality filter on it matches. Streaming `IntoTable` with the
+  SQLAlchemy backend binds a `UUID` field the same way instead of failing to
+  serialise it as JSON. Migration: an existing table with such a column needs
+  a revision changing its type; Alembic autogenerate reports it as a type
+  change from `JSON` to `Uuid`. Postgres does not cast `json` to `uuid`, so
+  the revision needs `postgresql_using="(<column> #>> '{}')::uuid"`. On a
+  dialect without a native UUID type the old rows hold JSON text (the quoted
+  UUID with dashes), which the `Uuid` column cannot read, so after the type
+  change the revision rewrites each value to its 32-character hex. On
+  SQLite: `op.batch_alter_table` for the type change, then
+  `UPDATE <table> SET <column> = replace(json_extract(<column>, '$'), '-', '')`.
+  Rewriting before the type change loses values on SQLite: a hex form made
+  only of digits is stored as a number in the `JSON` column.
+- **core:** a `Decimal` field, plain or optional, declares its column type: a
+  SQLAlchemy model with an undeclared one is refused when it is compiled,
+  naming the field. loom inferred `NUMERIC(10, 2)`, and Postgres silently
+  rounds a value to that scale (`1.2345` is stored as `1.23`) and refuses one
+  past that precision. Migration: declare it, e.g.
+  `Annotated[Decimal, Numeric(precision=20, scale=6)]` or
+  `ColumnField(Numeric(precision=20, scale=6))`; `Numeric()` with no
+  precision is now an unbounded `NUMERIC` instead of `NUMERIC(10, 2)`, and
+  `Numeric(scale=...)` without a precision raises `ValueError`, as SQLAlchemy
+  would drop the scale.
+- **core:** `sql_endpoint.auth` admits only `identity` and `external`;
+  `auth: jwt` is refused when the config is loaded, and the alias and its
+  `DeprecationWarning` are gone. Migration: replace `auth: jwt` with
+  `auth: identity`.
+- **core:** with no `LOOM_ENV` and no `environment=`, a process starts as
+  `production` and runs the deploy checks; an API without authentication now
+  fails at startup with `loom.rest.E001` until it configures
+  `app.rest.auth.jwt`, sets `app.rest.auth.custom: true` and passes an
+  `authenticator`, sets `LOOM_ENV=development`, or lists the id under
+  `checks.silenced`. An unknown or empty `LOOM_ENV` is a startup error.
+- **core:** the logger's default changed from development to production: with
+  no explicit `renderer`/`colors`, logs render as JSON without colours unless
+  the process resolved `development` or `test`. `create_kernel`,
+  `bootstrap_app`, `ObservabilityRuntime.from_config`, `configure_logging`
+  and `configure_logging_from_values` take `environment=None` and resolve it
+  (`LOOM_ENV`, else production) when none is passed.
+- **core:** the logger's own environment is removed:
+  `loom.core.logger.Environment`, `LoggerConfig.environment` and
+  `LogConfig.environment` are gone, and the logging functions take
+  `loom.core.environment.Environment`.
+- **core:** configuration sections refuse keys they do not declare: the
+  logger and its handlers, `checks`, `app.rest` (with `auth`, `jwt`, `cors`
+  and `discovery`), the `observability` log, otel and prometheus structs and
+  `OtelConfig`, `sql`, `celery` and `jobs`, every ETL `storage` struct and
+  lineage, `kafka`, the bytewax runtime, streaming `mongo`, `dynamodb` and the
+  flow config. A leftover `observability.log.config.environment`, or any
+  typo there, is a `ConfigError`. `app`, `database`, `persistence` and the
+  top of `observability`, which several readers decode in part, still accept
+  keys another reader owns. `create_app` and `bootstrap_worker` no longer fall
+  back to the default `observability` section when it fails validation, and
+  `create_app` registers the in-process job service when the `celery`
+  section is absent (with a warning) or the Celery extra is not installed; a
+  `celery` section that fails validation now stops startup instead.
+- **core:** a `LOOM__*` override sets one leaf value. A variable naming no
+  known section, with a malformed level, whose value is or holds a mapping,
+  whose target the files declare as a mapping or a list of mappings, naming
+  `config`, holding `${` however it is written, reaching inside an
+  interpolated key, failing to parse, or colliding with another variable
+  stops startup naming the variable, never the value. In production and
+  staging an override may set only an allowlisted key: loom's operational
+  keys (`loom.core.config.overrides.OVERRIDABLE`: log levels, Celery and
+  streaming worker counts and timeouts, SQL pool sizes and driver timeouts)
+  and the keys the reviewed files list under `config.overridable`. A
+  `config.overridable` entry starting with `*`, or inside `checks` or
+  `config`, stops every load. A placeholder in the `checks` section is a
+  `ConfigError`. A per-flow Prefect YAML is read without overrides.
+  `ConfigKey.LOGGER` and `ConfigKey.METRICS`, read by nothing, are removed.
+- **core:** the SQL `max_execution_time`, `connect_timeout`,
+  `send_receive_timeout`, `pool_size` and `executor_threads`, the Celery
+  `runtime.shutdown_timeout_ms` and the streaming runtime's
+  `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero; a
+  `0` fails when the section decodes.
+- **core:** the `loom.core.checks` logger sets its own WARNING level, so a
+  parent level (`CRITICAL`, top-level or `named_levels.loom`) cannot hide a
+  deploy check's warning or the silenced ids; name `loom.core.checks` under
+  `named_levels` to quiet it. The handlers `configure_logging` attaches no
+  longer filter by level, so a named level below the top-level level takes
+  effect for stdlib loggers; structlog loggers, loom's own included, still
+  drop events below the top-level level.
+- **core:** a consumer's test suite must set `LOOM_ENV=test` (loom's own
+  sets it in `tests/conftest.py`), or every application it builds starts as
+  production and runs the deploy checks.
+- **core:** the migration locator now resolves `LOOM_ENV` (picking the
+  overlay of a config directory), applies the `LOOM__*` variables and puts
+  `app.code_path` on `sys.path` when the directory exists, as the
+  application does. `loom check --deploy` refuses an `app.code_path` that is
+  not a literal path.
+- **core:** `ETLRunner` and `StreamingRunner` resolve the environment
+  (`LOOM_ENV`, else production): without one they log JSON and, built from a
+  whole configuration (a file, a directory, or a mapping for
+  `StreamingRunner.from_dict`), run the deploy checks; `ETLRunner.from_dict`
+  and `from_spark` receive no whole configuration and run none.
+- **core:** `loom.core.locator.CONFIG_ENV_VAR` is replaced by
+  `loom.core.environment.CONFIG_VARIABLE`; `LOOM_CONFIG` may name a config
+  directory. `loom.prefect`'s `LOOM_ETL_CONFIG` alias is removed; use
+  `loom.core.environment.ETL_CONFIG_VARIABLE`. `app.code_path` is added to
+  `sys.path` only when the directory exists.
+- **core:** a non-deployed environment logs one WARNING that the deploy
+  checks were skipped.
+- **rest:** `create_app(authenticator=...)` requires
+  `app.rest.auth.custom: true`, `custom: true` requires an `authenticator`,
+  and `custom: true` beside `app.rest.auth.jwt` is refused; `loom.rest.E001`
+  passes on `custom: true`.
+- **core:** `Rule.check(..., via=fn)` takes the violation from `fn`: a `str`
+  (the message) or a `RuleViolation` fails the rule, `None` passes it. A `bool`
+  or any other result raises `TypeError` naming the field, instead of `True`
+  failing the rule and `False` passing it. The `message=` parameter of
+  `Rule.check` is removed. `Rule.forbid` keeps its boolean condition; a `str`
+  or `RuleViolation` it returns no longer fails the rule. Migrate
+  `Rule.check(F(Order).total, via=lambda v: v <= 0, message="total must be > 0")`
+  to `Rule.check(F(Order).total, via=lambda v: "total must be > 0" if v <= 0 else None)`.
+- **core:** cursor signing keys are required (ADR 0004). An application whose
+  persistence backend serves repositories (`sqlalchemy`, `mongo`), and a
+  Celery worker that registers repositories, read `persistence.cursors` at
+  startup and fail with a `ConfigError` without a key:
+
+  ```yaml
+  persistence:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: CURSOR_KEY_2026_10}   # or {path: /run/secrets/...}
+  ```
+
+  Keys are read from a file or an environment variable, never written in the
+  configuration, as standard base64 decoding to at least 32 random bytes
+  (`openssl rand -base64 32`); a passphrase is refused. Older key ids stay in
+  `keys` to verify the tokens they signed during a rotation.
+  The default is `signed` in every environment; `signing: ephemeral` (a
+  random per-process key, for `development.yaml`) and `signing: unsigned`
+  (for `test.yaml`) are explicit opt-outs, and both log a WARNING at
+  startup. In production and staging the deploy check `loom.cursors.E001`
+  fails startup, and `loom check --deploy` fails, when a `database` or
+  `persistence.mongo` section is set and `signing` is not `signed` or
+  `current_key_id` names no entry of `keys`. No `config.overridable` entry
+  may open a key under `persistence.cursors`. A key's `env` source must not
+  name a `LOOM_*` variable. Tokens issued before this release are refused:
+  clients restart from the first page.
+- **core:** a cursor page orders only by non-null columns of a type a token
+  carries; a dotted path, a JSON, `bytes` or optional column answers
+  `400 unsupported_query` before the query runs (`require_cursor_sort`), and
+  a page whose last row holds a non-finite number or a value the token
+  cannot carry answers 400 instead of 500. An empty cursor is an invalid
+  token on SQLAlchemy as on Mongo. Tokens bind the model as
+  `module.qualname`; `UnsupportedQuery` and the client's 400 name it by its
+  qualified name alone. `CursorCodec.encode`/`decode`, `require_cursor_sort`
+  and `QuerySpecCompiler(model=...)` take the model class (or a name). Mongo
+  issues the next token in the model's types, so a page sorted by a date or
+  UUID column, or keyed by a UUID, reaches the next page.
+- **core:** one `CursorCodec` per process: the registration modules register
+  it with `register_cursor_codec`, which raises `ConfigError` when a
+  different codec is already registered, and, in a deployed environment,
+  for an `ephemeral` or `unsigned` codec unless `CursorCodec.from_context`
+  built it from a configuration silencing `loom.cursors.E001`. Without a
+  registered `Environment` the process environment decides (`LOOM_ENV`, else
+  production).
+- **core:** `loom.core.checks.silenced_checks(config)` returns the ids
+  `checks.silenced` lists, as the deploy-check runner reads them.
+- **core:** the unsigned module functions `encode_cursor` and
+  `decode_cursor` are gone. `CursorCodec` (with `CursorConfig` and
+  `CursorKeySource`, exported from `loom.core.repository.abc`) issues and
+  verifies tokens: `encode(cursor, *, model, query, scope)` and
+  `decode(token, *, backend, model, query, scope, columns, primary_key)`,
+  where `scope` is required and `""` binds a token to no tenant, `columns`
+  maps each column name to its annotation and `primary_key` names the key
+  columns in order. A sort key or primary-key value whose type is not its
+  column's is refused (`400 unsupported_query`), as is a sort field missing
+  from `columns`. The backends
+  register the codec they build in DI, so a service paginating by hand
+  resolves it with `container.resolve(CursorCodec)`. A decoded datetime key
+  is always aware. A `time` sort key is carried too, with the offset it was
+  issued with; before, a page sorted by a column holding `time` values
+  raised `TypeError` when it issued the next cursor.
+- **core:** `RepositorySQLAlchemy`, `RepositoryMongo`, `QuerySpecCompiler`
+  (with a required `scope` and `columns` too), `SQLAlchemyDefaultRepositoryBuilder`,
+  `MongoDefaultRepositoryBuilder`, `build_sqlalchemy_repository_registration_module`,
+  `build_mongo_repository_registration_module` and
+  `loom.testing.build_repository_harness` take a required keyword-only
+  `cursor_codec`. A custom repository `builder` passes
+  `context.container.resolve(CursorCodec)`. `extract_next_cursor` returns the
+  next `Cursor` position instead of a token, and `SessionManager` gains
+  `current_settings()`. SQLAlchemy repositories bind cursors to the caller's
+  `loom.scope.*` session values. `loom.core.environment` gains
+  `configured_variable(name)`, which reads a variable a configuration names
+  and refuses a `LOOM_*` name.
+
 - **core:** the `LoomType` protocol gains `from_query(params)`, which
   validates query-string values strictly. A number takes the JSON number
   grammar and must be finite, an integer its integer subset within
@@ -464,8 +719,7 @@
   takes the tuple as its first argument and raises `TypeError` for anything
   else. A cursor token issued for such a model before this release is refused with
   `UnsupportedQuery`, `400 unsupported_query`; clients restart from the first
-  page. `decode_cursor` takes `id_count`, the number of key columns, and
-  `get_id_attributes` returns every key column name.
+  page. `get_id_attributes` returns every key column name.
 
 - **core:** `compile_all` raises `ValueError` for a model with a composite
   primary key that declares a relation or a projection whose loader runs
@@ -490,9 +744,105 @@
   it. A `@cache_query` argument that is a pydantic instance now contributes
   its builtins rendering to the cache key rather than the instance's own
   `repr`, a one-time key change.
+- **core:** a model field annotated with an enum and no declared column type
+  takes the column type of the scalar the enum is mixed with, the first class
+  of its MRO with a column rule, as that class itself would: a `StrEnum` (any
+  `str` enum) becomes `String`, honouring `length=`, an `IntEnum` or `IntFlag`
+  becomes `Integer`, a `float` enum `Float`, a `Decimal` enum `Numeric`,
+  instead of `JSON`. The value is stored as a plain string or integer, not
+  JSON-encoded, so the column can be filtered by equality; `Optional` of such
+  an enum behaves the same. An existing table with such a column needs a
+  migration that converts the data with a `USING` clause, which Alembic's
+  autogenerate does not write: on Postgres,
+  `ALTER TABLE t ALTER COLUMN c TYPE varchar USING c #>> '{}'` and
+  `ALTER TABLE t ALTER COLUMN c TYPE integer USING (c #>> '{}')::integer`. On
+  SQLAlchemy models, a plain `Enum` (mixed with no scalar) or a `Literal[...]`
+  field with no declared column type now fails model compilation with a
+  `ValueError` naming the model and the field, instead of becoming a `JSON`
+  column; loom does not infer a type from the values. Declare the column, for
+  example `colour: Colour = ColumnField(String(20))`. Mongo and DynamoDB
+  models keep such fields as they are. Declared column types are unchanged,
+  and an `Annotated[...]` column type or `Field` is now read also when the
+  `Annotated` sits inside `Optional` (`Annotated[T, String(1)] | None`), and
+  is used when a `ColumnField(...)` on the field declares no column type.
+  `ColumnFieldInfo` gains `needs_declared_type`.
+- **core:** an `Optional` inside `Annotated` whose metadata carries no column
+  type, such as `Annotated[int | None, msgspec.Meta(ge=0)]`, now takes the
+  column of its scalar type (`Integer` here) instead of `JSON`; an existing
+  table needs the same `USING` migration as above. A `Field(...)` inside
+  `Annotated` with no column type is now read instead of being dropped, so its
+  settings take effect: `primary_key=True` adds the column to the primary key,
+  which can turn a model's key composite, and `nullable=True` makes the column
+  nullable. Review such fields before upgrading.
+- **core:** a `date` field is inferred as a `Date` column and a `time` field
+  as a `Time` column (`loom.core.model.Date`, `loom.core.model.Time`, new),
+  where both used to be inferred as an unbounded `String`; an enum mixed with
+  `date` or `time` follows to `Date` or `Time`. The SQLAlchemy repository
+  binds `date` and `time` values natively, so on Postgres with asyncpg writing
+  either field failed (`expected str, got date`, and the same for `time`). The
+  SQLAlchemy repository now refuses a `time` that carries a UTC offset when it
+  is written to, or compared with, a column that would drop the offset, with a
+  `BoundaryValidationError` (a `ValueError`) naming the column and not the
+  value: `boundary_validation` for a write (REST answers `422`),
+  `query_validation` for a filter, `get_by`, `exists_by` or `list_paginated`
+  value (`400`). Without the check, Postgres and SQLite would store
+  `08:30+02:00` in a `Time` column as `08:30`, and an aware filter value would
+  match the row holding `08:30`. A JSON column and a `Time` column declared
+  with `ColumnType("Time", kwargs={"timezone": True})` accept it; the JSON
+  column keeps the written offset, and so does the `Time` column on Postgres
+  (`timetz`), which takes only a `time` with an offset: one without (naive, or
+  with a zone but no fixed offset) is refused the same way, under
+  `time must carry a UTC offset`, since asyncpg cannot encode it for `timetz`;
+  every refused column of a write is reported, in name order. On any other
+  dialect startup refuses a `Time(timezone=True)` column with a `ConfigError`
+  naming `table.column`, since the dialect would not keep the offset. A
+  `datetime` field (`DateTime(tz=True)`) keeps the instant on Postgres
+  (`timestamptz`) and MongoDB, read back in UTC, not the written offset.
+  `get_by`, `exists_by` and the `filters` of `list_paginated` now convert
+  their value as a write converts it, as `QuerySpec` filters already did, so a
+  plain `Enum` member matches the value the write stored instead of failing to
+  bind. A `list_paginated` filter, `get_by` or `exists_by` on a name that is
+  not a mapped column of the model (a missing field, a relation, an attribute
+  such as `metadata`) raises `ValueError` naming it. An existing Postgres
+  table holding these columns as `varchar` needs a migration: Alembic
+  autogenerate detects the type change, but Postgres refuses it without a
+  cast, so the revision passes `postgresql_using="c::date"` (`"c::time"` for a
+  `time` field) to `op.alter_column`, which is
+  `ALTER TABLE t ALTER COLUMN c TYPE date USING c::date`. `c::time` drops any
+  offset the stored text holds (`'08:30+02'::time` is `08:30`): check first
+  with `SELECT c FROM t WHERE c ~ '[+-]\d{2}(:?\d{2})?$'`, and if offsets are
+  present convert those rows deliberately (for example to UTC with
+  `(c::timetz AT TIME ZONE 'UTC')::time`) before changing the type. MongoDB is
+  unaffected: it stores `date` and `time` values as ISO 8601 strings.
+- **core:** `to_column_value` is imported from `loom.core.model.convert`; it is
+  no longer exported by `loom.core.repository.sqlalchemy.values`.
 
 ### ai
 
+- **ai:** compile issues come from the code catalogue, and the 89 issue
+  factory functions of `loom.ai.errors` are removed, without aliases: for
+  example `spec_malformed`, `engine_not_found` and `mcp_server_unreachable`.
+  Build an issue with `AgentErrorCode.X.issue(...)` and keyword arguments,
+  such as `AgentErrorCode.ENGINE_NOT_FOUND.issue(component="openai-agents",
+  available=["pydantic-ai"])`. `loom.ai.errors.from_message` is removed too.
+  Messages keep their text; a list that is empty renders `none`.
+- **ai:** `AgentCompilationError` takes `AgentCompilationIssue` values only;
+  bare strings and the `AgentErrorCode.UNSPECIFIED` code they became are
+  removed. Build an issue from an `AgentErrorCode` member with `.issue()`.
+  The five pydantic-ai engine failures that raised bare strings now carry
+  their own codes, with the same messages: `TOOL_NAME_COLLISION`,
+  `TOOL_NAME_TOO_LONG`, `USECASE_NOT_COMPILED`, `CAPABILITY_KIND_NO_BUILDER`
+  and `MCP_CONNECTION_NOT_OPENED`.
+- **ai:** `AgentCompilationIssue` is a type alias of
+  `CompileIssue[AgentErrorCode]` from `loom.core.errors.codes`, not a class.
+  It has the same fields, but `isinstance` against it raises `TypeError`
+  (check `CompileIssue` instead), and it no longer derives from
+  `LoomFrozenStruct`, so `loom_message_type()` is gone.
+- **ai:** an `Mcp()` include filter on a use case that matches no tool aborts
+  start-up with the new code `USECASE_TOOL_FILTER_MATCHES_NOTHING` instead of
+  `TOOL_FILTER_MATCHES_NOTHING`, which is now raised only by an agent
+  artifact's filter. The message and the `parameters.<name>` field are
+  unchanged.
 - **ai:** `AgentPlan.fingerprint`, and so the ETL `agent_version` column,
   changes once for every existing agent. It no longer covers any policy, so
   changing `retries`, a timeout, `max_iterations`, `max_tool_calls`,
@@ -561,9 +911,43 @@
   declares both a pydantic `type_ref` output and `output_check` serialises
   an accepted answer twice per attempt — once for the check's own builtins
   projection, once for the wire — accepted rather than optimised away.
+- **ai:** a provider's `credentials_ref` is read through
+  `loom.core.environment.configured_variable` and may not name a `LOOM_*`
+  variable.
 
 ### rest
 
+- **rest:** a `QuerySpec` route filters and sorts only on the columns it
+  declares. Before, a client could filter or sort on any field the repository
+  could resolve. Now a filter on an undeclared column answers
+  `400 unsupported_query` naming the field, and so does a sort on one, with the
+  same answer whether or not the column exists. The primary key, which the
+  route orders by when the client names no sort, needs no declaration.
+  Declare `filterable` and `sortable` on the interface (its auto-CRUD `list`
+  route included) or on a route, which overrides it, as field references or
+  column names:
+
+  ```python
+  class OrderRestInterface(RestInterface[Order]):
+      prefix = "/orders"
+      auto = True
+      filterable = (F(Order).status, F(Order).total)
+      sortable = (F(Order).created_at,)
+  ```
+
+  In `app.rest.interfaces` both take column names (`[status, total]`).
+  `ALL` (`all` in YAML) keeps every scalar column and logs a warning naming
+  the route at startup. Only scalar columns of the use case's own model
+  (`UseCase[Model, ...]`) qualify. A related model's column (`warehouse.code`)
+  is refused, and so are JSON, array and text-search columns; lists, dicts
+  and structs are JSON. A `StrEnum` or `IntEnum` column is scalar; a plain
+  `Enum` or a `Literal` needs a declared column type. `InterfaceCompilationError` names the route and the field. It is also
+  raised for a declaration on a use case with no model, and for a route-level
+  declaration on a route without a `QuerySpec`; an inherited one is ignored.
+  `exists` and `not_exists` answer `400 unsupported_query`, and so do `like`
+  and `ilike` on a column that is not `str`. The repository's
+  `allowed_filter_fields` is unchanged: programmatic callers are not
+  restricted.
 - **rest:** every route now resolves its request parameters and decodes its
   body before the use case is built, so a request refused at that point
   never runs the use case's constructor.
@@ -592,9 +976,50 @@
   `msgspec.ValidationError`. The root `title` is dropped on pydantic
   OpenAPI schemas for request bodies and responses alike, matching the
   untitled document a Struct always produced.
+- **rest:** a `sortable` column must be a field of the items the route
+  answers with (`PageResult[T]`, `CursorResult[T]` or `list[T]`); a column
+  the response does not show, or a result type that does not say, fails
+  compilation naming the route and the field, since ordering by it reveals
+  its values. `sortable=ALL` opens every scalar column, hidden ones included,
+  and its startup warning says so. `filterable` follows the same rule, with
+  `filterable=ALL` as its escape hatch. "Shown" is decided by field name; a
+  pydantic field declared `exclude=True` is not shown.
+- **rest:** breaking: a `QuerySpec` route that can serve cursor pages (cursor
+  mode, or the default `allow_pagination_override=True`) must answer with
+  items that show its primary key, which every cursor token carries. A route
+  whose response hides the key, or whose result type is untyped (`str`,
+  `dict[str, Any]`, ...), now fails compilation naming the route and the key.
+  `sortable=ALL` opens it with a warning; a route that must hide its keys
+  serves offset pages only (`pagination_mode` offset and
+  `allow_pagination_override=False`). On such a route the key must also be of
+  a type a token carries, in a scalar column: a key declared in a JSON or
+  array column, which a SQL keyset cannot order, fails compilation instead
+  of on the first cursor request. A bare `UUID` key, a scalar `Uuid` column,
+  compiles and pages on SQLAlchemy and Mongo alike.
+- **rest:** `create_fastapi_app(interfaces=...)` is removed and `routes` is
+  required; use `create_fastapi_app(result, RouteSources(python=[...]))`.
+- **rest:** the `QUERY_PARAM_PAGE`, `QUERY_PARAM_LIMIT`,
+  `QUERY_PARAM_PAGINATION`, `QUERY_PARAM_AFTER`, `QUERY_PARAM_CURSOR`,
+  `QUERY_PARAM_SORT`, `QUERY_PARAM_DIRECTION` and `QUERY_PARAM_PROFILE`
+  re-exports of `loom.rest.fastapi.openapi` are removed; use the matching
+  `loom.rest.constants.QueryParam` member (`QueryParam.PAGE`, ...).
 
 ### prefect
 
+- **prefect:** `FlowCtx.environment` is removed; nothing read it.
+- **prefect:** the flow parameter `env` and the keys of a flow YAML's
+  `environments` block are loom environments (`production`, `staging`,
+  `development`, `test`); `prod`, `dev`, `local` or any other key or value is
+  a `ConfigError`. A run resolves the worker's environment (`LOOM_ENV`, else
+  production); `env` defaults to `None` and only confirms it, so a run whose
+  `env` differs fails before anything runs. The run hands the environment to
+  the runner, which takes its logger defaults from it and runs the deploy
+  checks when deployed; notifications report it. `deploy_flow` and
+  `discover_and_deploy_etls` take an optional `env` resolved the same way and
+  record it as the deployment's `env` parameter, so a deployment run on a
+  worker in another environment fails.
+- **prefect:** the storage configuration of a flow run may be a config
+  directory.
 - **prefect:** a placeholder counts from the run's scheduled start instead of
   the wall clock. `${today-1d}`, `${yesterday}` and `${now±N}` counted from
   `datetime.now()` inside the flow, so a queued run that started after
@@ -646,14 +1071,30 @@
 
 ### etl
 
+- **etl:** compile errors come from the code catalogue, and the 34
+  class-method factories of `ETLCompilationError` are removed, without
+  aliases: for example `upsert_no_keys`, `missing_target` and
+  `unknown_source_table`. Raise
+  `ETLCompilationError.from_issue(ETLErrorCode.X.issue(...))`; the
+  `ETLCompilationError(code, component, message, field)` constructor is
+  unchanged. Messages keep their text.
+- **etl:** each `IntoHistory` compile check has its own code instead of
+  `INVALID_TARGET_TYPE`: `HISTORIFY_KEYS_EMPTY`, `HISTORIFY_KEYS_TRACK_OVERLAP`,
+  `HISTORIFY_EFFECTIVE_DATE_IN_TRACK`, `HISTORIFY_BOUNDARY_IN_KEYS`,
+  `HISTORIFY_BOUNDARY_IN_TRACK`, `HISTORIFY_LOG_EFFECTIVE_DATE_NOT_COLUMN`,
+  `HISTORIFY_DELETE_MARKER_REQUIRES_LOG` and
+  `HISTORIFY_DELETE_MARKER_DECLARED_COLUMN`. Messages and fields are unchanged;
+  code that matched `INVALID_TARGET_TYPE` for these checks must match the new
+  codes. `INVALID_TARGET_TYPE` now means only a `target` that is not an
+  `IntoTable`, `IntoFile` or `IntoTemp`.
+- **etl:** `ETLErrorCode.INVALID_SOURCES_TYPE` is removed. No step could raise
+  it: a step's sources are grouped only when `sources` is a `Sources` or a
+  `SourceSet`, and both are valid.
 - **etl:** a `WithAgent` compiled by a runner whose config has no `ai:`
   section fails with the new code `AGENT_RUNNER_NOT_CONFIGURED` instead of
   `AGENT_NOT_FOUND`, which now means only that no artifact declares the name.
-- **etl:** the names of `loom.etl.runner.filtering` (`_filter_plan`,
-  `_filter_process`, `_collect_all_names`, `_map_pipeline_nodes`,
-  `_map_process_nodes`) are deprecated and removed in loom 3.0; each emits a
-  `DeprecationWarning` naming its replacement, `loom.etl.compiler.filter_plan`
-  or, for `_collect_all_names`, `iter_processes` and `iter_all_steps`.
+- **etl:** `loom.etl.runner.filtering` is removed; use
+  `loom.etl.compiler.filter_plan`.
 - **etl:** the Polars writer refuses, under `SchemaMode.STRICT` and
   `EVOLVE`, a frame column that is a `Struct` or `List` where the Delta table
   has `String`, or `String` where the table has a `Struct` or `List`, at any
@@ -672,8 +1113,7 @@
   `Unknown step or process names: [...]` instead of `No steps or processes
   match include=[...]`, the constructor's parameter is `unknown`, and the
   names are kept on the new `unknown` attribute. Positional construction is
-  unchanged; `InvalidStageError(include=...)` still works, emits a
-  `DeprecationWarning` and is removed in loom 3.0. The error survives pickle
+  unchanged. The error survives pickle
   with its `unknown` names, so it crosses process boundaries intact.
 - **etl:** `ThreadDispatcher` runs each task in a copy of the caller's
   context, as `asyncio.to_thread` does, so a step of a parallel group sees
@@ -684,17 +1124,337 @@
   caller's context among the requirements on an implementation.
 - **etl:** `WithAgent(max_usd=...)` keeps the budget as a `Decimal`. An
   `int`, or another `numbers.Integral` such as `numpy.int64`, is converted
-  exactly. A `float` emits a `DeprecationWarning`, is converted through its
-  `str()` (`0.1` becomes `Decimal("0.1")`) and is removed in loom 3.0. A
-  `bool`, accepted before, and any other type, such as `str`, raise
-  `TypeError`. `NaN`, `sNaN` and `Infinity`, as a `Decimal` or a `float`,
-  raise `ValueError`, like zero and a negative amount; a `Decimal` `NaN` or
-  `sNaN` used to raise `decimal.InvalidOperation`, and a `Decimal`
-  `Infinity`, a `float` `inf` and a `float` `nan` were accepted.
+  exactly. A `bool`, accepted before, and any other type, such as `str`,
+  raise `TypeError`. `NaN`, `sNaN` and `Infinity` raise `ValueError`, like
+  zero and a negative amount; a `Decimal` `NaN` or `sNaN` used to raise
+  `decimal.InvalidOperation`, and a `Decimal` `Infinity` was accepted.
+- **etl:** `InvalidStageError(include=...)` is removed; use
+  `InvalidStageError(unknown=...)` or pass the names positionally.
+- **etl:** `WithAgent(max_usd=<float>)` is removed and raises `TypeError`;
+  pass a `Decimal`, such as `Decimal("2.50")`, or an `int`.
+- **etl:** `loom.etl.CheckpointCleaner` and
+  `loom.etl.checkpoint.CheckpointCleaner` are removed; use
+  `FsspecTempCleaner`, now exported from `loom.etl` as well.
+- **etl:** the module `loom.etl.declarative.target._schema_mode` is removed;
+  import `SchemaMode` from `loom.core.schema` (or `loom.etl`).
+- **etl:** `FromClickHouse.select(columns)` is removed; use
+  `FromClickHouse.columns(*columns)`.
+- **etl:** `ClickHouseSourceSpec.table` is removed; use
+  `ClickHouseSourceSpec.table_ref.ref`.
+- **etl:** `loom.etl.backends.polars._reader._apply_source_schema` is
+  removed. It was a test helper and has no public replacement.
+- **etl:** the module `loom.etl.runner.errors` is removed, and neither
+  `loom.etl.runner` nor `loom.etl.runner.core` exports `InvalidStageError`;
+  import it from `loom.etl.compiler` (or `loom.etl`).
+- **etl:** `loom.etl.io.sources._clickhouse` no longer re-exports
+  `FromClickHouse` and `ClickHouseSourceSpec`; import them from
+  `loom.etl.declarative.source` (`FromClickHouse` also from `loom.etl`).
+
+### streaming
+
+- **streaming:** `ConsumerSettings.delivery` is required. A Kafka consumer
+  config without `delivery` fails to decode, so compiling a flow that reads
+  from Kafka raises `CompilationError` with `KAFKA_CONFIG_INVALID` naming the
+  missing field. Before, a missing `delivery` resolved to `at_most_once`.
+  Declare `delivery: at_most_once` to keep that behaviour, or
+  `delivery: at_least_once`. `ConsumerSettings.effective_delivery()` is
+  removed; read `ConsumerSettings.delivery`.
+- **streaming:** `ConsumerSettings.enable_auto_commit` is removed, together
+  with the `DELIVERY_CONFLICT` compile code. The consumer settings forbid
+  unknown fields, so a config that sets `enable_auto_commit` fails to decode
+  (`KAFKA_CONFIG_INVALID`). Declare `delivery` instead: `enable_auto_commit:
+  false` was `delivery: at_least_once`, and `true` was `delivery:
+  at_most_once`.
+- **streaming:** `ConsumerSettings.poll_timeout_ms` is removed. The
+  partitioned source ignored it and logged a deprecation warning; a config
+  that sets it now fails to decode (`KAFKA_CONFIG_INVALID`). Remove the key;
+  the partitioned source is tuned with `batch_size` and `poll_backoff_ms`.
+- **streaming:** `CompilationError` takes `CompilationIssue` values only;
+  bare strings and the `StreamingErrorCode.UNSPECIFIED` code they became are
+  removed. Build an issue from a `StreamingErrorCode` member with `.issue()`.
+- **streaming:** `CompilationError.errors` is removed. Read the messages from
+  `CompilationError.issues` (`[issue.message for issue in error.issues]`).
+- **streaming:** an `IntoTable` sink section (`streaming.sinks.<name>`) with a
+  key its backend does not read fails at compile with `SINK_CONFIG_INVALID`,
+  naming every unknown key; on Delta this covers the keys under `staging`
+  too, and a `staging` or `writer_properties` that is not a mapping is
+  refused. Before, such a key was ignored. A SQLAlchemy sink that references a
+  shared `database` reads no pool keys (`pool_size`, `echo`, ...) from its own
+  section, so they are refused there; set them under `database.<name>`.
+  A SQLAlchemy or ClickHouse sink section that sets both `url` and `database`
+  is refused too, instead of one silently winning: a SQLAlchemy sink sets one
+  or the other, and a ClickHouse sink takes its url from `database.<name>`, so
+  it sets `database` only.
+  Delta's `part_max_records` is removed and therefore refused: it was an alias
+  of `writer_properties.max_row_group_size`, which is the key to set. Without
+  `writer_properties` the row groups still hold at most 10 000 rows.
+  `DeltaSinkConfig` has no `part_max_records` attribute.
+- **streaming:** `CompiledSingleSource` and `CompiledMultiSource` take a
+  required `settings_key`, the config key their consumer settings were
+  resolved from (`kafka.consumer` or `kafka.consumers.<ref>`);
+  `KafkaSettings.consumer_key_for(ref)` names it.
+- **streaming:** `FromTopic`, `FromMultiTypeTopic`, `FromMongoCDC` and
+  `IntoTopic` take no `shape`, `CompiledSingleSource`, `CompiledMultiSource`
+  and `CompiledMongoCDCSource` have no `shape` field, and `StreamShape.MANY`
+  is removed. The runtime never read a declared shape: every source emits one
+  record per message, so a source declared `BATCH` was shape-checked as
+  batches while its nodes received records, and an `IntoTopic` writes one
+  record per message whatever it declared. Every flow now starts as a record
+  stream, and an `IntoTopic` ends its path (shape `none`). Migration: drop
+  `shape=`; to work on batches, use `CollectBatch` and, back to records,
+  `ForEach`.
+- **streaming:** a batch reaching a `Drain` or a `Broadcast` fails compilation
+  with `SHAPE_MISMATCH`, whatever the delivery. Under at-most-once delivery
+  `CollectBatch → Drain` compiled and dropped the batch; under at-least-once
+  the batch's offsets never completed. Under at-least-once a `Broadcast` with
+  more than one route raised `TypeError` (`Expected Message, got list`) on a
+  batch. Put a `ForEach` before the node.
+- **streaming:** `BatchExpandStep.execute` returns one list of payloads per
+  message of its batch, in batch order, instead of one flat list. List `i`
+  holds what `messages[i]` expands into; each output takes that message's
+  metadata, and an empty list filters the message out. A result whose length
+  differs from the batch, a flat list of payloads, a `Message` among the
+  outputs, or a `str`, `bytes`, `bytearray` or mapping in place of the result
+  or of one of its lists raises `TypeError`, and the batch becomes error
+  envelopes.
+
+  ```python
+  # before
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[Score]:
+      return [Score(value=m.payload.amount) for m in messages]
+
+  # after
+  def execute(self, messages: list[Message[Event]], **kwargs: object) -> list[list[Score]]:
+      return [[Score(value=m.payload.amount)] for m in messages]
+  ```
+- **streaming:** compile issues come from the code catalogue
+  (`StreamingErrorCode.X.issue(...)`), and the compiler's private issue
+  factories are removed. `loom.streaming.compiler.CompilationIssue` is a type
+  alias of `CompileIssue[StreamingErrorCode]`, not a class: it has the same
+  fields, but `isinstance` against it raises `TypeError` (check
+  `CompileIssue` instead), `loom_message_type()` is gone, and
+  `CompilationIssue.prefixed()` is removed. Messages keep their text.
+- **streaming:** a `Broadcast` followed by another node reports
+  `BROADCAST_NOT_LAST` with component `broadcast`, at the top level and in a
+  branch. It used to report `TERMINAL_NOT_LAST` with component `Broadcast`. In
+  a Router branch a `Broadcast` reports `ROUTER_BRANCH_UNSAFE_NODE`, and one
+  followed by another node also `TERMINAL_NOT_LAST` with component
+  `router branch <label> > Broadcast`.
+- **streaming:** a Router branch that ends in `IntoTopic`, `IntoTable` (any
+  `IntoSink`) or `Drain` hands the message to that terminal. The branch's
+  terminal was skipped: with a flow `output` the message went to the output
+  instead, without one it was not written.
+- **streaming:** `With`, `WithAsync`, `Router`, `CollectBatch`, `ForEach` and
+  `Explode` inside a Router branch fail compilation with
+  `ROUTER_BRANCH_UNSAFE_NODE`. Such flows compiled and raised `TypeError` when
+  the branch ran.
+- **streaming:** a `Router` requires a record stream. A batch reaching a
+  `Router`, such as after a `CollectBatch`, fails compilation with
+  `SHAPE_MISMATCH` before `Router`. Such flows compiled and raised
+  `TypeError` at the Router when a batch arrived.
+- **streaming:** `ROUTER_BRANCH_SHAPE_DIVERGENCE` reads "messages continuing
+  after the router have different shapes: ...", since the unmatched input of
+  a `Router` without a default takes part in the check. It read "router
+  branches produce different shapes: ...".
+- **streaming:** `SinkPartition.write_batch` and `close` return an `int`: how
+  many of the oldest events not yet reported durable they made durable, `0`
+  when they only buffered. A custom `IntoSink` partition must report it: a
+  `write_batch` that returns anything else, a `bool` included, fails with
+  `TypeError`, and a bad count from `close()` is logged as
+  `storage_sink_close_count_invalid` and completes nothing. After a call
+  raised or returned a refused count, later counts complete nothing. A storage sink's
+  `terminal:sink_write` spans are emitted for the events a call made durable,
+  not for every event handed to it. A buffering partition migrates like this:
+
+  ```python
+  # before
+  def write_batch(self, items):
+      self._buffer.extend(items)
+
+  def close(self):
+      flush(self._path, self._buffer)
+
+  # after
+  def write_batch(self, items) -> int:
+      self._buffer.extend(items)
+      return 0  # buffered, nothing durable yet
+
+  def close(self) -> int:
+      flush(self._path, self._buffer)
+      flushed, self._buffer = len(self._buffer), []
+      return flushed  # durable now
+  ```
+- **streaming:** under at-least-once delivery, a caller-supplied terminal sink
+  written inline by `With(process=...)` or `WithAsync(process=...)` must expose
+  `build_inline_partition()`, which returns a partition that completes no
+  offset and records no death; without it the flow fails at assembly with
+  `RuntimeConfigurationError` (`INLINE_SINK_CANNOT_SKIP_COMMITS`). Its
+  partitions completed offsets at the inline write.
+- **streaming:** a Delta `IntoTable` whose payload type has no fields fails
+  with `ValueError` when its partition is built. Its items wrote no row.
+- **streaming:** an output declared after a node that ends every path fails
+  compilation. A flow `output` after a process that ends in `IntoTopic`,
+  `IntoSink`, `Drain`, `ExpandRoutes`, or a `Router` with a `default` whose
+  branches all end in one of `IntoTopic`, `IntoSink`, `Drain`, fails with
+  `OUTPUT_AFTER_PATH_END`. A Broadcast route `output` after a process that ends
+  in any of those, in a `Broadcast`, or in a `Fork` with a `default` fails
+  with `BROADCAST_OUTPUT_AFTER_PATH_END`. Such flows compiled and wrote the
+  message twice, handed the expanded payload of an `ExpandRoutes` to the
+  output, or never wrote the output. A step or an `IntoTopic` after such a
+  `Router` fails with `TERMINAL_NOT_LAST`, the code an `IntoTopic`, `IntoSink`
+  or `Drain` followed by a node reports. A
+  branch that ends without a sink no longer logs `unrouted_branch_drop_sink`.
+- **streaming:** a `terminal_sinks` override passed to `build_dataflow` must
+  cover every compiled `IntoTopic` path; a missing one fails with
+  `RuntimeConfigurationError` (`TERMINAL_SINK_MISSING`). The path fell back to
+  a drop sink, so its messages completed without being written.
+- **streaming:** a failed send or flush to a Kafka sink's DLQ topic fails the
+  run (inside `With` or `WithAsync`, the message becomes an error envelope). It
+  used to be logged as `dlq_send_failed` and the batch's offsets were
+  committed. The fix is under Fixes.
+- **streaming:** a DLQ record is built from the same send request as the sink
+  record: it keeps the message key (and with it the partition and order), the
+  message type and the headers of the sink record, error envelopes now carry
+  `x-error-reason` and follow the sink's partition policy, and `x-dlq-error`
+  is added. A diverted message keeps its own trace id and parent trace id; an
+  error envelope without an original message gets a new trace id, as on the
+  sink, instead of none.
+- **streaming:** a sync `With(process=...)` hands on one message at a time, as
+  `WithAsync` does. After a `CollectBatch` it handed on whole batches, so as
+  the last node of a flow without `output` its messages never completed.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds each column with
+  the type core compiles for the field instead of its own map:
+  - a `StrEnum` or `IntEnum` field is written as its scalar (`String`,
+    `Integer`) instead of as JSON;
+  - a column type declared with `ColumnField` (on a `BaseModel`) or
+    `Annotated[T, <ColumnType>]` is used;
+  - a `Decimal`, plain `Enum` or `Literal` field without a declared column
+    type is refused when the partition is built, with core's message, instead
+    of being written as `Numeric()` (a `Decimal`) or as JSON. Declare it, e.g.
+    `Annotated[Decimal, Numeric(precision=12, scale=2)]`, or
+    `Annotated[Decimal, Numeric()]` for an unbounded `NUMERIC`.
+- **streaming:** `IntoTable` with `Backend.CLICKHOUSE` hands a `date` field to
+  clickhouse-connect as a `date`, as core keeps it for a column, instead of as
+  its ISO-8601 text. clickhouse-connect writes a `Date` column only from a
+  `date` and refused the text ("unsupported operand type(s) for -: 'str' and
+  'datetime.date'"); a `String` column now refuses the `date` ("object of type
+  'datetime.date' has no len()"). A `dict` value is written as compact JSON
+  text from `msgspec.json`, keys still sorted (`{"a":1}`, was `{"a": 1}`).
 
 ## 🐛 Fixes
 
 ### core
+
+- **core:** `RepositoryDynamoDB` reads, updates and deletes by a `UUID`
+  primary key. `get_by_id`, `get_by`, `exists_by`, `update` and `delete`
+  handed the raw key to boto3's `TypeSerializer`, which raised
+  `TypeError: Unsupported type "<class 'uuid.UUID'>"`; `create` already stored
+  the key as a string through `msgspec.to_builtins`. The key is now encoded
+  with that same conversion, so it matches its stored form and round-trips.
+  `update` keeps the key as stored instead of rewriting it from the argument.
+  Attribute values are encoded as before.
+- **cache:** security: the repository cache keeps each caller's entries apart.
+  The entity key (`get_by_id`, and the rows behind a cached page), the
+  `list_paginated` index key, the `list_with_query` key and the key of a
+  `@cache_query` read (`scope="entity"` and `scope="list"`) now carry the
+  caller's cache scope, so a row, a page of ids, a first page with its next
+  cursor or a custom read's result cached for one caller is no longer served
+  to another that row-level security hides it from. The scope comes from the
+  new, provisional `SupportsCacheScope.cache_scope()` (`""` for a repository
+  without it): `RepositorySQLAlchemy` builds it from every setting the
+  session-settings provider returns, so a policy reading a product setting
+  such as `app.tenant_id` is kept apart too, while cursor tokens stay bound to
+  the `loom.scope.*` settings only. Inside a caller-owned transaction (the
+  unit of work a use case runs in, or a `@transactional` scope) every cached
+  read goes straight to the repository, with no lookup and no store, and so
+  does a call to a `@cache_query` method whose `session` parameter, passed by
+  position or by name, is not `None`. This holds where the backend reports
+  such a transaction, SQLAlchemy and Mongo with transactions; DynamoDB and
+  Mongo with `transactions: false` keep caching, and a read-only use case run
+  outside another unit of work opens none and keeps using the cache. Writes
+  still evict every scope's entries: the scope is not part of the dependency
+  tags, and a write bumps the same generation counters whatever its scope. The
+  scope is read once per cache operation and read again before its writes,
+  which are skipped if it changed. `CachedRepository` implements
+  `cache_scope()` and `has_caller_scoped_session()` by forwarding the wrapped
+  repository's, so a wrapper around it keys by the same scope and stays out of
+  the same transactions, and refuses at construction, with a `RuntimeError`, a
+  repository whose `session_manager` has session settings but which does not
+  implement `cache_scope()`. The list filter, query and `@cache_query`
+  arguments fingerprints in cache keys are now the full SHA-256 instead of its
+  first 64 bits. `entity_key` and `list_index_key` take a required
+  keyword-only `scope`, and the new `query_index_key` and `custom_query_key`
+  build the `list_with_query` and `@cache_query` keys. Existing entity, list,
+  query and `@cache_query` entries are no longer read after the upgrade and
+  expire by their TTL.
+- **core:** one environment selector and deploy checks (ADR 0005). loom had
+  two unconnected notions of environment (the logger's `dev`/`prod`, where an
+  unknown value meant `dev`, and `FlowCtx.environment`) and nothing checked a
+  deployed configuration. `loom.core.environment` now holds
+  `Environment` (`production`, `staging`, `development`, `test`) and
+  `resolve_environment`: the explicit argument, else `LOOM_ENV`, else
+  `production`; an unknown or empty value raises `ConfigError`. REST
+  `create_app`, Celery `create_app` and `bootstrap_worker` take
+  `environment=` and `config_dir=`, which loads `base.yaml` then
+  `<environment>.yaml` when present; explicit file lists keep working, one
+  form or the other. `create_kernel(environment=...)` registers the
+  environment in the container, so a use case can inject `Environment`.
+  `loom.core.checks` adds deploy checks with stable ids
+  (`@deploy_check("<area>.<E|W><nnn>")`), run at startup in production and
+  staging: `E` fails startup with `DeployCheckError`, `W` logs a warning, and
+  `checks.silenced: [ids]` silences by id with a startup warning naming them.
+  Initial checks: `loom.rest.E001` (neither a literal `app.rest.auth.jwt`
+  mapping nor the literal `app.rest.auth.custom: true`), `loom.rest.W001` (docs, redoc or OpenAPI
+  URL not `null`), `loom.logger.W001` (`console` renderer); they read keys as
+  written (`ConfigContext.raw`) and resolve no placeholder. Processes serving
+  no HTTP skip the `loom.rest` checks. `loom check --deploy [--env X]
+  [--skip AREA] <config>` runs them in CI without starting the application
+  and prints the areas it skipped.
+- **core:** one place tells every loom process its environment and
+  configuration (ADR 0005). `LOOM__SECTION__KEY` variables override any
+  configuration key as the last layer (code defaults < `base.yaml` <
+  `<LOOM_ENV>.yaml` < `LOOM__*`, allowlisted keys only in production and
+  staging), merged as an OmegaConf dotlist; levels
+  match declared keys case-insensitively, a first level naming no known
+  section is a `ConfigError` naming the variable, values are parsed literals
+  (no `${` anywhere in them), an override sets one leaf, and one WARNING
+  line names the overridden keys without their values.
+  `loom.core.config.overrides.load_application_config` is the one loader
+  behind REST and Celery `create_app`, `bootstrap_worker`,
+  `loom check --deploy`, `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`,
+  the migration locator and `load_kafka_settings`; a per-flow Prefect YAML is
+  a flow definition and is read without them. Deploy checks see the final configuration. `ETLRunner`,
+  `StreamingRunner` and the migration locator accept a config directory as
+  the factories do. They take `environment=`, take their logger defaults from
+  it and run the deploy checks when deployed, like the Prefect flows through
+  them; a Prefect run's `env` only confirms the worker's environment.
+  Only `loom.core.environment` names, reads or sets `LOOM_*` variables.
+  `checks.modules` lists the modules registering an
+  application's own checks, imported before every run, at startup and in
+  `loom check --deploy` (which puts `app.code_path` on the import path as
+  `create_app` does). `app.rest.auth.custom: true` declares an authenticator
+  passed in code, so `loom.rest.E001` reads the same answer in CI and at
+  startup. `parse_environment` validates a value naming an environment.
+- **core:** the SQLAlchemy query compiler converts a filter value, and each
+  `in` item, as the repository converts a value it writes
+  (`loom.core.model.convert.to_column_value`, now shared by
+  both): an `Enum` member is bound as its value, a JSON column's value is
+  reduced to builtins. A plain `Enum` member as the value of a filter on a
+  string column failed to bind.
+- **core:** pagination cursors are signed and decoded strictly (ADR 0004).
+  A cursor token was base64url JSON with no integrity, and a datetime key
+  decoded without a time zone, so a client could forge a position and a
+  consumer comparing it with aware datetimes raised `TypeError` (a 500). A
+  token is now `base64url(payload).base64url(tag)`, the tag an HMAC-SHA256
+  over a domain-separated input bound to the model, the normalised filters,
+  the sort and the caller's scope, verified with `hmac.compare_digest` before
+  the payload is parsed. A malformed, unsigned, forged or rebound token, a
+  key signed by an unknown key id, a datetime key without a time zone, a key
+  of an unknown type, the wrong number of keys or the wrong backend is
+  `UnsupportedQuery` (`400 unsupported_query`), and the message never echoes
+  the token. A naive datetime key, such as a `DateTime(tz=False)` column, is
+  issued as UTC with an explicit offset and compared as naive UTC against
+  that column, on SQLite and Postgres alike.
 
 - **core:** a `BoundaryValidationError` no longer echoes the rejected value
   (#347). msgspec's `Invalid enum value 'x'` (an `Enum`, `IntEnum` or `Literal`
@@ -724,8 +1484,9 @@
   column only. The cursor now orders and compares on
   every key column after the sort keys and carries every key value in the
   token; offset pages and `list_paginated` order by every key column too.
-  Tokens of single-column keys are unchanged. A cached repository over such a
-  model keyed its entries by the first key column too, so a warm
+  That fix leaves tokens of single-column keys as they were. A cached
+  repository over such a model keyed its entries by the first key column
+  too, so a warm
   `list_paginated` or first cursor page served the rows sharing a first key
   value as copies of one of them; it now caches and reloads every row by its
   full key, one `get_by_id` per missing row.
@@ -760,6 +1521,12 @@
   evaluated `__annotations__` and no `__annotate__` function.
 
 ### etl
+
+- **etl:** the error for a missing destination table names only advice that
+  works under the policy in force. Under `missing_table_policy='error'` it
+  used to suggest `SchemaMode.OVERWRITE`, which that policy ignores; it now
+  suggests `missing_table_policy='create'`, `'schema_mode'` with
+  `SchemaMode.OVERWRITE`, or creating the table first.
 
 - **etl:** `replace(allow_empty=False)` on Spark writes the rows it checked.
   The writer ran `DataFrame.isEmpty()` and then let the write compute the
@@ -882,6 +1649,29 @@
 
 ### rest
 
+- **rest:** `?sort=` accepted any column. A cursor page put the sort
+  column's raw value of its last row in `nextCursor` (base64 JSON), so any
+  column, a secret one included, could be read through it, and a forged
+  cursor could range-probe it. Offset pages leaked its order, and an unknown
+  column answered `400 unsupported_query` (`Unknown filter field path`) while
+  a known one answered `200`, so the model's columns could be enumerated. A
+  route now sorts only by its declared `sortable` columns and its primary
+  key, so a cursor carries only those values.
+- **rest:** a `page` whose offset, `(page - 1) * limit`, exceeds the largest
+  signed 64-bit integer answers `400 query_validation` on `page` before any
+  query runs.
+- **rest:** a `QuerySpec` filter value was typed by its spelling: `true` and
+  `false` became booleans, text with a `.` a float and digits an integer,
+  whatever the filtered field declared. `?code=0123` on a `str` field compared
+  against `123`, and on Postgres a number bound to a text column answered
+  `500`. Values of `eq`, `ne`, `gt`, `gte`, `lt`, `lte` and each item of `in`
+  are now converted by the type of the declared filterable field, with the
+  strict grammar of `Query()`: a `str` field keeps the text as sent, a
+  boolean accepts only `true` or `false`, an `Enum` or `Literal` only its
+  values, and a value its field's type refuses answers `400 query_validation`
+  with `violations` naming the field. The field's constraints
+  (`msgspec.Meta`) do not apply to a filter value, so `rank__gt=0` is valid
+  on a column declared `ge=1`. `like` and `ilike` keep their pattern as text.
 - **rest:** the OpenAPI `limit` parameter of a `QuerySpec` route published
   `maximum: 1000` and `default: 50` whatever `RestApiDefaults.max_limit` said,
   while the router clamped `?limit=` to `max_limit`. The schema now publishes
@@ -908,6 +1698,154 @@
   and cause are logged at `WARNING`, never sent. `ErrorCode` gains
   `SERVICE_UNAVAILABLE`, which `HttpErrorMapper` maps to `503`. Any other
   exception from the authenticator, and the `401` refusal, are unchanged.
+- **rest:** the OpenAPI document of a route whose request or response holds a
+  tagged union published `discriminator.mapping` values as `#/$defs/<Name>`,
+  which the document does not contain, while each `$ref` already pointed at
+  `#/components/schemas/<Name>`, so code generators and OpenAPI validators
+  could not resolve them. Mapping values now follow the same rewrite as
+  `$ref` wherever they occur, for msgspec tagged structs and pydantic
+  discriminated unions alike, an optional (`X | Y | None`) union included.
+
+### streaming
+
+- **streaming:** `SINK_CANNOT_TRACK_COMMITS` and
+  `INLINE_SINK_CANNOT_SKIP_COMMITS` point their `field` at the `delivery` of
+  the consumer the source was bound through, `kafka.consumer.delivery` or
+  `kafka.consumers.<ref>.delivery`, instead of `streaming.delivery`, which no
+  config reads.
+- **streaming:** `ForEach` accepts the batch a `BatchStep` produces, so
+  `CollectBatch → BatchStep → ForEach → IntoTopic` compiles; it failed with
+  `shape mismatch: expected many but got batch before ForEach`. Under
+  at-least-once delivery each offset completes once, after its write is
+  flushed.
+- **streaming:** a batch reaching a node that takes records fails compilation
+  with `SHAPE_MISMATCH`: `IntoTopic`, `IntoTable` (any `IntoSink`), `Fork`,
+  `ExpandRoutes`, `CollectBatch` (it groups records), the flow `output`
+  (component `flow.output`, field `output`)
+  and a Broadcast route `output` (component `broadcast branch <n> > output`,
+  field `output`). Such flows used to compile. `CollectBatch → BatchStep →
+  IntoTopic` raised `'list' object has no attribute 'meta'` at runtime. Put a
+  `ForEach` before the node. `Drain` and `Broadcast` are under Behaviour
+  changes.
+- **streaming:** a `BatchExpandStep` subclass outputs records to the shape
+  check. The compiler matched step output shapes by exact type, so every step
+  subclass kept the incoming shape and a record step after a
+  `BatchExpandStep` failed with `expected record but got batch`. The shape
+  check reads a step's `input_shape` and `output_shape` from its class,
+  except in a Router branch: there a `BatchStep` runs one record at a time,
+  on a one-message batch, so it is record to record.
+- **streaming:** a `Broadcast` is validated as a `Broadcast`. The compiler
+  treated it as a plain terminal, so the nodes of its branches were never
+  shape-checked. A branch with a shape mismatch, such as a record step after
+  `CollectBatch`, now fails compilation with `SHAPE_MISMATCH` scoped under
+  `broadcast branch <n>`; such flows used to compile. The code a misplaced
+  `Broadcast` reports is under Behaviour changes.
+- **streaming:** a bare `ErrorEnvelope` among the `payloads` of
+  `FromMultiTypeTopic` is refused with `ERROR_ENVELOPE_UNPARAMETERIZED`. The
+  check only matched `ErrorEnvelope[X]`, which always has a parameter, so the
+  bare class compiled as a plain payload and its messages never reached the
+  error dispatch. Declare `ErrorEnvelope[OrderEvent]` instead; such flows used
+  to compile.
+- **streaming:** an `ExpandRoutes` is validated. Its routes were never
+  shape-checked and nothing stopped a node from following it, although the
+  node is terminal and hands the expanded payloads, not rows, to whatever
+  follows. Each route is now checked on the record stream it receives, with
+  issues scoped under `expand_routes branch <type>`, and a node after an
+  `ExpandRoutes` fails with `TERMINAL_NOT_LAST`; such flows used to compile.
+- **streaming:** under at-least-once delivery each source offset completes
+  once per fork share, and not before the writes on its path are flushed.
+  These shapes broke it:
+  - an inline `IntoTopic` in `With(process=...)` or `WithAsync(process=...)`
+    followed by a flow `output` completed the offset at the inline write,
+    before the output write, and again at the output;
+  - an `ExpandRoutes` route ending in a scope completed at a drop sink wired
+    beside the route's process, which does not wait for the inline write, and
+    again at the inline write;
+  - an `IntoTopic` ending an `ExpandRoutes` route, or a Broadcast route
+    without `output`, completed at its sink and again at a drop sink;
+  - a Router branch terminal, and a Router's unmatched messages with nothing
+    after them, never completed;
+  - a storage sink (`IntoTable`, any `IntoSink`) never completed;
+  - an undecodable record with no `WIRE` error route never completed;
+  - a batch diverted to a DLQ topic completed before the DLQ records were
+    flushed.
+
+  A Router keeps the source order of the messages that continue after it, and
+  an inline write no longer completes an offset: the message completes where
+  its path ends. A storage sink completes the offsets of the events its flush
+  wrote, so events still buffered when a worker dies are consumed again.
+- **streaming:** a sync `With(process=...)` runs on a record stream. It
+  accepted only batches and raised `TypeError` for every message.
+- **streaming:** a Kafka sink batch diverted to its DLQ topic commits its
+  offsets only once the DLQ topic received every record. The diversion sent
+  each record without flushing, logged and swallowed per-record failures, and
+  committed anyway, so a batch the DLQ topic never received was lost. The
+  producer is now flushed after the diversion, and a failed DLQ send or flush
+  raises `KafkaDeliveryError` naming the DLQ topic, with the failure the DLQ
+  step observed as its cause. The batch is not committed and is handled like a failed batch on a
+  sink without a DLQ topic: the run fails and, on restart, the batch is
+  consumed again from the recovery snapshot or, without one, from the last
+  committed offset; inside `With` or `WithAsync` the message becomes an error
+  envelope.
+- **streaming:** a `Router` branch that ends its path in `IntoTopic`,
+  `IntoSink` or `Drain` no longer takes part in the branch shape check, and a
+  `Router` reports the shape of the messages that continue after it: the
+  output of the branches that do not end their path and, without a default
+  branch, the unmatched input. A `Router` with an `IntoTopic` branch and a
+  `Drain` default failed with `ROUTER_BRANCH_SHAPE_DIVERGENCE`, and a step
+  after a `Router` without a default whose branches all end their path failed
+  with `SHAPE_MISMATCH`; both compile now.
+- **streaming:** a `BatchExpandStep` expands. Every output had to pair with
+  one input message, so a step returning more or fewer outputs than its batch
+  raised and each message of the batch became an error envelope. Under
+  at-least-once delivery each source offset now completes once per output,
+  after that output's write, and a message with no output completes its
+  offset at the step, also when the batch holds several messages of one
+  offset that an earlier expanding node produced. The new return type is under
+  Behaviour changes.
+- **streaming:** `IntoTable` with `Backend.SQLALCHEMY` binds a `bytes` field as
+  `LargeBinary` (`bytea` on Postgres). It bound it as text, which Postgres
+  refused for a `bytea` column ("column is of type bytea but expression is of
+  type character varying"). IntoTable now takes each column's type from core's
+  model introspection (`loom.core.backend.sqlalchemy.sa_table_for`), the type
+  a compiled model declares, and builds each row with core's new
+  `loom.core.repository.sqlalchemy.values.to_column_row`, which converts and
+  checks values as the repository does when it writes them: a plain `Enum` as
+  its value, a struct in a JSON column as a dict, an `UNSET` value left out so
+  the column's database default applies, also when other rows of the batch
+  set it, and a `time` whose UTC offset its column cannot take refused with
+  `BoundaryValidationError` (`boundary_validation`) instead of being written
+  without the offset. Relation and projection fields are no longer columns
+  for any backend: the SQLAlchemy and Delta rows included them and failed on
+  their `UNSET` value, and the ClickHouse insert named them. A `date` or
+  `time` field is bound as `Date` or `Time`, as core infers it, so it is
+  written into a Postgres `date` or `time` column; it was bound as `String`
+  and Postgres refused it ("column is of type date but expression is of type
+  character varying").
+- **streaming:** `IntoTable` with `Backend.DELTA` or `Backend.CLICKHOUSE`
+  refuses an `UNSET` column value when the item is written, with
+  `BoundaryValidationError` (`boundary_validation`) naming the field and the
+  table. Delta failed later, at a mini-batch or flush, with pyarrow's
+  `ArrowInvalid`, and ClickHouse passed the `UNSET` object to
+  clickhouse-connect's `insert`. Neither can leave a column out for one row as
+  `Backend.SQLALCHEMY` does.
+- **streaming:** `IntoTable` with `Backend.DELTA` or `Backend.CLICKHOUSE`
+  converts each column value as `Backend.SQLALCHEMY` and core's repository
+  do, with `loom.core.model.convert.to_column_value`: a plain `Enum` becomes
+  its value and a nested `msgspec.Struct` or `LoomStruct` a dict, also inside a
+  list or a dict, while `bytes`, `datetime`, `date`, `time`, `Decimal` and
+  `UUID` are kept. Delta refused an `Enum` or a struct with pyarrow's
+  `ArrowInvalid` ("did not recognize Python value type when inferring an
+  Arrow data type"); a nested struct is now a Delta struct column, as a `dict`
+  field already was, and keeps its `datetime` and `Decimal` types.
+  clickhouse-connect refused an `Enum` or a struct ("object of type ... has no
+  len()") and `json.dumps` a `dict` holding a `Decimal` or `datetime` ("Object
+  of type Decimal is not JSON serializable"); an `Enum` is now inserted as its
+  value and a struct or `dict` as JSON text from `msgspec.json`, a `datetime`
+  inside it as ISO-8601 text and a `Decimal` as decimal text.
+  `to_column_value` moved to `loom.core.model.convert` (under Behaviour
+  changes), so the Delta and ClickHouse writers use it without SQLAlchemy
+  installed.
 
 ### prefect
 

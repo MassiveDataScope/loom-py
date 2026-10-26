@@ -12,6 +12,8 @@ import pytest
 from omegaconf import OmegaConf
 
 from loom.core.engine.plan import ExecutionPlan
+from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
+from loom.core.logger import configure_logging
 from loom.testing.golden import GoldenHarness, _serialize_result, serialize_plan
 
 _GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -153,7 +155,20 @@ def assert_output_snapshot(update_golden: bool) -> Any:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _configure_loom_logging() -> None:
+def _test_environment() -> Iterator[None]:
+    """Run the whole suite in the ``test`` environment, as ``LOOM_ENV=test`` would.
+
+    Without it every application the suite builds would start as production,
+    loom's default, and run the deploy checks. A test about the production
+    path names the environment itself, or removes the variable.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(ENVIRONMENT_VARIABLE, Environment.TEST.value)
+        yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _configure_loom_logging(_test_environment: None) -> None:
     """Configure logging once per session, as an application does at startup.
 
     Without this the suite ran against structlog's *unconfigured* default,
@@ -171,6 +186,4 @@ def _configure_loom_logging() -> None:
     never touches that frozen stream — and makes the suite exercise the same
     logging path production does.
     """
-    from loom.core.logger import configure_logging
-
     configure_logging()

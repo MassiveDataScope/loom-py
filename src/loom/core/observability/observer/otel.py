@@ -22,6 +22,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Tracer
 
 from loom.core.config.observability import OtelConfig
+from loom.core.model.redaction import reveal_for_driver
 from loom.core.observability.protocol import SpanFlusher
 
 if TYPE_CHECKING:  # SDK types are extras-only: never import them at runtime here.
@@ -126,7 +127,7 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
         ImportError: If ``opentelemetry-sdk`` is not installed.
     """
     config.validate()
-    if not config.endpoint.strip():
+    if config.endpoint is None:
         return _host_tracer(config), None
 
     exporter = _build_exporter(config)
@@ -147,7 +148,9 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
         id_generator=LoomMessageIdGenerator(),
         sampler=build_sampler(config),
     )
-    provider.add_span_processor(BatchSpanProcessor(exporter, **config.span_processor_kwargs))
+    provider.add_span_processor(
+        BatchSpanProcessor(exporter, **reveal_for_driver(config.span_processor_kwargs))
+    )
     # After the generator is in place: ``get_tracer`` snapshots it, so a tracer
     # taken before this point would silently keep random trace ids.
     tracer = provider.get_tracer(config.tracer_name, config.tracer_version or None)
@@ -186,9 +189,13 @@ def _host_tracer(config: OtelConfig) -> Tracer:
 
 
 def _build_exporter(config: OtelConfig) -> Any:
-    kwargs: dict[str, Any] = {"endpoint": config.endpoint, **config.exporter_kwargs}
+    endpoint = "" if config.endpoint is None else config.endpoint.reveal()
+    kwargs: dict[str, Any] = {
+        "endpoint": endpoint,
+        **reveal_for_driver(config.exporter_kwargs),
+    }
     if config.headers:
-        kwargs["headers"] = dict(config.headers)
+        kwargs["headers"] = reveal_for_driver(config.headers)
     exporter_cls = _load_span_exporter_cls(config.protocol)
     if config.protocol == "grpc":
         kwargs["insecure"] = config.insecure
@@ -277,12 +284,12 @@ def install_otel_log_export(
 
 
 def _build_log_exporter(config: OtelConfig) -> LogRecordExporter:
-    kwargs: dict[str, Any] = {**config.exporter_kwargs}
+    kwargs: dict[str, Any] = {**reveal_for_driver(config.exporter_kwargs)}
     endpoint = _resolve_log_endpoint(config)
     if endpoint is not None:
         kwargs["endpoint"] = endpoint
     if config.headers:
-        kwargs["headers"] = dict(config.headers)
+        kwargs["headers"] = reveal_for_driver(config.headers)
 
     protocol = _resolve_log_protocol(config)
     exporter_cls = _load_log_exporter_cls(protocol)
@@ -296,7 +303,8 @@ def _resolve_log_endpoint(config: OtelConfig) -> str | None:
     if env_endpoint:
         return env_endpoint
 
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", config.endpoint).strip()
+    configured = "" if config.endpoint is None else config.endpoint.reveal()
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", configured).strip()
     if not endpoint:
         return None
     if endpoint.endswith("/v1/traces"):

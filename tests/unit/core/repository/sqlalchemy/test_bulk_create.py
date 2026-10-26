@@ -9,6 +9,7 @@ from sqlalchemy import event
 
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, ServerDefault
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -51,7 +52,9 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
 
 @pytest.fixture
 def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Item, int]:
-    return RepositorySQLAlchemy(session_manager=session_manager, model=_Item)
+    return RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Item, cursor_codec=CursorCodec(signing="ephemeral")
+    )
 
 
 @pytest.fixture

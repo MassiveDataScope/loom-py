@@ -351,7 +351,8 @@ target = IntoHistory(
 | `valid_from` | `"valid_from"` | Period-start boundary column |
 | `valid_to` | `"valid_to"` | Period-end boundary column (`NULL` = open) |
 | `deleted_at` | `"deleted_at"` | Soft-delete audit column (only written when `delete_policy="soft_delete"`) |
-| `delete_policy` | `"close"` | `"ignore"` / `"close"` / `"soft_delete"` |
+| `delete_policy` | `"close"` | `"ignore"` / `"close"` / `"soft_delete"` (SNAPSHOT mode only) |
+| `delete_marker` | `None` | LOG mode only: boolean column flagging tombstone events; never written to the table |
 | `partition_scope` | `None` | Partition columns for read/write pruning |
 | `allow_temporal_rerun` | `False` | Allow backfills with past `effective_date` |
 
@@ -420,6 +421,62 @@ target = IntoHistory(
 
 The first event is automatically closed by the second one. The last event
 remains open.
+
+### Deletions in LOG mode
+
+`delete_policy` does not apply to LOG mode. To record that an entity was
+deleted, name a boolean column of the event frame with `delete_marker`:
+
+```python
+target = IntoHistory(
+    "wh.dim_subscriptions",
+    keys=("subscription_id",),
+    track=("plan",),
+    effective_date="event_date",
+    mode="log",
+    delete_marker="is_deleted",
+)
+```
+
+**Incoming event log**
+
+| subscription_id | plan | event_date | is_deleted |
+|---|---|---|---|
+| 1 | basic | 2024-01-01 | false |
+| 1 | `NULL` | 2024-03-01 | true |
+
+**Result after historify**
+
+| subscription_id | plan | valid_from | valid_to |
+|---|---|---|---|
+| 1 | basic | 2024-01-01 | 2024-02-29 |
+
+A tombstone (`is_deleted = true`) closes the vector open before it one period
+earlier (one day, or one microsecond with `date_type="timestamp"`) and opens
+none, so the entity has no open row. The next regular event reopens it.
+Consecutive tombstones collapse to the first one, and a tombstone for an entity
+without an open vector writes nothing.
+
+- Every incoming frame must carry the marker as a boolean column; a missing or
+  non-boolean marker raises `HistorifyDeleteMarkerError`. `false` and `NULL`
+  mark regular events, and the column is never written to the table.
+- `track` values on tombstone rows are ignored.
+- A tombstone and a regular event for the same `(keys, effective_date)` raise
+  `HistorifyKeyConflictError`.
+- A tombstone at a stored vector's `valid_from` replaces that vector (incoming
+  wins), and the previous vector closes one period before it. That row is
+  removed, so downstream copies of the table must be synced by full or
+  partition replace, not by a keyed upsert on `(keys, valid_from)`.
+- With `partition_scope`, tombstone rows must carry the entity's partition
+  values, like any other event.
+
+**Gaps are deletions.** LOG history has no gaps except those left by
+tombstones, so with `delete_marker` set every gap in the stored history is read
+as a deletion and kept when the entity is rebuilt: replaying an event dated
+before a closure does not reopen the entity. Gaps from other origins — manual
+repairs, former SNAPSHOT loads — are read as deletions too. Once enabled,
+`delete_marker` must stay set: removing it merges stored closures back into
+open history.
 
 ### Custom boundary column names
 
@@ -996,9 +1053,18 @@ from loom.prefect.deploy import discover_and_deploy_etls
 deployment_ids = discover_and_deploy_etls(
     config="config/etls/*.yaml",
     work_pool="loom-fargate",   # default; "loom-docker" for local dev
-    env="prod",                 # picks environments.<env> from each declaration
+    env="production",           # picks environments.<env>; default: LOOM_ENV, else production
 )
 ```
+
+`env` and the keys of `environments` are loom environments: `production`,
+`staging`, `development` or `test`; any other value fails. Each deployment
+records its environment as the flow's `env` parameter. A run takes its
+environment from the worker's `LOOM_ENV` (else production), and `env` only
+confirms it: a run whose `env` differs fails before any step, so set
+`LOOM_ENV` on each worker to the environment of its deployments. The runner
+takes its logger defaults from that environment and, in production and
+staging, runs the [deploy checks](../getting-started/environments.md).
 
 Globs follow the rules of [`includes`](#composing-files-with-includes): only
 regular `.yaml` / `.yml` files match, sorted by resolved path, and a pattern
@@ -1019,7 +1085,7 @@ from loom.prefect import deploy_flow
 
 deployment_id = deploy_flow(
     daily_orders,
-    env="prod",                 # required, keyword only
+    env="production",           # keyword only; default: LOOM_ENV, else production
     work_pool="loom-fargate",   # used when the YAML sets no work_pool for env
 )
 ```
@@ -1064,7 +1130,7 @@ params:
   run_date: ${today-1d}
 tags: [orders, daily]
 environments:
-  prod:
+  production:
     work_pool: loom-fargate
     job_variables:
       cpu: 1024

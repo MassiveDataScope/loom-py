@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import Executor
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +48,7 @@ class DynamoDBDefaultRepositoryBuilder:
 
     dynamo_client: Any
     table_name: str
+    executor: Executor | None = None
 
     def __call__(self, context: RepositoryBuildContext) -> Any:
         if not issubclass(context.model, BaseModel):
@@ -58,6 +60,7 @@ class DynamoDBDefaultRepositoryBuilder:
             client=self.dynamo_client,
             table_name=self.table_name,
             model=context.model,
+            executor=self.executor,
         )
 
 
@@ -67,6 +70,7 @@ def build_dynamodb_repository_registration_module(
     models: Sequence[type[BaseModel]],
     *,
     logical_models: Sequence[type[Any]] = (),
+    executor: Executor | None = None,
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers DynamoDB repositories and capability bindings.
 
@@ -85,6 +89,8 @@ def build_dynamodb_repository_registration_module(
         table_name: Name of the DynamoDB table backing every model.
         models: Persistible models to register repositories for.
         logical_models: Extra models with explicit ``repository_for`` registrations.
+        executor: Threads the repositories run their blocking client calls on;
+            ``None`` uses the event loop's default executor.
     """
 
     def _registered_builder(
@@ -104,6 +110,7 @@ def build_dynamodb_repository_registration_module(
                 client=dynamo_client,
                 table_name=table_name,
                 model=context.model,
+                executor=executor,
             )
         return repository_type()
 
@@ -121,6 +128,7 @@ def build_dynamodb_repository_registration_module(
                 DynamoDBDefaultRepositoryBuilder(
                     dynamo_client=dynamo_client,
                     table_name=table_name,
+                    executor=executor,
                 ),
             )
         register(container)

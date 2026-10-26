@@ -25,11 +25,7 @@ from starlette.middleware import Middleware
 from loom.ai.a2a.card import build_agent_card, card_path
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AgentEndpointConfig, AiConfig
-from loom.ai.errors import (
-    AgentCompilationError,
-    auth_exclusion_overlaps_agents,
-    state_surface_unsupported,
-)
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.fastapi.response import ENCODER
 from loom.ai.runtime import AgentRuntime
 from loom.core.config.errors import ConfigError
@@ -98,7 +94,9 @@ def published_agents(
             )
             continue
         if plan.state is not None:
-            raise AgentCompilationError([state_surface_unsupported(name, "a2a")])
+            raise AgentCompilationError(
+                [AgentErrorCode.STATE_SURFACE_UNSUPPORTED.issue(component=name, surface="a2a")]
+            )
         card = ENCODER.encode(build_agent_card(plan, a2a, mechanism=mechanism, prefix=prefix))
         published.append(
             PublishedAgent(
@@ -180,7 +178,9 @@ def verify_exclusions(
         and any(path == root or path.startswith(f"{root}/") for root in guarded)
     ]
     if offending:
-        raise AgentCompilationError([auth_exclusion_overlaps_agents(offending)])
+        raise AgentCompilationError(
+            [AgentErrorCode.AUTH_EXCLUSION_OVERLAPS_AGENTS.issue(paths=offending)]
+        )
 
 
 def _is_auth_middleware(entry: Middleware) -> bool:

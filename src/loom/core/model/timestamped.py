@@ -43,10 +43,8 @@ class TimestampedModel(BaseModel):
 
     created_at: datetime | None = ColumnField(
         server_default=ServerDefault.NOW,
-        nullable=True,
     )
     updated_at: datetime | None = ColumnField(
         server_default=ServerDefault.NOW,
         server_onupdate=ServerOnUpdate.NOW,
-        nullable=True,
     )

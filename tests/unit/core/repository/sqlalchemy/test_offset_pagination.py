@@ -7,7 +7,7 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import FilterParams, PageParams, QuerySpec, SortSpec
+from loom.core.repository.abc import CursorCodec, FilterParams, PageParams, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -49,7 +49,9 @@ async def session_manager() -> AsyncIterator[SessionManager]:
 @pytest.fixture
 async def repository(session_manager: SessionManager) -> RepositorySQLAlchemy[_Row, int]:
     repo: RepositorySQLAlchemy[_Row, int] = RepositorySQLAlchemy(
-        session_manager=session_manager, model=_Row
+        session_manager=session_manager,
+        model=_Row,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
     await repo.create_many([_CreateRow(rank=rank) for rank in _RANKS])
     return repo
@@ -73,7 +75,14 @@ class TestOffsetOrdering:
         sa_model = get_compiled(_Row)
         assert sa_model is not None
         compiler = QuerySpecCompiler(
-            sa_model, sa_model.id, frozenset(), backend="sqlalchemy", model_name="_Row"
+            sa_model,
+            sa_model.id,
+            frozenset(),
+            backend="sqlalchemy",
+            model=_Row,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+            scope="",
+            columns={},
         )
 
         sql = str(compiler.compile_offset(QuerySpec(sort=(SortSpec("rank", "DESC"),), limit=2)))

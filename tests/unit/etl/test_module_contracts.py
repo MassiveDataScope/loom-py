@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -114,7 +113,8 @@ def test_reload_sql_and_compiler_definition_modules_with_basic_usage() -> None:
     class _Step:
         __qualname__ = "ReloadStep"
 
-    err = compiler_errors.ETLCompilationError.missing_target(_Step)
+    issue = compiler_errors.ETLErrorCode.MISSING_TARGET.issue(component=_Step)
+    err = compiler_errors.ETLCompilationError.from_issue(issue)
     assert err.code is compiler_errors.ETLErrorCode.MISSING_TARGET
     assert "ReloadStep" in str(err)
     assert "TargetSpec" in target_variants.__all__
@@ -162,49 +162,15 @@ def test_reload_sql_and_compiler_definition_modules_with_basic_usage() -> None:
     assert callable(predicate_utils.predicate_to_sql)
 
 
-def test_invalid_stage_error_is_one_class_across_its_import_paths() -> None:
+def test_invalid_stage_error_is_exported_only_by_loom_etl_and_the_compiler() -> None:
     import loom.etl
     import loom.etl.compiler
     import loom.etl.runner
-    import loom.etl.runner.errors
 
-    assert loom.etl.runner.InvalidStageError is loom.etl.compiler.InvalidStageError
-    assert loom.etl.runner.errors.InvalidStageError is loom.etl.compiler.InvalidStageError
+    assert loom.etl.runner.__all__ == ["ETLRunner"]
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("loom.etl.runner.errors")
     assert loom.etl.InvalidStageError is loom.etl.compiler.InvalidStageError
-
-
-@pytest.mark.parametrize(
-    ("name", "replacement"),
-    [
-        ("_filter_plan", "loom.etl.compiler.filter_plan"),
-        ("_filter_process", "loom.etl.compiler.filter_plan"),
-        ("_collect_all_names", "loom.etl.compiler.iter_processes"),
-        ("_map_pipeline_nodes", "loom.etl.compiler.filter_plan"),
-        ("_map_process_nodes", "loom.etl.compiler.filter_plan"),
-    ],
-)
-def test_runner_filtering_names_warn_with_their_replacement(name: str, replacement: str) -> None:
-    import loom.etl.runner.filtering
-
-    with pytest.warns(DeprecationWarning, match=rf"{name} .*loom 3\.0.*{re.escape(replacement)}"):
-        assert callable(getattr(loom.etl.runner.filtering, name))
-
-
-def test_runner_filtering_rejects_unknown_names() -> None:
-    import loom.etl.runner.filtering
-
-    with pytest.raises(AttributeError, match="filter_plan"):
-        _ = loom.etl.runner.filtering.filter_plan
-
-
-def test_runner_error_message_lists_the_unknown_names() -> None:
-    from loom.etl.runner.errors import InvalidStageError
-
-    err = InvalidStageError(frozenset({"MissingStep", "MissingProcess"}))
-    text = str(err)
-    assert "Unknown step or process names" in text
-    assert "MissingStep" in text
-    assert "MissingProcess" in text
 
 
 def test_reload_source_and_target_modules_with_real_builder_calls() -> None:

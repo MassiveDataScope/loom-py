@@ -104,6 +104,10 @@ class BatchStep(Step[InT, OutT], ABC):
 
     Subclasses define ``execute(self, messages, **kwargs) -> OutT`` with the
     explicit batch and dependency signature they need.
+
+    ``input_shape`` and ``output_shape`` hold outside a Router branch. Inside
+    one the step runs on a one-message batch of the routed message, so there
+    it is record to record.
     """
 
     router_branch_safe: ClassVar[bool] = True
@@ -130,7 +134,7 @@ class ExpandStep(Step[InT, OutT], ABC):
 
 
 class BatchExpandStep(Step[InT, OutT], ABC):
-    """Streaming step that expands one batch into many output messages.
+    """Streaming step that expands each message of a batch into its own outputs.
 
     Declare the subclass itself in a flow, not an instance. The compiler
     materializes the class during binding resolution.
@@ -138,8 +142,17 @@ class BatchExpandStep(Step[InT, OutT], ABC):
     Pattern:
         Batch fan-out step.
 
-    Subclasses define ``execute(self, messages, **kwargs) -> Iterable[OutT]``
-    with the explicit batch and dependency signature they need.
+    Subclasses define ``execute(self, messages, **kwargs) -> list[list[OutT]]``
+    with the explicit batch and dependency signature they need. The result
+    holds one list per message, in batch order: list ``i`` holds the payloads
+    ``messages[i]`` expands into, and each takes that message's metadata. An
+    empty list filters the message out. The result and each of its lists are
+    iterated once, so generators work.
+
+    These results raise ``TypeError`` and every message of the batch becomes
+    an error envelope: a result whose length differs from the batch, a flat
+    list of payloads, a ``Message`` among the outputs, and a ``str``,
+    ``bytes`` or mapping in place of the result or of one of its lists.
     """
 
     router_branch_safe: ClassVar[bool] = True

@@ -12,7 +12,7 @@ Install the optional extra to get ``prefect`` as a dependency::
 
 Public API
 ----------
-- :class:`FlowCtx` — operational context (correlation_id, run_id, env).
+- :class:`FlowCtx` — operational context (correlation_id, run_id, run options).
 - :func:`etl_flow` — per-ETL flow factory with synthesized signature.
 - :func:`backfill_flow` / :data:`BackfillChunk` — chunked backfill flow
   factory (hour/day/month/year partitions plus a finalize pass).

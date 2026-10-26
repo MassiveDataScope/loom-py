@@ -33,7 +33,7 @@ import logging
 import re
 import types
 import typing
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,7 +47,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Forbidden, LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.identity import Identity, current_identity
-from loom.core.model import BoundaryValidationError, LoomType, loom_type
+from loom.core.model import BoundaryValidationError, LoomType, loom_type, msgspec_type
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc.query import (
@@ -78,6 +78,10 @@ _logger = logging.getLogger(__name__)
 _error_mapper = HttpErrorMapper()
 
 _DEFAULT_PAGE = 1
+# The largest signed 64-bit integer: Postgres takes OFFSET as a bigint and
+# SQLite binds no larger integer, so a page beyond it cannot be queried.
+_MAX_OFFSET = 2**63 - 1
+_PAGE_TOO_FAR_MESSAGE = "Page is beyond the largest offset a query can skip."
 _NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
 _UNSUPPORTED_QUERY_MESSAGE = (
     "The request has a query parameter this route does not accept, or one given twice."
@@ -176,18 +180,82 @@ def _normalize_field_name(value: str) -> str:
     return value
 
 
-def _coerce_scalar(value: str) -> Any:
-    lowered = value.lower()
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    try:
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value
+def _query_validation(exc: BoundaryValidationError) -> BoundaryValidationError:
+    """Re-issue a query-string validation failure under ``query_validation`` (``400``)."""
+    return BoundaryValidationError(exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION)
+
+
+@dataclass(frozen=True, slots=True)
+class _FilterValues:
+    """Refuses filters the route does not allow and types the values of the others.
+
+    ``decoder`` is a struct with one field per column the route declares
+    filterable; ``text_columns`` are those of them annotated ``str``.
+    """
+
+    decoder: LoomType
+    columns: frozenset[str]
+    text_columns: frozenset[str]
+
+    def convert(self, field: str, op: FilterOp, raw: str) -> Any:
+        """Return the filter value of *op* on *field*, typed by the field.
+
+        Raises:
+            LoomError: ``unsupported_query`` when the route does not declare
+                *field* filterable, for ``exists`` and ``not_exists``, and for
+                ``like`` or ``ilike`` on a column that is not text.
+            BoundaryValidationError: ``query_validation`` when a value does
+                not satisfy the field's type.
+        """
+        if field not in self.columns:
+            raise _unsupported_query(f"Filtering on field {field!r} is not allowed by this route.")
+        if op in _RELATION_OPS:
+            raise _unsupported_query(f"Operator {op.value!r} is not supported by this route.")
+        if op in _PATTERN_OPS and field not in self.text_columns:
+            raise _unsupported_query(f"Operator {op.value!r} applies to text fields only.")
+        if op not in _TYPED_OPS:
+            return raw
+        if op is FilterOp.IN:
+            return [self._typed(field, item) for item in raw.split(",") if item != ""]
+        return self._typed(field, raw)
+
+    def _typed(self, field: str, text: str) -> Any:
+        try:
+            return getattr(self.decoder.from_query({field: text}), field)
+        except BoundaryValidationError as exc:
+            raise _query_validation(exc) from exc
+
+
+_RELATION_OPS = frozenset((FilterOp.EXISTS, FilterOp.NOT_EXISTS))
+_PATTERN_OPS = frozenset((FilterOp.LIKE, FilterOp.ILIKE))
+# Operators whose value, or each IN item, is a value of the column's type;
+# LIKE and ILIKE take a text pattern and IS_NULL ignores its value.
+_TYPED_OPS = frozenset(
+    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
+)
+
+
+def _unsupported_query(message: str) -> LoomError:
+    return LoomError(message, code=ErrorCode.UNSUPPORTED_QUERY)
+
+
+def _is_text(annotation: Any) -> bool:
+    union = typing.get_origin(annotation) in (typing.Union, types.UnionType)
+    members = typing.get_args(annotation) if union else (annotation,)
+    absent = (type(None), msgspec.UnsetType)
+    return [member for member in members if member not in absent] == [str]
+
+
+def _filter_values(fields: Sequence[tuple[str, Any]]) -> _FilterValues:
+    """Compile the filter value decoder of a route from its declared ``(column, annotation)``."""
+    struct = msgspec.defstruct(
+        "FilterValues", [(column, annotation, None) for column, annotation in fields]
+    )
+    return _FilterValues(
+        decoder=msgspec_type(struct),
+        columns=frozenset(column for column, _ in fields),
+        text_columns=frozenset(column for column, annotation in fields if _is_text(annotation)),
+    )
 
 
 def _parse_filter_op(op: str) -> FilterOp:
@@ -235,18 +303,28 @@ def _parse_pagination_mode(
         ) from exc
 
 
-def _parse_sort(sort_field: str | None, direction_raw: str) -> tuple[SortSpec, ...]:
+def _parse_sort(
+    sort_field: str | None, direction_raw: str, sortable: Collection[str]
+) -> SortSpec | None:
+    """Read ``sort`` and ``direction``, refusing a column the route does not let clients sort by.
+
+    The refusal is the same whether or not the column exists, so it does not
+    reveal the model's columns.
+    """
     direction = direction_raw.upper()
     if direction not in {"ASC", "DESC"}:
         raise HTTPException(status_code=400, detail="direction must be 'ASC' or 'DESC'.")
-    requested_fields = (sort_field,) if sort_field else ()
-    return tuple(
-        SortSpec(field=_normalize_field_name(field), direction=typing.cast(Any, direction))
-        for field in requested_fields
-    )
+    if not sort_field:
+        return None
+    field = _normalize_field_name(sort_field)
+    if field not in sortable:
+        raise _unsupported_query(f"Sorting on field {sort_field!r} is not allowed by this route.")
+    return SortSpec(field=field, direction=typing.cast(Any, direction))
 
 
-def _parse_filter_specs(query_params: QueryParams) -> list[FilterSpec]:
+def _parse_filter_specs(
+    query_params: QueryParams, filter_values: _FilterValues
+) -> list[FilterSpec]:
     filters: list[FilterSpec] = []
     for key, raw_value in query_params.items():
         if key in _RESERVED_QUERY_KEYS:
@@ -268,11 +346,7 @@ def _parse_filter_specs(query_params: QueryParams) -> list[FilterSpec]:
             raise HTTPException(status_code=400, detail=f"Invalid filter field: {key!r}.")
         field = ".".join(_normalize_field_name(part) for part in field_parts)
 
-        if op == FilterOp.IN:
-            value = [_coerce_scalar(item) for item in raw_value.split(",") if item != ""]
-        else:
-            value = _coerce_scalar(raw_value)
-
+        value = filter_values.convert(field, op, raw_value)
         filters.append(FilterSpec(field=field, op=op, value=value))
     return filters
 
@@ -307,13 +381,24 @@ def _build_query_spec(
     default_pagination_mode: PaginationMode,
     allow_pagination_override: bool,
     max_limit: int,
+    filter_values: _FilterValues,
+    sortable: Collection[str],
 ) -> QuerySpec:
     query_params = request.query_params
     page = _positive_int(query_params, QueryParam.PAGE, _DEFAULT_PAGE)
     # Clamped rather than refused: a caller asking for more rows than the API
     # serves gets the maximum, but never turns one request into a full scan.
     limit = min(_positive_int(query_params, QueryParam.LIMIT, LIMIT_DEFAULT), max_limit)
-    cursor = query_params.get(QueryParam.AFTER) or query_params.get(QueryParam.CURSOR)
+    if (page - 1) * limit > _MAX_OFFSET:
+        raise BoundaryValidationError(
+            _PAGE_TOO_FAR_MESSAGE,
+            ((QueryParam.PAGE, _PAGE_TOO_FAR_MESSAGE),),
+            code=ErrorCode.QUERY_VALIDATION,
+        )
+    # ``after`` wins when both are sent; an empty value is a token too, which
+    # the repository refuses like any invalid one.
+    after = query_params.get(QueryParam.AFTER)
+    cursor = after if after is not None else query_params.get(QueryParam.CURSOR)
     pagination = _parse_pagination_mode(
         query_params.get(QueryParam.PAGINATION),
         cursor,
@@ -323,12 +408,13 @@ def _build_query_spec(
     sort = _parse_sort(
         query_params.get(QueryParam.SORT),
         query_params.get(QueryParam.DIRECTION, "ASC"),
+        sortable,
     )
-    filters = _parse_filter_specs(query_params)
+    filters = _parse_filter_specs(query_params, filter_values)
     filter_group = FilterGroup(filters=tuple(filters)) if filters else None
     return QuerySpec(
         filters=filter_group,
-        sort=sort,
+        sort=() if sort is None else (sort,),
         pagination=pagination,
         limit=limit,
         page=page,
@@ -386,7 +472,7 @@ class _DeclaredQuery:
         """
         keys = [key for key, _ in query_params.multi_items()]
         if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
-            raise LoomError(_UNSUPPORTED_QUERY_MESSAGE, code=ErrorCode.UNSUPPORTED_QUERY)
+            raise _unsupported_query(_UNSUPPORTED_QUERY_MESSAGE)
         profile = query_params.get(QueryParam.PROFILE)
         if profile is not None and profile not in self.profiles:
             raise BoundaryValidationError(
@@ -399,9 +485,7 @@ class _DeclaredQuery:
                 {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
             )
         except BoundaryValidationError as exc:
-            raise BoundaryValidationError(
-                exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION
-            ) from exc
+            raise _query_validation(exc) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,6 +498,7 @@ class _RouteRuntime:
     query_param_name: str | None
     has_input_binding: bool
     declared_query: _DeclaredQuery | None
+    filter_values: _FilterValues
 
     @property
     def use_case_type(self) -> type[Any]:
@@ -425,6 +510,7 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
     plan = getattr(uc_type, "__execution_plan__", None)
     query_binding = plan.query_binding if plan is not None else None
     accepts_profile_param = QueryParam.PROFILE in inspect.signature(uc_type.execute).parameters
+    query_param_name = _resolve_query_param_name(uc_type)
     declared_query = None
     if query_binding is not None:
         accepted = {field.name for field in compiled_route.query_fields}
@@ -442,9 +528,10 @@ def _build_route_runtime(compiled_route: CompiledRoute) -> _RouteRuntime:
         compiled_route=compiled_route,
         path_params=tuple(_extract_path_params(compiled_route.route.path)),
         accepts_profile_param=accepts_profile_param,
-        query_param_name=_resolve_query_param_name(uc_type),
+        query_param_name=query_param_name,
         has_input_binding=plan is not None and plan.input_binding is not None,
         declared_query=declared_query,
+        filter_values=_filter_values(compiled_route.filter_fields),
     )
 
 
@@ -487,6 +574,8 @@ def _build_execution_params(
             default_pagination_mode=compiled_route.effective_pagination_mode,
             allow_pagination_override=compiled_route.effective_allow_pagination_override,
             max_limit=compiled_route.effective_max_limit,
+            filter_values=runtime.filter_values,
+            sortable=compiled_route.sort_fields,
         )
     return params
 

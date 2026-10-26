@@ -13,6 +13,7 @@ from sqlalchemy.schema import CreateTable
 from loom.core.backend.sqlalchemy import compile_all, reset_registry
 from loom.core.model import BaseModel, Bytes, ColumnField, Postgres, get_column_fields
 from loom.core.model.types import Integer
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 
 
@@ -58,7 +59,9 @@ def shared_registry() -> Iterator[None]:
 def test_bytes_reach_the_column_as_bytes_not_base64() -> None:
     compile_all(Device)
     repository: RepositorySQLAlchemy[Device, int] = RepositorySQLAlchemy(
-        session_manager=cast(Any, None), model=Device
+        session_manager=cast(Any, None),
+        model=Device,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     row = repository.create_object(DeviceInput(fingerprint=b"\x00\xff", address="10.0.0.1"))

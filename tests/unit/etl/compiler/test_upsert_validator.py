@@ -8,6 +8,7 @@ import pytest
 
 from loom.etl import ETLParams, ETLStep, IntoTable
 from loom.etl.compiler import ETLCompilationError
+from loom.etl.compiler._errors import ETLErrorCode
 from loom.etl.compiler._validators import validate_upsert_spec
 
 
@@ -153,8 +154,12 @@ class _UpdateNoKeys(ETLStep[_P]):
 
 def test_update_empty_keys_raises_naming_update() -> None:
     spec = _spec(_UpdateNoKeys)
-    with pytest.raises(ETLCompilationError, match=r"update\(\) requires at least one key"):
+    with pytest.raises(
+        ETLCompilationError, match=r"update\(\) requires at least one key"
+    ) as exc_info:
         validate_upsert_spec(_UpdateNoKeys, spec)
+
+    assert exc_info.value.code is ETLErrorCode.UPSERT_NO_KEYS
 
 
 class _UpdateBothExcludeInclude(ETLStep[_P]):
@@ -166,8 +171,10 @@ class _UpdateBothExcludeInclude(ETLStep[_P]):
 
 def test_update_exclude_and_include_raises_naming_update() -> None:
     spec = _spec(_UpdateBothExcludeInclude)
-    with pytest.raises(ETLCompilationError, match=r"update\(\) exclude= and include="):
+    with pytest.raises(ETLCompilationError, match=r"update\(\) exclude= and include=") as exc_info:
         validate_upsert_spec(_UpdateBothExcludeInclude, spec)
+
+    assert exc_info.value.code is ETLErrorCode.UPSERT_EXCLUDE_INCLUDE_CONFLICT
 
 
 class _UpdateIncludeAbsorbed(ETLStep[_P]):
@@ -181,8 +188,10 @@ class _UpdateIncludeAbsorbed(ETLStep[_P]):
 
 def test_update_include_absorbed_by_keys_and_partitions_raises() -> None:
     spec = _spec(_UpdateIncludeAbsorbed)
-    with pytest.raises(ETLCompilationError, match="guaranteed no-op"):
+    with pytest.raises(ETLCompilationError, match="guaranteed no-op") as exc_info:
         validate_upsert_spec(_UpdateIncludeAbsorbed, spec)
+
+    assert exc_info.value.code is ETLErrorCode.UPDATE_EMPTY_UPDATE_SET
 
 
 class _UpdateIncludeWithRealColumn(ETLStep[_P]):

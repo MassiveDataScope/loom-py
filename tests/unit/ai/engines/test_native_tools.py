@@ -187,5 +187,9 @@ def test_fails_naming_the_kind_when_a_grant_has_no_builder() -> None:
     plan = _PlanWithUnserved()
     container = LoomContainer()
 
-    with pytest.raises(AgentCompilationError, match="telepathy"):
+    with pytest.raises(AgentCompilationError, match="telepathy") as failure:
         build_capabilities(plan, container)  # type: ignore[arg-type]
+
+    assert [issue.code for issue in failure.value.issues] == [
+        AgentErrorCode.CAPABILITY_KIND_NO_BUILDER
+    ]

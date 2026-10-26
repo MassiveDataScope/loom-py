@@ -24,6 +24,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model import BaseModel
 from loom.core.persistence import NoneBackend, PersistenceWiring
+from loom.core.persistence.profile import BackendRuntime
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import health as health_module
@@ -71,8 +72,10 @@ class _ProbedBackend:
     name: ClassVar[str] = "probed"
     ready: ClassVar[bool | None] = None
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
-        wiring = NoneBackend().build(ctx, models)
+    def build(
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
+    ) -> PersistenceWiring:
+        wiring = NoneBackend().build(ctx, models, runtime)
         readiness = None if self.ready is None else self._probe
         return PersistenceWiring(
             uow_factory=wiring.uow_factory,
@@ -148,7 +151,8 @@ class TestHealthAuthentication:
     def test_health_is_served_without_credentials_under_a_custom_authenticator(
         self, tmp_path: Path
     ) -> None:
-        app = create_app(write_project(tmp_path, rest=_NO_DOCS), authenticator=_AlwaysRefuses())
+        rest = {**_NO_DOCS, "auth": {"custom": True}}
+        app = create_app(write_project(tmp_path, rest=rest), authenticator=_AlwaysRefuses())
 
         with TestClient(app) as client:
             assert client.get(_HEALTH).status_code == 200

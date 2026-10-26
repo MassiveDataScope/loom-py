@@ -10,10 +10,11 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.model.redaction import Dsn
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
-from loom.etl.compiler import ETLCompiler, filter_plan, iter_all_steps
+from loom.etl.compiler import ETLCompiler, InvalidStageError, filter_plan, iter_all_steps
 from loom.etl.compiler._plan import (
     ParallelProcessGroup,
     ParallelStepGroup,
@@ -21,7 +22,7 @@ from loom.etl.compiler._plan import (
     ProcessPlan,
     StepPlan,
 )
-from loom.etl.runner import ETLRunner, InvalidStageError
+from loom.etl.runner import ETLRunner
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TempConfig
 from loom.etl.testing import StubSourceReader, StubTargetWriter
 from tests.helpers.version_limited_extras import require_pyspark
@@ -208,13 +209,6 @@ class TestFilterPlan:
     def test_filter_with_an_empty_include_keeps_nothing(self) -> None:
         assert filter_plan(_compile(PipelineAll), ()).nodes == ()
 
-    def test_the_deprecated_runner_filter_still_filters(self) -> None:
-        from loom.etl.runner import filtering
-
-        with pytest.warns(DeprecationWarning, match="filter_plan"):
-            filtered = filtering._filter_plan(_compile(PipelineAll), frozenset({"StepB"}))
-        assert [step.step_type.__name__ for step in iter_all_steps(filtered)] == ["StepB"]
-
 
 class TestRunnerRun:
     @pytest.mark.parametrize(
@@ -355,8 +349,10 @@ class TestRunnerFromConfig:
         from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            temp=TempConfig(root="s3://bucket/checkpoints" if checkpoint_enabled else ""),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
+            temp=TempConfig(
+                root=Dsn("s3://bucket/checkpoints") if checkpoint_enabled else None
+            ),
         )
         runner = ETLRunner.from_config(config)
 
@@ -369,14 +365,14 @@ class TestRunnerFromConfig:
     ) -> None:
         from unittest.mock import MagicMock
 
+        from loom.core.connections import ClickHouseConnection
         from loom.etl.io.targets._clickhouse import ClickHouseClientExecutor
-        from loom.etl.storage._config import ClickHouseConfig
 
-        monkeypatch.setattr("loom.etl.io.targets._clickhouse._clickhouse_connect", MagicMock())
+        monkeypatch.setattr("clickhouse_connect.get_client", MagicMock())
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            clickhouse=ClickHouseConfig(url="clickhouse://user:pass@host:8123/db"),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
+            clickhouse=ClickHouseConnection(url=Dsn("clickhouse://user:pass@host:8123/db")),
         )
         runner = ETLRunner.from_config(config)
 
@@ -386,7 +382,7 @@ class TestRunnerFromConfig:
         self, tmp_path: Path
     ) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
         )
         runner = ETLRunner.from_config(config)
 
@@ -449,7 +445,7 @@ class TestAuditColumnsEndToEnd:
         write_deltalake(str(src_path), pl.DataFrame({"id": [1, 2]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
             audit=AuditConfig(enabled=True),
         )
@@ -494,7 +490,7 @@ class TestAuditColumnsEndToEnd:
         write_deltalake(str(src_path), pl.DataFrame({"id": [1]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
             audit=AuditConfig(enabled=False),
         )
@@ -531,8 +527,8 @@ class TestRunnerCleaner:
                 deleted.append(path)
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
-            temp=TempConfig(root="s3://bucket/checkpoints"),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
+            temp=TempConfig(root=Dsn("s3://bucket/checkpoints")),
         )
         runner = ETLRunner.from_config(config, cleaner=SpyCleaner())
 
@@ -557,9 +553,9 @@ class TestRunnerCleaner:
         write_deltalake(str(src), pl.DataFrame({"id": [1, 2]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
-            temp=TempConfig(root="s3://fake-bucket/checkpoints"),
+            temp=TempConfig(root=Dsn("s3://fake-bucket/checkpoints")),
         )
         runner = ETLRunner.from_config(config, cleaner=SpyCleaner())
 
@@ -600,9 +596,9 @@ class TestRunnerCleaner:
         write_deltalake(str(src), pl.DataFrame({"id": [1]}), mode="overwrite")
 
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri=str(tmp_path))),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
             missing_table_policy=MissingTablePolicy.CREATE,
-            temp=TempConfig(root="s3://fake-bucket/checkpoints"),
+            temp=TempConfig(root=Dsn("s3://fake-bucket/checkpoints")),
         )
         runner = ETLRunner.from_config(config, cleaner=SpyCleaner())
 
