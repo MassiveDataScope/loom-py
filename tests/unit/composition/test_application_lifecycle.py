@@ -308,3 +308,17 @@ async def test_without_resources_only_persistence_opens() -> None:
         pass
 
     assert journal.events == ["check:persistence", "open:persistence", "close:persistence"]
+
+
+async def test_a_failure_to_close_after_an_error_in_the_block_chains_that_error() -> None:
+    journal = Journal(fail=("close:ai",))
+    application = _application(journal)
+    boom = ValueError("boom")
+
+    with pytest.raises(RuntimeError, match="close:ai") as raised:
+        async with application.running():
+            raise boom
+
+    assert raised.value.__cause__ is boom
+    assert journal.events == OPEN + CLOSE
+    assert not application.is_open

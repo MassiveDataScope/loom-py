@@ -1,9 +1,10 @@
 """Each layer imports only the layers inside it (ADR 0006).
 
 The check reads the source, so an import inside a function counts; one under
-``if TYPE_CHECKING:`` loads nothing and does not. ``test_boundary`` in
-``tests/unit/composition`` complements it at run time, catching what a module
-pulls in transitively.
+``if TYPE_CHECKING:`` loads nothing and does not. Two tests complement it at
+run time, catching what a module pulls in transitively:
+``tests/unit/test_core_transport_containment.py`` for ``loom.core`` and
+``tests/unit/composition/test_boundary.py`` for ``loom.composition``.
 """
 
 from __future__ import annotations
@@ -11,16 +12,22 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from tests.helpers.imports import imported_modules
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
-# package → packages it must not import at run time.
-_FORBIDDEN: dict[str, tuple[str, ...]] = {
+# layer → (packages it must not import at run time, modules allowed inside them).
+_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # The core composes nothing: the composition root and the transports sit outside it.
-    "loom.core": ("loom.composition", "loom.rest", "loom.celery", "loom.ai"),
-    # The composition root reaches no transport; adapters reach it.
-    "loom.composition": ("fastapi", "starlette", "celery", "loom.rest", "loom.celery"),
+    "loom.core": (("loom.composition", "loom.rest", "loom.celery", "loom.ai"), ()),
+    # The composition root reaches no transport. The Celery job service is the
+    # outbound adapter of the JobService port, not the worker transport.
+    "loom.composition": (
+        ("fastapi", "starlette", "celery", "loom.rest", "loom.celery"),
+        ("loom.celery.service",),
+    ),
 }
 
 
@@ -37,23 +44,22 @@ def _within(module: str, package: str) -> bool:
     return module == package or module.startswith(package + ".")
 
 
-def _offenders(layer: str, forbidden: tuple[str, ...]) -> list[str]:
-    found = []
+@pytest.mark.parametrize(("layer", "rule"), _RULES.items(), ids=list(_RULES))
+def test_a_layer_imports_nothing_outside_it(
+    layer: str, rule: tuple[tuple[str, ...], tuple[str, ...]]
+) -> None:
+    forbidden, allowed = rule
+    offenders = []
     for path in sorted((_SRC / Path(*layer.split("."))).rglob("*.py")):
         module, package = _module_of(path)
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for imported in sorted(imported_modules(tree, package=package)):
-            if any(_within(imported, banned) for banned in forbidden):
-                found.append(f"{module} imports {imported}")
-    return found
+            if any(_within(imported, banned) for banned in forbidden) and not any(
+                _within(imported, kept) for kept in allowed
+            ):
+                offenders.append(f"{module} imports {imported}")
 
-
-def test_the_core_imports_neither_the_composition_root_nor_a_transport() -> None:
-    assert _offenders("loom.core", _FORBIDDEN["loom.core"]) == []
-
-
-def test_the_composition_root_imports_no_transport() -> None:
-    assert _offenders("loom.composition", _FORBIDDEN["loom.composition"]) == []
+    assert offenders == []
 
 
 def test_the_check_sees_function_local_and_relative_imports() -> None:
