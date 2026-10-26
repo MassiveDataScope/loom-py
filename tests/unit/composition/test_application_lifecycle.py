@@ -290,3 +290,21 @@ async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
     assert raised.value is boom
     assert witness.closed_with is boom
     assert journal.events[-2:] == ["close:persistence", "close:sql"]
+
+
+async def test_without_resources_only_persistence_opens() -> None:
+    journal = Journal()
+    application = Application(
+        kernel=cast(KernelRuntime, SimpleNamespace(container=LoomContainer())),
+        persistence=PersistenceWiring(
+            uow_factory=None,
+            repo_registration_module=lambda _container: None,
+            lifespan_init=journal.lifespan,
+            startup_checks=journal.check,
+        ),
+    )
+
+    async with application.running():
+        pass
+
+    assert journal.events == ["check:persistence", "open:persistence", "close:persistence"]
