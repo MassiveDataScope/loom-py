@@ -61,7 +61,7 @@ def _wired(
     """Wire a real executor to a real ``AgentRuntime`` through the marker resolver.
 
     Mirrors the composition a deployment's ``create_app`` performs between
-    ``_resolve_ai`` and ``result.factory.verify()``: the executor is built
+    ``resolve_ai`` and ``result.factory.verify()``: the executor is built
     first, and the agent resolver is bound to it once the AI runtime exists.
     """
     _, executor = compiler_and_executor

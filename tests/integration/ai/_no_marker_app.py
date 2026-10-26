@@ -2,7 +2,7 @@
 
 Run by ``test_no_agent_marker_containment.py`` in a fresh interpreter: the AI
 pillar is optional, and several docstrings on the ``create_app`` path
-(``_resolve_ai``, ``_verify_agent_markers``) argue at length that neither
+(``resolve_ai``, ``verify_agent_markers``) argue at length that neither
 guard imports ``loom.ai`` when no ``ai:`` section is present. Nothing here
 proves that on its own — this script is the proof, isolated from every other
 suite's already-imported modules, and from ``conftest`` modules (this one

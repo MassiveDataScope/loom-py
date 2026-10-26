@@ -146,7 +146,7 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         classmethod(_fake_from_config),
     )
     monkeypatch.setattr(auto, "_build_bootstrap", _fake_build_bootstrap)
-    monkeypatch.setattr(auto, "_configure_job_service", _fake_configure_job_service)
+    monkeypatch.setattr(auto, "configure_job_service", _fake_configure_job_service)
     monkeypatch.setattr(auto, "create_fastapi_app", _fake_create_fastapi_app)
     monkeypatch.setattr(auto, "add_code_path", lambda code_path, config_dir: Path(code_path))
 

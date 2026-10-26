@@ -785,7 +785,7 @@ def _reject_agent_markers(
 
     A task worker never builds an AI runtime — nothing in this module
     constructs one, unlike the FastAPI bootstrap's optional ``ai:`` section
-    (:func:`loom.rest.fastapi.auto._resolve_ai`) — so a use case declaring
+    (:func:`loom.composition._ai.resolve_ai`) — so a use case declaring
     the marker would compile here and only fail once a task actually invoked
     it. Refusing at start-up instead reuses the same check the FastAPI
     bootstrap runs, :func:`loom.ai._startup.verify_agent_markers`, called

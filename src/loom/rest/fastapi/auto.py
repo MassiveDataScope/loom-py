@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
 import logging
 import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -19,6 +18,16 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
 from loom.composition import Application, Resource, ResourceKind, closing
+from loom.composition._ai import (
+    AiWiring,
+    bind_agent_resolver,
+    bind_mcp_resolver,
+    resolve_ai,
+    verify_agent_markers,
+    verify_mcp_markers,
+)
+from loom.composition._jobs import configure_job_service
+from loom.composition._sql import SqlWiring, register_sql_collaborators
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import CacheGateways, cache_module_for
 from loom.core.checks import enforce_deploy_checks
@@ -50,7 +59,6 @@ from loom.core.introspection import (
     IntrospectionError,
     describe_app,
 )
-from loom.core.job.service import InlineJobService, JobService
 from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -88,30 +96,9 @@ from loom.rest.config import (
     validate_interfaces_config,
 )
 from loom.rest.cors import CorsConfig
-from loom.rest.fastapi._auto_ai import (
-    _AgentDepsFactory as _AgentDepsFactory,
-)
-from loom.rest.fastapi._auto_ai import (
-    _AiWiring,
-    _bind_agent_resolver,
-    _bind_agent_surface,
-    _bind_mcp_resolver,
-    _resolve_ai,
-    _verify_agent_markers,
-    _verify_mcp_markers,
-)
-from loom.rest.fastapi._auto_ai import (
-    _compile_use_case_mcp as _compile_use_case_mcp,
-)
+from loom.rest.fastapi._auto_ai import _bind_agent_surface
 from loom.rest.fastapi._auto_auth import _AuthWiring, _mount_authentication, _resolve_authentication
-from loom.rest.fastapi._auto_sql import (
-    _register_sql_collaborators,
-    _resolve_sql,
-    _warn_sql_endpoints,
-)
-from loom.rest.fastapi._auto_sql import (
-    _SqlWiring as _SqlWiring,
-)
+from loom.rest.fastapi._auto_sql import _resolve_sql, _warn_sql_endpoints
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.fastapi.health import HEALTH_PATH, mount_health, reject_health_collision
@@ -210,93 +197,6 @@ def _build_discovery_result(discovery_cfg: _DiscoveryConfig) -> DiscoveryResult:
     if engine is None:
         raise ValueError(f"Unsupported discovery mode: {discovery_cfg.mode!r}")
     return engine(discovery_cfg)
-
-
-def _build_celery_service(
-    ctx: ConfigContext,
-    result: KernelRuntime,
-    observability_runtime: ObservabilityRuntime | None,
-) -> Any | None:
-    """Return a ``CeleryJobService`` if the celery extra is installed and configured.
-
-    Returns ``None`` when the ``loom[celery]`` extra is absent or the
-    ``celery`` section is, so the caller can fall back to
-    :func:`_build_inline_service`. A section that fails validation raises.
-
-    Args:
-        ctx: Resolved configuration context.
-        result: Kernel runtime carrying container, factory and executor.
-
-    Returns:
-        ``CeleryJobService`` instance, or ``None``.
-    """
-    if not ctx.has(ConfigKey.CELERY):
-        # Checked before any import: an application without a celery section
-        # must not pay for loading Celery. find_spec locates without importing.
-        if importlib.util.find_spec("celery") is not None:
-            warnings.warn(
-                "Celery config section is missing — falling back to InlineJobService. "
-                "Add a 'celery' section to your config to suppress this.",
-                stacklevel=3,
-            )
-        return None
-    try:
-        from loom.celery.config import (  # type: ignore[import-untyped,unused-ignore]
-            CeleryConfig as _CC,
-        )
-        from loom.celery.config import (
-            create_celery_app,
-        )
-        from loom.celery.service import (
-            CeleryJobService,  # type: ignore[import-untyped,unused-ignore]
-        )
-
-    except ImportError:
-        return None
-    celery_cfg = ctx.section(ConfigKey.CELERY, _CC)
-    return CeleryJobService(
-        create_celery_app(celery_cfg),
-        metrics=result.metrics,
-        factory=result.factory,
-        executor=result.executor,
-        observability_runtime=observability_runtime,
-    )
-
-
-def _build_inline_service(result: KernelRuntime) -> InlineJobService:
-    """Return an ``InlineJobService`` backed by the kernel's factory and executor.
-
-    Args:
-        result: Kernel runtime carrying factory and executor.
-
-    Returns:
-        ``InlineJobService`` instance.
-    """
-    return InlineJobService(result.factory, result.executor)
-
-
-def _configure_job_service(
-    ctx: ConfigContext,
-    result: KernelRuntime,
-    observability_runtime: ObservabilityRuntime | None,
-) -> None:
-    """Register a ``JobService`` implementation in the container.
-
-    Registers :class:`~loom.celery.service.CeleryJobService` when a
-    ``celery`` config section is present and the ``loom[celery]`` extra is
-    installed.  Falls back to
-    :class:`~loom.core.job.service.InlineJobService` otherwise — enabling
-    local development and tests without a broker.
-
-    The registration uses ``APPLICATION`` scope so the service is created
-    once and shared across all requests.
-
-    Args:
-        ctx: Resolved configuration context.
-        result: Kernel runtime carrying container, factory and executor.
-    """
-    svc = _build_celery_service(ctx, result, observability_runtime) or _build_inline_service(result)
-    result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)
 
 
 def _load_observability_config(ctx: ConfigContext) -> ObservabilityConfig:
@@ -906,8 +806,8 @@ def create_app(
         environment=resolved_environment,
         pool_metrics=pool_metrics,
     )
-    _configure_job_service(ctx, result, observability_runtime)
-    _register_sql_collaborators(result.container, sql, observability_runtime)
+    configure_job_service(ctx, result, observability_runtime)
+    register_sql_collaborators(result.container, sql, observability_runtime)
     # Registered, not merely passed: capability spans resolve it from the
     # container, and an unregistered runtime makes every Scope.TOOL span a
     # silent no-op in production while passing every test that injects one.
@@ -915,10 +815,10 @@ def create_app(
         ObservabilityRuntime, lambda: observability_runtime, scope=Scope.APPLICATION
     )
     _reject_manifest_agents_without_ai_section(ctx, discovered.agent_specs)
-    use_case_mcp_bindings = _verify_mcp_markers(
+    use_case_mcp_bindings = verify_mcp_markers(
         discovered.use_cases, result.compiler, result.registry, ctx
     )
-    ai = _resolve_ai(
+    ai = resolve_ai(
         ctx,
         kernel=result,
         sql_cfg=sql.config,
@@ -926,9 +826,9 @@ def create_app(
         manifest_agent_specs=discovered.agent_specs,
         use_case_mcp_bindings=use_case_mcp_bindings,
     )
-    _verify_agent_markers(discovered.use_cases, result.compiler, result.registry, ai)
-    _bind_agent_resolver(result, ai)
-    _bind_mcp_resolver(result, ai)
+    verify_agent_markers(discovered.use_cases, result.compiler, result.registry, ai)
+    bind_agent_resolver(result, ai)
+    bind_mcp_resolver(result, ai)
     # Last: every service a use case may inject is registered by now.
     result.factory.verify()
 
@@ -984,8 +884,8 @@ def _resources(
     result: KernelRuntime,
     wiring: PersistenceWiring,
     backend_name: str,
-    sql: _SqlWiring,
-    ai: _AiWiring,
+    sql: SqlWiring,
+    ai: AiWiring,
 ) -> tuple[Resource, ...]:
     """Everything the application owns; :class:`Application` orders it by kind."""
     resources: list[Resource] = []
@@ -1032,7 +932,7 @@ def _reject_manifest_agents_without_ai_section(
         )
 
 
-def _build_introspection(app_cfg: _AppConfig, ai: _AiWiring) -> AppIntrospection:
+def _build_introspection(app_cfg: _AppConfig, ai: AiWiring) -> AppIntrospection:
     """Build the self-description of the application under construction.
 
     The AI contribution is a *string* reference resolved only when the
