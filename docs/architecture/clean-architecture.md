@@ -32,8 +32,10 @@ uses it follows one pattern, whatever the pillar:
 
 The island needs no `try`/`except` of its own: its `ImportError` is what
 `import_optional` translates. Islands today: the pydantic-ai providers and
-extras (`loom.ai.engines.pydantic_ai.providers`, `.extras`), boto3 for the
-config resolvers (`loom.core.config._boto3`), and the whole-package islands
+extras (`loom.ai.engines.pydantic_ai.providers`, `.extras`), the client
+builders `loom.core.connections.{aws,mongo,clickhouse}.client` (boto3, pymongo,
+clickhouse-connect; see [ADR 0006](adr/0006-hexagonal-layers.md)), the
+change-stream source `loom.streaming.mongo._bytewax_source` (pymongo), and the whole-package islands
 that predate the rule (`loom.core.sql.clickhouse`, `loom.streaming.bytewax`,
 `loom.etl.testing`). A dependency listed under `dependencies` is not
 optional and gets no island: import it at the top like any other. A test that stands in for an absent or stubbed SDK
@@ -42,3 +44,9 @@ blocks the SDK **and** evicts the island, so the next load re-imports it;
 itself may or may not have loaded — pydantic in `loom.core.model` — gates on
 `sys.modules` instead, on purpose: loom never loads what the application did
 not. Code that predates this rule is migrated when it is next touched.
+
+An island may import another island directly: both need the same SDK, so the
+import adds no requirement. Core paths load an island with the typed loader of
+the engine's contract package (`aws_island`, `mongo_island`,
+`clickhouse_island` in `loom.core.connections.<engine>`), never with an
+`import` of the island module.

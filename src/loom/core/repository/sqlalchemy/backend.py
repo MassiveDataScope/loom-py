@@ -6,10 +6,9 @@ import functools
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import ClassVar, Final, Literal
+from typing import ClassVar, Final
 
-import msgspec
-from sqlalchemy import inspect, make_url, text
+from sqlalchemy import MetaData, Time, inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from loom.core.authz.elevation import ElevationSink
@@ -22,11 +21,14 @@ from loom.core.backend.sqlalchemy import (
     reset_registry,
     scoped_tables,
 )
-from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.database import EXTERNAL, SchemaConfig, load_database_config
+from loom.core.persistence.profile import BackendRuntime
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
 )
@@ -37,12 +39,11 @@ from loom.core.repository.sqlalchemy.rls.elevate import (
 )
 from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 _logger = logging.getLogger(__name__)
 
-EXTERNAL: Final = "external"
 
 PROBE: Final = "SELECT 1"
 PRIVILEGED_ROLE: Final = (
@@ -52,57 +53,59 @@ _PROBE: Final = text(PROBE)
 _PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
 
 
-class _SchemaConfig(msgspec.Struct, kw_only=True, frozen=True):
-    mode: Literal["create_all", "external"] = "create_all"
-    allow_unprotected_dialect: bool = False
-    scopes: dict[str, str] = msgspec.field(default_factory=dict)
-    guard: str | None = None
-    naming_convention: dict[str, str] | None = None
-
-
-class _DatabaseConfig(msgspec.Struct, kw_only=True):
-    url: str
-    echo: bool | None = None
-    pool_pre_ping: bool = True
-    schema: _SchemaConfig = msgspec.field(default_factory=_SchemaConfig)
-
-
 class SQLAlchemyBackend:
     """Backend for ``persistence.backend: sqlalchemy``.
 
-    Reads the ``database`` section, opens one engine shared by the unit of
-    work and every repository, creates the compiled tables at startup and
-    disposes the engine at shutdown.
+    Reads the ``database`` and ``persistence.cursors`` sections, opens one
+    engine shared by the unit of work and every repository, creates the
+    compiled tables at startup and disposes the engine at shutdown.
     """
 
     name: ClassVar[str] = "sqlalchemy"
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
+    ) -> PersistenceWiring:
         """Build the SQLAlchemy wiring for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``database`` section.
             models: Models whose repositories the DI module registers.
+            runtime: Entry-point pool defaults and the optional pool-metrics receiver.
 
         Returns:
             The SQLAlchemy wiring.
 
         Raises:
-            ConfigError: When the ``database`` section is missing or invalid.
+            ConfigError: When the ``database`` section is missing or invalid,
+                or ``persistence.cursors`` cannot build a cursor codec.
         """
-        db_cfg = ctx.section(ConfigKey.DATABASE, _DatabaseConfig)
-        postgres = make_url(db_cfg.url).get_backend_name() == POSTGRES_DIALECT
+        db_cfg = load_database_config(ctx)
+        postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
-            DeferredScopedSettings(db_cfg.schema.scopes)
+            DeferredScopedSettings(db_cfg.schema.scopes or {})
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
         convention = configured_naming_convention(db_cfg.schema.naming_convention)
-        session_manager = _build_session_manager(db_cfg, settings)
+        cursor_codec = CursorCodec.from_context(ctx)
+        session_manager = build_session_manager(
+            db_cfg,
+            runtime.profile,
+            pool_metrics=runtime.pool_metrics,
+            session_settings=settings,
+        )
+        if settings is not None:
+            install_pool_reset(session_manager.engine)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
             repo_registration_module=_with_elevation_sink(
-                build_sqlalchemy_repository_registration_module(session_manager, models),
+                build_sqlalchemy_repository_registration_module(
+                    session_manager, models, cursor_codec=cursor_codec
+                ),
                 enabled=settings is not None,
             ),
             lifespan_init=lambda: _lifespan(session_manager, db_cfg.schema, settings),
@@ -123,26 +126,6 @@ def _with_elevation_sink(
         container.register_instance(ElevationSink, SQLAlchemyElevationSink())
 
     return register
-
-
-def _build_session_manager(
-    db_cfg: _DatabaseConfig, settings: DeferredScopedSettings | None
-) -> SessionManager:
-    echo = db_cfg.echo if db_cfg.echo is not None else False
-    manager = SessionManager(
-        db_cfg.url,
-        echo=echo,
-        pool_pre_ping=db_cfg.pool_pre_ping,
-        pool_size=None,
-        max_overflow=None,
-        pool_timeout=None,
-        pool_recycle=None,
-        connect_args={},
-        session_settings=settings,
-    )
-    if settings is not None:
-        install_pool_reset(manager.engine)
-    return manager
 
 
 def _prepare_models(
@@ -175,7 +158,7 @@ async def _readiness(session_manager: SessionManager) -> bool:
 
 
 def startup_checks(
-    config: _SchemaConfig,
+    config: SchemaConfig,
     dialect: str,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     *,
@@ -205,10 +188,35 @@ def startup_checks(
     return unprotected
 
 
+def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
+    """Refuse a ``Time(timezone=True)`` column on a dialect that drops its offset.
+
+    Postgres stores such a column as ``time with time zone`` and keeps the
+    offset; SQLite ignores the zone and stores the time without it.
+
+    Raises:
+        ConfigError: When *metadata* holds such a column and *dialect* is not
+            Postgres, naming each ``table.column``.
+    """
+    if dialect == POSTGRES_DIALECT:
+        return
+    columns = sorted(
+        f"{table.name}.{column.name}"
+        for table in metadata.tables.values()
+        for column in table.columns
+        if isinstance(column.type, Time) and column.type.timezone
+    )
+    if columns:
+        raise ConfigError(
+            f"dialect {dialect!r} would drop the UTC offset of the Time(timezone=True) "
+            f"columns {', '.join(columns)}; declare a JSON column to keep the offset"
+        )
+
+
 @asynccontextmanager
 async def _lifespan(
     session_manager: SessionManager,
-    config: _SchemaConfig,
+    config: SchemaConfig,
     settings: DeferredScopedSettings | None,
 ) -> AsyncIterator[None]:
     scoped = scoped_tables()
@@ -223,6 +231,7 @@ async def _lifespan(
         scoped,
         has_session_settings=session_manager.has_session_settings,
     )
+    check_time_zone_columns(session_manager.engine.dialect.name, get_metadata())
     if unprotected:
         _logger.warning(
             "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)

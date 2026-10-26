@@ -83,6 +83,7 @@ from loom.celery.runner import (
 from loom.core.async_bridge import build_backend_options
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import cache_module_for
+from loom.core.checks import REST_CHECKS, enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
     ConfigKey,
@@ -90,14 +91,19 @@ from loom.core.config import (
     with_default_resolvers,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.core.di.container import LoomContainer
 from loom.core.discovery._utils import collect_from_modules, import_modules
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.metrics import MetricsAdapter
+from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence.database import load_database_config
+from loom.core.persistence.profile import WORKER_PROFILE
+from loom.core.repository.abc import CursorCodec
 from loom.core.runner import shutdown_runner
 from loom.core.uow.abc import UnitOfWorkFactory
 from loom.core.use_case.agent_markers import declaring_agent_bindings
@@ -116,32 +122,6 @@ _T = TypeVar("_T")
 # ---------------------------------------------------------------------------
 # Local config structs — private to this module
 # ---------------------------------------------------------------------------
-
-
-class _WorkerSchemaConfig(msgspec.Struct, kw_only=True):
-    """The part of ``database.schema`` the worker compiles models with.
-
-    Attributes:
-        naming_convention: SQLAlchemy naming convention keyed by constraint kind.
-    """
-
-    naming_convention: dict[str, str] | None = None
-
-
-class _WorkerDbConfig(msgspec.Struct, kw_only=True):
-    """Database settings for the worker process.
-
-    Attributes:
-        url: Async SQLAlchemy connection URL.
-        echo: Log all SQL statements when ``True``.
-        pool_pre_ping: Test connections before checkout.
-        schema: Schema settings the models are compiled with.
-    """
-
-    url: str
-    echo: bool = False
-    pool_pre_ping: bool = True
-    schema: _WorkerSchemaConfig = msgspec.field(default_factory=_WorkerSchemaConfig)
 
 
 class _DiscoveryModules(msgspec.Struct, kw_only=True):
@@ -301,13 +281,14 @@ def _resolve_uow_factory(
     This keeps worker bootstrap lightweight for pure jobs that do not use DB.
     """
     config = _ensure_config_context(ctx)
-    try:
-        db_cfg = config.section(ConfigKey.DATABASE, _WorkerDbConfig)
-    except ConfigError:
+    if not _declares_worker_database(config):
         return None, None
+    # Validated strictly: a malformed section fails the worker instead of
+    # silently starting it without its database.
+    db_cfg = load_database_config(config)
 
     try:
-        from loom.core.repository.sqlalchemy.session_manager import SessionManager
+        from loom.core.repository.sqlalchemy.session_manager import build_session_manager
         from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
     except ImportError as exc:
         raise _sqlalchemy_extra_error() from exc
@@ -315,10 +296,37 @@ def _resolve_uow_factory(
     # SessionManager is created pre-fork. The async engine is lazy — no TCP
     # connections are opened until the first async context manager usage in
     # the child process after the async bridge initializes.
-    session_manager = SessionManager(
-        db_cfg.url, echo=db_cfg.echo, pool_pre_ping=db_cfg.pool_pre_ping
-    )
+    session_manager = build_session_manager(db_cfg, WORKER_PROFILE)
     return SQLAlchemyUnitOfWorkFactory(session_manager), session_manager
+
+
+_DATABASE_FIELDS = frozenset({"url", "echo", "pool", "connect_args", "schema"})
+
+
+def _declares_worker_database(config: ConfigContext) -> bool:
+    """Whether ``database`` is the worker's own section rather than absent or named entries.
+
+    A section holding any key of the ``database`` contract is the worker's own
+    and is then decoded strictly, so a missing or misspelt ``url`` fails the
+    worker. A section of named entries only (``database.<name>``) belongs to
+    streaming sinks.
+
+    Raises:
+        ConfigError: When the section is neither: a key outside the contract
+            whose value is not a named database mapping (``URL: ...``).
+    """
+    section = config.raw(ConfigKey.DATABASE)
+    if not isinstance(section, Mapping):
+        return False
+    if _DATABASE_FIELDS.intersection(section):
+        return True
+    stray = sorted(str(key) for key, value in section.items() if not isinstance(value, Mapping))
+    if stray:
+        raise ConfigError(
+            f"database.{stray[0]} is neither a key of the database section "
+            f"({', '.join(sorted(_DATABASE_FIELDS))}) nor a named database"
+        )
+    return False
 
 
 def _sqlalchemy_extra_error() -> ImportError:
@@ -622,6 +630,7 @@ def _resolve_compilables_and_jobs(
 def _register_repositories(
     session_manager: SessionManager,
     models: Sequence[type[BaseModel]],
+    cursor_codec: CursorCodec,
 ) -> Callable[[LoomContainer], None]:
     """Build a container module that registers SQLAlchemy repositories."""
     try:
@@ -630,13 +639,14 @@ def _register_repositories(
         )
     except ImportError as exc:
         raise _sqlalchemy_extra_error() from exc
-    return build_sqlalchemy_repository_registration_module(session_manager, models)
+    return build_sqlalchemy_repository_registration_module(
+        session_manager, models, cursor_codec=cursor_codec
+    )
 
 
 def _worker_naming_convention(ctx: ConfigContext) -> Mapping[str, str] | None:
     """The ``database.schema.naming_convention`` the REST runtime and migrations also read."""
-    db_cfg = ctx.section(ConfigKey.DATABASE, _WorkerDbConfig)
-    return db_cfg.schema.naming_convention
+    return load_database_config(ctx).schema.naming_convention
 
 
 def _compile_models(
@@ -666,14 +676,18 @@ def _compile_models(
 
 def _build_observability_runtime(
     ctx: ConfigContext | Mapping[str, Any],
+    environment: Environment = Environment.PRODUCTION,
 ) -> ObservabilityRuntime:
-    """Build the shared observability runtime from top-level config."""
+    """Build the shared observability runtime from top-level config.
+
+    Defaults apply only when the section is absent; one that fails validation
+    stops the worker instead of silently dropping its settings.
+    """
     config = _ensure_config_context(ctx)
-    try:
-        observability_cfg = config.section(ConfigKey.OBSERVABILITY, ObservabilityConfig)
-    except ConfigError:
-        observability_cfg = ObservabilityConfig()
-    return ObservabilityRuntime.from_config(observability_cfg)
+    observability_cfg = config.section_or_default(
+        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+    )
+    return ObservabilityRuntime.from_config(observability_cfg, environment=environment)
 
 
 def _compile_db_layer(
@@ -682,6 +696,7 @@ def _compile_db_layer(
     user_modules: Sequence[Callable[[LoomContainer], None]],
     *,
     naming_convention: Mapping[str, str] | None,
+    ctx: ConfigContext,
 ) -> tuple[tuple[type[BaseModel], ...], tuple[Callable[[LoomContainer], None], ...]]:
     """Compile models and register repositories; no-op when DB is not configured.
 
@@ -690,10 +705,16 @@ def _compile_db_layer(
         models: Model classes discovered or declared for this worker.
         user_modules: Container modules provided by the caller.
         naming_convention: The configured ``database.schema.naming_convention``.
+        ctx: Worker configuration; its ``persistence.cursors`` section builds
+            the cursor codec the repositories share.
 
     Returns:
         Tuple of (normalized_models, runtime_modules).  When no DB is
         configured or no models are present, original values pass through.
+
+    Raises:
+        ConfigError: When repositories are registered and
+            ``persistence.cursors`` cannot build a cursor codec.
     """
     base = tuple(user_modules)
     if session_manager is None:
@@ -701,7 +722,8 @@ def _compile_db_layer(
     normalized = _compile_models(models, naming_convention=naming_convention)
     if not normalized:
         return tuple(models), base
-    return normalized, (*base, _register_repositories(session_manager, normalized))
+    cursor_codec = CursorCodec.from_context(ctx)
+    return normalized, (*base, _register_repositories(session_manager, normalized, cursor_codec))
 
 
 def _emit_worker_init_graph(components: _WorkerResolved) -> None:
@@ -835,6 +857,8 @@ def _reject_mcp_markers(
 
 def bootstrap_worker(
     *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
@@ -845,9 +869,15 @@ def bootstrap_worker(
 ) -> WorkerBootstrapResult:
     """Bootstrap a Celery worker process and register all Job tasks.
 
-    Loads configuration from ``config_paths``, compiles all ``Job``
-    subclasses, registers Celery tasks, and connects worker lifecycle
-    signals for per-process async bridge management.
+    Resolves the environment once (*environment*, else ``LOOM_ENV``, else
+    production; see :mod:`loom.core.environment`), loads configuration from
+    ``config_dir`` or ``config_paths``, compiles all ``Job`` subclasses,
+    registers Celery tasks, and connects worker lifecycle signals for
+    per-process async bridge management.
+
+    In production and staging the deploy checks run (see
+    :mod:`loom.core.checks`), except the ``loom.rest`` ones: a worker serves
+    no HTTP. The environment is registered in the container.
 
     This function is **independent** of
     :func:`~loom.core.bootstrap.bootstrap.bootstrap_app` — it targets the
@@ -865,9 +895,14 @@ def bootstrap_worker(
     persistence.
 
     Args:
-        *config_paths: One or more paths to YAML configuration files.
-            Files are merged left-to-right.  Later files override earlier
-            ones.
+        *config_paths: Paths to YAML configuration files, merged
+            left-to-right; later files override earlier ones. Mutually
+            exclusive with *config_dir*.
+        config_dir: Local directory holding ``base.yaml`` and the
+            per-environment overlays: ``base.yaml`` loads first, then
+            ``<environment>.yaml`` when present. Either way the
+            ``LOOM__SECTION__KEY`` variables merge last.
+        environment: Environment of the worker; overrides ``LOOM_ENV``.
         jobs: Concrete ``Job`` subclasses to compile/register.  When
             omitted, jobs are discovered from ``app.discovery`` using
             mode ``modules`` or ``manifest``.
@@ -899,8 +934,11 @@ def bootstrap_worker(
         configured Celery application.
 
     Raises:
-        ConfigError: If a required configuration section is missing or
-            fails validation.
+        ConfigError: If neither or both of *config_paths* and *config_dir*
+            are given, the environment is unknown, or a required
+            configuration section is missing or fails validation.
+        DeployCheckError: When a deploy check of level error fails in
+            production or staging.
         RuntimeError: If no ``app.discovery`` config is provided and no
             ``jobs`` are declared, or if discovery finds no ``Job`` classes.
 
@@ -915,10 +953,17 @@ def bootstrap_worker(
         )
         result.celery_app.start()
     """
-    ctx = ConfigContext.from_yaml(*config_paths, resolvers=with_default_resolvers(resolvers))
+    resolved_environment = resolve_environment(environment)
+    paths = select_config_paths(
+        config_paths, config_dir, resolved_environment, caller="bootstrap_worker"
+    )
+    ctx = load_application_config(
+        *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
+    )
     app_cfg = ctx.section_optional(ConfigKey.APP, _WorkerAppConfig) or _WorkerAppConfig()
     celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
-    observability_runtime = _build_observability_runtime(ctx)
+    observability_runtime = _build_observability_runtime(ctx, resolved_environment)
+    enforce_deploy_checks(ctx, resolved_environment, skip=(REST_CHECKS,))
     async_runtime = _build_async_runtime(celery_cfg.runtime)
 
     resolved = _resolve_compilables_and_jobs(ctx, jobs, use_cases)
@@ -933,7 +978,7 @@ def bootstrap_worker(
     uow_factory, session_manager = _resolve_uow_factory(ctx)
     convention = _worker_naming_convention(ctx) if session_manager is not None else None
     final_models, runtime_modules = _compile_db_layer(
-        session_manager, resolved.models, modules, naming_convention=convention
+        session_manager, resolved.models, modules, naming_convention=convention, ctx=ctx
     )
     runtime_modules = (*runtime_modules, cache_module_for(ctx))
 
@@ -951,6 +996,7 @@ def bootstrap_worker(
         modules=runtime_modules,
         metrics=metrics,
         uow_factory=uow_factory,
+        environment=resolved_environment,
     )
     _reject_agent_markers(resolved.compilables, kernel)
     _reject_mcp_markers(resolved.compilables, kernel)

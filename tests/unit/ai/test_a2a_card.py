@@ -63,6 +63,7 @@ from loom.ai.errors import AgentRunErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model import msgspec_type
+from loom.core.model.redaction import Dsn, Secret
 from loom.core.sql.config import SqlConnectionConfig
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
@@ -195,7 +196,7 @@ def _canary_capabilities() -> tuple[CompiledCapability, ...]:
             connection="canary_conn",
             config=SqlConnectionConfig(
                 backend="clickhouse",
-                url="clickhouse://canary-db.internal:8123/reporting",
+                url=Dsn("clickhouse://canary-db.internal:8123/reporting"),
             ),
             max_rows=100,
             max_result_bytes=1024,
@@ -203,7 +204,7 @@ def _canary_capabilities() -> tuple[CompiledCapability, ...]:
         CompiledMcpCapability(
             server="canary_server",
             url="https://canary-mcp.internal/mcp",
-            headers_ref="canary/mcp-headers",
+            headers_ref=Secret("canary/mcp-headers"),
         ),
         CompiledSkillsCapability(
             library="canary-library",
@@ -217,7 +218,7 @@ def _canary_capabilities() -> tuple[CompiledCapability, ...]:
         CompiledA2ACapability(
             agent="canary_remote",
             url="https://canary-remote.internal",
-            headers_ref="canary/a2a-headers",
+            headers_ref=Secret("canary/a2a-headers"),
         ),
     )
 
@@ -243,7 +244,7 @@ def _canary_plan() -> AgentPlan:
 
 def _config(base_url: str = _BASE_URL) -> A2AConfig:
     """A2A exposure config publishing the default agent."""
-    return A2AConfig(base_url=base_url, expose=(_AGENT_NAME,))
+    return A2AConfig(base_url=Dsn(base_url), expose=(_AGENT_NAME,))
 
 
 def _card(

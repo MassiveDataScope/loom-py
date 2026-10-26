@@ -1,4 +1,4 @@
-"""Delivery-semantics validation: DELIVERY_CONFLICT detection and compilation."""
+"""Delivery-semantics validation: a declared delivery and what it requires of a flow."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from loom.core.config import ConfigContext
 from loom.streaming import Drain, Fork, ForkRoute, FromTopic, IntoTopic, Process, StreamFlow, msg
 from loom.streaming.compiler import CompilationError, StreamingErrorCode, compile_flow
+from loom.streaming.compiler._plan import CompiledSingleSource
 from loom.streaming.compiler.phases.validate import validate_delivery
 from tests.unit.streaming.compiler.cases import FakeStep, Order, Result
 
@@ -39,72 +40,25 @@ def _kafka_config(consumer_overrides: dict[str, object]) -> dict[str, object]:
 
 
 class TestValidateDelivery:
-    @pytest.mark.parametrize(
-        ("delivery", "enable_auto_commit"),
-        [
-            ("at_least_once", True),
-            ("at_most_once", False),
-        ],
-    )
-    def test_conflicting_fields_emit_delivery_conflict(
-        self,
-        delivery: str,
-        enable_auto_commit: bool,
-    ) -> None:
-        ctx = ConfigContext.from_dict(
-            _kafka_config({"delivery": delivery, "enable_auto_commit": enable_auto_commit})
-        )
-
-        issues = validate_delivery(_flow(), ctx)
-
-        assert len(issues) == 1
-        issue = issues[0]
-        assert issue.code is StreamingErrorCode.DELIVERY_CONFLICT
-        assert issue.field == "kafka.consumer.enable_auto_commit"
-        assert delivery in issue.message
-        assert "enable_auto_commit" in issue.message
-
-    @pytest.mark.parametrize(
-        "consumer_overrides",
-        [
-            {},
-            {"delivery": "at_least_once"},
-            {"delivery": "at_most_once"},
-            {"enable_auto_commit": True},
-            {"enable_auto_commit": False},
-            {"delivery": "at_least_once", "enable_auto_commit": False},
-            {"delivery": "at_most_once", "enable_auto_commit": True},
-        ],
-    )
-    def test_consistent_or_partial_fields_pass(
-        self,
-        consumer_overrides: dict[str, object],
-    ) -> None:
-        ctx = ConfigContext.from_dict(_kafka_config(consumer_overrides))
-
-        assert validate_delivery(_flow(), ctx) == []
-
     def test_missing_kafka_section_is_not_reported_here(self) -> None:
         assert validate_delivery(_flow(), ConfigContext.from_dict({})) == []
 
 
-class TestCompileFlowDeliveryConflict:
-    def test_compile_flow_raises_with_delivery_conflict_code(
-        self,
-        streaming_kafka_config: DictConfig,
-    ) -> None:
-        config = OmegaConf.merge(
-            streaming_kafka_config,
-            {"kafka": {"consumer": {"delivery": "at_least_once", "enable_auto_commit": True}}},
-        )
-
+class TestCompileFlowUndeclaredDelivery:
+    def test_a_consumer_without_delivery_is_refused(self) -> None:
+        config = OmegaConf.create(_kafka_config({}))
         flow = _flow()
 
         with pytest.raises(CompilationError) as exc_info:
             compile_flow(flow, config=config)
 
-        codes = {issue.code for issue in exc_info.value.issues}
-        assert StreamingErrorCode.DELIVERY_CONFLICT in codes
+        issues = [
+            issue
+            for issue in exc_info.value.issues
+            if issue.code is StreamingErrorCode.KAFKA_CONFIG_INVALID
+        ]
+        assert len(issues) == 1
+        assert "missing required field `delivery`" in issues[0].message
 
 
 class TestUnroutedForkUnderAtLeastOnce:
@@ -159,3 +113,26 @@ class TestUnroutedForkUnderAtLeastOnce:
         plan = compile_flow(self._flow_with_fork(default=None), config=streaming_kafka_config)
 
         assert plan.name == "test"
+
+
+class TestConsumerSettingsKey:
+    """The compiled source records which consumer section its settings came from."""
+
+    def test_a_source_bound_through_the_default_consumer(self) -> None:
+        config = OmegaConf.create(_kafka_config({"delivery": "at_most_once"}))
+
+        plan = compile_flow(_flow(), config=config)
+
+        assert isinstance(plan.source, CompiledSingleSource)
+        assert plan.source.settings_key == "kafka.consumer"
+
+    def test_a_source_bound_through_a_named_consumer(self) -> None:
+        config = _kafka_config({"delivery": "at_most_once"})
+        kafka = config["kafka"]
+        assert isinstance(kafka, dict)
+        kafka["consumers"] = {"in": kafka.pop("consumer")}
+
+        plan = compile_flow(_flow(), config=OmegaConf.create(config))
+
+        assert isinstance(plan.source, CompiledSingleSource)
+        assert plan.source.settings_key == "kafka.consumers.in"

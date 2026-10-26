@@ -6,7 +6,7 @@ routing overrides that supersede the ClassVar defaults declared on each
 :class:`~loom.core.job.job.Job` subclass.
 
 Both types use ``msgspec.Struct`` for consistency with the rest of the
-framework — they are validated at bootstrap time via ``msgspec.convert``.
+framework — they are validated at bootstrap time through the config section.
 
 Typical YAML layout::
 
@@ -37,12 +37,14 @@ from celery import Celery  # type: ignore[import-untyped]
 from kombu import Queue  # type: ignore[import-untyped]
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import Dsn
+from loom.core.model.types import PositiveInt
 
 if TYPE_CHECKING:
     from loom.core.job.job import Job
 
 
-class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Async bridge settings for a Celery worker process.
 
     Attributes:
@@ -51,15 +53,16 @@ class CeleryRuntimeConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         use_uvloop: When ``True`` and the backend is ``"asyncio"``, the worker
             uses uvloop on supported platforms.
         shutdown_timeout_ms: Maximum milliseconds to wait for in-flight async
-            work during worker shutdown.  ``None`` waits indefinitely.
+            work during worker shutdown, above zero.  ``None`` waits
+            indefinitely.
     """
 
     backend: Literal["asyncio", "trio"] = "asyncio"
     use_uvloop: bool = False
-    shutdown_timeout_ms: int | None = None
+    shutdown_timeout_ms: PositiveInt | None = None
 
 
-class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Broker and worker settings for the Celery application.
 
     Attributes:
@@ -93,8 +96,8 @@ class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         cfg = section(omegaconf_obj, "celery", CeleryConfig)
     """
 
-    broker_url: str
-    result_backend: str
+    broker_url: Dsn
+    result_backend: Dsn
     worker_concurrency: int = 4
     worker_max_tasks_per_child: int = 1_000
     worker_prefetch_multiplier: int = 1
@@ -109,7 +112,7 @@ class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     runtime: CeleryRuntimeConfig = msgspec.field(default_factory=CeleryRuntimeConfig)
 
 
-class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Per-job routing and execution overrides applied at bootstrap.
 
     Fields set to ``None`` leave the corresponding ClassVar on the
@@ -205,8 +208,8 @@ def create_celery_app(cfg: CeleryConfig) -> Celery:
         )
     app = Celery()
     app.conf.update(
-        broker_url=cfg.broker_url,
-        result_backend=cfg.result_backend,
+        broker_url=cfg.broker_url.reveal(),
+        result_backend=cfg.result_backend.reveal(),
         worker_concurrency=cfg.worker_concurrency,
         worker_max_tasks_per_child=cfg.worker_max_tasks_per_child,
         worker_prefetch_multiplier=cfg.worker_prefetch_multiplier,

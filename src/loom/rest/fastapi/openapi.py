@@ -40,16 +40,6 @@ _PARAM_REQUIRED = "required"
 _PARAM_SCHEMA = "schema"
 _PARAM_DESCRIPTION = "description"
 
-# Re-export for backwards compatibility — consumers may import from this module.
-QUERY_PARAM_PAGE = QueryParam.PAGE
-QUERY_PARAM_LIMIT = QueryParam.LIMIT
-QUERY_PARAM_PAGINATION = QueryParam.PAGINATION
-QUERY_PARAM_AFTER = QueryParam.AFTER
-QUERY_PARAM_CURSOR = QueryParam.CURSOR
-QUERY_PARAM_SORT = QueryParam.SORT
-QUERY_PARAM_DIRECTION = QueryParam.DIRECTION
-QUERY_PARAM_PROFILE = QueryParam.PROFILE
-
 QUERY_SPEC_PARAMETER_NAMES: tuple[str, ...] = (
     QueryParam.PAGE,
     QueryParam.LIMIT,
@@ -61,6 +51,8 @@ QUERY_SPEC_PARAMETER_NAMES: tuple[str, ...] = (
 )
 
 _COMPONENT_REF_PREFIX = "#/components/schemas/"
+_DISCRIMINATOR = "discriminator"
+_MAPPING = "mapping"
 
 
 def build_request_body_schema(
@@ -177,7 +169,7 @@ def build_query_parameters_schema(
 
     if has_profile_parameter(hints) and compiled_route.effective_expose_profile:
         profile_param: JsonSchema = {
-            _PARAM_NAME: QUERY_PARAM_PROFILE,
+            _PARAM_NAME: QueryParam.PROFILE,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
@@ -229,14 +221,14 @@ def _query_spec_openapi_parameters(
     mode_values = [item.value for item in PaginationMode]
     return [
         {
-            _PARAM_NAME: QUERY_PARAM_PAGE,
+            _PARAM_NAME: QueryParam.PAGE,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "integer", "minimum": 1, "default": 1},
             _PARAM_DESCRIPTION: "Offset page number.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_LIMIT,
+            _PARAM_NAME: QueryParam.LIMIT,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {
@@ -248,35 +240,35 @@ def _query_spec_openapi_parameters(
             _PARAM_DESCRIPTION: "Maximum rows per page.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_PAGINATION,
+            _PARAM_NAME: QueryParam.PAGINATION,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string", "enum": mode_values, "default": default_mode.value},
             _PARAM_DESCRIPTION: "Pagination strategy.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_AFTER,
+            _PARAM_NAME: QueryParam.AFTER,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
             _PARAM_DESCRIPTION: "Cursor token for cursor pagination.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_CURSOR,
+            _PARAM_NAME: QueryParam.CURSOR,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
             _PARAM_DESCRIPTION: "Alias for 'after'.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_SORT,
+            _PARAM_NAME: QueryParam.SORT,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string"},
             _PARAM_DESCRIPTION: "Field used for ordering.",
         },
         {
-            _PARAM_NAME: QUERY_PARAM_DIRECTION,
+            _PARAM_NAME: QueryParam.DIRECTION,
             _PARAM_IN: _PARAM_IN_QUERY,
             _PARAM_REQUIRED: False,
             _PARAM_SCHEMA: {"type": "string", "enum": ["ASC", "DESC"], "default": "ASC"},
@@ -358,9 +350,10 @@ def _safe_pydantic_schema(annotation: Any) -> JsonSchema | None:
 def _rewrite_to_component_refs(node: Any) -> Any:
     """Rewrite ``#/$defs/X`` references to ``#/components/schemas/X`` recursively.
 
-    Strips ``$defs`` keys and rewrites every ``$ref`` value that points to a
-    local definition so the resulting fragment is valid at the OpenAPI document
-    root where ``#/components/schemas/`` is resolvable.
+    Strips ``$defs`` keys and rewrites every ``$ref`` value and every
+    ``discriminator.mapping`` value that points to a local definition so the
+    resulting fragment is valid at the OpenAPI document root where
+    ``#/components/schemas/`` is resolvable.
     """
     if isinstance(node, list):
         return [_rewrite_to_component_refs(item) for item in node]
@@ -370,11 +363,30 @@ def _rewrite_to_component_refs(node: Any) -> Any:
     for k, v in node.items():
         if k == DEFS:
             continue
-        if k == REF and isinstance(v, str) and v.startswith(DEFS_PREFIX):
-            result[k] = _COMPONENT_REF_PREFIX + v.removeprefix(DEFS_PREFIX)
+        if k == REF and isinstance(v, str):
+            result[k] = _to_component_ref(v)
+        elif k == _DISCRIMINATOR and isinstance(v, dict):
+            result[k] = _rewrite_discriminator(v)
         else:
             result[k] = _rewrite_to_component_refs(v)
     return result
+
+
+def _rewrite_discriminator(discriminator: JsonSchema) -> JsonSchema:
+    rewritten: JsonSchema = _rewrite_to_component_refs(discriminator)
+    mapping = rewritten.get(_MAPPING)
+    if isinstance(mapping, dict):
+        rewritten[_MAPPING] = {
+            tag: _to_component_ref(ref) if isinstance(ref, str) else ref
+            for tag, ref in mapping.items()
+        }
+    return rewritten
+
+
+def _to_component_ref(ref: str) -> str:
+    if ref.startswith(DEFS_PREFIX):
+        return _COMPONENT_REF_PREFIX + ref.removeprefix(DEFS_PREFIX)
+    return ref
 
 
 def _safe_schema(

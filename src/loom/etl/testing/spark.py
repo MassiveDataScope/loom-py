@@ -30,7 +30,6 @@ fetching them from Maven.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Generator, Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -45,6 +44,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - packaging guard
     ) from exc
 
 from loom.core.config import ConfigContext
+from loom.core.environment import SPARK_IVY_DIR_VARIABLE, SPARK_OFFLINE_VARIABLE, loom_variable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import SourceSpec
 from loom.etl.declarative.target import TargetSpec
@@ -323,14 +323,14 @@ def loom_spark_runner(loom_spark_session: SparkSession) -> SparkStepRunner:
 def _resolve_ivy_dir(ivy_dir: str | Path | None) -> Path | None:
     if ivy_dir is not None:
         return Path(ivy_dir)
-    from_env = os.getenv("LOOM_SPARK_IVY_DIR")
+    from_env = loom_variable(SPARK_IVY_DIR_VARIABLE)
     if from_env:
         return Path(from_env)
     return None
 
 
 def _offline_jars_requested() -> bool:
-    return os.getenv("LOOM_SPARK_OFFLINE") == "1"
+    return loom_variable(SPARK_OFFLINE_VARIABLE) == "1"
 
 
 def _resolve_local_delta_jars() -> tuple[Path, ...] | None:

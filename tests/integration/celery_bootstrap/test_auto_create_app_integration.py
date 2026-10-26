@@ -16,6 +16,7 @@ from loom.core.job import InlineJobService, JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.use_case import Input
@@ -328,6 +329,7 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
             lambda: _RecordRepository(
                 session_manager=container.resolve(SessionManager),
                 model=_Record,
+                cursor_codec=CursorCodec(signing="ephemeral"),
             ),
             scope=Scope.REQUEST,
         )

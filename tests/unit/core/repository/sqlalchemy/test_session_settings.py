@@ -9,7 +9,13 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.model.redaction import Dsn
+from loom.core.persistence.database import DatabaseConfig
+from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.repository.sqlalchemy.session_manager import (
+    SessionManager,
+    build_session_manager,
+)
 from loom.core.repository.sqlalchemy.session_settings import (
     SET_SETTINGS,
     SessionSettings,
@@ -71,10 +77,12 @@ def test_session_settings_on_a_non_postgres_url_is_rejected_at_construction() ->
         )
 
 
-def test_from_config_rejects_session_settings_on_a_non_postgres_url() -> None:
+def test_the_configured_constructor_rejects_session_settings_on_a_non_postgres_url() -> None:
     with pytest.raises(ValueError, match="postgresql"):
-        SessionManager.from_config(
-            {"url": "sqlite+aiosqlite:///:memory:"}, session_settings=lambda: None
+        build_session_manager(
+            DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")),
+            SERVER_PROFILE,
+            session_settings=lambda: None,
         )
 
 
@@ -175,9 +183,11 @@ async def test_a_provider_on_a_postgres_url_installs_a_dedicated_session_class()
         await manager.dispose()
 
 
-async def test_from_config_installs_the_provider_on_a_postgres_url() -> None:
-    manager = SessionManager.from_config(
-        {"url": "postgresql+asyncpg://user:secret@localhost/db"}, session_settings=lambda: None
+async def test_the_configured_constructor_installs_the_provider_on_a_postgres_url() -> None:
+    manager = build_session_manager(
+        DatabaseConfig(url=Dsn("postgresql+asyncpg://user:secret@localhost/db")),
+        SERVER_PROFILE,
+        session_settings=lambda: None,
     )
     try:
         assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"

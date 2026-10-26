@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
 from loom.core.model import LoomFrozenStruct, LoomStruct
-from loom.streaming.compiler._errors import CompilationIssue, from_message
+from loom.core.persistence.database import DatabaseConfig
+from loom.streaming.compiler._errors import CompilationIssue
 from loom.streaming.core._errors import ErrorKind
 from loom.streaming.kafka._config import ConsumerSettings, ProducerSettings
 from loom.streaming.kafka._wire import DispatchTable
@@ -17,22 +18,30 @@ from loom.streaming.nodes._shape import StreamShape
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     DeltaSinkConfig,
-    SqlAlchemyDatabaseConfig,
     SqlAlchemySinkConfig,
 )
 
 
 @dataclass(frozen=True)
 class CompiledSingleSource:
-    """Resolved Kafka source with a single payload type and decode strategy."""
+    """Resolved Kafka source with a single payload type and decode strategy.
+
+    Args:
+        settings: Resolved Kafka consumer settings.
+        topics: Kafka topic names to subscribe to.
+        payload_type: Struct every record decodes into.
+        decode_strategy: Whether to decode records individually or in batches.
+        settings_key: Config key *settings* were resolved from:
+            ``kafka.consumer`` or ``kafka.consumers.<ref>``.
+    """
 
     needs_decode: ClassVar[bool] = True
 
     settings: ConsumerSettings
     topics: tuple[str, ...]
     payload_type: type[LoomStruct | LoomFrozenStruct]
-    shape: StreamShape
     decode_strategy: Literal["record", "batch"]
+    settings_key: str
 
 
 @dataclass(frozen=True)
@@ -45,8 +54,9 @@ class CompiledMultiSource:
         dispatch: Pre-built table mapping ``message_type`` and error
             ``payload_type`` strings to their concrete Python types, plus
             explicit wire-error payload types.
-        shape: Declared source shape.
         decode_strategy: Whether to decode records individually or in batches.
+        settings_key: Config key *settings* were resolved from:
+            ``kafka.consumer`` or ``kafka.consumers.<ref>``.
     """
 
     needs_decode: ClassVar[bool] = True
@@ -54,8 +64,8 @@ class CompiledMultiSource:
     settings: ConsumerSettings
     topics: tuple[str, ...]
     dispatch: DispatchTable
-    shape: StreamShape
     decode_strategy: Literal["record", "batch"]
+    settings_key: str
 
 
 @dataclass(frozen=True)
@@ -67,7 +77,6 @@ class CompiledMongoCDCSource:
     settings: MongoSourceConfig
     collections: tuple[str, ...]
     watch_options: Mapping[str, object]
-    shape: StreamShape
 
 
 @dataclass(frozen=True)
@@ -97,7 +106,7 @@ class CompiledStorageSink:
 
     node: Any
     config: SqlAlchemySinkConfig | DeltaSinkConfig | ClickHouseSinkConfig
-    database_config: SqlAlchemyDatabaseConfig | None = None
+    database_config: DatabaseConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -114,28 +123,19 @@ class CompilationError(Exception):
     """Raised when a StreamFlow fails validation or cannot be compiled.
 
     Aggregates every :class:`CompilationIssue` found in a compilation run.
-    Bare strings are accepted for backwards compatibility and normalized to
-    issues with code :data:`StreamingErrorCode.UNSPECIFIED`.
 
     Attributes:
         issues: Structured issues, one per failure, each carrying a
             machine-readable code, component, and optional config field.
 
     Args:
-        issues: Issues (or legacy message strings) collected by the compiler.
+        issues: Issues collected by the compiler.
     """
 
-    def __init__(self, issues: Sequence[CompilationIssue | str]) -> None:
-        self.issues: tuple[CompilationIssue, ...] = tuple(
-            from_message(item) if isinstance(item, str) else item for item in issues
-        )
+    def __init__(self, issues: Sequence[CompilationIssue]) -> None:
+        self.issues: tuple[CompilationIssue, ...] = tuple(issues)
         messages = [issue.message for issue in self.issues]
         super().__init__(f"Compilation failed with {len(messages)} error(s): {'; '.join(messages)}")
-
-    @property
-    def errors(self) -> list[str]:
-        """Human-readable messages, one per issue (legacy accessor)."""
-        return [issue.message for issue in self.issues]
 
 
 CompiledSource = CompiledSingleSource | CompiledMultiSource | CompiledMongoCDCSource

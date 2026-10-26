@@ -79,9 +79,9 @@ def backfill_flow(
         published annotation is ``datetime | None``, which is what the
         Prefect form renders as a date picker; because Prefect does not
         validate run parameters, the body also accepts a ``date``, an ISO
-        string and a placeholder. Plus ``env``
-        for deploy parity with :func:`~loom.prefect.etl_flow` (logged, not
-        used for routing).
+        string and a placeholder. Plus ``env``, as for
+        :func:`~loom.prefect.etl_flow`: it confirms the worker's
+        ``LOOM_ENV`` and a run whose ``env`` differs fails.
 
     Raises:
         TypeError: When a process list is not ``list[str]``.

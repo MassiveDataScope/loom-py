@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from loom.core.routing import LogicalRef
+from loom.core.schema import SchemaMode
 from loom.etl.checkpoint import CheckpointScope
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._utils import _clone_slots
@@ -31,7 +32,6 @@ from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._predicate import AndPred, EqPred, PredicateNode
 from loom.etl.declarative.expr._refs import TableRef, UnboundColumnRef
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._schema_mode import SchemaMode
 from loom.etl.declarative.target._table import (
     AppendSpec,
     ReplacePartitionsSpec,
@@ -95,8 +95,10 @@ class IntoTable:
         Args:
             schema:    Schema evolution strategy.  Defaults to
                        :attr:`~SchemaMode.STRICT`.
-            streaming: When ``True`` the Polars backend writes via an Arrow
-                       ``RecordBatchReader`` instead of materialising.
+            streaming: Kept on the :class:`AppendSpec`; an append does not
+                       read it.  The Polars backend collects the frame with
+                       the streaming engine when the step sets
+                       ``streaming = True``.
 
         Returns:
             New ``IntoTable`` with APPEND mode.

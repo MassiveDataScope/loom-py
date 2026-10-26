@@ -18,9 +18,8 @@ class NotifyEvent(msgspec.Struct, frozen=True, kw_only=True):
             when not applicable (e.g. maintenance flows).
         duration_seconds: Wall-clock time from flow start to terminal state,
             as reported by Prefect. ``None`` when unavailable.
-        env: Execution environment label forwarded from the flow's ``env``
-            parameter (e.g. ``"prod"``, ``"staging"``). ``None`` when not
-            declared.
+        env: Environment the run ran in, the process one (e.g.
+            ``"production"``, ``"staging"``); the hooks always fill it.
         message: Optional human-readable error or status message.
     """
 

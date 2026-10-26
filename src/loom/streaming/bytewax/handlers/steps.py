@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from bytewax.operators import flat_map
@@ -134,8 +134,6 @@ def _apply_expand_step(
 
     sid = _step_id(f"expand_{idx}_{name}", ctx)
     mapped = bw_map(sid, stream, step_fn)
-    from bytewax.operators import flat_map
-
     flattened_stream = flat_map(_step_id(f"flatten_expand_{idx}", ctx), mapped, _identity)
     return _split_node_result(flattened_stream, sid, ctx, ErrorKind.TASK)
 
@@ -296,9 +294,44 @@ def _execute_batch_expand_step(
         correlation_id=messages[0].meta.correlation_id if messages else None,
     ):
         result = _resolve_expand_result(batch_expand_step.execute(messages), name)
-        if not isinstance(result, Iterable):
-            raise TypeError(f"{name} must return an iterable of payloads.")
-        return _replace_payloads(messages, list(result))
+        return _outputs_per_message(messages, _result_list(result, name), name)
+
+
+def _outputs_per_message(
+    messages: list[Message[StreamPayload]],
+    groups: list[Any],
+    name: str,
+) -> list[Message[StreamPayload]]:
+    """Give each output the metadata of the message whose list it is in.
+
+    ``groups[i]`` holds the outputs of ``messages[i]``; an empty list filters
+    that message out.
+    """
+    if len(groups) != len(messages):
+        raise TypeError(
+            f"{name} returned {len(groups)} output lists for {len(messages)} messages; "
+            "return one list of payloads per message, in batch order."
+        )
+    outputs: list[Message[StreamPayload]] = []
+    for message, payloads in zip(messages, groups, strict=True):
+        for payload in _result_list(payloads, name):
+            if isinstance(payload, Message):
+                raise TypeError(
+                    f"{name} must return payloads, not messages: each output "
+                    "takes the metadata of the message it came from."
+                )
+            outputs.append(_replace_payload(message, payload))
+    return outputs
+
+
+def _result_list(value: object, name: str) -> list[Any]:
+    """Materialize one list of a batch-expanding result, iterating it once.
+
+    ``str``, ``bytes`` and mappings are iterable but are not lists of results.
+    """
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes, bytearray, Mapping)):
+        raise TypeError(f"{name} must return one list of payloads per message.")
+    return list(value)
 
 
 def _execute_explode_step(

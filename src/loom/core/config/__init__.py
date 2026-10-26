@@ -26,6 +26,7 @@ from loom.core.config.resolver import (
     merge_resolvers,
     with_default_resolvers,
 )
+from loom.core.config.retired import reject_retired_keys
 from loom.core.config.secrets import SecretsManagerResolver
 from loom.core.config.ssm import SsmResolver
 
@@ -45,6 +46,7 @@ __all__ = [
     "is_cloud_uri",
     "load_config",
     "merge_resolvers",
+    "reject_retired_keys",
     "section",
     "with_default_resolvers",
 ]

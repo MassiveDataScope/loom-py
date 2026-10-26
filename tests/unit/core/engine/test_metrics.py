@@ -9,9 +9,8 @@ from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import NotFound
+from loom.core.errors import NotFound, RuleViolation, RuleViolations
 from loom.core.use_case.markers import Input, LoadById
-from loom.core.use_case.rule import RuleViolation, RuleViolations
 from loom.core.use_case.use_case import UseCase
 
 # ---------------------------------------------------------------------------

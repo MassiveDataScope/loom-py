@@ -8,7 +8,7 @@ import yaml
 from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
-from loom.core.locator import Application, load_application
+from loom.core.locator import DEFAULT_CODE_PATH, Application, add_code_path, load_application
 from loom.core.repository.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
@@ -264,3 +264,52 @@ def test_a_naming_convention_for_an_unknown_kind_names_the_key(tmp_path: Path) -
 
     with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
         load_application(config_path)
+
+
+def test_a_config_directory_layers_the_overlay_of_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _config(PLAIN_MODULE, mode="create_all")
+    _write(tmp_path, "base.yaml", base)
+    _write(tmp_path, "staging.yaml", {"database": {"url": "postgresql+asyncpg://u:p@stage/db"}})
+    monkeypatch.setenv("LOOM_ENV", "staging")
+    monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
+
+    application = load_application()
+
+    assert application.database.url == "postgresql+asyncpg://u:p@stage/db"
+
+
+class TestAddCodePath:
+    """Each test swaps ``sys.path`` for a fresh list, so the real one is never touched."""
+
+    def test_a_relative_directory_resolves_against_the_config_and_goes_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        monkeypatch.setattr(sys, "path", ["/already/there"])
+
+        resolved = add_code_path(DEFAULT_CODE_PATH, tmp_path)
+
+        assert resolved == (tmp_path / "src").resolve()
+        assert sys.path == [str(resolved), "/already/there"]
+
+    def test_a_missing_directory_is_not_added(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "path", ["/already/there"])
+
+        add_code_path("missing", tmp_path)
+
+        assert sys.path == ["/already/there"]
+
+    def test_a_directory_already_on_the_path_is_not_added_twice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "src").mkdir()
+        resolved = str((tmp_path / "src").resolve())
+        monkeypatch.setattr(sys, "path", [resolved])
+
+        add_code_path("src", tmp_path)
+
+        assert sys.path == [resolved]

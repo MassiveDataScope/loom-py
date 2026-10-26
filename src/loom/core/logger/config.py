@@ -1,4 +1,14 @@
-"""Logging configuration: Environment/Renderer enums, handler configs, and configure_logging."""
+"""Logging configuration: the Renderer enum, handler configs, and configure_logging.
+
+The renderer and colour defaults follow the central
+:class:`~loom.core.environment.Environment`: a deployed environment
+(production, staging) renders JSON without colours, a local one (development,
+test) coloured console lines. An explicit ``renderer`` or ``colors`` wins.
+
+The attached handlers pass every record and the stdlib loggers filter, so a
+named level below the top-level one takes effect for stdlib loggers. structlog
+loggers, loom's own included, still drop events below the top-level level.
+"""
 
 from __future__ import annotations
 
@@ -13,38 +23,8 @@ from typing import Any, Literal
 import msgspec
 import structlog
 
+from loom.core.environment import Environment, resolve_environment
 from loom.core.model import LoomFrozenStruct
-
-
-class Environment(StrEnum):
-    """Known deployment environments.
-
-    Unknown string values default to ``DEV`` via ``from_str``.
-    """
-
-    DEV = "dev"
-    PROD = "prod"
-
-    @classmethod
-    def from_str(cls, value: str) -> Environment:
-        """Parse a string into an ``Environment``, defaulting to ``DEV`` for unknown values.
-
-        Args:
-            value: Raw environment name (case-insensitive).
-
-        Returns:
-            The matching ``Environment``, or ``DEV`` if unrecognised.
-
-        Example:
-            >>> Environment.from_str("prod")
-            <Environment.PROD: 'prod'>
-            >>> Environment.from_str("staging")
-            <Environment.DEV: 'dev'>
-        """
-        try:
-            return cls(value.strip().lower())
-        except ValueError:
-            return cls.DEV
 
 
 class Renderer(StrEnum):
@@ -76,7 +56,9 @@ class Renderer(StrEnum):
             raise ValueError(f"Unsupported renderer: {value!r}. Valid values: {valid}") from None
 
 
-class StreamHandlerConfig(LoomFrozenStruct, frozen=True, tag="stream", tag_field="type"):
+class StreamHandlerConfig(
+    LoomFrozenStruct, frozen=True, tag="stream", tag_field="type", forbid_unknown_fields=True
+):
     """Configuration for a stdlib ``StreamHandler``.
 
     Attributes:
@@ -90,7 +72,9 @@ class StreamHandlerConfig(LoomFrozenStruct, frozen=True, tag="stream", tag_field
     renderer: str | None = None
 
 
-class FileHandlerConfig(LoomFrozenStruct, frozen=True, tag="file", tag_field="type"):
+class FileHandlerConfig(
+    LoomFrozenStruct, frozen=True, tag="file", tag_field="type", forbid_unknown_fields=True
+):
     """Configuration for a stdlib ``FileHandler``.
 
     Attributes:
@@ -105,7 +89,11 @@ class FileHandlerConfig(LoomFrozenStruct, frozen=True, tag="file", tag_field="ty
 
 
 class RotatingFileHandlerConfig(
-    LoomFrozenStruct, frozen=True, tag="rotating_file", tag_field="type"
+    LoomFrozenStruct,
+    frozen=True,
+    tag="rotating_file",
+    tag_field="type",
+    forbid_unknown_fields=True,
 ):
     """Configuration for a stdlib ``RotatingFileHandler``.
 
@@ -127,8 +115,11 @@ class RotatingFileHandlerConfig(
 HandlerConfig = StreamHandlerConfig | FileHandlerConfig | RotatingFileHandlerConfig
 
 
-class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """YAML configuration struct for the ``logger:`` section.
+
+    An unknown key is refused, a removed one (``environment``) included, so
+    a stale setting fails loudly instead of being ignored.
 
     Use with :func:`~loom.core.config.loader.section` to parse the
     ``logger:`` block from an OmegaConf config, then pass directly to
@@ -136,13 +127,9 @@ class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
 
     Attributes:
         name: Logger name.  Empty string targets the root logger.
-        environment: Deployment environment (``"dev"``, ``"prod"``).
-            When empty, :func:`configure_logging_from_values` falls back to
-            the ``ENVIRONMENT`` env var, then ``"dev"``.
         renderer: Output renderer (``"json"`` or ``"console"``).
-            ``None`` auto-detects from ``environment``.
-        colors: Enable ANSI colours.  ``None`` auto-detects from
-            ``environment``.
+            ``None`` follows the environment the application resolved.
+        colors: Enable ANSI colours.  ``None`` follows the environment.
         level: Minimum log level (``"DEBUG"``, ``"INFO"``, etc.).
         named_levels: Per-logger minimum levels applied after the main logger
             setup.  Useful for silencing noisy third-party libraries like
@@ -156,9 +143,10 @@ class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     Example::
 
         cfg = section(raw, "logger", LoggerConfig)
+        environment = resolve_environment()  # once, at startup
         configure_logging_from_values(
             name=cfg.name,
-            environment=cfg.environment,
+            environment=environment,
             renderer=cfg.renderer,
             colors=cfg.colors,
             level=cfg.level,
@@ -169,7 +157,6 @@ class LoggerConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     """
 
     name: str = ""
-    environment: str = ""
     renderer: str | None = None
     colors: bool | None = None
     level: str = "INFO"
@@ -184,10 +171,12 @@ class LogConfig:
 
     Controls structlog processor chain, stdlib handler attachment, and rendering.
 
+    The renderer and colour defaults come from the environment passed to
+    :func:`configure_logging`, not from this configuration.
+
     Attributes:
-        environment: Deployment environment. Drives renderer and color defaults.
-        renderer: Output renderer. ``None`` means auto-detect from ``environment``.
-        colors: Enable ANSI colors. ``None`` means auto-detect from ``environment``.
+        renderer: Output renderer. ``None`` follows the environment.
+        colors: Enable ANSI colors. ``None`` follows the environment.
         level: Minimum log level name (e.g. ``"INFO"``, ``"DEBUG"``).
         name: stdlib logger name to attach handlers to. ``""`` targets the root logger.
         named_levels: Per-logger level overrides for specific stdlib logger names.
@@ -197,11 +186,10 @@ class LogConfig:
         extra_processors: Additional structlog processors inserted before the final renderer.
 
     Example:
-        >>> cfg = LogConfig(environment=Environment.PROD, level="WARNING")
-        >>> configure_logging(cfg)
+        >>> cfg = LogConfig(level="WARNING")
+        >>> configure_logging(cfg, environment=Environment.DEVELOPMENT)
     """
 
-    environment: Environment = Environment.DEV
     renderer: Renderer | None = None
     colors: bool | None = None
     level: str = "INFO"
@@ -225,31 +213,27 @@ def _parse_level(level: str) -> int:
     return value
 
 
-def _default_renderer(config: LogConfig) -> Renderer:
-    is_prod = config.environment == Environment.PROD
-    return config.renderer or (Renderer.JSON if is_prod else Renderer.CONSOLE)
+def _default_renderer(config: LogConfig, environment: Environment) -> Renderer:
+    return config.renderer or (Renderer.JSON if environment.is_deployed else Renderer.CONSOLE)
 
 
-def _default_colors(config: LogConfig) -> bool:
+def _default_colors(config: LogConfig, environment: Environment) -> bool:
     if config.colors is not None:
         return config.colors
-    return config.environment != Environment.PROD
+    return not environment.is_deployed
 
 
-def _resolve_renderer(config: LogConfig) -> Any:
-    """Top-level renderer (used by ``_setup_structlog`` for the wrapper chain)."""
-    return _RENDERER_FACTORIES[_default_renderer(config)](_default_colors(config))
-
-
-def _handler_renderer(handler_cfg: HandlerConfig, config: LogConfig) -> Any:
+def _handler_renderer(
+    handler_cfg: HandlerConfig, config: LogConfig, environment: Environment
+) -> Any:
     """Build the structlog renderer instance for a single handler.
 
     Honours the per-handler ``renderer`` field when set; otherwise falls
     back to the top-level :attr:`LogConfig.renderer` / environment default.
     """
     raw = getattr(handler_cfg, "renderer", None)
-    renderer = Renderer.from_str(raw) if raw is not None else _default_renderer(config)
-    return _RENDERER_FACTORIES[renderer](_default_colors(config))
+    renderer = Renderer.from_str(raw) if raw is not None else _default_renderer(config, environment)
+    return _RENDERER_FACTORIES[renderer](_default_colors(config, environment))
 
 
 def _build_stdlib_handler(cfg: HandlerConfig) -> logging.Handler:
@@ -271,7 +255,7 @@ def _build_stdlib_handler(cfg: HandlerConfig) -> logging.Handler:
             raise TypeError(f"Unhandled handler config type: {type(cfg).__name__!r}")
 
 
-def _setup_stdlib(config: LogConfig, level: int) -> None:
+def _setup_stdlib(config: LogConfig, level: int, environment: Environment) -> None:
     # Every stdlib record (loom-internal or third-party) is routed through
     # a structlog ProcessorFormatter so the whole process shares one render.
     target = logging.getLogger(config.name) if config.name else logging.getLogger()
@@ -279,12 +263,13 @@ def _setup_stdlib(config: LogConfig, level: int) -> None:
     while target.handlers:
         target.removeHandler(target.handlers[-1])
 
+    # Handlers stay at NOTSET: stdlib loggers filter, so their named levels apply
+    # as set. structlog's bound loggers still filter at the top-level level.
     for handler_cfg in config.handlers or (StreamHandlerConfig(),):
         handler = _build_stdlib_handler(handler_cfg)
-        handler.setLevel(level)
         handler.setFormatter(
             structlog.stdlib.ProcessorFormatter(
-                processor=_handler_renderer(handler_cfg, config),
+                processor=_handler_renderer(handler_cfg, config, environment),
                 foreign_pre_chain=_foreign_pre_chain(),
             )
         )
@@ -324,7 +309,7 @@ _DEFAULT_LOG_CONFIG = LogConfig()
 def configure_logging_from_values(
     *,
     name: str = "",
-    environment: str = "",
+    environment: Environment | str | None = None,
     renderer: str | None = None,
     colors: bool | None = None,
     level: str = "INFO",
@@ -340,9 +325,11 @@ def configure_logging_from_values(
 
     Args:
         name: stdlib logger name. ``""`` targets the root logger.
-        environment: Deployment environment string (``"dev"``, ``"prod"``).
+        environment: Environment of the process; drives the renderer and
+            colour defaults. Resolved like
+            :func:`~loom.core.environment.resolve_environment` when ``None``.
         renderer: Output renderer name (``"json"`` or ``"console"``).
-        colors: Enable ANSI colours. ``None`` auto-detects from ``environment``.
+        colors: Enable ANSI colours. ``None`` follows ``environment``.
         level: Minimum log level name.
         named_levels: Per-logger level overrides.
         handlers: stdlib handler configurations.
@@ -350,11 +337,9 @@ def configure_logging_from_values(
             entry will carry these fields automatically via ``structlog.contextvars``.
         extra_processors: Additional structlog processors inserted before the final renderer.
     """
-    env = Environment.from_str(environment.strip()) if environment.strip() else Environment.DEV
     configure_logging(
         LogConfig(
             name=name,
-            environment=env,
             renderer=Renderer.from_str(renderer) if renderer is not None else None,
             colors=colors,
             level=level,
@@ -362,27 +347,36 @@ def configure_logging_from_values(
             handlers=tuple(handlers),
             fields=tuple((fields or {}).items()),
             extra_processors=tuple(extra_processors),
-        )
+        ),
+        environment=environment,
     )
 
 
-def configure_logging(config: LogConfig = _DEFAULT_LOG_CONFIG) -> None:
+def configure_logging(
+    config: LogConfig = _DEFAULT_LOG_CONFIG,
+    *,
+    environment: Environment | str | None = None,
+) -> None:
     """Configure structlog and stdlib logging from a ``LogConfig``.
 
     Sets up the global structlog processor chain and attaches stdlib handlers.
     Call once at application startup before any logger is used.
 
     Args:
-        config: Logging configuration. Defaults to ``dev`` console with colors.
+        config: Logging configuration.
+        environment: Environment of the process; drives the renderer and
+            colour defaults. Resolved like
+            :func:`~loom.core.environment.resolve_environment` (``LOOM_ENV``,
+            else production) when ``None``.
 
     Raises:
         ValueError: If ``config.level`` is not a recognised log level name.
 
     Example:
-        >>> configure_logging(LogConfig(environment=Environment.PROD, level="WARNING"))
+        >>> configure_logging(LogConfig(level="WARNING"), environment=Environment.STAGING)
     """
     level = _parse_level(config.level)
-    _setup_stdlib(config, level)
+    _setup_stdlib(config, level, resolve_environment(environment))
     _apply_named_levels(config)
 
     if config.fields:

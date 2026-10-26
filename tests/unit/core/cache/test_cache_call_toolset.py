@@ -23,6 +23,8 @@ from typing import Any, get_args
 
 import pytest
 
+from loom.core.model.redaction import RedactedMap
+
 pytest.importorskip("pydantic_ai", reason="requires the ai-pydantic extra")
 
 from pydantic_ai.toolsets import FunctionToolset  # noqa: E402
@@ -39,7 +41,9 @@ from ._toolset_module import CursorTools, Doc, SearchTools  # noqa: E402
 def calls() -> CachedCalls:
     """The binder a booted container hands to a ``kind: python`` factory."""
     container = LoomContainer()
-    cache_module(CacheConfig(aiocache_config={"default": dict(SERIALIZED_BACKEND)}))(container)
+    cache_module(CacheConfig(aiocache_config=RedactedMap({"default": dict(SERIALIZED_BACKEND)})))(
+        container
+    )
     return cached_calls(container)
 
 

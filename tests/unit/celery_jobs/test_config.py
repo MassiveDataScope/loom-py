@@ -15,7 +15,9 @@ from loom.celery.config import (
     create_celery_app,
 )
 from loom.core.async_bridge import build_backend_options as _build_backend_options
+from loom.core.config.convert import convert_config
 from loom.core.job.job import Job
+from loom.core.model.redaction import Dsn
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,12 +52,14 @@ class _JobB(Job[None]):
 
 class TestCeleryConfig:
     def test_required_fields(self) -> None:
-        cfg = CeleryConfig(broker_url="redis://localhost/0", result_backend="redis://localhost/1")
+        cfg = CeleryConfig(
+            broker_url=Dsn("redis://localhost/0"), result_backend=Dsn("redis://localhost/1")
+        )
         assert cfg.broker_url == "redis://localhost/0"
         assert cfg.result_backend == "redis://localhost/1"
 
     def test_defaults(self) -> None:
-        cfg = CeleryConfig(broker_url="r://b", result_backend="r://r")
+        cfg = CeleryConfig(broker_url=Dsn("r://b"), result_backend=Dsn("r://r"))
         assert cfg.worker_concurrency == 4
         assert cfg.worker_max_tasks_per_child == 1_000
         assert cfg.worker_prefetch_multiplier == 1
@@ -74,7 +78,7 @@ class TestCeleryConfig:
             "worker_concurrency": 8,
             "runtime": {"backend": "trio", "use_uvloop": True, "shutdown_timeout_ms": 1234},
         }
-        cfg = msgspec.convert(raw, CeleryConfig, strict=False)
+        cfg = convert_config(raw, CeleryConfig, strict=False)
         assert cfg.worker_concurrency == 8
         assert cfg.queues == []
         assert cfg.runtime.backend == "trio"
@@ -83,11 +87,11 @@ class TestCeleryConfig:
 
     def test_missing_required_field_raises(self) -> None:
         with pytest.raises(msgspec.ValidationError):
-            msgspec.convert({"broker_url": "r://b"}, CeleryConfig, strict=False)
+            convert_config({"broker_url": "r://b"}, CeleryConfig, strict=False)
 
     def test_queues_list_default_not_shared(self) -> None:
-        cfg1 = CeleryConfig(broker_url="r://b", result_backend="r://r")
-        cfg2 = CeleryConfig(broker_url="r://b", result_backend="r://r")
+        cfg1 = CeleryConfig(broker_url=Dsn("r://b"), result_backend=Dsn("r://r"))
+        cfg2 = CeleryConfig(broker_url=Dsn("r://b"), result_backend=Dsn("r://r"))
         assert cfg1.queues is not cfg2.queues
 
 
@@ -220,7 +224,7 @@ class TestApplyJobConfig:
 
 class TestCreateCeleryApp:
     def test_sets_broker_url(self) -> None:
-        cfg = CeleryConfig(broker_url="redis://b:6379/0", result_backend="redis://r:6379/1")
+        cfg = CeleryConfig(broker_url=Dsn("redis://b:6379/0"), result_backend=Dsn("redis://r:6379/1"))
         mock_celery_cls = MagicMock()
         mock_app = MagicMock()
         mock_celery_cls.return_value = mock_app
@@ -230,14 +234,16 @@ class TestCreateCeleryApp:
 
         mock_app.conf.update.assert_called_once()
         call_kwargs = mock_app.conf.update.call_args.kwargs
+        assert isinstance(call_kwargs["broker_url"], str)
+        assert isinstance(call_kwargs["result_backend"], str)
         assert call_kwargs["broker_url"] == "redis://b:6379/0"
         assert call_kwargs["result_backend"] == "redis://r:6379/1"
         assert result is mock_app
 
     def test_forwards_all_config_fields(self) -> None:
         cfg = CeleryConfig(
-            broker_url="redis://b/0",
-            result_backend="redis://r/1",
+            broker_url=Dsn("redis://b/0"),
+            result_backend=Dsn("redis://r/1"),
             worker_concurrency=8,
             task_always_eager=True,
             timezone="Europe/Madrid",
@@ -255,7 +261,7 @@ class TestCreateCeleryApp:
         assert kwargs["timezone"] == "Europe/Madrid"
 
     def test_queues_empty_does_not_set_task_queues(self) -> None:
-        cfg = CeleryConfig(broker_url="redis://b/0", result_backend="redis://r/1")
+        cfg = CeleryConfig(broker_url=Dsn("redis://b/0"), result_backend=Dsn("redis://r/1"))
         mock_celery_cls = MagicMock()
         mock_app = MagicMock()
         mock_celery_cls.return_value = mock_app
@@ -268,8 +274,8 @@ class TestCreateCeleryApp:
 
     def test_queues_non_empty_sets_task_queues(self) -> None:
         cfg = CeleryConfig(
-            broker_url="redis://b/0",
-            result_backend="redis://r/1",
+            broker_url=Dsn("redis://b/0"),
+            result_backend=Dsn("redis://r/1"),
             queues=["default", "heavy"],
         )
         mock_celery_cls = MagicMock()

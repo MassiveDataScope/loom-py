@@ -20,7 +20,7 @@ from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository import Repository
-from loom.core.repository.abc import PageParams
+from loom.core.repository.abc import CursorCodec, PageParams
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -162,7 +162,9 @@ async def cached_dated_repo(
     async with integration_context.session_manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
     repository: RepositorySQLAlchemy[DatedEvent, date] = RepositorySQLAlchemy(
-        session_manager=integration_context.session_manager, model=DatedEvent
+        session_manager=integration_context.session_manager,
+        model=DatedEvent,
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
     return CachedRepository(
         repository=cast(
@@ -326,7 +328,7 @@ class TestCachedIndexRefillIntegration:
             tags.extend(cached_repo._entity_dependency_tags(entity_id))
             fingerprint = await resolver.fingerprint(tags)
             await cache.delete(
-                entity_key(cached_repo.entity_name, entity_id, "default", fingerprint)
+                entity_key(cached_repo.entity_name, entity_id, "default", fingerprint, scope="")
             )
 
     @pytest.mark.asyncio

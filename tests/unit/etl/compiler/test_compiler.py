@@ -20,6 +20,7 @@ from loom.etl import (
 from loom.etl.compiler import (
     ETLCompilationError,
     ETLCompiler,
+    ETLErrorCode,
     ParallelProcessGroup,
     ParallelStepGroup,
 )
@@ -112,6 +113,13 @@ class NoParams(ETLStep[RunParams]):
     target = IntoTable("staging.x").replace()
 
     def execute(self) -> Any:  # type: ignore[override]
+        return None
+
+
+class StringTarget(ETLStep[RunParams]):
+    target = "staging.out"  # type: ignore[assignment]
+
+    def execute(self, params: RunParams) -> Any:
         return None
 
 
@@ -360,23 +368,27 @@ class TestCompileStep:
         assert len(messages) == 1
 
     @pytest.mark.parametrize(
-        "step_type,error",
+        "step_type,error,code",
         [
-            (NoTarget, "target.*required"),
-            (MissingFrame, "customers"),
-            (ExtraFrame, "ghost"),
-            (NoParams, "params"),
-            (BareStep, "missing generic parameter"),
+            (NoTarget, "target.*required", ETLErrorCode.MISSING_TARGET),
+            (MissingFrame, "customers", ETLErrorCode.MISSING_SOURCE_PARAMS),
+            (ExtraFrame, "ghost", ETLErrorCode.EXTRA_SOURCE_PARAMS),
+            (NoParams, "params", ETLErrorCode.INVALID_PARAMS_TYPE),
+            (BareStep, "missing generic parameter", ETLErrorCode.MISSING_GENERIC_PARAM),
+            (StringTarget, "must be IntoTable", ETLErrorCode.INVALID_TARGET_TYPE),
         ],
     )
     def test_compile_step_errors(
         self,
         step_type: type[ETLStep[Any]],
         error: str,
+        code: ETLErrorCode,
     ) -> None:
         compiler = ETLCompiler()
-        with pytest.raises(ETLCompilationError, match=error):
+        with pytest.raises(ETLCompilationError, match=error) as exc_info:
             compiler.compile_step(step_type)
+
+        assert exc_info.value.code is code
 
 
 class TestCompileProcessAndPipeline:
@@ -389,8 +401,10 @@ class TestCompileProcessAndPipeline:
 
     def test_compile_process_invalid_item_raises(self) -> None:
         compiler = ETLCompiler()
-        with pytest.raises(ETLCompilationError, match="ETLStep subclass"):
+        with pytest.raises(ETLCompilationError, match="ETLStep subclass") as exc_info:
             compiler.compile_process(BadProcess)
+
+        assert exc_info.value.code is ETLErrorCode.INVALID_STEP_ITEM
 
     @pytest.mark.parametrize(
         "pipeline_type,is_parallel",
@@ -412,8 +426,10 @@ class TestCompileProcessAndPipeline:
 
     def test_compile_pipeline_invalid_process_raises(self) -> None:
         compiler = ETLCompiler()
-        with pytest.raises(ETLCompilationError, match="ETLProcess subclass"):
+        with pytest.raises(ETLCompilationError, match="ETLProcess subclass") as exc_info:
             compiler.compile(BadPipeline)
+
+        assert exc_info.value.code is ETLErrorCode.INVALID_PROCESS_ITEM
 
 
 class TestParamsCompatibility:
@@ -446,8 +462,10 @@ class TestParamsCompatibility:
 
     def test_pipeline_params_incompatible(self) -> None:
         compiler = ETLCompiler()
-        with pytest.raises(ETLCompilationError, match="region"):
+        with pytest.raises(ETLCompilationError, match="region") as exc_info:
             compiler.compile(MixedPipeline)
+
+        assert exc_info.value.code is ETLErrorCode.MISSING_PARAMS_FIELDS
 
 
 class TestCatalogValidation:

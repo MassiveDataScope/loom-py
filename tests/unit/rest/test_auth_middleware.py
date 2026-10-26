@@ -297,7 +297,7 @@ async def test_the_503_carries_the_standard_error_body_with_the_trace_id() -> No
 
 def test_create_app_answers_an_outage_with_503_and_the_trace_id(tmp_path: Path) -> None:
     """Through the real middleware stack the 503 still carries the request's trace."""
-    no_docs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    no_docs = {"docs_url": None, "redoc_url": None, "openapi_url": None, "auth": {"custom": True}}
     authenticator = _FailingAuthenticator(AuthenticationUnavailable("issuer keys unreachable"))
     app = create_app(write_project(tmp_path, rest=no_docs), authenticator=authenticator)
     with TestClient(app) as client:

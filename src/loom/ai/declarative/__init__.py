@@ -19,12 +19,7 @@ from types import MappingProxyType
 from typing import Final, TypeVar
 
 from loom.ai._paths import escapes, is_within
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentCompilationIssue,
-    agent_specs_escape_root,
-    spec_malformed,
-)
+from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 
 from ._envelope import (
     LATEST_SPEC_VERSION,
@@ -130,10 +125,10 @@ _LOADERS: Final[Mapping[str, Callable[[bytes, str], DecodedSpec]]] = MappingProx
 
 def _glob(pattern: str, root: Path) -> tuple[set[Path], list[AgentCompilationIssue]]:
     if escapes(pattern):
-        return set(), [agent_specs_escape_root(pattern)]
+        return set(), [AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT.issue(pattern=pattern)]
     matches = {path for path in root.glob(pattern) if path.is_file()}
     if not all(is_within(path, root) for path in matches):
-        return set(), [agent_specs_escape_root(pattern)]
+        return set(), [AgentErrorCode.AGENT_SPECS_ESCAPE_ROOT.issue(pattern=pattern)]
     return matches, []
 
 
@@ -154,18 +149,28 @@ def _load_one(path: Path) -> DecodedSpec:
     loader = _LOADERS.get(path.suffix.lower())
     if loader is None:
         raise AgentCompilationError(
-            [spec_malformed(source, f"unsupported artifact extension '{path.suffix}'")]
+            [
+                AgentErrorCode.SPEC_MALFORMED.issue(
+                    component=source, reason=f"unsupported artifact extension '{path.suffix}'"
+                )
+            ]
         )
     try:
         data = path.read_bytes()
     except OSError as exc:
         raise AgentCompilationError(
-            [spec_malformed(source, f"cannot read artifact: {exc}")]
+            [
+                AgentErrorCode.SPEC_MALFORMED.issue(
+                    component=source, reason=f"cannot read artifact: {exc}"
+                )
+            ]
         ) from exc
     try:
         return loader(data, source)
     except ImportError as exc:
-        raise AgentCompilationError([spec_malformed(source, _YAML_MISSING_HINT)]) from exc
+        raise AgentCompilationError(
+            [AgentErrorCode.SPEC_MALFORMED.issue(component=source, reason=_YAML_MISSING_HINT)]
+        ) from exc
 
 
 def load_specs(

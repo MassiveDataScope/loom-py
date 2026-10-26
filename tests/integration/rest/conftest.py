@@ -117,6 +117,7 @@ def write_project(
             "discovery": {"mode": "modules", "modules": {"include": [module]}},
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if rest is not None:
         config["app"]["rest"] = rest

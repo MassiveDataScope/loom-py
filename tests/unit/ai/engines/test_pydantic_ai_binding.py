@@ -22,7 +22,9 @@ from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_typ
 from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
+from loom.core.config import ConfigError
 from loom.core.di import LoomContainer
+from loom.core.model.redaction import Dsn
 from tests.helpers.pydantic_ai_engine import (
     STRICT_SCHEMA,
     NullDeps,
@@ -99,6 +101,20 @@ class TestModelBinding:
 
         assert _vendor_client(model).api_key == "the-real-key"
 
+    def test_a_credentials_ref_naming_a_loom_variable_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``LOOM_*`` variables are loom's own; none holds a vendor key."""
+        monkeypatch.setenv("LOOM_VENDOR_API_KEY", "the-real-key")
+        target = InferenceTarget(
+            provider="openai", model="a-model", credentials_ref="LOOM_VENDOR_API_KEY"
+        )
+
+        with pytest.raises(ConfigError, match="LOOM_VENDOR_API_KEY") as excinfo:
+            resolve_model(target)
+
+        assert "the-real-key" not in str(excinfo.value)
+
     def test_typesafe_carries_the_key_and_the_endpoint_when_resolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -107,7 +123,7 @@ class TestModelBinding:
         target = InferenceTarget(
             provider="typesafe",
             model="jev-latest",
-            endpoint="https://gateway.example.com/v1",
+            endpoint=Dsn("https://gateway.example.com/v1"),
             credentials_ref="VENDOR_API_KEY",
         )
 
@@ -171,7 +187,7 @@ class TestModelBinding:
         target = InferenceTarget(
             provider=provider,
             model="a-model",
-            endpoint="https://gateway.example.com/v1" if provider == "gateway" else None,
+            endpoint=Dsn("https://gateway.example.com/v1") if provider == "gateway" else None,
             credentials_ref="VENDOR_API_KEY",
         )
 

@@ -11,16 +11,17 @@ on both paths, so the two are indistinguishable and a value that does not
 survive the round trip fails on the very first call. The supported grammar is
 a :class:`msgspec.Struct`, a scalar, or a ``list``, ``tuple`` or optional of
 those; ``tuple`` is restored as a tuple, which builtins conversion flattens
-into a list. An annotation outside the grammar has no codec and the caller
-falls back to :class:`PassthroughResultCodec`.
+into a list. An annotation outside the grammar has no codec, and
+:class:`~loom.core.cache.repository.CachedRepository` refuses to wrap a
+repository with such a read.
 
 A coroutine marked with ``@cache_call`` uses the same machinery through
 :func:`build_call_codec`, which extends the grammar with pydantic types behind
 a lazily loaded adapter and refuses, rather than passes through, an annotation
 it cannot describe.
 
-The lenient builtins rendering every cache payload goes through lives here
-too, because the pass-through codec is its main caller.
+The lenient builtins rendering the wrapper uses for its keys and entity
+payloads lives here too.
 """
 
 from __future__ import annotations
@@ -59,7 +60,6 @@ def to_payload(value: Any) -> Any:
     Unlike :func:`msgspec.to_builtins` this never raises: a value outside the
     struct, pydantic model, sequence and mapping shapes it knows is returned
     as it is, and the backend serializer decides whether it can store it.
-    That leniency is what lets an unannotated cached read keep working.
 
     Args:
         value: Value on its way to the cache backend.
@@ -100,26 +100,6 @@ class ResultCodec(Protocol):
     def decode(self, payload: Any) -> Any:
         """Rebuild the return value from a *payload* read out of the cache."""
         ...
-
-
-class PassthroughResultCodec:
-    """Codec for a read whose declared type cannot drive a conversion.
-
-    It reproduces the behaviour that predates typed codecs: the loaded result
-    is returned untouched and a cached payload is returned as it was decoded.
-    Hit and miss can therefore disagree, which is why the wrapper deprecates
-    the methods that land here.
-    """
-
-    __slots__ = ()
-
-    def encode(self, result: Any) -> EncodedResult:
-        """Store *result* as builtins and return it unchanged."""
-        return EncodedResult(to_payload(result), result)
-
-    def decode(self, payload: Any) -> Any:
-        """Return *payload* as the backend decoded it."""
-        return payload
 
 
 class _LoomTypeResultCodec:
@@ -179,10 +159,6 @@ def build_call_codec(func: Callable[..., Any]) -> ResultCodec | None:
     a process that has not imported pydantic: the caller then runs the
     coroutine uncached instead of storing something a hit and a miss would
     disagree about.
-
-    :class:`PassthroughResultCodec` is deliberately not reused: caching an
-    undescribed result is the shape that made a cached pydantic value read
-    back as a miss.
 
     Args:
         func: Coroutine function marked with ``@cache_call``.

@@ -5,6 +5,7 @@ from typing import Any
 import msgspec
 
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import RedactedMap
 
 
 class CacheConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -95,7 +96,7 @@ class CacheConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
     enabled: bool = True
     aiocache_alias: str = "default"
     counter_alias: str | None = None
-    aiocache_config: dict[str, Any] = msgspec.field(default_factory=dict)
+    aiocache_config: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     default_ttl: int = 200
     default_list_ttl: int = 120
     ttl_jitter: float = 0.1
@@ -133,7 +134,9 @@ class CacheConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
             enabled=bool(data.get("enabled", True)),
             aiocache_alias=str(data.get("aiocache_alias", "default")),
             counter_alias=str(raw_counter_alias) if raw_counter_alias is not None else None,
-            aiocache_config=dict(data.get("aiocache_config") or data.get("aiocache") or {}),
+            aiocache_config=RedactedMap(
+                dict(data.get("aiocache_config") or data.get("aiocache") or {})
+            ),
             default_ttl=int(data.get("default_ttl", 200)),
             default_list_ttl=int(data.get("default_list_ttl", 120)),
             ttl_jitter=float(data.get("ttl_jitter", 0.1)),

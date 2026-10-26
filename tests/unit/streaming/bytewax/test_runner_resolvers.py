@@ -32,6 +32,7 @@ def _write_streaming_yaml(tmp_path: Path, workers: str) -> str:
         "  consumer:\n"
         '    brokers: ["localhost:9092"]\n'
         '    group_id: "test"\n'
+        "    delivery: at_most_once\n"
         '    topics: ["orders.in"]\n'
         "  producer:\n"
         '    brokers: ["localhost:9092"]\n'
@@ -135,6 +136,7 @@ class TestRunResolversRequireConfigPath:
                     "consumer": {
                         "brokers": ["localhost:9092"],
                         "group_id": "test",
+                        "delivery": "at_most_once",
                         "topics": ["orders.in"],
                     },
                     "producer": {

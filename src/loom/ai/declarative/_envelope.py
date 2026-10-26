@@ -23,12 +23,6 @@ from loom.ai.errors import (
     AgentCompilationError,
     AgentCompilationIssue,
     AgentErrorCode,
-    agent_name_invalid,
-    spec_malformed,
-    spec_unknown_field,
-    spec_version_deprecated,
-    spec_version_missing,
-    spec_version_unsupported,
 )
 
 from ._v1 import AgentSpecV1
@@ -86,16 +80,17 @@ _IssueBuilder = Callable[[str, str, str | None], AgentCompilationIssue]
 def _unknown_field_issue(component: str, message: str, field: str | None) -> AgentCompilationIssue:
     match = _UNKNOWN_FIELD_RE.search(message)
     name = match.group(1) if match else (field or "<unknown>")
-    return spec_unknown_field(component, name)
+    return AgentErrorCode.SPEC_UNKNOWN_FIELD.issue(component=component, field=name)
 
 
 def _agent_name_issue(component: str, message: str, field: str | None) -> AgentCompilationIssue:
     del field
-    return agent_name_invalid(component, message)
+    return AgentErrorCode.AGENT_NAME_INVALID.issue(component=component, reason=message)
 
 
 def _malformed_issue(component: str, message: str, field: str | None) -> AgentCompilationIssue:
-    return spec_malformed(component, message, field)
+    issue = AgentErrorCode.SPEC_MALFORMED.issue(component=component, reason=message)
+    return msgspec.structs.replace(issue, field=field)
 
 
 _ISSUE_BUILDERS: Final[Mapping[AgentErrorCode, _IssueBuilder]] = MappingProxyType(
@@ -132,12 +127,14 @@ def _envelope_version(data: bytes, decoder: _PayloadDecoder, source: str) -> int
     try:
         envelope = decoder(data, type=_Envelope)
     except msgspec.ValidationError as exc:
-        raise AgentCompilationError([spec_malformed(source, str(exc), "spec_version")]) from exc
+        raise AgentCompilationError([_malformed_issue(source, str(exc), "spec_version")]) from exc
     except msgspec.DecodeError as exc:
-        raise AgentCompilationError([spec_malformed(source, str(exc))]) from exc
+        raise AgentCompilationError(
+            [AgentErrorCode.SPEC_MALFORMED.issue(component=source, reason=str(exc))]
+        ) from exc
 
     if envelope.spec_version is None:
-        raise AgentCompilationError([spec_version_missing(source)])
+        raise AgentCompilationError([AgentErrorCode.SPEC_VERSION_MISSING.issue(component=source)])
     return envelope.spec_version
 
 
@@ -148,8 +145,22 @@ def _version_issues(
 ) -> tuple[AgentCompilationIssue, ...]:
     latest = max(versions)
     if version not in versions:
-        raise AgentCompilationError([spec_version_unsupported(source, version, sorted(versions))])
-    issues = [spec_version_deprecated(source, version, latest)] if version < latest else []
+        raise AgentCompilationError(
+            [
+                AgentErrorCode.SPEC_VERSION_UNSUPPORTED.issue(
+                    component=source, found=version, supported=sorted(versions)
+                )
+            ]
+        )
+    issues = (
+        [
+            AgentErrorCode.SPEC_VERSION_DEPRECATED.issue(
+                component=source, found=version, latest=latest
+            )
+        ]
+        if version < latest
+        else []
+    )
     return tuple(issues)
 
 
@@ -164,7 +175,9 @@ def _decode_payload(
     except msgspec.ValidationError as exc:
         raise AgentCompilationError([_issue_from_validation_error(source, str(exc))]) from exc
     except msgspec.DecodeError as exc:
-        raise AgentCompilationError([spec_malformed(source, str(exc))]) from exc
+        raise AgentCompilationError(
+            [AgentErrorCode.SPEC_MALFORMED.issue(component=source, reason=str(exc))]
+        ) from exc
 
 
 def decode_artifact(

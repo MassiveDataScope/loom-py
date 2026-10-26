@@ -20,9 +20,10 @@ from typing import Any
 import msgspec
 
 from loom.core.config import ConfigError, expand_config_glob
+from loom.core.environment import ETL_CONFIG_VARIABLE
 from loom.etl import ETLPipeline
 from loom.prefect._flow_yaml import read_yaml, resolve_config_uri
-from loom.prefect._meta import DEFAULT_STORAGE_CONFIG_PATH, LOOM_ETL_CONFIG
+from loom.prefect._meta import DEFAULT_STORAGE_CONFIG_PATH
 from loom.prefect.flow import FlowSettings, flow_attribute_name, flow_settings_from_mapping
 from loom.prefect.flow._assemble import check_inherited_params
 
@@ -164,10 +165,10 @@ def _reject_reserved_env(name: str, settings: FlowSettings, uri: str) -> None:
                 f"{uri}: ETL {name!r}: environments.{environment}.job_variables.env must be "
                 f"a mapping of environment variable name to value, not {type(env).__name__}"
             )
-        if LOOM_ETL_CONFIG in env:
+        if ETL_CONFIG_VARIABLE in env:
             raise ConfigError(
                 f"{uri}: ETL {name!r}: environments.{environment}.job_variables.env may not "
-                f"set {LOOM_ETL_CONFIG}; the deployer records it from the validated declaration"
+                f"set {ETL_CONFIG_VARIABLE}; the deployer records it from the validated declaration"
             )
 
 

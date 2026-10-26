@@ -12,7 +12,6 @@ class StreamShape(StrEnum):
     """Logical data shape at a streaming graph edge."""
 
     RECORD = "record"
-    MANY = "many"
     BATCH = "batch"
     NONE = "none"
 
@@ -55,8 +54,6 @@ class ForEach(LoomFrozenStruct, frozen=True):
         them. It carries no business semantics.
     """
 
-    router_branch_safe: ClassVar[bool] = True
-
 
 class CollectBatch(LoomFrozenStruct, frozen=True):
     """Explicit shape adapter from ``record`` to ``batch``.
@@ -66,8 +63,8 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
 
     Groups individual records into batches before handing them to downstream
     batch-aware nodes. Batch is an **optimization grouping**, not a
-    first-class semantic unit — downstream nodes receive and return individual
-    records after the batch step executes.
+    first-class semantic unit: a ``ForEach`` after the batch nodes turns the
+    batch back into individual records.
 
     Args:
         max_records: Maximum records collected into one batch.
@@ -92,7 +89,6 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
     timeout_ms: int
     window: WindowStrategy = WindowStrategy.COLLECT
     event_time: bool = False
-    router_branch_safe: ClassVar[bool] = True
 
     def __post_init__(self) -> None:
         """Validate batch collection parameters."""
@@ -105,7 +101,7 @@ class CollectBatch(LoomFrozenStruct, frozen=True):
 
 
 class Drain(LoomFrozenStruct, frozen=True):
-    """Explicit terminal adapter from any shape to ``none``.
+    """Explicit terminal adapter from ``record`` to ``none``.
 
     Pattern:
         Shape adapter.

@@ -127,8 +127,9 @@ broken.
   not per record. Success carries no such attribute: `flush()` waited for every
   record, so a successful death is per-message truth.
 - **A batch diverted to a DLQ closes failed, with `terminal.dlq_topic` set.**
-  The diversion never flushes and swallows per-item failures, so at span-close
-  time the DLQ landing is unverified. The batch still commits, as it did before.
+  The batch never reached its outbound topic. It commits only after the DLQ
+  flush confirmed every record; a DLQ send or flush failure raises instead, and
+  the spans close failed without `terminal.dlq_topic`.
 - **A delivery error can be attributed to the wrong batch.** The producer's
   pending error is consumed by whichever `flush()` observes it, which may be the
   next batch's. The terminal spans that close failed are then one batch late.

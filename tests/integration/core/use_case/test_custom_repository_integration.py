@@ -13,6 +13,7 @@ from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.repository import RepositoryBuildContext, repository_for
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.response import Response
 from loom.core.use_case.use_case import UseCase
@@ -95,6 +96,7 @@ def _repo_module(
     return build_sqlalchemy_repository_registration_module(
         integration_context.session_manager,
         (Product,),
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
 
@@ -105,6 +107,7 @@ def _logical_repo_module(
         integration_context.session_manager,
         (),
         logical_models=(TaskView,),
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
 
@@ -115,6 +118,7 @@ def _builder_logical_repo_module(
         integration_context.session_manager,
         (),
         logical_models=(BuilderTaskView,),
+        cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
     def register(container: LoomContainer) -> None:

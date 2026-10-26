@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.config.overrides import load_application_config
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.runner.config_loader import _load_yaml, config_dir
 from loom.etl.storage._config import STORAGE_KEYED_COLLECTIONS, StorageConfig
@@ -257,12 +257,12 @@ def test_load_yaml_forwards_resolvers_and_keeps_keyed_collections(tmp_path: Path
     resolver.name = "stub"
 
     with patch(
-        "loom.etl.runner.config_loader.ConfigContext.from_yaml",
-        wraps=ConfigContext.from_yaml,
-    ) as from_yaml:
+        "loom.etl.runner.config_loader.load_application_config",
+        wraps=load_application_config,
+    ) as load:
         _load_yaml(str(path), resolvers=[resolver])
 
-    kwargs = from_yaml.call_args.kwargs
+    kwargs = load.call_args.kwargs
     assert kwargs["keyed"] == STORAGE_KEYED_COLLECTIONS
     assert kwargs["resolvers"][0] is resolver
 

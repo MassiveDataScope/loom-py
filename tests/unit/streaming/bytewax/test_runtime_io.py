@@ -2,23 +2,27 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import cast
 
 import pytest
 from confluent_kafka import TopicPartition
 
+from tests.helpers.extras import without_extra
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.plugins.optional import MissingExtraError  # noqa: E402
 from loom.streaming.bytewax import _adapter, _runtime_io  # noqa: E402
 from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E402
 from loom.streaming.compiler import CompiledMongoCDCSource  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
 from loom.streaming.kafka import MsgspecCodec  # noqa: E402
-from loom.streaming.kafka._errors import KafkaDeliveryError  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from loom.streaming.kafka._wire import DecodeError  # noqa: E402
 from loom.streaming.mongo import MongoSourceConfig  # noqa: E402
@@ -43,16 +47,38 @@ pytestmark = pytest.mark.bytewax
 class TestRuntimeIOBuilders:
     def test_build_runtime_source_returns_mongo_source_without_commit_tracker(self) -> None:
         source = CompiledMongoCDCSource(
-            settings=MongoSourceConfig(uri="mongodb://localhost:27017", database="app"),
+            settings=MongoSourceConfig(url=Dsn("mongodb://localhost:27017"), database="app"),
             collections=("orders",),
             watch_options={"full_document": "updateLookup"},
-            shape=build_compiled_source().shape,
         )
 
         runtime_source = _runtime_io.build_runtime_source(source)
 
         assert isinstance(runtime_source, MongoCDCSource)
         assert _runtime_io.build_commit_tracker(source) is None
+
+    def test_a_mongo_source_without_pymongo_names_the_extra(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        without_extra(monkeypatch, ["pymongo"], ["loom.streaming.mongo._bytewax_source"])
+        source = CompiledMongoCDCSource(
+            settings=MongoSourceConfig(url=Dsn("mongodb://localhost:27017"), database="app"),
+            collections=("orders",),
+            watch_options={},
+        )
+
+        with pytest.raises(MissingExtraError, match="needs the 'mongo' extra"):
+            _runtime_io.build_runtime_source(source)
+
+    def test_the_runtime_io_loads_without_pymongo(self) -> None:
+        script = (
+            "import sys\nsys.modules['pymongo'] = None\nimport loom.streaming.bytewax._runtime_io\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
 
     def test_build_runtime_source_returns_partitioned_source(
         self,
@@ -74,7 +100,7 @@ class TestRuntimeIOBuilders:
     ) -> None:
         fake_raw = RawProducerStub()
         monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
-        source = build_compiled_source(enable_auto_commit=False)
+        source = build_compiled_source(delivery="at_least_once")
         tracker = _runtime_io.build_commit_tracker(source)
         assert tracker is not None
 
@@ -255,13 +281,6 @@ class TestRuntimeIOBuilders:
         assert fake_raw.sent[0].headers["x-error-kind"] == b"wire"
         assert fake_raw.sent[0].headers["x-error-reason"] == b"decode failed"
 
-    def test_build_commit_tracker_defaults_to_legacy_at_most_once(self) -> None:
-        """Configs setting neither delivery nor enable_auto_commit keep prior behavior."""
-        source = build_compiled_source()
-
-        assert source.settings.to_confluent_config()["enable.auto.commit"] is True
-        assert _runtime_io.build_commit_tracker(source) is None
-
     def test_build_commit_tracker_with_explicit_at_least_once(self) -> None:
         tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
 
@@ -276,7 +295,7 @@ class TestRuntimeIOBuilders:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        source_cfg = build_compiled_source(enable_auto_commit=False)
+        source_cfg = build_compiled_source(delivery="at_least_once")
         tracker = _runtime_io.build_commit_tracker(source_cfg)
         assert tracker is not None
 
@@ -307,7 +326,7 @@ class TestRuntimeIOBuilders:
     def test_commit_tracker_waits_for_contiguous_offsets(
         self,
     ) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 2, consumer, None)
@@ -338,7 +357,7 @@ class TestRuntimeIOBuilders:
     def test_commit_tracker_accounts_for_broadcast_fanout(
         self,
     ) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 2, consumer, None)
@@ -361,7 +380,7 @@ class TestRuntimeIOBuilders:
     def test_commit_tracker_propagates_commit_offset_errors(
         self,
     ) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         consumer.commit_error = RuntimeError("commit-boom")
@@ -374,23 +393,6 @@ class TestRuntimeIOBuilders:
         tracker.complete("orders.in", 2, 9)
         with pytest.raises(RuntimeError, match="commit-boom"):
             tracker.flush_partition("orders.in", 2)
-
-    def test_build_inline_sink_partition_can_write_dlq_payloads(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        fake_raw = RawProducerStub()
-        monkeypatch.setattr(_runtime_io, "KafkaProducerClient", lambda settings: fake_raw)
-        fake_raw.flush_error = KafkaDeliveryError("broker unavailable")
-
-        partition = _runtime_io.build_inline_sink_partition(
-            build_compiled_sink(dlq_topic="orders.dlq"),
-        )
-        partition.write_batch([build_order_message("123", None)])
-
-        topics = [record.topic for record in fake_raw.sent]
-        assert "orders.out" in topics
-        assert "orders.dlq" in topics
 
     def test_branch_terminal_without_sink_falls_back_to_a_drop_sink(
         self,
@@ -429,7 +431,7 @@ class TestRuntimeIOBuilders:
 class TestCommitTrackerGapsAndFloor:
     def test_watermark_passes_offset_gaps(self) -> None:
         """Offset gaps (transactions, compaction) must never freeze commits."""
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -444,7 +446,7 @@ class TestCommitTrackerGapsAndFloor:
         assert tracker.flush_partition("orders.in", 0) == [TopicPartition("orders.in", 0, 107)]
 
     def test_floor_suppresses_commits_at_or_below_committed_offset(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         # production attaches floor and seeded watermark together, from the
@@ -467,7 +469,7 @@ class TestCommitTrackerGapsAndFloor:
         assert tracker.flush_partition("orders.in", 0) == [TopicPartition("orders.in", 0, 6)]
 
     def test_partition_committers_route_commits_to_their_owner(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         owner_zero = ConsumerBackendStub({})
         owner_one = ConsumerBackendStub({})
@@ -487,7 +489,7 @@ class TestCommitTrackerGapsAndFloor:
         assert owner_one.commit_offset_calls == [[TopicPartition("orders.in", 1, 6)]]
 
     def test_force_flush_recommits_current_watermark_for_keepalive(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -501,7 +503,7 @@ class TestCommitTrackerGapsAndFloor:
         assert tracker.keepalive_partition("orders.in", 0) == [TopicPartition("orders.in", 0, 10)]
 
     def test_rebuilding_a_partition_clears_inflight_state(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -517,7 +519,7 @@ class TestCommitTrackerGapsAndFloor:
 
 class TestCommitTrackerRobustness:
     def test_duplicate_register_of_inflight_offset_is_a_noop(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         tracker.attach_partition("orders.in", 0, consumer, None)
@@ -531,7 +533,7 @@ class TestCommitTrackerRobustness:
         assert tracker.flush_partition("orders.in", 0) == []
 
     def test_commit_failure_remarks_dirty_so_next_flush_retries(self) -> None:
-        tracker = _runtime_io.build_commit_tracker(build_compiled_source(enable_auto_commit=False))
+        tracker = _runtime_io.build_commit_tracker(build_compiled_source(delivery="at_least_once"))
         assert tracker is not None
         consumer = ConsumerBackendStub({})
         consumer.commit_error = RuntimeError("transient-commit-boom")

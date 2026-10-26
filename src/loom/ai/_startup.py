@@ -25,13 +25,7 @@ from typing import get_args
 
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import McpServerConfig
-from loom.ai.errors import (
-    AgentCompilationError,
-    AgentCompilationIssue,
-    agent_marker_output_mismatch,
-    agent_marker_unknown,
-    mcp_marker_unknown,
-)
+from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import AgentBinding, McpBinding
 from loom.core.use_case.registry import UseCaseRegistry
@@ -85,7 +79,9 @@ def _agent_binding_issues(
     for binding in agent_bindings:
         agent_plan = plans_by_name.get(binding.agent)
         if agent_plan is None:
-            yield agent_marker_unknown(uc_name, binding.name, binding.agent, available)
+            yield AgentErrorCode.AGENT_MARKER_UNKNOWN.issue(
+                component=uc_name, parameter=binding.name, agent=binding.agent, available=available
+            )
             continue
         expected_args = get_args(binding.annotation)
         if not expected_args:
@@ -97,10 +93,10 @@ def _agent_binding_issues(
         declared = agent_plan.output.loom_type.type
         if expected is declared:
             continue
-        yield agent_marker_output_mismatch(
-            uc_name,
-            binding.name,
-            binding.agent,
+        yield AgentErrorCode.AGENT_MARKER_OUTPUT_MISMATCH.issue(
+            component=uc_name,
+            parameter=binding.name,
+            agent=binding.agent,
             expected=getattr(expected, "__name__", str(expected)),
             declared=getattr(declared, "__name__", str(declared)),
         )
@@ -159,7 +155,12 @@ def _mcp_binding_issues(
     available = tuple(servers)
     for binding in mcp_bindings:
         if binding.server not in servers:
-            yield mcp_marker_unknown(uc_name, binding.name, binding.server, available)
+            yield AgentErrorCode.MCP_MARKER_UNKNOWN.issue(
+                component=uc_name,
+                parameter=binding.name,
+                server=binding.server,
+                available=available,
+            )
 
 
 __all__ = ["verify_agent_markers", "verify_mcp_markers"]

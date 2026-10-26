@@ -7,7 +7,8 @@ This module provides the Spark fixtures and backend-specific helper tests.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Generator
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,6 @@ from loom.etl.declarative.expr._refs import TableRef  # noqa: E402
 from loom.etl.declarative.target._history import (  # noqa: E402
     HistorifyDateCollisionError,
     HistorifyInputMode,
-    HistorifyKeyConflictError,
     HistorifySpec,
     HistoryDateType,
 )
@@ -65,6 +65,25 @@ class TestHistorifySparkTarget(HistorifyContractTests):
     def read_table(self, spark: SparkSession) -> Callable[[str], list[dict[str, Any]]]:
         return lambda uri: [row.asDict() for row in spark.read.format("delta").load(uri).collect()]
 
+    @pytest.fixture(autouse=True)
+    def utc_clock(
+        self, spark: SparkSession, monkeypatch: pytest.MonkeyPatch
+    ) -> Generator[None, None, None]:
+        """Pin the Python and Spark session clocks to UTC.
+
+        PySpark converts naive datetimes with the process local zone and casts
+        timestamps to dates with the session zone; pinning both makes naive
+        values round-trip as UTC wall time, as the contract expects.
+        """
+        previous = spark.conf.get("spark.sql.session.timeZone")
+        monkeypatch.setenv("TZ", "UTC")
+        time.tzset()
+        spark.conf.set("spark.sql.session.timeZone", "UTC")
+        yield
+        spark.conf.set("spark.sql.session.timeZone", previous)
+        monkeypatch.undo()
+        time.tzset()
+
 
 # ---------------------------------------------------------------------------
 # Spark-specific helper tests (backend-specific operations)
@@ -78,20 +97,20 @@ def _stamp_new_rows(frame: DataFrame, spec: HistorifySpec, eff_date: Any) -> Dat
     return ops.stamp_col(frame, spec.valid_to, None, dtype)
 
 
-class TestAssertUniqueEntityState:
-    def test_unique_frame_passes(self, spark: SparkSession) -> None:
+class TestDuplicateKeys:
+    def test_unique_frame_has_none(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(
             [{"player_id": 1, "team_id": "RM"}, {"player_id": 2, "team_id": "BCA"}]
         )
-        SparkHistorifyBackend().assert_unique_keys(frame, ["player_id", "team_id"])
+        assert SparkHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"]) is None
 
-    def test_duplicate_raises(self, spark: SparkSession) -> None:
+    def test_duplicates_are_described(self, spark: SparkSession) -> None:
         frame = spark.createDataFrame(
             [{"player_id": 1, "team_id": "RM"}, {"player_id": 1, "team_id": "RM"}]
         )
-        backend = SparkHistorifyBackend()
-        with pytest.raises(HistorifyKeyConflictError):
-            backend.assert_unique_keys(frame, ["player_id", "team_id"])
+        described = SparkHistorifyBackend().duplicate_keys(frame, ["player_id", "team_id"])
+        assert described is not None
+        assert "'player_id': 1" in described
 
 
 class TestAssertNoDateCollisions:
@@ -372,3 +391,37 @@ class TestCollectFutureRows:
             existing, _snapshot_spec(), date(2024, 3, 1)
         )
         assert sorted(rows) == [(1, date(2024, 6, 1)), (2, date(2024, 9, 1))]
+
+
+_CLOSURE_HISTORY = [
+    # Contiguous, open tail: no deletion.
+    {"id": 1, "valid_from": date(2024, 1, 1), "valid_to": date(2024, 1, 31)},
+    {"id": 1, "valid_from": date(2024, 2, 1), "valid_to": None},
+    # Zero-width vector sharing valid_from with the open one: no deletion.
+    {"id": 2, "valid_from": date(2024, 1, 1), "valid_to": date(2024, 1, 1)},
+    {"id": 2, "valid_from": date(2024, 1, 1), "valid_to": None},
+    # Gap before a reopen, then a closed tail: two deletions.
+    {"id": 3, "valid_from": date(2024, 1, 1), "valid_to": date(2024, 1, 31)},
+    {"id": 3, "valid_from": date(2024, 3, 1), "valid_to": date(2024, 3, 31)},
+]
+_CLOSURE_EVENTS = [(3, date(2024, 2, 1)), (3, date(2024, 4, 1))]
+_CLOSURE_SPEC = HistorifySpec(
+    table_ref=TableRef("t"),
+    keys=("id",),
+    effective_date="event_date",
+    mode=HistorifyInputMode.LOG,
+    track=("state",),
+    delete_marker="is_deleted",
+)
+
+
+class TestClosureEvents:
+    def test_returns_tombstone_after_each_closure_without_successor(
+        self, spark: SparkSession
+    ) -> None:
+        schema = "id long, valid_from date, valid_to date"
+        frame = spark.createDataFrame(
+            [(r["id"], r["valid_from"], r["valid_to"]) for r in _CLOSURE_HISTORY], schema
+        )
+        result = SparkHistorifyBackend().closure_events(frame, _CLOSURE_SPEC)
+        assert sorted(tuple(r) for r in result.collect()) == _CLOSURE_EVENTS
