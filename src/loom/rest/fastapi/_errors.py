@@ -7,9 +7,12 @@ therefore had to parse two formats, the failing *input* was echoed back, and a
 link to the Pydantic documentation advertised the internals.
 
 Registering these handlers makes every error of the application look the same,
-correlatable by ``trace_id`` and free of internal detail.
+correlatable by ``trace_id`` and free of internal detail.  The module also
+builds the ``400`` the router runtime and the SQL endpoint raise for a malformed
+body and the generic ``500`` they return for an unexpected failure.
 
-Internal module: consumed by :func:`loom.rest.fastapi.app.create_fastapi_app`.
+Internal module: consumed by :func:`loom.rest.fastapi.app.create_fastapi_app`,
+the router runtime and the SQL endpoint.
 """
 
 from __future__ import annotations
@@ -22,14 +25,38 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 
+from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
+from loom.rest._body import malformed_body_detail
 from loom.rest.errors import ErrorField
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
+_INTERNAL_ERROR_CODE = "internal_error"
+_INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
 _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
+
+
+def internal_error_response() -> MsgspecJSONResponse:
+    """Return the generic ``500`` that hides an unexpected failure's details.
+
+    It carries the active trace id, or ``""`` when there is none.
+    """
+    return MsgspecJSONResponse(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        content={
+            ErrorField.CODE: _INTERNAL_ERROR_CODE,
+            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
+            ErrorField.TRACE_ID: get_trace_id() or "",
+        },
+    )
+
+
+def malformed_body_error() -> HTTPException:
+    """Return the ``400`` for a request body that is not well-formed JSON."""
+    return HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail())
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -112,4 +139,4 @@ def _field_of(location: Any) -> str:
     if not isinstance(location, (list, tuple)):
         return str(location)
     parts = [str(part) for part in location if str(part) != _BODY_LOCATION]
-    return ".".join(parts) if parts else _BODY_LOCATION
+    return ".".join(parts) if parts else BODY_FIELD

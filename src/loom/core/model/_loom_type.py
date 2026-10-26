@@ -29,7 +29,7 @@ from typing import Any, Literal, Protocol
 import msgspec
 
 from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import LoomError
+from loom.core.errors.errors import BODY_FIELD, LoomError
 from loom.core.model._json_schema import DEFS, definition, without_null
 
 _LAX_TYPE_REASON = (
@@ -468,7 +468,7 @@ _PYDANTIC_ECHOING_REASONS = {
 def _pydantic_violations(exc: Any) -> tuple[tuple[str, str], ...]:
     return tuple(
         (
-            "body" if not error["loc"] else ".".join(map(str, error["loc"])),
+            BODY_FIELD if not error["loc"] else ".".join(map(str, error["loc"])),
             _PYDANTIC_ECHOING_REASONS.get(error["type"], str(error["msg"])),
         )
         for error in exc.errors(include_url=False, include_input=False)
@@ -520,7 +520,8 @@ def _msgspec_violation(text: str) -> tuple[str, str]:
         text: The one-line message a msgspec ``ValidationError`` carries.
 
     Returns:
-        The violation's field (``"body"`` when the message names none) and
+        The violation's field (:data:`~loom.core.errors.BODY_FIELD` when the
+        message names none) and
         the message with any trailing ``- at ...`` location stripped.
     """
     message, path = _msgspec_at_path(text)
@@ -532,5 +533,5 @@ def _msgspec_violation(text: str) -> tuple[str, str]:
     field_match = _MSGSPEC_FIELD.search(message)
     named_field = field_match.group(1) if field_match else None
 
-    field = ".".join(part for part in (path, named_field) if part) or "body"
+    field = ".".join(part for part in (path, named_field) if part) or BODY_FIELD
     return field, message
