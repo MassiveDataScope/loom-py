@@ -9,14 +9,11 @@ from typing import Any, Literal
 
 import polars as pl
 
-try:
-    import clickhouse_connect as _clickhouse_connect  # type: ignore[import-untyped]
-except ImportError:
-    _clickhouse_connect = None
-
+from loom.core.connections import ClickHouseConnection
 from loom.core.logger import get_logger
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._client import ClientSpec
+from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 
 _log = get_logger(__name__)
 
@@ -92,19 +89,23 @@ class ClickHouseTargetWriter:
     Uses the native HTTP/2 columnar insert protocol — no SQLAlchemy required.
 
     Args:
-        url: ClickHouse DSN, e.g. ``clickhouse://user:pass@host:8123/default``.
+        url:        ClickHouse DSN, e.g. ``clickhouse://host:8123/default``; a
+                    shortcut for ``connection=ClickHouseConnection(url=url)``.
+        connection: The ``storage.clickhouse`` connection: DSN, credentials and
+                    bounds.  Exactly one of *url* and *connection* is given.
 
     Raises:
         ImportError: If ``clickhouse-connect`` is not installed.
+        ValueError: When neither or both of *url* and *connection* are given.
     """
 
-    def __init__(self, url: str) -> None:
-        if _clickhouse_connect is None:
-            raise ImportError(
-                "ClickHouseTargetWriter requires 'clickhouse-connect'. "
-                "Install it with: pip install 'loom-py[clickhouse]'"
-            )
-        self._client = _clickhouse_connect.get_client(dsn=url)
+    def __init__(
+        self, url: str | None = None, *, connection: ClickHouseConnection | None = None
+    ) -> None:
+        resolved = resolve_connection(url, connection, owner="ClickHouseTargetWriter")
+        if resolved is None:
+            raise ValueError("ClickHouseTargetWriter requires 'url' or 'connection'")
+        self._client = open_client(resolved)
 
     def write(
         self,
@@ -184,17 +185,19 @@ class ClickHouseClientExecutor:
     ClickHouse.
 
     Args:
-        url:    ClickHouse DSN, e.g. ``clickhouse://user:pass@host:8123/db``.
-                Mutually exclusive with *client*.
-        client: Pre-built ``clickhouse_connect`` client.  Use for testing or
-                when the client is managed externally.  Mutually exclusive
-                with *url*.
+        url:        ClickHouse DSN, e.g. ``clickhouse://host:8123/db``; a shortcut
+                    for ``connection=ClickHouseConnection(url=url)``.
+        connection: The ``storage.clickhouse`` connection: DSN, credentials and
+                    bounds.  Mutually exclusive with *url*.
+        client:     Pre-built ``clickhouse_connect`` client.  Use for testing or
+                    when the client is managed externally.  Takes precedence
+                    over *url* and *connection*.
 
     Raises:
         ImportError: If ``clickhouse-connect`` is not installed and *client*
             is not provided.
-        ValueError: If neither *url* nor *client* is provided when
-            :meth:`command` is called.
+        ValueError: When both *url* and *connection* are given, or when none
+            of the three is provided and :meth:`command` is called.
 
     Example::
 
@@ -208,8 +211,14 @@ class ClickHouseClientExecutor:
         )
     """
 
-    def __init__(self, url: str | None = None, *, client: Any | None = None) -> None:
-        self._url = url
+    def __init__(
+        self,
+        url: str | None = None,
+        *,
+        connection: ClickHouseConnection | None = None,
+        client: Any | None = None,
+    ) -> None:
+        self._connection = resolve_connection(url, connection, owner="ClickHouseClientExecutor")
         self._client = client
         self._client_lock = threading.Lock()
 
@@ -221,7 +230,7 @@ class ClickHouseClientExecutor:
                 ``clickhouse_connect`` client and executes the step logic.
 
         Raises:
-            ValueError: If neither a URL nor a pre-built client was provided.
+            ValueError: If neither a connection nor a pre-built client was provided.
             ImportError: If ``clickhouse-connect`` is not installed.
         """
         fn(self._client or self._get_client())
@@ -230,17 +239,12 @@ class ClickHouseClientExecutor:
         with self._client_lock:
             if self._client is not None:
                 return self._client
-            if not self._url:
+            if self._connection is None:
                 raise ValueError(
-                    "ClickHouseClientExecutor requires either 'url' or 'client' "
+                    "ClickHouseClientExecutor requires 'url', 'connection' or 'client' "
                     "at construction time."
                 )
-            if _clickhouse_connect is None:
-                raise ImportError(
-                    "ClickHouseClientExecutor requires 'clickhouse-connect'. "
-                    "Install it with: pip install 'loom-py[clickhouse]'"
-                )
-            self._client = _clickhouse_connect.get_client(dsn=self._url)
+            self._client = open_client(self._connection)
             return self._client
 
 

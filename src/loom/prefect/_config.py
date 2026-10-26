@@ -9,7 +9,7 @@ import msgspec
 import yaml
 
 
-class FlowConfig(msgspec.Struct, frozen=True, kw_only=True):
+class FlowConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Retry and execution policy for a single ETL flow.
 
     A flow retry is scheduled by the server rather than awaited in place: the

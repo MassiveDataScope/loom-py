@@ -9,6 +9,7 @@ from aiocache import caches
 
 from loom.core.cache import BoundedMemoryCache, CacheConfig, CacheGateway
 from loom.core.cache.serializer import MsgspecSerializer
+from loom.core.model.redaction import RedactedMap
 
 pytestmark = pytest.mark.asyncio
 
@@ -146,12 +147,14 @@ class TestApplyConfig:
             aiocache_alias="data",
             max_size=2,
             max_bytes=1024,
-            aiocache_config={
-                "data": {
-                    "cache": "aiocache.SimpleMemoryCache",
-                    "serializer": {"class": "loom.core.cache.serializer.MsgspecSerializer"},
+            aiocache_config=RedactedMap(
+                {
+                    "data": {
+                        "cache": "aiocache.SimpleMemoryCache",
+                        "serializer": {"class": "loom.core.cache.serializer.MsgspecSerializer"},
+                    }
                 }
-            },
+            ),
         )
         CacheGateway.apply_config(config)
         gateway = CacheGateway(alias="data")
@@ -169,7 +172,9 @@ class TestApplyConfig:
         config = CacheConfig(
             aiocache_alias="data",
             max_size=global_bound,
-            aiocache_config={"data": {"cache": "aiocache.SimpleMemoryCache", "max_size": 5}},
+            aiocache_config=RedactedMap(
+                {"data": {"cache": "aiocache.SimpleMemoryCache", "max_size": 5}}
+            ),
         )
         CacheGateway.apply_config(config)
         backend = CacheGateway(alias="data")._cache
@@ -179,7 +184,7 @@ class TestApplyConfig:
     def test_without_a_bound_the_plain_class_is_kept(self) -> None:
         config = CacheConfig(
             aiocache_alias="data",
-            aiocache_config={"data": {"cache": "aiocache.SimpleMemoryCache"}},
+            aiocache_config=RedactedMap({"data": {"cache": "aiocache.SimpleMemoryCache"}}),
         )
         CacheGateway.apply_config(config)
         assert type(CacheGateway(alias="data")._cache).__name__ == "SimpleMemoryCache"
@@ -187,7 +192,9 @@ class TestApplyConfig:
     def test_a_redis_alias_is_forwarded_unchanged(self) -> None:
         redis = {"cache": "aiocache.RedisCache", "endpoint": "redis", "port": 6379}
         config = CacheConfig(
-            aiocache_alias="data", max_bytes=1024, aiocache_config={"data": dict(redis)}
+            aiocache_alias="data",
+            max_bytes=1024,
+            aiocache_config=RedactedMap({"data": dict(redis)}),
         )
         CacheGateway.apply_config(config)
         assert caches.get_config()["data"] == redis

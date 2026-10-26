@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ from omegaconf import OmegaConf
 
 import loom.rest.fastapi.auto as auto
 from loom.core.config import ConfigContext
+from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.prometheus.middleware import PrometheusMiddleware
@@ -59,19 +61,20 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     captured: dict[str, Any] = {}
     runtime = ObservabilityRuntime.noop()
 
-    def _fake_from_yaml(
-        cls: type[ConfigContext],
-        *config_paths: str,
-        resolvers: Any = (),
-        binder: Any = None,
+    def _fake_load(
+        *config_paths: str, resolvers: Any = (), environment: Any = None
     ) -> ConfigContext:
-        del config_paths, resolvers, binder, cls
+        del config_paths, resolvers, environment
         return ConfigContext.from_dict(cast(dict[str, Any], OmegaConf.to_container(raw)))
 
     def _fake_from_config(
-        cls: type[ObservabilityRuntime], config: ObservabilityConfig
+        cls: type[ObservabilityRuntime],
+        config: ObservabilityConfig,
+        *,
+        environment: Environment,
     ) -> ObservabilityRuntime:
         captured["observability_config"] = config
+        captured["environment"] = environment
         return runtime
 
     def _fake_build_bootstrap(
@@ -80,8 +83,10 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         metrics: Any | None = None,
         config_interfaces: Any = (),
         modules: Any = (),
+        environment: Any = None,
+        pool_metrics: Any = None,
     ) -> tuple[Any, Any, Any, Any]:
-        del app_cfg, ctx, metrics, config_interfaces, modules
+        del app_cfg, ctx, metrics, config_interfaces, modules, environment, pool_metrics
         result = SimpleNamespace(
             # create_app now verifies every compiled plan's Agent() markers
             # (spec 014, T202) before it registers the agent resolver, so the
@@ -125,7 +130,7 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         captured["runtime"] = observability_runtime
         return FastAPI()
 
-    monkeypatch.setattr(ConfigContext, "from_yaml", classmethod(_fake_from_yaml))
+    monkeypatch.setattr(auto, "load_application_config", _fake_load)
     monkeypatch.setattr(
         _AUTO.ObservabilityRuntime,
         "from_config",
@@ -134,11 +139,12 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(auto, "_build_bootstrap", _fake_build_bootstrap)
     monkeypatch.setattr(auto, "_configure_job_service", _fake_configure_job_service)
     monkeypatch.setattr(auto, "create_fastapi_app", _fake_create_fastapi_app)
-    monkeypatch.setattr(auto, "_ensure_code_path", lambda code_path: None)
+    monkeypatch.setattr(auto, "add_code_path", lambda code_path, config_dir: Path(code_path))
 
-    app = create_app("config.yaml")
+    app = create_app("config.yaml", environment="development")
 
     assert captured["observability_config"].log.enabled is False
+    assert captured["environment"] is Environment.DEVELOPMENT
     assert captured["runtime"] is runtime
     classes: list[Any] = [m.cls for m in app.user_middleware]
     assert TraceIdMiddleware in classes

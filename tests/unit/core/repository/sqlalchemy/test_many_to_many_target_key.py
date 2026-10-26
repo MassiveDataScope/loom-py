@@ -7,6 +7,7 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all
 from loom.core.command import Command
 from loom.core.model import BaseModel, Cardinality, ColumnField, RelationField
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
@@ -59,9 +60,19 @@ async def session_manager(sqlite_manager_for: SessionManagerFactory) -> SessionM
 async def test_a_composite_key_target_is_joined_on_the_referenced_column(
     session_manager: SessionManager,
 ) -> None:
-    devices = RepositorySQLAlchemy(session_manager=session_manager, model=_Device)
-    tags = RepositorySQLAlchemy(session_manager=session_manager, model=_Tag)
-    links = RepositorySQLAlchemy(session_manager=session_manager, model=_TagDevice)
+    devices = RepositorySQLAlchemy(
+        session_manager=session_manager,
+        model=_Device,
+        cursor_codec=CursorCodec(signing="ephemeral"),
+    )
+    tags = RepositorySQLAlchemy(
+        session_manager=session_manager, model=_Tag, cursor_codec=CursorCodec(signing="ephemeral")
+    )
+    links = RepositorySQLAlchemy(
+        session_manager=session_manager,
+        model=_TagDevice,
+        cursor_codec=CursorCodec(signing="ephemeral"),
+    )
     # Device "A" is (account 1, id 7) and "B" is (account 7, id 1): joining on the
     # first key column, account_id, would pick "B" for the link to device id 7.
     await devices.create_many(

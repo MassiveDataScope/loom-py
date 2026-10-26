@@ -89,6 +89,7 @@ def _write_project(tmp_path: Path, *, ai_extra: dict[str, Any]) -> str:
             },
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
         "ai": {
             "engine": _ENGINE_NAME,
             "specs": ["ai/agents/*/agent.yaml"],

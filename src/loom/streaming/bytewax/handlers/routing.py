@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Final, cast
+from typing import Any, Final, NamedTuple, cast
 
 from bytewax.operators import branch as bw_branch
 from bytewax.operators import flat_map as bw_flat_map
@@ -14,6 +14,7 @@ from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
     _classify_routing,
     _execute_in_boundary,
+    _split_node_result,
 )
 from loom.streaming.bytewax.handlers._shared import (
     _BuildContextProtocol,
@@ -28,17 +29,20 @@ from loom.streaming.bytewax.handlers._shared import (
     _resolve_record_result,
     _step_id,
 )
+from loom.streaming.core._errors import ErrorKind
 from loom.streaming.core._exceptions import UnsupportedNodeError
 from loom.streaming.core._message import Message
-from loom.streaming.nodes._boundary import IntoTopic
-from loom.streaming.nodes._branches import Branch, iter_branches
+from loom.streaming.nodes._branches import (
+    PATH_END_NODE_TYPES,
+    Branch,
+    branch_ends_path,
+    iter_branches,
+    router_ends_every_path,
+)
 from loom.streaming.nodes._broadcast import Broadcast
-from loom.streaming.nodes._capabilities import RouterBranchSafe
 from loom.streaming.nodes._expand_routes import ExpandRoutes
 from loom.streaming.nodes._fork import Fork, ForkKind
 from loom.streaming.nodes._router import Router, evaluate_predicate, select_value
-from loom.streaming.nodes._shape import Drain
-from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._step import BatchStep, RecordStep
 
 Stream = Any
@@ -47,7 +51,20 @@ _NO_KEY: Final = object()
 """Sentinel for a router without a selector, which no keyed branch can match."""
 
 
-def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+def _apply_router(
+    stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol
+) -> Stream | None:
+    """Route each message once, inline, and end the branches that end in a terminal.
+
+    One map selects the branch and runs its nodes up to the terminal, so the
+    messages that continue keep their order. A message whose branch ends in a
+    terminal leaves the map tagged with the branch index and is written by
+    that terminal's own handler at its compiled path.
+
+    Returns the messages that continue after the router, or ``None`` when it
+    ends every path (:func:`router_ends_every_path`), so nothing can be wired
+    after it.
+    """
     if not isinstance(raw, Router):
         raise UnsupportedNodeError(f"Unsupported router node {type(raw).__name__}.")
     router = raw
@@ -55,6 +72,7 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
     flow_name = ctx.plan.name
     boundary = ErrorBoundary(observer=observer, flow=flow_name)
     branches = tuple(iter_branches(router))
+    router_path = ctx.current_path
 
     def step(msg: Any) -> Any:
         message = _require_message(msg)
@@ -66,11 +84,44 @@ def _apply_router(stream: Stream, raw: object, idx: int, ctx: _BuildContextProto
         )
 
     sid = _step_id(f"router_{idx}", ctx)
-    mapped = bw_map(sid, stream, step)
-    from loom.streaming.bytewax._error_boundary import _split_node_result
-    from loom.streaming.core._errors import ErrorKind
+    routed = bw_map(sid, stream, step)
+    for branch in branches:
+        if branch_ends_path(branch):
+            ctx.wire_branch(
+                f"router_{idx}_out_{branch.index}",
+                bw_flat_map(
+                    _step_id(f"router_{idx}_to_{branch.index}", ctx),
+                    routed,
+                    _routed_to(branch.index),
+                ),
+                branch.nodes,
+                router_path + (branch.index,),
+                start=len(branch.nodes) - 1,
+            )
+    continuing = bw_flat_map(_step_id(f"router_{idx}_continue", ctx), routed, _routed_to(None))
+    live = _split_node_result(continuing, sid, ctx, ErrorKind.ROUTING)
+    return None if router_ends_every_path(router) else live
 
-    return _split_node_result(mapped, sid, ctx, ErrorKind.ROUTING)
+
+class _Routed(NamedTuple):
+    """A message the router ran, and the terminal branch that must write it, if any."""
+
+    terminal: int | None
+    message: Any
+
+
+def _routed_to(target: int | None) -> Callable[[Any], list[Any]]:
+    """Keep the routed items bound for *target*: a terminal branch, or ``None`` to continue.
+
+    Error envelopes continue, to the routing error split.
+    """
+
+    def take(item: Any) -> list[Any]:
+        if isinstance(item, _Routed):
+            return [item.message] if item.terminal == target else []
+        return [item] if target is None else []
+
+    return take
 
 
 def _execute_router_step(
@@ -80,7 +131,7 @@ def _execute_router_step(
     router: Router[Any, Any],
     branches: Sequence[Branch],
     message: Any,
-) -> Any:
+) -> _Routed:
     with _observe_node(
         observer,
         flow_name,
@@ -97,7 +148,7 @@ def _apply_broadcast(
     raw: object,
     idx: int,
     ctx: _BuildContextProtocol,
-) -> Stream:
+) -> None:
     if not isinstance(raw, Broadcast):
         raise UnsupportedNodeError(f"Unsupported broadcast node {type(raw).__name__}.")
     node = raw
@@ -111,15 +162,12 @@ def _apply_broadcast(
         )
 
     for branch in iter_branches(node):
-        branch_path = broadcast_path + (branch.index,)
-        branch_stream = ctx.wire_process(stream, branch.nodes, path_prefix=branch_path)
-        ctx.wire_branch_terminal(
+        ctx.wire_branch(
             f"broadcast_{idx}_out_{branch.index}",
-            branch_stream,
-            branch_path,
+            stream,
+            branch.nodes,
+            broadcast_path + (branch.index,),
         )
-
-    return stream
 
 
 def _row_extractor(
@@ -183,7 +231,7 @@ def _apply_expand_routes(
     raw: object,
     idx: int,
     ctx: _BuildContextProtocol,
-) -> Stream:
+) -> None:
     if not isinstance(raw, ExpandRoutes):
         raise UnsupportedNodeError(f"Unsupported expand_routes node {type(raw).__name__}.")
     node = raw
@@ -213,33 +261,23 @@ def _apply_expand_routes(
             expanded_stream,
             _row_extractor(node, output_type),
         )
-        ctx.wire_process(route_stream, branch.nodes, path_prefix=branch_path)
-        ctx.wire_branch_terminal(
-            f"expand_routes_{idx}_out_{branch.index}",
-            route_stream,
-            branch_path,
+        ctx.wire_branch(
+            f"expand_routes_{idx}_out_{branch.index}", route_stream, branch.nodes, branch_path
         )
 
-    return expanded_stream
 
+def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream | None:
+    """Split *stream* into the fork's branches and end each branch's live stream.
 
-def _apply_fork(stream: Stream, raw: object, idx: int, ctx: _BuildContextProtocol) -> Stream:
+    Returns the messages no branch claimed, or ``None`` when a default branch
+    took them.
+    """
     if not isinstance(raw, Fork):
         raise UnsupportedNodeError(f"Unsupported fork node {type(raw).__name__}.")
     fork = raw
-    if fork.kind is ForkKind.KEYED:
-        return _apply_fork_by(stream, fork, idx, ctx)
-    return _apply_fork_when(stream, fork, idx, ctx)
-
-
-def _apply_fork_by(
-    stream: Stream,
-    fork: Fork[Any],
-    idx: int,
-    ctx: _BuildContextProtocol,
-) -> Stream:
     selector = fork.selector
-    if selector is None:
+    keyed = fork.kind is ForkKind.KEYED
+    if keyed and selector is None:
         raise UnsupportedNodeError("Fork.by requires a selector.")
     remaining = stream
     fork_path = ctx.current_path
@@ -247,56 +285,42 @@ def _apply_fork_by(
     for branch in iter_branches(fork):
         branch_path = fork_path + (branch.index,)
         if branch.is_default:
-            ctx.wire_process(remaining, branch.nodes, path_prefix=branch_path)
-            continue
-        branch_name = _step_id(f"fork_{idx}_by_{branch.index}", ctx)
+            claimed = remaining
+        else:
 
-        def predicate(message: Any, *, expected: object = branch.key) -> bool:
-            runtime_message = _require_message(message)
-            return select_value(selector, runtime_message) == expected
+            def predicate(message: Any, *, current: Branch = branch) -> bool:
+                runtime_message = _require_message(message)
+                if keyed:
+                    return select_value(cast(Any, selector), runtime_message) == current.key
+                return evaluate_predicate(cast(Any, current.when), runtime_message)
 
-        split = bw_branch(branch_name, remaining, predicate)
-        ctx.wire_process(split.trues, branch.nodes, path_prefix=branch_path)
-        remaining = split.falses
+            kind = "by" if keyed else "when"
+            split = bw_branch(
+                _step_id(f"fork_{idx}_{kind}_{branch.index}", ctx), remaining, predicate
+            )
+            claimed, remaining = split.trues, split.falses
+        ctx.wire_branch(f"fork_{idx}_out_{branch.index}", claimed, branch.nodes, branch_path)
 
-    return remaining
-
-
-def _apply_fork_when(
-    stream: Stream,
-    fork: Fork[Any],
-    idx: int,
-    ctx: _BuildContextProtocol,
-) -> Stream:
-    remaining = stream
-    fork_path = ctx.current_path
-
-    for branch in iter_branches(fork):
-        branch_path = fork_path + (branch.index,)
-        if branch.is_default:
-            ctx.wire_process(remaining, branch.nodes, path_prefix=branch_path)
-            continue
-        branch_name = _step_id(f"fork_{idx}_when_{branch.index}", ctx)
-
-        def predicate(message: Any, *, when: Any = branch.when) -> bool:
-            runtime_message = _require_message(message)
-            return evaluate_predicate(when, runtime_message)
-
-        split = bw_branch(branch_name, remaining, predicate)
-        ctx.wire_process(split.trues, branch.nodes, path_prefix=branch_path)
-        remaining = split.falses
-
-    return remaining
+    return None if fork.default is not None else remaining
 
 
-def _execute_router(router: Router[Any, Any], branches: Sequence[Branch], message: Any) -> Any:
+def _execute_router(router: Router[Any, Any], branches: Sequence[Branch], message: Any) -> _Routed:
+    """Run the selected branch up to its terminal.
+
+    Returns:
+        The message as the branch left it, tagged with the index of the branch
+        whose terminal must write it, or with ``None`` when it continues after
+        the router.
+    """
     branch = _select_router_branch(router, branches, message)
     if branch is None:
-        return message
+        return _Routed(None, message)
     result = message
     for node in branch.nodes:
+        if isinstance(node, PATH_END_NODE_TYPES):
+            return _Routed(branch.index, result)
         result = _execute_router_node(node, result)
-    return result
+    return _Routed(None, result)
 
 
 def _select_router_branch(
@@ -317,18 +341,16 @@ def _select_router_branch(
 
 
 def _execute_router_node(node: object, message: Any) -> Any:
-    if isinstance(node, RouterBranchSafe) and isinstance(node, BatchStep):
+    if isinstance(node, BatchStep):
         batch_node = cast(_ExecutableBatchStep, node)
         results = _resolve_batch_result(batch_node.execute([message]), "Router")
         return _replace_payload(message, results[0])
-    if isinstance(node, RouterBranchSafe) and isinstance(node, RecordStep):
+    if isinstance(node, RecordStep):
         record_node = cast(_ExecutableRecordStep, node)
         return _replace_payload(
             message,
             _resolve_record_result(record_node.execute(message), "Router"),
         )
-    if isinstance(node, RouterBranchSafe) and isinstance(node, (IntoTopic, Drain, IntoSink)):
-        return message
     raise TypeError(
         f"Router branch node {type(node).__name__} is not supported by Bytewax adapter."
     )

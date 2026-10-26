@@ -13,8 +13,16 @@ import pytest
 from prefect.flows import Flow
 
 from loom.core.config import ConfigError
+from loom.core.environment import ENVIRONMENT_VARIABLE
 from loom.prefect._meta import LOOM_ETL_META_ATTR, ETLFlowMeta
 from loom.prefect.deploy import discover_and_deploy_etls
+
+
+@pytest.fixture(autouse=True)
+def _deploying_for_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These deployments target production, the environment their YAML declares."""
+    monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
+
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "prefect" / "etls"
 PIPELINES = "tests.fixtures.prefect.pipelines"
@@ -131,7 +139,7 @@ def test_job_variables_env_records_uri_and_keeps_user_keys(
         etl: orders
         pipeline: {PIPELINES}.OrdersPipeline
         environments:
-          prod:
+          production:
             job_variables:
               cpu: 512
               env:
@@ -153,7 +161,7 @@ def test_declaration_setting_the_variable_itself_is_rejected_naming_the_etl(
         etl: orders
         pipeline: {PIPELINES}.OrdersPipeline
         environments:
-          prod:
+          production:
             job_variables:
               env:
                 {ENV_VAR}: user-value
@@ -175,7 +183,7 @@ def test_job_variables_env_as_a_list_is_rejected_before_any_deployment(
         etl: orders
         pipeline: {PIPELINES}.OrdersPipeline
         environments:
-          prod:
+          production:
             job_variables:
               env: [FOO=bar]
         """,
@@ -337,7 +345,7 @@ def test_real_from_source_rebuilds_flow_through_the_entrypoint(
         correlation_field: run_date
         tags: [orders]
         environments:
-          prod:
+          production:
             job_variables:
               working_dir: {tmp_path}
         """,

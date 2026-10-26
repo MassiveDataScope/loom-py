@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history._enums import (
@@ -11,7 +12,6 @@ from loom.etl.declarative.target._history._enums import (
     HistorifyInputMode,
     HistoryDateType,
 )
-from loom.etl.declarative.target._schema_mode import SchemaMode
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,11 @@ class HistorifySpec:
         date_type: Precision of the ``valid_from`` / ``valid_to`` columns.
         schema_mode: Schema evolution strategy.
         allow_temporal_rerun: Allow re-weave when past-date data is loaded.
+        delete_marker: LOG mode only. Name of a boolean frame column flagging
+            tombstone events: a ``True`` row closes the entity's open vector one
+            period before its effective date and opens none. Every gap in stored
+            history is read as a deletion. Never written to the table. ``None``
+            disables tombstones.
     """
 
     table_ref: TableRef
@@ -70,6 +75,7 @@ class HistorifySpec:
     date_type: HistoryDateType = HistoryDateType.DATE
     schema_mode: SchemaMode = SchemaMode.STRICT
     allow_temporal_rerun: bool = False
+    delete_marker: str | None = None
 
 
 __all__ = ["HistorifySpec"]

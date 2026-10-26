@@ -54,6 +54,7 @@ from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
 from loom.core.model import loom_type, msgspec_type
+from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.rest.auth.middleware import AuthenticationMiddleware
@@ -1693,6 +1694,7 @@ def test_does_not_import_loom_ai_when_the_config_has_no_ai_section(tmp_path: Pat
             },
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     config_path = tmp_path / "app.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -1727,7 +1729,7 @@ class TestAuthenticationExclusions:
         """Bind the A2A surface of one agent with the given exclusion list."""
         config = make_ai_config(
             endpoints={_AGENT: make_endpoint()},
-            a2a=A2AConfig(base_url=_A2A_BASE_URL, expose=(_AGENT,)),
+            a2a=A2AConfig(base_url=Dsn(_A2A_BASE_URL), expose=(_AGENT,)),
         )
         plans = [make_plan(_AGENT)]
         runtime = AgentRuntime(

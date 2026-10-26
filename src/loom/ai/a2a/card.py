@@ -136,7 +136,7 @@ def build_agent_card(
         "protocolVersion": PROTOCOL_VERSION,
         "name": plan.name,
         "description": plan.description,
-        "url": agent_url(config.base_url, plan.name, prefix=prefix),
+        "url": agent_url(config.base_url.reveal(), plan.name, prefix=prefix),
         "version": str(plan.spec_version),
         "capabilities": dict(_TRANSPORT_CAPABILITIES),
         "defaultInputModes": list(_INPUT_MODES),

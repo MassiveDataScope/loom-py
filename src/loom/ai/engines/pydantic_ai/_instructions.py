@@ -21,11 +21,7 @@ from pydantic_ai.messages import InstructionPart
 
 from loom.ai.abc import StateShape
 from loom.ai.compiler import AgentPlan, CompiledInstruction
-from loom.ai.errors import (
-    AgentCompilationError,
-    template_compilation_failed,
-    template_extra_missing,
-)
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.core.plugins.optional import MissingExtraError, import_optional
 
 TEMPLATING_EXTRA: Final[str] = "ai-templates"
@@ -80,7 +76,9 @@ def ensure_templating_available(plan: AgentPlan) -> None:
         return
     raise AgentCompilationError(
         [
-            template_extra_missing(plan.name, _block_label(block, index), TEMPLATING_EXTRA)
+            AgentErrorCode.TEMPLATE_EXTRA_MISSING.issue(
+                component=plan.name, block=_block_label(block, index), extra=TEMPLATING_EXTRA
+            )
             for index, block in templated
         ]
     )
@@ -238,7 +236,11 @@ def _handlebars_instruction(
         rendered = handlebars.compile_checked(block.text, schema)
     except handlebars.HandlebarsError as exc:
         raise AgentCompilationError(
-            [template_compilation_failed(component, label, str(exc))]
+            [
+                AgentErrorCode.TEMPLATE_COMPILATION_FAILED.issue(
+                    component=component, block=label, reason=str(exc)
+                )
+            ]
         ) from exc
 
     async def render(ctx: RunContext[Any]) -> str:

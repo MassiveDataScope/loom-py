@@ -27,19 +27,19 @@ from loom.rest.fastapi.app import _register_openapi_components
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestInterface, RestRoute
 
-_MEMBERSHIP = "12345678-1234-5678-1234-567812345678"
+_CUSTOMER = "12345678-1234-5678-1234-567812345678"
 
 
-class GrantState(StrEnum):
-    LIVE = "live"
-    REVOKED = "revoked"
+class OrderStatus(StrEnum):
+    OPEN = "open"
+    SHIPPED = "shipped"
 
 
-class GrantQuery(
+class OrderQuery(
     msgspec.Struct, frozen=True, kw_only=True, rename="camel", forbid_unknown_fields=True
 ):
-    membership_id: UUID | None = None
-    state: GrantState | None = None
+    customer_id: UUID | None = None
+    status: OrderStatus | None = None
     changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
         default=None, name="changed_since"
     )
@@ -48,16 +48,16 @@ class GrantQuery(
     flag: bool = False
 
 
-class ListGrants(UseCase[Any, GrantQuery]):
-    async def execute(self, query: GrantQuery = Query()) -> GrantQuery:
+class ListOrders(UseCase[Any, OrderQuery]):
+    async def execute(self, query: OrderQuery = Query()) -> OrderQuery:
         return query
 
 
-class ModelGrantQuery(pydantic.BaseModel):
+class ModelOrderQuery(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid", alias_generator=to_camel)
 
-    membership_id: UUID | None = None
-    state: GrantState | None = None
+    customer_id: UUID | None = None
+    status: OrderStatus | None = None
     changed_since: pydantic.AwareDatetime | None = pydantic.Field(
         default=None, alias="changed_since"
     )
@@ -65,9 +65,9 @@ class ModelGrantQuery(pydantic.BaseModel):
     flag: bool = False
 
 
-class ListGrantsFromModel(UseCase[Any, list[Any]]):
-    async def execute(self, query: ModelGrantQuery = Query()) -> list[Any]:
-        return [query.state, query.limit]
+class ListOrdersFromModel(UseCase[Any, list[Any]]):
+    async def execute(self, query: ModelOrderQuery = Query()) -> list[Any]:
+        return [query.status, query.limit]
 
 
 class OwnerQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -75,43 +75,43 @@ class OwnerQuery(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     tier: int | None = None
 
 
-class ListOwnerGrants(UseCase[Any, list[Any]]):
+class ListOwnerOrders(UseCase[Any, list[Any]]):
     async def execute(self, query: OwnerQuery = Query()) -> list[Any]:
         return [query.owner, query.tier]
 
 
-class ListGrantsByProfile(UseCase[Any, list[Any]]):
-    async def execute(self, profile: str, query: GrantQuery = Query()) -> list[Any]:
+class ListOrdersByProfile(UseCase[Any, list[Any]]):
+    async def execute(self, profile: str, query: OrderQuery = Query()) -> list[Any]:
         return [profile, query.limit]
 
 
-class ListGrantsUnannotatedProfile(UseCase[Any, int]):
-    async def execute(self, profile, query: GrantQuery = Query()) -> int:  # type: ignore[no-untyped-def]
+class ListOrdersUnannotatedProfile(UseCase[Any, int]):
+    async def execute(self, profile, query: OrderQuery = Query()) -> int:  # type: ignore[no-untyped-def]
         return query.limit
 
 
-class Grants(RestInterface[Any]):
-    prefix = "/grants"
+class Orders(RestInterface[Any]):
+    prefix = "/orders"
     routes = (
-        RestRoute(use_case=ListGrants, method="GET", path=""),
-        RestRoute(use_case=ListGrantsFromModel, method="GET", path="/from-model"),
-        RestRoute(use_case=ListOwnerGrants, method="GET", path="/by-owner"),
+        RestRoute(use_case=ListOrders, method="GET", path=""),
+        RestRoute(use_case=ListOrdersFromModel, method="GET", path="/from-model"),
+        RestRoute(use_case=ListOwnerOrders, method="GET", path="/by-owner"),
         RestRoute(
-            use_case=ListGrantsUnannotatedProfile,
+            use_case=ListOrdersUnannotatedProfile,
             method="GET",
             path="/unannotated-profile",
             expose_profile=True,
             allowed_profiles=("default", "detail"),
         ),
         RestRoute(
-            use_case=ListGrants,
+            use_case=ListOrders,
             method="GET",
             path="/exposed-unused",
             expose_profile=True,
             allowed_profiles=("default", "detail"),
         ),
         RestRoute(
-            use_case=ListGrantsByProfile,
+            use_case=ListOrdersByProfile,
             method="GET",
             path="/by-profile",
             expose_profile=True,
@@ -138,14 +138,14 @@ def factory() -> _RecordingFactory:
 @pytest.fixture
 def client(factory: _RecordingFactory) -> TestClient:
     compiler = UseCaseCompiler()
-    for route in Grants.routes:
+    for route in Orders.routes:
         compiler.compile(route.use_case)
         factory.register(route.use_case)
     app = FastAPI()
     register_error_handlers(app)
     registry = bind_interfaces(
         app,
-        RestInterfaceCompiler(compiler).compile(Grants),
+        RestInterfaceCompiler(compiler).compile(Orders),
         factory,
         RuntimeExecutor(compiler),
         ObservabilityRuntime.noop(),
@@ -156,10 +156,10 @@ def client(factory: _RecordingFactory) -> TestClient:
 
 def test_declared_values_reach_execute_typed(client: TestClient) -> None:
     response = client.get(
-        "/grants",
+        "/orders",
         params={
-            "membershipId": _MEMBERSHIP,
-            "state": "live",
+            "customerId": _CUSTOMER,
+            "status": "open",
             "changed_since": "2026-09-15T10:00:00+02:00",
             "cursor": "abc",
             "limit": "7",
@@ -168,8 +168,8 @@ def test_declared_values_reach_execute_typed(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "membershipId": _MEMBERSHIP,
-        "state": "live",
+        "customerId": _CUSTOMER,
+        "status": "open",
         "changed_since": "2026-09-15T10:00:00+02:00",
         "cursor": "abc",
         "limit": 7,
@@ -178,11 +178,11 @@ def test_declared_values_reach_execute_typed(client: TestClient) -> None:
 
 
 def test_defaults_apply_when_absent(client: TestClient) -> None:
-    response = client.get("/grants")
+    response = client.get("/orders")
 
     assert response.json() == {
-        "membershipId": None,
-        "state": None,
+        "customerId": None,
+        "status": None,
         "changed_since": None,
         "cursor": None,
         "limit": 50,
@@ -191,10 +191,10 @@ def test_defaults_apply_when_absent(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "query", ["changed_sinse=2026-01-01T00:00:00Z", "membership_id=x", "limit=5&limit=6"]
+    "query", ["changed_sinse=2026-01-01T00:00:00Z", "customer_id=x", "limit=5&limit=6"]
 )
 def test_an_unknown_or_repeated_parameter_is_unsupported(client: TestClient, query: str) -> None:
-    response = client.get(f"/grants?{query}")
+    response = client.get(f"/orders?{query}")
 
     detail = response.json()["detail"]
     assert (response.status_code, detail["code"]) == (400, "unsupported_query")
@@ -206,7 +206,7 @@ def test_an_unknown_or_repeated_parameter_is_unsupported(client: TestClient, que
 def test_an_exposed_profile_is_accepted_next_to_the_declared_parameters(
     client: TestClient,
 ) -> None:
-    response = client.get("/grants/by-profile?profile=detail&limit=5")
+    response = client.get("/orders/by-profile?profile=detail&limit=5")
 
     assert (response.status_code, response.json()) == (200, ["detail", 5])
 
@@ -215,15 +215,15 @@ def test_an_exposed_profile_is_accepted_next_to_the_declared_parameters(
     ("query", "field"),
     [
         ("limit=500", "limit"),
-        ("state=gone", "state"),
-        ("membershipId=not-a-uuid", "membershipId"),
+        ("status=gone", "status"),
+        ("customerId=not-a-uuid", "customerId"),
         ("changed_since=2026-09-15T10:00:00", "changed_since"),
     ],
 )
 def test_a_bad_value_is_a_query_validation_error(
     client: TestClient, query: str, field: str
 ) -> None:
-    response = client.get(f"/grants?{query}")
+    response = client.get(f"/orders?{query}")
 
     detail = response.json()["detail"]
     assert (response.status_code, detail["code"]) == (400, "query_validation")
@@ -233,19 +233,19 @@ def test_a_bad_value_is_a_query_validation_error(
 def test_openapi_publishes_exactly_the_declared_parameters(client: TestClient) -> None:
     document = client.get("/openapi.json").json()
 
-    parameters = document["paths"]["/grants"]["get"]["parameters"]
+    parameters = document["paths"]["/orders"]["get"]["parameters"]
     assert parameters == [
         {
-            "name": "membershipId",
+            "name": "customerId",
             "in": "query",
             "required": False,
             "schema": {"type": "string", "format": "uuid"},
         },
         {
-            "name": "state",
+            "name": "status",
             "in": "query",
             "required": False,
-            "schema": {"$ref": "#/components/schemas/GrantState"},
+            "schema": {"$ref": "#/components/schemas/OrderStatus"},
         },
         {
             "name": "changed_since",
@@ -268,22 +268,22 @@ def test_openapi_publishes_exactly_the_declared_parameters(client: TestClient) -
             "schema": {"type": "boolean", "default": False},
         },
     ]
-    assert document["components"]["schemas"]["GrantState"]["enum"] == ["live", "revoked"]
+    assert document["components"]["schemas"]["OrderStatus"]["enum"] == ["open", "shipped"]
 
 
 def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient) -> None:
-    accepted = client.get("/grants/from-model?state=revoked&limit=3")
-    refused = client.get("/grants/from-model?limit=0")
-    unknown = client.get("/grants/from-model?page=2")
-    operation = client.get("/openapi.json").json()["paths"]["/grants/from-model"]["get"]
+    accepted = client.get("/orders/from-model?status=shipped&limit=3")
+    refused = client.get("/orders/from-model?limit=0")
+    unknown = client.get("/orders/from-model?page=2")
+    operation = client.get("/openapi.json").json()["paths"]["/orders/from-model"]["get"]
 
-    assert (accepted.status_code, accepted.json()) == (200, ["revoked", 3])
+    assert (accepted.status_code, accepted.json()) == (200, ["shipped", 3])
     assert (refused.status_code, refused.json()["detail"]["code"]) == (400, "query_validation")
     assert (unknown.status_code, unknown.json()["detail"]["code"]) == (400, "unsupported_query")
     assert all("title" not in parameter["schema"] for parameter in operation["parameters"])
     assert [parameter["name"] for parameter in operation["parameters"]] == [
-        "membershipId",
-        "state",
+        "customerId",
+        "status",
         "changed_since",
         "limit",
         "flag",
@@ -293,10 +293,10 @@ def test_a_pydantic_query_is_accepted_validated_and_published(client: TestClient
 @pytest.mark.parametrize(
     "url",
     [
-        "/grants?profile=detail",
-        "/grants/by-profile?profile=detail&profile=default",
-        "/grants/exposed-unused?profile=detail",
-        "/grants/unannotated-profile?profile=detail",
+        "/orders?profile=detail",
+        "/orders/by-profile?profile=detail&profile=default",
+        "/orders/exposed-unused?profile=detail",
+        "/orders/unannotated-profile?profile=detail",
     ],
 )
 def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
@@ -311,7 +311,7 @@ def test_a_profile_the_route_does_not_expose_or_repeats_is_unsupported(
 
 
 @pytest.mark.parametrize(
-    "url", ["/grants?page=2", "/grants?limit=500", "/grants/by-profile?profile=unknown"]
+    "url", ["/orders?page=2", "/orders?limit=500", "/orders/by-profile?profile=unknown"]
 )
 def test_a_refused_query_does_not_build_the_use_case(
     client: TestClient, factory: _RecordingFactory, url: str
@@ -322,9 +322,9 @@ def test_a_refused_query_does_not_build_the_use_case(
     assert factory.built == []
 
 
-@pytest.mark.parametrize("path", ["/grants", "/grants/from-model"])
+@pytest.mark.parametrize("path", ["/orders", "/orders/from-model"])
 def test_a_bad_enum_value_is_not_echoed(client: TestClient, path: str) -> None:
-    response = client.get(path, params={"state": "secret-input-value"})
+    response = client.get(path, params={"status": "secret-input-value"})
 
     assert (response.status_code, response.json()["detail"]["code"]) == (400, "query_validation")
     assert "secret-input-value" not in response.text
@@ -333,7 +333,7 @@ def test_a_bad_enum_value_is_not_echoed(client: TestClient, path: str) -> None:
 def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
     client: TestClient,
 ) -> None:
-    response = client.get("/grants/by-profile", params={"profile": "secret-input-value"})
+    response = client.get("/orders/by-profile", params={"profile": "secret-input-value"})
 
     detail = response.json()["detail"]
     assert (response.status_code, detail["code"]) == (400, "query_validation")
@@ -344,7 +344,7 @@ def test_a_profile_the_route_does_not_allow_is_a_query_validation_error(
 
 
 def test_a_field_without_default_is_a_required_parameter(client: TestClient) -> None:
-    operation = client.get("/openapi.json").json()["paths"]["/grants/by-owner"]["get"]
+    operation = client.get("/openapi.json").json()["paths"]["/orders/by-owner"]["get"]
 
     assert [(p["name"], p["required"]) for p in operation["parameters"]] == [
         ("owner", True),
@@ -353,7 +353,7 @@ def test_a_field_without_default_is_a_required_parameter(client: TestClient) -> 
 
 
 def test_a_missing_required_field_is_a_query_validation_error(client: TestClient) -> None:
-    response = client.get("/grants/by-owner")
+    response = client.get("/orders/by-owner")
 
     detail = response.json()["detail"]
     assert (response.status_code, detail["code"]) == (400, "query_validation")

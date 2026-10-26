@@ -15,6 +15,7 @@ from typing import Any
 
 from clickhouse_connect.driver.exceptions import DatabaseError
 
+from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.sql.abc import SqlColumn, SqlExecutionOptions, SqlQueryResult
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
 
@@ -38,6 +39,15 @@ def make_connection_config(**overrides: Any) -> SqlConnectionConfig:
     params.update(overrides)
     if "max_limit" in overrides and "default_limit" not in overrides:
         params["default_limit"] = min(1000, overrides["max_limit"])
+    url = params.get("url")
+    if isinstance(url, str):
+        params["url"] = Dsn(url)
+    password = params.get("password")
+    if isinstance(password, str):
+        params["password"] = Secret(password)
+    settings = params.get("settings")
+    if isinstance(settings, dict):
+        params["settings"] = RedactedMap(settings)
     return SqlConnectionConfig(**params)
 
 

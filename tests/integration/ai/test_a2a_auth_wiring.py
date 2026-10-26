@@ -32,6 +32,7 @@ from loom.ai.compiler import CompiledA2ACapability, CompiledRemoteAuth
 from loom.ai.engines.pydantic_ai._a2a import create_a2a_client
 from loom.ai.engines.pydantic_ai.extras.a2a import build_a2a_http_client
 from loom.ai.remote_auth import shared_a2a_auth
+from loom.core.model.redaction import Secret
 
 from ...helpers.remote_auth_plugin import third_party_strategy
 
@@ -128,7 +129,7 @@ class TestHeadersRefReachesTheCardRequest:
 
     async def test_the_card_request_carries_the_header(self, remote_agent: _RecordingAgent) -> None:
         capability = CompiledA2ACapability(
-            agent=_AGENT, url=remote_agent.url, headers_ref="X-API-Key=abc123"
+            agent=_AGENT, url=remote_agent.url, headers_ref=Secret("X-API-Key=abc123")
         )
 
         headers = await _card_request(capability, remote_agent)

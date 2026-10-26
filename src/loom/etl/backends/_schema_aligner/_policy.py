@@ -30,8 +30,8 @@ class SchemaAlignmentPolicy(Generic[FrameT, SchemaT]):
 
         if schema is None:
             raise SchemaNotFoundError(
-                "Destination table does not yet exist. "
-                "Write with SchemaMode.OVERWRITE to create it on first run."
+                f"No table schema to align the frame to under SchemaMode.{mode.name}. "
+                "Pass the table's schema, or use SchemaMode.OVERWRITE, which skips alignment."
             )
 
         decision = self._analyze(frame, schema)

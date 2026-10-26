@@ -11,7 +11,6 @@ from typing_extensions import TypeVar
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.routing import LogicalRef, as_logical_ref
 from loom.streaming.mongo._event import MongoCDCEvent
-from loom.streaming.nodes._shape import StreamShape
 
 MongoCDCPayloadT = TypeVar(
     "MongoCDCPayloadT",
@@ -33,13 +32,11 @@ class FromMongoCDC(LoomFrozenStruct, Generic[MongoCDCPayloadT], frozen=True):
         collections: Collection names to watch. An empty tuple means a
             database-level watch.
         watch_options: Driver watch kwargs resolved later by compiler/runtime.
-        shape: Declared source shape.
     """
 
     name: str
     collections: tuple[str, ...] = ()
     watch_options: Mapping[str, object] = msgspec.field(default_factory=dict)
-    shape: StreamShape = StreamShape.RECORD
 
     @property
     def logical_ref(self) -> LogicalRef:

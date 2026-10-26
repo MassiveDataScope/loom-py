@@ -39,9 +39,9 @@ def test_parses_defaults_when_connection_is_minimal() -> None:
         conn.max_execution_time,
         conn.max_sql_bytes,
         conn.connect_timeout,
-        conn.send_receive_timeout,
+        conn.read_timeout,
         conn.executor_threads,
-        conn.pool_size,
+        conn.pool.size,
     ) == (True, 1000, 10000, 30, 262144, 10, 60, None, None)
 
 
@@ -134,7 +134,7 @@ def test_repr_redacts_the_dsn_credentials() -> None:
         _minimal(url="clickhouse://loom_user:s3cr3t_pw@ch.internal:8123/analytics")
     ).connections["analytics"]
     rendered = repr(conn)
-    assert ("s3cr3t_pw" in rendered, "://***@ch.internal" in rendered) == (False, True)
+    assert ("s3cr3t_pw" in rendered, "://loom_user:***@ch.internal" in rendered) == (False, True)
 
 
 def test_credentials_default_to_none_when_not_declared() -> None:
@@ -152,19 +152,36 @@ def test_parses_explicit_credentials_when_declared() -> None:
 
 
 def test_repr_never_exposes_the_explicit_password() -> None:
-    """The hand-written ``repr`` omits the credential fields entirely."""
+    """The ``repr`` masks the credential fields."""
     conn = _parse(_minimal(username="mcp_reader", password="s3cr3t_pw")).connections["analytics"]
     assert "s3cr3t_pw" not in repr(conn)
 
 
+def test_repr_masks_the_backend_settings() -> None:
+    """``settings`` may carry a credential; the repr keeps the key and masks the value."""
+    conn = _parse(_minimal(settings={"http_password": "s3cr3t_pw"})).connections["analytics"]
+    rendered = repr(conn)
+    assert ("s3cr3t_pw" in rendered, "'http_password': '***'" in rendered) == (False, True)
+
+
 def test_fails_when_auth_has_an_unknown_value() -> None:
-    """``auth`` only admits 'jwt' or 'external'; any other value => ConfigError."""
+    """``auth`` only admits 'identity' or 'external'; any other value => ConfigError."""
     connection = _minimal(
         allowed_roles=["role_viz_reader"],
         default_role="role_viz_reader",
         sql_endpoint={"enabled": True, "auth": "basic"},
     )
     with pytest.raises(ConfigError):
+        _parse(connection)
+
+
+def test_refuses_the_removed_jwt_auth_mode_naming_the_field() -> None:
+    """``auth: jwt`` is refused at decode and the error names the field."""
+    connection = _minimal(
+        default_role="role_viz_reader",
+        sql_endpoint={"enabled": True, "auth": "jwt"},
+    )
+    with pytest.raises(ConfigError, match=r"'jwt'.*sql_endpoint\.auth"):
         _parse(connection)
 
 
@@ -178,10 +195,10 @@ def test_parses_an_endpoint_with_an_allowlist_under_identity_bound_auth() -> Non
     conn = _parse(
         _minimal(
             allowed_roles=["role_viz_reader"],
-            sql_endpoint={"enabled": True, "auth": "jwt"},
+            sql_endpoint={"enabled": True, "auth": "identity"},
         )
     ).connections["analytics"]
-    assert (conn.sql_endpoint.enabled, conn.sql_endpoint.auth) == (True, "jwt")
+    assert (conn.sql_endpoint.enabled, conn.sql_endpoint.auth) == (True, "identity")
 
 
 def test_allows_an_enabled_endpoint_with_an_empty_allowlist_and_default_role() -> None:

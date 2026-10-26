@@ -48,7 +48,7 @@ import logging
 from typing import Any, Protocol, runtime_checkable
 
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
-from loom.etl.checkpoint._cleaners import CheckpointCleaner, TempCleaner
+from loom.etl.checkpoint._cleaners import FsspecTempCleaner, TempCleaner
 from loom.etl.checkpoint._paths import correlation_scope_base, run_scope_base, scope_base
 from loom.etl.checkpoint._scope import CheckpointScope
 
@@ -124,7 +124,7 @@ class CheckpointStore:
         cleaner: TempCleaner | None = None,
     ) -> None:
         self._root = root.rstrip("/")
-        self._cleaner = cleaner if cleaner is not None else CheckpointCleaner()
+        self._cleaner = cleaner if cleaner is not None else FsspecTempCleaner()
         self._backend = backend if backend is not None else _PolarsCheckpointBackend({})
 
     # ------------------------------------------------------------------

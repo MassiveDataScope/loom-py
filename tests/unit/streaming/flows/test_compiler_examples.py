@@ -28,7 +28,6 @@ class TestCompilerFlowExamples:
 def _assert_simple_validation_case(plan: CompiledPlan) -> None:
     assert plan.name == "orders_validate"
     assert plan.source.payload_type is not None
-    assert plan.source.shape is StreamShape.RECORD
     assert plan.source.decode_strategy == "record"
     assert plan.output is not None
     assert plan.output.topic == "orders.validated"

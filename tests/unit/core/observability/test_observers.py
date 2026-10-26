@@ -81,7 +81,7 @@ class TestOtelLogExport:
         )
 
         handler = install_otel_log_export(
-            OtelConfig(endpoint="", service_name="loom-test", tracer_name="loom.test"),
+            OtelConfig(endpoint=None, service_name="loom-test", tracer_name="loom.test"),
             exporter=exporter,
         )
         try:

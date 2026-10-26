@@ -12,8 +12,9 @@ no global is touched.
 ## Declaring
 
 `@cached` goes on the repository class. Every read the wrapper knows about —
-`get_by_id`, `get_by`, the list and cursor reads — is served through the cache
-from then on; writes go straight through and invalidate.
+`get_by_id`, the list and cursor reads — is served through the cache from then
+on; `get_by`, `exists_by` and `count` are not cached, and writes go straight
+through and invalidate.
 
 ```python
 from loom.core.cache import cache_query, cached
@@ -34,8 +35,9 @@ class UserRepository(RepositorySQLAlchemy[User, UserCreate, UserUpdate]):
 `@cache_query` marks a custom read method. Annotate its return type: the
 wrapper derives a codec from it, so a hit and a miss return the same type. A
 `msgspec.Struct`, a scalar, or a `list`, `tuple` or optional of those is
-supported; anything else emits a `DeprecationWarning` when the repository is
-wrapped and the cached call returns the decoded payload instead.
+supported. A missing annotation or anything else makes wrapping the repository
+raise `RuntimeError`, naming the method, so the application fails when it
+builds the repository rather than serving a hit of another type.
 
 `scope="entity"` requires the model's primary key as the first positional
 argument — a keyword argument does not count, and the wrapper raises
@@ -114,14 +116,16 @@ silently disabled every override is the failure mode this guards against.
 
 ## What is cached, what invalidates it
 
-Two kinds of entry are stored on the data alias:
+Three kinds of entry are stored on the data alias:
 
-- **Entity reads** — `get_by_id` and every `@cache_query(scope="entity")`
-  method — keyed on the entity name, the id and a fingerprint of their tags.
-- **List indexes** — `get_by`, the paginated and cursor reads and every
-  `@cache_query(scope="list")` method — an index of ids plus the entities of
-  the page, so a warm index reloads only the rows it is missing, with one
-  `<primary key> IN (...)` query.
+- **Entity reads** — `get_by_id` — keyed on the entity name, the id and a
+  fingerprint of their tags.
+- **List indexes** — the paginated and cursor reads — an index of ids plus the
+  entities of the page, so a warm index reloads only the rows it is missing,
+  with one `<primary key> IN (...)` query.
+- **Custom reads** — every `@cache_query` method — the method's encoded result,
+  keyed on the method name, a hash of its arguments and a fingerprint of its
+  tags; `scope="entity"` or `scope="list"` chooses those tags and the TTL.
 
 Every entry lists the tags it depends on; the counters alias holds one
 generation counter per tag (`tag:<name>`), and an entry whose fingerprint no
@@ -129,6 +133,29 @@ longer matches the counters is a miss. A write bumps only the tags it affects:
 `user:list` and `user:id:<k>` for each written id, plus any tag the mutation
 event carries. Updating one row leaves every other cached row of the entity
 warm.
+
+Every entry also carries the caller's scope, which the wrapped repository
+reports through `cache_scope()`: on SQLAlchemy it is every session setting the
+caller's transactions start with, so a row-level policy reading any setting
+keeps its callers' entries apart (cursor tokens bind only the `loom.scope.*`
+settings). The scope is not a tag, so a write still evicts the entry in every
+scope. Visibility that depends on other tables, such as a membership join a
+policy reads, is not in the scope, so a change there reaches a cached entry
+only when its TTL runs out.
+A per-request value in `session_settings`, such as a request id or an audit
+value, makes the cache effectively per request: every request writes its own
+entries, and their number grows with the request rate.
+
+The cache takes no part inside a caller-owned transaction: the unit of work a
+use case runs in, or a `@transactional` scope. There, `get_by_id`, the list
+and query reads and every `@cache_query` method go straight to the repository,
+with no lookup and no store, so they see the transaction's own writes; writes
+still invalidate as usual. This holds where the backend reports such a
+transaction: SQLAlchemy, and Mongo with transactions. DynamoDB and Mongo with
+`transactions: false` report none and keep caching. A read-only use case run
+outside another unit of work opens none and keeps using the cache. A call to a
+`@cache_query` method whose `session` parameter, passed by position or by
+name, is not `None` is not cached either.
 
 Inside a use case or a `@transactional` scope the bump is not applied at the
 write: it is enqueued on the post-commit channel and published **after the
@@ -166,6 +193,9 @@ caller's answer to another. loom cannot detect this and does not try.
 An object that carries identity must put it in the arguments, where the key can
 see it. A toolset holding a per-tenant client is not a candidate; a toolset that
 takes `tenant` as a parameter is.
+
+A `@cache_call` key carries no scope, so a `@cache_call` coroutine must not
+wrap a read from a scoped repository.
 
 ### Declaring
 

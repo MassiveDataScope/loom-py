@@ -6,7 +6,7 @@ import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import FilterGroup, FilterOp, FilterSpec
+from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterSpec
 from loom.core.repository.abc.query_compiler import QueryCompiler
 from loom.core.repository.sqlalchemy.query_compiler.compiler import QuerySpecCompiler
 from loom.core.repository.sqlalchemy.query_compiler.errors import UnsafeFilterError
@@ -24,7 +24,14 @@ def _compiler(allowed: frozenset[str] = frozenset()) -> QuerySpecCompiler:
     sa_model = get_compiled(_Row)
     assert sa_model is not None
     return QuerySpecCompiler(
-        sa_model, sa_model.id, allowed, backend="sqlalchemy", model_name="_Row"
+        sa_model,
+        sa_model.id,
+        allowed,
+        backend="sqlalchemy",
+        model=_Row,
+        cursor_codec=CursorCodec(signing="ephemeral"),
+        scope="",
+        columns={},
     )
 
 

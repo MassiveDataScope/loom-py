@@ -23,6 +23,7 @@ from loom.ai.compiler import (
 from loom.ai.declarative import PolicySpec
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
+from loom.core.model.redaction import Dsn
 from loom.core.sql.config import SqlConnectionConfig
 from tests.helpers.pydantic_ai_engine import compiled_output, make_plan
 
@@ -54,7 +55,9 @@ _USECASES = CompiledUsecaseCapability(keys=("orders.list",), use_cases=())
 _SQL = CompiledSqlCapability(
     connection="reports",
     config=SqlConnectionConfig(
-        backend="clickhouse", url="clickhouse://reports.invalid:8123/reporting", allowed_roles=()
+        backend="clickhouse",
+        url=Dsn("clickhouse://reports.invalid:8123/reporting"),
+        allowed_roles=(),
     ),
     max_rows=1000,
     max_result_bytes=1_000_000,
@@ -74,6 +77,9 @@ def _policies(**changes: Any) -> AgentPlan:
 
 
 def _target(**changes: Any) -> AgentPlan:
+    endpoint = changes.get("endpoint")
+    if isinstance(endpoint, str):
+        changes["endpoint"] = Dsn(endpoint)
     return msgspec.structs.replace(_BASE, inference=msgspec.structs.replace(_TARGET, **changes))
 
 

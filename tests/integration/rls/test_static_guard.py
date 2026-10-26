@@ -20,6 +20,7 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import Application
+from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.rls import create_schema, verify
 from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
@@ -394,10 +395,13 @@ async def test_startup_refuses_a_tampered_guard_as_the_application_user(
                 "guard": installed.guard,
             },
         },
+        "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     register_scope_source("editor", lambda: None)
     try:
-        wiring = SQLAlchemyBackend().build(ConfigContext.from_dict(config), notes.MODELS)
+        wiring = SQLAlchemyBackend().build(
+            ConfigContext.from_dict(config), notes.MODELS, BackendRuntime(SERVER_PROFILE)
+        )
         wiring.prepare_models(notes.MODELS)
         with pytest.raises(ConfigError, match="guard.relation_grants"):
             async with wiring.lifespan_init():

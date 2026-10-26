@@ -3,10 +3,25 @@
 from __future__ import annotations
 
 import typing
-from typing import Annotated, Any, Generic, TypeVar
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum, IntEnum, IntFlag, StrEnum
+from typing import Annotated, Any, Generic, Literal, TypeVar
+from uuid import UUID
 
 import msgspec
+import pytest
 
+from loom.core.model import (
+    JSON,
+    BaseModel,
+    Cardinality,
+    ColumnField,
+    Field,
+    Postgres,
+    RelationField,
+)
+from loom.core.model.field import ColumnType
 from loom.core.model.introspection import (
     _union_inner_args,
     extract_model_from_hint,
@@ -14,8 +29,19 @@ from loom.core.model.introspection import (
     get_column_fields,
     list_element_type,
     resolve_type_hints,
+    scalar_column_annotations,
 )
-from loom.core.model.types import Integer, String
+from loom.core.model.types import (
+    Bytes,
+    Date,
+    DateTime,
+    Float,
+    Integer,
+    Numeric,
+    String,
+    Time,
+    Uuid,
+)
 
 
 class _Note:
@@ -141,3 +167,276 @@ class TestOptionalColumnTypes:
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
+
+
+class _Unsettable(BaseModel):
+    __tablename__ = "introspection_unsettable"
+
+    id: int = ColumnField(primary_key=True)
+    label: str | msgspec.UnsetType = msgspec.UNSET
+    count: int | msgspec.UnsetType = msgspec.UNSET
+    note: str | None | msgspec.UnsetType = msgspec.UNSET
+    code: Annotated[str, String(20)] | msgspec.UnsetType = msgspec.UNSET
+
+
+class TestUnsetColumnTypes:
+    @pytest.mark.parametrize(
+        ("name", "column_type"),
+        [("label", String()), ("count", Integer), ("note", String()), ("code", String(20))],
+    )
+    def test_unset_type_does_not_change_the_inferred_column_type(
+        self, name: str, column_type: ColumnType
+    ) -> None:
+        assert get_column_fields(_Unsettable)[name].column_type == column_type
+
+    @pytest.mark.parametrize(("name", "nullable"), [("label", False), ("note", True)])
+    def test_only_none_makes_an_unset_field_nullable(self, name: str, nullable: bool) -> None:
+        assert get_column_fields(_Unsettable)[name].field.nullable is nullable
+
+    def test_an_unset_scalar_field_is_a_scalar_column(self) -> None:
+        assert set(scalar_column_annotations(_Unsettable)) == {
+            "id",
+            "label",
+            "count",
+            "note",
+            "code",
+        }
+
+
+class _Temporal(msgspec.Struct):
+    day: date
+    at: time | None = None
+
+
+class TestTemporalColumnTypes:
+    def test_infers_date_and_time_columns_for_date_and_time_annotations(self) -> None:
+        fields = get_column_fields(_Temporal)
+
+        assert (fields["day"].column_type, fields["at"].column_type) == (Date, Time)
+
+
+class _Keyed(BaseModel):
+    __tablename__ = "introspection_keyed"
+
+    id: int = ColumnField(primary_key=True)
+    ref: UUID
+    alt: UUID | None = None
+
+
+class TestUuidColumnTypes:
+    def test_infers_a_uuid_column_for_a_uuid_annotation_optional_or_not(self) -> None:
+        fields = get_column_fields(_Keyed)
+
+        assert (fields["ref"].column_type, fields["alt"].column_type) == (Uuid, Uuid)
+
+    def test_a_uuid_column_is_scalar(self) -> None:
+        assert scalar_column_annotations(_Keyed) == {"id": int, "ref": UUID, "alt": UUID | None}
+
+
+class _Status(StrEnum):
+    PAID = "paid"
+
+
+class _Priority(IntEnum):
+    HIGH = 1
+
+
+class _Colour(Enum):
+    RED = "red"
+
+
+class _Mask(IntFlag):
+    READ = 1
+
+
+class _Ratio(float, Enum):
+    HALF = 0.5
+
+
+class _Amount(Decimal, Enum):
+    ONE = Decimal("1")
+
+
+class _Day(date, Enum):
+    FIRST = (2026, 1, 1)
+
+
+class _Moment(datetime, Enum):
+    EPOCH = (2026, 1, 1, 0, 0)
+
+
+class _Hour(time, Enum):
+    NOON = (12, 0)
+
+
+class _Tag(bytes, Enum):
+    RAW = b"raw"
+
+
+class _Enums(BaseModel):
+    __tablename__ = "enums"
+    status: _Status
+    sized: _Status = ColumnField(length=12)
+    maybe: _Status | None = None
+    priority: _Priority = _Priority.HIGH
+    colour: _Colour = ColumnField(String(8), default=_Colour.RED)
+    mode: Annotated[Literal["a", "b"], String(1)] = "a"
+    maybe_mode: Annotated[Literal["a", "b"], String(1)] | None = None
+    annotated_maybe: Annotated[_Status | None, Field(length=12)] = None
+    declared_mode: Annotated[Literal["a", "b"], String(1)] | None = ColumnField(nullable=True)
+
+
+class _MixedEnums(BaseModel):
+    __tablename__ = "mixed_enums"
+    status: _Status
+    priority: _Priority
+    mask: _Mask
+    ratio: _Ratio
+    amount: _Amount
+    day: _Day
+    moment: _Moment
+    hour: _Hour
+    tag: _Tag
+
+
+class _AnnotatedFields(BaseModel):
+    __tablename__ = "annotated_fields"
+    key: Annotated[int, Field(primary_key=True)]
+    count: Annotated[int | None, msgspec.Meta(ge=0)] = None
+    note: Annotated[str | None, Field(nullable=True)] = None
+
+
+class _PlainEnum(BaseModel):
+    __tablename__ = "plain_enums"
+    colour: _Colour
+
+
+class _Literal(BaseModel):
+    __tablename__ = "literals"
+    mode: Literal["a", "b"] | None = ColumnField(nullable=True)
+
+
+class _AnnotatedLiteral(BaseModel):
+    __tablename__ = "annotated_literals"
+    mode: Annotated[Literal["a", "b"], "a note"] = "a"
+
+
+class TestEnumColumnTypes:
+    def test_a_str_enum_follows_the_str_rule(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["status"].column_type == String()
+        assert fields["sized"].column_type == String(12)
+
+    def test_an_optional_str_enum_follows_the_str_rule(self) -> None:
+        assert get_column_fields(_Enums)["maybe"].column_type == String()
+
+    def test_an_int_enum_follows_the_int_rule(self) -> None:
+        assert get_column_fields(_Enums)["priority"].column_type == Integer
+
+    def test_a_declared_column_type_wins(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["colour"].column_type == String(8)
+        assert fields["mode"].column_type == String(1)
+
+    def test_annotated_metadata_inside_optional_or_around_it_is_honoured(self) -> None:
+        fields = get_column_fields(_Enums)
+
+        assert fields["maybe_mode"].column_type == String(1)
+        assert fields["annotated_maybe"].column_type == String(12)
+
+    def test_a_column_field_without_a_type_takes_the_annotated_column_type(self) -> None:
+        info = get_column_fields(_Enums)["declared_mode"]
+
+        assert (info.column_type, info.field.nullable) == (String(1), True)
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("status", String()),
+            ("priority", Integer),
+            ("mask", Integer),
+            ("ratio", Float),
+            ("day", Date),
+            ("moment", DateTime(tz=True)),
+            ("hour", Time),
+            ("tag", Bytes),
+        ],
+    )
+    def test_an_enum_follows_the_scalar_type_it_is_mixed_with(
+        self, field: str, expected: ColumnType
+    ) -> None:
+        info = get_column_fields(_MixedEnums)[field]
+
+        assert (info.column_type, info.needs_declared_type) == (expected, False)
+
+    @pytest.mark.parametrize(
+        ("model", "field"),
+        [(_PlainEnum, "colour"), (_Literal, "mode"), (_AnnotatedLiteral, "mode")],
+    )
+    def test_a_plain_enum_or_literal_without_a_column_type_needs_one_declared(
+        self, model: type, field: str
+    ) -> None:
+        info = get_column_fields(model)[field]
+
+        assert (info.column_type, info.needs_declared_type) == (JSON, True)
+
+    def test_a_decimal_enum_without_a_column_type_needs_one_declared(self) -> None:
+        info = get_column_fields(_MixedEnums)["amount"]
+
+        assert (info.column_type, info.needs_declared_type) == (Numeric(), True)
+
+    def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
+        assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())
+
+
+class TestAnnotatedColumnFields:
+    def test_a_field_in_annotated_without_a_column_type_takes_effect(self) -> None:
+        fields = get_column_fields(_AnnotatedFields)
+
+        assert (fields["key"].field.primary_key, fields["key"].column_type) == (True, Integer)
+        assert (fields["note"].field.nullable, fields["note"].column_type) == (True, String())
+
+    def test_an_optional_inside_annotated_follows_its_scalar_type(self) -> None:
+        assert get_column_fields(_AnnotatedFields)["count"].column_type == Integer
+
+
+class _Shelf(BaseModel):
+    __tablename__ = "introspection_shelves"
+
+    id: int = ColumnField(primary_key=True)
+    label: str = ColumnField(length=2)
+    tags: list[str] = ColumnField()
+    words: str = ColumnField(Postgres.TSVECTOR)
+    marks: list[int] = ColumnField(Postgres.ARRAY(Integer))
+
+
+class _Book(BaseModel):
+    __tablename__ = "introspection_books"
+
+    id: int = ColumnField(primary_key=True)
+    rank: Annotated[int, msgspec.Meta(ge=1)] | None = ColumnField()
+    settings: dict[str, Any] = ColumnField(JSON)
+    shelf_id: int = ColumnField(foreign_key="introspection_shelves.id")
+    shelf: _Shelf | None = RelationField(
+        foreign_key="shelf_id", cardinality=Cardinality.MANY_TO_ONE
+    )
+
+
+class _Priced(BaseModel):
+    __tablename__ = "introspection_priced"
+
+    price: Decimal
+    maybe: Decimal | None = None
+
+
+class TestScalarColumnAnnotations:
+    def test_scalar_columns_map_to_their_annotation_without_metadata(self) -> None:
+        assert scalar_column_annotations(_Book) == {"id": int, "rank": int | None, "shelf_id": int}
+
+    def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
+        assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}
+
+    def test_a_decimal_without_a_column_type_is_scalar(self) -> None:
+        assert scalar_column_annotations(_Priced) == {"price": Decimal, "maybe": Decimal | None}

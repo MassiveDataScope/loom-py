@@ -12,7 +12,10 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
-from loom.core.repository.sqlalchemy.session_manager import SessionManager  # noqa: E402
+from loom.core.model.redaction import Dsn, RedactedMap  # noqa: E402
+from loom.core.persistence.database import DatabaseConfig, PoolConfig  # noqa: E402
+from loom.core.persistence.profile import STREAMING_PROFILE, RuntimeProfile  # noqa: E402
+from loom.core.repository.sqlalchemy import session_manager as session_manager_module  # noqa: E402
 from loom.streaming.bytewax._resource_manager import ResourceManager  # noqa: E402
 
 
@@ -23,34 +26,38 @@ class _FakeManager:
 
 
 def test_session_manager_for_reuses_same_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[dict[str, object]] = []
+    calls: list[tuple[DatabaseConfig, RuntimeProfile]] = []
 
-    def _from_config(cls: type[SessionManager], config: dict[str, object]) -> _FakeManager:
-        del cls
-        calls.append(dict(config))
+    def _build(config: DatabaseConfig, profile: RuntimeProfile) -> _FakeManager:
+        calls.append((config, profile))
         return _FakeManager()
 
-    monkeypatch.setattr(SessionManager, "from_config", classmethod(_from_config))
+    monkeypatch.setattr(session_manager_module, "build_session_manager", _build)
 
     manager = ResourceManager(cast(AsyncBridge, object()))
-    first = manager.session_manager_for(
-        {
-            "url": "sqlite+aiosqlite:///:memory:",
-            "connect_args": {"timeout": 1},
-            "pool_pre_ping": True,
-            "table": "orders",
-            "chunk_size": 100,
-        }
+    config = DatabaseConfig(
+        url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
     )
+    first = manager.session_manager_for(config)
     second = manager.session_manager_for(
-        {
-            "pool_pre_ping": True,
-            "connect_args": {"timeout": 1},
-            "url": "sqlite+aiosqlite:///:memory:",
-            "table": "customers",
-            "chunk_size": 500,
-        }
+        DatabaseConfig(
+            url=Dsn("sqlite+aiosqlite:///:memory:"), connect_args=RedactedMap({"timeout": 1})
+        )
     )
 
     assert first is second
-    assert len(calls) == 1
+    assert calls == [(config, STREAMING_PROFILE)]
+
+
+def test_a_different_pool_gets_its_own_session_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        session_manager_module, "build_session_manager", lambda config, profile: _FakeManager()
+    )
+    manager = ResourceManager(cast(AsyncBridge, object()))
+
+    first = manager.session_manager_for(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")))
+    second = manager.session_manager_for(
+        DatabaseConfig(url=Dsn("sqlite+aiosqlite:///"), pool=PoolConfig(size=1))
+    )
+
+    assert first is not second

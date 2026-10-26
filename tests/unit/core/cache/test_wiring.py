@@ -33,6 +33,7 @@ from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.model.redaction import RedactedMap
 from loom.core.repository import (
     RepositoryBuildContext,
     RepositoryDecorator,
@@ -116,14 +117,16 @@ class ReadOnlyWidgetRepository:
 
 
 def _single_alias() -> CacheConfig:
-    return CacheConfig(aiocache_config={"default": dict(SERIALIZED_BACKEND)})
+    return CacheConfig(aiocache_config=RedactedMap({"default": dict(SERIALIZED_BACKEND)}))
 
 
 def _two_aliases() -> CacheConfig:
     return CacheConfig(
         aiocache_alias="data",
         counter_alias="counters",
-        aiocache_config={"data": dict(SERIALIZED_BACKEND), "counters": dict(MEMORY_BACKEND)},
+        aiocache_config=RedactedMap(
+            {"data": dict(SERIALIZED_BACKEND), "counters": dict(MEMORY_BACKEND)}
+        ),
     )
 
 

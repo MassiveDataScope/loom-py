@@ -17,6 +17,7 @@ from typing import Any, ClassVar, Protocol
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
+from loom.core.persistence.profile import BackendRuntime
 from loom.core.uow.abc import UnitOfWorkFactory
 
 
@@ -73,12 +74,19 @@ class PersistenceBackend(Protocol):
 
     name: ClassVar[str]
 
-    def build(self, ctx: ConfigContext, models: Sequence[type[BaseModel]]) -> PersistenceWiring:
+    def build(
+        self,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
+    ) -> PersistenceWiring:
         """Build the persistence wiring for the discovered models.
 
         Args:
             ctx: Configuration context the backend reads its section from.
             models: Models discovered by the host.
+            runtime: Defaults of the entry point building the backend and the
+                optional pool-metrics receiver.
 
         Returns:
             The resolved wiring.

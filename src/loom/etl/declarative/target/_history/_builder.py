@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from loom.core.schema import SchemaMode
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._history._enums import (
@@ -12,7 +13,6 @@ from loom.etl.declarative.target._history._enums import (
     HistoryDateType,
 )
 from loom.etl.declarative.target._history._spec import HistorifySpec
-from loom.etl.declarative.target._schema_mode import SchemaMode
 
 
 class IntoHistory:
@@ -62,6 +62,24 @@ class IntoHistory:
     * LOG mode is idempotent by construction: replaying events converges, and a
       same-date correction for an entity replaces the stored event (incoming
       wins).
+    * In LOG mode, ``delete_policy`` does not apply: every entity's last event
+      stays open unless ``delete_marker`` is set. A tombstone (marker ``True``)
+      at instant ``T`` closes the vector open before ``T`` at ``T`` minus one
+      period and opens none; the next regular event reopens the entity.
+      Consecutive tombstones collapse to the first, and a tombstone for an
+      entity without an open vector is a no-op. A null marker is a regular
+      event, and ``track`` values on tombstone rows are ignored. A tombstone
+      and an event for the same ``(keys, effective_date)`` raise
+      :class:`~loom.etl.HistorifyKeyConflictError`; a tombstone at a stored
+      vector's ``valid_from`` replaces that vector (incoming wins), closing
+      the previous one at ``T`` minus one period. With ``partition_scope``,
+      tombstone rows must carry the entity's partition values.
+    * LOG history has no gaps except those left by tombstones, so with
+      ``delete_marker`` set every gap in stored history is read as a deletion
+      and replayed when the entity is rebuilt: replaying an earlier event does
+      not reopen it. Gaps from other origins (manual repairs, former SNAPSHOT
+      loads) are read as deletions too. Once enabled, ``delete_marker`` must
+      stay set: removing it merges stored closures back into open history.
     * In LOG mode, two events for the same entity that share an effective
       instant (with different ``track`` values) collapse the earlier vector to
       zero width (``valid_from == valid_to``). Boundaries are inclusive, so a
@@ -86,6 +104,14 @@ class IntoHistory:
             Must not overlap with ``keys`` or ``track``.
         delete_policy: Action for absent keys in SNAPSHOT mode.
             Defaults to ``\"close\"``.
+        delete_marker: LOG mode only. Name of a boolean frame column marking
+            tombstone events (``True``); ``False`` or null rows are regular
+            events. Every incoming frame must carry it with a boolean dtype
+            (otherwise :class:`~loom.etl.HistorifyDeleteMarkerError`); it is
+            never written to the table. A tombstone at a stored vector's
+            ``valid_from`` removes that row, so downstream copies must be synced
+            by full or partition replace, not by a keyed upsert on
+            ``(keys, valid_from)``. Defaults to ``None`` (no tombstones).
         partition_scope: Partition columns to constrain Delta reads/writes.
             Strongly recommended for large tables.
         valid_from: Name of the period-start column in the Delta table.
@@ -109,6 +135,9 @@ class IntoHistory:
         ValueError: If ``track`` overlaps with ``keys``.
         ValueError: If ``overwrite`` overlaps with ``keys``, ``track``, or boundary columns.
         ValueError: If ``valid_from`` and ``valid_to`` share the same name.
+        ValueError: If ``delete_marker`` is set outside LOG mode or names a key,
+            ``track``, ``overwrite``, ``effective_date``, boundary or
+            ``partition_scope`` column.
 
     Example::
 
@@ -142,6 +171,7 @@ class IntoHistory:
         date_type: Literal["date", "timestamp"] = "date",
         schema: SchemaMode = SchemaMode.STRICT,
         allow_temporal_rerun: bool = False,
+        delete_marker: str | None = None,
     ) -> None:
         keys_t = tuple(keys)
         track_t: tuple[str, ...] | None = tuple(track) if track is not None else None
@@ -149,6 +179,20 @@ class IntoHistory:
 
         _validate_history_args(keys_t, track_t, overwrite_t, valid_from, valid_to, deleted_at)
         _validate_log_effective_date(effective_date, valid_from, valid_to, mode)
+        _validate_delete_marker(
+            delete_marker,
+            mode,
+            (
+                *keys_t,
+                *(track_t or ()),
+                *(overwrite_t or ()),
+                str(effective_date),
+                valid_from,
+                valid_to,
+                deleted_at,
+                *(partition_scope or ()),
+            ),
+        )
 
         table_ref = TableRef(ref) if isinstance(ref, str) else ref
         self._spec = HistorifySpec(
@@ -166,6 +210,7 @@ class IntoHistory:
             date_type=HistoryDateType(date_type),
             schema_mode=schema,
             allow_temporal_rerun=allow_temporal_rerun,
+            delete_marker=delete_marker,
         )
 
     def _to_spec(self) -> HistorifySpec:
@@ -272,6 +317,36 @@ def _validate_log_effective_date(
             f"valid_from={valid_from!r} or valid_to={valid_to!r}. "
             "The engine drops the effective_date column after building history boundaries; "
             "using the same name would silently erase the computed column."
+        )
+
+
+def _validate_delete_marker(
+    delete_marker: str | None,
+    mode: str,
+    declared_cols: tuple[str, ...],
+) -> None:
+    """Raise if ``delete_marker`` is set outside LOG mode or names a declared column.
+
+    Args:
+        delete_marker: Tombstone flag column name, or ``None``.
+        mode: ``\"log\"`` or ``\"snapshot\"``.
+        declared_cols: Key, track, overwrite, effective_date, boundary and
+            partition columns.
+
+    Raises:
+        ValueError: On any violated constraint.
+    """
+    if delete_marker is None:
+        return
+    if mode != "log":
+        raise ValueError(
+            "IntoHistory: 'delete_marker' requires mode='log'. "
+            "SNAPSHOT deletions are governed by 'delete_policy'."
+        )
+    if delete_marker in declared_cols:
+        raise ValueError(
+            f"IntoHistory: 'delete_marker'={delete_marker!r} must not name a key, track, "
+            "overwrite, effective_date, boundary or partition_scope column."
         )
 
 

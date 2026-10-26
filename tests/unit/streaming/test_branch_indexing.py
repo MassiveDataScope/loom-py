@@ -324,13 +324,7 @@ class TestCompiledBranchPathParity:
 
 
 class TestAdapterResolvesCompiledPaths:
-    """Every path the compiler keys a sink by is a path the adapter resolves.
-
-    Covers the branching kinds the adapter wires as independent Bytewax
-    streams. A ``Router`` executes its branches in place inside a single map
-    step and resolves no branch path at all, so it is covered by
-    :class:`TestCompiledBranchPathParity` instead.
-    """
+    """Every path the compiler keys a sink by is a path the adapter resolves."""
 
     @pytest.mark.parametrize(
         ("kind", "build_node", "expected_sinks"),
@@ -339,6 +333,8 @@ class TestAdapterResolvesCompiledPaths:
             ("fork_when", _fork_when_node, 3),
             ("broadcast", _broadcast_node, 2),
             ("expand_routes", _expand_routes_node, 2),
+            ("router_when", _router_when_node, 3),
+            ("router_keyed_and_predicate", _router_keyed_and_predicate_node, 3),
         ],
     )
     def test_compiled_terminal_paths_are_all_resolved_by_the_adapter(

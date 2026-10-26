@@ -22,13 +22,13 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
 from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
 
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWork, active_session
 from loom.core.repository.registration import capabilities_of
@@ -64,11 +64,10 @@ def mongo_database() -> Iterator[_SessionDatabase]:
 
 
 def redact_uri(uri: str) -> str:
-    """Return ``uri`` without its userinfo, for messages that may be logged."""
-    parts = urlsplit(uri)
-    if "@" not in parts.netloc:
-        return uri
-    return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
+    """Return ``uri`` with its password masked, for messages that may be logged."""
+    from loom.core.model.redaction import mask_dsn
+
+    return mask_dsn(uri)
 
 
 def _probe(client: MongoClient[Any], uri: str) -> str | None:
@@ -103,7 +102,12 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
 
     @asynccontextmanager
     async def open_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
-        yield RepositoryMongo(Order, collection, session_provider=active_session)
+        yield RepositoryMongo(
+            Order,
+            collection,
+            session_provider=active_session,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
 
     return BackendCase(
         name="mongo",

@@ -15,7 +15,7 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.config.resolver import ConfigResolver
 from loom.core.config.secrets import SecretsManagerResolver
-from tests.helpers.extras import BOTO3_ISLAND
+from tests.helpers.extras import BOTO3_ISLAND, patched_aws_clients
 
 
 @pytest.fixture
@@ -53,19 +53,19 @@ class TestSecretsManagerResolverIdentity:
 
 class TestSecretsManagerResolverResolve:
     def test_returns_secret_string_value(self, mock_client: MagicMock) -> None:
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             result = SecretsManagerResolver().resolve("/prod/token")
         assert result == "mysecret"
 
     def test_calls_secretsmanager_with_secret_id(self, mock_client: MagicMock) -> None:
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             SecretsManagerResolver().resolve("/prod/token")
         mock_client.get_secret_value.assert_called_once_with(SecretId="/prod/token")
 
     def test_raises_config_error_on_binary_secret(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.return_value = {"SecretBinary": b"bytes"}
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError):
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError):
             resolver.resolve("/prod/token")
 
 
@@ -79,14 +79,14 @@ class TestSecretsManagerResolverEnvVarExpansion:
         self, mock_client: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ENVIRONMENT", "prod")
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             SecretsManagerResolver().resolve("/myapp/%ENVIRONMENT%/token")
         mock_client.get_secret_value.assert_called_once_with(SecretId="/myapp/prod/token")
 
     def test_raises_on_missing_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("MISSING_VAR", raising=False)
         resolver = SecretsManagerResolver()
-        with patch("boto3.client"), pytest.raises(ConfigError):
+        with patched_aws_clients(), pytest.raises(ConfigError):
             resolver.resolve("/path/%MISSING_VAR%/token")
 
     def test_percent_syntax_parses_from_omegaconf_yaml(
@@ -98,7 +98,7 @@ class TestSecretsManagerResolverEnvVarExpansion:
         monkeypatch.setenv("ENV", "prod")
         resolver = SecretsManagerResolver()
         OmegaConf.register_new_resolver("secrets", resolver.resolve, replace=True)
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             cfg = OmegaConf.create({"val": "${secrets:/app/%ENV%/token}"})
             _ = cfg.val
         mock_client.get_secret_value.assert_called_once_with(SecretId="/app/prod/token")
@@ -112,7 +112,7 @@ class TestSecretsManagerResolverEnvVarExpansion:
 class TestSecretsManagerResolverDotNotation:
     def test_plain_path_returns_string(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "mysecret"}
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             result = SecretsManagerResolver().resolve("/prod/token")
         assert result == "mysecret"
 
@@ -120,7 +120,7 @@ class TestSecretsManagerResolverDotNotation:
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"host": "db.internal"})
         }
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             result = SecretsManagerResolver().resolve("/prod/db.host")
         assert result == "db.internal"
         mock_client.get_secret_value.assert_called_once_with(SecretId="/prod/db")
@@ -129,20 +129,20 @@ class TestSecretsManagerResolverDotNotation:
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"conn": {"host": "internal"}})
         }
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             result = SecretsManagerResolver().resolve("/prod/cfg.conn.host")
         assert result == "internal"
 
     def test_raises_on_invalid_json(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "not-json-at-all"}
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError):
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError):
             resolver.resolve("/prod/db.host")
 
     def test_raises_on_missing_json_key(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError):
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError):
             resolver.resolve("/prod/db.missing_key")
 
     def test_env_var_expansion_then_dot_navigation(
@@ -152,7 +152,7 @@ class TestSecretsManagerResolverDotNotation:
         mock_client.get_secret_value.return_value = {
             "SecretString": json.dumps({"host": "prod-db"})
         }
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             result = SecretsManagerResolver().resolve("/app/%ENV%/db.host")
         assert result == "prod-db"
         mock_client.get_secret_value.assert_called_once_with(SecretId="/app/prod/db")
@@ -165,19 +165,19 @@ class TestSecretsManagerResolverDotNotation:
 
 class TestSecretsManagerResolverClientLifecycle:
     def test_client_created_once_across_multiple_resolves(self, mock_client: MagicMock) -> None:
-        with patch("boto3.client", return_value=mock_client) as mock_factory:
+        with patched_aws_clients(mock_client) as mock_factory:
             resolver = SecretsManagerResolver()
             resolver.resolve("/key/one")
             resolver.resolve("/key/two")
         assert mock_factory.call_count == 1
 
     def test_region_forwarded_to_boto3(self, mock_client: MagicMock) -> None:
-        with patch("boto3.client", return_value=mock_client) as mock_factory:
+        with patched_aws_clients(mock_client) as mock_factory:
             SecretsManagerResolver("eu-west-1").resolve("/some/secret")
         mock_factory.assert_called_once_with("secretsmanager", region_name="eu-west-1")
 
     def test_region_none_by_default(self, mock_client: MagicMock) -> None:
-        with patch("boto3.client", return_value=mock_client) as mock_factory:
+        with patched_aws_clients(mock_client) as mock_factory:
             SecretsManagerResolver().resolve("/some/secret")
         mock_factory.assert_called_once_with("secretsmanager", region_name=None)
 
@@ -196,7 +196,7 @@ class TestSecretsManagerResolverLogging:
         }
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            patch("boto3.client", return_value=mock_client),
+            patched_aws_clients(mock_client),
         ):
             SecretsManagerResolver().resolve("/prod/db.host")
         messages = [r.message for r in caplog.records]
@@ -210,7 +210,7 @@ class TestSecretsManagerResolverLogging:
         mock_client.get_secret_value.return_value = {"SecretString": "mysecret"}
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            patch("boto3.client", return_value=mock_client),
+            patched_aws_clients(mock_client),
         ):
             SecretsManagerResolver().resolve("/prod/token")
         messages = [r.message for r in caplog.records]
@@ -227,7 +227,7 @@ class TestSecretsManagerResolverLogging:
         monkeypatch.setenv("STAGE", "prod")
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            patch("boto3.client", return_value=mock_client),
+            patched_aws_clients(mock_client),
         ):
             SecretsManagerResolver().resolve("/app/%STAGE%/db")
         messages = [r.message for r in caplog.records]
@@ -255,7 +255,7 @@ class TestSecretsManagerResolverUnexpandedKey:
     ) -> None:
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            patch("boto3.client", return_value=mock_client),
+            patched_aws_clients(mock_client),
         ):
             SecretsManagerResolver().resolve(self.KEY)
         messages = [r.message for r in caplog.records]
@@ -269,7 +269,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         cause = Exception(f"ResourceNotFoundException: {self.EXPANDED}")
         mock_client.get_secret_value.side_effect = cause
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError) as info:
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError) as info:
             resolver.resolve(self.KEY)
         text = str(info.value)
         assert self.KEY in text
@@ -279,7 +279,7 @@ class TestSecretsManagerResolverUnexpandedKey:
     def test_binary_secret_error_carries_unexpanded_key(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.return_value = {"SecretBinary": b"bytes"}
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError) as info:
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError) as info:
             resolver.resolve(self.KEY)
         text = str(info.value)
         assert self.KEY in text
@@ -296,7 +296,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
         with (
             caplog.at_level(logging.INFO, logger="loom.core.config.secrets"),
-            patch("boto3.client", return_value=mock_client),
+            patched_aws_clients(mock_client),
         ):
             value = SecretsManagerResolver().resolve("/app/svc/%DOTTED_ENV%")
         assert value == json.dumps({"host": "db"})
@@ -308,7 +308,7 @@ class TestSecretsManagerResolverUnexpandedKey:
         self, mock_client: MagicMock
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db-1"})}
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             value = SecretsManagerResolver().resolve(f"{self.KEY}.host")
         assert value == "db-1"
         mock_client.get_secret_value.assert_called_once_with(SecretId=self.EXPANDED)
@@ -321,7 +321,7 @@ class TestSecretsManagerResolverUnexpandedKey:
             {"Error": {"Code": "AccessDeniedException", "Message": self.EXPANDED}},
         )
         mock_client.get_secret_value.side_effect = cause
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             resolver = SecretsManagerResolver()
             with pytest.raises(ConfigError) as info:
                 resolver.resolve(self.KEY)
@@ -333,7 +333,7 @@ class TestSecretsManagerResolverUnexpandedKey:
 
     def test_fetch_error_message_falls_back_to_type_name(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.side_effect = TimeoutError("boom")
-        with patch("boto3.client", return_value=mock_client):
+        with patched_aws_clients(mock_client):
             resolver = SecretsManagerResolver()
             with pytest.raises(ConfigError) as info:
                 resolver.resolve(self.KEY)
@@ -344,7 +344,7 @@ class TestSecretsManagerResolverUnexpandedKey:
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": "not-json-at-all"}
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError) as info:
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError) as info:
             resolver.resolve(f"{self.KEY}.host")
         text = str(info.value)
         assert self.KEY in text
@@ -357,7 +357,7 @@ class TestSecretsManagerResolverUnexpandedKey:
     ) -> None:
         mock_client.get_secret_value.return_value = {"SecretString": json.dumps({"host": "db"})}
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError) as info:
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError) as info:
             resolver.resolve(f"{self.KEY}.missing_key")
         text = str(info.value)
         assert self.KEY in text
@@ -374,12 +374,12 @@ class TestSecretsManagerResolverErrors:
     def test_raises_config_error_on_api_exception(self, mock_client: MagicMock) -> None:
         mock_client.get_secret_value.side_effect = Exception("AccessDenied")
         resolver = SecretsManagerResolver()
-        with patch("boto3.client", return_value=mock_client), pytest.raises(ConfigError):
+        with patched_aws_clients(mock_client), pytest.raises(ConfigError):
             resolver.resolve("/missing/secret")
 
     def test_raises_config_error_on_empty_key(self) -> None:
         resolver = SecretsManagerResolver()
-        with patch("boto3.client") as mock_factory, pytest.raises(ConfigError):
+        with patched_aws_clients() as mock_factory, pytest.raises(ConfigError):
             resolver.resolve("")
         mock_factory.assert_not_called()
 

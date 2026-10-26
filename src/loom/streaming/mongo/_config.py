@@ -2,41 +2,36 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Literal
 
 import msgspec
 
+from loom.core.config import ConfigContext, ConfigKey, reject_retired_keys
+from loom.core.connections.mongo import MongoConnection
 from loom.core.model import LoomFrozenStruct
+from loom.core.model.redaction import RedactedMap
 from loom.core.routing import DefaultingRouteResolver, LogicalRef
 
-_URI_CREDENTIALS_RE = re.compile(r"://[^@]+@")
 
+class MongoSourceConfig(MongoConnection, frozen=True, kw_only=True):
+    """One MongoDB change-stream source: the Mongo connection plus how to watch it.
 
-def _redact_uri(uri: str) -> str:
-    return _URI_CREDENTIALS_RE.sub("://***@", uri)
+    Every key of :class:`~loom.core.connections.MongoConnection` applies, as
+    in every other context reading MongoDB; the repr hides the URL's
+    credentials.
 
+    Args:
+        watch_options: Options handed to ``watch()``. Secret-named entries stay
+            masked until the change stream is opened.
+        on_oplog_expired: What to do when the resume token fell off the oplog.
+    """
 
-class MongoSourceConfig(LoomFrozenStruct, frozen=True, kw_only=True):
-    """Connection settings for one MongoDB CDC source."""
-
-    uri: str
-    database: str
-    watch_options: Mapping[str, object] = msgspec.field(default_factory=dict)
-    server_api_version: str | None = None
+    watch_options: RedactedMap = msgspec.field(default_factory=RedactedMap.empty)
     on_oplog_expired: Literal["fail", "restart_from_now"] = "fail"
 
-    def __repr__(self) -> str:
-        return (
-            f"MongoSourceConfig(uri={_redact_uri(self.uri)!r},"
-            f" database={self.database!r},"
-            f" server_api_version={self.server_api_version!r},"
-            f" on_oplog_expired={self.on_oplog_expired!r})"
-        )
 
-
-class MongoConfig(LoomFrozenStruct, frozen=True, kw_only=True):
+class MongoConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """Top-level MongoDB settings loaded from the ``mongo`` config section."""
 
     source: MongoSourceConfig | None = None
@@ -52,4 +47,22 @@ class MongoConfig(LoomFrozenStruct, frozen=True, kw_only=True):
         return resolver.resolve(ref)
 
 
-__all__ = ["MongoConfig", "MongoSourceConfig"]
+def load_mongo_config(ctx: ConfigContext) -> MongoConfig:
+    """Read the ``mongo`` section of *ctx*, refusing a retired key in any of its sources.
+
+    Raises:
+        ConfigError: When the section is absent or invalid, or a source holds
+            a retired key, naming its replacement.
+    """
+    key = ConfigKey.MONGO.value
+    raw = ctx.raw(key)
+    if isinstance(raw, Mapping):
+        reject_retired_keys(raw.get("source"), f"{key}.source", MongoSourceConfig)
+        sources = raw.get("sources")
+        if isinstance(sources, Mapping):
+            for name, source in sources.items():
+                reject_retired_keys(source, f"{key}.sources.{name}", MongoSourceConfig)
+    return ctx.section(key, MongoConfig)
+
+
+__all__ = ["MongoConfig", "MongoSourceConfig", "load_mongo_config"]

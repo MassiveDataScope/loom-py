@@ -12,7 +12,7 @@ from deltalake import DeltaTable, write_deltalake
 
 from loom.etl import ETLParams, col
 from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
-from loom.etl.backends.polars._schema import PolarsPhysicalSchema, SchemaNotFoundError
+from loom.etl.backends.polars._schema import PolarsPhysicalSchema
 from loom.etl.declarative._format import Format
 from loom.etl.declarative.expr._params import params as p
 from loom.etl.declarative.expr._refs import TableRef
@@ -22,6 +22,7 @@ from loom.etl.declarative.target import IntoTable, SchemaMode
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import AppendSpec, ReplacePartitionsSpec, ReplaceSpec
 from loom.etl.lineage._records import WriteContext
+from loom.etl.schema import SchemaNotFoundError
 from loom.etl.schema._schema import ColumnSchema, LoomDtype, SchemaError
 from loom.etl.storage._config import AuditConfig, CustomColumnDef, MissingTablePolicy
 from loom.etl.storage._locator import MappingLocator, TableLocation
@@ -270,6 +271,38 @@ def test_writer_error_policy_blocks_creation_even_with_overwrite_schema(tmp_path
 
     with pytest.raises(SchemaNotFoundError):
         writer.write(frame, spec, None)
+
+
+def test_writer_error_policy_missing_table_advice_omits_overwrite(tmp_path: Path) -> None:
+    writer = PolarsTargetWriter(tmp_path, missing_table_policy=MissingTablePolicy.ERROR)
+    frame = pl.DataFrame({"id": [1], "v": [10.0]}).lazy()
+    spec = ReplaceSpec(table_ref=TableRef("staging.must_exist"), schema_mode=SchemaMode.OVERWRITE)
+
+    with pytest.raises(SchemaNotFoundError) as excinfo:
+        writer.write(frame, spec, None)
+
+    message = str(excinfo.value)
+    assert "staging.must_exist" in message
+    assert "missing_table_policy='error'" in message
+    assert "missing_table_policy='create'" in message
+    assert "'schema_mode' with SchemaMode.OVERWRITE" in message
+    assert "create the table first" in message
+    assert "Use SchemaMode.OVERWRITE" not in message
+
+
+def test_writer_schema_mode_policy_missing_table_advice_names_overwrite(tmp_path: Path) -> None:
+    writer = PolarsTargetWriter(tmp_path, missing_table_policy=MissingTablePolicy.SCHEMA_MODE)
+    frame = pl.DataFrame({"id": [1], "v": [10.0]}).lazy()
+    spec = AppendSpec(table_ref=TableRef("staging.must_exist"))
+
+    with pytest.raises(SchemaNotFoundError) as excinfo:
+        writer.write(frame, spec, None)
+
+    message = str(excinfo.value)
+    assert "staging.must_exist" in message
+    assert "SchemaMode.OVERWRITE" in message
+    assert "missing_table_policy='create'" in message
+    assert "'schema_mode'" not in message
 
 
 def test_writer_append_creates_table_on_first_write(tmp_path: Path) -> None:

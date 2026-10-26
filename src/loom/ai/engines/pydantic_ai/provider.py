@@ -44,7 +44,7 @@ from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai._models import ModelResolver, resolve_model
 from loom.ai.engines.pydantic_ai._native import supported_native_tools
 from loom.ai.engines.pydantic_ai._spec import build_agent_spec, build_output_type
-from loom.ai.errors import AgentCompilationError, streaming_required_by_capability
+from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
 from loom.core.model import LoomType
@@ -169,7 +169,9 @@ class PydanticAIEngineProvider:
         if not plan.inference.streaming and any(
             capability.has_wrap_run_event_stream for capability in capabilities
         ):
-            raise AgentCompilationError([streaming_required_by_capability(plan.name)])
+            raise AgentCompilationError(
+                [AgentErrorCode.STREAMING_REQUIRED_BY_CAPABILITY.issue(component=plan.name)]
+            )
         output_type = build_output_type(plan)
         # The keyword is absent, not ``None``, when no mode is pinned: the
         # engine's default for ``output_type`` is ``str``, and passing ``None``

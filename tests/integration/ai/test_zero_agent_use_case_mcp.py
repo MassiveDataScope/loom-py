@@ -4,7 +4,7 @@ Owner decision D1: ``_effective_agent_specs`` tolerates an empty artifact set
 only when at least one compiled use case declares an ``Mcp()`` marker — a
 deployment whose only AI usage is ``Mcp()`` no longer has to ship a filler
 agent artifact it never runs. Every other empty-artifact deployment still
-aborts with ``agent_specs_missing``, exactly as before this train.
+aborts with ``AGENT_SPECS_MISSING``, exactly as before this train.
 
 Drives :func:`loom.rest.fastapi.auto.create_app` over a temporary project
 discovered by manifest, mirroring ``tests/integration/ai/test_agent_specs_source.py``.
@@ -131,6 +131,7 @@ def _write_project(tmp_path: Path, *, declares_use_case: bool) -> str:
             "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST_MODULE}},
         },
         "database": {"url": "sqlite+aiosqlite:///"},
+        "persistence": {"cursors": {"signing": "ephemeral"}},
         "ai": {
             "engine": _ENGINE_NAME,
             "models": {"default": {"provider": "fake", "model": "fake-model"}},

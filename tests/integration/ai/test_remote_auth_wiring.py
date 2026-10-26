@@ -25,6 +25,7 @@ import pytest
 from loom.ai.compiler import CompiledMcpCapability, CompiledRemoteAuth
 from loom.ai.engines.pydantic_ai._mcp import build_mcp_toolset
 from loom.ai.remote_auth import shared_mcp_auth
+from loom.core.model.redaction import Secret
 
 from ...helpers.remote_auth_plugin import third_party_strategy
 
@@ -103,7 +104,7 @@ class TestHeadersRefReachesTheClient:
 
     def test_the_client_carries_the_header_when_the_server_declares_headers_ref(self) -> None:
         capability = CompiledMcpCapability(
-            server="orders", url=_URL, headers_ref="X-API-Key=abc123"
+            server="orders", url=_URL, headers_ref=Secret("X-API-Key=abc123")
         )
 
         assert _transport(capability).headers == {"X-API-Key": "abc123"}

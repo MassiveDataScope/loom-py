@@ -18,12 +18,7 @@ from __future__ import annotations
 from loom.ai.compiler._plan import CONVERSATION_CONTEXT_FIELDS, CompiledConversation
 from loom.ai.compiler.phases._feedable import feedable_input, is_granted
 from loom.ai.declarative import AgentSpecV1
-from loom.ai.errors import (
-    AgentCompilationIssue,
-    conversation_input_unsatisfied,
-    conversation_usecase_also_granted,
-    conversation_usecase_unknown,
-)
+from loom.ai.errors import AgentCompilationIssue, AgentErrorCode
 from loom.core.use_case.registry import UseCaseRegistry
 
 _ConversationResult = tuple[CompiledConversation | None, list[AgentCompilationIssue]]
@@ -59,17 +54,29 @@ def compile_conversation(
     key = spec.conversation.usecase
     issues: list[AgentCompilationIssue] = []
     if is_granted(spec.capabilities, key):
-        issues.append(conversation_usecase_also_granted(component, key))
+        issues.append(
+            AgentErrorCode.CONVERSATION_USECASE_ALSO_GRANTED.issue(component=component, key=key)
+        )
     try:
         use_case = registry.resolve(key)
     except KeyError:
-        issues.append(conversation_usecase_unknown(component, key))
+        issues.append(
+            AgentErrorCode.CONVERSATION_USECASE_UNKNOWN.issue(component=component, key=key)
+        )
         return None, issues
     accepted, reason = feedable_input(use_case, _OFFERED)
     if reason is not None:
-        issues.append(conversation_input_unsatisfied(component, key, reason))
+        issues.append(
+            AgentErrorCode.CONVERSATION_INPUT_UNSATISFIED.issue(
+                component=component, key=key, reason=reason
+            )
+        )
     elif _CONVERSATION_ID not in accepted:
-        issues.append(conversation_input_unsatisfied(component, key, _MISSING_CONVERSATION_ID))
+        issues.append(
+            AgentErrorCode.CONVERSATION_INPUT_UNSATISFIED.issue(
+                component=component, key=key, reason=_MISSING_CONVERSATION_ID
+            )
+        )
     if issues:
         return None, issues
     return CompiledConversation(usecase=key, use_case=use_case, accepted=accepted), []

@@ -7,7 +7,9 @@ from typing import cast
 import pytest
 
 from loom.core.config.observability import OtelConfig
+from loom.core.environment import Environment
 from loom.core.logger.config import LoggerConfig
+from loom.core.model.redaction import Dsn
 from loom.core.observability.config import (
     LogObservabilityConfig,
     ObservabilityConfig,
@@ -144,7 +146,7 @@ class TestFromConfig:
             otel=OtelObservabilityConfig(
                 enabled=True,
                 export_logs=True,
-                config=OtelConfig(endpoint="", service_name="loom"),
+                config=OtelConfig(endpoint=None, service_name="loom"),
             ),
         )
 
@@ -179,7 +181,7 @@ class TestFromConfig:
             otel=OtelObservabilityConfig(
                 enabled=True,
                 export_logs=True,
-                config=OtelConfig(endpoint="", service_name="loom"),
+                config=OtelConfig(endpoint=None, service_name="loom"),
             ),
         )
 
@@ -190,6 +192,27 @@ class TestFromConfig:
         extra_processors = cast(tuple[object, ...], captured["extra_processors"])
         assert len(extra_processors) == 1
         assert captured["otel_log_export_installed"] is True
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [({}, Environment.TEST), ({"environment": Environment.STAGING}, Environment.STAGING)],
+    )
+    def test_the_logger_receives_the_environment_of_the_runtime(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        given: dict[str, Environment],
+        expected: Environment,
+    ) -> None:
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(
+            "loom.core.observability.runtime.configure_logging_from_values",
+            lambda **kwargs: captured.update(kwargs),
+        )
+        config = ObservabilityConfig(log=LogObservabilityConfig(config=LoggerConfig()))
+
+        ObservabilityRuntime.from_config(config, **given)
+
+        assert captured["environment"] is expected
 
 
 class TestStartScrapeServer:
@@ -258,7 +281,7 @@ class TestStartScrapeServer:
         config = ObservabilityConfig(
             prometheus=PrometheusObservabilityConfig(
                 enabled=True,
-                pushgateway_url="https://pushgateway:9091",
+                pushgateway_url=Dsn("https://pushgateway:9091"),
                 config=PrometheusConfig(port=8080),
             )
         )

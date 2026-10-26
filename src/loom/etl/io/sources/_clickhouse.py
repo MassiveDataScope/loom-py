@@ -1,4 +1,4 @@
-"""ClickHouse source reader and compatibility re-exports."""
+"""ClickHouse source reader."""
 
 from __future__ import annotations
 
@@ -12,20 +12,16 @@ from typing import Any
 import polars as pl
 
 try:
-    import clickhouse_connect as _clickhouse_connect  # type: ignore[import-untyped]
-except ImportError:
-    _clickhouse_connect = None
-
-try:
     import pyarrow as _pa
 except ImportError:
     _pa = None  # type: ignore[assignment]
 
+from loom.core.connections import ClickHouseConnection
 from loom.core.logger import get_logger
 from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
-from loom.etl.declarative.source._from_clickhouse import FromClickHouse
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
+from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader
 from loom.etl.schema._schema import ColumnSchema
 
@@ -97,18 +93,26 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     connection for both roles.
 
     Args:
-        url:    ClickHouse DSN, e.g. ``clickhouse://user:pass@host:8123/default``.
-        client: Pre-built ``clickhouse_connect`` client.  Takes precedence over
-                *url*.  Use for testing or when the client is managed externally.
+        url:        ClickHouse DSN, e.g. ``clickhouse://host:8123/default``; a
+                    shortcut for ``connection=ClickHouseConnection(url=url)``.
+        connection: The ``storage.clickhouse`` connection: DSN, credentials and
+                    bounds.  Mutually exclusive with *url*.
+        client:     Pre-built ``clickhouse_connect`` client.  Takes precedence
+                    over *url* and *connection*.  Use for testing or when the
+                    client is managed externally.
+
+    Raises:
+        ValueError: When both *url* and *connection* are given.
     """
 
     def __init__(
         self,
         url: str | None = None,
         *,
+        connection: ClickHouseConnection | None = None,
         client: Any | None = None,
     ) -> None:
-        self._url = url
+        self._connection = resolve_connection(url, connection, owner="ClickHouseSourceReader")
         self._client = client
         self._client_lock = threading.Lock()
 
@@ -190,7 +194,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             fn: Callable that receives the raw ``clickhouse_connect`` client.
 
         Raises:
-            ValueError: If neither a URL nor a pre-built client was provided.
+            ValueError: If neither a connection nor a pre-built client was provided.
             ImportError: If ``clickhouse-connect`` is not installed.
         """
         fn(self._client or self._get_client())
@@ -199,17 +203,12 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         with self._client_lock:
             if self._client is not None:
                 return self._client
-            if not self._url:
+            if self._connection is None:
                 raise ValueError(
-                    "ClickHouseSourceReader requires storage.clickhouse.url to be configured "
+                    "ClickHouseSourceReader requires storage.clickhouse to be configured "
                     "or an explicit client injected at construction time."
                 )
-            if _clickhouse_connect is None:
-                raise ImportError(
-                    "ClickHouseSourceReader requires 'clickhouse-connect'. "
-                    "Install it with: pip install 'loom-py[clickhouse]'"
-                )
-            self._client = _clickhouse_connect.get_client(dsn=self._url)
+            self._client = open_client(self._connection)
             return self._client
 
     def _build_query(self, spec: ClickHouseSourceSpec, params_instance: Any) -> str:
@@ -319,4 +318,4 @@ def _log_query_start(spec: ClickHouseSourceSpec, query: str, *, streaming: bool)
     )
 
 
-__all__ = ["ClickHouseSourceReader", "ClickHouseSourceSpec", "FromClickHouse"]
+__all__ = ["ClickHouseSourceReader"]

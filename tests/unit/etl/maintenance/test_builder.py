@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from loom.core.model.redaction import Dsn
 from loom.etl.maintenance._builder import MaintainSchema, MaintainTable
 from loom.etl.maintenance._ops import CompactSpec, VacuumSpec, ZOrderSpec
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TableRoute
@@ -84,11 +85,15 @@ class TestMaintainSchema:
 
     def test_expand_matches_prefix(self) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri="/lake/")),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("/lake/"))),
             tables=(
-                TableRoute(name="raw.events", path=TablePathConfig(uri="/lake/raw/events")),
-                TableRoute(name="raw.snapshots", path=TablePathConfig(uri="/lake/raw/snapshots")),
-                TableRoute(name="staging.events", path=TablePathConfig(uri="/lake/staging/events")),
+                TableRoute(name="raw.events", path=TablePathConfig(uri=Dsn("/lake/raw/events"))),
+                TableRoute(
+                    name="raw.snapshots", path=TablePathConfig(uri=Dsn("/lake/raw/snapshots"))
+                ),
+                TableRoute(
+                    name="staging.events", path=TablePathConfig(uri=Dsn("/lake/staging/events"))
+                ),
             ),
         )
         specs = MaintainSchema("raw").vacuum()._expand(config)
@@ -97,9 +102,11 @@ class TestMaintainSchema:
 
     def test_expand_no_match_returns_empty(self) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri="/lake/")),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("/lake/"))),
             tables=(
-                TableRoute(name="staging.events", path=TablePathConfig(uri="/lake/staging/events")),
+                TableRoute(
+                    name="staging.events", path=TablePathConfig(uri=Dsn("/lake/staging/events"))
+                ),
             ),
         )
         specs = MaintainSchema("raw").vacuum()._expand(config)
@@ -107,8 +114,10 @@ class TestMaintainSchema:
 
     def test_expand_propagates_ops(self) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri="/lake/")),
-            tables=(TableRoute(name="raw.events", path=TablePathConfig(uri="/lake/raw/events")),),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("/lake/"))),
+            tables=(
+                TableRoute(name="raw.events", path=TablePathConfig(uri=Dsn("/lake/raw/events"))),
+            ),
         )
         specs = (
             MaintainSchema("raw")
@@ -124,16 +133,20 @@ class TestMaintainSchema:
 
     def test_expand_propagates_full_vacuum(self) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri="/lake/")),
-            tables=(TableRoute(name="raw.events", path=TablePathConfig(uri="/lake/raw/events")),),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("/lake/"))),
+            tables=(
+                TableRoute(name="raw.events", path=TablePathConfig(uri=Dsn("/lake/raw/events"))),
+            ),
         )
         specs = MaintainSchema("raw").vacuum(dry_run=False, full=True)._expand(config)
         assert specs[0].ops == (VacuumSpec(dry_run=False, full=True),)
 
     def test_compact_and_z_order_mutually_exclusive(self) -> None:
         config = StorageConfig(
-            defaults=StorageDefaults(table_path=TablePathConfig(uri="/lake/")),
-            tables=(TableRoute(name="raw.events", path=TablePathConfig(uri="/lake/raw/events")),),
+            defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn("/lake/"))),
+            tables=(
+                TableRoute(name="raw.events", path=TablePathConfig(uri=Dsn("/lake/raw/events"))),
+            ),
         )
         builder = MaintainSchema("raw").compact().z_order_by(["date"])
         with pytest.raises(TypeError, match="mutually exclusive"):

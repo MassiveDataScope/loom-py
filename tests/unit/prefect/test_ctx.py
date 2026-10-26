@@ -3,7 +3,8 @@
 Verifies:
 - FlowCtx is a frozen msgspec.Struct (immutable).
 - Required fields (correlation_id, run_id) raise TypeError when missing.
-- Default values for optional fields (environment, dry_run, force, processes).
+- Default values for optional fields (dry_run, force, processes).
+- No environment of its own: the deployment environment is loom.core.environment's.
 - processes=None default and explicit tuple values.
 """
 
@@ -39,10 +40,9 @@ def test_flow_ctx_minimal_construction() -> None:
     assert ctx.run_id == "run-1"
 
 
-def test_flow_ctx_default_environment() -> None:
-    """environment defaults to 'prod'."""
-    ctx = FlowCtx(correlation_id="corr-1", run_id="run-1")
-    assert ctx.environment == "prod"
+def test_flow_ctx_carries_no_environment_of_its_own() -> None:
+    """The environment is resolved once by loom.core.environment, not per flow context."""
+    assert "environment" not in FlowCtx.__struct_fields__
 
 
 def test_flow_ctx_default_dry_run() -> None:
@@ -85,12 +85,10 @@ def test_flow_ctx_full_construction() -> None:
     ctx = FlowCtx(
         correlation_id="corr-42",
         run_id="run-42",
-        environment="staging",
         dry_run=True,
         force=True,
         processes=("ProcA",),
     )
-    assert ctx.environment == "staging"
     assert ctx.dry_run is True
     assert ctx.force is True
     assert ctx.processes == ("ProcA",)

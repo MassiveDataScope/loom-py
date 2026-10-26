@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 from uuid import UUID, uuid4
 
 import msgspec
 
+from loom.core.environment import (
+    STORAGE_CONFIG_VARIABLE,
+    Environment,
+    confirm_environment,
+    loom_variable,
+)
 from loom.etl.compiler import flatten_step_names
 from loom.etl.compiler._plan import PipelinePlan, iter_processes, iter_steps_in_process
 from loom.etl.pipeline import ETLPipeline
@@ -22,6 +27,7 @@ from loom.prefect.flow._runtime import (
     load_or_init_manifest,
     maybe_delete_manifest,
 )
+from loom.prefect.flow._signature import ENV_SOURCE
 from loom.prefect.flow._stages import known_process_names, validate_stage_names
 from loom.prefect.manifest import ManifestStore, RunManifest, completed_steps
 from loom.prefect.observer._logging_bridge import (
@@ -72,7 +78,7 @@ def build_flow_body(
             uninstall_log_bridge()
 
     def _run(flow_run_id: UUID | None, kwargs: dict[str, Any]) -> None:
-        env = kwargs.pop("env", "prod")
+        environment = confirm_environment(kwargs.pop("env", None), source=ENV_SOURCE)
         explicit_correlation = kwargs.pop("correlation_id", None)
         processes = validate_stage_names(kwargs.pop("processes", None), known_processes)
         params_obj = resolve_run_params(kwargs, params_type, anchor=prefect_run_anchor())
@@ -84,11 +90,10 @@ def build_flow_body(
                 or compute_correlation_id(flow_name, correlation_field, decoded)
             ),
             run_id=f"{flow_name}-{uuid4().hex[:8]}",
-            environment=env,
             processes=processes,
         )
 
-        actual_config_path = os.environ.get("LOOM_STORAGE_CONFIG_PATH") or storage_config_path
+        actual_config_path = loom_variable(STORAGE_CONFIG_VARIABLE) or storage_config_path
 
         manifest = load_or_init_manifest(manifest_store, ctx.correlation_id)
         pending = _resolve_pending(plan, ctx.processes, manifest)
@@ -106,6 +111,7 @@ def build_flow_body(
             ctx,
             observers,
             plan,
+            environment=environment,
         )
         set_run_summary(_etl_summary(plan, pending))
         maybe_delete_manifest(manifest_store, ctx.correlation_id)
@@ -131,10 +137,12 @@ def _invoke_runner(
     ctx: FlowCtx,
     observers: list[Any],
     plan: PipelinePlan,
+    *,
+    environment: Environment,
 ) -> None:
     import prefect  # noqa: PLC0415
 
-    runner = ETLRunner.from_yaml(config_path, extra_observers=observers)
+    runner = ETLRunner.from_yaml(config_path, extra_observers=observers, environment=environment)
     pending_set = set(pending)
 
     for proc in iter_processes(plan):

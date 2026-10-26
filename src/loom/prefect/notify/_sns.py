@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import boto3  # type: ignore[import-untyped]
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
+from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws.client import build_aws_client
 from loom.core.logger import get_logger
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import run_details, should_notify
@@ -40,7 +41,7 @@ class SnsNotifier:
         self._client = (
             client
             if client is not None
-            else boto3.client("sns", region_name=topic_arn.split(":")[3])
+            else build_aws_client("sns", AwsClientConfig(region=topic_arn.split(":")[3]))
         )
 
     def notify(self, event: NotifyEvent) -> None:

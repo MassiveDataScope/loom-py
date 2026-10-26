@@ -28,6 +28,19 @@ with the `mongo` extra:
 pip install "loom-kernel[streaming,kafka,mongo]"
 ```
 
+A source under `mongo.source` or `mongo.sources.<name>` takes the MongoDB
+connection keys every loom context shares (`url`, `database`, `username`,
+`password`, `connect_timeout`, `read_timeout`, `server_selection_timeout`, all
+in seconds, and `pool.size`/`pool.timeout`). A ClickHouse sink's
+`database.<name>` takes the ClickHouse keys (`url`, `username`, `password`,
+`connect_timeout`, `read_timeout`, `pool.size`). See
+ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
+
+Upgrade note: `uri` is now `url`, `max_pool_size` is now `pool.size` and
+`server_selection_timeout_ms` is now `server_selection_timeout`, in seconds;
+a sink database's `send_receive_timeout` is now `read_timeout` and `pool_size`
+is now `pool.size`. An old key stops the flow's compilation naming the new one.
+
 ## Minimal flow
 
 ```python

@@ -12,25 +12,24 @@ from tests.helpers.version_limited_extras import require_bytewax
 require_bytewax()
 
 from loom.core.async_bridge import AsyncBridge  # noqa: E402
+from loom.core.model.redaction import Dsn  # noqa: E402
 from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.persistence.database import DatabaseConfig, PoolConfig  # noqa: E402
 from loom.streaming.bytewax.handlers import storage as _storage  # noqa: E402
 from loom.streaming.compiler import CompiledStorageSink  # noqa: E402
 from loom.streaming.nodes._table import Backend, IntoTable  # noqa: E402
-from loom.streaming.nodes._table.common import (  # noqa: E402
-    SqlAlchemyDatabaseConfig,
-    SqlAlchemySinkConfig,
-)
+from loom.streaming.nodes._table.common import SqlAlchemySinkConfig  # noqa: E402
 from tests.unit.streaming.compiler.cases import Result  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
 
 
 class _Partition:
-    def write_batch(self, items: Sequence[Any]) -> None:
-        del items
+    def write_batch(self, items: Sequence[Any]) -> int:
+        return len(items)
 
-    def close(self) -> None:
-        return None
+    def close(self) -> int:
+        return 0
 
 
 class _FakeCtx:
@@ -39,15 +38,12 @@ class _FakeCtx:
         self.bridge = bridge
         self.flow_runtime = ObservabilityRuntime.noop()
         self.flow_run_id = "run-1"
+        self.commit_tracker = None
         self._session_manager = object()
-        self.session_manager_calls: list[dict[str, Any]] = []
+        self.session_manager_calls: list[DatabaseConfig] = []
 
-    def session_manager_for(self, config: Any) -> object:
-        if hasattr(config, "to_session_manager_config"):
-            resolved = config.to_session_manager_config()
-        else:
-            resolved = dict(config)
-        self.session_manager_calls.append(dict(resolved))
+    def session_manager_for(self, config: DatabaseConfig) -> object:
+        self.session_manager_calls.append(config)
         return self._session_manager
 
 
@@ -88,7 +84,9 @@ class TestStorageDynamicSink:
                 {"url": "sqlite:///:memory:", "table": "results", "chunk_size": 500},
                 default_table="results",
             ),
-            database_config=SqlAlchemyDatabaseConfig(url="sqlite:///:memory:", pool_pre_ping=True),
+            database_config=DatabaseConfig(
+                url=Dsn("sqlite:///:memory:"), pool=PoolConfig(pre_ping=True)
+            ),
         )
         bridge = cast(AsyncBridge, object())
         fake_ctx = cast(Any, _FakeCtx(bridge=bridge))
@@ -105,16 +103,7 @@ class TestStorageDynamicSink:
         fake_ctx = cast(Any, dynamic_sink._ctx)
         assert captured["session_manager"] is fake_ctx._session_manager
         assert fake_ctx.session_manager_calls == [
-            {
-                "url": "sqlite:///:memory:",
-                "echo": False,
-                "pool_pre_ping": True,
-                "pool_size": 10,
-                "max_overflow": 20,
-                "pool_timeout": 30,
-                "pool_recycle": 1800,
-                "connect_args": {},
-            }
+            DatabaseConfig(url=Dsn("sqlite:///:memory:"), pool=PoolConfig(pre_ping=True))
         ]
 
     def test_sqlalchemy_table_partition_requires_async_bridge(
@@ -147,7 +136,7 @@ class TestStorageDynamicSink:
                 {"url": "sqlite:///:memory:", "table": "results", "chunk_size": 500},
                 default_table="results",
             ),
-            database_config=SqlAlchemyDatabaseConfig(url="sqlite:///:memory:"),
+            database_config=DatabaseConfig(url=Dsn("sqlite:///:memory:")),
         )
         dynamic_sink = _storage._StorageDynamicSink(compiled, cast(Any, _FakeCtx(bridge=None)))
 

@@ -584,25 +584,14 @@ class CodecRepository(CustomCallCountingRepository[RowT], Generic[RowT]):
         self.custom_calls["late_stats"] += 1
         return LateStats(count=len(self.storage))
 
-    @cache_query(scope="list")
-    async def unresolvable(
-        self,
-    ) -> UnknownStats:  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
-        """Return a value whose annotation names nothing importable here."""
-        self.custom_calls["unresolvable"] += 1
-        return Stats(total=len(self.storage), label="unresolvable")
+
+class OutOfGrammarReadRepository(CodecRepository[RowT], Generic[RowT]):
+    """:class:`CodecRepository` plus a cached read returning a mapping."""
 
     @cache_query(scope="list")
     async def out_of_grammar(self) -> dict[str, int]:
         """Return a mapping, which is outside the supported grammar."""
-        self.custom_calls["out_of_grammar"] += 1
         return {"total": len(self.storage)}
-
-    @cache_query(scope="list")
-    async def unannotated(self):  # type: ignore[no-untyped-def]
-        """Return a struct without declaring it."""
-        self.custom_calls["unannotated"] += 1
-        return Stats(total=len(self.storage), label="unannotated")
 
 
 class LateStats(msgspec.Struct):
@@ -671,12 +660,11 @@ class EvolvedRepository(CustomCallCountingRepository[RowT], Generic[RowT]):
         return EvolvedStats(total=len(self.storage), label="all", source="v2")
 
 
-class UnmarkedOverrideRepository(CodecRepository[RowT], Generic[RowT]):
+class UnmarkedOverrideRepository(OutOfGrammarReadRepository[RowT], Generic[RowT]):
     """Subclass that overrides cached reads and drops the ``@cache_query`` marker.
 
     The overridden reads are no longer cached, so the base class's codecs — and
-    the deprecation its annotations would earn — must not be registered for
-    them.
+    the refusal its annotations would earn — must not be registered for them.
     """
 
     async def stats(self) -> Stats:
@@ -685,7 +673,7 @@ class UnmarkedOverrideRepository(CodecRepository[RowT], Generic[RowT]):
         return Stats(total=len(self.storage), label="override")
 
     async def out_of_grammar(self) -> dict[str, int]:
-        """Return a mapping, uncached, so its annotation deprecates nothing."""
+        """Return a mapping, uncached, so its annotation is not refused."""
         self.custom_calls["out_of_grammar"] += 1
         return {"total": len(self.storage)}
 

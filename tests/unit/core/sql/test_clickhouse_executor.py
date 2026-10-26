@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 from typing import Any
 
@@ -12,6 +13,7 @@ from loom.core.errors import RuleViolation
 from loom.core.errors import SystemError as LoomSystemError
 from loom.core.sql.abc import SqlColumn, SqlExecutionError, SqlExecutionOptions
 from loom.core.sql.clickhouse import ClickHouseConnectionRegistry, ClickHouseSqlExecutor
+from tests.helpers.extras import CLICKHOUSE_ISLAND
 from tests.unit.core.sql._fakes import (
     FakeClickHouseClient,
     RecordingClientFactory,
@@ -43,16 +45,16 @@ def _hide_modules(monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
     monkeypatch.setitem(sys.modules, prefix, None)
 
 
-async def test_missing_clickhouse_connect_raises_import_error_with_hint(
+def test_missing_clickhouse_connect_raises_import_error_with_hint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without the extra installed, startup fails with a 'loom-kernel[clickhouse]' hint."""
+    """Without the extra, loading the SQL backend fails naming 'loom-kernel[clickhouse]'."""
     _hide_modules(monkeypatch, "clickhouse_connect")
-    config = make_sql_config(analytics=make_connection_config())
-    registry = ClickHouseConnectionRegistry(config=config)
+    for name in list(sys.modules):
+        if name.startswith(("loom.core.sql.clickhouse", CLICKHOUSE_ISLAND)):
+            monkeypatch.delitem(sys.modules, name)
     with pytest.raises(ImportError, match=r"loom-kernel\[clickhouse\]"):
-        async with registry:
-            pass
+        importlib.import_module("loom.core.sql.clickhouse")
 
 
 async def test_parameters_travel_server_side_without_interpolation() -> None:

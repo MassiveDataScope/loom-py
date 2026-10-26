@@ -6,6 +6,8 @@ import os
 from collections.abc import Iterable
 from typing import Any
 
+from loom.core.config.errors import ConfigError
+from loom.core.environment import resolve_environment
 from loom.core.logger import get_logger
 from loom.prefect._async import run_sync
 from loom.prefect._summary import get_run_summary
@@ -90,10 +92,18 @@ def _correlation_from_params(flow_run: Any) -> str:
     return str(params.get("correlation_id") or "")
 
 
-def _env_from_params(flow_run: Any) -> str | None:
-    params = getattr(flow_run, "parameters", None) or {}
-    env = params.get("env")
-    return str(env) if env else None
+def _env_from_params(flow_run: Any) -> str:
+    """Name the environment the run ran in: the process one.
+
+    The run's ``env`` parameter only confirms it. When the process selector
+    is itself invalid, the run failed on it, and the notification reports the
+    parameter as given instead of failing a second time.
+    """
+    try:
+        return str(resolve_environment())
+    except ConfigError:
+        params = getattr(flow_run, "parameters", None) or {}
+        return str(params.get("env"))
 
 
 def _duration_from_run(flow_run: Any) -> float | None:

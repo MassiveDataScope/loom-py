@@ -16,6 +16,7 @@ import msgspec
 import pytest
 
 from loom.core.cache import CacheConfig, CacheGateway
+from loom.core.model.redaction import RedactedMap
 
 from ._doubles import SERIALIZED_BACKEND
 
@@ -35,7 +36,9 @@ class LaxStruct(msgspec.Struct):
 
 
 def _gateway(alias: str, backend: dict[str, Any]) -> CacheGateway:
-    CacheGateway.apply_config(CacheConfig(aiocache_alias=alias, aiocache_config={alias: backend}))
+    CacheGateway.apply_config(
+        CacheConfig(aiocache_alias=alias, aiocache_config=RedactedMap({alias: backend}))
+    )
     return CacheGateway(alias=alias)
 
 

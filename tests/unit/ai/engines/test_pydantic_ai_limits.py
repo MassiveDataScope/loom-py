@@ -33,6 +33,7 @@ from loom.ai.engines.pydantic_ai._models import ModelResolver
 from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
 from loom.ai.inference import InferenceTarget
 from loom.core.di import LoomContainer
+from loom.core.model.redaction import Dsn
 from tests.helpers.pydantic_ai_engine import NullDeps, make_plan
 
 _COMPONENT = "agent 'appraiser'"
@@ -243,7 +244,9 @@ class TestCreateEngineWiring:
         warn here, even though every run bills correctly through the
         ``OpenAIProvider`` the binding actually builds.
         """
-        gateway = InferenceTarget(provider="gateway", model="gpt-4o", endpoint="https://gw.test")
+        gateway = InferenceTarget(
+            provider="gateway", model="gpt-4o", endpoint=Dsn("https://gw.test")
+        )
 
         with caplog.at_level(logging.WARNING, logger=_LIMITS_LOGGER):
             _create_engine(
