@@ -18,7 +18,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
+
+from tests.helpers.imports import imported_roots
 
 _SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -97,45 +98,12 @@ def test_importing_the_connection_contracts_loads_no_sdk() -> None:
     assert json.loads(result.stdout.splitlines()[-1]) == []
 
 
-def _is_type_checking_block(node: ast.AST) -> bool:
-    if not isinstance(node, ast.If):
-        return False
-    test = node.test
-    name = test.attr if isinstance(test, ast.Attribute) else getattr(test, "id", None)
-    return name == "TYPE_CHECKING"
-
-
-def _runtime_nodes(tree: ast.AST) -> list[ast.AST]:
-    """Every node of *tree* but those under ``if TYPE_CHECKING:``, which never run."""
-    nodes: list[ast.AST] = []
-    pending = [tree]
-    while pending:
-        node = pending.pop()
-        nodes.append(node)
-        for child in ast.iter_child_nodes(node):
-            if _is_type_checking_block(child):
-                pending.extend(cast(ast.If, child).orelse)
-            else:
-                pending.append(child)
-    return nodes
-
-
-def _imported_roots(tree: ast.AST) -> set[str]:
-    roots: set[str] = set()
-    for node in _runtime_nodes(tree):
-        if isinstance(node, ast.Import):
-            roots.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            roots.add(node.module.split(".")[0])
-    return roots
-
-
 def test_a_driver_sdk_is_imported_only_by_its_islands() -> None:
     """Static imports only; a dynamic ``importlib`` load is what the island rule forbids."""
     offenders = []
     for path in sorted((_SRC / "loom").rglob("*.py")):
         relative = path.relative_to(_SRC / "loom").as_posix()
-        for sdk in _imported_roots(ast.parse(path.read_text(encoding="utf-8"))) & set(_ISLANDS):
+        for sdk in imported_roots(ast.parse(path.read_text(encoding="utf-8"))) & set(_ISLANDS):
             if relative not in _ISLANDS[sdk]:
                 offenders.append(f"{relative} imports {sdk}")
 
@@ -155,7 +123,7 @@ def test_the_import_check_skips_type_only_imports() -> None:
         "import clickhouse_connect\n"
     )
 
-    assert _imported_roots(sample) == {"typing", "botocore", "clickhouse_connect"}
+    assert imported_roots(sample) == {"typing", "botocore", "clickhouse_connect"}
 
 
 def test_reading_configuration_loads_no_persistence_layer() -> None:

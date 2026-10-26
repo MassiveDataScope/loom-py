@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import SimpleNamespace
@@ -9,9 +10,9 @@ from typing import Any, cast
 
 import pytest
 
+from loom.composition import Application
 from loom.core.bootstrap.kernel import KernelRuntime
 from loom.core.cache.wiring import CacheGateways
-from loom.core.composition import Application
 from loom.core.di.container import LoomContainer
 from loom.core.persistence.abc import PersistenceWiring
 
@@ -234,3 +235,58 @@ async def test_without_cache_gateways_nothing_closes_them() -> None:
         pass
 
     assert journal.events == OPEN + CLOSE[:-2]
+
+
+async def test_a_cancellation_while_closing_propagates_after_closing_everything() -> None:
+    journal = Journal()
+    application = _application(journal)
+
+    async def cancelled() -> None:
+        journal.events.append("close:counters")
+        raise asyncio.CancelledError
+
+    gateways = application.kernel.container.resolve(CacheGateways)
+    cast(Any, gateways.counters).close = cancelled
+
+    with pytest.raises(asyncio.CancelledError):
+        async with application.running():
+            pass
+
+    assert journal.events == OPEN + CLOSE
+    assert not application.is_open
+
+
+class Witness:
+    """A resource that records the error it was closed with."""
+
+    def __init__(self) -> None:
+        self.closed_with: BaseException | None | str = "never closed"
+
+    async def __aenter__(self) -> Witness:
+        return self
+
+    async def __aexit__(self, _type: object, error: BaseException | None, _tb: object) -> None:
+        self.closed_with = error
+
+
+async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
+    witness = Witness()
+    journal = Journal()
+    application = Application(
+        kernel=cast(KernelRuntime, SimpleNamespace(container=LoomContainer())),
+        persistence=PersistenceWiring(
+            uow_factory=None,
+            repo_registration_module=lambda _container: None,
+            lifespan_init=journal.lifespan,
+        ),
+        resources=lambda: (witness, journal.resource("sql")),
+    )
+    boom = ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom") as raised:
+        async with application.running():
+            raise boom
+
+    assert raised.value is boom
+    assert witness.closed_with is boom
+    assert journal.events[-2:] == ["close:persistence", "close:sql"]

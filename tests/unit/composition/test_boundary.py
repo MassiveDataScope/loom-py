@@ -10,7 +10,7 @@ _FORBIDDEN = ("fastapi", "starlette", "celery", "loom.rest")
 
 def test_importing_the_composition_loads_no_transport() -> None:
     probe = (
-        "import sys, loom.core.composition\n"
+        "import sys, loom.composition\n"
         f"loaded = [m for m in {_FORBIDDEN!r} if any(n == m or n.startswith(m + '.') "
         "for n in sys.modules)]\n"
         "print(','.join(loaded))\n"

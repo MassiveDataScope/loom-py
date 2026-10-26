@@ -10,7 +10,8 @@ from loom.core.bootstrap.kernel import KernelRuntime
 from loom.core.cache.wiring import CacheGateways
 from loom.core.persistence.abc import PersistenceWiring
 
-_Close = Callable[[], Awaitable[object]]
+_Close = Callable[[BaseException | None], Awaitable[object]]
+"""Closes one resource, told the error that ended its use, if any."""
 
 
 def _no_resources() -> Sequence[AbstractAsyncContextManager[object]]:
@@ -31,8 +32,9 @@ class Application:
         persistence: Wiring of the persistence backend.
         resources: Called on every open; returns the context managers to
             enter, in order, before persistence (the SQL registry, the agent
-            runtime). A fresh call per open leaves reopening to whoever
-            supplies them.
+            runtime). The application reopens only if these resources do:
+            a factory returning the same instances each time reopens only
+            what supports reentry.
     """
 
     kernel: KernelRuntime
@@ -57,6 +59,10 @@ class Application:
     async def running(self, *, check: bool = True) -> AsyncIterator[Application]:
         """Open the resources, yield the application, and close them in reverse.
 
+        Every resource is closed even when another fails to close or the task
+        is cancelled while closing, and the application is closed afterwards.
+        Each resource is told the error that ended the block, if any.
+
         Args:
             check: Run :meth:`check` before opening persistence. A prefork
                 worker checks once in the parent and opens each child with
@@ -74,24 +80,34 @@ class Application:
         try:
             await self._open_all(closers, check=check)
         except BaseException as error:
-            for failure in await _close_all(closers):
-                error.add_note(f"also failed to close: {failure!r}")
-            self._open = False
+            try:
+                for failure in await _close_all(closers, error):
+                    error.add_note(f"also failed to close: {failure!r}")
+            finally:
+                self._open = False
             raise
+        ended: BaseException | None = None
         try:
             yield self
+        except BaseException as error:
+            ended = error
+            raise
         finally:
-            failures = await _close_all(closers)
-            self._open = False
+            try:
+                failures = await _close_all(closers, ended)
+            finally:
+                self._open = False
             if len(failures) == 1:
                 raise failures[0]
             if failures:
-                raise ExceptionGroup("Application failed to close", failures)
+                raise BaseExceptionGroup("Application failed to close", failures)
 
     async def _open_all(self, closers: list[_Close], *, check: bool) -> None:
         container = self.kernel.container
         if container.is_registered(CacheGateways):
-            closers.extend(gateway.close for gateway in container.resolve(CacheGateways).distinct())
+            closers.extend(
+                _closing(gateway.close) for gateway in container.resolve(CacheGateways).distinct()
+            )
         for resource in self.resources():
             await _enter(resource, closers)
         if check:
@@ -99,16 +115,37 @@ class Application:
         await _enter(self.persistence.lifespan_init(), closers)
 
 
+def _closing(close: Callable[[], Awaitable[object]]) -> _Close:
+    async def closer(_error: BaseException | None) -> None:
+        await close()
+
+    return closer
+
+
 async def _enter(resource: AbstractAsyncContextManager[object], closers: list[_Close]) -> None:
     await resource.__aenter__()
-    closers.append(lambda: resource.__aexit__(None, None, None))
+
+    async def close(error: BaseException | None) -> None:
+        if error is None:
+            await resource.__aexit__(None, None, None)
+            return
+        try:
+            await resource.__aexit__(type(error), error, error.__traceback__)
+        except BaseException as raised:
+            # A generator-based manager re-raises the error it was given;
+            # that is the error being handled, not a failure to close.
+            if raised is not error:
+                raise
+
+    closers.append(close)
 
 
-async def _close_all(closers: list[_Close]) -> list[Exception]:
-    failures: list[Exception] = []
+async def _close_all(closers: list[_Close], error: BaseException | None) -> list[BaseException]:
+    """Close every resource in reverse; a cancellation does not skip the rest."""
+    failures: list[BaseException] = []
     while closers:
         try:
-            await closers.pop()()
-        except Exception as failure:
+            await closers.pop()(error)
+        except BaseException as failure:
             failures.append(failure)
     return failures

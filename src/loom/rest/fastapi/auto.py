@@ -18,10 +18,10 @@ from prometheus_client import CollectorRegistry
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
+from loom.composition import Application
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
-from loom.core.composition import Application
 from loom.core.config import (
     ConfigContext,
     ConfigKey,

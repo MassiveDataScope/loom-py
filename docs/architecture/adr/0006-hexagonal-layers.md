@@ -39,10 +39,14 @@ Dependencies point inwards: a layer imports only the layers listed above it.
 | Ports | `loom.core.persistence.abc`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
 | Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.persistence.database`, `loom.core.persistence.profile` | validated data; no SDK |
 | Outbound adapters (islands) | `loom.core.repository.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus` | implement the ports; the only modules importing an SDK |
-| Composition root | `create_app` and the worker bootstrap | compose the application; the transport-neutral root is the next step |
+| Composition root | `loom.composition` (`Application`), and `create_app` and the worker bootstrap until they move into it | compose the application and own the lifecycle of its resources; no transport. A top-level package, outside `loom.core`, because it wires the AI runtime and the Celery job service |
 | Inbound adapters | `loom.rest.fastapi`, `loom.celery`, the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
 
 This table classifies what exists. Packages move only when work touches them.
+`tests/unit/test_layers.py` enforces the composition-root rules: `loom.core`
+imports neither `loom.composition` nor a transport (`loom.rest`, `loom.celery`,
+`loom.ai`), and `loom.composition` imports no transport. It reads the source,
+so an import inside a function counts.
 
 ### One connection type per engine
 
