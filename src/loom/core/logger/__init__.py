@@ -11,6 +11,7 @@ from loom.core.logger.config import (
     configure_logging,
     configure_logging_from_values,
 )
+from loom.core.logger.context import log_context
 from loom.core.logger.registry import (
     LoggerFactory,
     configure_logger_factory,
@@ -35,5 +36,6 @@ __all__ = [
     "configure_logging_from_values",
     "configure_logging",
     "get_logger",
+    "log_context",
     "reset_logger_factory",
 ]

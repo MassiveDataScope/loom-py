@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -14,11 +16,14 @@ from loom.core.sql.abc import SqlExecutionError
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig, SqlEndpointConfig
 from loom.core.sql.service import SqlQueryService
 from loom.rest.fastapi.sql import bind_sql_endpoints
+from tests.helpers.deep_json import assert_too_deep_for_msgspec, fixed_thread_stack, nested_array
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
     make_sql_config,
 )
+
+_MALFORMED_BODY_MESSAGE = "Request body is not valid JSON"
 
 
 def _endpoint_connection(**overrides: Any) -> SqlConnectionConfig:
@@ -201,12 +206,36 @@ def test_returns_generic_500_when_the_backend_is_unreachable() -> None:
     )
 
 
+def test_an_unexpected_error_answers_the_generic_500_body() -> None:
+    """An unhandled failure answers the router's generic 500, byte for byte."""
+    client = _client(FakeSqlExecutor(error=RuntimeError("boom")))
+    response = client.post("/sql/analytics", json={"sql": "SELECT 1"})
+    assert (response.status_code, response.content) == (
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        b'{"code":"internal_error","message":"An unexpected error occurred","trace_id":""}',
+    )
+
+
 def test_rejects_sql_exceeding_max_sql_bytes_without_executing_it() -> None:
     """SQL larger than ``max_sql_bytes`` is rejected at the input edge (413/422)."""
     executor = FakeSqlExecutor()
     client = _client(executor, max_sql_bytes=64)
     response = client.post("/sql/analytics", json={"sql": "SELECT '" + "x" * 200 + "'"})
     assert (response.status_code in (413, 422), executor.calls) == (True, [])
+
+
+def test_the_413_body_is_the_standard_payload_too_large_body() -> None:
+    """The 413 carries the same bytes as the application-wide body cap."""
+    client = _client(FakeSqlExecutor(), max_sql_bytes=64)
+    response = client.post(
+        "/sql/analytics",
+        content=b"x" * (128 * 1024),
+        headers={"content-type": "application/json"},
+    )
+    assert response.content == (
+        b'{"detail":{"code":"payload_too_large","message":"Request body exceeds the maximum'
+        b' accepted size (65600 bytes)","trace_id":null}}'
+    )
 
 
 def test_rejects_a_giant_body_with_413_without_invoking_the_executor() -> None:
@@ -255,16 +284,69 @@ async def test_chunked_body_without_content_length_is_capped_cutting_the_read() 
     assert consumed < len(chunks)  # the read was cut, never buffered to the end
 
 
-def test_non_json_bytes_within_the_cap_return_the_standard_422() -> None:
-    """Raw non-JSON bytes (e.g. a gzip body Starlette never decompresses) → 422, not 500."""
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\x1f\x8b\x08\x00" + b"\x00" * 128,
+        b"{not json",
+        b"",
+        b'{"sql": "SELECT \xff"}',
+    ],
+    ids=["gzip_like", "syntax", "empty", "not_utf8_in_string"],
+)
+def test_malformed_body_returns_the_standard_400(body: bytes) -> None:
+    """A body that is not well-formed JSON → 400 ``bad_request``, never executed."""
     executor = FakeSqlExecutor()
     client = _client(executor)
-    gzip_like = b"\x1f\x8b\x08\x00" + b"\x00" * 128
     response = client.post(
-        "/sql/analytics", content=gzip_like, headers={"content-type": "application/json"}
+        "/sql/analytics", content=body, headers={"content-type": "application/json"}
     )
     detail = response.json()["detail"]
-    assert (response.status_code, detail["code"], executor.calls) == (422, "rule_violation", [])
+    assert (response.status_code, executor.calls) == (HTTPStatus.BAD_REQUEST, [])
+    assert detail.keys() == {"code", "message", "trace_id"}
+    assert (detail["code"], detail["message"]) == ("bad_request", _MALFORMED_BODY_MESSAGE)
+
+
+def test_malformed_body_is_not_echoed() -> None:
+    """The 400 carries a fixed message, not the decoder's view of the input."""
+    client = _client(FakeSqlExecutor())
+    response = client.post(
+        "/sql/analytics",
+        content=b'{"sql": "echo-marker',
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert "echo-marker" not in response.text
+
+
+def test_too_deeply_nested_body_returns_the_standard_400() -> None:
+    """Parameters nested past msgspec's recursion bound → 400, never executed."""
+    executor = FakeSqlExecutor()
+    client = _client(executor)
+    body = b'{"sql": "SELECT 1", "parameters": {"p": ' + nested_array() + b"}}"
+    assert_too_deep_for_msgspec(body)
+
+    with fixed_thread_stack():
+        response = client.post(
+            "/sql/analytics", content=body, headers={"content-type": "application/json"}
+        )
+
+    detail = response.json()["detail"]
+    assert (response.status_code, executor.calls) == (HTTPStatus.BAD_REQUEST, [])
+    assert detail["message"] == _MALFORMED_BODY_MESSAGE
+
+
+def test_well_formed_body_of_wrong_type_stays_422() -> None:
+    """Valid JSON that does not fit the schema keeps the ``rule_violation`` 422."""
+    executor = FakeSqlExecutor()
+    client = _client(executor)
+    response = client.post("/sql/analytics", json={"sql": 1})
+    detail = response.json()["detail"]
+    assert (response.status_code, detail["code"], executor.calls) == (
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+        "rule_violation",
+        [],
+    )
 
 
 def test_rejects_body_with_settings_without_executing_it() -> None:
@@ -340,3 +422,4 @@ def test_emits_the_router_runtime_equivalent_span_per_request() -> None:
         "POST",
         True,
     )
+    assert (type(start.meta["status_code"]), start.meta["status_code"]) == (int, 200)
