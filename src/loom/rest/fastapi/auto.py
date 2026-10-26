@@ -18,9 +18,9 @@ from prometheus_client import CollectorRegistry
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from loom.composition import Application
+from loom.composition import Application, Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime, create_kernel
-from loom.core.cache.wiring import cache_module_for
+from loom.core.cache.wiring import CacheGateways, cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
@@ -932,13 +932,9 @@ def create_app(
     # Last: every service a use case may inject is registered by now.
     result.factory.verify()
 
-    # The registry opens before persistence, so its clients close even when
-    # the persistence lifespan fails to start or to shut down.
-    resources = tuple(r for r in (sql.registry, ai.runtime) if r is not None)
     application = Application(
         kernel=result,
-        persistence=wiring,
-        resources=lambda: resources,
+        resources=_resources(result, wiring, _load_persistence_config(ctx).backend, sql, ai),
     )
 
     @asynccontextmanager
@@ -982,6 +978,41 @@ def create_app(
     verify_exclusion_paths(app, auth.exclude_paths)
     _warn_anonymous_schema(app_cfg.rest, auth)
     return app
+
+
+def _resources(
+    result: KernelRuntime,
+    wiring: PersistenceWiring,
+    backend_name: str,
+    sql: _SqlWiring,
+    ai: _AiWiring,
+) -> tuple[Resource, ...]:
+    """Everything the application owns; :class:`Application` orders it by kind."""
+    resources: list[Resource] = []
+    if result.container.is_registered(CacheGateways):
+        gateways = result.container.resolve(CacheGateways)
+        names = ("data", "counters")
+        for name, gateway in zip(names, gateways.distinct(), strict=False):
+            resources.append(
+                Resource(kind=ResourceKind.CACHE, name=name, manager=closing(gateway.close))
+            )
+    registry, runtime = sql.registry, ai.runtime
+    if registry is not None:
+        resources.append(
+            Resource(kind=ResourceKind.SQL, name="clickhouse", manager=lambda: registry)
+        )
+    if runtime is not None:
+        resources.append(Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime))
+    resources.append(
+        Resource(
+            kind=ResourceKind.STORE,
+            name=backend_name,
+            manager=wiring.lifespan_init,
+            check=wiring.startup_checks,
+            readiness=wiring.readiness,
+        )
+    )
+    return tuple(resources)
 
 
 def _reject_manifest_agents_without_ai_section(

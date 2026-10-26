@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from loom.core.cache.wiring import CacheGateways
+from loom.composition.resources import Resource, in_opening_order
 
 if TYPE_CHECKING:
     from loom.core.bootstrap.kernel import KernelRuntime
-    from loom.core.persistence.abc import PersistenceWiring
 
 _Exit = Callable[
     [type[BaseException] | None, BaseException | None, TracebackType | None],
@@ -21,33 +20,26 @@ _Exit = Callable[
 """The ``__aexit__`` shape :meth:`AsyncExitStack.push_async_exit` takes."""
 
 
-def _no_resources() -> Sequence[AbstractAsyncContextManager[object]]:
-    return ()
-
-
 @dataclass(eq=False)
 class Application:
     """A compiled kernel and the resources it owns, independent of any transport.
 
-    :meth:`running` opens, in this order, the cache gateways (they only need
-    closing), each of *resources*, the persistence startup checks and the
-    persistence lifespan. Leaving it closes them in reverse. A transport
-    adapter enters :meth:`running` and never opens these resources itself.
+    :meth:`running` opens the resources in the order of their
+    :class:`~loom.composition.ResourceKind`, running each one's startup checks
+    right before it opens, and closes them in reverse. A transport adapter
+    enters :meth:`running` and never opens these resources itself.
 
     Args:
-        kernel: Compiled kernel; its container holds the cache gateways.
-        persistence: Wiring of the persistence backend.
-        resources: Called on every open; returns the context managers to
-            enter, in order, before persistence (the SQL registry, the agent
-            runtime). The application reopens only if these resources do:
-            a factory returning the same instances each time reopens only
-            what supports reentry.
+        kernel: Compiled kernel.
+        resources: What the application owns, in any order.
     """
 
     kernel: KernelRuntime
-    persistence: PersistenceWiring
-    resources: Callable[[], Sequence[AbstractAsyncContextManager[object]]] = _no_resources
+    resources: tuple[Resource, ...] = ()
     _open: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        self.resources = in_opening_order(self.resources)
 
     @property
     def is_open(self) -> bool:
@@ -55,12 +47,14 @@ class Application:
         return self._open
 
     async def check(self) -> None:
-        """Run the startup checks without opening anything.
+        """Run every resource's startup checks without opening anything.
 
         Raises:
-            ConfigError: When the schema or the roles do not pass.
+            ConfigError: When the schema or the roles of a store do not pass.
         """
-        await self.persistence.startup_checks()
+        for resource in self.resources:
+            if resource.check is not None:
+                await resource.check()
 
     @asynccontextmanager
     async def running(self, *, check: bool = True) -> AsyncIterator[Application]:
@@ -72,9 +66,9 @@ class Application:
         suppress it.
 
         Args:
-            check: Run :meth:`check` before opening persistence. A prefork
-                worker checks once in the parent and opens each child with
-                ``check=False``.
+            check: Run each resource's startup checks before it opens. A
+                prefork worker checks once in the parent and opens each child
+                with ``check=False``.
 
         Raises:
             RuntimeError: When the application is already open.
@@ -90,7 +84,12 @@ class Application:
         opened = False
         try:
             async with AsyncExitStack() as stack:
-                await self._open_all(stack, failures, check=check)
+                for resource in self.resources:
+                    if check and resource.check is not None:
+                        await resource.check()
+                    manager = resource.manager()
+                    await manager.__aenter__()
+                    stack.push_async_exit(_recorded(manager.__aexit__, resource, failures))
                 opened = True
                 yield self
         except BaseException as error:
@@ -105,37 +104,8 @@ class Application:
         if failures:
             raise _close_error(failures)
 
-    async def _open_all(
-        self, stack: AsyncExitStack, failures: list[BaseException], *, check: bool
-    ) -> None:
-        container = self.kernel.container
-        if container.is_registered(CacheGateways):
-            for gateway in container.resolve(CacheGateways).distinct():
-                stack.push_async_exit(_recorded(_closing(gateway.close), failures))
-        for resource in self.resources():
-            await _enter(stack, resource, failures)
-        if check:
-            await self.check()
-        await _enter(stack, self.persistence.lifespan_init(), failures)
 
-
-async def _enter(
-    stack: AsyncExitStack,
-    resource: AbstractAsyncContextManager[object],
-    failures: list[BaseException],
-) -> None:
-    await resource.__aenter__()
-    stack.push_async_exit(_recorded(resource.__aexit__, failures))
-
-
-def _closing(close: Callable[[], Awaitable[object]]) -> _Exit:
-    async def exit_(*_: object) -> None:
-        await close()
-
-    return exit_
-
-
-def _recorded(exit_: _Exit, failures: list[BaseException]) -> _Exit:
+def _recorded(exit_: _Exit, resource: Resource, failures: list[BaseException]) -> _Exit:
     """Record a failure to close instead of letting it replace the error in flight."""
 
     async def recorded(
@@ -146,6 +116,7 @@ def _recorded(exit_: _Exit, failures: list[BaseException]) -> _Exit:
         try:
             await exit_(exc_type, exc, traceback)
         except BaseException as failure:
+            failure.add_note(f"while closing {resource.label}")
             failures.append(failure)
         return False
 

@@ -1,8 +1,9 @@
-"""Transport-neutral composition: the application and its lifecycle.
+"""Transport-neutral composition: the application, its resources and their lifecycle.
 
-Nothing here imports an HTTP framework, a queue broker or :mod:`loom.rest`.
+Nothing here imports an HTTP framework, the Celery worker or :mod:`loom.rest`.
 """
 
 from loom.composition.application import Application
+from loom.composition.resources import Resource, ResourceKind, closing
 
-__all__ = ["Application"]
+__all__ = ["Application", "Resource", "ResourceKind", "closing"]

@@ -96,8 +96,12 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
             registry=SimpleNamespace(key_for=lambda use_case_type: None),
             factory=SimpleNamespace(verify=lambda: None),
             # create_app always registers SqlQueryService, so the stub
-            # container must accept register() calls.
-            container=SimpleNamespace(register=lambda *args, **kwargs: None),
+            # container must accept register() calls, and it asks whether
+            # cache gateways were registered when it lists the resources.
+            container=SimpleNamespace(
+                register=lambda *args, **kwargs: None,
+                is_registered=lambda key: False,
+            ),
         )
 
         @asynccontextmanager

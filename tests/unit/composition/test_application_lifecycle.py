@@ -1,33 +1,33 @@
-"""An application opens its resources once, in a fixed order, and closes them in reverse."""
+"""An application opens its resources once, in the order of their kind, closing in reverse."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
-from loom.composition import Application
+from loom.composition import Application, Resource, ResourceKind, closing
 from loom.core.bootstrap.kernel import KernelRuntime
-from loom.core.cache.wiring import CacheGateways
-from loom.core.di.container import LoomContainer
-from loom.core.persistence.abc import PersistenceWiring, no_startup_checks
 
 
 class Journal:
-    """Records every open, close and check, and fails the steps it is told to."""
+    """Records every open, close and check, and fails or cancels the steps it is told to."""
 
-    def __init__(self, *, fail: tuple[str, ...] = ()) -> None:
+    def __init__(self, *, fail: tuple[str, ...] = (), cancel: tuple[str, ...] = ()) -> None:
         self.events: list[str] = []
         self.fail = set(fail)
+        self.cancel = set(cancel)
 
     def step(self, event: str) -> None:
         self.events.append(event)
         if event in self.fail:
             raise RuntimeError(event)
+        if event in self.cancel:
+            raise asyncio.CancelledError
 
     def resource(self, name: str) -> AbstractAsyncContextManager[None]:
         @asynccontextmanager
@@ -40,29 +40,26 @@ class Journal:
 
         return resource()
 
+    def closer(self, name: str) -> Resource:
+        async def close() -> None:
+            self.step(f"close:{name}")
+
+        return Resource(kind=ResourceKind.CACHE, name=name, manager=closing(close))
+
     async def check(self) -> None:
         self.step("check:persistence")
 
 
-class Gateway:
-    def __init__(self, journal: Journal, name: str) -> None:
-        self.journal = journal
-        self.name = name
-
-    async def close(self) -> None:
-        self.journal.step(f"close:{self.name}")
+def _kernel() -> KernelRuntime:
+    return cast(KernelRuntime, SimpleNamespace())
 
 
-def _kernel(container: LoomContainer) -> KernelRuntime:
-    return cast(KernelRuntime, SimpleNamespace(container=container))
-
-
-def _persistence(journal: Journal, *, startup_checks: bool = True) -> PersistenceWiring:
-    return PersistenceWiring(
-        uow_factory=None,
-        repo_registration_module=lambda _container: None,
-        lifespan_init=lambda: journal.resource("persistence"),
-        startup_checks=journal.check if startup_checks else no_startup_checks,
+def _store(journal: Journal, *, startup_checks: bool = True) -> Resource:
+    return Resource(
+        kind=ResourceKind.STORE,
+        name="default",
+        manager=lambda: journal.resource("persistence"),
+        check=journal.check if startup_checks else None,
     )
 
 
@@ -70,23 +67,20 @@ def _application(
     journal: Journal,
     *,
     cache: bool = True,
-    resources: Callable[[], Sequence[AbstractAsyncContextManager[object]]] | None = None,
+    resources: Sequence[Resource] | None = None,
     startup_checks: bool = True,
 ) -> Application:
-    container = LoomContainer()
-    if cache:
-        container.register_instance(
-            CacheGateways,
-            CacheGateways(
-                data=cast(Any, Gateway(journal, "cache")),
-                counters=cast(Any, Gateway(journal, "counters")),
-            ),
+    """Cache gateways, SQL and agents (or *resources*), and one store."""
+    if resources is None:
+        # Fresh managers on every open, as a registry or runtime context manager is.
+        resources = (
+            Resource(kind=ResourceKind.SQL, name="sql", manager=lambda: journal.resource("sql")),
+            Resource(kind=ResourceKind.AGENTS, name="ai", manager=lambda: journal.resource("ai")),
         )
-    # Fresh resources on every open, as a registry or runtime context manager is.
+    gateways = (journal.closer("cache"), journal.closer("counters")) if cache else ()
     return Application(
-        kernel=_kernel(container),
-        persistence=_persistence(journal, startup_checks=startup_checks),
-        resources=resources or (lambda: (journal.resource("sql"), journal.resource("ai"))),
+        kernel=_kernel(),
+        resources=(*gateways, *resources, _store(journal, startup_checks=startup_checks)),
     )
 
 
@@ -239,15 +233,8 @@ async def test_without_cache_gateways_nothing_closes_them() -> None:
 
 
 async def test_a_cancellation_while_closing_propagates_after_closing_everything() -> None:
-    journal = Journal()
+    journal = Journal(cancel=("close:counters",))
     application = _application(journal)
-
-    async def cancelled() -> None:
-        journal.events.append("close:counters")
-        raise asyncio.CancelledError
-
-    gateways = application.kernel.container.resolve(CacheGateways)
-    cast(Any, gateways.counters).close = cancelled
 
     with pytest.raises(asyncio.CancelledError):
         async with application.running():
@@ -277,7 +264,10 @@ async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
         journal,
         cache=False,
         startup_checks=False,
-        resources=lambda: (witness, journal.resource("sql")),
+        resources=(
+            Resource(kind=ResourceKind.SQL, name="witness", manager=lambda: witness),
+            Resource(kind=ResourceKind.SQL, name="sql", manager=lambda: journal.resource("sql")),
+        ),
     )
     boom = ValueError("boom")
 
@@ -290,15 +280,42 @@ async def test_each_resource_is_told_the_error_that_ended_the_block() -> None:
     assert journal.events[-2:] == ["close:persistence", "close:sql"]
 
 
-async def test_without_resources_only_persistence_opens() -> None:
-    journal = Journal()
-    # No resources argument: the default factory is what is under test.
-    application = Application(kernel=_kernel(LoomContainer()), persistence=_persistence(journal))
+async def test_an_application_without_resources_opens_nothing() -> None:
+    application = Application(kernel=_kernel())
 
+    async with application.running():
+        assert application.is_open
+
+    assert not application.is_open
+
+
+async def test_the_kind_decides_the_order_whatever_order_the_resources_come_in() -> None:
+    journal = Journal()
+    given = _application(journal).resources
+
+    application = Application(kernel=_kernel(), resources=tuple(reversed(given)))
     async with application.running():
         pass
 
-    assert journal.events == ["check:persistence", "open:persistence", "close:persistence"]
+    assert [resource.kind for resource in application.resources] == [
+        ResourceKind.CACHE,
+        ResourceKind.CACHE,
+        ResourceKind.SQL,
+        ResourceKind.AGENTS,
+        ResourceKind.STORE,
+    ]
+    assert journal.events[: len(OPEN)] == OPEN
+
+
+async def test_a_failure_to_close_names_the_resource() -> None:
+    journal = Journal(fail=("close:ai",))
+    application = _application(journal)
+
+    with pytest.raises(RuntimeError, match="close:ai") as raised:
+        async with application.running():
+            pass
+
+    assert raised.value.__notes__ == ["while closing agents:ai"]
 
 
 async def test_a_failure_to_close_after_an_error_in_the_block_chains_that_error() -> None:
