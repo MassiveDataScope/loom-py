@@ -404,7 +404,6 @@ async def test_startup_refuses_a_tampered_guard_as_the_application_user(
         )
         wiring.prepare_models(notes.MODELS)
         with pytest.raises(ConfigError, match="guard.relation_grants"):
-            async with wiring.lifespan_init():
-                pass
+            await wiring.startup_checks()
     finally:
         clear_scope_sources()

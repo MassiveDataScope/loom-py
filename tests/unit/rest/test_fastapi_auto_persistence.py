@@ -220,6 +220,7 @@ class _RecordingBackend:
     """Backend that records what the host hands it, delegating to ``none``."""
 
     name: ClassVar[str] = "recording"
+    repository_type: ClassVar[type[Any] | None] = None
     events: ClassVar[list[tuple[str, tuple[type[BaseModel], ...]]]] = []
     runtimes: ClassVar[list[BackendRuntime]] = []
 
@@ -233,7 +234,6 @@ class _RecordingBackend:
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
             lifespan_init=wiring.lifespan_init,
-            default_repository_type=wiring.default_repository_type,
             prepare_models=self._prepare_models,
         )
 

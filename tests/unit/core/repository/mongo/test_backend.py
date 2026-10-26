@@ -114,7 +114,7 @@ def test_wiring_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     wiring = _wiring(monkeypatch, FakeMongoClient(), _SECTION, (Article,))
 
     assert isinstance(wiring.uow_factory, MongoUnitOfWorkFactory)
-    assert wiring.default_repository_type is RepositoryMongo
+    assert MongoBackend.repository_type is RepositoryMongo
     assert wiring.readiness is not None
 
 

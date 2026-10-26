@@ -97,6 +97,7 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
     try:
         wiring = backend(database.write)
         wiring.prepare_models(notes.MODELS)
+        await wiring.startup_checks()
         async with wiring.lifespan_init():
             manager = wiring.uow_factory._session_manager  # type: ignore[union-attr]
             token = set_identity(Identity(subject="u1"))
@@ -113,8 +114,7 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
         bypass = backend(database.bypass)
         bypass.prepare_models(notes.MODELS)
         with pytest.raises(ConfigError, match="bypass"):
-            async with bypass.lifespan_init():
-                pass
+            await bypass.startup_checks()
     finally:
         clear_scope_sources()
 
@@ -159,5 +159,4 @@ async def test_external_mode_refuses_a_bypass_connection_without_scoped_tables(
     wiring.prepare_models((Widget,))
 
     with pytest.raises(ConfigError, match="bypass"):
-        async with wiring.lifespan_init():
-            pass
+        await wiring.startup_checks()
