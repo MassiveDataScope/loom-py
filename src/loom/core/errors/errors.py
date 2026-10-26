@@ -230,6 +230,10 @@ class RateLimited(DomainError):
         self.retry_after = max(1, math.ceil(retry_after))
 
 
+BODY_FIELD = "body"
+"""Field a violation names when it concerns the request body as a whole."""
+
+
 class RuleViolation(DomainError):
     """Raised when a single business rule is violated.
 
