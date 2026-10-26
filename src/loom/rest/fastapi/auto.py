@@ -7,7 +7,7 @@ import importlib.util
 import logging
 import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,8 +18,9 @@ from prometheus_client import CollectorRegistry
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
+from loom.composition import Application
 from loom.core.bootstrap import KernelRuntime, create_kernel
-from loom.core.cache.wiring import CacheGateways, cache_module_for
+from loom.core.cache.wiring import cache_module_for
 from loom.core.checks import enforce_deploy_checks
 from loom.core.config import (
     ConfigContext,
@@ -931,21 +932,18 @@ def create_app(
     # Last: every service a use case may inject is registered by now.
     result.factory.verify()
 
+    # The registry opens before persistence, so its clients close even when
+    # the persistence lifespan fails to start or to shut down.
+    resources = tuple(r for r in (sql.registry, ai.runtime) if r is not None)
+    application = Application(
+        kernel=result,
+        persistence=wiring,
+        resources=lambda: resources,
+    )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        async with AsyncExitStack() as stack:
-            # Pushed first, so the gateways close after the SQL registry.
-            if result.container.is_registered(CacheGateways):
-                for gateway in result.container.resolve(CacheGateways).distinct():
-                    stack.push_async_callback(gateway.close)
-            # Registry next: its clients close even when the persistence
-            # lifespan fails to start or to shut down.
-            if sql.registry is not None:
-                await stack.enter_async_context(sql.registry)
-            if ai.runtime is not None:
-                await stack.enter_async_context(ai.runtime)
-            await wiring.startup_checks()
-            await stack.enter_async_context(wiring.lifespan_init())
+        async with application.running():
             yield
 
     route_sources = RouteSources(

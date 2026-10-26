@@ -38,11 +38,18 @@ Dependencies point inwards: a layer imports only the layers listed above it.
 | Domain and application | `loom.core.model`, `use_case`, `engine`, `command`, `projection`, `identity`, `authz` | no infrastructure, no SDK |
 | Ports | `loom.core.persistence.abc`, `uow.abc`, `repository.abc`, `sql.abc`, `job.service`, `cache` | protocols and value types; no SDK |
 | Configuration contracts | `loom.core.config`, `loom.core.connections.<engine>`, `loom.core.persistence.database`, `loom.core.persistence.profile` | validated data; no SDK |
-| Outbound adapters (islands) | `loom.core.repository.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus` | implement the ports; the only modules importing an SDK |
-| Composition root | `create_app` and the worker bootstrap | compose the application; the transport-neutral root is the next step |
-| Inbound adapters | `loom.rest.fastapi`, `loom.celery`, the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
+| Outbound adapters (islands) | `loom.core.repository.{sqlalchemy,dynamodb,mongo}`, `loom.core.sql.clickhouse`, `loom.core.connections.<engine>.client`, `loom.prometheus`, `loom.celery.service` (the `JobService` port over Celery) | implement the ports; the only modules importing an SDK |
+| Composition root | `loom.composition` (`Application`), and `create_app` and the worker bootstrap until they move into it | compose the application and own the lifecycle of its resources; no transport. A top-level package, outside `loom.core`, because it wires the AI runtime and the Celery job service |
+| Inbound adapters | `loom.rest.fastapi`, `loom.celery` (the worker), the ETL and streaming runners, Prefect flows | translate a transport; build no resource of their own |
 
 This table classifies what exists. Packages move only when work touches them.
+`tests/unit/test_layers.py` enforces the composition-root rules: `loom.core`
+imports none of `loom.composition`, `loom.rest`, `loom.celery` and `loom.ai`,
+and `loom.composition` imports no transport (`loom.rest`, the Celery worker),
+though it may load the Celery job service. It reads the source, so an import
+inside a function counts. `tests/unit/test_core_transport_containment.py` and
+`tests/unit/composition/test_boundary.py` check the same boundaries at run
+time, where a transitive import shows.
 
 ### One connection type per engine
 
