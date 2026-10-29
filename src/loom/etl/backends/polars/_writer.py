@@ -28,7 +28,7 @@ from loom.etl.backends.polars._schema import (
     apply_schema_polars,
     read_delta_physical_schema,
 )
-from loom.etl.declarative.target import SchemaMode
+from loom.etl.declarative.target import SchemaMode, UpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
 from loom.etl.declarative.target._table import (
@@ -36,6 +36,7 @@ from loom.etl.declarative.target._table import (
     ReplacePartitionsSpec,
     UpdateSpec,
     UpsertSpec,
+    upsert_delete_flag_conflict,
 )
 from loom.etl.lineage._records import LineageRecord, WriteContext, get_lineage_schema
 from loom.etl.schema._schema import SchemaError
@@ -115,6 +116,43 @@ def _check_null_dtype_columns_lazy(frame: pl.LazyFrame) -> None:
         f"(use an explicit schema declaration or .cast() in the pipeline step).\n"
         f"Full frame schema:\n{schema_repr}"
     )
+
+
+def _require_delete_flag(frame: pl.LazyFrame, spec: UpsertSpec, flag: str) -> None:
+    """Check that *flag* names a usable boolean column of *frame*.
+
+    Raises:
+        UpsertDeleteFlagError: The flag is blank, names an upsert option, is
+            missing from *frame*, or is not boolean.
+    """
+    if not flag.strip():
+        raise UpsertDeleteFlagError(flag, "must name a source column")
+    conflict = upsert_delete_flag_conflict(spec)
+    if conflict is not None:
+        raise UpsertDeleteFlagError(
+            flag,
+            f"conflicts with {conflict}; the flag column is not written to the target",
+        )
+    schema = frame.collect_schema()
+    if flag not in schema:
+        raise UpsertDeleteFlagError(flag, "is missing from the source frame")
+    dtype = schema[flag]
+    if dtype.base_type() != pl.Boolean:
+        raise UpsertDeleteFlagError(flag, f"must be a boolean column, got {dtype}")
+
+
+def _require_flag_not_in_target(flag: str, existing: PolarsPhysicalSchema) -> None:
+    """Check that the target table has no column named *flag*.
+
+    Raises:
+        UpsertDeleteFlagError: The target table already has a column named *flag*.
+    """
+    if flag in existing.schema:
+        raise UpsertDeleteFlagError(
+            flag,
+            "is also a column of the target table; the flag column is never written, "
+            "so name it differently from every target column",
+        )
 
 
 def _check_null_dtype_columns(frame: pl.DataFrame) -> None:
@@ -501,8 +539,51 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
         """Merge frame into target using Delta MERGE (update + insert)."""
         _ = existing_schema
         merger, plan, location = self._matched_update_merger(frame, target, spec, mode="upsert")
-        merger.when_not_matched_insert(updates=plan.insert_values).execute()
+        if plan.not_matched_insert_predicate is None:
+            merger.when_not_matched_insert(updates=plan.insert_values).execute()
+        else:
+            merger.when_not_matched_insert(
+                updates=plan.insert_values,
+                predicate=plan.not_matched_insert_predicate,
+            ).execute()
         _log_write_commit("upsert", location)
+
+    def _upsert_deleting(
+        self,
+        frame: pl.LazyFrame,
+        target: ResolvedTarget,
+        spec: UpsertSpec,
+        flag: str,
+    ) -> None:
+        """Merge the frame, deleting matches whose *flag* column is true.
+
+        The flag column is removed before schema alignment. Rows whose flag
+        is true are omitted when the table is created. A null flag is false.
+        The source is collected once and the flag is reattached to the
+        aligned columns of that same collected frame, so every flag stays on
+        its row.
+        """
+        _require_delete_flag(frame, spec, flag)
+        existing = self._physical_schema(target)
+        if existing is None:
+            self._create_missing(
+                frame.filter(~pl.col(flag).fill_null(False)).drop(flag),
+                target,
+                schema_mode=spec.schema_mode,
+                streaming=False,
+                partition_cols=spec.partition_cols,
+            )
+            return
+        _require_flag_not_in_target(flag, existing)
+        source = frame.collect()
+        aligned = self._materialize_checked(
+            self._align(source.drop(flag).lazy(), existing, spec.schema_mode),
+            target,
+            streaming=False,
+        )
+        merge_source = aligned.with_columns(source.get_column(flag))
+        del source, aligned
+        self._upsert(merge_source, target, spec=spec, existing_schema=existing)
 
     def _update(
         self,
@@ -578,7 +659,16 @@ class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysical
             source_alias=SOURCE_ALIAS,
             target_alias=TARGET_ALIAS,
             **self._delta_properties(location),
-        ).when_matched_update(updates=merge_plan.update_set)
+        )
+        if merge_plan.matched_delete_predicate is None:
+            merger = merger.when_matched_update(updates=merge_plan.update_set)
+        else:
+            merger = merger.when_matched_delete(
+                predicate=merge_plan.matched_delete_predicate
+            ).when_matched_update(
+                updates=merge_plan.update_set,
+                predicate=merge_plan.matched_update_predicate,
+            )
         return merger, merge_plan, location
 
     def _read_existing_data(

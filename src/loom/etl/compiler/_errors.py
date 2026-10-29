@@ -109,6 +109,14 @@ class ETLErrorCode(IssueCode):
             "non-partition column."
         ),
     )
+    UPSERT_DELETE_FLAG_CONFLICT = (
+        "UPSERT_DELETE_FLAG_CONFLICT",
+        Template(
+            "{component}: {method}() delete_flag={delete_flag!r} conflicts with {conflict}. "
+            "The flag column is not written to the target.",
+            field="delete_flag",
+        ),
+    )
     MISSING_GENERIC_PARAM = (
         "MISSING_GENERIC_PARAM",
         Template("{component}: missing generic parameter — use {kind}[YourParams] not bare {kind}"),
