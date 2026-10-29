@@ -215,3 +215,72 @@ class _UpsertIncludeAbsorbed(ETLStep[_P]):
 
 def test_upsert_include_absorbed_is_not_flagged() -> None:
     validate_upsert_spec(_UpsertIncludeAbsorbed, _spec(_UpsertIncludeAbsorbed))
+
+
+class _UpsertWithDeleteFlag(ETLStep[_P]):
+    target = IntoTable("t.out").upsert(keys=("id",), delete_flag="_deleted")
+
+    def execute(self, params: _P) -> Any:
+        return None
+
+
+def test_upsert_delete_flag_passes() -> None:
+    validate_upsert_spec(_UpsertWithDeleteFlag, _spec(_UpsertWithDeleteFlag))
+
+
+class _DeleteFlagIsKey(ETLStep[_P]):
+    target = IntoTable("t.out").upsert(keys=("id",), delete_flag="id")
+
+    def execute(self, params: _P) -> Any:
+        return None
+
+
+def test_upsert_delete_flag_equal_to_a_key_raises() -> None:
+    with pytest.raises(ETLCompilationError, match="conflicts with keys") as exc_info:
+        validate_upsert_spec(_DeleteFlagIsKey, _spec(_DeleteFlagIsKey))
+
+    assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
+
+
+class _DeleteFlagInExclude(ETLStep[_P]):
+    target = IntoTable("t.out").upsert(keys=("id",), exclude=("_deleted",), delete_flag="_deleted")
+
+    def execute(self, params: _P) -> Any:
+        return None
+
+
+def test_upsert_delete_flag_in_exclude_raises() -> None:
+    with pytest.raises(ETLCompilationError, match="conflicts with exclude") as exc_info:
+        validate_upsert_spec(_DeleteFlagInExclude, _spec(_DeleteFlagInExclude))
+
+    assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
+
+
+class _DeleteFlagInInclude(ETLStep[_P]):
+    target = IntoTable("t.out").upsert(keys=("id",), include=("_deleted",), delete_flag="_deleted")
+
+    def execute(self, params: _P) -> Any:
+        return None
+
+
+def test_upsert_delete_flag_in_include_raises() -> None:
+    with pytest.raises(ETLCompilationError, match="conflicts with include") as exc_info:
+        validate_upsert_spec(_DeleteFlagInInclude, _spec(_DeleteFlagInInclude))
+
+    assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT
+
+
+class _DeleteFlagInPartition(ETLStep[_P]):
+    target = IntoTable("t.out").upsert(
+        keys=("id",), partition_cols=("_deleted",), delete_flag="_deleted"
+    )
+
+    def execute(self, params: _P) -> Any:
+        return None
+
+
+def test_upsert_delete_flag_in_partition_cols_raises() -> None:
+    with pytest.raises(ETLCompilationError, match="conflicts with partition_cols") as exc_info:
+        validate_upsert_spec(_DeleteFlagInPartition, _spec(_DeleteFlagInPartition))
+
+    assert exc_info.value.code is ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT

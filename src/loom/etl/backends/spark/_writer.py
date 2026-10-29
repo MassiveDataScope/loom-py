@@ -35,7 +35,7 @@ from loom.etl.declarative._write_options import (
     JsonWriteOptions,
     ParquetWriteOptions,
 )
-from loom.etl.declarative.target import SchemaMode
+from loom.etl.declarative.target import SchemaMode, UnsupportedUpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import HistorifySpec
 from loom.etl.declarative.target._table import AppendSpec, UpdateSpec, UpsertSpec
@@ -305,6 +305,8 @@ class SparkTargetWriter(_WritePolicy[DataFrame, DataFrame, SparkPhysicalSchema])
         existing_schema: SparkPhysicalSchema,
     ) -> None:
         """Merge frame into target using Delta MERGE (delta-spark)."""
+        if spec.delete_flag is not None:
+            raise UnsupportedUpsertDeleteFlagError(type(self).__name__, spec.delete_flag)
         _ = existing_schema
         merger, plan = self._matched_update_merger(frame, target, spec)
         merger.whenNotMatchedInsert(

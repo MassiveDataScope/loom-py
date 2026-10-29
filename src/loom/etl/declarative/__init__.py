@@ -46,6 +46,8 @@ from .target import (
     IntoTable,
     IntoTemp,
     SchemaMode,
+    UnsupportedUpsertDeleteFlagError,
+    UpsertDeleteFlagError,
 )
 
 __all__ = [
@@ -96,4 +98,6 @@ __all__ = [
     "HistorifyTemporalConflictError",
     # write errors
     "EmptyReplaceError",
+    "UpsertDeleteFlagError",
+    "UnsupportedUpsertDeleteFlagError",
 ]
