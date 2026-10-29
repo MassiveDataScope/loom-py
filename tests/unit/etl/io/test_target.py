@@ -13,7 +13,13 @@ from loom.etl.checkpoint import CheckpointScope
 from loom.etl.declarative._format import Format
 from loom.etl.declarative.expr._params import params
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.declarative.target import IntoFile, IntoTable, IntoTemp, SchemaMode
+from loom.etl.declarative.target import (
+    IntoFile,
+    IntoTable,
+    IntoTemp,
+    SchemaMode,
+    UpsertDeleteFlagError,
+)
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import (
     AppendSpec,
@@ -200,6 +206,17 @@ class TestIntoTableModes:
         assert spec.partition_cols == ("year", "month")
         assert spec.upsert_exclude == ("created_at",)
         assert spec.upsert_include == ("status",)
+
+    def test_upsert_propagates_delete_flag(self) -> None:
+        spec = IntoTable("staging.orders").upsert(keys=("id",), delete_flag="_deleted")._to_spec()
+        assert isinstance(spec, UpsertSpec)
+        assert spec.delete_flag == "_deleted"
+
+    @pytest.mark.parametrize("flag", ["", "   "])
+    def test_upsert_rejects_a_blank_delete_flag(self, flag: str) -> None:
+        with pytest.raises(UpsertDeleteFlagError, match="must name a source column") as info:
+            IntoTable("staging.orders").upsert(keys=("id",), delete_flag=flag)
+        assert info.value.column == flag
 
     def test_update_propagates_include_exclude_and_partitions(self) -> None:
         spec = (

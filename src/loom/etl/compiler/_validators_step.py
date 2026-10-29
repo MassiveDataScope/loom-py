@@ -24,7 +24,7 @@ from loom.etl.declarative.expr._predicate import PredicateNode
 from loom.etl.declarative.source import FileSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._file import FileSpec
-from loom.etl.declarative.target._table import UpdateSpec
+from loom.etl.declarative.target._table import UpdateSpec, UpsertSpec, upsert_delete_flag_conflict
 from loom.etl.pipeline._step_client import ClientStep
 from loom.etl.pipeline._step_sql import StepSQL
 
@@ -467,6 +467,7 @@ def validate_upsert_spec(step_type: type[Any], spec: TargetSpec) -> None:
     _check_upsert_keys_non_empty(step_type, upsert_spec, method)
     _check_upsert_exclude_include_exclusive(step_type, upsert_spec, method)
     _check_upsert_exclude_keys_disjoint(step_type, upsert_spec, method)
+    _check_upsert_delete_flag(step_type, spec, method)
     if method == "update":
         _check_update_include_not_absorbed(step_type, upsert_spec)
 
@@ -645,6 +646,23 @@ def _check_upsert_exclude_keys_disjoint(
                 component=step_type, overlap=str(sorted(overlap)), method=method
             )
         )
+
+
+def _check_upsert_delete_flag(step_type: type[Any], spec: object, method: str) -> None:
+    """Raise when ``delete_flag`` names a key, partition, exclude, or include column."""
+    if not isinstance(spec, UpsertSpec):
+        return
+    conflict = upsert_delete_flag_conflict(spec)
+    if conflict is None:
+        return
+    raise ETLCompilationError.from_issue(
+        ETLErrorCode.UPSERT_DELETE_FLAG_CONFLICT.issue(
+            component=step_type,
+            method=method,
+            delete_flag=spec.delete_flag,
+            conflict=conflict,
+        )
+    )
 
 
 def _check_update_include_not_absorbed(step_type: type[Any], spec: _UpsertSpecLike) -> None:

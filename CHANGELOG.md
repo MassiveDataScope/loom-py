@@ -350,6 +350,26 @@
 
 ### etl
 
+- **etl:** `IntoTable(...).upsert(..., delete_flag=...)` deletes matched rows
+  whose boolean source column is true and does not insert unmatched rows with
+  that flag. A false or null flag keeps the normal update or insert; null is
+  read as false (`coalesce(s.<flag>, false)`). The column is removed before
+  schema alignment, including `SchemaMode.STRICT`, so it is never written and
+  never appears in the update or insert maps. It must exist on the source
+  frame, be boolean, must not be a key, a partition column, or listed in
+  `exclude` or `include`, and must not name a column of the target table;
+  otherwise `UpsertDeleteFlagError` is raised before anything is written. The
+  Polars writer applies it. Any other writer, including Spark, raises
+  `UnsupportedUpsertDeleteFlagError` and does not write. On first write the
+  table is created from the unflagged rows, so a batch where every row is
+  flagged creates an empty table. A key repeated in the source batch (for
+  example a tombstone and a live row) fails the MERGE. With
+  `SchemaMode.EVOLVE` the MERGE does not add new source columns, as before.
+  Omitting `delete_flag` leaves the MERGE byte-for-byte as it was: matched
+  update and unmatched insert, with no delete clause. `UpsertSpec` gains
+  `delete_flag`; `UpsertDeleteFlagError` and
+  `UnsupportedUpsertDeleteFlagError` are exported from `loom.etl`.
+
 - **etl:** `vacuum(full=True)` (`MaintainTable`, `MaintainSchema`,
   `maintenance.vacuum.full`) also deletes files the Delta log does not
   reference, such as the output of an aborted write, older than the retention

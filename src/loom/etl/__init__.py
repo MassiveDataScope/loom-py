@@ -82,6 +82,8 @@ from loom.etl.declarative import (
     SchemaMode,
     Sources,
     SourceSet,
+    UnsupportedUpsertDeleteFlagError,
+    UpsertDeleteFlagError,
     WithAgent,
     WriteOptions,
 )
@@ -207,6 +209,8 @@ __all__ = [
     "HistorifyDeleteMarkerError",
     "HistorifyTemporalConflictError",
     "EmptyReplaceError",
+    "UpsertDeleteFlagError",
+    "UnsupportedUpsertDeleteFlagError",
     # intermediates
     "CheckpointCleaner",
     "CheckpointScope",
