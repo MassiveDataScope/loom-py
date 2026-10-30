@@ -102,6 +102,23 @@ class UnknownColumn(ETLStep[P]):
         return orders
 
 
+class _OrderRow(msgspec.Struct):
+    id: int
+    amount: float
+    note: str | None
+
+
+class _ReceivedSchema(ETLStep[P]):
+    """Return the dtypes the step receives, one row per column."""
+
+    orders = FromTable("raw.orders").with_schema(_OrderRow)
+    target = IntoTable("mart.schema").replace()
+
+    def execute(self, params: P, *, orders: Any) -> Any:  # type: ignore[override]
+        schema = orders.collect_schema()
+        return pl.LazyFrame({"column": schema.names(), "dtype": [str(d) for d in schema.dtypes()]})
+
+
 class _Payload(msgspec.Struct):
     kind: str
 
@@ -383,6 +400,25 @@ class TestScenarioComposition:
 
 
 # 9 ---------------------------------------------------------------------------
+class TestDeclaredSourceSchema:
+    _ROWS: ClassVar[list[tuple[Any, ...]]] = [(1, 10, None), (2, 20, None)]
+    _EXPECTED: ClassVar[dict[str, str]] = {"id": "Int64", "amount": "Float64", "note": "String"}
+
+    def test_untyped_seed_reaches_the_step_with_the_declared_dtypes(self) -> None:
+        runner = PolarsStepRunner().seed("raw.orders", self._ROWS, ["id", "amount", "note"])
+
+        received = runner.run(_ReceivedSchema, P()).to_polars()
+
+        assert dict(received.iter_rows()) == self._EXPECTED
+
+    def test_untyped_scenario_table_reaches_the_step_with_the_declared_dtypes(self) -> None:
+        scenario = ETLScenario().with_table("raw.orders", self._ROWS, ["id", "amount", "note"])
+
+        received = PolarsStepRunner(scenario).run(_ReceivedSchema, P()).to_polars()
+
+        assert dict(received.iter_rows()) == self._EXPECTED
+
+
 class TestSourceFinalisation:
     def test_columns_project_and_where_filters(self) -> None:
         runner = PolarsStepRunner().seed(
@@ -426,7 +462,7 @@ class TestDeleteMetricsInMemory:
 
         result = runner.run(UpsertDroppingFlag, P())
 
-        with pytest.raises(UpsertDeleteFlagError, match="missing from the step output"):
+        with pytest.raises(UpsertDeleteFlagError, match="is missing from"):
             _ = result.deletes
 
     def test_deletes_needs_a_boolean_flag_column(self) -> None:

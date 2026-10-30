@@ -4,34 +4,55 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
 from loom.core.config import ConfigContext
 from loom.etl.backends._predicate import predicate_to_sql
 from loom.etl.backends.polars._dtype import loom_type_to_polars
-from loom.etl.backends.polars._reader import _finalize_source_frame
+from loom.etl.backends.polars._reader import (
+    _apply_source_schema,
+    _finalize_source_frame,
+    execute_sql,
+)
+from loom.etl.backends.polars._writer import _check_null_dtype_columns_lazy
+from loom.etl.checkpoint import CheckpointScope, CheckpointStore
+from loom.etl.checkpoint._backends._memory import _InMemoryCheckpointBackend
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
-from loom.etl.declarative.target._table import ReplaceWhereSpec, UpsertSpec
+from loom.etl.declarative.target._table import ReplaceWhereSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.executor import ETLExecutor
+from loom.etl.lineage._records import RunContext
 from loom.etl.runtime.contracts import SourceReader, TargetWriter
-from loom.etl.schema._schema import LoomType
+from loom.etl.schema._schema import ColumnSchema, LoomType, SchemaError
 from loom.etl.testing._delta import DeltaTables
 from loom.etl.testing._result import StepResult
-from loom.etl.testing._scenario import ETLScenario
-from loom.etl.testing._temps import RunnerTemps
+
+if TYPE_CHECKING:
+    from loom.etl.testing._scenario import ETLScenario
 
 SeedSchema = Mapping[str, LoomType]
-TempData = Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame | StepResult
+"""Loom types of some or all seeded columns."""
+
+TempData = Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame
+"""Data ``seed_temp`` accepts with a temp name: row tuples or a Polars frame."""
+
+_TEMP_ROOT = "memory://loom-step-runner"
 
 
-class _PolarsCapturingWriter:
-    def __init__(self) -> None:
-        self.frame: pl.LazyFrame | pl.DataFrame | None = None
+class _CapturingWriter:
+    """Capture the step output once as a ``DataFrame``, then hand it to *target* if any.
+
+    Collecting before the real write means a step that reads its own target is
+    not evaluated again against the table it just changed.
+    """
+
+    def __init__(self, target: TargetWriter | None = None) -> None:
+        self._target = target
+        self.frame: pl.DataFrame | None = None
         self.spec: TargetSpec | None = None
         self._last_params: Any = None
 
@@ -44,42 +65,14 @@ class _PolarsCapturingWriter:
         streaming: bool = False,
         write_ctx: Any = None,
     ) -> None:
-        _ = (streaming, write_ctx)
-        self.frame = frame
+        captured = frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+        self.frame = captured
         self.spec = spec
         self._last_params = params_instance
-
-
-class _DeltaCapturingWriter(_PolarsCapturingWriter):
-    """Capture the step output, then hand the same rows to the real writer.
-
-    The frame is collected once before the write, so a step that reads its own
-    target is not evaluated again against the table it just changed.
-    """
-
-    def __init__(self, target: TargetWriter) -> None:
-        super().__init__()
-        self._target = target
-
-    def write(
-        self,
-        frame: Any,
-        spec: TargetSpec,
-        params_instance: Any,
-        *,
-        streaming: bool = False,
-        write_ctx: Any = None,
-    ) -> None:
-        lazy = isinstance(frame, pl.LazyFrame)
-        captured = frame.collect() if lazy else frame
-        super().write(captured, spec, params_instance)
-        self._target.write(
-            captured.lazy() if lazy else captured,
-            spec,
-            params_instance,
-            streaming=streaming,
-            write_ctx=write_ctx,
-        )
+        if self._target is not None:
+            self._target.write(
+                captured.lazy(), spec, params_instance, streaming=streaming, write_ctx=write_ctx
+            )
 
 
 class _PolarsStubReader:
@@ -108,10 +101,7 @@ class _PolarsStubReader:
         return self.read(spec, params_instance)
 
     def execute_sql(self, frames: dict[str, Any], query: str, /) -> pl.LazyFrame:
-        ctx = pl.SQLContext()
-        for name, frame in frames.items():
-            ctx.register(name, frame)
-        return ctx.execute(query, eager=False)
+        return execute_sql(frames, query)
 
 
 def _build_lazy_frame(
@@ -120,21 +110,21 @@ def _build_lazy_frame(
     *,
     schema: SeedSchema | None = None,
 ) -> pl.LazyFrame:
-    dtypes = _polars_dtypes(columns, schema)
-    series = [
-        pl.Series(name, [row[i] for row in data], dtype=dtypes.get(name))
-        for i, name in enumerate(columns)
+    _require_known_columns(columns, schema)
+    declared = schema or {}
+    frame_schema = [
+        (name, loom_type_to_polars(declared[name]) if name in declared else None)
+        for name in columns
     ]
-    return pl.DataFrame(series).lazy()
+    return pl.DataFrame(
+        list(data), schema=frame_schema, orient="row", infer_schema_length=None
+    ).lazy()
 
 
-def _polars_dtypes(columns: Sequence[str], schema: SeedSchema | None) -> dict[str, Any]:
-    if not schema:
-        return {}
-    unknown = sorted(set(schema) - set(columns))
+def _require_known_columns(columns: Sequence[str], schema: SeedSchema | None) -> None:
+    unknown = sorted(set(schema or ()) - set(columns))
     if unknown:
         raise ValueError(f"schema names columns that are not seeded: {unknown}")
-    return {name: loom_type_to_polars(dtype) for name, dtype in schema.items()}
 
 
 def _temp_frame(
@@ -142,10 +132,8 @@ def _temp_frame(
     columns: Sequence[str] | None,
     schema: SeedSchema | None,
 ) -> pl.LazyFrame:
-    if isinstance(data, StepResult):
-        return _cast(data.to_polars().lazy(), schema)
     if isinstance(data, pl.DataFrame):
-        return _cast(data.lazy(), schema)
+        data = data.lazy()
     if isinstance(data, pl.LazyFrame):
         return _cast(data, schema)
     if columns is None:
@@ -153,20 +141,22 @@ def _temp_frame(
     return _build_lazy_frame(data, columns, schema=schema)
 
 
-def _require_typed_columns(ref: str, frame: pl.LazyFrame) -> None:
-    untyped = [name for name, dtype in frame.collect_schema().items() if dtype == pl.Null]
-    if untyped:
-        raise ValueError(
-            f"seed({ref!r}): columns {untyped} have no dtype because they are empty or "
-            "all null, and Delta cannot store them. Declare their types with schema=."
-        )
-
-
 def _cast(frame: pl.LazyFrame, schema: SeedSchema | None) -> pl.LazyFrame:
     if not schema:
         return frame
-    dtypes = _polars_dtypes(frame.collect_schema().names(), schema)
-    return frame.with_columns(pl.col(name).cast(dtype) for name, dtype in dtypes.items())
+    _require_known_columns(frame.collect_schema().names(), schema)
+    columns = tuple(ColumnSchema(name, dtype) for name, dtype in schema.items())
+    return _apply_source_schema(frame, columns)
+
+
+def _require_typed_columns(ref: str, frame: pl.LazyFrame) -> None:
+    try:
+        _check_null_dtype_columns_lazy(frame)
+    except SchemaError as exc:
+        raise SchemaError(
+            f"seed({ref!r}) has columns without dtype because they are empty or all null; "
+            f"declare their types with schema=.\n{exc}"
+        ) from exc
 
 
 class PolarsStepRunner:
@@ -211,12 +201,12 @@ class PolarsStepRunner:
 
     def __init__(self, *scenarios: ETLScenario, delta_root: str | Path | None = None) -> None:
         self._tables: dict[str, pl.LazyFrame] = {}
-        self._temps = RunnerTemps()
-        self._writer = _PolarsCapturingWriter()
+        self._temp_backend = _InMemoryCheckpointBackend()
+        self._temps = CheckpointStore(_TEMP_ROOT, backend=self._temp_backend)
+        self._context = RunContext(run_id="step-runner-run", correlation_id="step-runner")
+        self._writer = _CapturingWriter()
         self._config_context: ConfigContext | None = None
-        self._delta: DeltaTables | None = None
-        if delta_root is not None:
-            self._delta = DeltaTables(delta_root)
+        self._delta = DeltaTables(delta_root) if delta_root is not None else None
         for scenario in scenarios:
             scenario.apply(self)
 
@@ -243,7 +233,7 @@ class PolarsStepRunner:
             ``self`` for fluent chaining.
 
         Raises:
-            ValueError: With ``delta_root``, when a column has no dtype because
+            SchemaError: With ``delta_root``, when a column has no dtype because
                 it is empty or all null and *schema* does not declare it.
         """
         frame = _build_lazy_frame(data, columns, schema=schema)
@@ -264,20 +254,22 @@ class PolarsStepRunner:
     ) -> PolarsStepRunner:
         """Register data as the temp *name*, as an ``IntoTemp`` step would.
 
-        ``FromTemp`` reads temps by ``temp_name``, not by its alias.  Pass the
-        :class:`StepResult` of an ``IntoTemp`` step alone to seed it under the
-        name it was written with.
+        Two forms:
 
-        The temp is seeded in RUN scope.  ``FromTemp`` looks in RUN scope
-        before CORRELATION scope, as in production, so a seeded temp hides one
-        that a step writes with ``IntoTemp(scope=CORRELATION)`` under the same
-        name.  The result of that step's :meth:`run` is still read from the
-        scope it wrote.
+        * ``seed_temp(name, data, columns=None, *, schema=None)`` — *data* is
+          row tuples (with *columns*), a ``pl.DataFrame`` or a ``pl.LazyFrame``.
+        * ``seed_temp(result)`` — the :class:`StepResult` of an ``IntoTemp``
+          step, seeded under the temp name that step wrote.
+
+        ``FromTemp`` reads temps by ``temp_name``, not by its alias.  The temp
+        is seeded in RUN scope.  ``FromTemp`` looks in RUN scope before
+        CORRELATION scope, as in production, so a seeded temp hides one that a
+        step writes with ``IntoTemp(scope=CORRELATION)`` under the same name.
+        The result of that step's :meth:`run` is still the temp it wrote.
 
         Args:
             name:    Temp name, or the result of an ``IntoTemp`` step.
-            data:    Row tuples (with *columns*), a Polars frame, or a
-                     :class:`StepResult`.
+            data:    Row tuples, a Polars frame; omitted with a result.
             columns: Column names aligned with the tuple positions.
             schema:  Loom types of some or all columns.
 
@@ -285,21 +277,25 @@ class PolarsStepRunner:
             ``self`` for fluent chaining.
 
         Raises:
-            ValueError: When the temp name cannot be determined, or row tuples
-                come without *columns*.
+            ValueError: When the result is not from an ``IntoTemp`` step, a
+                name comes without data, or row tuples come without *columns*.
         """
         if isinstance(name, StepResult):
-            if data is not None:
-                raise ValueError("seed_temp(result) takes no data; the result is the data.")
             if name.temp_name is None:
                 raise ValueError(
                     "seed_temp needs a temp name: this StepResult is not from an IntoTemp step."
                 )
-            data = name
+            data = name.to_polars()
             name = name.temp_name
         if data is None:
             raise ValueError(f"seed_temp({name!r}) needs data.")
-        self._temps.put(name, _temp_frame(data, columns, schema))
+        self._temps.put(
+            name,
+            run_id=self._context.run_id,
+            correlation_id=self._context.correlation_id,
+            scope=CheckpointScope.RUN,
+            data=_temp_frame(data, columns, schema),
+        )
         return self
 
     def with_config(self, values: Mapping[str, Any]) -> PolarsStepRunner:
@@ -326,7 +322,8 @@ class PolarsStepRunner:
 
         Returns:
             :class:`~loom.etl.testing._result.StepResult` for assertions: the
-            temp for an ``IntoTemp`` target, otherwise the frame the step wrote.
+            temp an ``IntoTemp`` target wrote (accumulated for fan-in),
+            otherwise the frame the step wrote.
 
         Raises:
             KeyError:     When a source table was not seeded (in memory).
@@ -337,20 +334,19 @@ class PolarsStepRunner:
         """
         plan = ETLCompiler(config_context=self._config_context).compile_step(step_cls)
         reader, self._writer = self._io()
-        version_before = self._target_version(plan)
         ETLExecutor(
             reader,
             self._writer,
-            checkpoint_store=self._temps.store,
+            checkpoint_store=self._temps,
             config_context=self._config_context,
-        ).run_step(plan, params, self._temps.context)
-        raw = self._writer.frame
-        if raw is not None:
-            return self._table_result(raw, version_before)
+        ).run_step(plan, params, self._context)
+        if self._writer.frame is not None:
+            merged = self._delta.last_merge if self._delta is not None else None
+            return StepResult(self._writer.frame, target=self._writer.spec, merge_metrics=merged)
         spec = plan.target_binding.spec
-        if isinstance(spec, (TempSpec, TempFanInSpec)):
-            frame = self._temps.read(spec.temp_name, spec.temp_scope)
-            return StepResult(frame, temp_name=spec.temp_name)
+        written = self._temp_backend.probe_last()
+        if isinstance(spec, (TempSpec, TempFanInSpec)) and written is not None:
+            return StepResult(written.collect(), target=spec)
         raise RuntimeError("Step produced no output — check that target is declared.")
 
     def table(self, ref: str) -> StepResult:
@@ -388,23 +384,7 @@ class PolarsStepRunner:
             return None
         return predicate_to_sql(spec.replace_predicate, self._writer._last_params)
 
-    def _io(self) -> tuple[SourceReader, _PolarsCapturingWriter]:
+    def _io(self) -> tuple[SourceReader, _CapturingWriter]:
         if self._delta is None:
-            return _PolarsStubReader(dict(self._tables)), _PolarsCapturingWriter()
-        return self._delta.reader, _DeltaCapturingWriter(self._delta.writer)
-
-    def _target_version(self, plan: Any) -> int | None:
-        if self._delta is None:
-            return None
-        return self._delta.version(plan.target_binding.spec)
-
-    def _table_result(
-        self, raw: pl.LazyFrame | pl.DataFrame, version_before: int | None
-    ) -> StepResult:
-        frame = raw.collect() if isinstance(raw, pl.LazyFrame) else raw
-        spec = self._writer.spec
-        delete_flag = spec.delete_flag if isinstance(spec, UpsertSpec) else None
-        metrics = None
-        if self._delta is not None and spec is not None:
-            metrics = self._delta.merge_metrics(spec, version_before)
-        return StepResult(frame, delete_flag=delete_flag, merge_metrics=metrics)
+            return _PolarsStubReader(dict(self._tables)), _CapturingWriter()
+        return self._delta.reader, _CapturingWriter(self._delta)

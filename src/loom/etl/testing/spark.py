@@ -30,7 +30,7 @@ fetching them from Maven.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import TracebackType
@@ -49,8 +49,8 @@ from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import SourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.executor import ETLExecutor
-from loom.etl.schema._schema import LoomType
 from loom.etl.testing._result import StepResult
+from loom.etl.testing._runners import SeedSchema, TempData
 
 if TYPE_CHECKING:
     import polars as pl
@@ -226,7 +226,7 @@ class SparkStepRunner:
         data: list[tuple[Any, ...]],
         columns: list[str],
         *,
-        schema: Mapping[str, LoomType] | None = None,
+        schema: SeedSchema | None = None,
     ) -> SparkStepRunner:
         """Register raw data under the logical table reference *ref*.
 
@@ -251,11 +251,11 @@ class SparkStepRunner:
 
     def seed_temp(
         self,
-        name: Any,
-        data: Any = None,
-        columns: list[str] | None = None,
+        name: str | StepResult,
+        data: TempData | None = None,
+        columns: Sequence[str] | None = None,
         *,
-        schema: Mapping[str, LoomType] | None = None,
+        schema: SeedSchema | None = None,
     ) -> SparkStepRunner:
         """Not supported on Spark yet: temps are only seeded by :class:`PolarsStepRunner`.
 

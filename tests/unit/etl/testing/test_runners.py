@@ -21,7 +21,7 @@ from loom.etl.testing._result import StepResult
 from loom.etl.testing._runners import (
     PolarsStepRunner,
     _build_lazy_frame,
-    _PolarsCapturingWriter,
+    _CapturingWriter,
     _PolarsStubReader,
 )
 
@@ -41,13 +41,14 @@ class TestPolarsRunnerInternals:
         assert frame.to_dict(as_series=False) == {"id": [1, 2], "amount": [10.0, 20.0]}
 
     def test_polars_capturing_writer_stores_last_call(self) -> None:
-        writer = _PolarsCapturingWriter()
+        writer = _CapturingWriter()
         frame = pl.DataFrame({"id": [1]}).lazy()
         spec = ReplaceSpec(table_ref=TableRef("staging.out"))
 
         writer.write(frame, spec, {"run_id": "r-1"})
 
-        assert writer.frame is frame
+        assert writer.frame is not None
+        assert writer.frame.equals(frame.collect())
         assert writer.spec is spec
         assert writer._last_params == {"run_id": "r-1"}
 

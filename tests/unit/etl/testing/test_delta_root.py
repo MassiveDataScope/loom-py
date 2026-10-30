@@ -20,7 +20,7 @@ from loom.etl import (  # noqa: E402
     col,
     params,
 )
-from loom.etl.schema._schema import LoomDtype  # noqa: E402
+from loom.etl.schema._schema import LoomDtype, SchemaError  # noqa: E402
 from loom.etl.testing import ETLScenario, MergeMetrics, PolarsStepRunner  # noqa: E402
 
 
@@ -162,9 +162,9 @@ class TestUpsertWithDeleteFlag:
     def test_untyped_seed_column_asks_for_schema(self, tmp_path: Path) -> None:
         runner = PolarsStepRunner(delta_root=tmp_path)
 
-        with pytest.raises(ValueError, match="schema="):
+        with pytest.raises(SchemaError, match="schema="):
             runner.seed("raw.cdc", [(1, None)], ["id", "status"])
-        with pytest.raises(ValueError, match="schema="):
+        with pytest.raises(SchemaError, match="schema="):
             runner.seed("raw.cdc", [], ["id"])
 
 

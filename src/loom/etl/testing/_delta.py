@@ -6,10 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from deltalake import DeltaTable
-from deltalake.exceptions import TableNotFoundError
 
 from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
+from loom.etl.backends.polars._writer import _last_commit, _open_delta_table
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source import TableSourceSpec
 from loom.etl.declarative.target import SchemaMode, TargetSpec
@@ -23,6 +22,10 @@ _MERGE = "MERGE"
 class DeltaTables:
     """Tables of one local Delta root, read and written as production does.
 
+    :meth:`write` is a target writer: it delegates to the real
+    :class:`PolarsTargetWriter` and keeps, in :attr:`last_merge`, what the
+    MERGE of an upsert or update applied.
+
     Args:
         root: Local directory holding the tables, e.g. pytest's ``tmp_path``.
     """
@@ -32,6 +35,7 @@ class DeltaTables:
         self._locator = PrefixLocator(self._root)
         self.reader = PolarsSourceReader(self._root)
         self.writer = PolarsTargetWriter(self._root, missing_table_policy=MissingTablePolicy.CREATE)
+        self.last_merge: MergeMetrics | None = None
 
     def seed(self, ref: str, frame: pl.LazyFrame) -> None:
         """Write *frame* as the whole content of table *ref*, creating it if missing."""
@@ -43,43 +47,40 @@ class DeltaTables:
         spec = TableSourceSpec(alias=ref, table_ref=TableRef(ref))
         return self.reader.read(spec, None).collect()
 
-    def version(self, spec: TargetSpec) -> int | None:
-        """Return the Delta version of the upsert or update target of *spec*, if any."""
-        if not isinstance(spec, (UpsertSpec, UpdateSpec)):
-            return None
-        table = self._open(spec.table_ref)
-        return None if table is None else table.version()
+    def write(
+        self,
+        frame: Any,
+        spec: TargetSpec,
+        params_instance: Any,
+        *,
+        streaming: bool = False,
+        write_ctx: Any = None,
+    ) -> None:
+        """Write with the real writer, recording the MERGE metrics of an upsert or update.
 
-    def merge_metrics(self, spec: TargetSpec, version_before: int | None) -> MergeMetrics | None:
-        """Return what the MERGE of the last write applied, or ``None`` when none ran.
-
-        A write that committed nothing applied no row.  A first write that
-        created the table is not a MERGE and has no merge metrics.
-
-        Args:
-            spec: Target spec of the step that just ran.
-            version_before: Table version read before the step ran.
+        :attr:`last_merge` is ``None`` when the target is not an upsert or
+        update, or when the table did not exist and this write created it.
         """
-        if not isinstance(spec, (UpsertSpec, UpdateSpec)):
-            return None
-        table = self._open(spec.table_ref)
+        self.last_merge = None
+        table = None
+        if isinstance(spec, (UpsertSpec, UpdateSpec)):
+            table = _open_delta_table(self._locator.locate(spec.table_ref))
+        version_before = None if table is None else table.version()
+        self.writer.write(frame, spec, params_instance, streaming=streaming, write_ctx=write_ctx)
         if table is None:
-            return None
-        if version_before is not None and table.version() == version_before:
-            return MergeMetrics(inserted=0, updated=0, deleted=0)
-        commit = table.history(1)[0]
-        if commit.get("operation") != _MERGE:
-            return None
-        metrics: dict[str, Any] = commit.get("operationMetrics") or {}
-        return MergeMetrics(
-            inserted=int(metrics.get("num_target_rows_inserted", 0)),
-            updated=int(metrics.get("num_target_rows_updated", 0)),
-            deleted=int(metrics.get("num_target_rows_deleted", 0)),
-        )
+            return
+        table.update_incremental()
+        version, commit = _last_commit(table)
+        if version == version_before:
+            self.last_merge = MergeMetrics(inserted=0, updated=0, deleted=0)
+        elif commit.get("operation") == _MERGE:
+            self.last_merge = _merge_metrics(commit.get("operationMetrics") or {})
 
-    def _open(self, ref: TableRef) -> DeltaTable | None:
-        location = self._locator.locate(ref)
-        try:
-            return DeltaTable(location.uri, storage_options=location.storage_options or None)
-        except TableNotFoundError:
-            return None
+
+def _merge_metrics(metrics: dict[str, Any]) -> MergeMetrics:
+    """Read delta-rs MERGE ``operationMetrics`` (snake_case keys)."""
+    return MergeMetrics(
+        inserted=int(metrics.get("num_target_rows_inserted", 0)),
+        updated=int(metrics.get("num_target_rows_updated", 0)),
+        deleted=int(metrics.get("num_target_rows_deleted", 0)),
+    )

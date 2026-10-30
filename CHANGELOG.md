@@ -29,9 +29,9 @@
   `pl.DataFrame` raises `TypeError`, fan-in aligns to the first schema,
   RUN then CORRELATION lookup); temps persist across `run()` calls of one
   runner, which keeps a fixed run context. `seed_temp(name, data, columns,
-  *, schema=)` seeds a temp by `temp_name` from row tuples, a Polars frame or
-  a `StepResult`; `seed_temp(result)` takes the name from an `IntoTemp`
-  step's result. A seeded temp lives in RUN scope, which `FromTemp` reads
+  *, schema=)` seeds a temp by `temp_name` from row tuples or a Polars frame;
+  `seed_temp(result)` seeds the `StepResult` of an `IntoTemp` step under the
+  name it wrote. A seeded temp lives in RUN scope, which `FromTemp` reads
   before CORRELATION scope. A step whose target is `IntoTemp` returns, as its
   `StepResult`, the temp read from the scope the step wrote (the accumulated
   temp for fan-in) instead of raising "Step produced no output". `seed` and
@@ -39,10 +39,11 @@
   columns keep their dtype. `PolarsStepRunner(*scenarios, delta_root=)`
   applies scenarios at construction; with `delta_root` the real
   `PolarsSourceReader`/`PolarsTargetWriter` run on that directory, seeds are
-  written as Delta tables (a column left without dtype raises `ValueError`
+  written as Delta tables (a column left without dtype raises `SchemaError`
   asking for `schema=`), missing targets are created, and `table(ref)`
-  returns the final state. `StepResult.deletes` counts the rows the step
-  emitted with its upsert `delete_flag` set, and raises
+  returns the final state. `StepResult` keeps the step's `target` spec and
+  derives `temp_name` and `delete_flag` from it. `StepResult.deletes` counts
+  the rows the step emitted with its upsert `delete_flag` set, and raises
   `UpsertDeleteFlagError` when the output lacks the flag column or it is not
   boolean; `StepResult.merged` returns the `MergeMetrics(inserted, updated,
   deleted)` the Delta MERGE applied, only with `delta_root` and an upsert or

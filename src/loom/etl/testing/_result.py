@@ -6,7 +6,10 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from loom.etl.declarative.target import UpsertDeleteFlagError
+from loom.etl.backends.polars._writer import _require_boolean_flag_column
+from loom.etl.declarative.target import TargetSpec
+from loom.etl.declarative.target._table import UpsertSpec
+from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.schema._schema import LoomDtype
 
 
@@ -44,8 +47,7 @@ class StepResult:
 
     Args:
         _frame: Materialised output frame.
-        temp_name: Name of the temp when the step's target is ``IntoTemp``.
-        delete_flag: ``delete_flag`` of the step's upsert target, if any.
+        target: Target spec of the step that produced the frame, if known.
         merge_metrics: Metrics of the MERGE commit, set by a ``delta_root``
             runner for upsert and update targets.
 
@@ -58,13 +60,26 @@ class StepResult:
     """
 
     _frame: pl.DataFrame
-    temp_name: str | None = None
-    delete_flag: str | None = None
+    target: TargetSpec | None = None
     merge_metrics: MergeMetrics | None = None
 
     def to_polars(self) -> pl.DataFrame:
         """Return the materialised output as a ``polars.DataFrame``."""
         return self._frame
+
+    @property
+    def temp_name(self) -> str | None:
+        """Temp name when the step's target is ``IntoTemp``, else ``None``."""
+        if isinstance(self.target, (TempSpec, TempFanInSpec)):
+            return self.target.temp_name
+        return None
+
+    @property
+    def delete_flag(self) -> str | None:
+        """``delete_flag`` of the step's upsert target, else ``None``."""
+        if isinstance(self.target, UpsertSpec):
+            return self.target.delete_flag
+        return None
 
     @property
     def deletes(self) -> int:
@@ -83,11 +98,7 @@ class StepResult:
             raise RuntimeError(
                 "deletes needs a step whose target is IntoTable(...).upsert(delete_flag=...)."
             )
-        dtype = self._frame.schema.get(flag)
-        if dtype is None:
-            raise UpsertDeleteFlagError(flag, "is missing from the step output")
-        if dtype != pl.Boolean:
-            raise UpsertDeleteFlagError(flag, f"must be a boolean column, got {dtype}")
+        _require_boolean_flag_column(self._frame.schema, flag)
         return int(self._frame.select(pl.col(flag).fill_null(False).sum()).item())
 
     @property

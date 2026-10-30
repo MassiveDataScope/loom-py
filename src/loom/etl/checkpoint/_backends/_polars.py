@@ -62,7 +62,7 @@ class _PolarsCheckpointBackend:
     def write(self, name: str, base: str, data: Any, *, append: bool) -> None:
         """Sink *data* as Arrow IPC atomically (write-then-rename)."""
         frame = _require_polars_lazy_frame(data)
-        key = f"{base}/{name}"
+        key = _checkpoint_key(name, base)
 
         with self._lock:
             existing = self._schemas.get(key)
@@ -88,6 +88,11 @@ class _PolarsCheckpointBackend:
         if fs.exists(dp) and fs.glob(_join_path(dp, "*.arrow")):
             return _join_path(base, name, "*.arrow")
         return None
+
+
+def _checkpoint_key(name: str, base: str) -> str:
+    """Return the key identifying the intermediate *name* under *base*."""
+    return f"{base}/{name}"
 
 
 def _arrow_path(name: str, base: str) -> str:

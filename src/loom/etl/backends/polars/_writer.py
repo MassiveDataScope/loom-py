@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 import polars as pl
 from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
+from deltalake.exceptions import TableNotFoundError
 from deltalake.table import TableMerger
 
 from loom.core.logger import get_logger
@@ -78,17 +79,33 @@ def _log_write_start(
     )
 
 
+def _open_delta_table(location: TableLocation) -> DeltaTable | None:
+    """Open the Delta table at *location*, or return ``None`` when it does not exist."""
+    try:
+        return DeltaTable(location.uri, storage_options=location.storage_options or None)
+    except TableNotFoundError:
+        return None
+
+
+def _last_commit(table: DeltaTable) -> tuple[int, dict[str, Any]]:
+    """Return the version of *table* and its latest commit entry (empty without history)."""
+    history = table.history(1)
+    return table.version(), (history[0] if history else {})
+
+
 def _log_write_commit(mode: str, location: TableLocation) -> None:
     try:
-        dt = DeltaTable(location.uri, storage_options=location.storage_options or {})
-        history = dt.history(1)
-        entry = history[0] if history else {}
+        dt = _open_delta_table(location)
+        if dt is None:
+            _log.info("delta write commit", mode=mode, uri=location.uri, metrics="unavailable")
+            return
+        version, entry = _last_commit(dt)
         metrics = entry.get("operationMetrics") or {}
         _log.info(
             "delta write commit",
             mode=mode,
             uri=location.uri,
-            version=dt.version(),
+            version=version,
             rows=int(metrics.get("numOutputRows", 0)) or None,
             bytes=int(metrics.get("numOutputBytes", 0)) or None,
             files=int(metrics.get("numAddedFiles", 0)) or None,
@@ -133,7 +150,15 @@ def _require_delete_flag(frame: pl.LazyFrame, spec: UpsertSpec, flag: str) -> No
             flag,
             f"conflicts with {conflict}; the flag column is not written to the target",
         )
-    schema = frame.collect_schema()
+    _require_boolean_flag_column(frame.collect_schema(), flag)
+
+
+def _require_boolean_flag_column(schema: pl.Schema, flag: str) -> None:
+    """Check that *schema* has *flag* as a boolean column.
+
+    Raises:
+        UpsertDeleteFlagError: *flag* is missing from *schema*, or is not boolean.
+    """
     if flag not in schema:
         raise UpsertDeleteFlagError(flag, "is missing from the source frame")
     dtype = schema[flag]

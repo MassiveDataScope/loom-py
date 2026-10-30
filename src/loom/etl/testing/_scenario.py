@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
-from loom.etl.schema._schema import LoomType
 from loom.etl.testing._result import StepResult
+from loom.etl.testing._runners import PolarsStepRunner, SeedSchema, TempData
 
 
 @runtime_checkable
@@ -24,20 +24,20 @@ class StepRunnerProto(Protocol):
         data: list[tuple[Any, ...]],
         columns: list[str],
         *,
-        schema: Mapping[str, LoomType] | None = None,
-    ) -> Any:
+        schema: SeedSchema | None = None,
+    ) -> object:
         """Register raw data under the logical table reference *ref*."""
         ...
 
     def seed_temp(
         self,
-        name: Any,
-        data: Any = None,
-        columns: list[str] | None = None,
+        name: str | StepResult,
+        data: TempData | None = None,
+        columns: Sequence[str] | None = None,
         *,
-        schema: Mapping[str, LoomType] | None = None,
-    ) -> Any:
-        """Register data as the temp *name*, as an ``IntoTemp`` step would."""
+        schema: SeedSchema | None = None,
+    ) -> object:
+        """Register data as the temp *name*, or seed the result of an ``IntoTemp`` step."""
         ...
 
     def run(self, step_cls: type[Any], params: Any) -> StepResult:
@@ -49,41 +49,44 @@ _RunnerT = TypeVar("_RunnerT", bound=StepRunnerProto)
 
 
 class _ScenarioOp(Protocol):
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
     def apply(self, runner: StepRunnerProto) -> None: ...
 
-    def describe(self) -> tuple[str, str]: ...
-
 
 @dataclass(frozen=True, eq=False)
-class _TableSeed:
-    ref: str
-    data: tuple[tuple[Any, ...], ...]
-    columns: tuple[str, ...]
-    schema: Mapping[str, LoomType] | None
+class _Seed:
+    """Rows seeded as a table or as a temp."""
 
-    def apply(self, runner: StepRunnerProto) -> None:
-        # Positional call without schema= keeps runners written for the old protocol working.
-        if self.schema is None:
-            runner.seed(self.ref, list(self.data), list(self.columns))
-        else:
-            runner.seed(self.ref, list(self.data), list(self.columns), schema=self.schema)
-
-    def describe(self) -> tuple[str, str]:
-        return ("table", self.ref)
-
-
-@dataclass(frozen=True, eq=False)
-class _TempSeed:
+    kind: Literal["table", "temp"]
     name: str
     data: tuple[tuple[Any, ...], ...]
     columns: tuple[str, ...]
-    schema: Mapping[str, LoomType] | None
+    schema: SeedSchema | None
 
     def apply(self, runner: StepRunnerProto) -> None:
-        runner.seed_temp(self.name, list(self.data), list(self.columns), schema=self.schema)
+        data, columns = list(self.data), list(self.columns)
+        if self.kind == "temp":
+            runner.seed_temp(self.name, data, columns, schema=self.schema)
+        elif self.schema is None:
+            # Positional call without schema= keeps runners written for the old protocol working.
+            runner.seed(self.name, data, columns)
+        else:
+            runner.seed(self.name, data, columns, schema=self.schema)
 
-    def describe(self) -> tuple[str, str]:
-        return ("temp", self.name)
+
+def _seed(
+    kind: Literal["table", "temp"],
+    name: str,
+    data: Sequence[tuple[Any, ...]],
+    columns: Sequence[str],
+    schema: SeedSchema | None,
+) -> _Seed:
+    return _Seed(kind, name, tuple(data), tuple(columns), dict(schema) if schema else None)
 
 
 class _AfterStep:
@@ -95,35 +98,32 @@ class _AfterStep:
     operation and every application seeds the same temp.
     """
 
+    kind = "after"
+
     def __init__(self, prefix: tuple[_ScenarioOp, ...], step_cls: type[Any], params: Any) -> None:
         self._prefix = prefix
         self._step_cls = step_cls
         self._params = params
         self._result: StepResult | None = None
 
+    @property
+    def name(self) -> str:
+        return self._step_cls.__qualname__
+
     def apply(self, runner: StepRunnerProto) -> None:
         runner.seed_temp(self._upstream_result())
 
     def _upstream_result(self) -> StepResult:
         if self._result is None:
-            self._result = self._run_upstream()
+            upstream = ETLScenario(self._prefix).apply(PolarsStepRunner())
+            result = upstream.run(self._step_cls, self._params)
+            if result.temp_name is None:
+                raise TypeError(
+                    f"ETLScenario.after() needs a step whose target is IntoTemp; "
+                    f"{self.name} writes a table."
+                )
+            self._result = result
         return self._result
-
-    def _run_upstream(self) -> StepResult:
-        # _runners imports this module, so the runner is imported when first needed.
-        from loom.etl.testing._runners import PolarsStepRunner  # noqa: PLC0415
-
-        upstream = ETLScenario(self._prefix).apply(PolarsStepRunner())
-        result = upstream.run(self._step_cls, self._params)
-        if result.temp_name is None:
-            raise TypeError(
-                f"ETLScenario.after() needs a step whose target is IntoTemp; "
-                f"{self._step_cls.__qualname__} writes a table."
-            )
-        return result
-
-    def describe(self) -> tuple[str, str]:
-        return ("after", self._step_cls.__qualname__)
 
 
 class ETLScenario:
@@ -165,7 +165,7 @@ class ETLScenario:
         data: Sequence[tuple[Any, ...]],
         columns: Sequence[str],
         *,
-        schema: Mapping[str, LoomType] | None = None,
+        schema: SeedSchema | None = None,
     ) -> ETLScenario:
         """Return a new scenario that also seeds the table *ref*.
 
@@ -179,8 +179,7 @@ class ETLScenario:
         Returns:
             A new :class:`ETLScenario`.
         """
-        schema_copy = dict(schema) if schema is not None else None
-        return self._with(_TableSeed(ref, tuple(data), tuple(columns), schema_copy))
+        return self._with(_seed("table", ref, data, columns, schema))
 
     def with_temp(
         self,
@@ -188,7 +187,7 @@ class ETLScenario:
         data: Sequence[tuple[Any, ...]],
         columns: Sequence[str],
         *,
-        schema: Mapping[str, LoomType] | None = None,
+        schema: SeedSchema | None = None,
     ) -> ETLScenario:
         """Return a new scenario that also seeds the temp *name*.
 
@@ -201,8 +200,7 @@ class ETLScenario:
         Returns:
             A new :class:`ETLScenario`.
         """
-        schema_copy = dict(schema) if schema is not None else None
-        return self._with(_TempSeed(name, tuple(data), tuple(columns), schema_copy))
+        return self._with(_seed("temp", name, data, columns, schema))
 
     def after(self, step_cls: type[Any], params: Any) -> ETLScenario:
         """Return a new scenario that also holds the real output of an ``IntoTemp`` step.
@@ -212,9 +210,14 @@ class ETLScenario:
         this scenario (the ones before ``after()``).  It does not see the
         runner the scenario is applied to: neither its config
         (:meth:`PolarsStepRunner.with_config`), nor seeds added outside the
-        scenario, nor its ``delta_root``.  The output is memoized and every
-        application seeds it with ``seed_temp``; entries added after
-        ``after()``, or scenarios composed with ``+``, do not change it.
+        scenario, nor its ``delta_root``.  Every application seeds the output
+        with ``seed_temp``; entries added after ``after()``, or scenarios
+        composed with ``+``, do not change it.
+
+        The memo lives in the returned scenario, and in the scenarios derived
+        from it.  Define the scenario at module level, or in a module- or
+        session-scoped fixture, so the upstream step runs only once; a
+        scenario built inside each test runs it in each test.
 
         Args:
             step_cls: Upstream step whose target is ``IntoTemp``.
@@ -248,10 +251,9 @@ class ETLScenario:
         return ETLScenario(self._ops + other._ops)
 
     def __repr__(self) -> str:
-        described = [op.describe() for op in self._ops]
-        tables = [name for kind, name in described if kind == "table"]
-        temps = [name for kind, name in described if kind == "temp"]
-        after = [name for kind, name in described if kind == "after"]
+        tables = [op.name for op in self._ops if op.kind == "table"]
+        temps = [op.name for op in self._ops if op.kind == "temp"]
+        after = [op.name for op in self._ops if op.kind == "after"]
         return f"ETLScenario(tables={tables}, temps={temps}, after={after})"
 
     def _with(self, op: _ScenarioOp) -> ETLScenario:
