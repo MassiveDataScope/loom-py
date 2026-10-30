@@ -70,8 +70,10 @@ class _CapturingWriter:
         self.spec = spec
         self._last_params = params_instance
         if self._target is not None:
+            # Forward the type the step returned, so the real writer accepts or rejects it.
+            forwarded = captured.lazy() if isinstance(frame, pl.LazyFrame) else frame
             self._target.write(
-                captured.lazy(), spec, params_instance, streaming=streaming, write_ctx=write_ctx
+                forwarded, spec, params_instance, streaming=streaming, write_ctx=write_ctx
             )
 
 

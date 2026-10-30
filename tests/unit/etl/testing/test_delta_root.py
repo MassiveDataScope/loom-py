@@ -68,6 +68,14 @@ class UpdateOrders(ETLStep[P]):
         return cdc.drop("_deleted")
 
 
+class EagerReplace(ETLStep[P]):
+    sources = Sources(raw=FromTable("raw.sales"))
+    target = IntoTable("silver.sales").replace()
+
+    def execute(self, params: P, *, raw: Any) -> Any:  # type: ignore[override]
+        return raw.collect()
+
+
 class AppendEvent(ETLStep[P]):
     sources = Sources(raw=FromTable("raw.events"))
     target = IntoTable("silver.events").append()
@@ -193,6 +201,14 @@ class TestReplaceOnPartitionedTable:
 
 
 # 12 --------------------------------------------------------------------------
+class TestRealWriterContract:
+    def test_eager_frame_into_a_table_fails_like_production(self, tmp_path: Path) -> None:
+        runner = PolarsStepRunner(SALES, delta_root=tmp_path)
+
+        with pytest.raises(AttributeError, match="collect"):
+            runner.run(EagerReplace, P())
+
+
 class TestIsolation:
     @pytest.mark.parametrize("event_id", [1, 2])
     def test_function_scoped_roots_do_not_share_writes(self, tmp_path: Path, event_id: int) -> None:
