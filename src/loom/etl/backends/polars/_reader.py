@@ -296,17 +296,13 @@ class PolarsSourceReader(SourceReader):
             target.location.uri,
             storage_options=target.location.storage_options or None,
         )
-
-        for predicate in spec.predicates:
-            frame = frame.filter(predicate_to_polars(predicate, params))
-
-        return self._finalize_source_frame(frame, spec)
+        return finalize_source_frame(frame, spec, params)
 
     def _read_file(self, spec: FileSourceSpec, params_instance: Any) -> pl.LazyFrame:
         """Read file (CSV, JSON, XLSX, Parquet), resolving alias if needed."""
         path = self._resolve_file_path(spec, params_instance)
         frame = self._read_file_by_format(path, spec.format, spec.read_options)
-        return self._finalize_source_frame(frame, spec)
+        return finalize_source_frame(frame, spec, params_instance)
 
     def _resolve_file_path(self, spec: FileSourceSpec, params_instance: Any) -> str:
         """Return the physical URI for *spec*, resolving alias and template."""
@@ -317,20 +313,6 @@ class PolarsSourceReader(SourceReader):
             params_instance=params_instance,
             role="FromFile",
         )
-
-    def _finalize_source_frame(
-        self,
-        frame: pl.LazyFrame,
-        spec: TableSourceSpec | FileSourceSpec,
-    ) -> pl.LazyFrame:
-        """Apply post-read transformations: columns, schema, json decode."""
-        if spec.columns:
-            frame = frame.select(list(spec.columns))
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        if spec.json_columns:
-            frame = decode_json_columns(frame, spec.json_columns)
-        return frame
 
     @staticmethod
     def _read_file_by_format(path: str, format: Any, options: Any) -> pl.LazyFrame:
@@ -380,14 +362,42 @@ class PolarsSourceReader(SourceReader):
     def _read_parquet(path: str, _options: Any) -> pl.LazyFrame:
         return pl.scan_parquet(path)
 
-    @staticmethod
-    def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
-        """Cast declared columns to their Loom type."""
-        if not schema:
-            return frame
 
-        cast_exprs = [pl.col(col.name).cast(loom_type_to_polars(col.dtype)) for col in schema]
-        return frame.with_columns(cast_exprs)
+def finalize_source_frame(
+    frame: pl.LazyFrame,
+    spec: TableSourceSpec | FileSourceSpec,
+    params_instance: Any,
+) -> pl.LazyFrame:
+    """Apply what *spec* declares on top of a raw scan, as :class:`PolarsSourceReader` does.
+
+    Filters by the table predicates first, then projects ``columns``, casts the
+    declared ``schema`` and decodes ``json_columns``.  Returns *frame* itself
+    when the spec declares none of them.
+
+    Args:
+        frame: Raw frame scanned or seeded for the source.
+        spec: Compiled table or file source spec.
+        params_instance: Concrete params the predicates resolve against.
+
+    Returns:
+        The lazy frame the step receives.
+    """
+    if isinstance(spec, TableSourceSpec):
+        for predicate in spec.predicates:
+            frame = frame.filter(predicate_to_polars(predicate, params_instance))
+    if spec.columns:
+        frame = frame.select(list(spec.columns))
+    if spec.schema:
+        frame = _apply_source_schema(frame, spec.schema)
+    if spec.json_columns:
+        frame = decode_json_columns(frame, spec.json_columns)
+    return frame
+
+
+def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
+    """Cast declared columns to their Loom type."""
+    cast_exprs = [pl.col(col.name).cast(loom_type_to_polars(col.dtype)) for col in schema]
+    return frame.with_columns(cast_exprs)
 
 
 def execute_sql(frames: dict[str, pl.LazyFrame], query: str) -> pl.LazyFrame:

@@ -23,6 +23,20 @@ def _is_polars_lazy_frame(value: Any) -> TypeGuard[pl.LazyFrame]:
     return isinstance(value, pl.LazyFrame)
 
 
+def _require_polars_lazy_frame(data: Any) -> pl.LazyFrame:
+    """Return *data* as a LazyFrame, or raise the error every Polars backend raises.
+
+    Raises:
+        TypeError: When *data* is not a :class:`polars.LazyFrame`.
+    """
+    if not _is_polars_lazy_frame(data):
+        raise TypeError(
+            f"Polars backend expects polars.LazyFrame, got {type(data).__qualname__!r}. "
+            "Verify that CheckpointStore was constructed without a SparkSession."
+        )
+    return data
+
+
 class _PolarsCheckpointBackend:
     """Polars Arrow IPC backend with atomic write-then-rename."""
 
@@ -47,13 +61,7 @@ class _PolarsCheckpointBackend:
 
     def write(self, name: str, base: str, data: Any, *, append: bool) -> None:
         """Sink *data* as Arrow IPC atomically (write-then-rename)."""
-        if not _is_polars_lazy_frame(data):
-            raise TypeError(
-                f"Polars backend expects polars.LazyFrame, got {type(data).__qualname__!r}. "
-                "Verify that CheckpointStore was constructed without a SparkSession."
-            )
-
-        frame = data
+        frame = _require_polars_lazy_frame(data)
         key = f"{base}/{name}"
 
         with self._lock:
