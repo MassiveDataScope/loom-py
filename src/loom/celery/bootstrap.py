@@ -148,7 +148,10 @@ def bootstrap_worker(
             Celery callback (success / error) tasks.
         modules: Callables that receive the container and register
             infrastructure bindings (repositories, services, etc.).
-            Executed in declaration order before compilation.
+            Executed in declaration order before compilation.  A module
+            binding a framework-owned key fails with
+            :class:`~loom.composition.errors.ReservedBindingError`; see
+            :func:`loom.composition.create_app`.
         metrics: Optional metrics adapter forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered

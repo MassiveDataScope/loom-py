@@ -16,6 +16,7 @@ from loom.composition._ai import (
     verify_mcp_markers,
 )
 from loom.composition._jobs import configure_job_service
+from loom.composition._reserved import refusing_reserved
 from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve_sql
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
@@ -62,10 +63,16 @@ def create_app(
         code_path: Overrides ``app.code_path``, relative to the first config file.
         resolvers: Resolvers for ``${name:key}`` placeholders, ahead of the
             built-in ``secrets`` and ``ssm``.
-        modules: DI modules run before repositories are registered.
+        modules: DI modules run before repositories are registered. They may
+            bind ``JobService`` and repositories, which the framework then
+            leaves alone, but none of the keys it owns (see
+            :class:`~loom.composition.errors.ReservedBindingError`).
 
     Returns:
         What *adapter* binds: an ASGI app, a Celery app, a handler.
+
+    Raises:
+        ReservedBindingError: When a module binds a framework-owned key.
     """
     application = build_application(
         *config_paths,
@@ -110,6 +117,7 @@ def build_application(
         ConfigError: When the configuration is incomplete or invalid.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
+        ReservedBindingError: When a module binds a framework-owned key.
     """
     source = load_source(
         *config_paths,
@@ -190,7 +198,8 @@ def compose_application(
     Args:
         source: Configuration, environment and code of the application.
         adapter: Whose recipe to compose.
-        modules: DI modules run before repositories are registered.
+        modules: DI modules run before repositories are registered; see
+            :func:`create_app`.
 
     Returns:
         The composed, closed application.
@@ -198,6 +207,7 @@ def compose_application(
     Raises:
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
+        ReservedBindingError: When a module binds a framework-owned key.
     """
     ctx, observability = source.config, source.observability
     recipe = adapter.recipe(source)
@@ -211,12 +221,16 @@ def compose_application(
     )
     wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
-    # Caller modules first, then repositories, then the framework's own. The
-    # framework's services registered below are defaults: a caller's binding stays.
+    # Caller modules first, then repositories, then the framework's own. A
+    # caller module binding a framework-owned key fails right after it runs.
     kernel = create_kernel(
         config=source.app,
         use_cases=discovered.use_cases,
-        modules=[*modules, wiring.repo_registration_module, cache_module_for(ctx)],
+        modules=[
+            *refusing_reserved(modules),
+            wiring.repo_registration_module,
+            cache_module_for(ctx),
+        ],
         uow_factory=wiring.uow_factory,
         metrics=recipe.metrics,
         environment=source.environment,
@@ -227,9 +241,7 @@ def compose_application(
     # Registered, not merely passed: capability spans resolve it from the
     # container, and an unregistered runtime makes every Scope.TOOL span a
     # silent no-op in production while passing every test that injects one.
-    kernel.container.register_default(
-        ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION
-    )
+    kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
     # Last: every service a use case may inject is registered by now.
     kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))

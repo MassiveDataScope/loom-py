@@ -108,10 +108,11 @@ def register_sql_collaborators(
     trail as the REST endpoint: one span per query, labelled with the effective
     roles and the caller subject.
 
-    A collaborator a caller's DI module already registered is kept.
+    Both keys are reserved: a caller's DI module binding either fails the
+    composition before this runs.
     """
     service = sql.service
     config = sql.config if sql.config is not None else SqlConfig(connections={})
     caller_bound = CallerBoundSql(service, config, observability)
-    container.register_default(SqlQueryService, lambda: service, scope=Scope.APPLICATION)
-    container.register_default(CallerBoundSql, lambda: caller_bound, scope=Scope.APPLICATION)
+    container.register(SqlQueryService, lambda: service, scope=Scope.APPLICATION)
+    container.register(CallerBoundSql, lambda: caller_bound, scope=Scope.APPLICATION)

@@ -124,13 +124,14 @@ def build_sqlalchemy_repository_registration_module(
     )
 
     def _register_with_session(container: LoomContainer) -> None:
-        container.register_default(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
+        # The one session manager: the composition refuses a caller binding the key.
+        container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
         register_cursor_codec(container, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(
                 DefaultRepositoryBuilder,
                 SQLAlchemyDefaultRepositoryBuilder(
-                    session_manager=container.resolve(SessionManager),
+                    session_manager=session_manager,
                     cursor_codec=container.resolve(CursorCodec),
                 ),
             )

@@ -159,8 +159,13 @@ def _repositories_module(
 
 
 def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
-    """Register the session manager unless the container already holds one."""
-    container.register_default(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
+    """Register the backend's session manager, the one every consumer shares.
+
+    ``SessionManager`` is framework-owned: the composition refuses a caller's
+    module binding it, so the unit of work, the pool reset and the startup
+    checks hold the same instance the container serves.
+    """
+    container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
 
 
 def _with_elevation_sink(
