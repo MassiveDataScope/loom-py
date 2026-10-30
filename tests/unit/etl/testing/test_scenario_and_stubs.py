@@ -19,8 +19,23 @@ class _Runner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[tuple[Any, ...]], list[str]]] = []
 
-    def seed(self, ref: str, data: list[tuple[Any, ...]], columns: list[str]) -> Any:
+    def seed(
+        self,
+        ref: str,
+        data: list[tuple[Any, ...]],
+        columns: list[str],
+        *,
+        schema: Any = None,
+    ) -> Any:
         self.calls.append((ref, data, columns))
+        return None
+
+    def seed_temp(
+        self, name: Any, data: Any = None, columns: Any = None, *, schema: Any = None
+    ) -> Any:
+        return None
+
+    def run(self, step_cls: type[Any], params: Any) -> Any:
         return None
 
 

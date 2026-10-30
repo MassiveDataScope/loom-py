@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import polars as pl
@@ -83,7 +84,9 @@ class TestPolarsStepRunner:
         def _fake_compile_step(self: ETLCompiler, _step_cls: type[Any]) -> _Plan:
             return _Plan()
 
-        def _fake_run_step(self: ETLExecutor, _plan: Any, params_instance: _RunParams) -> None:
+        def _fake_run_step(
+            self: ETLExecutor, _plan: Any, params_instance: _RunParams, _ctx: Any = None
+        ) -> None:
             predicate = col("day") == params_instance.run_day
             spec = ReplaceWhereSpec(table_ref=TableRef("staging.out"), replace_predicate=predicate)
             writer = self._writer
@@ -108,9 +111,12 @@ class TestPolarsStepRunner:
         runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
 
         def _fake_compile_step(self: ETLCompiler, _step_cls: type[Any]) -> object:
-            return object()
+            spec = ReplaceSpec(table_ref=TableRef("staging.out"))
+            return SimpleNamespace(target_binding=SimpleNamespace(spec=spec))
 
-        def _fake_run_step(self: ETLExecutor, _plan: Any, _params_instance: Any) -> None:
+        def _fake_run_step(
+            self: ETLExecutor, _plan: Any, _params_instance: Any, _ctx: Any = None
+        ) -> None:
             return None
 
         monkeypatch.setattr(ETLCompiler, "compile_step", _fake_compile_step)

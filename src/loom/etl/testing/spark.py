@@ -49,6 +49,7 @@ from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import SourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.executor import ETLExecutor
+from loom.etl.schema._schema import LoomType
 from loom.etl.testing._result import StepResult
 
 if TYPE_CHECKING:
@@ -224,6 +225,8 @@ class SparkStepRunner:
         ref: str,
         data: list[tuple[Any, ...]],
         columns: list[str],
+        *,
+        schema: Mapping[str, LoomType] | None = None,
     ) -> SparkStepRunner:
         """Register raw data under the logical table reference *ref*.
 
@@ -231,12 +234,39 @@ class SparkStepRunner:
             ref:     Logical table reference, e.g. ``"raw.orders"``.
             data:    Row data as a list of tuples.
             columns: Column names aligned with the tuple positions.
+            schema:  Typed seeds are not supported on Spark yet; must be ``None``.
 
         Returns:
             ``self`` for fluent chaining.
+
+        Raises:
+            NotImplementedError: When *schema* is given.
         """
+        if schema is not None:
+            raise NotImplementedError(
+                "SparkStepRunner does not support typed seeds (schema=) yet; use PolarsStepRunner."
+            )
         self._seeds[ref] = (list(data), list(columns))
         return self
+
+    def seed_temp(
+        self,
+        name: Any,
+        data: Any = None,
+        columns: list[str] | None = None,
+        *,
+        schema: Mapping[str, LoomType] | None = None,
+    ) -> SparkStepRunner:
+        """Not supported on Spark yet: temps are only seeded by :class:`PolarsStepRunner`.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        _ = (name, data, columns, schema)
+        raise NotImplementedError(
+            "SparkStepRunner does not support seed_temp() yet; "
+            "test FromTemp/IntoTemp steps with PolarsStepRunner."
+        )
 
     def with_config(self, values: Mapping[str, Any]) -> SparkStepRunner:
         """Set the config the step's ``FromConfig`` values resolve from.

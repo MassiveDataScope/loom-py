@@ -23,6 +23,48 @@
   update and unmatched insert, with no delete clause. `UpsertSpec` gains
   `delete_flag`; `UpsertDeleteFlagError` and
   `UnsupportedUpsertDeleteFlagError` are exported from `loom.etl`.
+- **etl:** `PolarsStepRunner` tests steps that use temps and real Delta
+  targets. `FromTemp`/`IntoTemp` work through an in-memory `CheckpointStore`
+  that keeps the production checks (an `IntoTemp` step returning a
+  `pl.DataFrame` raises `TypeError`, fan-in aligns to the first schema,
+  RUN then CORRELATION lookup); temps persist across `run()` calls of one
+  runner, which keeps a fixed run context. `seed_temp(name, data, columns,
+  *, schema=)` seeds a temp by `temp_name` from row tuples, a Polars frame or
+  a `StepResult`; `seed_temp(result)` takes the name from an `IntoTemp`
+  step's result. A step whose target is `IntoTemp` returns the temp as its
+  `StepResult` instead of raising "Step produced no output". `seed` and
+  `ETLScenario.with_table` accept `schema=` (loom types) so empty and all-null
+  columns keep their dtype. `PolarsStepRunner(*scenarios, delta_root=)`
+  applies scenarios at construction; with `delta_root` the real
+  `PolarsSourceReader`/`PolarsTargetWriter` run on that directory, seeds are
+  written as Delta tables, missing targets are created, and `table(ref)`
+  returns the final state. `StepResult.deletes` counts the rows the step
+  emitted with its upsert `delete_flag` set; `StepResult.merged` returns the
+  `MergeMetrics(inserted, updated, deleted)` the Delta MERGE applied (only
+  with `delta_root`). `ETLScenario` gains `with_temp`, `after(step, params)`
+  (runs an `IntoTemp` step once and reuses its output) and `+`.
+  `SparkStepRunner.seed_temp` and `SparkStepRunner.seed(..., schema=...)`
+  raise `NotImplementedError`. Cache scenarios and frames, not runners: tests
+  that mutate state need a function-scoped runner on their own `tmp_path`.
+
+## ⚠ Behaviour changes
+
+### etl
+
+- **etl:** the `PolarsStepRunner` reader applies what a `FromTable` or
+  `FromFile` declares, as `PolarsSourceReader` does: `.where()` filters,
+  `.columns()` projects (an unknown column raises
+  `polars.exceptions.ColumnNotFoundError`), `with_schema` casts and
+  `parse_json` decodes. Before, the seeded frame reached the step unchanged;
+  a seed that was already decoded for a `parse_json` column must now hold the
+  JSON text.
+- **etl:** `ETLScenario` is immutable: `with_table` returns a new scenario
+  and no longer changes the one it is called on. Chained calls work as before;
+  code that called `scenario.with_table(...)` without using the result must
+  use it.
+- **etl:** `StepRunnerProto` requires `seed(..., *, schema=None)`,
+  `seed_temp` and `run`. `ETLScenario.apply` still calls `seed(ref, data,
+  columns)` positionally when no schema is declared.
 
 # 🚀 Releases 2.1.3 to 9.0.0
 
