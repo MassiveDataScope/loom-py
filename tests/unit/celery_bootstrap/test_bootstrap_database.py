@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,12 +9,11 @@ import pytest
 pytest.importorskip("celery")
 
 from loom.celery.adapter import CeleryAdapter  # noqa: E402
-from loom.composition import AppConfig, CompositionSource, compose_application  # noqa: E402
+from loom.composition import AppConfig, compose_application  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
-from loom.core.environment import Environment  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
 from loom.core.uow.abc import UnitOfWorkFactory  # noqa: E402
+from tests.helpers.composition import composition_source  # noqa: E402
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 
@@ -27,15 +25,11 @@ class _PingJob(Job[int]):
 
 def _resolve_uow_factory(config: dict[str, Any]) -> UnitOfWorkFactory | None:
     """Compose a worker from *config* and return the unit-of-work factory it runs jobs with."""
-    source = CompositionSource(
-        config=ConfigContext.from_dict(
+    source = composition_source(
+        ConfigContext.from_dict(
             {"celery": {"broker_url": "memory://", "result_backend": "cache+memory://"}, **config}
         ),
-        environment=Environment.TEST,
-        code_path=Path.cwd(),
-        config_root=Path.cwd(),
         app=AppConfig(name="worker"),
-        observability=ObservabilityRuntime.noop(),
     )
     return compose_application(source, CeleryAdapter(jobs=[_PingJob])).persistence.uow_factory
 

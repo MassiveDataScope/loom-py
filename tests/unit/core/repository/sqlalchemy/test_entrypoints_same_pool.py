@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,6 +14,7 @@ from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
+from tests.helpers.composition import composition_source
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 _FULL_POOL = {"size": 3, "max_overflow": 1, "timeout": 4, "recycle": 60, "pre_ping": False}
@@ -41,23 +41,17 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
     from loom.celery.adapter import CeleryAdapter
-    from loom.composition import AppConfig, CompositionSource, compose_application
-    from loom.core.environment import Environment
+    from loom.composition import AppConfig, compose_application
     from loom.core.job.job import Job
-    from loom.core.observability.runtime import ObservabilityRuntime
 
     class _PingJob(Job[int]):
         def execute(self) -> int:
             return 1
 
     celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
-    source = CompositionSource(
-        config=ConfigContext.from_dict({"database": database, "celery": celery}),
-        environment=Environment.TEST,
-        code_path=Path.cwd(),
-        config_root=Path.cwd(),
+    source = composition_source(
+        ConfigContext.from_dict({"database": database, "celery": celery}),
         app=AppConfig(name="worker"),
-        observability=ObservabilityRuntime.noop(),
     )
     factory: Any = compose_application(
         source, CeleryAdapter(jobs=[_PingJob])

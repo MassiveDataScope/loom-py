@@ -15,15 +15,14 @@ from loom.composition import AppConfig, Application, CompositionSource
 from loom.composition import compose_application as compose
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import REST_CHECKS
-from loom.core.config import ConfigContext
-from loom.core.environment import Environment
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import WORKER_PROFILE
 from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.composition import composition_source
 from tests.unit.core.cache._doubles import SERIALIZED_BACKEND
 
 _CELERY = {"broker_url": "memory://", "result_backend": "cache+memory://"}
@@ -57,13 +56,11 @@ class _KnowledgeUseCase(UseCase[object, object]):
 
 
 def _source(tmp_path: Path, config: dict[str, Any]) -> CompositionSource:
-    return CompositionSource(
-        config=ConfigContext.from_dict({"celery": _CELERY, **config}),
-        environment=Environment.TEST,
+    return composition_source(
+        ConfigContext.from_dict({"celery": _CELERY, **config}),
+        app=AppConfig(name="worker"),
         code_path=tmp_path,
         config_root=tmp_path,
-        app=AppConfig(name="worker"),
-        observability=ObservabilityRuntime.noop(),
     )
 
 
@@ -91,6 +88,17 @@ class TestBackendRule:
         )
 
         assert recipe.backend.name == "sqlalchemy"
+
+    def test_credentials_without_url_are_the_workers_own_section_decoded_strictly(
+        self, tmp_path: Path
+    ) -> None:
+        source = _source(tmp_path, {"database": {"username": "app"}})
+
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
+
+        assert recipe.backend.name == "sqlalchemy"
+        with pytest.raises(ConfigError, match="url"):
+            compose(source, CeleryAdapter(jobs=[_PingJob]))
 
 
 class TestRecipe:

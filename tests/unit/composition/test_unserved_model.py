@@ -21,12 +21,11 @@ from loom.composition import (
 )
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.use_case import Exists, LoadById, UnservedModelError, UseCase, UseCaseErrorCode
+from tests.helpers.composition import composition_source
 
 
 class _Invoice(BaseModel):
@@ -70,18 +69,16 @@ class _Serving:
 
 
 def _source(tmp_path: Path) -> CompositionSource:
-    return CompositionSource(
-        config=ConfigContext.from_dict(
+    return composition_source(
+        ConfigContext.from_dict(
             {
                 "database": {"url": "sqlite+aiosqlite:///:memory:"},
                 "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         ),
-        environment=Environment.TEST,
+        app=AppConfig(name="api"),
         code_path=tmp_path,
         config_root=tmp_path,
-        app=AppConfig(name="api"),
-        observability=ObservabilityRuntime.noop(),
     )
 
 

@@ -33,6 +33,7 @@ from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
+from tests.helpers.celery import WorkerDouble, isolated_signals
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 
@@ -40,6 +41,8 @@ pytestmark = pytest.mark.integration
 
 U1 = "11111111-1111-1111-1111-111111111111"
 U2 = "22222222-2222-2222-2222-222222222222"
+
+_isolated_signals = isolated_signals(worker_init, worker_shutdown)
 
 
 class ListNoteBodies(UseCase[notes.Note, list[str]]):
@@ -61,12 +64,6 @@ class ListNoteBodiesJob(Job[list[str]]):
 
     async def execute(self) -> list[str]:
         return list(await self._app.invoke(ListNoteBodies))
-
-
-class _SoloWorker:
-    """The ``worker_init`` sender of a ``--pool=solo`` worker."""
-
-    pool_cls = "solo"
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +116,7 @@ async def _through_the_api(config: str, subject: str) -> list[str]:
 def _through_the_worker(config: str, subjects: tuple[str, ...]) -> dict[str, list[str]]:
     result = bootstrap_worker(config, environment=Environment.TEST)
     task = result.celery_app.tasks[f"{TASK_JOB_PREFIX}.{ListNoteBodiesJob.__qualname__}"]
-    worker_init.send(sender=_SoloWorker())
+    worker_init.send(sender=WorkerDouble())
     try:
         return {
             subject: task.apply(

@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
@@ -60,14 +60,13 @@ class _WorkerAppConfig(msgspec.Struct, kw_only=True):
 
 @dataclass(frozen=True)
 class WorkerManifest:
-    """Typed worker manifest for manifest-mode discovery.
+    """The components a worker serves, as discovery resolves them.
 
-    Define a module-level ``MANIFEST`` attribute of this type in your
-    manifest module.  :func:`bootstrap_worker` reads it when
+    A manifest module does not declare an instance of this type (a module-level
+    ``MANIFEST`` is refused): it declares the module-level lists ``JOBS``,
+    ``USE_CASES``, ``INTERFACES``, ``MODELS`` and ``CALLBACKS``, any of them
+    optional but at least one present. :func:`bootstrap_worker` reads them when
     ``app.discovery.mode == "manifest"`` is configured in YAML.
-
-    All fields are optional — a manifest that only declares ``jobs``
-    is valid for workers that do not expose any use cases to callbacks.
 
     Attributes:
         jobs: Job subclasses to register as Celery tasks.
@@ -76,19 +75,18 @@ class WorkerManifest:
         interfaces: ``RestInterface`` subclasses whose route use-cases
             are extracted and compiled automatically.
         models: Model classes for which AutoCRUD use cases are compiled.
+        callbacks: Job callback classes to register as Celery tasks.
 
     Example::
 
-        from loom.celery.bootstrap import WorkerManifest
+        # app/worker_manifest.py
         from app.product.jobs import SendRestockEmailJob
         from app.product.use_cases import GetProductUseCase
         from app.product.model import Product
 
-        MANIFEST = WorkerManifest(
-            jobs=[SendRestockEmailJob],
-            use_cases=[GetProductUseCase],
-            models=[Product],
-        )
+        JOBS = [SendRestockEmailJob]
+        USE_CASES = [GetProductUseCase]
+        MODELS = [Product]
     """
 
     jobs: Sequence[type[Job[Any]]] = field(default_factory=list)
@@ -114,7 +112,7 @@ class _WorkerResolved:
 
 
 def _apply_job_config_if_present(
-    ctx: ConfigContext | Mapping[str, Any],
+    ctx: ConfigContext,
     job_type: type[Job[Any]],
 ) -> None:
     """Apply ``JobConfig`` overrides from YAML to ``job_type``'s ClassVars.
@@ -126,9 +124,8 @@ def _apply_job_config_if_present(
         ctx: Resolved configuration context.
         job_type: Concrete ``Job`` subclass to configure.
     """
-    config = _ensure_config_context(ctx)
     try:
-        cfg = config.section(f"{ConfigKey.JOBS}.{job_type.__name__}", JobConfig)
+        cfg = ctx.section(f"{ConfigKey.JOBS}.{job_type.__name__}", JobConfig)
         apply_job_config(job_type, cfg)
     except ConfigError:
         pass  # no override for this job — use ClassVar defaults
@@ -349,28 +346,27 @@ def _discover_compilables_from_config(
     return _discover_from_manifest(discovery_cfg)
 
 
-def _try_discover_components(ctx: ConfigContext | Mapping[str, Any]) -> _WorkerResolved:
+def _try_discover_components(ctx: ConfigContext) -> _WorkerResolved:
     """Best-effort discovery; returns empty _WorkerResolved if config is absent."""
-    config = _ensure_config_context(ctx)
     try:
-        app_cfg = config.section(ConfigKey.APP, _WorkerAppConfig)
+        app_cfg = ctx.section(ConfigKey.APP, _WorkerAppConfig)
         return _discover_compilables_from_config(app_cfg.discovery)
     except (ConfigError, RuntimeError, ValueError, TypeError):
         return _WorkerResolved(compilables=(), jobs=(), models=(), callbacks=())
 
 
 def _resolve_compilables_and_jobs(
-    ctx: ConfigContext | Mapping[str, Any],
+    ctx: ConfigContext,
     explicit_jobs: Sequence[type[Job[Any]]],
     explicit_use_cases: Sequence[type[Compilable]],
 ) -> _WorkerResolved:
     """Resolve worker components from explicit args and/or discovery config."""
-    config = _ensure_config_context(ctx)
     if explicit_jobs or explicit_use_cases:
         jobs = tuple(explicit_jobs)
         compilables = _merge_unique(explicit_use_cases, jobs)
-        discovered = _try_discover_components(config)
-        extra = tuple(c for c in discovered.compilables if c not in set(compilables))
+        discovered = _try_discover_components(ctx)
+        declared = set(compilables)
+        extra = tuple(c for c in discovered.compilables if c not in declared)
         return _WorkerResolved(
             compilables=(*compilables, *extra),
             jobs=jobs,
@@ -379,7 +375,7 @@ def _resolve_compilables_and_jobs(
         )
 
     try:
-        app_cfg = config.section(ConfigKey.APP, _WorkerAppConfig)
+        app_cfg = ctx.section(ConfigKey.APP, _WorkerAppConfig)
     except ConfigError as exc:
         raise RuntimeError(
             "No jobs provided and no app.discovery configured for worker bootstrap."
@@ -405,10 +401,3 @@ def _emit_worker_init_graph(components: _WorkerResolved) -> None:
         callbacks=len(components.callbacks),
         models=len(components.models),
     )
-
-
-def _ensure_config_context(source: ConfigContext | Mapping[str, Any]) -> ConfigContext:
-    """Return a :class:`ConfigContext` for any supported config input."""
-    if isinstance(source, ConfigContext):
-        return source
-    return ConfigContext.from_dict(source)

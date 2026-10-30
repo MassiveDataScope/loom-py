@@ -9,16 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, CompositionSource, build_application, compose_application
+from loom.composition import AppConfig, build_application, compose_application
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.environment import Environment
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService, JobService
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.helpers.composition import ProjectFactory
+from tests.helpers.composition import ProjectFactory, composition_source
 
 
 class _PingJob(Job[int]):
@@ -51,16 +49,14 @@ def test_the_api_keeps_the_job_service_a_module_registered(
 
 
 def test_the_worker_keeps_the_job_service_a_module_registered(tmp_path: Path) -> None:
-    source = CompositionSource(
+    source = composition_source(
         # A celery section would otherwise register the Celery service.
-        config=ConfigContext.from_dict(
+        ConfigContext.from_dict(
             {"celery": {"broker_url": "memory://", "result_backend": "cache+memory://"}}
         ),
-        environment=Environment.TEST,
+        app=AppConfig(name="worker"),
         code_path=tmp_path,
         config_root=tmp_path,
-        app=AppConfig(name="worker"),
-        observability=ObservabilityRuntime.noop(),
     )
 
     application = compose_application(

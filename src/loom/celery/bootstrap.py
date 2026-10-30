@@ -36,21 +36,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery._discovery import WorkerManifest
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, CompositionSource, compose_application
-from loom.core.config import ConfigKey, ConfigResolver, with_default_resolvers
-from loom.core.config.overrides import load_application_config
+from loom.composition import AppConfig, compose_application
+from loom.composition.build import load_source
+from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
-from loom.core.environment import Environment, resolve_environment, select_config_paths
-from loom.core.locator import add_code_path
-from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.environment import Environment
 from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
@@ -95,40 +91,6 @@ class WorkerBootstrapResult:
 # ---------------------------------------------------------------------------
 # bootstrap_worker
 # ---------------------------------------------------------------------------
-
-
-def _worker_source(
-    config_paths: Sequence[str],
-    config_dir: str | None,
-    environment: Environment | str | None,
-    resolvers: Sequence[ConfigResolver],
-) -> CompositionSource:
-    """Load what the worker composes from, as :func:`loom.composition.build_application` does.
-
-    Unlike the API, a worker needs no ``app`` section: pure jobs passed in
-    code declare nothing else.
-    """
-    resolved_environment = resolve_environment(environment)
-    paths = select_config_paths(
-        config_paths, config_dir, resolved_environment, caller="bootstrap_worker"
-    )
-    ctx = load_application_config(
-        *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
-    )
-    observability = ObservabilityRuntime.from_config(
-        ctx.section_or_default(ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()),
-        environment=resolved_environment,
-    )
-    app_cfg = ctx.section_optional(ConfigKey.APP, _WorkerAppConfig) or _WorkerAppConfig()
-    config_root = Path(paths[0]).resolve().parent
-    return CompositionSource(
-        config=ctx,
-        environment=resolved_environment,
-        code_path=add_code_path(app_cfg.code_path, config_root),
-        config_root=config_root,
-        app=app_cfg,
-        observability=observability,
-    )
 
 
 def bootstrap_worker(
@@ -219,7 +181,15 @@ def bootstrap_worker(
         )
         result.celery_app.start()
     """
-    source = _worker_source(config_paths, config_dir, environment, resolvers)
+    source = load_source(
+        *config_paths,
+        config_dir=config_dir,
+        environment=environment,
+        code_path=None,
+        resolvers=resolvers,
+        caller="bootstrap_worker",
+        default_app=_WorkerAppConfig(),
+    )
     adapter = CeleryAdapter(
         jobs=jobs,
         use_cases=use_cases,

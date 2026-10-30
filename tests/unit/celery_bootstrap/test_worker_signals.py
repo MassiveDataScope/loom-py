@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -29,24 +29,16 @@ from loom.celery.adapter import CeleryAdapter, _connect_lifecycle_signals, _Work
 from loom.celery.constants import TASK_JOB_PREFIX
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
-from loom.composition import AppConfig, Application, CompositionSource, compose_application
+from loom.composition import AppConfig, Application, compose_application
 from loom.core.config import ConfigContext
-from loom.core.environment import Environment
 from loom.core.job.job import Job
-from loom.core.observability.runtime import ObservabilityRuntime
+from tests.helpers.celery import WorkerDouble, isolated_signals
+from tests.helpers.composition import composition_source
 
 _SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
 
 
-@pytest.fixture(autouse=True)
-def isolated_celery_signals() -> Iterator[None]:
-    """Save and restore the four lifecycle signals' receivers around each test."""
-    saved = [list(cast(list[Any], signal.receivers)) for signal in _SIGNALS]
-    for signal in _SIGNALS:
-        cast(list[Any], signal.receivers)[:] = []
-    yield
-    for signal, receivers in zip(_SIGNALS, saved, strict=True):
-        cast(list[Any], signal.receivers)[:] = receivers
+isolated_celery_signals = isolated_signals(*_SIGNALS, clear=True)
 
 
 class _ApplicationSpy:
@@ -111,24 +103,13 @@ def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
     return bridge
 
 
-class _Worker:
-    """What ``worker_init`` receives: the controller, its pool not yet resolved."""
-
-    def __init__(self, pool: object) -> None:
-        self.pool_cls = pool
-
-
-def _worker(pool: object) -> _Worker:
-    return _Worker(pool)
-
-
 class TestPrefork:
     @pytest.mark.parametrize("pool", ["prefork", "processes", PreforkPool])
     def test_worker_init_checks_once_and_opens_nothing(self, pool: object) -> None:
         application = _ApplicationSpy()
         bridge = _connect(application)
 
-        worker_init.send(sender=_worker(pool))
+        worker_init.send(sender=WorkerDouble(pool))
 
         assert application.events == ["check"]
         assert bridge._bridge is None
@@ -136,7 +117,7 @@ class TestPrefork:
     def test_worker_process_init_starts_the_bridge_and_opens_without_checking(self) -> None:
         application = _ApplicationSpy()
         bridge = _connect(application)
-        worker_init.send(sender=_worker("prefork"))
+        worker_init.send(sender=WorkerDouble("prefork"))
 
         worker_process_init.send(sender=None)
         try:
@@ -160,7 +141,7 @@ class TestPrefork:
         _connect(application)
 
         with pytest.raises(WorkerTerminate) as caught:
-            worker_init.send(sender=_worker("prefork"))
+            worker_init.send(sender=WorkerDouble("prefork"))
 
         assert isinstance(caught.value.__cause__, RuntimeError)
 
@@ -168,7 +149,7 @@ class TestPrefork:
         application = _ApplicationSpy()
         runtime = _RuntimeSpy()
         _connect(application, runtime)
-        worker_init.send(sender=_worker("prefork"))
+        worker_init.send(sender=WorkerDouble("prefork"))
 
         worker_shutdown.send(sender=None)
 
@@ -183,7 +164,7 @@ class TestSingleProcessPools:
         application = _ApplicationSpy()
         bridge = _connect(application)
 
-        worker_init.send(sender=_worker(pool))
+        worker_init.send(sender=WorkerDouble(pool))
         try:
             assert application.events == ["open(check=True)"]
             assert bridge._bridge is not None and bridge._bridge.is_alive
@@ -198,13 +179,13 @@ class TestSingleProcessPools:
         bridge = _connect(application)
 
         with pytest.raises(WorkerTerminate) as caught:
-            worker_init.send(sender=_worker("solo"))
+            worker_init.send(sender=WorkerDouble("solo"))
 
         assert isinstance(caught.value.__cause__, RuntimeError)
         assert bridge._bridge is None
 
 
-class _PingJob(Job[int]):
+class _RefusedOpenJob(Job[int]):
     __retries__ = 0
 
     def execute(self) -> int:
@@ -215,9 +196,9 @@ class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_PingJob])
-        source = CompositionSource(
-            config=ConfigContext.from_dict(
+        adapter = CeleryAdapter(jobs=[_RefusedOpenJob])
+        source = composition_source(
+            ConfigContext.from_dict(
                 {
                     "celery": {
                         "broker_url": "memory://",
@@ -226,11 +207,9 @@ class TestFailedChildOpen:
                     }
                 }
             ),
-            environment=Environment.TEST,
+            app=AppConfig(name="worker"),
             code_path=tmp_path,
             config_root=tmp_path,
-            app=AppConfig(name="worker"),
-            observability=ObservabilityRuntime.noop(),
         )
         application = compose_application(source, adapter)
 
@@ -242,7 +221,7 @@ class TestFailedChildOpen:
 
         cast(Any, application).running = _failing
         celery_app = adapter.bind(application)
-        return celery_app.tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
+        return celery_app.tasks[f"{TASK_JOB_PREFIX}.{_RefusedOpenJob.__qualname__}"]
 
     def test_every_task_fails_fast_naming_the_failure_to_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -306,7 +285,7 @@ class TestConnecting:
         _connect(first)
         _connect(second)
 
-        worker_init.send(sender=_worker("prefork"))
+        worker_init.send(sender=WorkerDouble("prefork"))
 
         assert first.events == []
         assert second.events == ["check"]

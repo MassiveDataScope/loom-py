@@ -111,8 +111,46 @@ def build_application(
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
     """
+    source = load_source(
+        *config_paths,
+        config_dir=config_dir,
+        environment=environment,
+        code_path=code_path,
+        resolvers=resolvers,
+        caller="create_app",
+    )
+    return compose_application(source, adapter, modules=modules)
+
+
+def load_source(
+    *config_paths: str,
+    config_dir: str | None,
+    environment: Environment | str | None,
+    code_path: str | None,
+    resolvers: Sequence[ConfigResolver],
+    caller: str,
+    default_app: AppConfig | None = None,
+) -> CompositionSource:
+    """Load the configuration, environment and code an application composes from.
+
+    Args:
+        *config_paths: See :func:`create_app`.
+        config_dir: See :func:`create_app`.
+        environment: See :func:`create_app`.
+        code_path: See :func:`create_app`.
+        resolvers: See :func:`create_app`.
+        caller: Entry point named when the paths are invalid.
+        default_app: Taken when ``app`` is absent; ``None`` makes ``app`` required.
+            Its type decodes a present section.
+
+    Returns:
+        The loaded source.
+
+    Raises:
+        ConfigError: When the configuration is incomplete or invalid.
+    """
     resolved_environment = resolve_environment(environment)
-    paths = select_config_paths(config_paths, config_dir, resolved_environment, caller="create_app")
+    paths = select_config_paths(config_paths, config_dir, resolved_environment, caller=caller)
     ctx = load_application_config(
         *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
     )
@@ -120,20 +158,22 @@ def build_application(
         ctx.section_or_default(ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()),
         environment=resolved_environment,
     )
-    app_cfg = ctx.section(ConfigKey.APP, AppConfig)
-    config_root = Path(paths[0]).resolve().parent
-    effective_code_path = add_code_path(
-        code_path if code_path is not None else app_cfg.code_path, config_root
+    app_cfg = (
+        ctx.section(ConfigKey.APP, AppConfig)
+        if default_app is None
+        else ctx.section_optional(ConfigKey.APP, type(default_app)) or default_app
     )
-    source = CompositionSource(
+    config_root = Path(paths[0]).resolve().parent
+    return CompositionSource(
         config=ctx,
         environment=resolved_environment,
-        code_path=effective_code_path,
+        code_path=add_code_path(
+            code_path if code_path is not None else app_cfg.code_path, config_root
+        ),
         config_root=config_root,
         app=app_cfg,
         observability=observability,
     )
-    return compose_application(source, adapter, modules=modules)
 
 
 def compose_application(

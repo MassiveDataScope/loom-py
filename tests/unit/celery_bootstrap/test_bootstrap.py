@@ -18,6 +18,7 @@ from loom.celery._discovery import _apply_job_config_if_present
 from loom.celery.bootstrap import WorkerBootstrapResult, WorkerManifest
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.registry import UseCaseRegistry
@@ -53,10 +54,8 @@ class _ObservedCallback:
         del job_id, exc_type, exc_msg, context
 
 
-def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
-    """Build a minimal omegaconf DictConfig for bootstrap_worker tests."""
-    from omegaconf import OmegaConf
-
+def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
+    """Build a minimal configuration for bootstrap_worker tests."""
     base = {
         "celery": {
             "broker_url": "memory://",
@@ -68,7 +67,7 @@ def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
     }
     if extra:
         base.update(extra)
-    return OmegaConf.create(base)
+    return ConfigContext.from_dict(base)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +77,7 @@ def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
 
 class TestApplyJobConfigIfPresent:
     def test_applies_override_when_section_exists(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        raw = _make_raw_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
+        raw = _make_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
         monkeypatch.setattr(_SyncJob, "__queue__", _SyncJob.__queue__, raising=False)
         monkeypatch.setattr(_SyncJob, "__retries__", _SyncJob.__retries__, raising=False)
 
@@ -88,12 +87,12 @@ class TestApplyJobConfigIfPresent:
         assert _SyncJob.__retries__ == 5
 
     def test_does_not_raise_when_section_absent(self) -> None:
-        raw = _make_raw_config()
+        raw = _make_config()
         # Must not raise even though jobs._SyncJob section is missing
         _apply_job_config_if_present(raw, _SyncJob)
 
     def test_classvar_unchanged_when_section_absent(self) -> None:
-        raw = _make_raw_config()
+        raw = _make_config()
         original = _SyncJob.__queue__
         _apply_job_config_if_present(raw, _SyncJob)
         assert _SyncJob.__queue__ == original

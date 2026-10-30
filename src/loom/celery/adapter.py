@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 from celery.concurrency import get_implementation  # type: ignore[import-untyped]
 from celery.concurrency.prefork import TaskPool as PreforkPool  # type: ignore[import-untyped]
@@ -70,11 +71,13 @@ from loom.core.persistence import (
     WORKER_PROFILE,
     resolve_backend,
 )
+from loom.core.persistence.database import DatabaseConfig
 from loom.core.runner import shutdown_runner
 from loom.core.use_case.agent_markers import declaring_agent_bindings
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
 
 if TYPE_CHECKING:
+    from loom.core.engine.compiler import UseCaseCompiler
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
 
@@ -83,7 +86,7 @@ _logger = logging.getLogger(__name__)
 _EX_FAILURE = 1
 """Exit status of a worker that cannot start."""
 
-_DATABASE_FIELDS = frozenset({"url", "echo", "pool", "connect_args", "schema"})
+_DATABASE_FIELDS = frozenset(field.encode_name for field in msgspec.structs.fields(DatabaseConfig))
 
 _SIGNAL_UIDS = {
     worker_init: "loom.celery.worker.init",
@@ -146,75 +149,66 @@ def _declares_own_database(config: ConfigContext) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _reject_agent_markers(
+def _reject_markers(
     compilables: Sequence[type[Compilable]],
     kernel: KernelRuntime,
+    *,
+    declaring_bindings: Callable[[Sequence[type[Compilable]], UseCaseCompiler], Sequence[object]],
+    verifier: str,
 ) -> None:
-    """Abort worker start-up when a compiled use case declares an ``Agent()`` marker.
+    """Abort worker start-up when a compiled use case declares a marker of the AI pillar.
 
     A task worker never builds an AI runtime (its recipe declares
     ``agents=False``), so a use case declaring the marker would compile here
     and only fail once a task actually invoked it. Refusing at start-up
-    instead reuses the check the API runs,
-    :func:`loom.ai._startup.verify_agent_markers`, called with no compiled
-    agent plans at all, which reports every declared agent as unknown by name.
+    instead reuses the check the API runs, ``loom.ai._startup.<verifier>``,
+    called with nothing configured, which reports every declared name as
+    unknown.
 
     Args:
         compilables: Every use case and job compiled for this worker.
         kernel: The kernel runtime, whose compiler already holds each of
             their plans and whose registry names them in the error.
+        declaring_bindings: Returns the use cases declaring the marker.
+        verifier: Name of the check in :mod:`loom.ai._startup`.
 
     Raises:
-        AgentCompilationError: Naming each declaring use case and its
-            ``Agent()`` parameter, when at least one declares the marker.
+        AgentCompilationError: Naming each declaring use case and its marked
+            parameter, when at least one declares the marker.
     """
-    declaring = declaring_agent_bindings(compilables, kernel.compiler)
+    declaring = declaring_bindings(compilables, kernel.compiler)
     if not declaring:
-        # No use case declares Agent(): importing 'loom.ai' here, only to
-        # find nothing to check, would pull the AI pillar into every worker
-        # process regardless of whether any job or use case ever reaches it.
-        return
-
-    # Local import: the AI pillar is optional and this branch only runs once
-    # a declaring use case is already known to exist.
-    from loom.ai._startup import verify_agent_markers
-
-    verify_agent_markers(declaring, kernel.registry, {})
-
-
-def _reject_mcp_markers(
-    compilables: Sequence[type[Compilable]],
-    kernel: KernelRuntime,
-) -> None:
-    """Abort worker start-up when a compiled use case declares an ``Mcp()`` marker.
-
-    A task worker never builds an AI runtime, so a declared server is never
-    opened here either — the same reason :func:`_reject_agent_markers`
-    refuses ``Agent()``. Reuses :func:`loom.ai._startup.verify_mcp_markers`,
-    called with no configured servers at all, which reports every declared
-    server as unknown by name.
-
-    Args:
-        compilables: Every use case and job compiled for this worker.
-        kernel: The kernel runtime, whose compiler already holds each of
-            their plans and whose registry names them in the error.
-
-    Raises:
-        AgentCompilationError: Naming each declaring use case and its
-            ``Mcp()`` parameter, when at least one declares the marker.
-    """
-    declaring = declaring_mcp_bindings(compilables, kernel.compiler)
-    if not declaring:
-        # No use case declares Mcp(): importing 'loom.ai' here, only to find
+        # Nothing declares the marker: importing 'loom.ai' here, only to find
         # nothing to check, would pull the AI pillar into every worker
         # process regardless of whether any job or use case ever reaches it.
         return
 
     # Local import: the AI pillar is optional and this branch only runs once
     # a declaring use case is already known to exist.
-    from loom.ai._startup import verify_mcp_markers
+    from loom.ai import _startup
 
-    verify_mcp_markers(declaring, kernel.registry, {})
+    verify: Callable[..., None] = getattr(_startup, verifier)
+    verify(declaring, kernel.registry, {})
+
+
+def _reject_agent_markers(compilables: Sequence[type[Compilable]], kernel: KernelRuntime) -> None:
+    """Refuse an ``Agent()`` marker through :func:`loom.ai._startup.verify_agent_markers`."""
+    _reject_markers(
+        compilables,
+        kernel,
+        declaring_bindings=declaring_agent_bindings,
+        verifier="verify_agent_markers",
+    )
+
+
+def _reject_mcp_markers(compilables: Sequence[type[Compilable]], kernel: KernelRuntime) -> None:
+    """Refuse an ``Mcp()`` marker through :func:`loom.ai._startup.verify_mcp_markers`."""
+    _reject_markers(
+        compilables,
+        kernel,
+        declaring_bindings=declaring_mcp_bindings,
+        verifier="verify_mcp_markers",
+    )
 
 
 # ---------------------------------------------------------------------------

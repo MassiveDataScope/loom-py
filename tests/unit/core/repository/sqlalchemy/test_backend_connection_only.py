@@ -7,12 +7,11 @@ as the caller compiled it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled, reset_registry
+from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
@@ -29,13 +28,6 @@ class _CallerCompiled(BaseModel):
     __tablename__ = "caller_compiled_connection_only"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
-
-
-@pytest.fixture(autouse=True)
-def _clean_registry() -> Iterator[None]:
-    reset_registry()
-    yield
-    reset_registry()
 
 
 def _wiring(database: dict[str, Any]) -> PersistenceWiring:

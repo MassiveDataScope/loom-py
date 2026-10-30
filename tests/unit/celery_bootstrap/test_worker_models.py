@@ -27,6 +27,7 @@ from loom.core.use_case.errors import UnservedModelError, UseCaseErrorCode
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.celery import WorkerDouble, isolated_signals
 
 
 class _Order(BaseModel):
@@ -75,19 +76,12 @@ class _PageThroughOrdersJob(Job[list[list[str]]]):
         return list(await self._app.invoke(_PageThroughOrders))
 
 
-class _SoloWorker:
-    pool_cls = "solo"
-
-
-_SIGNALS = (worker_init, worker_shutdown)
+_isolated_signals = isolated_signals(worker_init, worker_shutdown)
 
 
 @pytest.fixture(autouse=True)
-def _isolated() -> Iterator[None]:
-    saved = [list(cast(list[Any], signal.receivers)) for signal in _SIGNALS]
+def _reset_registry() -> Iterator[None]:
     yield
-    for signal, receivers in zip(_SIGNALS, saved, strict=True):
-        cast(list[Any], signal.receivers)[:] = receivers
     reset_registry()
 
 
@@ -137,7 +131,7 @@ def test_a_declared_model_serves_cursor_pagination_to_a_job(tmp_path: Path) -> N
     result = bootstrap_worker(_config(tmp_path, discover=True), environment="test")
     task = result.celery_app.tasks[f"{TASK_JOB_PREFIX}.{_PageThroughOrdersJob.__qualname__}"]
 
-    worker_init.send(sender=_SoloWorker())
+    worker_init.send(sender=WorkerDouble())
     try:
         pages = task.apply().get()
     finally:

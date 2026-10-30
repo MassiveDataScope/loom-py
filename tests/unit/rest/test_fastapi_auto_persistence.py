@@ -30,9 +30,9 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import _AppConfig, _discover_components
 from loom.rest.fastapi.auto import create_app
 from loom.rest.model import RestInterface, RestRoute
+from tests.helpers.composition import composition_source
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
-from tests.unit.rest._composition import composition_source
 from tests.unit.rest._fixture_app import UUID4_ID_FIELD, write_project
 
 

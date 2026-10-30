@@ -26,7 +26,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
-from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
 from loom.core.persistence.database import EXTERNAL, SchemaConfig, load_database_config
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.repository.abc import CursorCodec
@@ -81,11 +81,8 @@ class SQLAlchemyBackend:
         Returns:
             The SQLAlchemy wiring.
 
-        With ``runtime.connection_only`` only the unit of work and the session
-        manager are served: no cursor codec, no repository, and
-        ``prepare_models`` leaves the compiled registry as it is. Row-level
-        security then stays unbound, so on Postgres with ``schema.mode:
-        external`` every session fails closed.
+        With ``runtime.connection_only`` no repository is served; see
+        :class:`~loom.core.persistence.BackendRuntime`.
 
         Raises:
             ConfigError: When the ``database`` section is missing or invalid,
@@ -99,8 +96,24 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
-        convention = configured_naming_convention(db_cfg.schema.naming_convention)
-        cursor_codec = None if runtime.connection_only else CursorCodec.from_context(ctx)
+        # Before the engine: an invalid persistence.cursors fails with none built.
+        register: Callable[[SessionManager], Callable[[LoomContainer], None]]
+        prepare: Callable[[Sequence[type[BaseModel]]], None]
+        if runtime.connection_only:
+            prepare = no_model_preparation
+            register = _session_manager_module
+        else:
+            prepare = functools.partial(
+                _prepare_models,
+                convention=configured_naming_convention(db_cfg.schema.naming_convention),
+                settings=settings,
+            )
+            register = functools.partial(
+                _repositories_module,
+                models=models,
+                cursor_codec=CursorCodec.from_context(ctx),
+                elevation=settings is not None,
+            )
         session_manager = build_session_manager(
             db_cfg,
             runtime.profile,
@@ -109,37 +122,39 @@ class SQLAlchemyBackend:
         )
         if settings is not None:
             install_pool_reset(session_manager.engine)
-        if cursor_codec is None:
-            return PersistenceWiring(
-                uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
-                repo_registration_module=functools.partial(
-                    _register_session_manager, session_manager
-                ),
-                lifespan_init=lambda: _lifespan(session_manager),
-                startup_checks=functools.partial(
-                    _run_startup_checks, session_manager, db_cfg.schema
-                ),
-                readiness=lambda: _readiness(session_manager),
-            )
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
-            repo_registration_module=_with_elevation_sink(
-                build_sqlalchemy_repository_registration_module(
-                    session_manager, models, cursor_codec=cursor_codec
-                ),
-                enabled=settings is not None,
-            ),
+            repo_registration_module=register(session_manager),
             lifespan_init=lambda: _lifespan(session_manager),
-            prepare_models=functools.partial(
-                _prepare_models, convention=convention, settings=settings
-            ),
+            prepare_models=prepare,
             startup_checks=functools.partial(_run_startup_checks, session_manager, db_cfg.schema),
             readiness=lambda: _readiness(session_manager),
         )
 
 
+def _session_manager_module(session_manager: SessionManager) -> Callable[[LoomContainer], None]:
+    """The module of a backend serving no repository: the session manager only."""
+    return functools.partial(_register_session_manager, session_manager)
+
+
+def _repositories_module(
+    session_manager: SessionManager,
+    *,
+    models: Sequence[type[BaseModel]],
+    cursor_codec: CursorCodec,
+    elevation: bool,
+) -> Callable[[LoomContainer], None]:
+    """The module registering a repository per model, and the elevation sink when scoped."""
+    return _with_elevation_sink(
+        build_sqlalchemy_repository_registration_module(
+            session_manager, models, cursor_codec=cursor_codec
+        ),
+        enabled=elevation,
+    )
+
+
 def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
-    """Register only the session manager: the module of a backend serving no repository."""
+    """Register the session manager unless the container already holds one."""
     if not container.is_registered(SessionManager):
         container.register_instance(SessionManager, session_manager)
 

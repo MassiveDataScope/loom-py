@@ -9,10 +9,36 @@ from typing import Any
 
 import pytest
 
-from loom.composition import Application
+from loom.composition import AppConfig, Application, CompositionSource
+from loom.core.config import ConfigContext, ConfigKey
+from loom.core.environment import Environment
+from loom.core.observability.runtime import ObservabilityRuntime
 from tests.unit.rest._fixture_app import write_project
 
 ProjectFactory = Callable[..., str]
+
+
+def composition_source(
+    ctx: ConfigContext,
+    *,
+    environment: Environment = Environment.TEST,
+    app: AppConfig | None = None,
+    code_path: Path | None = None,
+    config_root: Path | None = None,
+) -> CompositionSource:
+    """What ``build_application`` would have resolved from files holding *ctx*.
+
+    Without *app*, the ``app`` section of *ctx* is decoded; the paths default
+    to the working directory.
+    """
+    return CompositionSource(
+        config=ctx,
+        environment=environment,
+        code_path=code_path if code_path is not None else Path.cwd(),
+        config_root=config_root if config_root is not None else Path.cwd(),
+        app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),
+        observability=ObservabilityRuntime.noop(),
+    )
 
 
 @pytest.fixture
