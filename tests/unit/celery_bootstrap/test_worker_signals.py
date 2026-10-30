@@ -13,7 +13,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from celery.concurrency.prefork import TaskPool as PreforkPool
@@ -26,7 +26,11 @@ from celery.signals import (
 )
 
 from loom.celery.adapter import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
-from loom.celery.constants import TASK_JOB_PREFIX
+from loom.celery.constants import (
+    TASK_CALLBACK_ERROR_PREFIX,
+    TASK_CALLBACK_PREFIX,
+    TASK_JOB_PREFIX,
+)
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
 from loom.composition import AppConfig, Application, compose_application
@@ -192,11 +196,23 @@ class _PingJob(Job[int]):
         return 1
 
 
+class _SyncCallback:
+    """Sync hooks run in the task thread, not on the bridge: they must still refuse."""
+
+    calls: ClassVar[list[str]] = []
+
+    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
+        self.calls.append("success")
+
+    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+        self.calls.append("failure")
+
+
 class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_SyncCallback])
         source = composition_source(
             ConfigContext.from_dict(
                 {
@@ -220,13 +236,12 @@ class TestFailedChildOpen:
             yield application
 
         cast(Any, application).running = _failing
-        celery_app = adapter.bind(application)
-        return celery_app.tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
+        return adapter.bind(application)
 
     def test_every_task_fails_fast_naming_the_failure_to_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        task = self._worker(tmp_path)
+        task = self._worker(tmp_path).tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
 
         with caplog.at_level(logging.ERROR, logger="loom.celery.adapter"):
             worker_process_init.send(sender=None)
@@ -235,9 +250,30 @@ class TestFailedChildOpen:
         for failure in failures:
             assert isinstance(failure, WorkerNotOpenError)
             assert isinstance(failure.__cause__, RuntimeError)
-            assert failure.cause is failure.__cause__
+            assert "RuntimeError: clickhouse unreachable" in str(failure)
         opening = [r for r in caplog.records if "failed to open its application" in r.message]
         assert len(opening) == 1
+
+    @pytest.mark.parametrize(
+        ("prefix", "kwargs"),
+        [
+            (TASK_CALLBACK_PREFIX, {"args": (1,)}),
+            (TASK_CALLBACK_ERROR_PREFIX, {}),
+        ],
+        ids=["on_success", "on_failure"],
+    )
+    def test_a_sync_callback_task_refuses_too(
+        self, tmp_path: Path, prefix: str, kwargs: dict[str, Any]
+    ) -> None:
+        celery_app = self._worker(tmp_path)
+        task = celery_app.tasks[f"{prefix}.{_SyncCallback.__qualname__}"]
+        _SyncCallback.calls.clear()
+
+        worker_process_init.send(sender=None)
+        failure = task.apply(**kwargs, kwargs={"job_id": "job-1", "context": {}}).result
+
+        assert isinstance(failure, WorkerNotOpenError)
+        assert _SyncCallback.calls == []
 
 
 class TestClosing:

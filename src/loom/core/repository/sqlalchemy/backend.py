@@ -246,13 +246,20 @@ def startup_checks(
             "use database.schema.mode: external and create_schema(migrator_url, application)"
         )
     unprotected = check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
-    if scoped and dialect == "postgresql":
-        names = ", ".join(sorted(table.name for table in scoped.values()))
-        raise ConfigError(
-            f"create_all cannot protect scoped tables {names}; run "
-            "create_schema(migrator_url, application) and set database.schema.mode: external"
-        )
+    if dialect == POSTGRES_DIALECT:
+        _refuse_unprotected_scoped(scoped)
     return unprotected
+
+
+def _refuse_unprotected_scoped(scoped: Mapping[tuple[str | None, str], ScopedTable]) -> None:
+    """Refuse scoped tables on Postgres outside an external schema: nothing protects them."""
+    if not scoped:
+        return
+    names = ", ".join(sorted(table.name for table in scoped.values()))
+    raise ConfigError(
+        f"create_all cannot protect scoped tables {names}; run "
+        "create_schema(migrator_url, application) and set database.schema.mode: external"
+    )
 
 
 def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
@@ -314,15 +321,25 @@ async def _probe_connection(session_manager: SessionManager, config: SchemaConfi
     """Open one connection and run ``SELECT 1``, then drop queued connections.
 
     The startup of a backend serving no repository: the process-wide metadata
-    holds tables this host does not serve, so none is created or inspected and
-    the schema settings in *config* are not consulted. The engine is used
-    directly, not a session, so unbound row-level security settings do not
-    refuse the probe. A failure to connect propagates as the driver raised it.
+    holds tables this host does not serve, so none is created or inspected.
+    On Postgres the two refusals that protect row-level security still hold:
+    scoped tables in that metadata outside ``schema.mode: external``, before
+    connecting, and a superuser or bypass role, on the probe's connection.
+    The engine is used directly, not a session, so unbound row-level security
+    settings do not refuse the probe. A failure to connect propagates as the
+    driver raised it.
+
+    Raises:
+        ConfigError: When a Postgres connection would bypass row-level security.
     """
-    del config
+    postgres = session_manager.engine.dialect.name == POSTGRES_DIALECT
+    if postgres and config.mode != EXTERNAL:
+        _refuse_unprotected_scoped(scoped_tables())
     try:
         async with session_manager.engine.connect() as connection:
             await connection.execute(_PROBE)
+            if postgres:
+                await _reject_privileged_connection(connection)
     finally:
         await _release_queued(session_manager)
 

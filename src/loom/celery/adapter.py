@@ -16,9 +16,11 @@ refuses, and when the Celery signals check, open and close the application:
 
 A worker with no model asks for its connection only
 (``BackendRuntime.connection_only``), serving no repository: its check
-probes the connection and creates no table, and its row-level security
-is never bound, so on Postgres with ``schema.mode: external`` every
-session it opens fails closed instead of running unscoped.
+probes the connection and creates no table, though on Postgres it still
+refuses a superuser or bypass role and scoped tables outside an external
+schema; its row-level security is never bound, so on Postgres with
+``schema.mode: external`` every session it opens fails closed instead of
+running unscoped.
 
 Fork safety follows from :meth:`~loom.composition.Application.check`: it
 leaves no connection open, so nothing the parent touched crosses the fork.
@@ -448,8 +450,12 @@ class CeleryAdapter:
             ConfigError: When ``celery`` or ``database`` is misdeclared, or no
                 backend is registered under the name the worker resolves.
             RuntimeError: When no job is passed and no ``app.discovery`` is
-                configured.
+                configured, or this instance already composed an application.
         """
+        if self._declared is not None:
+            raise RuntimeError(
+                "one adapter instance composes one application; create another adapter"
+            )
         ctx = source.config
         celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
         resolved = _resolve_compilables_and_jobs(ctx, self._jobs, self._use_cases)

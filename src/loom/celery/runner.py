@@ -21,7 +21,9 @@ tasks.
 
 Callbacks follow the same pattern: async ``on_success`` / ``on_failure``
 methods are submitted to the shared :class:`~loom.core.async_bridge.AsyncBridge`;
-sync methods are called directly from the task thread.
+sync methods are called directly from the task thread. Every task body first
+calls ``ensure_open``, so a process whose application failed to open refuses
+sync and async work alike.
 """
 
 from __future__ import annotations
@@ -84,6 +86,18 @@ class _CeleryAsyncRuntime:
         """Fail every later :meth:`run` of this process: its application did not open."""
         self._open_failure = cause
 
+    def ensure_open(self) -> None:
+        """Refuse a task of a process whose application failed to open.
+
+        Every task body calls it first: a sync callback never reaches
+        :meth:`run`, so the gate there alone would let it run.
+
+        Raises:
+            WorkerNotOpenError: When :meth:`refuse` recorded a failure to open.
+        """
+        if self._open_failure is not None:
+            raise WorkerNotOpenError(self._open_failure) from self._open_failure
+
     def run(
         self,
         coro: Any,
@@ -97,9 +111,11 @@ class _CeleryAsyncRuntime:
             WorkerNotOpenError: When :meth:`refuse` recorded that this
                 process's application failed to open; *coro* is closed unrun.
         """
-        if self._open_failure is not None:
+        try:
+            self.ensure_open()
+        except WorkerNotOpenError:
             _close_unrun(coro)
-            raise WorkerNotOpenError(self._open_failure) from self._open_failure
+            raise
         if self._bridge is not None and self._bridge.is_alive:
             return self._bridge.run(coro, timeout=timeout)
 
@@ -318,6 +334,8 @@ def _make_job_task(
         trace_id: str | None,
     ) -> Any:
         """Build the job instance and run it under the job span."""
+        # Inside the task's retry handling: a retry may land on a healthy process.
+        async_runtime.ensure_open()
         with runtime.span(
             Scope.JOB,
             name,
@@ -434,6 +452,7 @@ def _make_callback_task(
         context: dict[str, Any],
         trace_id: str | None = None,
     ) -> None:
+        async_runtime.ensure_open()
         token = _install_trace(trace_id)
         try:
             with runtime.span(
@@ -513,6 +532,7 @@ def _make_callback_error_task(
         context: dict[str, Any],
         trace_id: str | None = None,
     ) -> None:
+        async_runtime.ensure_open()
         token = _install_trace(trace_id)
         try:
             with runtime.span(

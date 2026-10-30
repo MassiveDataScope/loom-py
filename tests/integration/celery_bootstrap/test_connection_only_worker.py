@@ -2,28 +2,31 @@
 
 The prefork parent runs the check before Celery forks, so the check must not
 leave a connection the children would inherit, nor create the tables the
-process-wide metadata holds for models this worker does not serve.
+process-wide metadata holds for models this worker does not serve. Nor may it
+connect as a role that ignores row-level security: the worker connects as an
+ordinary role created for the test, and a superuser fails the check.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import event, inspect, text
+from sqlalchemy import event, inspect, make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.celery.adapter import CeleryAdapter
 from loom.composition import AppConfig, compose_application
 from loom.core.backend.sqlalchemy import compile_all, reset_registry
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.model.types import Integer
@@ -62,6 +65,49 @@ def _database() -> str:
     return database
 
 
+async def _admin(database: str, statement: str) -> None:
+    engine = create_async_engine(database, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text(statement))
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def worker_url() -> AsyncIterator[str]:
+    """The URL of an ordinary login role: neither superuser nor bypassing row-level security."""
+    database = _database()
+    role = f"loom_worker_{secrets.token_hex(4)}"
+    password = secrets.token_hex(12)
+    await _admin(
+        database, f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS"
+    )
+    try:
+        yield (
+            make_url(database)
+            .set(username=role, password=password)
+            .render_as_string(hide_password=False)
+        )
+    finally:
+        await _admin(database, f'DROP ROLE IF EXISTS "{role}"')
+
+
+def _worker(tmp_path: Path, url: str) -> Any:
+    source = composition_source(
+        ConfigContext.from_dict(
+            {
+                "database": {"url": url},
+                "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
+            }
+        ),
+        app=AppConfig(name="worker"),
+        code_path=tmp_path,
+        config_root=tmp_path,
+    )
+    return compose_application(source, CeleryAdapter(jobs=[_RawSqlJob]))
+
+
 async def _connections(database: str, name: str) -> int:
     engine = create_async_engine(database, poolclass=NullPool)
     try:
@@ -94,21 +140,12 @@ async def _has_table(database: str) -> bool:
         await engine.dispose()
 
 
-async def test_the_check_probes_once_and_leaves_no_connection(tmp_path: Path) -> None:
+async def test_the_check_probes_once_and_leaves_no_connection(
+    tmp_path: Path, worker_url: str
+) -> None:
     database = _database()
     compile_all(_Unserved)
-    source = composition_source(
-        ConfigContext.from_dict(
-            {
-                "database": {"url": database},
-                "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
-            }
-        ),
-        app=AppConfig(name="worker"),
-        code_path=tmp_path,
-        config_root=tmp_path,
-    )
-    application = compose_application(source, CeleryAdapter(jobs=[_RawSqlJob]))
+    application = _worker(tmp_path, worker_url)
     manager = application.kernel.container.resolve(SessionManager)
     name = f"connection-only-{uuid.uuid4().hex[:12]}"
     opened: list[str] = []
@@ -126,5 +163,21 @@ async def test_the_check_probes_once_and_leaves_no_connection(tmp_path: Path) ->
         assert (pool.checkedout(), pool.checkedin()) == (0, 0)
         assert await _settled_connections(database, name) == 0
         assert not await _has_table(database)
+    finally:
+        await manager.dispose()
+
+
+async def test_a_superuser_fails_the_check_and_leaves_no_connection(tmp_path: Path) -> None:
+    """The test container's admin is a superuser: it would ignore row-level security."""
+    database = _database()
+    application = _worker(tmp_path, database)
+    manager = application.kernel.container.resolve(SessionManager)
+
+    try:
+        with pytest.raises(ConfigError, match="superuser or a bypass role"):
+            await application.check()
+
+        pool: Any = manager.engine.sync_engine.pool
+        assert (pool.checkedout(), pool.checkedin()) == (0, 0)
     finally:
         await manager.dispose()

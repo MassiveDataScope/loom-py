@@ -571,9 +571,14 @@ class FastAPIAdapter:
                 endpoint is misdeclared; before any discovery.
             RestInterfaceConfigError: When a YAML interface or disabled route
                 is malformed.
-            RuntimeError: When discovery finds nothing to serve, or a CRUD
-                route cannot be served by the backend.
+            RuntimeError: When discovery finds nothing to serve, a CRUD
+                route cannot be served by the backend, or this instance
+                already composed an application.
         """
+        if self._declared is not None:
+            raise RuntimeError(
+                "one adapter instance composes one application; create another adapter"
+            )
         ctx = source.config
         app_cfg = _section_app_config(ctx)
         metrics_cfg = _load_observability_config(ctx).prometheus

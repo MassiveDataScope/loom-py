@@ -125,6 +125,20 @@ class TestRecipe:
 
         assert recipe.metrics is metrics
 
+    def test_a_second_recipe_on_the_same_adapter_is_refused(self, tmp_path: Path) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
+        adapter.recipe(_source(tmp_path, {}))
+
+        with pytest.raises(RuntimeError, match="one adapter instance composes one application"):
+            adapter.recipe(_source(tmp_path, {}))
+
+    def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
+        with pytest.raises(ConfigError):
+            adapter.recipe(_source(tmp_path, {"database": {"URL": "x"}}))
+
+        assert adapter.recipe(_source(tmp_path, {})).profile is WORKER_PROFILE
+
 
 class TestBind:
     def test_bind_returns_a_celery_app_with_jobs_and_callbacks(self, tmp_path: Path) -> None:

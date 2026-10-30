@@ -51,3 +51,11 @@ def test_the_lifespan_opens_the_application_once_and_closes_it(
 def test_bind_before_recipe_is_refused() -> None:
     with pytest.raises(RuntimeError, match="call recipe first"):
         FastAPIAdapter().bind(object())  # type: ignore[arg-type]
+
+
+def test_a_second_recipe_on_the_same_adapter_is_refused(fixture_project: ProjectFactory) -> None:
+    adapter = FastAPIAdapter()
+    compose(fixture_project("first"), adapter=adapter, environment="test")
+
+    with pytest.raises(RuntimeError, match="one adapter instance composes one application"):
+        compose(fixture_project("second"), adapter=adapter, environment="test")

@@ -17,9 +17,10 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.model import BaseModel, ColumnField, ColumnType
+from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
+from loom.core.model.types import Integer
 from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.profile import WORKER_PROFILE, BackendRuntime
 from loom.core.repository.abc import CursorCodec
@@ -42,6 +43,15 @@ class _CallerZoned(BaseModel):
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
     closes_at: time = ColumnField(ColumnType("Time", kwargs={"timezone": True}))
+
+
+class _CallerScoped(BaseModel, RowScoped):
+    """A scoped table some other host of the process compiled."""
+
+    __tablename__ = "caller_scoped_connection_only"
+
+    holder: int = ScopedField(Integer, primary_key=True, scope="holder")
+    id: int = ColumnField(Integer, primary_key=True)
 
 
 def _wiring(database: dict[str, Any]) -> PersistenceWiring:
@@ -122,3 +132,23 @@ async def test_an_unreachable_database_fails_the_startup(tmp_path: Path) -> None
         await wiring.startup_checks()
 
     assert _idle(wiring) == (0, 0)
+
+
+async def test_postgres_refuses_scoped_tables_outside_an_external_schema() -> None:
+    """The refusal ``startup_checks`` makes for create_all, before any connection."""
+    compile_all(_CallerScoped)
+    wiring = _wiring({"url": _POSTGRES})
+    wiring.prepare_models(())
+
+    with pytest.raises(ConfigError, match="create_all cannot protect scoped tables"):
+        await wiring.startup_checks()
+
+    assert _idle(wiring) == (0, 0)
+
+
+async def test_scoped_tables_on_sqlite_are_not_this_refusal(tmp_path: Path) -> None:
+    compile_all(_CallerScoped)
+    wiring = _wiring({"url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"})
+    wiring.prepare_models(())
+
+    await wiring.startup_checks()
