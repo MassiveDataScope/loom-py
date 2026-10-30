@@ -321,7 +321,12 @@ def _resources(
     registry, runtime = sql.registry, ai.runtime
     if registry is not None:
         resources.append(
-            Resource(kind=ResourceKind.SQL, name="clickhouse", manager=lambda: registry)
+            Resource(
+                kind=ResourceKind.SQL,
+                name="clickhouse",
+                manager=lambda: registry,
+                check=registry.check,
+            )
         )
     if runtime is not None:
         resources.append(Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime))

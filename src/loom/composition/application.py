@@ -76,7 +76,9 @@ class Application:
         """Run every resource's startup checks without opening anything.
 
         Raises:
-            ConfigError: When the schema or the roles of a store do not pass.
+            ConfigError: When the schema or the roles of a store do not pass,
+                or a ClickHouse connection fails its driver checks or its
+                role-enforcement probe.
         """
         for resource in self.resources:
             if resource.check is not None:
