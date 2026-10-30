@@ -479,12 +479,16 @@ an opaque `AttributeError` on the first call. The wrapper's constructor refuses
 instead, and the container reports it as a `ResolutionError` naming the class and
 the methods it lacks. Drop `@cached` from a partial repository, or complete it.
 
-Celery builds the gateways once, pre-fork, when the worker validates its
-container. A Redis client shared across forked children is the deployment's
-concern until a per-worker init hook exists; the memory backend is unaffected.
+Celery builds the gateways once, pre-fork, when the worker composes its
+application; each child closes them when it closes the application. A Redis
+client created in the parent and used across forked children is still the
+deployment's concern; the memory backend is unaffected.
 
 ## Lifecycle
 
-The REST app closes the cache gateways at shutdown, beside the SQL registry:
+The application closes the cache gateways when it closes, last, after the
+persistence store, the agent runtime and the SQL registry — in the API's
+lifespan and in each Celery worker process alike (see
+[Composition and lifecycle](../getting-started/composition.md#lifecycle)):
 one `close` per distinct alias, so two with a separate `counter_alias` and one
 when the counters share the data alias.

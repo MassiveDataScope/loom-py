@@ -1,8 +1,9 @@
 # Celery worker
 
-`loom-kernel` bootstraps Celery workers from the same config and discovery system used
-by the REST API. Jobs are first-class citizens — they support `Input()`, `LoadById()`,
-`Rule`, and full DI injection just like use cases.
+`loom-kernel` bootstraps Celery workers from the same config, discovery and
+composition used by the REST API: the worker gets the same persistence backends,
+row-level security and startup checks. Jobs are first-class citizens — they
+support `Input()`, `LoadById()`, `Rule`, and full DI injection just like use cases.
 
 ---
 
@@ -23,6 +24,8 @@ pip install "loom-kernel[celery]"
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
+| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.adapter`) |
+| `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
 
@@ -568,6 +571,79 @@ uv run celery -A app.worker_main:celery_app worker \
     --concurrency=4 \
     --loglevel=INFO
 ```
+
+---
+
+## Application lifecycle
+
+The worker composes on the same recipe as the API
+([Composition and lifecycle](../getting-started/composition.md)):
+`bootstrap_worker`, `loom.celery.auto.create_app` and
+`loom.composition.create_app(..., adapter=CeleryAdapter(...))` build the same
+application. What stays specific to the worker is its discovery, its pool
+profile (`WORKER_PROFILE`), the agent markers it refuses, and which Celery
+signal checks, opens and closes the application:
+
+| Pool | Checks | Opens | Closes |
+|---|---|---|---|
+| prefork (the default) | `worker_init`, once, in the parent | `worker_process_init`, in each child, without checking again | `worker_process_shutdown` and `worker_shutdown`, best effort |
+| any other (`solo`, `threads`, ...) | `worker_init` | `worker_init` | `worker_shutdown` |
+
+```python
+# src/app/worker_main.py
+from loom.celery.adapter import CeleryAdapter
+from loom.composition import create_app
+
+celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
+```
+
+- The startup checks — `create_all`, or with `schema.mode: external` the
+  tables, the connecting role and the row-level-security guard — run once per
+  worker, in the parent, before any child exists. They leave no connection
+  open, so no pool crosses the fork, and a failed check stops the worker
+  (`WorkerTerminate`, exit status 1) before it creates a child.
+- Each prefork child opens the application on the async bridge that runs its
+  tasks, so every connection is created on the loop that uses it. Opening
+  creates no connection: the engine connects on first use.
+- A child that fails to open is not killed — the pool would respawn it into
+  the same failure. The failure is logged once, and every task of that child
+  fails fast with `WorkerNotOpenError` (`loom.celery.errors`), chained to the
+  failure to open. It is a system error: a retry may land on a healthy child.
+- Neither shutdown signal is guaranteed by Celery. Closing is idempotent and
+  best effort: a failure to close is logged, never raised into Celery. The
+  cache gateways are closed with the rest (they used to be left open).
+- The signal handlers carry a fixed `dispatch_uid`: composing a worker again
+  in the same process (an integration test, say) replaces the previous
+  handlers, and only the latest application is checked, opened and closed.
+- Every task is registered with `shared=False`, on its own Celery app only,
+  so a second worker app composed in the same process never serves a task
+  bound to the first one.
+
+### Persistence
+
+The worker resolves its backend like the API, through the
+`loom.persistence.backends` entry points:
+
+1. `persistence.backend`, when set — `sqlalchemy`, `mongo`, `dynamodb`,
+   `none` or a backend of your own;
+2. else `sqlalchemy`, when `database` is the worker's own section (it holds
+   a key of the `database` contract, such as `url`);
+3. else `none`: a worker of pure jobs pays for no persistence.
+
+With `sqlalchemy` the worker applies row-level security exactly as the API
+does: session settings per transaction, the pool reset, and the
+`schema.mode: external` checks. A backend whose extra is not installed stops
+startup with a `ConfigError` naming `loom-kernel[<backend>]`. Agent and MCP
+markers are still refused at startup: the worker hosts no agent runtime.
+
+A worker that discovers no model runs connection-only: no repository and no
+cursor codec, and its startup check is a single `SELECT 1` that, on Postgres,
+still refuses a superuser or `BYPASSRLS` role and `create_all` over scoped
+tables; see
+[Workers without models](../getting-started/composition.md#workers-without-models).
+A job or use case that reads a model no repository serves — through
+`main_repo`, `LoadById`, `Load` or `Exists` — fails the worker at startup
+with `UnservedModelError`, not its first task.
 
 ---
 

@@ -367,8 +367,9 @@ The logger's renderer and colours follow the environment unless
 ## Deploy checks
 
 In `production` and `staging`, every entry point runs the deploy checks on
-its final configuration before the application or the runner is built, in
-the spirit of Django's
+its final configuration before any resource of the application or the runner
+is built (for `create_app` and the worker, right after discovery, so
+`checks.modules` may name the application's modules), in the spirit of Django's
 `manage.py check --deploy`: REST and Celery `create_app`, `bootstrap_worker`,
 `ETLRunner` and `StreamingRunner` built from a configuration, and the Prefect
 flows through them. Each check has a stable id `<area>.<E|W><nnn>`: an `E`

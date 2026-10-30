@@ -540,12 +540,14 @@ use cases are verified — the same semantics as the Celery `create_app`. A use
 case injecting `Clock` without the module still aborts startup with a
 `ResolutionError` naming the use case and the missing binding.
 
-Modules bind ports, they do not override the framework. `register` is
-last-write-wins, and `create_app` registers its own bindings after your modules:
-the repositories, the cache module, `JobService`, `SqlQueryService`,
-`CallerBoundSql`, `ObservabilityRuntime` and, on PostgreSQL with
-`database.schema.mode: external`, `ElevationSink`. A module that binds one of those keys is silently
-replaced.
+Modules run before `create_app` registers its own services. A module's
+`JobService` is kept, and repositories are replaced through `repository_for`
+or a custom `DefaultRepositoryBuilder`. The framework-owned keys
+(`SessionManager`, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`,
+`ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`)
+are reserved: a module that binds one stops startup with a typed error naming
+the key. See
+[Caller bindings and framework defaults](composition.md#caller-bindings-and-framework-defaults).
 
 ---
 
