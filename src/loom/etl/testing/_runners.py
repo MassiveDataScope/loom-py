@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import polars as pl
 
@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 SeedSchema = Mapping[str, LoomType]
 """Loom types of some or all seeded columns."""
 
-TempData = Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame
+# A string alias: the docs build mocks polars, so the union must not run at import.
+TempData: TypeAlias = "Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame"
 """Data ``seed_temp`` accepts with a temp name: row tuples or a Polars frame."""
 
 _TEMP_ROOT = "memory://loom-step-runner"

@@ -58,6 +58,7 @@ from ._file_writer import PolarsFileWriter
 from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
 
 _log = get_logger(__name__)
+_COMMIT_EVENT = "delta write commit"
 
 
 def _log_write_start(
@@ -97,12 +98,12 @@ def _log_write_commit(mode: str, location: TableLocation) -> None:
     try:
         dt = _open_delta_table(location)
         if dt is None:
-            _log.info("delta write commit", mode=mode, uri=location.uri, metrics="unavailable")
+            _log.info(_COMMIT_EVENT, mode=mode, uri=location.uri, metrics="unavailable")
             return
         version, entry = _last_commit(dt)
         metrics = entry.get("operationMetrics") or {}
         _log.info(
-            "delta write commit",
+            _COMMIT_EVENT,
             mode=mode,
             uri=location.uri,
             version=version,
@@ -111,7 +112,7 @@ def _log_write_commit(mode: str, location: TableLocation) -> None:
             files=int(metrics.get("numAddedFiles", 0)) or None,
         )
     except Exception:  # noqa: BLE001
-        _log.info("delta write commit", mode=mode, uri=location.uri, metrics="unavailable")
+        _log.info(_COMMIT_EVENT, mode=mode, uri=location.uri, metrics="unavailable")
 
 
 def _check_null_dtype_columns_lazy(frame: pl.LazyFrame) -> None:

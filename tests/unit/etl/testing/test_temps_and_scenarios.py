@@ -185,9 +185,10 @@ class TestSeedTemp:
     def test_seeding_the_alias_does_not_satisfy_from_temp(self) -> None:
         runner = PolarsStepRunner().seed_temp("orders", [(1, 10.0)], ["id", "amount"])
         runner.seed("orders", [(1, 10.0)], ["id", "amount"])
+        params = P()
 
         with pytest.raises(FileNotFoundError, match="normalized_orders"):
-            runner.run(Enrich, P())
+            runner.run(Enrich, params)
 
 
 # 2 ---------------------------------------------------------------------------
@@ -203,9 +204,10 @@ class TestIntoTempResult:
 class TestIntoTempRejectsEagerFrames:
     def test_dataframe_from_execute_raises_like_production(self) -> None:
         runner = PolarsStepRunner(_ORDERS)
+        params = P()
 
         with pytest.raises(TypeError, match="expects polars.LazyFrame"):
-            runner.run(EagerIntoTemp, P())
+            runner.run(EagerIntoTemp, params)
 
 
 # 4 ---------------------------------------------------------------------------
@@ -262,8 +264,10 @@ class TestChaining:
 
         assert sorted(result.to_polars()["amount"].to_list()) == [10.0, 20.0]
 
-    def test_after_runs_the_upstream_step_once_across_applications(self) -> None:
-        Normalize.calls = 0
+    def test_after_runs_the_upstream_step_once_across_applications(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Normalize, "calls", 0)
         normalized = _ORDERS.after(Normalize, P())
 
         first = PolarsStepRunner(normalized).run(Enrich, P())
@@ -276,12 +280,15 @@ class TestChaining:
 
     def test_after_ignores_seeds_outside_its_prefix(self) -> None:
         runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
+        normalized = ETLScenario().after(Normalize, P())
 
         with pytest.raises(KeyError, match="raw.orders"):
-            ETLScenario().after(Normalize, P()).apply(runner)
+            normalized.apply(runner)
 
-    def test_composed_scenarios_reuse_the_same_after_result(self) -> None:
-        Normalize.calls = 0
+    def test_composed_scenarios_reuse_the_same_after_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Normalize, "calls", 0)
         small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
         large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
         normalized = _ORDERS.after(Normalize, P())
@@ -292,8 +299,10 @@ class TestChaining:
         assert Normalize.calls == 1
         assert from_small.to_polars().equals(from_large.to_polars())
 
-    def test_two_prefixes_with_the_same_after_give_their_own_results(self) -> None:
-        Normalize.calls = 0
+    def test_two_prefixes_with_the_same_after_give_their_own_results(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Normalize, "calls", 0)
         small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
         large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
         small_after = small.after(Normalize, P())
@@ -321,9 +330,10 @@ class TestChaining:
 
     def test_seed_temp_without_a_name_needs_an_into_temp_result(self) -> None:
         not_a_temp = StepResult(pl.DataFrame({"id": [1]}))
+        runner = PolarsStepRunner()
 
         with pytest.raises(ValueError, match="temp name"):
-            PolarsStepRunner().seed_temp(not_a_temp)
+            runner.seed_temp(not_a_temp)
 
 
 # 7 ---------------------------------------------------------------------------
@@ -432,9 +442,10 @@ class TestSourceFinalisation:
 
     def test_unknown_column_fails(self) -> None:
         runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
+        params = P()
 
         with pytest.raises(pl.exceptions.ColumnNotFoundError):
-            runner.run(UnknownColumn, P())
+            runner.run(UnknownColumn, params)
 
     def test_parse_json_columns_reach_the_step_decoded(self) -> None:
         runner = PolarsStepRunner().seed("raw.events", [('{"kind": "click"}',)], ["payload"])
@@ -490,5 +501,7 @@ class TestDeleteMetricsInMemory:
             _ = result.merged
 
     def test_table_needs_delta_root(self) -> None:
+        runner = PolarsStepRunner()
+
         with pytest.raises(RuntimeError, match="delta_root"):
-            PolarsStepRunner().table("raw.orders")
+            runner.table("raw.orders")

@@ -204,9 +204,10 @@ class TestReplaceOnPartitionedTable:
 class TestRealWriterContract:
     def test_eager_frame_into_a_table_fails_like_production(self, tmp_path: Path) -> None:
         runner = PolarsStepRunner(SALES, delta_root=tmp_path)
+        params = P()
 
         with pytest.raises(AttributeError, match="collect"):
-            runner.run(EagerReplace, P())
+            runner.run(EagerReplace, params)
 
 
 class TestIsolation:
