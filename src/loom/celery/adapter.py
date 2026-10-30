@@ -30,8 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -62,7 +61,7 @@ from loom.celery.runner import (
     _make_callback_task,
     _make_job_task,
 )
-from loom.composition import Application, CompositionSource, Recipe
+from loom.composition import Application, ApplicationHost, CompositionSource, Recipe
 from loom.core.async_bridge import build_backend_options
 from loom.core.bootstrap import KernelRuntime
 from loom.core.checks import REST_CHECKS
@@ -220,6 +219,8 @@ def _reject_mcp_markers(compilables: Sequence[type[Compilable]], kernel: KernelR
 
 
 class _AsyncRuntimeProtocol(Protocol):
+    backend: str
+
     def initialize(self) -> None: ...
 
     def refuse(self, cause: BaseException) -> None: ...
@@ -248,13 +249,23 @@ def _is_prefork(worker: Any) -> bool:
     return isinstance(pool, type) and issubclass(pool, PreforkPool)
 
 
+_Step = Callable[[], Coroutine[Any, Any, Any]]
+"""One bridge call that opens or closes the application."""
+
+
 class _WorkerLifecycle:
     """Checks, opens and closes one worker process's application.
 
     The application is opened on the async bridge that runs the tasks, so a
-    connection is always created on the loop that uses it. Closing is
-    idempotent and best effort: neither shutdown signal is guaranteed, and a
-    failure to close is logged, never raised into Celery.
+    connection is always created on the loop that uses it. An
+    :class:`~loom.composition.ApplicationHost` opens and closes it in one task
+    of the bridge, although each bridge call runs in a task of its own: a
+    task-affine resource (an agent runtime, an MCP client) closes cleanly.
+    Another backend than asyncio has no asyncio task to own it: there the
+    application is entered and exited in two bridge calls, which is safe
+    because the worker hosts no agents. Closing is idempotent and best
+    effort: neither shutdown signal is guaranteed, and a failure to close is
+    logged, never raised into Celery.
 
     Args:
         application: The composed application of the worker.
@@ -264,7 +275,7 @@ class _WorkerLifecycle:
     def __init__(self, application: Application, async_runtime: _AsyncRuntimeProtocol) -> None:
         self._application = application
         self._runtime = async_runtime
-        self._running: AbstractAsyncContextManager[Application] | None = None
+        self._stop: _Step | None = None
 
     def on_worker_init(self, worker: Any) -> None:
         """Check once; open here too unless the pool forks children that open.
@@ -300,28 +311,36 @@ class _WorkerLifecycle:
 
     def close(self) -> None:
         """Close what this process opened, then stop its bridge."""
-        running, self._running = self._running, None
-        exit_coroutine: Any = None
+        stop, self._stop = self._stop, None
+        stop_coroutine: Any = None
         try:
-            if running is not None:
-                exit_coroutine = running.__aexit__(None, None, None)
-                self._runtime.run(exit_coroutine, eager_fallback=False)
+            if stop is not None:
+                stop_coroutine = stop()
+                self._runtime.run(stop_coroutine, eager_fallback=False)
         except Exception:
             _logger.warning("worker application failed to close", exc_info=True)
-            if exit_coroutine is not None:
-                exit_coroutine.close()
+            if stop_coroutine is not None:
+                stop_coroutine.close()
         finally:
             shutdown_runner(self._runtime)
 
     def _open(self, *, check: bool) -> None:
         self._runtime.initialize()
-        running = self._application.running(check=check)
+        start, stop = self._opening(check=check)
         try:
-            self._runtime.run(running.__aenter__(), eager_fallback=False)
+            self._runtime.run(start(), eager_fallback=False)
         except BaseException:
             shutdown_runner(self._runtime)
             raise
-        self._running = running
+        self._stop = stop
+
+    def _opening(self, *, check: bool) -> tuple[_Step, _Step]:
+        """How this process opens and closes its application, each a bridge call."""
+        if self._runtime.backend == "asyncio":
+            host = ApplicationHost(self._application, check=check)
+            return host.start, host.stop
+        running = self._application.running(check=check)
+        return running.__aenter__, lambda: running.__aexit__(None, None, None)
 
 
 def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:

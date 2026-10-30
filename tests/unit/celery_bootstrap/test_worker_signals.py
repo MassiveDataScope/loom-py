@@ -37,7 +37,7 @@ from loom.composition import AppConfig, Application, compose_application
 from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from tests.helpers.celery import WorkerDouble, isolated_signals
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import TaskAffine, application_of, composition_source
 
 _SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
 
@@ -77,7 +77,8 @@ class _ApplicationSpy:
 class _RuntimeSpy:
     """A bridge double that runs nothing, so a failure to run can be forced."""
 
-    def __init__(self) -> None:
+    def __init__(self, backend: str = "asyncio") -> None:
+        self.backend = backend
         self.initialize_calls = 0
         self.shutdown_calls = 0
         self.ran: list[Any] = []
@@ -313,6 +314,63 @@ class TestClosing:
         exit_coroutine = runtime.ran[-1]
         assert inspect.getcoroutinestate(exit_coroutine) == inspect.CORO_CLOSED
         assert runtime.shutdown_calls == 1
+
+
+class TestTaskAffineResources:
+    """Opening and closing run in one task on the bridge, never in two bridge calls."""
+
+    @pytest.mark.parametrize(
+        ("pool", "opening", "closing"),
+        [
+            ("prefork", worker_process_init, worker_process_shutdown),
+            ("solo", worker_init, worker_shutdown),
+        ],
+    )
+    def test_a_task_affine_resource_closes_cleanly(
+        self, pool: str, opening: Any, closing: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        affine = TaskAffine()
+        application = application_of(affine.resource())
+        bridge = _connect(cast(Any, application))
+        worker_init.send(sender=WorkerDouble(pool))
+
+        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
+            opening.send(sender=None)
+            assert application.is_open
+            closing.send(sender=None)
+
+        assert affine.exited_in is not None
+        assert not application.is_open
+        assert "failed to close" not in caplog.text
+        assert bridge._bridge is None
+
+
+class TestBackends:
+    """Only asyncio has the task an :class:`ApplicationHost` owns the application from."""
+
+    @pytest.mark.parametrize(
+        ("backend", "opening", "closing"),
+        [
+            ("asyncio", "ApplicationHost.start", "ApplicationHost.stop"),
+            # Trio enters and exits in two bridge calls, as before: the worker
+            # hosts no agents, the task-affine resources of asyncio.
+            ("trio", "__aenter__", "__aexit__"),
+        ],
+    )
+    def test_the_backend_decides_how_the_application_opens(
+        self, backend: str, opening: str, closing: str
+    ) -> None:
+        runtime = _RuntimeSpy(backend=backend)
+        _connect(_ApplicationSpy(), runtime)
+
+        worker_init.send(sender=WorkerDouble("solo"))
+        worker_shutdown.send(sender=None)
+
+        ran = [coroutine.__qualname__ for coroutine in runtime.ran]
+        assert [name.removeprefix("_AsyncGeneratorContextManager.") for name in ran] == [
+            opening,
+            closing,
+        ]
 
 
 class TestConnecting:
