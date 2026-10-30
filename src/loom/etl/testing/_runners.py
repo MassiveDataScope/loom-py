@@ -28,7 +28,7 @@ from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import RunContext
 from loom.etl.runtime.contracts import SourceReader, TargetWriter
 from loom.etl.schema._schema import ColumnSchema, LoomType, SchemaError
-from loom.etl.testing._delta import DeltaTables
+from loom.etl.testing._delta import _DeltaRoot
 from loom.etl.testing._result import StepResult
 
 if TYPE_CHECKING:
@@ -208,7 +208,7 @@ class PolarsStepRunner:
         self._context = RunContext(run_id="step-runner-run", correlation_id="step-runner")
         self._writer = _CapturingWriter()
         self._config_context: ConfigContext | None = None
-        self._delta = DeltaTables(delta_root) if delta_root is not None else None
+        self._delta = _DeltaRoot(delta_root) if delta_root is not None else None
         for scenario in scenarios:
             scenario.apply(self)
 

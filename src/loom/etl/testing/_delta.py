@@ -1,4 +1,4 @@
-"""Delta tables of a ``PolarsStepRunner(delta_root=...)``: real reader and writer on one root."""
+"""Delta root of a ``PolarsStepRunner(delta_root=...)``: real reader and writer on one root."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from loom.etl.testing._result import MergeMetrics
 _MERGE = "MERGE"
 
 
-class DeltaTables:
-    """Tables of one local Delta root, read and written as production does.
+class _DeltaRoot:
+    """One local Delta root whose tables are read and written as production does.
 
     :meth:`write` is a target writer: it delegates to the real
     :class:`PolarsTargetWriter` and keeps, in :attr:`last_merge`, what the
