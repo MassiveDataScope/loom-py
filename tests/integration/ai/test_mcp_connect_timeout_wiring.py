@@ -1,6 +1,6 @@
 """``ai.startup_timeout_ms`` reaches the real pydantic-ai engine's MCP toolsets (FR-051).
 
-Drives the real composition root — ``create_app`` -> ``_resolve_ai`` ->
+Drives the real composition root — ``create_app`` -> ``resolve_ai`` ->
 ``loom.ai.registry.configure_engine_mcp_connect_timeout`` -> the real,
 installed ``pydantic-ai`` engine's own ``configure_mcp_connect_timeout`` ->
 :class:`~loom.ai.engines.pydantic_ai._mcp.SharedMcpToolsets` — with no fake

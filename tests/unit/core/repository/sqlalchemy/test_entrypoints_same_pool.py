@@ -14,6 +14,7 @@ from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
+from tests.helpers.composition import composition_source
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 _FULL_POOL = {"size": 3, "max_overflow": 1, "timeout": 4, "recycle": 60, "pre_ping": False}
@@ -39,11 +40,23 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
 
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
-    from loom.celery.bootstrap import _resolve_uow_factory
+    from loom.celery.adapter import CeleryAdapter
+    from loom.composition import AppConfig, compose_application
+    from loom.core.job.job import Job
 
-    _factory, manager = _resolve_uow_factory(ConfigContext.from_dict({"database": database}))
-    assert manager is not None
-    return manager
+    class _PingJob(Job[int]):
+        def execute(self) -> int:
+            return 1
+
+    celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
+    source = composition_source(
+        ConfigContext.from_dict({"database": database, "celery": celery}),
+        app=AppConfig(name="worker"),
+    )
+    factory: Any = compose_application(
+        source, CeleryAdapter(jobs=[_PingJob])
+    ).persistence.uow_factory
+    return factory._session_manager
 
 
 def _streaming_manager(database: dict[str, Any]) -> SessionManager:

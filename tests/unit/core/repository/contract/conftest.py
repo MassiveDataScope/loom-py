@@ -4,18 +4,21 @@ Every backend runs the same tests over the same neutral ``Order`` model; a
 test that needs a capability the backend does not declare skips with the
 capability name. Expected query results come from :func:`oracle`, a pure
 Python evaluation of the seed data, so one ``QuerySpec`` must yield the same
-rows on every backend.
+rows on every backend. Mongo runs twice: ``mongo`` autocommits through
+:class:`NoOpMongoUnitOfWork`, and ``mongo-transactional`` joins
+:class:`MongoUnitOfWork`.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Callable
+import weakref
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -26,10 +29,11 @@ from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterS
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWork
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import NoOpMongoUnitOfWork
+from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork, active_session
 from loom.core.repository.registration import capabilities_of
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 
@@ -181,6 +185,8 @@ class BackendCase:
         capabilities: Standard protocols the repository class declares.
         transactions: Whether ``unit_of_work`` really rolls back writes.
         unit_of_work: Builds a unit of work bound to the repository's store.
+        fail_commit: Arms a failure that surfaces from ``commit``, not the
+            body. Called inside the unit of work after the first write.
     """
 
     name: str
@@ -189,6 +195,7 @@ class BackendCase:
     capabilities: frozenset[type]
     transactions: bool
     unit_of_work: Callable[[Any], UnitOfWork]
+    fail_commit: Callable[[Any], Awaitable[None]] | None = None
 
 
 @asynccontextmanager
@@ -229,6 +236,42 @@ async def _mongo_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
     yield RepositoryMongo(Order, collection, cursor_codec=CursorCodec(signing="ephemeral"))
 
 
+# Repository -> client for the transactional mongo case. A weak key keeps the
+# mapping off the repository instance (nothing is set on src objects).
+_MONGO_CLIENTS: weakref.WeakKeyDictionary[Any, FakeMongoClient] = weakref.WeakKeyDictionary()
+
+
+def mongo_client_of(repository: Any) -> FakeMongoClient:
+    """Return the client the mongo-transactional repository was opened on."""
+    return _MONGO_CLIENTS[repository]
+
+
+@asynccontextmanager
+async def _mongo_transactional_repository() -> AsyncIterator[RepositoryMongo[Order, int]]:
+    client = FakeMongoClient()
+    collection = client.collection(_TABLE)
+    repository = RepositoryMongo(
+        Order,
+        collection,
+        session_provider=active_session,
+        cursor_codec=CursorCodec(signing="ephemeral"),
+    )
+    _MONGO_CLIENTS[repository] = client
+    yield repository
+
+
+async def _fail_sqlalchemy_commit(repository: Any) -> None:
+    """Leave a duplicate primary key pending so ``commit`` flushes it and fails."""
+    session = get_active_session()
+    assert session is not None
+    session.add(repository.create_object(SEED[1]))
+
+
+async def _fail_mongo_commit(repository: Any) -> None:
+    """Make the next ``commit_transaction`` raise. The fake does not restore state."""
+    mongo_client_of(repository).commit_error = ConnectionError("commit lost")
+
+
 def _sqlalchemy_case() -> BackendCase:
     return BackendCase(
         name="sqlalchemy",
@@ -237,6 +280,7 @@ def _sqlalchemy_case() -> BackendCase:
         capabilities=frozenset(capabilities_of(RepositorySQLAlchemy)),
         transactions=True,
         unit_of_work=lambda repository: SQLAlchemyUnitOfWork(repository.session_manager),
+        fail_commit=_fail_sqlalchemy_commit,
     )
 
 
@@ -262,7 +306,24 @@ def _mongo_case() -> BackendCase:
     )
 
 
-CASES: tuple[BackendCase, ...] = (_sqlalchemy_case(), _dynamodb_case(), _mongo_case())
+def _mongo_transactional_case() -> BackendCase:
+    return BackendCase(
+        name="mongo-transactional",
+        repository_factory=_mongo_transactional_repository,
+        model=Order,
+        capabilities=frozenset(capabilities_of(RepositoryMongo)),
+        transactions=True,
+        unit_of_work=lambda repository: MongoUnitOfWork(cast(Any, mongo_client_of(repository))),
+        fail_commit=_fail_mongo_commit,
+    )
+
+
+CASES: tuple[BackendCase, ...] = (
+    _sqlalchemy_case(),
+    _dynamodb_case(),
+    _mongo_case(),
+    _mongo_transactional_case(),
+)
 
 
 def require(case: BackendCase, *capabilities: type) -> None:

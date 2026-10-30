@@ -1,6 +1,6 @@
 """Zero compiled agent artifacts, one declaring use case (spec 015, T204).
 
-Owner decision D1: ``_effective_agent_specs`` tolerates an empty artifact set
+Owner decision D1: ``effective_agent_specs`` tolerates an empty artifact set
 only when at least one compiled use case declares an ``Mcp()`` marker — a
 deployment whose only AI usage is ``Mcp()`` no longer has to ship a filler
 agent artifact it never runs. Every other empty-artifact deployment still
@@ -169,8 +169,8 @@ class TestOnlyMcpWithNoAgentArtefacts:
     def test_an_unknown_server_dies_as_marker_unknown_not_as_server_unknown(
         self, tmp_path: Path
     ) -> None:
-        """H9/T202: ``_verify_mcp_markers`` must catch the unknown name before
-        ``_compile_use_case_mcp``/``compile_mcp_capability`` ever see it, so
+        """H9/T202: ``verify_mcp_markers`` must catch the unknown name before
+        ``compile_use_case_mcp``/``compile_mcp_capability`` ever see it, so
         ``MCP_SERVER_UNKNOWN`` must never appear here."""
         config_path = _write_project(tmp_path, declares_use_case=True)
         # A missing server in 'ai.mcp_servers' recreates the same YAML this
@@ -193,7 +193,7 @@ class TestOnlyMcpWithNoAgentArtefacts:
         """H4: pins the ``create_app`` call site itself, not just the function it calls.
 
         ``tests/unit/rest/test_fastapi_auto_agent_markers.py`` covers
-        ``_bind_mcp_resolver``'s own behaviour by calling it directly, which
+        ``bind_mcp_resolver``'s own behaviour by calling it directly, which
         would stay green even if ``create_app`` stopped calling it at all —
         exactly the mutation that leaves the ``Mcp()`` marker dead in
         production. This wraps the real method to record whether ``create_app``

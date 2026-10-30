@@ -1,7 +1,7 @@
 """Start-up verification of use-case marker bindings, shared by every worker.
 
 Both composition roots that admit a marker — the FastAPI auto-bootstrap
-(:mod:`loom.rest.fastapi.auto`) and the Celery worker bootstrap
+(:mod:`loom.composition._ai`) and the Celery worker bootstrap
 (:mod:`loom.celery.bootstrap`) — call :func:`verify_agent_markers` once every
 compiled use case declaring at least one ``Agent()`` binding is already known
 via :func:`~loom.core.use_case.agent_markers.declaring_agent_bindings`, so

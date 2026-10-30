@@ -12,7 +12,7 @@ from loom.rest.auth import AuthenticationMiddleware, Authenticator, JwtAuthConfi
 from loom.rest.auth.config import DEFAULT_EXCLUDE_PATHS
 
 if TYPE_CHECKING:
-    from loom.rest.fastapi.auto import _AppConfig, _RestAuthConfig
+    from loom.rest.fastapi.adapter import _AppConfig, _RestAuthConfig
 
 
 @dataclass(frozen=True)

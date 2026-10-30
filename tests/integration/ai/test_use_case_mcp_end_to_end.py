@@ -4,7 +4,7 @@ Every test here drives a real :class:`~loom.core.engine.compiler.UseCaseCompiler
 a real :class:`~loom.core.engine.executor.RuntimeExecutor` and a real
 :class:`~loom.ai.runtime.AgentRuntime`, wired through the same production glue
 ``create_app`` uses — :func:`~loom.core.use_case.mcp_markers.declaring_mcp_bindings`
-and ``loom.rest.fastapi.auto._compile_use_case_mcp`` — rather than hand-built
+and ``loom.composition._ai.compile_use_case_mcp`` — rather than hand-built
 ``UseCaseMcpGrant`` instances. The seam faked is the MCP client itself, at the
 edge, exactly as ``test_agent_marker_grants_integration.py`` fakes it for the
 ``Agent()`` marker.
@@ -37,6 +37,7 @@ from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._handle import agent_marker_resolver, mcp_marker_resolver
+from loom.composition._ai import compile_use_case_mcp
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
@@ -46,7 +47,7 @@ from loom.core.sql.service import NullSqlQueryService
 from loom.core.use_case import Agent, Mcp, UseCase
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
 from loom.core.use_case.registry import UseCaseRegistry
-from loom.rest.fastapi.auto import _compile_use_case_mcp, create_app
+from loom.rest.fastapi.auto import create_app
 from loom.testing.runner import McpHandleDouble, UseCaseTest
 from tests.integration.ai.conftest import (
     AgentPlan,
@@ -141,7 +142,7 @@ def _mcp_wired(
     Reuses the same production glue ``auto.py`` calls between compiling and
     constructing ``AgentRuntime`` (``:1453-1458``):
     :func:`declaring_mcp_bindings` finds the compiled ``Mcp()`` bindings, and
-    ``_compile_use_case_mcp`` turns them into ``UseCaseMcpGrant``s. Building
+    ``compile_use_case_mcp`` turns them into ``UseCaseMcpGrant``s. Building
     that tuple by hand, as ``test_use_case_mcp_runtime.py`` does for its own
     narrower purpose, would skip exercising this glue at all.
 
@@ -168,7 +169,7 @@ def _mcp_wired(
     registry = UseCaseRegistry.build(list(use_case_types))
     declaring = declaring_mcp_bindings(list(use_case_types), compiler)
     servers = make_mcp_servers(*clients)
-    use_case_mcp = _compile_use_case_mcp(declaring, registry, servers)
+    use_case_mcp = compile_use_case_mcp(declaring, registry, servers)
 
     executor = RuntimeExecutor(compiler)
     runtime = AgentRuntime(
@@ -276,10 +277,10 @@ class TestTheUseCaseReachesWhatTheAgentExcludes:
 
 class TestAnIncludeMatchingNothingAbortsThroughTheRealPath:
     """T501 item 4: an ``include`` matching nothing aborts start-up through
-    ``_compile_use_case_mcp`` itself, not through a hand-built
+    ``compile_use_case_mcp`` itself, not through a hand-built
     ``UseCaseMcpGrant`` — ``test_use_case_mcp_runtime.py`` pins this same
     outcome, but its ``_grant()`` helper builds the grant by hand and never
-    calls ``_compile_use_case_mcp``, so it cannot catch a regression in the
+    calls ``compile_use_case_mcp``, so it cannot catch a regression in the
     glue that carries ``binding.include`` into the compiled capability.
     """
 
@@ -421,7 +422,7 @@ USE_CASES = [LookUpKnowledgeUseCase]
 
 class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
     """T501 item 6 (the ``create_app`` half): no unit test drives this —
-    ``test_fastapi_auto_mcp_markers.py`` calls ``_verify_mcp_markers`` directly."""
+    ``test_fastapi_auto_mcp_markers.py`` calls ``verify_mcp_markers`` directly."""
 
     def test_create_app_aborts_naming_the_use_case_and_the_parameter(self, tmp_path: Path) -> None:
         app_module = "loom_noai_mcp_fixture_app"

@@ -1302,6 +1302,15 @@ outside tests.
 
 ### Jobs that cross boundaries
 
+A Celery job runs under the same protection as a request: the worker runs the
+same composition as the API, so its SQLAlchemy backend installs the same
+session settings, resets the pool the same way and runs the same
+`schema.mode: external` checks, once, before it forks its children (see
+[Celery worker](celery.md#application-lifecycle)). A worker with no model runs
+connection-only: it inspects no schema, but its probe still refuses a
+superuser or `BYPASSRLS` role and `create_all` over scoped tables, and its
+unbound session settings fail closed.
+
 A job that must read or write every boundary uses a second
 {class}`~loom.core.repository.sqlalchemy.session_manager.SessionManager` on the URL of
 the declared bypass user, without a provider:

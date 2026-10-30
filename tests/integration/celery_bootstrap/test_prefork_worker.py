@@ -7,7 +7,9 @@ import os
 import signal
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 import redis
@@ -44,10 +46,21 @@ def _ready(log: Path, process: subprocess.Popen[str]) -> None:
     raise AssertionError(log.read_text()[-4000:])
 
 
-def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
+@dataclass(frozen=True)
+class _Run:
+    """What one prefork worker run reported."""
+
+    parent: dict[str, Any]
+    answers: list[dict[str, Any]]
+    checks: list[int]
+
+
+def _run_prefork_worker(tmp_path: Path, children: int) -> _Run:
+    """Start a real prefork worker with *children* processes and run one job in each."""
     database = _skip_without_services()
     config = tmp_path / "worker.yaml"
     report = tmp_path / "parent.json"
+    checks = tmp_path / "checks"
     pids = tmp_path / "pids"
     log = tmp_path / "worker.log"
     pids.mkdir()
@@ -80,6 +93,8 @@ def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
     env["LOOM_PREFORK_CONFIG"] = str(config)
     env["LOOM_PREFORK_REPORT"] = str(report)
     env["LOOM_PREFORK_PIDS"] = str(pids)
+    env["LOOM_PREFORK_CHECKS"] = str(checks)
+    env["LOOM_PREFORK_CHILDREN"] = str(children)
     env["PYTHONPATH"] = os.pathsep.join([str(root), str(root / "src"), env.get("PYTHONPATH", "")])
     command = [
         str(root / ".venv" / "bin" / "celery"),
@@ -87,7 +102,7 @@ def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
         "tests.integration.celery_bootstrap.prefork_worker_app:celery_app",
         "worker",
         "--pool=prefork",
-        "--concurrency=2",
+        f"--concurrency={children}",
         "--loglevel=INFO",
         "--without-gossip",
         "--without-mingle",
@@ -107,7 +122,7 @@ def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
         _ready(log, process)
         parent = json.loads(report.read_text())
         client = Celery(broker=BROKER, backend=BROKER)
-        results = [client.send_task("loom.job._PingJob", queue="default") for _ in range(2)]
+        results = [client.send_task("loom.job._PingJob", queue="default") for _ in range(children)]
         answers = [item.get(timeout=30, disable_sync_subtasks=False) for item in results]
     finally:
         os.killpg(process.pid, signal.SIGTERM)
@@ -116,6 +131,13 @@ def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
+    recorded = [int(line) for line in checks.read_text().split()] if checks.exists() else []
+    return _Run(parent=parent, answers=answers, checks=recorded)
+
+
+def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
+    run = _run_prefork_worker(tmp_path, children=2)
+    parent, answers = run.parent, run.answers
 
     assert parent["pool"] == "AsyncAdaptedQueuePool"
     assert parent["checkedout"] == 0
@@ -124,3 +146,16 @@ def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
     child_pids = {answer["pid"] for answer in answers}
     assert len(child_pids) == 2
     assert parent["pid"] not in child_pids
+
+
+def test_eight_children_open_after_one_check_in_the_parent(tmp_path: Path) -> None:
+    """SC-006a: the parent checks once and none of its connections serves a child."""
+    run = _run_prefork_worker(tmp_path, children=8)
+    parent_pid = run.parent["pid"]
+
+    assert run.checks == [parent_pid]
+    assert len({answer["pid"] for answer in run.answers}) == 8
+    assert {answer["one"] for answer in run.answers} == {1}
+    seen = {name for answer in run.answers for name in answer["connections"]}
+    assert f"prefork-{parent_pid}" not in seen
+    assert {f"prefork-{answer['pid']}" for answer in run.answers} <= seen

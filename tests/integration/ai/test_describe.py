@@ -29,12 +29,8 @@ from fastapi import FastAPI
 
 from loom.ai.describe import AGENTS_CONTRIBUTOR, AGENTS_SECTION, describe_agents
 from loom.core.plugins import entrypoints as entrypoints_module
-from loom.rest.fastapi.auto import (
-    _AGENTS_CONTRIBUTOR,
-    _AGENTS_SECTION,
-    create_app,
-    describe_fastapi_app,
-)
+from loom.rest.fastapi.adapter import _AGENTS_CONTRIBUTOR, _AGENTS_SECTION
+from loom.rest.fastapi.auto import create_app, describe_fastapi_app
 from tests.integration.ai._entrypoints import fake_entry_points
 from tests.integration.ai.conftest import CountingEngineProvider
 
@@ -480,9 +476,9 @@ class TestWiringIsReachable:
 
 
 class TestContributorContract:
-    """The wiring literals of ``auto`` and the pillar's own must not drift."""
+    """The wiring literals of the FastAPI adapter and the pillar's own must not drift."""
 
-    # 'auto' restates these literals instead of importing them: importing
+    # The adapter restates these literals instead of importing them: importing
     # 'loom.ai.describe' there would pull the AI pillar into every app (FR-050).
 
     def test_the_section_declared_by_auto_matches_the_pillars_own(self) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Final
 
@@ -24,9 +24,10 @@ from loom.core.backend.sqlalchemy import (
 )
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
+from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
-from loom.core.persistence.abc import PersistenceWiring
+from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
 from loom.core.persistence.database import EXTERNAL, SchemaConfig, load_database_config
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.repository.abc import CursorCodec
@@ -59,7 +60,8 @@ class SQLAlchemyBackend:
 
     Reads the ``database`` and ``persistence.cursors`` sections, opens one
     engine shared by the unit of work and every repository, creates the
-    compiled tables at startup and disposes the engine at shutdown.
+    compiled tables at startup and disposes the engine at shutdown. Built
+    connection-only, its startup probes the connection instead.
     """
 
     name: ClassVar[str] = "sqlalchemy"
@@ -81,9 +83,13 @@ class SQLAlchemyBackend:
         Returns:
             The SQLAlchemy wiring.
 
+        With ``runtime.connection_only`` no repository is served; see
+        :class:`~loom.core.persistence.BackendRuntime`.
+
         Raises:
             ConfigError: When the ``database`` section is missing or invalid,
-                or ``persistence.cursors`` cannot build a cursor codec.
+                or repositories are served and ``persistence.cursors`` cannot
+                build a cursor codec.
         """
         db_cfg = load_database_config(ctx)
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
@@ -92,8 +98,27 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
-        convention = configured_naming_convention(db_cfg.schema.naming_convention)
-        cursor_codec = CursorCodec.from_context(ctx)
+        # Before the engine: an invalid persistence.cursors fails with none built.
+        register: Callable[[SessionManager], Callable[[LoomContainer], None]]
+        prepare: Callable[[Sequence[type[BaseModel]]], None]
+        check: Callable[[SessionManager, SchemaConfig], Awaitable[None]]
+        if runtime.connection_only:
+            prepare = no_model_preparation
+            register = _session_manager_module
+            check = _probe_connection
+        else:
+            check = _run_startup_checks
+            prepare = functools.partial(
+                _prepare_models,
+                convention=configured_naming_convention(db_cfg.schema.naming_convention),
+                settings=settings,
+            )
+            register = functools.partial(
+                _repositories_module,
+                models=models,
+                cursor_codec=CursorCodec.from_context(ctx),
+                elevation=settings is not None,
+            )
         session_manager = build_session_manager(
             db_cfg,
             runtime.profile,
@@ -104,19 +129,43 @@ class SQLAlchemyBackend:
             install_pool_reset(session_manager.engine)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
-            repo_registration_module=_with_elevation_sink(
-                build_sqlalchemy_repository_registration_module(
-                    session_manager, models, cursor_codec=cursor_codec
-                ),
-                enabled=settings is not None,
-            ),
+            repo_registration_module=register(session_manager),
             lifespan_init=lambda: _lifespan(session_manager),
-            prepare_models=functools.partial(
-                _prepare_models, convention=convention, settings=settings
-            ),
-            startup_checks=functools.partial(_run_startup_checks, session_manager, db_cfg.schema),
+            prepare_models=prepare,
+            startup_checks=functools.partial(check, session_manager, db_cfg.schema),
             readiness=lambda: _readiness(session_manager),
         )
+
+
+def _session_manager_module(session_manager: SessionManager) -> Callable[[LoomContainer], None]:
+    """The module of a backend serving no repository: the session manager only."""
+    return functools.partial(_register_session_manager, session_manager)
+
+
+def _repositories_module(
+    session_manager: SessionManager,
+    *,
+    models: Sequence[type[BaseModel]],
+    cursor_codec: CursorCodec,
+    elevation: bool,
+) -> Callable[[LoomContainer], None]:
+    """The module registering a repository per model, and the elevation sink when scoped."""
+    return _with_elevation_sink(
+        build_sqlalchemy_repository_registration_module(
+            session_manager, models, cursor_codec=cursor_codec
+        ),
+        enabled=elevation,
+    )
+
+
+def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
+    """Register the backend's session manager, the one every consumer shares.
+
+    ``SessionManager`` is framework-owned: the composition refuses a caller's
+    module binding it, so the unit of work, the pool reset and the startup
+    checks hold the same instance the container serves.
+    """
+    container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
 
 
 def _with_elevation_sink(
@@ -197,13 +246,20 @@ def startup_checks(
             "use database.schema.mode: external and create_schema(migrator_url, application)"
         )
     unprotected = check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
-    if scoped and dialect == "postgresql":
-        names = ", ".join(sorted(table.name for table in scoped.values()))
-        raise ConfigError(
-            f"create_all cannot protect scoped tables {names}; run "
-            "create_schema(migrator_url, application) and set database.schema.mode: external"
-        )
+    if dialect == POSTGRES_DIALECT:
+        _refuse_unprotected_scoped(scoped)
     return unprotected
+
+
+def _refuse_unprotected_scoped(scoped: Mapping[tuple[str | None, str], ScopedTable]) -> None:
+    """Refuse scoped tables on Postgres outside an external schema: nothing protects them."""
+    if not scoped:
+        return
+    names = ", ".join(sorted(table.name for table in scoped.values()))
+    raise ConfigError(
+        f"create_all cannot protect scoped tables {names}; run "
+        "create_schema(migrator_url, application) and set database.schema.mode: external"
+    )
 
 
 def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
@@ -258,8 +314,40 @@ async def _run_startup_checks(session_manager: SessionManager, config: SchemaCon
             else:
                 await connection.run_sync(get_metadata().create_all)
     finally:
-        if isinstance(session_manager.engine.sync_engine.pool, QueuePool):
-            await session_manager.dispose()
+        await _release_queued(session_manager)
+
+
+async def _probe_connection(session_manager: SessionManager, config: SchemaConfig) -> None:
+    """Open one connection and run ``SELECT 1``, then drop queued connections.
+
+    The startup of a backend serving no repository: the process-wide metadata
+    holds tables this host does not serve, so none is created or inspected.
+    On Postgres the two refusals that protect row-level security still hold:
+    scoped tables in that metadata outside ``schema.mode: external``, before
+    connecting, and a superuser or bypass role, on the probe's connection.
+    The engine is used directly, not a session, so unbound row-level security
+    settings do not refuse the probe. A failure to connect propagates as the
+    driver raised it.
+
+    Raises:
+        ConfigError: When a Postgres connection would bypass row-level security.
+    """
+    postgres = session_manager.engine.dialect.name == POSTGRES_DIALECT
+    if postgres and config.mode != EXTERNAL:
+        _refuse_unprotected_scoped(scoped_tables())
+    try:
+        async with session_manager.engine.connect() as connection:
+            await connection.execute(_PROBE)
+            if postgres:
+                await _reject_privileged_connection(connection)
+    finally:
+        await _release_queued(session_manager)
+
+
+async def _release_queued(session_manager: SessionManager) -> None:
+    """Dispose a queued pool, so a prefork parent forks with no connection."""
+    if isinstance(session_manager.engine.sync_engine.pool, QueuePool):
+        await session_manager.dispose()
 
 
 @asynccontextmanager

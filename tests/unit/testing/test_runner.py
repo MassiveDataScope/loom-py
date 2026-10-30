@@ -9,6 +9,7 @@ import pytest
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.composition._ai import AgentDepsFactory
 from loom.core.command import Command
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.errors import NotFound, RuleViolation, RuleViolations
@@ -16,7 +17,6 @@ from loom.core.identity import Identity
 from loom.core.model import LoomStruct
 from loom.core.use_case.markers import Agent, Caller, Input, LoadById, Mcp
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.auto import _AgentDepsFactory
 from loom.testing.runner import AgentHandleDouble, DepsFactoryDouble, McpHandleDouble, UseCaseTest
 
 # ---------------------------------------------------------------------------
@@ -654,7 +654,7 @@ class TestDepsFactoryDoubleMatchesProduction:
 
     def test_double_and_production_factory_accept_the_same_call(self) -> None:
         double_signature = inspect.signature(DepsFactoryDouble.build)
-        production_signature = inspect.signature(_AgentDepsFactory.build)
+        production_signature = inspect.signature(AgentDepsFactory.build)
         assert double_signature.parameters.keys() == production_signature.parameters.keys()
         for name in double_signature.parameters:
             assert (

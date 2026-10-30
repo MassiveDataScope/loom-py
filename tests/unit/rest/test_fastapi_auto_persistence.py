@@ -7,7 +7,6 @@ and the bootstrap steps around them.
 
 from __future__ import annotations
 
-import functools
 import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -21,7 +20,6 @@ import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import NoneBackend, PersistenceWiring
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
@@ -29,21 +27,13 @@ from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi import auto
-from loom.rest.fastapi.auto import (
-    _AppConfig,
-    _discover_components,
-    create_app,
-)
-from loom.rest.fastapi.auto import (
-    _build_bootstrap as _build_bootstrap_in,
-)
+from loom.rest.fastapi.adapter import _AppConfig, _discover_components
+from loom.rest.fastapi.auto import create_app
 from loom.rest.model import RestInterface, RestRoute
+from tests.helpers.composition import composition_source
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
+from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
 from tests.unit.rest._fixture_app import UUID4_ID_FIELD, write_project
-
-# The fixture apps opt out of cursor signing, which a deployed environment refuses.
-_build_bootstrap = functools.partial(_build_bootstrap_in, environment=Environment.TEST)
 
 
 def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
@@ -109,7 +99,13 @@ def fake_mongo_client(monkeypatch: pytest.MonkeyPatch) -> FakeMongoClient:
 
 @pytest.fixture
 def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auto, "_build_discovery_result", lambda _cfg: _agents_only())
+    monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _agents_only())
+    # Composition now refuses manifest agents when the ai section is absent.
+    # These tests select a persistence backend; they never build an agent runtime.
+    monkeypatch.setattr(
+        "loom.composition.build.reject_manifest_agents_without_ai_section",
+        lambda _ctx, _specs: None,
+    )
 
 
 class TestBackendSelection:
@@ -286,18 +282,18 @@ def test_create_app_builds_the_backend_with_the_server_profile(
 
 
 def test_discover_components_accepts_agents_only_result(agents_only_discovery: None) -> None:
-    discovered = _discover_components(_AppConfig(name="demo"))
+    source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
+    discovered = _discover_components(source)
 
     assert discovered.agent_specs == ("agents/*.yaml",)
 
 
 def test_discover_components_rejects_empty_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(auto, "_build_discovery_result", lambda _cfg: _no_models())
-
-    app_cfg = _AppConfig(name="demo")
+    monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: _no_models())
+    source = composition_source(ConfigContext.from_dict({"app": {"name": "demo"}}))
 
     with pytest.raises(RuntimeError, match="Nothing discovered") as exc_info:
-        _discover_components(app_cfg)
+        _discover_components(source)
 
     message = str(exc_info.value)
     assert "discovery.mode: manifest" in message
@@ -342,8 +338,7 @@ def test_build_bootstrap_rejects_autocrud_without_model_on_any_backend(
         auto = True
 
     monkeypatch.setattr(
-        auto,
-        "_build_discovery_result",
+        "loom.composition.source.discover",
         lambda _cfg: DiscoveryResult(
             models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
         ),
@@ -373,8 +368,7 @@ def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
         routes = (RestRoute(use_case=_ListRecords, method="GET", path=""),)
 
     monkeypatch.setattr(
-        auto,
-        "_build_discovery_result",
+        "loom.composition.source.discover",
         lambda _cfg: DiscoveryResult(
             models=(), use_cases=(), interfaces=_interfaces(HandWrittenInterface), agent_specs=()
         ),

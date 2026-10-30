@@ -196,7 +196,7 @@ def _handlebars_instruction(
     The closure renders against ``ctx.deps.state``, never against ``ctx.deps``
     itself. ``ctx.deps`` is the bundle carrying the caller's verified
     ``Identity``, the application container and a caller-bound invoker
-    (``loom.rest.fastapi.auto``); rendering against the bundle would put all
+    (``loom.composition._ai``); rendering against the bundle would put all
     three within a marker's reach. Rendering against ``state`` — the
     normalised mapping the artifact declared a shape for — is the security
     boundary a template cannot cross (FR-036).

@@ -21,8 +21,14 @@ repository class the auto-CRUD gate inspects, and it is known before `build`.
 configuration section from the context it is given; the host knows nothing
 about that section. `runtime` is a `BackendRuntime`: the
 `RuntimeProfile` of the entry point building it (`server`, `worker`, ...),
-whose defaults size any connection pool the backend opens, and an optional
-pool-metrics sink. A backend with no pool ignores it.
+whose defaults size any connection pool the backend opens, an optional
+pool-metrics sink, and `connection_only`. A backend with no pool ignores it.
+`connection_only` is set by an entry point with no model (a worker running
+raw-SQL jobs): a backend that honours it serves its connection and unit of
+work only, no repository and no cursor codec, and its startup checks only
+probe the connection. `sqlalchemy` honours it (see
+[Workers without models](../getting-started/composition.md#workers-without-models));
+a backend that ignores it builds as usual.
 
 ```python
 # billing_ledger/backend.py
@@ -109,8 +115,8 @@ startup: the host fails closed instead of picking one.
 | `uow_factory` | Bound to the kernel executor. `None` means "no unit of work": use cases run without one, and deferred job dispatch never fires. |
 | `prepare_models` | Called right after `build` with the discovered models — the slot where SQLAlchemy compiles its tables, binds in-memory row-level settings and where a document store validates identifiers. Raise `ConfigError` for a model the backend cannot serve. Defaults to `no_model_preparation`. |
 | `repo_registration_module` | A DI module run against the container; registers one repository per model. |
-| `startup_checks` | Awaited before `lifespan_init`. Schema and role checks. When they finish, a queued pool holds no connection; an in-memory pool is the database and stays open. Defaults to `no_startup_checks`. |
-| `lifespan_init` | An async context manager entered at application startup and exited at shutdown, after the SQL registry and the AI runtime so their clients close even when it fails. It does not check the schema and it does not reset the compiled registry. Defaults to `no_lifespan`. |
+| `startup_checks` | Run by `Application.check()`, and by `Application.running()` right before `lifespan_init` unless it is entered with `check=False`. Schema and role checks. When they finish, a queued pool holds no connection; an in-memory pool is the database and stays open. A prefork worker runs them once, in the parent. Defaults to `no_startup_checks`. |
+| `lifespan_init` | An async context manager entered when `Application.running()` opens and exited when it closes, last to open and first to close, after the cache gateways, the SQL registry and the AI runtime. It does not check the schema and it does not reset the compiled registry, so a closed application reopens. Defaults to `no_lifespan`. |
 | `readiness` | Optional `async () -> bool`. Aggregated by `GET /health`; absent, the route reports no backends. |
 
 A readiness probe never raises: log the failure and answer `False`, so the
@@ -182,12 +188,20 @@ raise UnsupportedQuery("dynamodb", "orders.Order", "get_by on 'customer_id' need
 ## Dependency verification at boot
 
 Once every service is registered — persistence, job service, SQL, observability,
-AI — `create_app` calls `UseCaseFactory.verify()`. Every registered use case's
-constructor is checked against the container, and a missing binding raises
-`ResolutionError` naming the use case, the parameter and the key. A backend
-that registers `Readable[Order]` but not `Listable[Order]` therefore fails the
-bootstrap of a use case injecting `Listable[Order]`, not its first request.
-Use cases of routes the gate pruned are dropped before that check.
+AI — the composition calls `UseCaseFactory.verify()`, for the API and the
+worker alike. Every registered use case's constructor is checked against the
+container, and a missing binding raises `ResolutionError` naming the use case,
+the parameter and the key. A backend that registers `Readable[Order]` but not
+`Listable[Order]` therefore fails the bootstrap of a use case injecting
+`Listable[Order]`, not its first request. Use cases of routes the gate pruned
+are dropped before that check.
+
+The models a use case or job reads are checked too: its main repository, and
+every model its plan loads through `LoadById`, `Load` or `Exists`. A model no
+repository serves — left out of `MODELS` or of `app.discovery` — raises
+`UnservedModelError` (`loom.core.use_case.errors`), a `ResolutionError`
+carrying the typed issue (`UNSERVED_MODEL`, the component, the parameter) and
+the model.
 
 ## Cursor tokens
 
@@ -632,6 +646,30 @@ class Measurement(BaseModel):
 
 ## Upgrade notes
 
+- The application is composed once, transport-neutrally, by
+  `loom.composition` ([Composition and lifecycle](../getting-started/composition.md)),
+  and the API and the worker are adapters over it:
+  - `PersistenceWiring.default_repository_type` is gone: a backend declares
+    `repository_type` as a class variable.
+  - `lifespan_init` only opens and releases; the schema and role checks moved
+    to `startup_checks`. Closing a SQLAlchemy backend no longer resets the
+    compiled registry: `prepare_models` resets it before compiling.
+  - The deploy checks run after discovery, and still before any resource is
+    built.
+  - The worker selects its backend like the API (`persistence.backend`, else
+    `sqlalchemy` when `database` holds a key of its own contract, such as
+    `url`, else `none`) and applies row-level security. A worker that serves
+    models now runs the startup checks too: without `schema.mode: external`,
+    it runs `create_all`. A missing backend extra is a `ConfigError`, not an
+    `ImportError`. Its cache gateways are closed.
+  - A `LoadById`, `Load` or `Exists` over a model no repository serves fails
+    at startup with `UnservedModelError`, in the API as well as the worker.
+  - A `JobService` your `modules` register is kept instead of being replaced;
+    the framework-owned keys (`SessionManager`, `SqlQueryService`,
+    `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`,
+    `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
+    and a module that binds one fails startup; see
+    [Caller bindings and framework defaults](../getting-started/composition.md#caller-bindings-and-framework-defaults).
 - Every engine's connection follows one standard
   (ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)):
   `url`, `username`/`password`, `connect_timeout` and `read_timeout` in

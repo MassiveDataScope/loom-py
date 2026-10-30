@@ -315,15 +315,10 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
 
     asyncio.run(_create_schema(db_url))
 
-    repo_session_manager = SessionManager(db_url)
     callback_sink = _CallbackSink()
 
     def _module(container: LoomContainer) -> None:
-        container.register(
-            SessionManager,
-            lambda: repo_session_manager,
-            scope=Scope.APPLICATION,
-        )
+        # SessionManager is the backend's: the composition refuses a module binding it.
         container.register(
             _RecordRepository,
             lambda: _RecordRepository(
@@ -347,7 +342,6 @@ def celery_files(tmp_path: Path, monkeypatch: Any) -> Any:
     try:
         yield str(config_path), db_path, _module, callback_sink
     finally:
-        asyncio.run(repo_session_manager.dispose())
         asyncio.run(_drop_schema(db_url))
         reset_registry()
         if db_path.exists():

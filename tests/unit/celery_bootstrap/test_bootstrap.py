@@ -11,15 +11,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import loom.celery._discovery as discovery
+import loom.celery.adapter as adapter
 import loom.celery.bootstrap as boot
-from loom.celery.bootstrap import (
-    WorkerBootstrapResult,
-    WorkerManifest,
-    _apply_job_config_if_present,
-    _connect_worker_signals,
-)
+from loom.celery._discovery import _apply_job_config_if_present
+from loom.celery.bootstrap import WorkerBootstrapResult, WorkerManifest
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.registry import UseCaseRegistry
@@ -55,10 +54,8 @@ class _ObservedCallback:
         del job_id, exc_type, exc_msg, context
 
 
-def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
-    """Build a minimal omegaconf DictConfig for bootstrap_worker tests."""
-    from omegaconf import OmegaConf
-
+def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
+    """Build a minimal configuration for bootstrap_worker tests."""
     base = {
         "celery": {
             "broker_url": "memory://",
@@ -70,7 +67,7 @@ def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
     }
     if extra:
         base.update(extra)
-    return OmegaConf.create(base)
+    return ConfigContext.from_dict(base)
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +77,7 @@ def _make_raw_config(extra: dict[str, Any] | None = None) -> Any:
 
 class TestApplyJobConfigIfPresent:
     def test_applies_override_when_section_exists(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        raw = _make_raw_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
+        raw = _make_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
         monkeypatch.setattr(_SyncJob, "__queue__", _SyncJob.__queue__, raising=False)
         monkeypatch.setattr(_SyncJob, "__retries__", _SyncJob.__retries__, raising=False)
 
@@ -90,12 +87,12 @@ class TestApplyJobConfigIfPresent:
         assert _SyncJob.__retries__ == 5
 
     def test_does_not_raise_when_section_absent(self) -> None:
-        raw = _make_raw_config()
+        raw = _make_config()
         # Must not raise even though jobs._SyncJob section is missing
         _apply_job_config_if_present(raw, _SyncJob)
 
     def test_classvar_unchanged_when_section_absent(self) -> None:
-        raw = _make_raw_config()
+        raw = _make_config()
         original = _SyncJob.__queue__
         _apply_job_config_if_present(raw, _SyncJob)
         assert _SyncJob.__queue__ == original
@@ -186,7 +183,9 @@ class TestBootstrapWorkerTaskRegistration:
         config_path = tmp_path / "worker_with_runtime.yaml"
         config_path.write_text(yaml.dump(cfg))
 
-        with patch.object(boot, "_build_async_runtime", wraps=boot._build_async_runtime) as spy:
+        with patch.object(
+            adapter, "_build_async_runtime", wraps=adapter._build_async_runtime
+        ) as spy:
             boot.bootstrap_worker(str(config_path), jobs=[_SyncJob])
 
         call = spy.call_args
@@ -218,7 +217,7 @@ class TestBootstrapWorkerTaskRegistration:
             captured_retries.append(job_type.__retries__)
             return _runner._make_job_task(celery_app, job_type, *args, **kwargs)
 
-        with patch.object(boot, "_make_job_task", side_effect=_spy):
+        with patch.object(adapter, "_make_job_task", side_effect=_spy):
             self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7}}})
 
         assert captured_retries == [7], (
@@ -240,7 +239,7 @@ class TestBootstrapWorkerTaskRegistration:
         config_path = tmp_path / "worker_no_db.yaml"
         config_path.write_text(yaml.dump(cfg))
 
-        with patch.object(boot, "_connect_worker_signals") as mock_signals:
+        with patch.object(adapter, "_connect_lifecycle_signals") as mock_signals:
             result = boot.bootstrap_worker(str(config_path), jobs=[_SyncJob])
 
         assert isinstance(result, WorkerBootstrapResult)
@@ -379,7 +378,7 @@ class TestBootstrapWorkerTaskRegistration:
 
     def test_autocrud_use_cases_cover_the_five_operations_without_persistence(self) -> None:
         """Workers derive every operation from the model alone; no backend gates them."""
-        use_cases = boot._autocrud_use_cases_from_models((_DiscoveredModel,))
+        use_cases = discovery._autocrud_use_cases_from_models((_DiscoveredModel,))
 
         assert len(use_cases) == 5
 
@@ -399,140 +398,3 @@ class TestBootstrapWorkerTaskRegistration:
     def test_raises_when_no_jobs_and_no_discovery(self, tmp_path: Any) -> None:
         with pytest.raises(RuntimeError):
             self._run(tmp_path, jobs=None)
-
-
-# ---------------------------------------------------------------------------
-# Celery worker signals
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def isolated_celery_signals() -> Any:
-    """Save and restore Celery worker signal receivers around each test.
-
-    ``_connect_worker_signals`` registers closures with ``dispatch_uid``,
-    which replaces rather than accumulates handlers on repeated calls.
-    This fixture ensures that handlers registered by previous tests do not
-    leak into the current one and that the signal state is restored cleanly
-    after each test regardless of what the test does.
-    """
-    from celery.signals import (  # type: ignore[import-untyped]
-        worker_process_init,
-        worker_process_shutdown,
-    )
-
-    init_receivers = cast(list[Any], worker_process_init.receivers)
-    shutdown_receivers = cast(list[Any], worker_process_shutdown.receivers)
-    saved_init = list(init_receivers)
-    saved_shutdown = list(shutdown_receivers)
-    init_receivers[:] = []
-    shutdown_receivers[:] = []
-    yield
-    init_receivers[:] = saved_init
-    shutdown_receivers[:] = saved_shutdown
-
-
-class TestWorkerSignals:
-    class _RuntimeSpy:
-        def __init__(self) -> None:
-            self.initialize_calls = 0
-            self.run_calls: list[tuple[Any, bool]] = []
-            self.shutdown_calls = 0
-            self.run_side_effect: Exception | None = None
-
-        def initialize(self) -> None:
-            self.initialize_calls += 1
-
-        def run(self, coro: Any, *, eager_fallback: bool) -> Any:
-            self.run_calls.append((coro, eager_fallback))
-            if self.run_side_effect is not None:
-                raise self.run_side_effect
-            return None
-
-        def shutdown(self) -> None:
-            self.shutdown_calls += 1
-
-    def test_on_init_calls_async_runtime_initialize(self, isolated_celery_signals: Any) -> None:
-        from celery.signals import worker_process_init
-
-        mock_sm = MagicMock()
-        mock_runtime = self._RuntimeSpy()
-
-        _connect_worker_signals(mock_sm, mock_runtime)
-        worker_process_init.send(sender=None)
-
-        assert mock_runtime.initialize_calls == 1
-
-    def test_on_shutdown_disposes_session_manager_via_runtime(
-        self, isolated_celery_signals: Any
-    ) -> None:
-        from celery.signals import worker_process_init, worker_process_shutdown
-
-        mock_sm = MagicMock()
-        dispose_coro = MagicMock()
-        mock_sm.dispose.return_value = dispose_coro
-        mock_runtime = self._RuntimeSpy()
-
-        _connect_worker_signals(mock_sm, mock_runtime)
-        worker_process_init.send(sender=None)
-        worker_process_shutdown.send(sender=None)
-
-        assert mock_runtime.run_calls == [(dispose_coro, False)]
-
-    def test_on_shutdown_calls_async_runtime_shutdown(self, isolated_celery_signals: Any) -> None:
-        from celery.signals import worker_process_init, worker_process_shutdown
-
-        mock_sm = MagicMock()
-        mock_runtime = self._RuntimeSpy()
-
-        _connect_worker_signals(mock_sm, mock_runtime)
-        worker_process_init.send(sender=None)
-        worker_process_shutdown.send(sender=None)
-
-        assert mock_runtime.shutdown_calls == 1
-
-    def test_on_shutdown_skips_dispose_when_session_manager_missing(
-        self, isolated_celery_signals: Any
-    ) -> None:
-        from celery.signals import worker_process_shutdown
-
-        mock_runtime = self._RuntimeSpy()
-
-        _connect_worker_signals(None, mock_runtime)
-        worker_process_shutdown.send(sender=None)
-
-        assert mock_runtime.run_calls == []
-        assert mock_runtime.shutdown_calls == 1
-
-    def test_on_shutdown_always_calls_shutdown_when_dispose_fails(
-        self, isolated_celery_signals: Any
-    ) -> None:
-        from celery.signals import worker_process_shutdown
-
-        mock_sm = MagicMock()
-        dispose_coro = MagicMock()
-        mock_sm.dispose.return_value = dispose_coro
-        mock_runtime = self._RuntimeSpy()
-        mock_runtime.run_side_effect = RuntimeError("loop stopped")
-
-        _connect_worker_signals(mock_sm, mock_runtime)
-        worker_process_shutdown.send(sender=None)
-
-        assert mock_runtime.run_calls == [(dispose_coro, False)]
-        dispose_coro.close.assert_called_once()
-        assert mock_runtime.shutdown_calls == 1
-
-    def test_second_connect_replaces_closure_not_accumulates(
-        self, isolated_celery_signals: Any
-    ) -> None:
-        from celery.signals import worker_process_shutdown
-
-        first_runtime = self._RuntimeSpy()
-        second_runtime = self._RuntimeSpy()
-
-        _connect_worker_signals(None, first_runtime)
-        _connect_worker_signals(None, second_runtime)
-        worker_process_shutdown.send(sender=None)
-
-        assert second_runtime.shutdown_calls == 1
-        assert first_runtime.shutdown_calls == 0

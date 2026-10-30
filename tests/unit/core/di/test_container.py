@@ -57,6 +57,41 @@ class TestRegister:
         assert isinstance(instance, AltService)
 
 
+class TestRegisterDefault:
+    def test_registers_when_the_key_is_absent(self, container: LoomContainer) -> None:
+        container.register_default(IService, ConcreteService, scope=Scope.APPLICATION)
+
+        assert isinstance(container.resolve(IService), ConcreteService)
+
+    def test_keeps_a_binding_already_registered(self, container: LoomContainer) -> None:
+        class AltService(IService):
+            pass
+
+        container.register(IService, AltService, scope=Scope.REQUEST)
+        container.register_default(IService, ConcreteService, scope=Scope.APPLICATION)
+
+        assert isinstance(container.resolve(IService), AltService)
+        assert container.resolve(IService) is not container.resolve(IService)
+
+    def test_keeps_a_registered_instance(self, container: LoomContainer) -> None:
+        own = ConcreteService()
+        container.register_instance(IService, own)
+        container.register_default(IService, lambda: ConcreteService(), scope=Scope.APPLICATION)
+
+        assert container.resolve(IService) is own
+
+    def test_a_kept_binding_never_calls_the_default_provider(
+        self, container: LoomContainer
+    ) -> None:
+        calls: list[int] = []
+        container.register(IService, ConcreteService)
+
+        container.register_default(IService, lambda: calls.append(1), scope=Scope.APPLICATION)
+        container.validate()
+
+        assert calls == []
+
+
 class TestResolve:
     @pytest.mark.parametrize("scope", [Scope.REQUEST, Scope.TRANSACTION])
     def test_resolve_non_singleton_scope_creates_new_instance(

@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import AgentHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.celery.bootstrap import _reject_agent_markers
+from loom.celery.adapter import _reject_agent_markers
 from loom.core.bootstrap import KernelRuntime
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler

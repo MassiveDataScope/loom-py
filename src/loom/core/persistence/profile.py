@@ -86,10 +86,20 @@ class BackendRuntime:
         profile: Defaults of the entry point building the backend.
         pool_metrics: Receiver of pool measurements; ``None`` when metrics are
             disabled, in which case the pool is built exactly as without them.
+        connection_only: Serve the connection and nothing else, for a host
+            with no model (a worker running raw-SQL jobs). A backend that
+            honours it (``sqlalchemy``) then registers its session manager
+            and unit of work, builds no cursor codec, registers no repository
+            and leaves the compiled registry as it is. Its startup checks
+            open one connection, run ``SELECT 1`` and release the pool: no
+            table is created, no external schema or connecting role is
+            inspected and no column is checked. Row-level security settings
+            stay installed but unbound, so they fail closed.
     """
 
     profile: RuntimeProfile
     pool_metrics: PoolMetricsSink | None = None
+    connection_only: bool = False
 
 
 SERVER_PROFILE = RuntimeProfile(

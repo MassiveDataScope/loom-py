@@ -7,7 +7,6 @@ the backend's default repository type.
 
 from __future__ import annotations
 
-import functools
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -23,7 +22,6 @@ from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.repository.abc import (
@@ -40,16 +38,13 @@ from loom.core.use_case.registry import model_entity_key
 from loom.core.use_case.use_case import UseCase
 from loom.rest.autocrud import build_auto_routes, crud_op_of
 from loom.rest.compiler import RestInterfaceCompiler
-from loom.rest.fastapi import auto
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.fastapi.auto import _AppConfig, create_app
-from loom.rest.fastapi.auto import _build_bootstrap as _build_bootstrap_in
+from loom.rest.fastapi.adapter import _AppConfig
+from loom.rest.fastapi.auto import create_app
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
+from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
 from tests.unit.rest._fixture_app import write_project
-
-# The fixture apps opt out of cursor signing, which a deployed environment refuses.
-_build_bootstrap = functools.partial(_build_bootstrap_in, environment=Environment.TEST)
 
 _DYNAMODB_PERSISTENCE = {
     "backend": "dynamodb",
@@ -158,7 +153,7 @@ def aws_test_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 def discover(monkeypatch: pytest.MonkeyPatch) -> Any:
     def _install(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> None:
         result = _discovery(*interfaces, models=models)
-        monkeypatch.setattr(auto, "_build_discovery_result", lambda _cfg: result)
+        monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: result)
 
     return _install
 
