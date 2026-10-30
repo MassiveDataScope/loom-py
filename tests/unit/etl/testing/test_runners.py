@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import polars as pl
@@ -20,7 +21,7 @@ from loom.etl.testing._result import StepResult
 from loom.etl.testing._runners import (
     PolarsStepRunner,
     _build_lazy_frame,
-    _PolarsCapturingWriter,
+    _CapturingWriter,
     _PolarsStubReader,
 )
 
@@ -40,13 +41,14 @@ class TestPolarsRunnerInternals:
         assert frame.to_dict(as_series=False) == {"id": [1, 2], "amount": [10.0, 20.0]}
 
     def test_polars_capturing_writer_stores_last_call(self) -> None:
-        writer = _PolarsCapturingWriter()
+        writer = _CapturingWriter()
         frame = pl.DataFrame({"id": [1]}).lazy()
         spec = ReplaceSpec(table_ref=TableRef("staging.out"))
 
         writer.write(frame, spec, {"run_id": "r-1"})
 
-        assert writer.frame is frame
+        assert writer.frame is not None
+        assert writer.frame.equals(frame.collect())
         assert writer.spec is spec
         assert writer._last_params == {"run_id": "r-1"}
 
@@ -83,7 +85,9 @@ class TestPolarsStepRunner:
         def _fake_compile_step(self: ETLCompiler, _step_cls: type[Any]) -> _Plan:
             return _Plan()
 
-        def _fake_run_step(self: ETLExecutor, _plan: Any, params_instance: _RunParams) -> None:
+        def _fake_run_step(
+            self: ETLExecutor, _plan: Any, params_instance: _RunParams, _ctx: Any = None
+        ) -> None:
             predicate = col("day") == params_instance.run_day
             spec = ReplaceWhereSpec(table_ref=TableRef("staging.out"), replace_predicate=predicate)
             writer = self._writer
@@ -108,9 +112,12 @@ class TestPolarsStepRunner:
         runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
 
         def _fake_compile_step(self: ETLCompiler, _step_cls: type[Any]) -> object:
-            return object()
+            spec = ReplaceSpec(table_ref=TableRef("staging.out"))
+            return SimpleNamespace(target_binding=SimpleNamespace(spec=spec))
 
-        def _fake_run_step(self: ETLExecutor, _plan: Any, _params_instance: Any) -> None:
+        def _fake_run_step(
+            self: ETLExecutor, _plan: Any, _params_instance: Any, _ctx: Any = None
+        ) -> None:
             return None
 
         monkeypatch.setattr(ETLCompiler, "compile_step", _fake_compile_step)

@@ -6,9 +6,11 @@ Public API
 * :class:`StubSourceReader` — in-memory reader, keyed by table reference.
 * :class:`StubTargetWriter` — in-memory writer that captures written frames.
 * :class:`StubRunObserver` — in-memory observer that records lifecycle events.
-* :class:`PolarsStepRunner` — Polars-backed in-memory step harness.
+* :class:`PolarsStepRunner` — Polars step harness, in memory or on a local
+  Delta root (``delta_root=``).
 * :class:`StepResult` — unified assertion surface for step output.
-* :class:`ETLScenario` — backend-agnostic reusable seed dataset.
+* :class:`MergeMetrics` — rows a Delta MERGE applied (``StepResult.merged``).
+* :class:`ETLScenario` — backend-agnostic, immutable, composable seed dataset.
 * :class:`StepRunnerProto` — protocol satisfied by both runner types.
 
 Pytest fixtures
@@ -36,7 +38,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - packaging guard
         "loom.etl.testing defines pytest fixtures: install loom-kernel[testing]"
     ) from exc
 
-from loom.etl.testing._result import StepResult
+from loom.etl.testing._result import MergeMetrics, StepResult
 from loom.etl.testing._runners import PolarsStepRunner
 from loom.etl.testing._scenario import ETLScenario, StepRunnerProto
 from loom.etl.testing._stubs import (
@@ -53,6 +55,7 @@ __all__ = [
     "StubRunObserver",
     "PolarsStepRunner",
     "StepResult",
+    "MergeMetrics",
     "ETLScenario",
     "StepRunnerProto",
 ]
