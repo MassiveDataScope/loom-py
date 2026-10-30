@@ -17,6 +17,7 @@ from loom.etl import (
     IntoTable,
     IntoTemp,
     Sources,
+    UpsertDeleteFlagError,
     col,
 )
 from loom.etl.schema._schema import LoomDtype
@@ -137,6 +138,14 @@ class _PassthroughTemp(ETLStep[P]):
         return orders
 
 
+class UpsertDroppingFlag(ETLStep[P]):
+    sources = Sources(cdc=FromTable("raw.cdc"))
+    target = IntoTable("silver.orders").upsert(keys=("id",), delete_flag="_deleted")
+
+    def execute(self, params: P, *, cdc: Any) -> Any:  # type: ignore[override]
+        return cdc.drop("_deleted")
+
+
 _ORDERS = ETLScenario().with_table(
     "raw.orders",
     [(1, 10.0), (2, 5.0), (3, None)],
@@ -191,9 +200,11 @@ class TestFanIn:
             .seed("raw.b", [(2, "x")], ["id", "extra"])
         )
 
-        runner.run(PartA, P())
+        first = runner.run(PartA, P())
         result = runner.run(PartB, P())
 
+        first.assert_count(1)
+        assert result.temp_name == "parts"
         frame = result.to_polars().sort("id")
         assert frame.columns == ["id", "amount"]
         assert frame.schema["amount"] == pl.Float64
@@ -207,6 +218,21 @@ class TestCorrelationScope:
 
         runner.run(KeepAcrossRetries, P()).assert_count(3)
         runner.run(ReadKept, P()).assert_count(3)
+
+    def test_run_returns_the_temp_from_the_scope_the_step_wrote(self) -> None:
+        runner = PolarsStepRunner(_ORDERS).seed_temp("kept", [(99, 1.0)], ["id", "amount"])
+
+        result = runner.run(KeepAcrossRetries, P())
+
+        assert sorted(result.to_polars()["id"].to_list()) == [1, 2, 3]
+
+    def test_a_seeded_run_temp_takes_precedence_for_from_temp(self) -> None:
+        runner = PolarsStepRunner(_ORDERS).seed_temp("kept", [(99, 1.0)], ["id", "amount"])
+        runner.run(KeepAcrossRetries, P())
+
+        result = runner.run(ReadKept, P())
+
+        assert result.to_polars()["id"].to_list() == [99]
 
 
 # 6 ---------------------------------------------------------------------------
@@ -230,6 +256,40 @@ class TestChaining:
         assert Normalize.calls == 1
         for result in (first, second, third):
             assert sorted(result.to_polars()["amount"].to_list()) == [10.0, 20.0]
+
+    def test_after_runs_on_its_own_prefix_not_on_the_target_runner(self) -> None:
+        Normalize.calls = 0
+        small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
+        large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
+        normalized = _ORDERS.after(Normalize, P())
+
+        from_small = PolarsStepRunner(small + normalized).run(Enrich, P())
+        from_large = PolarsStepRunner(large + normalized).run(Enrich, P())
+
+        assert Normalize.calls == 1
+        assert from_small.to_polars().equals(from_large.to_polars())
+
+    def test_two_prefixes_with_the_same_after_give_their_own_results(self) -> None:
+        Normalize.calls = 0
+        small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
+        large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
+        small_after = small.after(Normalize, P())
+        large_after = large.after(Normalize, P())
+
+        results = [
+            PolarsStepRunner(scenario).run(Enrich, P())
+            for scenario in (small_after, large_after, small_after, large_after)
+        ]
+
+        assert Normalize.calls == 2
+        assert [len(r.to_polars()) for r in results] == [1, 2, 1, 2]
+
+    def test_after_does_not_write_into_the_target_runner(self) -> None:
+        runner = PolarsStepRunner(_ORDERS.after(Normalize, P()))
+
+        with pytest.raises(RuntimeError, match="No spec"):
+            _ = runner.target_spec
+        assert "after=['Normalize']" in repr(_ORDERS.after(Normalize, P()))
 
     def test_seed_temp_infers_the_name_from_an_into_temp_result(self) -> None:
         upstream = PolarsStepRunner(_ORDERS).run(Normalize, P())
@@ -279,9 +339,11 @@ class TestScenarioComposition:
 
         assert base is not orders
         assert orders is not temp
-        assert repr(base) == "ETLScenario(tables=[], temps=[])"
-        assert repr(orders) == "ETLScenario(tables=['raw.orders'], temps=[])"
-        assert repr(temp) == "ETLScenario(tables=['raw.orders'], temps=['normalized_orders'])"
+        assert repr(base) == "ETLScenario(tables=[], temps=[], after=[])"
+        assert repr(orders) == "ETLScenario(tables=['raw.orders'], temps=[], after=[])"
+        assert repr(temp) == (
+            "ETLScenario(tables=['raw.orders'], temps=['normalized_orders'], after=[])"
+        )
 
     def test_plus_composes_both_scenarios_in_order(self) -> None:
         orders = ETLScenario().with_table("raw.orders", [(1, 10.0)], ["id", "amount"])
@@ -292,7 +354,7 @@ class TestScenarioComposition:
 
         runner.run(_Passthrough, P()).assert_count(1)
         runner.run(Enrich, P()).assert_count(0)
-        assert repr(orders) == "ETLScenario(tables=['raw.orders'], temps=[])"
+        assert repr(orders) == "ETLScenario(tables=['raw.orders'], temps=[], after=[])"
 
     def test_positional_with_table_and_seed_calls_still_work(self) -> None:
         scenario = (
@@ -352,6 +414,24 @@ class TestDeleteMetricsInMemory:
         result = runner.run(UpsertWithTombstones, P())
 
         assert result.deletes == 1
+
+    def test_deletes_needs_the_flag_column_in_the_output(self) -> None:
+        runner = PolarsStepRunner().seed(
+            "raw.cdc", [(1, "open", True)], ["id", "status", "_deleted"]
+        )
+
+        result = runner.run(UpsertDroppingFlag, P())
+
+        with pytest.raises(UpsertDeleteFlagError, match="missing from the step output"):
+            _ = result.deletes
+
+    def test_deletes_needs_a_boolean_flag_column(self) -> None:
+        runner = PolarsStepRunner().seed("raw.cdc", [(1, "open", 1)], ["id", "status", "_deleted"])
+
+        result = runner.run(UpsertWithTombstones, P())
+
+        with pytest.raises(UpsertDeleteFlagError, match="must be a boolean column"):
+            _ = result.deletes
 
     def test_deletes_needs_an_upsert_with_delete_flag(self) -> None:
         result = PolarsStepRunner(_ORDERS).run(_Passthrough, P())

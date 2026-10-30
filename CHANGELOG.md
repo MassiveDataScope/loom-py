@@ -31,18 +31,27 @@
   runner, which keeps a fixed run context. `seed_temp(name, data, columns,
   *, schema=)` seeds a temp by `temp_name` from row tuples, a Polars frame or
   a `StepResult`; `seed_temp(result)` takes the name from an `IntoTemp`
-  step's result. A step whose target is `IntoTemp` returns the temp as its
-  `StepResult` instead of raising "Step produced no output". `seed` and
+  step's result. A seeded temp lives in RUN scope, which `FromTemp` reads
+  before CORRELATION scope. A step whose target is `IntoTemp` returns, as its
+  `StepResult`, the temp read from the scope the step wrote (the accumulated
+  temp for fan-in) instead of raising "Step produced no output". `seed` and
   `ETLScenario.with_table` accept `schema=` (loom types) so empty and all-null
   columns keep their dtype. `PolarsStepRunner(*scenarios, delta_root=)`
   applies scenarios at construction; with `delta_root` the real
   `PolarsSourceReader`/`PolarsTargetWriter` run on that directory, seeds are
-  written as Delta tables, missing targets are created, and `table(ref)`
+  written as Delta tables (a column left without dtype raises `ValueError`
+  asking for `schema=`), missing targets are created, and `table(ref)`
   returns the final state. `StepResult.deletes` counts the rows the step
-  emitted with its upsert `delete_flag` set; `StepResult.merged` returns the
-  `MergeMetrics(inserted, updated, deleted)` the Delta MERGE applied (only
-  with `delta_root`). `ETLScenario` gains `with_temp`, `after(step, params)`
-  (runs an `IntoTemp` step once and reuses its output) and `+`.
+  emitted with its upsert `delete_flag` set, and raises
+  `UpsertDeleteFlagError` when the output lacks the flag column or it is not
+  boolean; `StepResult.merged` returns the `MergeMetrics(inserted, updated,
+  deleted)` the Delta MERGE applied, only with `delta_root` and an upsert or
+  update that merged into an existing table. `ETLScenario` gains `with_temp`,
+  `after(step, params)` and `+`. `after()` runs the `IntoTemp` step once, on
+  a fresh in-memory runner seeded only with the scenario entries before it
+  (not the runner's config or other seeds), and seeds the memoized output on
+  every application. The scenario `repr` lists `tables`, `temps` and
+  `after` separately.
   `SparkStepRunner.seed_temp` and `SparkStepRunner.seed(..., schema=...)`
   raise `NotImplementedError`. Cache scenarios and frames, not runners: tests
   that mutate state need a function-scoped runner on their own `tmp_path`.

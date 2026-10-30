@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import polars as pl
 
 from loom.core.config import ConfigContext
 from loom.etl.backends._predicate import predicate_to_sql
+from loom.etl.backends.polars._dtype import loom_type_to_polars
+from loom.etl.backends.polars._reader import _finalize_source_frame
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
@@ -18,12 +20,10 @@ from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
 from loom.etl.executor import ETLExecutor
 from loom.etl.runtime.contracts import SourceReader, TargetWriter
 from loom.etl.schema._schema import LoomType
+from loom.etl.testing._delta import DeltaTables
 from loom.etl.testing._result import StepResult
 from loom.etl.testing._scenario import ETLScenario
 from loom.etl.testing._temps import RunnerTemps
-
-if TYPE_CHECKING:
-    from loom.etl.testing._delta import DeltaTables
 
 SeedSchema = Mapping[str, LoomType]
 TempData = Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame | StepResult
@@ -96,10 +96,7 @@ class _PolarsStubReader:
         key = table_ref.ref if table_ref is not None else spec.alias
         frame = self._frames[key]
         if isinstance(spec, (TableSourceSpec, FileSourceSpec)):
-            # loom.etl.backends.polars imports deltalake; keep it out of module import.
-            from loom.etl.backends.polars._reader import finalize_source_frame  # noqa: PLC0415
-
-            return finalize_source_frame(frame, spec, params_instance)
+            return _finalize_source_frame(frame, spec, params_instance)
         return frame
 
     def read_streaming(
@@ -137,9 +134,6 @@ def _polars_dtypes(columns: Sequence[str], schema: SeedSchema | None) -> dict[st
     unknown = sorted(set(schema) - set(columns))
     if unknown:
         raise ValueError(f"schema names columns that are not seeded: {unknown}")
-    # loom.etl.backends.polars imports deltalake; keep it out of module import.
-    from loom.etl.backends.polars._dtype import loom_type_to_polars  # noqa: PLC0415
-
     return {name: loom_type_to_polars(dtype) for name, dtype in schema.items()}
 
 
@@ -157,6 +151,15 @@ def _temp_frame(
     if columns is None:
         raise ValueError("seed_temp with row tuples needs columns=.")
     return _build_lazy_frame(data, columns, schema=schema)
+
+
+def _require_typed_columns(ref: str, frame: pl.LazyFrame) -> None:
+    untyped = [name for name, dtype in frame.collect_schema().items() if dtype == pl.Null]
+    if untyped:
+        raise ValueError(
+            f"seed({ref!r}): columns {untyped} have no dtype because they are empty or "
+            "all null, and Delta cannot store them. Declare their types with schema=."
+        )
 
 
 def _cast(frame: pl.LazyFrame, schema: SeedSchema | None) -> pl.LazyFrame:
@@ -213,9 +216,6 @@ class PolarsStepRunner:
         self._config_context: ConfigContext | None = None
         self._delta: DeltaTables | None = None
         if delta_root is not None:
-            # Only this mode needs deltalake and the real Delta writer.
-            from loom.etl.testing._delta import DeltaTables  # noqa: PLC0415
-
             self._delta = DeltaTables(delta_root)
         for scenario in scenarios:
             scenario.apply(self)
@@ -241,9 +241,14 @@ class PolarsStepRunner:
 
         Returns:
             ``self`` for fluent chaining.
+
+        Raises:
+            ValueError: With ``delta_root``, when a column has no dtype because
+                it is empty or all null and *schema* does not declare it.
         """
         frame = _build_lazy_frame(data, columns, schema=schema)
         if self._delta is not None:
+            _require_typed_columns(ref, frame)
             self._delta.seed(ref, frame)
         else:
             self._tables[ref] = frame
@@ -262,6 +267,12 @@ class PolarsStepRunner:
         ``FromTemp`` reads temps by ``temp_name``, not by its alias.  Pass the
         :class:`StepResult` of an ``IntoTemp`` step alone to seed it under the
         name it was written with.
+
+        The temp is seeded in RUN scope.  ``FromTemp`` looks in RUN scope
+        before CORRELATION scope, as in production, so a seeded temp hides one
+        that a step writes with ``IntoTemp(scope=CORRELATION)`` under the same
+        name.  The result of that step's :meth:`run` is still read from the
+        scope it wrote.
 
         Args:
             name:    Temp name, or the result of an ``IntoTemp`` step.
@@ -338,7 +349,7 @@ class PolarsStepRunner:
             return self._table_result(raw, version_before)
         spec = plan.target_binding.spec
         if isinstance(spec, (TempSpec, TempFanInSpec)):
-            frame = self._temps.get(spec.temp_name).collect()
+            frame = self._temps.read(spec.temp_name, spec.temp_scope)
             return StepResult(frame, temp_name=spec.temp_name)
         raise RuntimeError("Step produced no output — check that target is declared.")
 

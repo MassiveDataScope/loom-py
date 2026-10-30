@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from loom.etl.declarative.target import UpsertDeleteFlagError
 from loom.etl.schema._schema import LoomDtype
 
 
@@ -74,25 +75,35 @@ class StepResult:
 
         Raises:
             RuntimeError: When the target is not an upsert with ``delete_flag``.
+            UpsertDeleteFlagError: When the output has no flag column, or it
+                is not boolean.
         """
-        if self.delete_flag is None:
+        flag = self.delete_flag
+        if flag is None:
             raise RuntimeError(
                 "deletes needs a step whose target is IntoTable(...).upsert(delete_flag=...)."
             )
-        return int(self._frame.select(pl.col(self.delete_flag).fill_null(False).sum()).item())
+        dtype = self._frame.schema.get(flag)
+        if dtype is None:
+            raise UpsertDeleteFlagError(flag, "is missing from the step output")
+        if dtype != pl.Boolean:
+            raise UpsertDeleteFlagError(flag, f"must be a boolean column, got {dtype}")
+        return int(self._frame.select(pl.col(flag).fill_null(False).sum()).item())
 
     @property
     def merged(self) -> MergeMetrics:
         """Rows the MERGE applied to the target table.
 
         Raises:
-            RuntimeError: When the runner has no ``delta_root``, or the target
-                is not an upsert or update that ran as a MERGE.
+            RuntimeError: When the runner has no ``delta_root``, the target is
+                not an upsert or update, or the target table did not exist and
+                was created by this write instead of merged.
         """
         if self.merge_metrics is None:
             raise RuntimeError(
-                "merged is only available on a PolarsStepRunner(delta_root=...) for an "
-                "upsert or update target that ran as a MERGE. "
+                "merged is unavailable: no MERGE ran because the runner has no "
+                "delta_root, the target is not an upsert or update, "
+                "or the target table did not exist and was created by this write. "
                 "Check the final table with runner.table(ref).assert_count(n) instead."
             )
         return self.merge_metrics

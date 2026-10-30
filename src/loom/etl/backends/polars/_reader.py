@@ -296,13 +296,13 @@ class PolarsSourceReader(SourceReader):
             target.location.uri,
             storage_options=target.location.storage_options or None,
         )
-        return finalize_source_frame(frame, spec, params)
+        return _finalize_source_frame(frame, spec, params)
 
     def _read_file(self, spec: FileSourceSpec, params_instance: Any) -> pl.LazyFrame:
         """Read file (CSV, JSON, XLSX, Parquet), resolving alias if needed."""
         path = self._resolve_file_path(spec, params_instance)
         frame = self._read_file_by_format(path, spec.format, spec.read_options)
-        return finalize_source_frame(frame, spec, params_instance)
+        return _finalize_source_frame(frame, spec, params_instance)
 
     def _resolve_file_path(self, spec: FileSourceSpec, params_instance: Any) -> str:
         """Return the physical URI for *spec*, resolving alias and template."""
@@ -363,7 +363,7 @@ class PolarsSourceReader(SourceReader):
         return pl.scan_parquet(path)
 
 
-def finalize_source_frame(
+def _finalize_source_frame(
     frame: pl.LazyFrame,
     spec: TableSourceSpec | FileSourceSpec,
     params_instance: Any,

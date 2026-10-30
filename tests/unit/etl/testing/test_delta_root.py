@@ -60,6 +60,14 @@ class ReplaceSales(ETLStep[P]):
         return fix
 
 
+class UpdateOrders(ETLStep[P]):
+    sources = Sources(cdc=FromTable("raw.cdc"))
+    target = IntoTable("silver.orders").update(keys=("id",))
+
+    def execute(self, params: P, *, cdc: Any) -> Any:  # type: ignore[override]
+        return cdc.drop("_deleted")
+
+
 class AppendEvent(ETLStep[P]):
     sources = Sources(raw=FromTable("raw.events"))
     target = IntoTable("silver.events").append()
@@ -72,11 +80,9 @@ _ORDER_SCHEMA = {"id": LoomDtype.INT64, "status": LoomDtype.UTF8}
 SILVER_ORDERS = ETLScenario().with_table(
     "silver.orders", [(1, "open"), (2, "open")], ["id", "status"], schema=_ORDER_SCHEMA
 )
+_CDC_SCHEMA = {**_ORDER_SCHEMA, "_deleted": LoomDtype.BOOLEAN}
 RAW_CDC = ETLScenario().with_table(
-    "raw.cdc",
-    [(2, "closed", True)],
-    ["id", "status", "_deleted"],
-    schema={**_ORDER_SCHEMA, "_deleted": LoomDtype.BOOLEAN},
+    "raw.cdc", [(2, "closed", True)], ["id", "status", "_deleted"], schema=_CDC_SCHEMA
 )
 _SALE_SCHEMA = {"year": LoomDtype.INT64, "amount": LoomDtype.FLOAT64}
 SALES = ETLScenario().with_table(
@@ -117,6 +123,49 @@ class TestUpsertWithDeleteFlag:
 
         with pytest.raises(RuntimeError, match=r"table\(ref\)\.assert_count"):
             _ = result.merged
+
+    def test_merged_counts_inserted_and_updated_rows(self, tmp_path: Path) -> None:
+        cdc = ETLScenario().with_table(
+            "raw.cdc",
+            [(1, "closed", False), (3, "new", None)],
+            ["id", "status", "_deleted"],
+            schema=_CDC_SCHEMA,
+        )
+        runner = PolarsStepRunner(SILVER_ORDERS + cdc, delta_root=tmp_path)
+
+        result = runner.run(UpsertOrders, P())
+
+        assert result.merged == MergeMetrics(inserted=1, updated=1, deleted=0)
+        assert result.deletes == 0
+
+    def test_merged_reports_an_update_target(self, tmp_path: Path) -> None:
+        cdc = ETLScenario().with_table(
+            "raw.cdc",
+            [(1, "closed", False), (3, "new", False)],
+            ["id", "status", "_deleted"],
+            schema=_CDC_SCHEMA,
+        )
+        runner = PolarsStepRunner(SILVER_ORDERS + cdc, delta_root=tmp_path)
+
+        result = runner.run(UpdateOrders, P())
+
+        assert result.merged == MergeMetrics(inserted=0, updated=1, deleted=0)
+
+    def test_merged_is_unavailable_when_the_upsert_creates_the_table(self, tmp_path: Path) -> None:
+        runner = PolarsStepRunner(RAW_CDC, delta_root=tmp_path)
+
+        result = runner.run(UpsertOrders, P())
+
+        with pytest.raises(RuntimeError, match="created by this write"):
+            _ = result.merged
+
+    def test_untyped_seed_column_asks_for_schema(self, tmp_path: Path) -> None:
+        runner = PolarsStepRunner(delta_root=tmp_path)
+
+        with pytest.raises(ValueError, match="schema="):
+            runner.seed("raw.cdc", [(1, None)], ["id", "status"])
+        with pytest.raises(ValueError, match="schema="):
+            runner.seed("raw.cdc", [], ["id"])
 
 
 # 11 --------------------------------------------------------------------------

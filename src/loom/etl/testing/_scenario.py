@@ -87,24 +87,40 @@ class _TempSeed:
 
 
 class _AfterStep:
-    """Run an ``IntoTemp`` step once, then seed its memoized output on later applications."""
+    """Seed the output of an ``IntoTemp`` step run on the operations that precede it.
 
-    def __init__(self, step_cls: type[Any], params: Any) -> None:
+    The step runs once, on a fresh :class:`PolarsStepRunner` built only from
+    *prefix*, the immutable operations of the scenario ``after()`` was called
+    on.  The output depends only on that prefix, so it is memoized on this
+    operation and every application seeds the same temp.
+    """
+
+    def __init__(self, prefix: tuple[_ScenarioOp, ...], step_cls: type[Any], params: Any) -> None:
+        self._prefix = prefix
         self._step_cls = step_cls
         self._params = params
         self._result: StepResult | None = None
 
     def apply(self, runner: StepRunnerProto) -> None:
-        if self._result is not None:
-            runner.seed_temp(self._result)
-            return
-        result = runner.run(self._step_cls, self._params)
+        runner.seed_temp(self._upstream_result())
+
+    def _upstream_result(self) -> StepResult:
+        if self._result is None:
+            self._result = self._run_upstream()
+        return self._result
+
+    def _run_upstream(self) -> StepResult:
+        # _runners imports this module, so the runner is imported when first needed.
+        from loom.etl.testing._runners import PolarsStepRunner  # noqa: PLC0415
+
+        upstream = ETLScenario(self._prefix).apply(PolarsStepRunner())
+        result = upstream.run(self._step_cls, self._params)
         if result.temp_name is None:
             raise TypeError(
                 f"ETLScenario.after() needs a step whose target is IntoTemp; "
                 f"{self._step_cls.__qualname__} writes a table."
             )
-        self._result = result
+        return result
 
     def describe(self) -> tuple[str, str]:
         return ("after", self._step_cls.__qualname__)
@@ -191,10 +207,14 @@ class ETLScenario:
     def after(self, step_cls: type[Any], params: Any) -> ETLScenario:
         """Return a new scenario that also holds the real output of an ``IntoTemp`` step.
 
-        The step runs, against the state seeded so far, the first time the
-        scenario is applied; its output is memoized and later applications
-        only seed it with ``seed_temp``.  Scenarios derived from the returned
-        one share the memo.
+        The step runs once, the first time the scenario is applied, on a fresh
+        in-memory :class:`PolarsStepRunner` seeded only with the entries of
+        this scenario (the ones before ``after()``).  It does not see the
+        runner the scenario is applied to: neither its config
+        (:meth:`PolarsStepRunner.with_config`), nor seeds added outside the
+        scenario, nor its ``delta_root``.  The output is memoized and every
+        application seeds it with ``seed_temp``; entries added after
+        ``after()``, or scenarios composed with ``+``, do not change it.
 
         Args:
             step_cls: Upstream step whose target is ``IntoTemp``.
@@ -206,7 +226,7 @@ class ETLScenario:
         Raises:
             TypeError: On first application, when the step does not write a temp.
         """
-        return self._with(_AfterStep(step_cls, params))
+        return self._with(_AfterStep(self._ops, step_cls, params))
 
     def apply(self, runner: _RunnerT) -> _RunnerT:
         """Seed every entry into *runner*, in order, and return it.
@@ -230,8 +250,9 @@ class ETLScenario:
     def __repr__(self) -> str:
         described = [op.describe() for op in self._ops]
         tables = [name for kind, name in described if kind == "table"]
-        temps = [name for kind, name in described if kind != "table"]
-        return f"ETLScenario(tables={tables}, temps={temps})"
+        temps = [name for kind, name in described if kind == "temp"]
+        after = [name for kind, name in described if kind == "after"]
+        return f"ETLScenario(tables={tables}, temps={temps}, after={after})"
 
     def _with(self, op: _ScenarioOp) -> ETLScenario:
         return ETLScenario(self._ops + (op,))

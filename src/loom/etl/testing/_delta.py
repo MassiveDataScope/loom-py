@@ -1,8 +1,4 @@
-"""Delta tables of a ``PolarsStepRunner(delta_root=...)``: real reader and writer on one root.
-
-Imported only when a runner is built with ``delta_root``, because it pulls in
-``deltalake`` through the Polars backend.
-"""
+"""Delta tables of a ``PolarsStepRunner(delta_root=...)``: real reader and writer on one root."""
 
 from __future__ import annotations
 
