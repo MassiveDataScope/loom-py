@@ -211,7 +211,8 @@ def compose_application(
     )
     wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
-    # Caller modules first, then repositories, then the framework's own.
+    # Caller modules first, then repositories, then the framework's own. The
+    # framework's services registered below are defaults: a caller's binding stays.
     kernel = create_kernel(
         config=source.app,
         use_cases=discovered.use_cases,
@@ -226,7 +227,9 @@ def compose_application(
     # Registered, not merely passed: capability spans resolve it from the
     # container, and an unregistered runtime makes every Scope.TOOL span a
     # silent no-op in production while passing every test that injects one.
-    kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
+    kernel.container.register_default(
+        ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION
+    )
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
     # Last: every service a use case may inject is registered by now.
     kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))

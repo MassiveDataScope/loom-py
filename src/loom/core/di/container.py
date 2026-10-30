@@ -102,6 +102,35 @@ class LoomContainer:
         factory = provider
         self._bindings[interface] = _Binding(provider=factory, scope=scope)
 
+    def register_default(
+        self,
+        interface: BindingKey,
+        provider: Callable[[], Any] | type[Any],
+        scope: Scope = Scope.REQUEST,
+    ) -> None:
+        """Register a provider for ``interface`` unless one is already bound.
+
+        :meth:`register` replaces a binding silently. A framework default
+        registered after the caller's modules uses this instead, so the
+        caller's own binding — through :meth:`register` or
+        :meth:`register_instance` — is kept and *provider* is never called.
+
+        Args:
+            interface: A hashable DI key used as the resolution key.
+            provider: As in :meth:`register`.
+            scope: Lifetime scope of the default. Defaults to
+                :attr:`~Scope.REQUEST`; ignored when a binding is kept.
+
+        Example::
+
+            container.register(JobService, MyJobService, scope=Scope.APPLICATION)
+            container.register_default(JobService, InlineJobService)
+            assert isinstance(container.resolve(JobService), MyJobService)
+        """
+        if interface in self._bindings:
+            return
+        self.register(interface, provider, scope=scope)
+
     def register_instance(self, interface: BindingKey, instance: Any) -> None:
         """Register an already-constructed singleton instance.
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from loom.core.di.container import LoomContainer
+from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.repository import (
     DefaultRepositoryBuilder,
@@ -123,8 +124,7 @@ def build_sqlalchemy_repository_registration_module(
     )
 
     def _register_with_session(container: LoomContainer) -> None:
-        if not container.is_registered(SessionManager):
-            container.register_instance(SessionManager, session_manager)
+        container.register_default(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
         register_cursor_codec(container, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(

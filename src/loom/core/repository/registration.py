@@ -249,12 +249,10 @@ def _register_repository_binding(
     binding_key: object,
     provider: Callable[[], Any],
 ) -> None:
-    if not container.is_registered(binding_key):
-        container.register(binding_key, provider, scope=Scope.APPLICATION)
+    container.register_default(binding_key, provider, scope=Scope.APPLICATION)
     container.register_repo(model, binding_key)
     for key in capability_keys:
-        if not container.is_registered(key):
-            container.register(key, provider, scope=Scope.APPLICATION)
+        container.register_default(key, provider, scope=Scope.APPLICATION)
 
 
 def build_repository_registration_module(

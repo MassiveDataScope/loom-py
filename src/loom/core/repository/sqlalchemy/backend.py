@@ -24,6 +24,7 @@ from loom.core.backend.sqlalchemy import (
 )
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
+from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
@@ -155,8 +156,7 @@ def _repositories_module(
 
 def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
     """Register the session manager unless the container already holds one."""
-    if not container.is_registered(SessionManager):
-        container.register_instance(SessionManager, session_manager)
+    container.register_default(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
 
 
 def _with_elevation_sink(

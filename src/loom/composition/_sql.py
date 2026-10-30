@@ -107,9 +107,11 @@ def register_sql_collaborators(
     The runtime is handed to the bound path so its queries leave the same audit
     trail as the REST endpoint: one span per query, labelled with the effective
     roles and the caller subject.
+
+    A collaborator a caller's DI module already registered is kept.
     """
     service = sql.service
     config = sql.config if sql.config is not None else SqlConfig(connections={})
     caller_bound = CallerBoundSql(service, config, observability)
-    container.register(SqlQueryService, lambda: service, scope=Scope.APPLICATION)
-    container.register(CallerBoundSql, lambda: caller_bound, scope=Scope.APPLICATION)
+    container.register_default(SqlQueryService, lambda: service, scope=Scope.APPLICATION)
+    container.register_default(CallerBoundSql, lambda: caller_bound, scope=Scope.APPLICATION)
