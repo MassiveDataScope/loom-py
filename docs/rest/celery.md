@@ -605,6 +605,10 @@ celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
 - Each prefork child opens the application on the async bridge that runs its
   tasks, so every connection is created on the loop that uses it. Opening
   creates no connection: the engine connects on first use.
+- On asyncio one owner task, `ApplicationHost` (`loom.composition`), opens
+  and closes the application, so a resource that must be closed by the task
+  that opened it closes cleanly; on trio the application is entered and
+  exited in two bridge calls, which is safe because the worker hosts no agents.
 - A child that fails to open is not killed — the pool would respawn it into
   the same failure. The failure is logged once, and every task of that child
   fails fast with `WorkerNotOpenError` (`loom.celery.errors`), chained to the

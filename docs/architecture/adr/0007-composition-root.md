@@ -108,7 +108,11 @@ by construction: the parent checks once, then each child opens on the async
 bridge that runs its tasks. A failed check raises `WorkerTerminate`, so no
 child is created. A child that fails to open is not killed, since the pool
 would respawn it into the same failure; its tasks fail with
-`WorkerNotOpenError` (`loom.celery.errors`), chained to the cause. Neither
+`WorkerNotOpenError` (`loom.celery.errors`), chained to the cause. On asyncio
+a single owner task, `ApplicationHost`, opens and closes the application,
+since each bridge call runs in a task of its own; on trio the application is
+entered and exited in two bridge calls, safe because the worker hosts no
+agents. Neither
 shutdown signal is guaranteed, so closing is idempotent, logs its failures
 and raises nothing into Celery. Each handler carries a `dispatch_uid`, so
 composing again replaces the previous handlers.

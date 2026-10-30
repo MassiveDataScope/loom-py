@@ -161,6 +161,21 @@ connection checks — run right before it opens, and all of them run in
 - Open and close on the same event loop: a connection belongs to the loop
   that created it.
 
+A transport that opens and closes in separate calls — the Celery signals,
+a Lambda's Init and shutdown — uses `ApplicationHost(application, check=True)`
+instead, since each call runs in a task of its own and an agent runtime or an
+MCP client must be closed by the task that opened it:
+
+- `await host.start()` spawns one owner task that enters `running()` and
+  returns once the application is open, or raises the failure to open as
+  itself. A host starts once; a second `start()` raises `RuntimeError`.
+- `await host.stop()` closes in that owner task and waits for it; concurrent
+  calls all wait, and only the first raises a failure to close. Without a
+  start, or once closed, it does nothing.
+- A `stop()` during the opening makes `start()` raise `RuntimeError` once what
+  opened is closed; a cancelled `start()` closes what opened, and a failure to
+  close that no `stop()` raises is logged.
+
 `check()` leaving no connection open is what makes a forking server safe:
 the parent checks, the children open, and nothing the parent touched crosses
 the fork.

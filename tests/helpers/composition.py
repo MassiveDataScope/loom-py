@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource
+from loom.composition import AppConfig, Application, CompositionSource, Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.environment import Environment
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -73,3 +75,46 @@ def application_openings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(Application, "running", recorded)
     return events
+
+
+def application_of(*resources: Resource) -> Application:
+    """An application owning *resources*, whose composition facts play no part in its lifecycle."""
+    unused = cast(Any, SimpleNamespace())
+    return Application(
+        kernel=unused,
+        config=unused,
+        environment=unused,
+        code_path=unused,
+        discovered=unused,
+        observability=unused,
+        sql=unused,
+        ai=unused,
+        persistence=unused,
+        resources=resources,
+    )
+
+
+class TaskAffine:
+    """Refuses, as ``AgentRuntime`` and an MCP client do, an exit from a task it was not entered in.
+
+    Attributes:
+        entered_in: The task that entered it.
+        exited_in: The task that exited it, once it has.
+    """
+
+    def __init__(self) -> None:
+        self.entered_in: asyncio.Task[Any] | None = None
+        self.exited_in: asyncio.Task[Any] | None = None
+
+    def resource(self) -> Resource:
+        """The agent runtime slot of an application, opening and closing this."""
+        return Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: self)
+
+    async def __aenter__(self) -> None:
+        self.entered_in = asyncio.current_task()
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        current = asyncio.current_task()
+        if current is not self.entered_in:
+            raise RuntimeError("must be exited by the task that entered it")
+        self.exited_in = current

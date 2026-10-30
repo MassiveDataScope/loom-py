@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING
 
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
@@ -12,12 +12,15 @@ from loom.core.di.scope import Scope
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.observability.runtime import ObservabilityRuntime
 
+if TYPE_CHECKING:
+    from loom.celery.service import CeleryJobService
+
 
 def build_celery_service(
     ctx: ConfigContext,
     result: KernelRuntime,
     observability_runtime: ObservabilityRuntime | None,
-) -> Any | None:
+) -> CeleryJobService | None:
     """Return a ``CeleryJobService`` if the celery extra is installed and configured.
 
     Returns ``None`` when the ``loom[celery]`` extra is absent or the
@@ -80,7 +83,7 @@ def configure_job_service(
     ctx: ConfigContext,
     result: KernelRuntime,
     observability_runtime: ObservabilityRuntime | None,
-) -> None:
+) -> CeleryJobService | None:
     """Register a ``JobService`` implementation in the container.
 
     Registers :class:`~loom.celery.service.CeleryJobService` when a
@@ -98,6 +101,8 @@ def configure_job_service(
         result: Kernel runtime carrying container, factory and executor.
     """
     if result.container.is_registered(JobService):
-        return
-    svc = build_celery_service(ctx, result, observability_runtime) or build_inline_service(result)
+        return None
+    celery_service = build_celery_service(ctx, result, observability_runtime)
+    svc = celery_service or build_inline_service(result)
     result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)
+    return celery_service

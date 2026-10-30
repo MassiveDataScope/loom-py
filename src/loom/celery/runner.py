@@ -476,7 +476,7 @@ def _make_callback_task(
     return _callback_task
 
 
-def _resolve_error_info(job_id: str) -> tuple[str, str]:
+def _resolve_error_info(job_id: str, app: Celery) -> tuple[str, str]:
     """Look up the exception that caused a job to fail via the result backend.
 
     Falls back to empty strings if the backend does not hold the result or
@@ -484,11 +484,12 @@ def _resolve_error_info(job_id: str) -> tuple[str, str]:
 
     Args:
         job_id: Celery task UUID of the *failed* job.
+        app: The worker application holding the result backend.
 
     Returns:
         A ``(exc_type, exc_msg)`` tuple ready to forward to ``on_failure``.
     """
-    exc = AsyncResult(job_id).result
+    exc = AsyncResult(job_id, app=app).result
     if isinstance(exc, Exception):
         return type(exc).__qualname__, str(exc)
     return "Unknown", ""
@@ -542,7 +543,7 @@ def _make_callback_error_task(
                 id=job_id,
                 callback="failure",
             ):
-                exc_type, exc_msg = _resolve_error_info(job_id)
+                exc_type, exc_msg = _resolve_error_info(job_id, celery_app)
                 cb = factory.build(callback_type)
                 if _on_failure_is_async:
                     async_runtime.run(

@@ -681,11 +681,19 @@ class TestEmitHelpers:
 
 
 class TestResolveErrorInfo:
+    def test_looks_up_result_on_the_worker_app(self) -> None:
+        app = Celery("worker", set_as_current=False)
+        mock_result = MagicMock()
+        mock_result.result = ValueError("bad")
+        with patch("loom.celery.runner.AsyncResult", return_value=mock_result) as result:
+            assert _resolve_error_info("some-task-id", app) == ("ValueError", "bad")
+        result.assert_called_once_with("some-task-id", app=app)
+
     def test_returns_qualname_and_message_for_exception(self) -> None:
         mock_result = MagicMock()
         mock_result.result = ValueError("something went wrong")
         with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            exc_type, exc_msg = _resolve_error_info("some-task-id")
+            exc_type, exc_msg = _resolve_error_info("some-task-id", Celery(set_as_current=False))
         assert exc_type == "ValueError"
         assert exc_msg == "something went wrong"
 
@@ -693,7 +701,7 @@ class TestResolveErrorInfo:
         mock_result = MagicMock()
         mock_result.result = None
         with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            exc_type, exc_msg = _resolve_error_info("some-task-id")
+            exc_type, exc_msg = _resolve_error_info("some-task-id", Celery(set_as_current=False))
         assert exc_type == "Unknown"
         assert exc_msg == ""
 
