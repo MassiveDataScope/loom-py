@@ -12,11 +12,13 @@ class ResourceKind(StrEnum):
     """What a resource is. The order of the members is the order of opening.
 
     The cache gateways only need closing, so they open first and close last;
+    the Celery producer opens next and closes after the stores, agents and SQL;
     the SQL registry opens before the agent runtime, which may query it; the
     stores open last, after their startup checks.
     """
 
     CACHE = "cache"
+    CELERY = "celery"
     SQL = "sql"
     AGENTS = "agents"
     STORE = "store"

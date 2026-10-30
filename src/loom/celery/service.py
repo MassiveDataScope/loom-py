@@ -251,6 +251,11 @@ class CeleryJobService:
         self._executor = executor
         self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
 
+    @property
+    def celery_app(self) -> Celery:
+        """The Celery application owned by this service."""
+        return self._app
+
     # ------------------------------------------------------------------
     # JobService protocol
     # ------------------------------------------------------------------

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from celery import Celery
+from celery import Celery, current_app
 
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.celery.adapter import CeleryAdapter
@@ -141,6 +141,13 @@ class TestRecipe:
 
 
 class TestBind:
+    def test_bind_sets_the_worker_app_as_current(self, tmp_path: Path) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
+
+        app = adapter.bind(_application(tmp_path, {}, adapter))
+
+        assert current_app._get_current_object() is app
+
     def test_bind_returns_a_celery_app_with_jobs_and_callbacks(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_PingCallback])
 

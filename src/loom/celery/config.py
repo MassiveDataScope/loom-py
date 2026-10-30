@@ -206,7 +206,7 @@ def create_celery_app(cfg: CeleryConfig) -> Celery:
             f"queues={cfg.queues}. Callbacks would be silently routed to an "
             "unconsumed queue. Add the queue name to the 'queues' list."
         )
-    app = Celery()
+    app = Celery(set_as_current=False)
     app.conf.update(
         broker_url=cfg.broker_url.reveal(),
         result_backend=cfg.result_backend.reveal(),

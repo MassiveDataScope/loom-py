@@ -510,6 +510,7 @@ class CeleryAdapter:
 
         async_runtime = _build_async_runtime(declared.celery.runtime)
         celery_app = create_celery_app(declared.celery)
+        celery_app.set_current()
         _register_tasks(celery_app, declared, application, async_runtime, self._metrics)
         _connect_lifecycle_signals(_WorkerLifecycle(application, async_runtime))
         return celery_app
