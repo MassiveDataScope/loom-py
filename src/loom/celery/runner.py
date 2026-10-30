@@ -5,6 +5,12 @@ Each ``_make_*`` function registers one Celery task against a given
 worker bootstrap (see :func:`~loom.celery.bootstrap.bootstrap_worker`)
 and never again.
 
+Every task is registered with ``shared=False``: it belongs to its
+``celery_app`` alone. A shared task joins Celery's process-wide finalizers,
+so a second application finalized in the same process would also receive
+it, and the first task registered under a name wins — the second
+application would serve a task bound to the first one's runtime.
+
 All jobs — both sync and async ``execute()`` — are executed through the
 :class:`~loom.core.engine.executor.RuntimeExecutor` via a per-process
 :class:`~loom.core.async_bridge.AsyncBridge`.  This gives every job
@@ -343,6 +349,7 @@ def _make_job_task(
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=f"{TASK_JOB_PREFIX}.{job_type.__qualname__}",
+        shared=False,
         bind=True,
         acks_late=True,
         reject_on_worker_lost=True,
@@ -417,7 +424,9 @@ def _make_callback_task(
     _on_success_is_async = inspect.iscoroutinefunction(callback_type.on_success)
     runtime = observability_runtime or ObservabilityRuntime.noop()
 
-    @celery_app.task(name=f"{TASK_CALLBACK_PREFIX}.{callback_type.__qualname__}")  # type: ignore[untyped-decorator]
+    @celery_app.task(  # type: ignore[untyped-decorator]
+        name=f"{TASK_CALLBACK_PREFIX}.{callback_type.__qualname__}", shared=False
+    )
     def _callback_task(
         result: Any,
         *,
@@ -495,7 +504,9 @@ def _make_callback_error_task(
     _on_failure_is_async = inspect.iscoroutinefunction(callback_type.on_failure)
     runtime = observability_runtime or ObservabilityRuntime.noop()
 
-    @celery_app.task(name=f"{TASK_CALLBACK_ERROR_PREFIX}.{callback_type.__qualname__}")  # type: ignore[untyped-decorator]
+    @celery_app.task(  # type: ignore[untyped-decorator]
+        name=f"{TASK_CALLBACK_ERROR_PREFIX}.{callback_type.__qualname__}", shared=False
+    )
     def _callback_error_task(
         *,
         job_id: str,

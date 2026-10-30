@@ -185,7 +185,7 @@ class TestSingleProcessPools:
         assert bridge._bridge is None
 
 
-class _RefusedOpenJob(Job[int]):
+class _PingJob(Job[int]):
     __retries__ = 0
 
     def execute(self) -> int:
@@ -196,7 +196,7 @@ class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_RefusedOpenJob])
+        adapter = CeleryAdapter(jobs=[_PingJob])
         source = composition_source(
             ConfigContext.from_dict(
                 {
@@ -221,7 +221,7 @@ class TestFailedChildOpen:
 
         cast(Any, application).running = _failing
         celery_app = adapter.bind(application)
-        return celery_app.tasks[f"{TASK_JOB_PREFIX}.{_RefusedOpenJob.__qualname__}"]
+        return celery_app.tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
 
     def test_every_task_fails_fast_naming_the_failure_to_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
