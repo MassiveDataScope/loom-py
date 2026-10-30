@@ -13,6 +13,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 from celery import Celery  # type: ignore[import-untyped]
 
+import loom.celery.adapter as adapter
 import loom.celery.bootstrap as boot
 import loom.celery.runner as _runner
 from loom.ai.abc import AgentHandle, McpHandle
@@ -252,7 +253,7 @@ class TestBootstrapWorkerJobConfigOverride:
         config_file = tmp_path / "worker_with_override.yaml"
         config_file.write_text(yaml.dump(cfg))
 
-        with patch.object(boot, "_make_job_task", side_effect=_spy):
+        with patch.object(adapter, "_make_job_task", side_effect=_spy):
             bootstrap_worker(str(config_file), jobs=[_DoubleSyncJob])
 
         assert captured_retries == [3], (

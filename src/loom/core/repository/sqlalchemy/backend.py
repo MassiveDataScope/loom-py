@@ -81,9 +81,16 @@ class SQLAlchemyBackend:
         Returns:
             The SQLAlchemy wiring.
 
+        With ``runtime.connection_only`` only the unit of work and the session
+        manager are served: no cursor codec, no repository, and
+        ``prepare_models`` leaves the compiled registry as it is. Row-level
+        security then stays unbound, so on Postgres with ``schema.mode:
+        external`` every session fails closed.
+
         Raises:
             ConfigError: When the ``database`` section is missing or invalid,
-                or ``persistence.cursors`` cannot build a cursor codec.
+                or repositories are served and ``persistence.cursors`` cannot
+                build a cursor codec.
         """
         db_cfg = load_database_config(ctx)
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
@@ -93,7 +100,7 @@ class SQLAlchemyBackend:
             else None
         )
         convention = configured_naming_convention(db_cfg.schema.naming_convention)
-        cursor_codec = CursorCodec.from_context(ctx)
+        cursor_codec = None if runtime.connection_only else CursorCodec.from_context(ctx)
         session_manager = build_session_manager(
             db_cfg,
             runtime.profile,
@@ -102,6 +109,18 @@ class SQLAlchemyBackend:
         )
         if settings is not None:
             install_pool_reset(session_manager.engine)
+        if cursor_codec is None:
+            return PersistenceWiring(
+                uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
+                repo_registration_module=functools.partial(
+                    _register_session_manager, session_manager
+                ),
+                lifespan_init=lambda: _lifespan(session_manager),
+                startup_checks=functools.partial(
+                    _run_startup_checks, session_manager, db_cfg.schema
+                ),
+                readiness=lambda: _readiness(session_manager),
+            )
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
             repo_registration_module=_with_elevation_sink(
@@ -117,6 +136,12 @@ class SQLAlchemyBackend:
             startup_checks=functools.partial(_run_startup_checks, session_manager, db_cfg.schema),
             readiness=lambda: _readiness(session_manager),
         )
+
+
+def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
+    """Register only the session manager: the module of a backend serving no repository."""
+    if not container.is_registered(SessionManager):
+        container.register_instance(SessionManager, session_manager)
 
 
 def _with_elevation_sink(

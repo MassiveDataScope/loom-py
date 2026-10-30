@@ -32,6 +32,9 @@ class Recipe:
         metrics: Use-case metrics, or ``None``.
         pool_metrics: Connection-pool metrics, only for an entry point that
             serves a scrape.
+        connection_only: Ask the backend for its connection only, no
+            repository; for an entry point with no model (see
+            :class:`~loom.core.persistence.BackendRuntime`).
     """
 
     profile: RuntimeProfile
@@ -41,6 +44,7 @@ class Recipe:
     agents: bool = False
     metrics: MetricsAdapter | None = None
     pool_metrics: PoolMetricsSink | None = None
+    connection_only: bool = False
 
 
 class Adapter(Protocol[T_co]):

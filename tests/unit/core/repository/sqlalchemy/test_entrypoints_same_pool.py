@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -39,11 +40,29 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
 
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
-    from loom.celery.bootstrap import _resolve_uow_factory
+    from loom.celery.adapter import CeleryAdapter
+    from loom.composition import AppConfig, CompositionSource, compose_application
+    from loom.core.environment import Environment
+    from loom.core.job.job import Job
+    from loom.core.observability.runtime import ObservabilityRuntime
 
-    _factory, manager = _resolve_uow_factory(ConfigContext.from_dict({"database": database}))
-    assert manager is not None
-    return manager
+    class _PingJob(Job[int]):
+        def execute(self) -> int:
+            return 1
+
+    celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
+    source = CompositionSource(
+        config=ConfigContext.from_dict({"database": database, "celery": celery}),
+        environment=Environment.TEST,
+        code_path=Path.cwd(),
+        config_root=Path.cwd(),
+        app=AppConfig(name="worker"),
+        observability=ObservabilityRuntime.noop(),
+    )
+    factory: Any = compose_application(
+        source, CeleryAdapter(jobs=[_PingJob])
+    ).persistence.uow_factory
+    return factory._session_manager
 
 
 def _streaming_manager(database: dict[str, Any]) -> SessionManager:

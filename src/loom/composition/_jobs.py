@@ -90,11 +90,14 @@ def configure_job_service(
     local development and tests without a broker.
 
     The registration uses ``APPLICATION`` scope so the service is created
-    once and shared across all requests.
+    once and shared across all requests. A ``JobService`` a caller's DI
+    module already registered is kept.
 
     Args:
         ctx: Resolved configuration context.
         result: Kernel runtime carrying container, factory and executor.
     """
+    if result.container.is_registered(JobService):
+        return
     svc = build_celery_service(ctx, result, observability_runtime) or build_inline_service(result)
     result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)

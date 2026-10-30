@@ -26,11 +26,14 @@ from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigKey, ConfigResolver, with_default_resolvers
 from loom.core.config.overrides import load_application_config
 from loom.core.di.scope import Scope
+from loom.core.engine.compilable import Compilable
+from loom.core.engine.plan import ExistsStep, LoadStep
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
+from loom.core.use_case.factory import ModelRead
 
 if TYPE_CHECKING:
     from loom.composition.recipe import Adapter, Recipe
@@ -163,9 +166,10 @@ def compose_application(
     enforce_deploy_checks(ctx, source.environment, skip=recipe.skip_checks)
 
     discovered = recipe.discovered
-    wiring = recipe.backend.build(
-        ctx, discovered.models, BackendRuntime(recipe.profile, pool_metrics=recipe.pool_metrics)
+    runtime = BackendRuntime(
+        recipe.profile, pool_metrics=recipe.pool_metrics, connection_only=recipe.connection_only
     )
+    wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
     # Caller modules first, then repositories, then the framework's own.
     kernel = create_kernel(
@@ -185,7 +189,7 @@ def compose_application(
     kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
     # Last: every service a use case may inject is registered by now.
-    kernel.factory.verify()
+    kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))
 
     return Application(
         kernel=kernel,
@@ -199,6 +203,20 @@ def compose_application(
         persistence=wiring,
         resources=_resources(kernel, wiring, recipe.backend.name, sql, ai),
     )
+
+
+def _marker_reads(
+    kernel: KernelRuntime, use_cases: Sequence[type[Compilable]]
+) -> tuple[ModelRead, ...]:
+    """The models the compiled plans read through ``LoadById``, ``Load`` or ``Exists``."""
+    reads: list[ModelRead] = []
+    for use_case in use_cases:
+        plan = kernel.compiler.get_plan(use_case)
+        if plan is None:
+            continue
+        steps: tuple[LoadStep | ExistsStep, ...] = (*plan.load_steps, *plan.exists_steps)
+        reads.extend(ModelRead(use_case, step.name, step.entity_type) for step in steps)
+    return tuple(reads)
 
 
 def _compose_agents(

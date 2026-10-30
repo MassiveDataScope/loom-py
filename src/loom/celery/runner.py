@@ -32,6 +32,7 @@ from celery import Celery  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import PostCommitError
@@ -61,6 +62,7 @@ class _CeleryAsyncRuntime:
     backend_options: dict[str, Any] = field(default_factory=dict)
     shutdown_timeout_ms: int | None = None
     _bridge: AsyncBridge | None = None
+    _open_failure: BaseException | None = None
 
     def initialize(self) -> None:
         """Create the async bridge once per forked worker process."""
@@ -72,6 +74,10 @@ class _CeleryAsyncRuntime:
             shutdown_timeout_ms=self.shutdown_timeout_ms,
         )
 
+    def refuse(self, cause: BaseException) -> None:
+        """Fail every later :meth:`run` of this process: its application did not open."""
+        self._open_failure = cause
+
     def run(
         self,
         coro: Any,
@@ -79,7 +85,15 @@ class _CeleryAsyncRuntime:
         timeout: float | None = None,
         eager_fallback: bool,
     ) -> Any:
-        """Run *coro* through the worker bridge or fall back to asyncio."""
+        """Run *coro* through the worker bridge or fall back to asyncio.
+
+        Raises:
+            WorkerNotOpenError: When :meth:`refuse` recorded that this
+                process's application failed to open; *coro* is closed unrun.
+        """
+        if self._open_failure is not None:
+            _close_unrun(coro)
+            raise WorkerNotOpenError(self._open_failure) from self._open_failure
         if self._bridge is not None and self._bridge.is_alive:
             return self._bridge.run(coro, timeout=timeout)
 
@@ -92,9 +106,7 @@ class _CeleryAsyncRuntime:
 
             return asyncio.run(_with_timeout())
 
-        close = getattr(coro, "close", None)
-        if callable(close):
-            close()
+        _close_unrun(coro)
         raise RuntimeError(
             "Celery async bridge is not initialized and eager fallback is disabled. "
             "Use a Celery worker process or enable task_always_eager."
@@ -106,6 +118,13 @@ class _CeleryAsyncRuntime:
             return
         self._bridge.shutdown()
         self._bridge = None
+
+
+def _close_unrun(coro: Any) -> None:
+    """Close a coroutine that will never run, so it is not reported as never awaited."""
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
 
 
 # ---------------------------------------------------------------------------
