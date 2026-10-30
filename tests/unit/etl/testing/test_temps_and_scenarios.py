@@ -257,7 +257,13 @@ class TestChaining:
         for result in (first, second, third):
             assert sorted(result.to_polars()["amount"].to_list()) == [10.0, 20.0]
 
-    def test_after_runs_on_its_own_prefix_not_on_the_target_runner(self) -> None:
+    def test_after_ignores_seeds_outside_its_prefix(self) -> None:
+        runner = PolarsStepRunner().seed("raw.orders", [(1, 10.0)], ["id", "amount"])
+
+        with pytest.raises(KeyError, match="raw.orders"):
+            ETLScenario().after(Normalize, P()).apply(runner)
+
+    def test_composed_scenarios_reuse_the_same_after_result(self) -> None:
         Normalize.calls = 0
         small = ETLScenario().with_table("raw.orders", [(1, 1.0)], ["id", "amount"])
         large = ETLScenario().with_table("raw.orders", [(1, 1.0), (2, 2.0)], ["id", "amount"])
@@ -284,12 +290,10 @@ class TestChaining:
         assert Normalize.calls == 2
         assert [len(r.to_polars()) for r in results] == [1, 2, 1, 2]
 
-    def test_after_does_not_write_into_the_target_runner(self) -> None:
-        runner = PolarsStepRunner(_ORDERS.after(Normalize, P()))
+    def test_repr_lists_after_entries_apart_from_temps(self) -> None:
+        scenario = _ORDERS.after(Normalize, P())
 
-        with pytest.raises(RuntimeError, match="No spec"):
-            _ = runner.target_spec
-        assert "after=['Normalize']" in repr(_ORDERS.after(Normalize, P()))
+        assert repr(scenario) == "ETLScenario(tables=['raw.orders'], temps=[], after=['Normalize'])"
 
     def test_seed_temp_infers_the_name_from_an_into_temp_result(self) -> None:
         upstream = PolarsStepRunner(_ORDERS).run(Normalize, P())
