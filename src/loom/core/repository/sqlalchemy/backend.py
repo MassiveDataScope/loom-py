@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Final
 
@@ -60,7 +60,8 @@ class SQLAlchemyBackend:
 
     Reads the ``database`` and ``persistence.cursors`` sections, opens one
     engine shared by the unit of work and every repository, creates the
-    compiled tables at startup and disposes the engine at shutdown.
+    compiled tables at startup and disposes the engine at shutdown. Built
+    connection-only, its startup probes the connection instead.
     """
 
     name: ClassVar[str] = "sqlalchemy"
@@ -100,10 +101,13 @@ class SQLAlchemyBackend:
         # Before the engine: an invalid persistence.cursors fails with none built.
         register: Callable[[SessionManager], Callable[[LoomContainer], None]]
         prepare: Callable[[Sequence[type[BaseModel]]], None]
+        check: Callable[[SessionManager, SchemaConfig], Awaitable[None]]
         if runtime.connection_only:
             prepare = no_model_preparation
             register = _session_manager_module
+            check = _probe_connection
         else:
+            check = _run_startup_checks
             prepare = functools.partial(
                 _prepare_models,
                 convention=configured_naming_convention(db_cfg.schema.naming_convention),
@@ -128,7 +132,7 @@ class SQLAlchemyBackend:
             repo_registration_module=register(session_manager),
             lifespan_init=lambda: _lifespan(session_manager),
             prepare_models=prepare,
-            startup_checks=functools.partial(_run_startup_checks, session_manager, db_cfg.schema),
+            startup_checks=functools.partial(check, session_manager, db_cfg.schema),
             readiness=lambda: _readiness(session_manager),
         )
 
@@ -298,8 +302,30 @@ async def _run_startup_checks(session_manager: SessionManager, config: SchemaCon
             else:
                 await connection.run_sync(get_metadata().create_all)
     finally:
-        if isinstance(session_manager.engine.sync_engine.pool, QueuePool):
-            await session_manager.dispose()
+        await _release_queued(session_manager)
+
+
+async def _probe_connection(session_manager: SessionManager, config: SchemaConfig) -> None:
+    """Open one connection and run ``SELECT 1``, then drop queued connections.
+
+    The startup of a backend serving no repository: the process-wide metadata
+    holds tables this host does not serve, so none is created or inspected and
+    the schema settings in *config* are not consulted. The engine is used
+    directly, not a session, so unbound row-level security settings do not
+    refuse the probe. A failure to connect propagates as the driver raised it.
+    """
+    del config
+    try:
+        async with session_manager.engine.connect() as connection:
+            await connection.execute(_PROBE)
+    finally:
+        await _release_queued(session_manager)
+
+
+async def _release_queued(session_manager: SessionManager) -> None:
+    """Dispose a queued pool, so a prefork parent forks with no connection."""
+    if isinstance(session_manager.engine.sync_engine.pool, QueuePool):
+        await session_manager.dispose()
 
 
 @asynccontextmanager

@@ -90,8 +90,11 @@ class BackendRuntime:
             with no model (a worker running raw-SQL jobs). A backend that
             honours it (``sqlalchemy``) then registers its session manager
             and unit of work, builds no cursor codec, registers no repository
-            and leaves the compiled registry as it is. Row-level security
-            settings stay installed but unbound, so they fail closed.
+            and leaves the compiled registry as it is. Its startup checks
+            open one connection, run ``SELECT 1`` and release the pool: no
+            table is created, no external schema or connecting role is
+            inspected and no column is checked. Row-level security settings
+            stay installed but unbound, so they fail closed.
     """
 
     profile: RuntimeProfile

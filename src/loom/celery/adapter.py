@@ -15,9 +15,10 @@ refuses, and when the Celery signals check, open and close the application:
   ``worker_shutdown`` closes.
 
 A worker with no model asks for its connection only
-(``BackendRuntime.connection_only``), serving no repository:
-its row-level security is never bound, so on Postgres with ``schema.mode:
-external`` every session it opens fails closed instead of running unscoped.
+(``BackendRuntime.connection_only``), serving no repository: its check
+probes the connection and creates no table, and its row-level security
+is never bound, so on Postgres with ``schema.mode: external`` every
+session it opens fails closed instead of running unscoped.
 
 Fork safety follows from :meth:`~loom.composition.Application.check`: it
 leaves no connection open, so nothing the parent touched crosses the fork.
