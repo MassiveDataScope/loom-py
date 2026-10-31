@@ -51,13 +51,16 @@ A backend is a class with a no-argument constructor, a `name`, a
 `repository_type` and one method:
 `build(ctx, models, runtime) -> PersistenceWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
-`None` means the backend serves no repositories. The class reads its store's
-section, `stores.default`, from the context it is given
-(`loom.core.persistence.stores.default_store`); the host knows nothing about
-the keys of that section. `runtime` is a `BackendRuntime`: the
-`RuntimeProfile` of the entry point building it (`server`, `worker`, ...),
-whose defaults size any connection pool the backend opens, an optional
-pool-metrics sink, and `connection_only`. A backend with no pool ignores it.
+`None` means the backend serves no repositories. `runtime` is a
+`BackendRuntime`: the `RuntimeProfile` of the entry point building it
+(`server`, `worker`, ...), whose defaults size any connection pool the backend
+opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
+`StoreCatalog` the composition loaded once. The class takes its store,
+`stores.default`, from that catalog
+(`runtime.catalog.require(DEFAULT_STORE, backend=self.name, purpose=...)`)
+and decodes its section; the host knows nothing about the keys of that
+section. It reads any other section (`persistence.cursors`) from `ctx`. A
+backend with no pool ignores the profile.
 `connection_only` is set by an entry point with no model (a worker running
 raw-SQL jobs): a backend that honours it serves its connection and unit of
 work only, no repository and no cursor codec, and its startup checks only
@@ -79,7 +82,7 @@ from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
 from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.stores import default_store
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -99,7 +102,10 @@ class LedgerBackend:
         self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
     ) -> PersistenceWiring:
         # ConfigError when stores.default is missing, names another backend or is invalid.
-        cfg = default_store(ctx, self.name).decode(_LedgerConfig)
+        store = runtime.catalog.require(
+            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
+        )
+        cfg = store.decode(_LedgerConfig)
         client = LedgerClient(cfg.url, cfg.namespace)
         return PersistenceWiring(
             uow_factory=None,

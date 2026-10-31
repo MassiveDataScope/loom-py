@@ -17,10 +17,11 @@ import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import PersistenceWiring, resolve_backend
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
+from tests.helpers.persistence import build_backend
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -77,7 +78,7 @@ def _wiring(
     monkeypatch.setattr(
         backend_module, "build_async_mongo_client", lambda _cfg, **_extra: fake_client
     )
-    return MongoBackend().build(_ctx(section), models, BackendRuntime(SERVER_PROFILE))
+    return build_backend(MongoBackend(), _ctx(section), models, SERVER_PROFILE)
 
 
 _SECTION: dict[str, Any] = {"url": "mongodb://localhost:27017", "database": "demo"}
@@ -93,7 +94,7 @@ def test_missing_section_is_a_config_error() -> None:
     backend = MongoBackend()
 
     with pytest.raises(ConfigError, match="stores.default"):
-        backend.build(ctx, (), BackendRuntime(SERVER_PROFILE))
+        build_backend(backend, ctx, (), SERVER_PROFILE)
 
 
 def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(
@@ -105,7 +106,7 @@ def test_a_missing_cursor_key_fails_the_build_naming_the_opt_out(
     ctx = _ctx(_SECTION, cursors={})
 
     with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
-        MongoBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+        build_backend(MongoBackend(), ctx, (), SERVER_PROFILE)
 
 
 def test_wiring_shape(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,11 +126,12 @@ def test_client_seam_forwards_only_the_options_set(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(mongo_island, "AsyncMongoClient", _record)
 
-    MongoBackend().build(_ctx(_SECTION), (), BackendRuntime(SERVER_PROFILE))
-    MongoBackend().build(
+    build_backend(MongoBackend(), _ctx(_SECTION), (), SERVER_PROFILE)
+    build_backend(
+        MongoBackend(),
         _ctx({**_SECTION, "pool": {"size": 8}, "server_selection_timeout": 2}),
         (),
-        BackendRuntime(SERVER_PROFILE),
+        SERVER_PROFILE,
     )
 
     assert seen == [

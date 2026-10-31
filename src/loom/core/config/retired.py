@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from loom.core.config.errors import ConfigError
 from loom.core.connections import ConnectionSettings
+
+if TYPE_CHECKING:
+    from loom.core.config.context import ConfigContext
 
 _RETIRED_PERSISTENCE: Final = {
     "backend": "set stores.default.backend",
@@ -45,26 +48,27 @@ def reject_retired_keys(data: object, path: str, connection: type[ConnectionSett
             raise ConfigError(f"{path}.{retired} was removed; use {path}.{replacement}{hint}")
 
 
-def reject_retired_sections(document: object) -> None:
-    """Fail when the configuration *document* declares persistence outside ``stores``.
+def reject_retired_sections(ctx: ConfigContext) -> None:
+    """Fail when the configuration *ctx* declares persistence outside ``stores``.
 
     ``database``, ``database.<name>``, ``persistence.backend``,
     ``persistence.mongo`` and ``persistence.dynamodb`` were replaced by the
     ``stores.<name>`` sections (ADR 0008). Reading them next to ``stores``
     would mix two contracts, so every load refuses them and names the
-    replacement. ``persistence.cursors`` stays.
+    replacement. ``persistence.cursors`` stays. The sections are read as
+    written: no placeholder resolves.
 
     Args:
-        document: The whole configuration as written; anything but a mapping
-            is left alone.
+        ctx: The whole configuration.
 
     Raises:
         ConfigError: Naming every retired key found and its ``stores.``
             replacement.
     """
-    if not isinstance(document, Mapping):
-        return
-    problems = [*_retired_database(document.get("database")), *_retired_persistence(document)]
+    problems = [
+        *_retired_database(ctx.raw("database")),
+        *_retired_persistence(ctx.raw("persistence")),
+    ]
     if problems:
         raise ConfigError("; ".join(problems) + " (ADR 0008)")
 
@@ -89,9 +93,8 @@ def _is_own_database_key(key: object, value: object) -> bool:
     return not isinstance(value, Mapping) or key in _OWN_DATABASE_MAPPINGS
 
 
-def _retired_persistence(document: Mapping[object, object]) -> list[str]:
-    """The retired keys of the ``persistence`` section of *document*."""
-    persistence = document.get("persistence")
+def _retired_persistence(persistence: object) -> list[str]:
+    """The retired keys of the ``persistence`` section *persistence*."""
     if not isinstance(persistence, Mapping):
         return []
     return [

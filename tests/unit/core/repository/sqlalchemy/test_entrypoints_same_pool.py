@@ -9,12 +9,14 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.core.model import LoomStruct
 from loom.core.persistence.database import load_database_config
-from loom.core.persistence.profile import SERVER_PROFILE, STREAMING_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE, STREAMING_PROFILE
+from loom.core.persistence.stores import load_catalog
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
 from tests.helpers.composition import composition_source
+from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 _FULL_POOL = {"size": 3, "max_overflow": 1, "timeout": 4, "recycle": 60, "pre_ping": False}
@@ -36,7 +38,7 @@ def _api_manager(database: dict[str, Any]) -> SessionManager:
             "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
-    wiring = SQLAlchemyBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+    wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
     factory: Any = wiring.uow_factory
     return factory._session_manager
 
@@ -72,7 +74,7 @@ def _streaming_manager(database: dict[str, Any]) -> SessionManager:
         }
     )
     node = IntoTable(payload=_Row, table="orders", name="orders_sink")
-    resolved = resolve_sqlalchemy_table_config(node, ctx)
+    resolved = resolve_sqlalchemy_table_config(node, ctx, load_catalog(ctx))
     return build_session_manager(resolved.database, STREAMING_PROFILE)
 
 

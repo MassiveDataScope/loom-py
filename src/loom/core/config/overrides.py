@@ -119,8 +119,6 @@ OVERRIDABLE: Final = (
 )
 """Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
-_RETIRED_SECTIONS: Final = ("database", "persistence")
-"""Top-level sections :func:`reject_retired_sections` reads."""
 
 
 def load_application_config(
@@ -158,7 +156,7 @@ def load_application_config(
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
     resolved = resolve_environment(environment)
     context = ConfigContext(_apply_overrides(config, override_variables(), resolved))
-    reject_retired_sections({section: context.raw(section) for section in _RETIRED_SECTIONS})
+    reject_retired_sections(context)
     return context
 
 

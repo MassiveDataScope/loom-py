@@ -11,9 +11,10 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.connections.aws.client import build_aws_client
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.dynamodb.backend import DynamoDBBackend, DynamoDBRepositoryConfig
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.persistence import build_backend
 from tests.helpers.silent_endpoint import silent_endpoint  # noqa: F401 - pytest fixture
 
 from .conftest import Product
@@ -38,7 +39,7 @@ def _build(monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]) -> dict[str
     ctx = ConfigContext.from_dict(
         {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
     )
-    DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+    build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
     return seen
 
 
@@ -87,7 +88,7 @@ def test_a_missing_section_still_names_the_section() -> None:
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb"}}})
 
     with pytest.raises(ConfigError, match="stores.default"):
-        DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
 
 async def test_a_silent_service_fails_within_the_declared_bounds(

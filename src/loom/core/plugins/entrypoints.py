@@ -194,7 +194,7 @@ def load_entry_point(
     """
     ep = select_entry_point(group, name, on_duplicate=on_duplicate)
     if ep is None:
-        raise EntryPointNotFoundError(group, name, _registered_names(group))
+        raise EntryPointNotFoundError(group, name, registered_names(group))
     obj: object = ep.load()
     if api_version is not None:
         check_api_version(obj, api_version)
@@ -222,7 +222,8 @@ def _resolve_conflict(
     return first
 
 
-def _registered_names(group: str) -> tuple[str, ...]:
+def registered_names(group: str) -> tuple[str, ...]:
+    """Return the names registered in *group*, sorted and deduplicated, importing none."""
     return tuple(sorted({ep.name for ep in list_entry_points(group)}))
 
 
@@ -243,5 +244,6 @@ __all__ = [
     "check_api_version",
     "list_entry_points",
     "load_entry_point",
+    "registered_names",
     "select_entry_point",
 ]

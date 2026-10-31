@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import pytest
+
+from loom.core.config import ConfigContext, ConfigError
+from loom.core.model import BaseModel, ColumnField, Integer
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
     StoreKey,
     load_catalog,
     store_of,
 )
-
-from loom.core.config import ConfigContext, ConfigError
-from loom.core.model import BaseModel, ColumnField, Integer
 
 
 class DefaultRecord(BaseModel):
@@ -48,9 +48,7 @@ def test_default_store_loads_its_backend_and_own_config_section() -> None:
     assert StoreKey("default") == DEFAULT_STORE
     assert spec.key == DEFAULT_STORE
     assert spec.backend == "sqlalchemy"
-    assert isinstance(spec.section, ConfigContext)
-    assert spec.section.raw("url") == "sqlite+aiosqlite:///:memory:"
-    assert spec.section.raw("service") is None
+    assert spec.settings() == {"url": "sqlite+aiosqlite:///:memory:"}
     with pytest.raises(AttributeError):
         spec.backend = "mongo"
 
@@ -75,8 +73,7 @@ def test_catalog_loads_all_declared_store_keys_and_backends() -> None:
         StoreKey("sessions"): "dynamodb",
         StoreKey("legacy"): "mongo",
     }
-    assert catalog.specs[StoreKey("default")].section.raw("audit") is None
-    assert catalog.specs[StoreKey("default")].section.raw("stores.audit") is None
+    assert catalog.specs[StoreKey("default")].settings() == {}
 
 
 def test_absent_stores_section_loads_an_empty_catalog() -> None:

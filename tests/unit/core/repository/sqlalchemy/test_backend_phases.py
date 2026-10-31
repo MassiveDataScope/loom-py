@@ -13,8 +13,9 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
 from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from tests.helpers.persistence import build_backend
 
 
 class Plain(BaseModel):
@@ -50,8 +51,8 @@ def _wiring(url: str, *models: type[BaseModel], **schema: object):
         "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
-    return SQLAlchemyBackend().build(
-        ConfigContext.from_dict(config), models, BackendRuntime(SERVER_PROFILE)
+    return build_backend(
+        SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE
     )
 
 

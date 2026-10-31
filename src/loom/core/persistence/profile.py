@@ -12,8 +12,11 @@ SQLAlchemy extra installed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from loom.core.persistence.stores import StoreCatalog
 
 
 @dataclass(frozen=True)
@@ -95,11 +98,16 @@ class BackendRuntime:
             table is created, no external schema or connecting role is
             inspected and no column is checked. Row-level security settings
             stay installed but unbound, so they fail closed.
+        catalog: The stores the configuration declares, loaded once by the
+            host; the backend takes its store from it
+            (``catalog.require(DEFAULT_STORE, backend=..., purpose=...)``)
+            instead of reading ``stores`` from the configuration again.
     """
 
     profile: RuntimeProfile
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
+    catalog: StoreCatalog = field(kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(

@@ -34,7 +34,7 @@ from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.stores import load_catalog, require_default_store
+from loom.core.persistence.stores import StoreCatalog, require_single_store
 from loom.core.use_case.factory import ModelRead
 
 if TYPE_CHECKING:
@@ -217,10 +217,14 @@ def compose_application(
     enforce_deploy_checks(ctx, source.environment, skip=recipe.skip_checks)
 
     discovered = recipe.discovered
+    catalog = source.catalog
+    require_single_store(discovered.models)
     runtime = BackendRuntime(
-        recipe.profile, pool_metrics=recipe.pool_metrics, connection_only=recipe.connection_only
+        recipe.profile,
+        pool_metrics=recipe.pool_metrics,
+        connection_only=recipe.connection_only,
+        catalog=catalog,
     )
-    require_default_store(discovered.models, load_catalog(ctx))
     wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
     # Caller modules first, then repositories, then the framework's own. A
@@ -244,6 +248,8 @@ def compose_application(
     # container, and an unregistered runtime makes every Scope.TOOL span a
     # silent no-op in production while passing every test that injects one.
     kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
+    # The catalog the backend was built from, not another load of ``stores``.
+    kernel.container.register(StoreCatalog, lambda: catalog, scope=Scope.APPLICATION)
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
     # Last: every service a use case may inject is registered by now.
     kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))

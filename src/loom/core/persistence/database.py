@@ -20,17 +20,15 @@ from typing import Any, ClassVar, Final, Literal
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_keys
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
 from loom.core.config.convert import convert_config
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import StoreKey, StoreSpec, load_catalog
+from loom.core.persistence.stores import SQLALCHEMY_BACKEND, StoreCatalog, load_catalog
 
 EXTERNAL: Final = "external"
-SQLALCHEMY_BACKEND: Final = "sqlalchemy"
-"""The backend whose stores hold a relational database section."""
 
 _ASYNCPG: Final = "postgresql+asyncpg"
 _ASYNCPG_TIMEOUTS: Final = {"connect_timeout": "timeout", "read_timeout": "command_timeout"}
@@ -235,32 +233,27 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
 def load_database_config(ctx: ConfigContext, store: str) -> DatabaseConfig:
     """Read and decode the relational section of the store *store* of *ctx*.
 
+    For a caller outside a composition; a composition reads its own catalog
+    through :func:`database_config_of`.
+
     Args:
         ctx: The application configuration.
         store: Key of the store, declared under ``stores.<store>``.
 
     Raises:
-        ConfigError: When the catalog does not load, the store is not
-            declared, or it fails :func:`database_config_of`.
+        ConfigError: When the catalog does not load, or as :func:`database_config_of`.
     """
-    spec = load_catalog(ctx).specs.get(StoreKey(store))
-    if spec is None:
-        raise ConfigError(f"{ConfigKey.STORES}.{store} is not declared")
-    return database_config_of(spec)
+    return database_config_of(load_catalog(ctx), store, purpose="a relational database")
 
 
-def database_config_of(spec: StoreSpec) -> DatabaseConfig:
-    """Decode the relational section of the store *spec* declares.
+def database_config_of(catalog: StoreCatalog, store: str, *, purpose: str) -> DatabaseConfig:
+    """Decode the relational section of the store *store* of *catalog*, which *purpose* needs.
 
     Raises:
-        ConfigError: When the store's backend is not ``sqlalchemy``, or its
-            section fails :func:`decode_database_config`.
+        ConfigError: When the store is not declared, its backend is not
+            ``sqlalchemy``, or its section fails :func:`decode_database_config`.
     """
-    if spec.backend != SQLALCHEMY_BACKEND:
-        raise ConfigError(
-            f"{spec.path}.backend is {spec.backend!r}, but a relational database "
-            f"needs backend: {SQLALCHEMY_BACKEND}"
-        )
+    spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose=purpose)
     return decode_database_config(spec.settings(), path=spec.path)
 
 
@@ -282,7 +275,6 @@ __all__ = [
     "SchemaRoles",
     "SchemaUser",
     "SchemaVersionTables",
-    "SQLALCHEMY_BACKEND",
     "database_config_of",
     "decode_database_config",
     "load_database_config",

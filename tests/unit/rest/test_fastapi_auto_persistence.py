@@ -8,7 +8,7 @@ and the bootstrap steps around them.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -32,7 +32,9 @@ from loom.rest.fastapi.auto import create_app
 from loom.rest.model import RestInterface, RestRoute
 from tests.helpers.composition import composition_source
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
+from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
+from tests.unit.rest._composition import store_context as _ctx
 from tests.unit.rest._fixture_app import UUID4_ID_FIELD, write_project
 
 
@@ -41,12 +43,7 @@ def _interfaces(*classes: type) -> tuple[type[RestInterface[Any]], ...]:
     return tuple(cast(type[RestInterface[Any]], klass) for klass in classes)
 
 
-_DYNAMODB_SECTION = {
-    "region": "eu-west-1",
-    "table": "products",
-    "url": "http://localhost:8000",
-}
-_DYNAMODB_STORE = {"backend": "dynamodb", **_DYNAMODB_SECTION}
+_DYNAMODB_STORE = dynamodb_store("products")
 _MONGO_STORE = {"backend": "mongo", "url": "mongodb://localhost:27017", "database": "demo"}
 
 
@@ -55,20 +52,6 @@ class PersistenceNoneRecord(BaseModel):
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
     name: str = ColumnField(length=50)
-
-
-_SQLITE_STORE = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
-
-
-def _ctx(store: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
-    return ConfigContext.from_dict(
-        {
-            "app": {"name": "demo"},
-            "stores": {"default": dict(store or _SQLITE_STORE)},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
-            **sections,
-        }
-    )
 
 
 def _no_models() -> DiscoveryResult:
@@ -110,7 +93,7 @@ def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
 class TestBackendSelection:
     @pytest.mark.parametrize(
         "store",
-        [pytest.param(None, id="default"), pytest.param(_SQLITE_STORE, id="explicit")],
+        [pytest.param(None, id="default"), pytest.param(SQLITE_STORE, id="explicit")],
     )
     def test_defaults_to_sqlalchemy(
         self, agents_only_discovery: None, store: dict[str, object] | None

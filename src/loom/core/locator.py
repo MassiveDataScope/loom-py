@@ -37,9 +37,9 @@ from loom.core.persistence.database import (
     DatabaseConfig,
     SchemaConfig,
     SchemaUser,
-    load_database_config,
+    database_config_of,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, load_catalog, require_default_store
+from loom.core.persistence.stores import DEFAULT_STORE, load_catalog, require_single_store
 from loom.core.schema_names import SchemaNames, schema_identifier
 
 if TYPE_CHECKING:
@@ -129,10 +129,12 @@ def load_application(config_path: str | None = None) -> Application:
     paths = config_source_paths(path, environment)
     context = load_application_config(*paths, environment=environment)
     app = context.section(ConfigKey.APP, _AppSection)
-    database = load_database_config(context, DEFAULT_STORE)
+    database = database_config_of(
+        load_catalog(context), DEFAULT_STORE, purpose="the application's schema"
+    )
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
     models = _discover(app.discovery).models
-    require_default_store(models, load_catalog(context))
+    require_single_store(models)
     metadata = MetaData(
         naming_convention=configured_naming_convention(database.schema.naming_convention)
     )

@@ -30,7 +30,7 @@ from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
 from loom.core.persistence.database import EXTERNAL, SchemaConfig, database_config_of
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import default_store
+from loom.core.persistence.stores import DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
@@ -65,7 +65,7 @@ class SQLAlchemyBackend:
     connection-only, its startup probes the connection instead.
     """
 
-    name: ClassVar[str] = "sqlalchemy"
+    name: ClassVar[str] = SQLALCHEMY_BACKEND
     repository_type: ClassVar[type[Any] | None] = RepositorySQLAlchemy
 
     def build(
@@ -77,9 +77,10 @@ class SQLAlchemyBackend:
         """Build the SQLAlchemy wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``stores.default`` section.
+            ctx: Configuration context holding the ``persistence.cursors`` section.
             models: Models whose repositories the DI module registers.
-            runtime: Entry-point pool defaults and the optional pool-metrics receiver.
+            runtime: Entry-point pool defaults, the optional pool-metrics
+                receiver and the catalog holding ``stores.default``.
 
         Returns:
             The SQLAlchemy wiring.
@@ -93,7 +94,9 @@ class SQLAlchemyBackend:
                 or repositories are served and ``persistence.cursors`` cannot
                 build a cursor codec.
         """
-        db_cfg = database_config_of(default_store(ctx, self.name))
+        db_cfg = database_config_of(
+            runtime.catalog, DEFAULT_STORE, purpose=f"the {self.name!r} backend"
+        )
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
             DeferredScopedSettings(db_cfg.schema.scopes or {})

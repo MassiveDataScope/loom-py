@@ -308,8 +308,6 @@ SQLALCHEMY_INLINE_DATABASE_KEYS: frozenset[str] = frozenset(DatabaseConfig.__str
 }
 """Database keys an inline-``url`` sink takes: the relational store contract but ``schema``."""
 _SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "store", "url", "chunk_size"}
-RETIRED_STORE_REFERENCE = "database"
-"""The sink key that named a ``database.<name>`` section before ``store``."""
 _DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
     "table",
     "uri",
@@ -384,14 +382,9 @@ class SqlAlchemySinkConfig:
         """Build SQLAlchemy sink settings from a resolved sink config.
 
         Raises:
-            ValueError: If the config uses the retired ``database`` key,
-                carries a key the sink does not read, or names no table.
+            ValueError: If the config carries a key the sink does not read,
+                or names no table.
         """
-        if RETIRED_STORE_REFERENCE in config:
-            raise ValueError(
-                "SQLAlchemy sink config key 'database' was renamed to 'store'; "
-                "name a stores.<name> section (ADR 0008)."
-            )
         table = str(config.get("table") or default_table).strip()
         store = str(config.get("store") or "").strip()
         url_text = str(config.get("url") or "").strip()

@@ -19,13 +19,14 @@ from typing import TYPE_CHECKING
 
 from loom.core.checks import Finding, deploy_check
 from loom.core.config.keys import ConfigKey
+from loom.core.persistence.stores import BACKEND_KEY, SQLALCHEMY_BACKEND
 from loom.core.repository.abc.cursor import CURSOR_SIGNING_CHECK, CursorConfig
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 _SECTION = ConfigKey.PERSISTENCE_CURSORS
-_CURSOR_BACKENDS = frozenset({"sqlalchemy", "mongo"})
+_CURSOR_BACKENDS = frozenset({SQLALCHEMY_BACKEND, "mongo"})
 """Backends whose repositories page with cursors."""
 _SIGNED = CursorConfig().signing
 _HINT = (
@@ -64,7 +65,7 @@ def _serves_repositories(config: ConfigContext) -> bool:
     if not isinstance(stores, dict):
         return False
     return any(
-        isinstance(store, dict) and store.get("backend") in _CURSOR_BACKENDS
+        isinstance(store, dict) and store.get(BACKEND_KEY) in _CURSOR_BACKENDS
         for store in stores.values()
     )
 

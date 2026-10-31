@@ -7,7 +7,7 @@ the backend's default repository type.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,7 +17,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import loom.core.repository as repository_package
-from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
@@ -43,15 +42,12 @@ from loom.rest.fastapi.adapter import _AppConfig
 from loom.rest.fastapi.auto import create_app
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
+from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
+from tests.unit.rest._composition import store_context as _ctx
 from tests.unit.rest._fixture_app import write_project
 
-_DYNAMODB_STORE = {
-    "backend": "dynamodb",
-    "region": "eu-west-1",
-    "table": "capability_records",
-    "url": "http://localhost:8000",
-}
+_DYNAMODB_STORE = dynamodb_store("capability_records")
 _KEY_OPS = {CrudOp.GET, CrudOp.CREATE, CrudOp.UPDATE, CrudOp.DELETE}
 
 
@@ -116,20 +112,6 @@ class TestSupportedOpsFollowTheRegisteredRepository:
         assert tuple(crud_op_of(route.use_case) for route in routes) == (CrudOp.CREATE, CrudOp.GET)
 
 
-_SQLITE_STORE = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
-
-
-def _ctx(store: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
-    return ConfigContext.from_dict(
-        {
-            "app": {"name": "demo"},
-            "stores": {"default": dict(store or _SQLITE_STORE)},
-            "persistence": {"cursors": {"signing": "ephemeral"}},
-            **sections,
-        }
-    )
-
-
 def _discovery(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> DiscoveryResult:
     """Mirror discovery: the use cases are those the interface routes reference."""
     typed = tuple(cast(type[RestInterface[Any]], klass) for klass in interfaces)
@@ -180,7 +162,7 @@ class TestDefaultInclude:
         _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
         assert CrudOp.LIST not in _ops(RecordsOnBoth)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_SQLITE_STORE))
+        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=SQLITE_STORE))
         assert _ops(RecordsOnBoth) == _KEY_OPS | {CrudOp.LIST}
 
     def test_a_pruned_use_case_mounted_elsewhere_survives(self, discover: Any) -> None:
@@ -231,7 +213,7 @@ class TestDefaultInclude:
 
         discover(BulkOnly, models=(BulkOnlyRecord,))
         app_config = _AppConfig(name="demo")
-        ctx = _ctx(store=_SQLITE_STORE)
+        ctx = _ctx(store=SQLITE_STORE)
 
         with pytest.raises(RuntimeError, match="BulkOnly") as exc_info:
             _build_bootstrap(app_config, ctx)
@@ -338,7 +320,7 @@ class TestHandWrittenCapabilityDependency:
 
     def test_boots_on_a_backend_that_binds_it(self, tmp_path: Path, discover: Any) -> None:
         discover(_CountInterface)
-        config_path = write_project(tmp_path, store=_SQLITE_STORE)
+        config_path = write_project(tmp_path, store=SQLITE_STORE)
 
         assert create_app(config_path) is not None
 

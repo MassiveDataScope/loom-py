@@ -26,6 +26,7 @@ from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.job import Job
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence.stores import StoreCatalog
 from loom.core.repository import DefaultRepositoryBuilder
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.sql import CallerBoundSql, SqlQueryService
@@ -45,6 +46,7 @@ _RESERVED: list[BindingKey] = [
     SqlQueryService,
     CallerBoundSql,
     ObservabilityRuntime,
+    StoreCatalog,
     ElevationSink,
     RuntimeExecutor,
     UseCaseRegistry,

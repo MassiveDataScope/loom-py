@@ -41,6 +41,7 @@ from loom.core.persistence import (
     PersistenceBackend,
     PoolMetricsSink,
 )
+from loom.core.persistence.stores import SQLALCHEMY_BACKEND
 from loom.core.use_case.constants import CrudOp
 from loom.prometheus import PrometheusMetricsAdapter
 from loom.prometheus.db_pool import PrometheusPoolMetrics
@@ -598,7 +599,7 @@ class FastAPIAdapter:
         discovered = _fold_config_interfaces(discovered, config_interfaces)
         # Runs before the backend allocates resources: building it creates them.
         _reject_autocrud_without_model(discovered)
-        backend = source.backend(default="sqlalchemy")
+        backend = source.backend(default=SQLALCHEMY_BACKEND)
         discovered = _gate_autocrud_capabilities(discovered, backend, backend.name)
 
         self._declared = _Declared(

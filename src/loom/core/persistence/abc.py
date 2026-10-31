@@ -73,8 +73,9 @@ class PersistenceBackend(Protocol):
     """Factory a persistence backend exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
-    registry instantiates it. Each backend reads its own configuration
-    section from the context it is given.
+    registry instantiates it. Each backend takes its store from the catalog
+    the host loaded once (``runtime.catalog``) and reads any other section
+    (``persistence.cursors``) from the context it is given.
     """
 
     name: ClassVar[str]
@@ -89,10 +90,10 @@ class PersistenceBackend(Protocol):
         """Build the persistence wiring for the discovered models.
 
         Args:
-            ctx: Configuration context the backend reads its section from.
+            ctx: Configuration context the backend reads its other sections from.
             models: Models discovered by the host.
-            runtime: Defaults of the entry point building the backend and the
-                optional pool-metrics receiver.
+            runtime: Defaults of the entry point building the backend, the
+                optional pool-metrics receiver and the store catalog.
 
         Returns:
             The resolved wiring.

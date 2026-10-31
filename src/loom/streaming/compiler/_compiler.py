@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from loom.core.config import ConfigContext
+from loom.core.persistence.stores import load_catalog
 from loom.streaming.compiler._bindings import resolve_flow_bindings
 from loom.streaming.compiler._errors import CompilationIssue
 from loom.streaming.compiler._plan import CompilationError, CompiledPlan
@@ -60,10 +61,12 @@ class _Compiler:
         if errors:
             raise CompilationError(errors)
 
+        # Once per compilation: both phases and every sink read this catalog.
+        catalog = load_catalog(ctx)
         errors.extend(validate_kafka(resolved_flow, ctx))
         errors.extend(validate_delivery(resolved_flow, ctx))
         errors.extend(validate_mongo(resolved_flow, ctx))
-        errors.extend(validate_storage_sinks(resolved_flow, ctx))
+        errors.extend(validate_storage_sinks(resolved_flow, ctx, catalog))
         errors.extend(validate_resources(resolved_flow))
         errors.extend(validate_shapes(resolved_flow))
         errors.extend(validate_outputs(resolved_flow))
@@ -71,7 +74,7 @@ class _Compiler:
         if errors:
             raise CompilationError(errors)
 
-        return build_plan(resolved_flow, ctx)
+        return build_plan(resolved_flow, ctx, catalog)
 
 
 def _ensure_config_context(

@@ -69,10 +69,8 @@ from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigKey
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compilable import Compilable
-from loom.core.persistence import (
-    WORKER_PROFILE,
-    resolve_backend,
-)
+from loom.core.persistence import WORKER_PROFILE
+from loom.core.persistence.stores import NONE_BACKEND
 from loom.core.runner import shutdown_runner
 from loom.core.use_case.agent_markers import declaring_agent_bindings
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
@@ -93,25 +91,6 @@ _SIGNAL_UIDS = {
     worker_process_shutdown: "loom.celery.worker.process_shutdown",
     worker_shutdown: "loom.celery.worker.shutdown",
 }
-
-
-# ---------------------------------------------------------------------------
-# Persistence backend of a worker
-# ---------------------------------------------------------------------------
-
-
-def _worker_backend_name(source: CompositionSource) -> str:
-    """``stores.default.backend``; ``none`` when the worker declares no default store.
-
-    A worker that runs only pure jobs declares no store and pays for no
-    persistence at all. A ``stores`` section holding only the stores of
-    streaming sinks declares no default store either.
-
-    Raises:
-        ConfigError: When the store catalog does not load, a retired
-            persistence key included.
-    """
-    return source.backend_name(default="none")
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +438,9 @@ class CeleryAdapter:
             callbacks=_merge_unique(resolved.callbacks, self._callbacks),
         )
         _emit_worker_init_graph(resolved)
-        backend = resolve_backend(_worker_backend_name(source))
+        # Without a default store the worker pays for no persistence at all: it
+        # runs only pure jobs, or its stores serve streaming sinks only.
+        backend = source.backend(default=NONE_BACKEND)
 
         self._declared = _Declared(
             celery=celery_cfg, jobs=resolved.jobs, callbacks=resolved.callbacks

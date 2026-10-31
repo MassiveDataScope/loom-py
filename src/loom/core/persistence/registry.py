@@ -8,7 +8,6 @@ from loom.core.config import ConfigError
 from loom.core.persistence.abc import PersistenceBackend
 from loom.core.plugins.entrypoints import (
     EntryPointNotFoundError,
-    list_entry_points,
     load_entry_point,
 )
 
@@ -44,11 +43,6 @@ def resolve_backend(name: str) -> PersistenceBackend:
     return backend_cls()
 
 
-def registered_backends() -> tuple[str, ...]:
-    """Return the names registered in the backends group, sorted, importing none of them."""
-    return tuple(sorted({entry.name for entry in list_entry_points(BACKEND_ENTRY_POINT_GROUP)}))
-
-
 def unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
     """Return the message naming an unknown backend *name* and the *available* ones."""
     if not available:
@@ -59,7 +53,6 @@ def unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
 
 __all__ = [
     "BACKEND_ENTRY_POINT_GROUP",
-    "registered_backends",
     "resolve_backend",
     "unknown_backend_message",
 ]

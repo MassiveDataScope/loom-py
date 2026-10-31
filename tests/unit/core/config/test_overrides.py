@@ -514,3 +514,20 @@ def test_reaching_inside_an_interpolated_key_is_refused_without_resolving_it(
         OmegaConf.clear_resolver("overrides_probe")
 
     assert calls == []
+
+
+def test_loading_an_application_file_refuses_a_retired_database_section(tmp_path: Path) -> None:
+    path = _write_document(tmp_path, {"app": {"name": "x"}, "database": {"url": "sqlite://"}})
+
+    with pytest.raises(ConfigError, match=r"database was removed.*stores\.default"):
+        load_application_config(path, environment=Environment.DEVELOPMENT)
+
+
+def test_an_override_cannot_bring_a_retired_key_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write_document(tmp_path, {"app": {"name": "x"}, "persistence": {"cursors": {}}})
+    monkeypatch.setenv("LOOM__PERSISTENCE__BACKEND", "mongo")
+
+    with pytest.raises(ConfigError, match=r"persistence\.backend was removed"):
+        load_application_config(path, environment=Environment.DEVELOPMENT)

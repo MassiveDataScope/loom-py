@@ -8,13 +8,12 @@ from typing import Annotated, Any
 import typer
 import yaml
 
+from loom.core.config.keys import ConfigKey
+from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.schema_names import SchemaNames
 
-_STORES = "stores"
-_DEFAULT = "default"
-_STORE_PATH = f"{_STORES}.{_DEFAULT}"
-_BACKEND = "backend"
-_SQLALCHEMY = "sqlalchemy"
+_STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
+_STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
 schema_app = typer.Typer(no_args_is_help=True, help="Prepare a row-scoped schema.")
 
@@ -37,7 +36,9 @@ def init(
     try:
         block = _block(name, SchemaNames.derived(name))
         if config is None:
-            document = {_STORES: {_DEFAULT: {_BACKEND: _SQLALCHEMY, "schema": block}}}
+            document = {
+                _STORES: {DEFAULT_STORE: {BACKEND_KEY: SQLALCHEMY_BACKEND, "schema": block}}
+            }
             typer.echo(yaml.safe_dump(document, sort_keys=False), nl=False)
             return
         _write(config, block)
@@ -48,11 +49,11 @@ def init(
 
 def _write(config: Path, block: dict[str, Any]) -> None:
     document = _load(config)
-    store = _section(_section(document, _STORES, _STORES), _DEFAULT, _STORE_PATH)
-    backend = store.setdefault(_BACKEND, _SQLALCHEMY)
-    if backend != _SQLALCHEMY:
+    store = _section(_section(document, _STORES, _STORES), DEFAULT_STORE, _STORE_PATH)
+    backend = store.setdefault(BACKEND_KEY, SQLALCHEMY_BACKEND)
+    if backend != SQLALCHEMY_BACKEND:
         raise ValueError(
-            f"{_STORE_PATH}.backend is {backend!r}; a row-scoped schema needs {_SQLALCHEMY}"
+            f"{_STORE_PATH}.backend is {backend!r}; a row-scoped schema needs {SQLALCHEMY_BACKEND}"
         )
     schema = _section(store, "schema", f"{_STORE_PATH}.schema")
     conflicts = _merge(schema, block, f"{_STORE_PATH}.schema")

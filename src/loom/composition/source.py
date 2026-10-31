@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext
 from loom.core.discovery import (
     InterfacesDiscoveryEngine,
     ManifestDiscoveryEngine,
@@ -17,7 +18,7 @@ from loom.core.discovery import (
 )
 from loom.core.locator import DEFAULT_CODE_PATH
 from loom.core.persistence import resolve_backend
-from loom.core.persistence.stores import DEFAULT_STORE, load_catalog
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, load_catalog
 
 if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
@@ -103,23 +104,24 @@ class CompositionSource:
         """Discover the use cases, models, interfaces and agents ``app.discovery`` names."""
         return discover(self.app.discovery)
 
+    @functools.cached_property
+    def catalog(self) -> StoreCatalog:
+        """The stores ``stores`` declares, loaded once for the whole composition.
+
+        Raises:
+            ConfigError: When the store catalog does not load, a retired
+                persistence key or a connection-only ``stores.default`` included.
+        """
+        return load_catalog(self.config)
+
     def backend_name(self, default: str) -> str:
         """Return ``stores.default.backend``, or *default* when that store is not declared.
 
         Raises:
-            ConfigError: When the store catalog does not load, a retired
-                persistence key included, or ``stores.default`` is a
-                connection-only store.
+            ConfigError: As :attr:`catalog`.
         """
-        spec = load_catalog(self.config).specs.get(DEFAULT_STORE)
-        if spec is None:
-            return default
-        if spec.connection_only:
-            raise ConfigError(
-                f"{spec.path}.backend is {spec.backend!r}, a connection-only store that "
-                "serves no model; declare the application's persistence backend there"
-            )
-        return spec.backend
+        spec = self.catalog.specs.get(DEFAULT_STORE)
+        return default if spec is None else spec.backend
 
     def backend(self, default: str) -> PersistenceBackend:
         """Build the backend :meth:`backend_name` names.

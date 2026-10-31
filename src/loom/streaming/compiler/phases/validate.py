@@ -7,13 +7,14 @@ single :class:`~loom.streaming.compiler.CompilationError`.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.keys import ConfigKey
+from loom.core.persistence.stores import StoreCatalog
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.graph._flow import StreamFlow
@@ -49,11 +50,15 @@ from loom.streaming.nodes._with import ResourceScope, With, WithAsync
 def validate_storage_sinks(
     flow: StreamFlow[Any, Any],
     ctx: ConfigContext,
+    catalog: StoreCatalog,
 ) -> list[CompilationIssue]:
-    """Validate that every named IntoSink node has a config section at streaming.sinks.<name>."""
+    """Validate that every named IntoSink node has a config section at streaming.sinks.<name>.
+
+    A sink naming a store takes it from *catalog*, the one the compilation loaded.
+    """
     errors: list[CompilationIssue] = []
     for node in _iter_unique_storage_sinks(flow.process.nodes, errors):
-        errors.extend(_validate_storage_sink_node(node, ctx))
+        errors.extend(_validate_storage_sink_node(node, ctx, catalog))
     return errors
 
 
@@ -290,28 +295,39 @@ def _iter_unique_storage_sinks(
         yield node
 
 
-def _validate_storage_sink_node(node: IntoSink[Any], ctx: ConfigContext) -> list[CompilationIssue]:
+def _validate_storage_sink_node(
+    node: IntoSink[Any], ctx: ConfigContext, catalog: StoreCatalog
+) -> list[CompilationIssue]:
     """Validate backend-specific config for one storage sink."""
     if not isinstance(node, IntoTable):
         return []
     if node.backend is Backend.SQLALCHEMY:
-        return _validate_storage_sink_resolution(node, ctx, resolve_sqlalchemy_table_config)
+        return _validate_storage_sink_resolution(
+            node, lambda: resolve_sqlalchemy_table_config(node, ctx, catalog)
+        )
     if node.backend is Backend.DELTA:
-        return _validate_storage_sink_resolution(node, ctx, resolve_delta_table_config)
+        return _validate_storage_sink_resolution(
+            node, lambda: resolve_delta_table_config(node, ctx)
+        )
     if node.backend is Backend.CLICKHOUSE:
-        return _validate_storage_sink_resolution(node, ctx, resolve_clickhouse_table_config)
+        return _validate_storage_sink_resolution(
+            node, lambda: resolve_clickhouse_table_config(node, ctx, catalog)
+        )
     return []
 
 
 def _validate_storage_sink_resolution(
     node: IntoTable[Any],
-    ctx: ConfigContext,
-    resolver: Any,
+    resolve: Callable[[], object],
 ) -> list[CompilationIssue]:
-    """Resolve one IntoTable config and return validation errors."""
+    """Resolve one IntoTable config and return validation errors.
+
+    A sink section that is invalid (``ValueError``) or names a store the
+    catalog does not hold as it needs (``ConfigError``) is one issue.
+    """
     try:
-        resolver(node, ctx)
-    except ValueError as exc:
+        resolve()
+    except (ValueError, ConfigError) as exc:
         component = node.name or type(node).__name__
         return [StreamingErrorCode.SINK_CONFIG_INVALID.issue(component=component, exc=exc)]
     return []

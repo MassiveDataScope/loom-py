@@ -8,8 +8,9 @@ import pytest
 from sqlalchemy import text
 
 from loom.core.config import ConfigError
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.rls import create_schema
+from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for, execute, scalar
 
@@ -92,8 +93,8 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
             },
             "persistence": {"cursors": {"signing": "ephemeral"}},
         }
-        return SQLAlchemyBackend().build(
-            ConfigContext.from_dict(config), notes.MODELS, BackendRuntime(SERVER_PROFILE)
+        return build_backend(
+            SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
         )
 
     register_scope_source("editor", lambda: None)
@@ -162,8 +163,8 @@ async def test_external_mode_refuses_a_bypass_connection_without_scoped_tables(
         },
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
-    wiring = SQLAlchemyBackend().build(
-        ConfigContext.from_dict(config), (Widget,), BackendRuntime(SERVER_PROFILE)
+    wiring = build_backend(
+        SQLAlchemyBackend(), ConfigContext.from_dict(config), (Widget,), SERVER_PROFILE
     )
     wiring.prepare_models((Widget,))
 

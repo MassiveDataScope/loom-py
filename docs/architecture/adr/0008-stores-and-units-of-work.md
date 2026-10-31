@@ -59,7 +59,8 @@ possible without changing the use-case DSL.
   nothing else. It is not a persistence backend.
 - It serves no model and no repository: a model whose `__store__` names it
   fails at startup. It is never transactional, so it is never a primary store
-  and can never be `Joined`.
+  and can never be `Joined`; `stores.default` cannot be one, and the catalog
+  refuses it when it loads.
 - Streaming and ETL sinks (`store: <name>`) and, later, post-commit and
   outbox writers take their connection from it. A ClickHouse sink requires
   `backend: clickhouse` and a SQLAlchemy sink `backend: sqlalchemy`; a

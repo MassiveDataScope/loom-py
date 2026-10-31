@@ -12,9 +12,10 @@ import pytest
 
 import loom.core.repository.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
+from tests.helpers.persistence import build_backend
 
 from .conftest import Product
 
@@ -86,6 +87,6 @@ def test_the_backend_sizes_its_executor_by_the_pool_size(
         }
     )
 
-    DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+    build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
     assert created == [16]

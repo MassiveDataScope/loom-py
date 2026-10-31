@@ -13,13 +13,14 @@ from loom.core.config.convert import convert_config
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.persistence.database import DatabaseConfig, SchemaConfig
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
     check_time_zone_columns,
     startup_checks,
 )
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from tests.helpers.persistence import build_backend
 
 
 class Plain(BaseModel):
@@ -127,8 +128,8 @@ def _wiring(url: str, *models: type, **schema: object):
         "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
-    return SQLAlchemyBackend().build(
-        ConfigContext.from_dict(config), models, BackendRuntime(SERVER_PROFILE)
+    return build_backend(
+        SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE
     )
 
 

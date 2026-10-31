@@ -10,6 +10,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.stores import NONE_BACKEND
 
 
 class NoneBackend:
@@ -19,7 +20,7 @@ class NoneBackend:
     of the store section, if any, is ignored.
     """
 
-    name: ClassVar[str] = "none"
+    name: ClassVar[str] = NONE_BACKEND
     repository_type: ClassVar[type[Any] | None] = None
 
     def build(

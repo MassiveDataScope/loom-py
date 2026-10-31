@@ -9,25 +9,25 @@ hands its connection to the streaming and ETL sinks that name it. A model
 declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`
 (ADR 0008).
 
-Loading the catalog resolves nothing but each ``backend``: it reads the
-sections as written, so a deploy check or CI can load it without the
-secrets the connections name.
+Loading the catalog resolves nothing but each ``backend``: a deploy check or
+CI can load it without the secrets the connections name. A store resolves
+the rest of its section the first time it is read, and only then.
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, NewType, TypeVar
 
-import msgspec
-
 from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_sections
-from loom.core.config.convert import convert_config
+from loom.core.config.loader import convert_section
 from loom.core.model import BaseModel
-from loom.core.persistence.registry import registered_backends, unknown_backend_message
+from loom.core.persistence.registry import BACKEND_ENTRY_POINT_GROUP, unknown_backend_message
+from loom.core.plugins.entrypoints import registered_names
 
 T = TypeVar("T")
 
@@ -37,17 +37,27 @@ StoreKey = NewType("StoreKey", str)
 DEFAULT_STORE: Final = StoreKey("default")
 """The store of every model that declares no ``__store__``."""
 
-_STORE_ATTRIBUTE: Final = "__store__"
-_RETIRED_ATTRIBUTE: Final = "__database__"
-_BACKEND_KEY: Final = "backend"
-_KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
-_RETIRED_SECTIONS: Final = ("database", "persistence")
+BACKEND_KEY: Final = "backend"
+"""The key of a store section naming its backend."""
 
-CONNECTION_ONLY_BACKENDS: Final = frozenset({"clickhouse"})
+SQLALCHEMY_BACKEND: Final = "sqlalchemy"
+"""The backend whose stores hold a relational database section."""
+
+CLICKHOUSE_BACKEND: Final = "clickhouse"
+"""The connection-only kind of a ClickHouse store."""
+
+NONE_BACKEND: Final = "none"
+"""The backend that persists nothing."""
+
+CONNECTION_ONLY_BACKENDS: Final = frozenset({CLICKHOUSE_BACKEND})
 """Store kinds that only hold a connection: no model, no repository, no unit of work."""
 
+_STORE_ATTRIBUTE: Final = "__store__"
+_RETIRED_ATTRIBUTE: Final = "__database__"
+_KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True)
 class StoreSpec:
     """One declared store.
 
@@ -55,33 +65,38 @@ class StoreSpec:
         key: The store's name.
         backend: Name of the persistence backend serving it, or of a
             connection-only kind (:data:`CONNECTION_ONLY_BACKENDS`).
-        section: The ``stores.<key>`` section, ``backend`` included; its
-            interpolations still resolve against the whole configuration.
+        config: The whole configuration, against which the section's
+            interpolations resolve.
     """
 
     key: StoreKey
     backend: str
-    section: ConfigContext
+    config: ConfigContext
 
     @property
-    def connection_only(self) -> bool:
-        """Whether the store only holds a connection and serves no model."""
-        return self.backend in CONNECTION_ONLY_BACKENDS
+    def serves_models(self) -> bool:
+        """Whether the store serves models, unlike a connection-only one."""
+        return self.backend not in CONNECTION_ONLY_BACKENDS
 
     @property
     def path(self) -> str:
         """Dotted path of the store's section, for error messages."""
-        return f"{ConfigKey.STORES}.{self.key}"
+        return _path(self.key)
+
+    @functools.cached_property
+    def _resolved(self) -> dict[str, Any]:
+        """The section without ``backend``, resolved on first read and kept."""
+        resolved = self.config.section(self.path, dict)
+        resolved.pop(BACKEND_KEY, None)
+        return resolved
 
     def settings(self) -> dict[str, Any]:
-        """Return the section resolved, without ``backend``: what the backend decodes.
+        """Return a copy of the section resolved, without ``backend``: what the backend decodes.
 
         Raises:
             ConfigError: When an interpolation of the section does not resolve.
         """
-        resolved = _resolved(self.section, self.path)
-        resolved.pop(_BACKEND_KEY, None)
-        return resolved
+        return dict(self._resolved)
 
     def decode(self, target: type[T]) -> T:
         """Decode :meth:`settings` into *target*, as a section of the configuration decodes.
@@ -90,12 +105,7 @@ class StoreSpec:
             ConfigError: When the section does not resolve or fails validation,
                 naming the store's path.
         """
-        try:
-            return convert_config(self.settings(), target, strict=False)
-        except msgspec.ValidationError as exc:
-            raise ConfigError(
-                f"Config section {self.path!r} failed validation as {target.__name__!r}: {exc}"
-            ) from exc
+        return convert_section(self._resolved, self.path, target)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +117,27 @@ class StoreCatalog:
     """
 
     specs: Mapping[StoreKey, StoreSpec]
+
+    def require(self, key: str, *, backend: str | None = None, purpose: str) -> StoreSpec:
+        """Return the store *key*, which *purpose* needs, served by *backend* when given.
+
+        Args:
+            key: The store's name.
+            backend: The backend the store must declare; ``None`` takes any.
+            purpose: Who needs the store, for the message (``"the 'mongo' backend"``).
+
+        Raises:
+            ConfigError: When the store is not declared, or declares another backend.
+        """
+        spec = self.specs.get(StoreKey(key))
+        if spec is None:
+            raise ConfigError(f"{purpose} needs {_path(key)}, which is not declared")
+        if backend is not None and spec.backend != backend:
+            raise ConfigError(
+                f"{spec.path}.{BACKEND_KEY} is {spec.backend!r}, but {purpose} needs "
+                f"{BACKEND_KEY}: {backend}"
+            )
+        return spec
 
     def models_by_store(
         self, models: Sequence[type[BaseModel]]
@@ -128,14 +159,14 @@ class StoreCatalog:
         keys = sorted(self.specs, key=lambda key: key != DEFAULT_STORE)
         groups: dict[StoreKey, list[type[BaseModel]]] = {key: [] for key in keys}
         for model in models:
-            key = store_of(model)
-            if key not in groups:
+            spec = self.require(store_of(model), purpose=f"model {model.__name__}")
+            if not spec.serves_models:
                 raise ConfigError(
-                    f"{model.__name__} belongs to store {key!r}, but "
-                    f"{ConfigKey.STORES}.{key} is not declared"
+                    f"{model.__name__} belongs to store {spec.key!r}, a connection-only "
+                    f"{spec.backend} store that serves no model; {spec.path} only hands its "
+                    "connection to the sinks that name it"
                 )
-            _refuse_connection_only(model, self.specs[key])
-            groups[key].append(model)
+            groups[spec.key].append(model)
         return {key: tuple(members) for key, members in groups.items()}
 
 
@@ -152,30 +183,25 @@ def store_of(model: type[BaseModel]) -> StoreKey:
             f"declare {_STORE_ATTRIBUTE} instead (ADR 0008)"
         )
     declared = getattr(model, _STORE_ATTRIBUTE, DEFAULT_STORE)
-    if not isinstance(declared, str) or not _KEY_PATTERN.fullmatch(declared):
-        raise ConfigError(f"{model.__name__}.{_STORE_ATTRIBUTE} {declared!r} is not a store key")
-    return StoreKey(declared)
+    return _store_key(declared, owner=f"{model.__name__}.{_STORE_ATTRIBUTE}")
 
 
-def require_default_store(models: Sequence[type[BaseModel]], catalog: StoreCatalog) -> None:
-    """Fail unless every one of *models* belongs to a :data:`DEFAULT_STORE` that serves models.
+def require_single_store(models: Sequence[type[BaseModel]]) -> None:
+    """Fail unless every one of *models* belongs to :data:`DEFAULT_STORE`.
 
     An application composes its default store only; a model of another store
     would otherwise be served by the default store's backend and session.
+    The catalog refuses a connection-only default store when it loads.
 
     Args:
         models: The discovered models.
-        catalog: The application's stores.
 
     Raises:
-        ConfigError: As :func:`store_of`, naming the first model of a
-            connection-only store, or of a store other than the default one.
+        ConfigError: As :func:`store_of`, or naming the first model of a
+            store other than the default one.
     """
     for model in models:
         key = store_of(model)
-        spec = catalog.specs.get(key)
-        if spec is not None:
-            _refuse_connection_only(model, spec)
         if key != DEFAULT_STORE:
             raise ConfigError(
                 f"{model.__name__} belongs to store {key!r}, but an application "
@@ -183,22 +209,11 @@ def require_default_store(models: Sequence[type[BaseModel]], catalog: StoreCatal
             )
 
 
-def _refuse_connection_only(model: type[BaseModel], spec: StoreSpec) -> None:
-    """Fail when *model* belongs to the connection-only store *spec*.
-
-    Raises:
-        ConfigError: Naming the model, the store and its kind.
-    """
-    if spec.connection_only:
-        raise ConfigError(
-            f"{model.__name__} belongs to store {spec.key!r}, a connection-only "
-            f"{spec.backend} store that serves no model; {spec.path} only hands its "
-            "connection to the sinks that name it"
-        )
-
-
 def load_catalog(ctx: ConfigContext) -> StoreCatalog:
     """Read the ``stores`` section of *ctx* into a catalog.
+
+    A composition loads it once and shares it: the backends, the sinks and
+    the container read that one catalog.
 
     Args:
         ctx: The application configuration.
@@ -209,128 +224,85 @@ def load_catalog(ctx: ConfigContext) -> StoreCatalog:
     Raises:
         ConfigError: When the configuration declares a retired persistence
             key (``database``, ``persistence.backend``, ...), ``stores`` or
-            one of its entries is not a mapping, a key is not a store key, or
-            a store declares no backend, or one that is neither a registered
-            persistence backend nor a connection-only kind.
+            one of its entries is not a mapping, a key is not a store key, a store declares no
+            backend, or one that is neither a registered persistence backend
+            nor a connection-only kind, or :data:`DEFAULT_STORE` is
+            connection-only.
     """
-    reject_retired_sections({section: ctx.raw(section) for section in _RETIRED_SECTIONS})
+    reject_retired_sections(ctx)
     written = ctx.raw(ConfigKey.STORES)
     if written is None:
         return StoreCatalog(specs=MappingProxyType({}))
     if not isinstance(written, Mapping):
         raise ConfigError(f"{ConfigKey.STORES} must map each store name to its section")
-    specs = {
-        StoreKey(key): _spec(ctx, StoreKey(key), section)
-        for key, section in ((_store_key(key), section) for key, section in written.items())
-    }
+    registered = registered_names(BACKEND_ENTRY_POINT_GROUP)
+    specs: dict[StoreKey, StoreSpec] = {}
+    for name, section in written.items():
+        key = _store_key(name, owner=f"{ConfigKey.STORES} key")
+        if not isinstance(section, Mapping):
+            raise ConfigError(
+                f"{_path(key)} must be a mapping holding the store's backend and connection"
+            )
+        specs[key] = _spec(ctx, key, registered)
     return StoreCatalog(specs=MappingProxyType(specs))
 
 
-def default_store(ctx: ConfigContext, backend: str) -> StoreSpec:
-    """Return the :data:`DEFAULT_STORE` of *ctx*, which *backend* is about to build.
-
-    Args:
-        ctx: The application configuration.
-        backend: Name of the backend building the store.
-
-    Raises:
-        ConfigError: As :func:`load_catalog`, when ``stores.default`` is not
-            declared, or when it names another backend.
-    """
-    spec = load_catalog(ctx).specs.get(DEFAULT_STORE)
-    path = f"{ConfigKey.STORES}.{DEFAULT_STORE}"
-    if spec is None:
-        raise ConfigError(f"the {backend!r} backend needs {path}, which is not declared")
-    if spec.backend != backend:
-        raise ConfigError(
-            f"{path}.backend is {spec.backend!r}, but the {backend!r} backend is building it"
-        )
-    return spec
+def _path(key: str) -> str:
+    """Dotted path of the section of store *key*."""
+    return f"{ConfigKey.STORES}.{key}"
 
 
-def _store_key(key: object) -> str:
-    """Return *key* when it is a valid store key.
+def _store_key(value: object, *, owner: str) -> StoreKey:
+    """Return *value*, which *owner* declares, when it is a valid store key.
 
     Raises:
-        ConfigError: Naming the key otherwise.
+        ConfigError: Naming the owner and the value otherwise.
     """
-    if not isinstance(key, str) or not _KEY_PATTERN.fullmatch(key):
+    if not isinstance(value, str) or not _KEY_PATTERN.fullmatch(value):
         raise ConfigError(
-            f"{ConfigKey.STORES} key {key!r} is not a store key: "
+            f"{owner} {value!r} is not a store key: "
             "use letters, digits and underscores, not starting with a digit"
         )
-    return key
+    return StoreKey(value)
 
 
-def _spec(ctx: ConfigContext, key: StoreKey, section: object) -> StoreSpec:
-    """Build the spec of store *key* from its *section* as written.
+def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> StoreSpec:
+    """Build the spec of store *key*, whose backend is one of *registered* or connection-only.
 
     Raises:
-        ConfigError: When the section is not a mapping or its backend is
-            missing or not registered.
+        ConfigError: When the backend is missing or not registered, or the
+            default store is connection-only.
     """
-    path = f"{ConfigKey.STORES}.{key}"
-    if not isinstance(section, Mapping):
-        raise ConfigError(f"{path} must be a mapping holding the store's backend and connection")
-    node = _node(ctx, path)
-    backend = node.section(_BACKEND_KEY, str) if _BACKEND_KEY in section else ""
+    path = _path(key)
+    backend = ctx.section_or_default(f"{path}.{BACKEND_KEY}", str, "")
     if not backend:
-        raise ConfigError(f"{path}.backend is missing: name the store's persistence backend")
-    if backend in CONNECTION_ONLY_BACKENDS:
-        return StoreSpec(key=key, backend=backend, section=node)
-    registered = registered_backends()
-    if backend not in registered:
-        connection_only = ", ".join(sorted(CONNECTION_ONLY_BACKENDS))
+        raise ConfigError(f"{path}.{BACKEND_KEY} is missing: name the store's persistence backend")
+    connection_only = backend in CONNECTION_ONLY_BACKENDS
+    if not connection_only and backend not in registered:
+        kinds = ", ".join(sorted(CONNECTION_ONLY_BACKENDS))
         raise ConfigError(
-            f"{path}.backend: {unknown_backend_message(backend, registered)} "
-            f"Connection-only stores: {connection_only}."
+            f"{path}.{BACKEND_KEY}: {unknown_backend_message(backend, registered)} "
+            f"Connection-only stores: {kinds}."
         )
-    return StoreSpec(key=key, backend=backend, section=node)
-
-
-def _node(ctx: ConfigContext, path: str) -> ConfigContext:
-    """Return the section at *path* as a context still attached to the whole configuration.
-
-    The node keeps its parent, so an interpolation naming another section
-    (``${app.name}``) resolves as it does from the root.
-    """
-    from omegaconf import DictConfig, OmegaConf
-
-    node = OmegaConf.select(ctx._config, path)
-    if not isinstance(node, DictConfig):
-        raise ConfigError(f"{path} must be a mapping holding the store's backend and connection")
-    return ConfigContext(node)
-
-
-def _resolved(section: ConfigContext, path: str) -> dict[str, Any]:
-    """Return *section*, read from *path*, as plain data, interpolations resolved.
-
-    Raises:
-        ConfigError: When an interpolation does not resolve, as
-            :meth:`ConfigContext.section` reports it.
-    """
-    from omegaconf import OmegaConf
-
-    try:
-        data = OmegaConf.to_container(section._config, resolve=True)
-    except Exception as exc:  # omegaconf and resolvers raise their own types
+    if connection_only and key == DEFAULT_STORE:
         raise ConfigError(
-            f"Failed to resolve config section {path!r} "
-            f"(check ${{oc.env:VAR}} interpolations): {exc}"
-        ) from exc
-    if not isinstance(data, dict):
-        raise ConfigError(f"{path} must be a mapping holding the store's backend and connection")
-    return {str(key): value for key, value in data.items()}
+            f"{path}.{BACKEND_KEY} is {backend!r}, a connection-only store that "
+            "serves no model; declare the application's persistence backend there"
+        )
+    return StoreSpec(key=key, backend=backend, config=ctx)
 
 
 __all__ = [
+    "BACKEND_KEY",
+    "CLICKHOUSE_BACKEND",
     "CONNECTION_ONLY_BACKENDS",
     "DEFAULT_STORE",
+    "NONE_BACKEND",
+    "SQLALCHEMY_BACKEND",
     "StoreCatalog",
     "StoreKey",
     "StoreSpec",
-    "default_store",
     "load_catalog",
-    "require_default_store",
+    "require_single_store",
     "store_of",
 ]

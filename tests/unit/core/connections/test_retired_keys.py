@@ -10,12 +10,13 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
 from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.persistence.stores import StoreKey, load_catalog
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.sql.config import reject_retired_sql_keys
 from loom.etl.storage._config import normalise_storage_section
 from loom.streaming.mongo._config import load_mongo_config
+from tests.helpers.persistence import build_backend
 
 _AWS_RETIRED = [
     ("endpoint_url", "http://localhost:8000", "url"),
@@ -42,7 +43,7 @@ def test_persistence_dynamodb(retired: str, value: Any, replacement: str) -> Non
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **section}}})
 
     with pytest.raises(ConfigError, match=_names("stores.default", retired, replacement)):
-        DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
 
 @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
@@ -54,7 +55,7 @@ def test_persistence_mongo(retired: str, value: Any, replacement: str) -> None:
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})
 
     with pytest.raises(ConfigError, match=_names("stores.default", retired, replacement)):
-        MongoBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+        build_backend(MongoBackend(), ctx, (), SERVER_PROFILE)
 
 
 @pytest.mark.parametrize(

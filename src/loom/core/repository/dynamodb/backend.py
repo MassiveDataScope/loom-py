@@ -13,7 +13,7 @@ from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import default_store
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
@@ -66,9 +66,10 @@ class DynamoDBBackend:
         """Build the DynamoDB wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``stores.default`` section.
+            ctx: Ignored; the store's section comes from ``runtime.catalog``.
             models: Models whose repositories the DI module registers.
-            runtime: Entry-point defaults; the DynamoDB client takes none of them yet.
+            runtime: The catalog holding ``stores.default``; the DynamoDB client
+                takes none of the entry-point defaults yet.
 
         Returns:
             The DynamoDB wiring.
@@ -77,7 +78,9 @@ class DynamoDBBackend:
             ConfigError: When the ``stores.default`` section is missing, names
                 another backend, holds a retired key or is invalid.
         """
-        spec = default_store(ctx, self.name)
+        spec = runtime.catalog.require(
+            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
+        )
         reject_retired_keys(spec.settings(), spec.path, DynamoDBRepositoryConfig)
         dynamo_cfg = spec.decode(DynamoDBRepositoryConfig)
         # The low-level client, not the resource: it is thread-safe, and

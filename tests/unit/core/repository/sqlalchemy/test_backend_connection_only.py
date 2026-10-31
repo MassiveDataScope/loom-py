@@ -1,4 +1,4 @@
-"""``SQLAlchemyBackend`` built with ``BackendRuntime(connection_only=True)``.
+"""``SQLAlchemyBackend`` built with ``connection_only=True``.
 
 A host with no model (a worker running raw-SQL jobs) gets a unit of work and
 nothing more: no cursor codec, no repository, and the compiled registry left
@@ -22,10 +22,11 @@ from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer
 from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import WORKER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import WORKER_PROFILE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 
@@ -57,7 +58,7 @@ class _CallerScoped(BaseModel, RowScoped):
 def _wiring(database: dict[str, Any]) -> PersistenceWiring:
     # No persistence.cursors at all: a codec built here would fail.
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy", **database}}})
-    return SQLAlchemyBackend().build(ctx, (), BackendRuntime(WORKER_PROFILE, connection_only=True))
+    return build_backend(SQLAlchemyBackend(), ctx, (), WORKER_PROFILE, connection_only=True)
 
 
 def _registered(wiring: PersistenceWiring) -> LoomContainer:

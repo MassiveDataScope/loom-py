@@ -11,6 +11,7 @@ from loom.core.authz.elevation import ElevationSink
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence.stores import StoreCatalog
 from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
@@ -19,6 +20,7 @@ _RESERVED: tuple[BindingKey, ...] = (
     SqlQueryService,
     CallerBoundSql,
     ObservabilityRuntime,
+    StoreCatalog,
     ElevationSink,
     RuntimeExecutor,
     UseCaseRegistry,

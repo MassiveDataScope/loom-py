@@ -21,7 +21,7 @@ from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import default_store
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -76,9 +76,10 @@ class MongoBackend:
         """Build the Mongo wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``stores.default`` section.
+            ctx: Configuration context holding the ``persistence.cursors`` section.
             models: Models whose repositories the DI module registers.
-            runtime: Entry-point defaults; the Mongo client takes none of them yet.
+            runtime: The catalog holding ``stores.default``; the Mongo client
+                takes none of the entry-point defaults yet.
 
         Returns:
             The Mongo wiring.
@@ -88,7 +89,9 @@ class MongoBackend:
                 another backend, holds a retired key or is invalid, or
                 ``persistence.cursors`` cannot build a cursor codec.
         """
-        spec = default_store(ctx, self.name)
+        spec = runtime.catalog.require(
+            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
+        )
         reject_retired_keys(spec.settings(), spec.path, MongoRepositoryConfig)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
         cursor_codec = CursorCodec.from_context(ctx)
