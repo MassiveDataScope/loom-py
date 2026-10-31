@@ -61,13 +61,11 @@ class Ticket(BaseModel):
 
 
 def _ctx(section: dict[str, Any] | None, cursors: dict[str, Any] | None = None) -> ConfigContext:
-    persistence: dict[str, Any] = {
-        "backend": "mongo",
-        "cursors": {"signing": "ephemeral"} if cursors is None else cursors,
-    }
+    persistence = {"cursors": {"signing": "ephemeral"} if cursors is None else cursors}
+    config: dict[str, Any] = {"app": {"name": "demo"}, "persistence": persistence}
     if section is not None:
-        persistence["mongo"] = section
-    return ConfigContext.from_dict({"app": {"name": "demo"}, "persistence": persistence})
+        config["stores"] = {"default": {"backend": "mongo", **section}}
+    return ConfigContext.from_dict(config)
 
 
 def _wiring(
@@ -94,7 +92,7 @@ def test_missing_section_is_a_config_error() -> None:
     ctx = _ctx(None)
     backend = MongoBackend()
 
-    with pytest.raises(ConfigError, match="persistence.mongo"):
+    with pytest.raises(ConfigError, match="stores.default"):
         backend.build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 

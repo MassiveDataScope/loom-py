@@ -1,9 +1,9 @@
 """ClickHouse connection settings shared by the SQL service, the ETL and streaming sinks.
 
 The SQL service (``sql.connections.<name>``), the ETL (``storage.clickhouse``)
-and the streaming sinks (``database.<name>`` named by a sink) declare
-:class:`ClickHouseConnection` or a subclass of it, and build their clients
-through :mod:`loom.core.connections.clickhouse.client`.
+and the streaming sinks (a ``clickhouse`` store, ``stores.<name>``, named by
+a sink) declare :class:`ClickHouseConnection` or a subclass of it, and build
+their clients through :mod:`loom.core.connections.clickhouse.client`.
 """
 
 from __future__ import annotations

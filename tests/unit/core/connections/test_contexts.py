@@ -16,6 +16,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
 from loom.core.persistence.database import load_database_config
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, load_catalog
 from loom.core.repository.dynamodb.backend import DynamoDBRepositoryConfig
 from loom.core.repository.mongo.backend import MongoRepositoryConfig
 from loom.core.sql.config import SqlConnectionConfig
@@ -145,11 +146,19 @@ def test_an_omitted_etl_engine_is_absent() -> None:
 
 def test_a_stray_key_in_database_schema_fails_naming_it() -> None:
     ctx = ConfigContext.from_dict(
-        {"database": {"url": "sqlite+aiosqlite:///:memory:", "schema": {"guard_name": "g"}}}
+        {
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": "sqlite+aiosqlite:///:memory:",
+                    "schema": {"guard_name": "g"},
+                }
+            }
+        }
     )
 
     with pytest.raises(ConfigError, match="guard_name"):
-        load_database_config(ctx)
+        load_database_config(ctx, DEFAULT_STORE)
 
 
 def test_database_schema_carries_every_key_its_readers_use() -> None:
@@ -165,10 +174,18 @@ def test_database_schema_carries_every_key_its_readers_use() -> None:
         "naming_convention": {"pk": "pk_%(table_name)s"},
     }
     ctx = ConfigContext.from_dict(
-        {"database": {"url": "postgresql+asyncpg://h/db", "schema": schema}}
+        {
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": "postgresql+asyncpg://h/db",
+                    "schema": schema,
+                }
+            }
+        }
     )
 
-    decoded = load_database_config(ctx).schema
+    decoded = load_database_config(ctx, DEFAULT_STORE).schema
 
     assert decoded.roles is not None
     assert decoded.groups is not None
@@ -179,14 +196,14 @@ def test_database_schema_carries_every_key_its_readers_use() -> None:
     )
 
 
-# ------------------------------------------------------- streaming sink databases
+# ---------------------------------------------------------- streaming sink stores
 
 
-def _sink_connection(database: dict[str, Any]) -> ClickHouseConnection:
+def _sink_connection(store: dict[str, Any]) -> ClickHouseConnection:
     from loom.streaming.nodes._table.config import _clickhouse_connection
 
-    ctx = ConfigContext.from_dict({"database": {"warehouse": database}})
-    return _clickhouse_connection(ctx, "database.warehouse")
+    ctx = ConfigContext.from_dict({"stores": {"warehouse": {"backend": "clickhouse", **store}}})
+    return _clickhouse_connection(load_catalog(ctx).specs[StoreKey("warehouse")])
 
 
 def test_a_sink_database_is_the_shared_clickhouse_connection() -> None:
@@ -196,12 +213,12 @@ def test_a_sink_database_is_the_shared_clickhouse_connection() -> None:
 
 
 def test_a_sink_database_with_http_url_names_its_new_key() -> None:
-    with pytest.raises(ValueError, match=r"database\.warehouse\.http_url was renamed to url"):
+    with pytest.raises(ValueError, match=r"stores\.warehouse\.http_url was renamed to url"):
         _sink_connection({"http_url": "http://h:8123"})
 
 
 def test_a_relational_database_behind_a_clickhouse_sink_names_the_engine() -> None:
-    with pytest.raises(ValueError, match=r"database\.warehouse holds a 'postgresql\+asyncpg'"):
+    with pytest.raises(ValueError, match=r"stores\.warehouse holds a 'postgresql\+asyncpg'"):
         _sink_connection({"url": "postgresql+asyncpg://h/db"})
 
 

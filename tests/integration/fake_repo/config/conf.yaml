@@ -12,11 +12,13 @@ persistence:
   cursors:
     signing: ephemeral
 
-database:
-  url: ${oc.env:LOOM_TEST_DATABASE_URL}
-  echo: false
-  pool:
-    pre_ping: true
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:LOOM_TEST_DATABASE_URL}
+    echo: false
+    pool:
+      pre_ping: true
 
 observability:
   prometheus:

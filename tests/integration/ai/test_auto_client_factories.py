@@ -94,7 +94,7 @@ def _write_project(tmp_path: Path, *, specs: dict[str, dict[str, Any]]) -> str:
                 "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
             },
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
         "ai": {
             "engine": _ENGINE_NAME,

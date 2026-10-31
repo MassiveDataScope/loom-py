@@ -1,6 +1,6 @@
 """AWS client settings shared by every loom context that calls an AWS service.
 
-The DynamoDB repository (``persistence.dynamodb``), the ETL DynamoDB sources
+The DynamoDB repository (a ``dynamodb`` store), the ETL DynamoDB sources
 (``storage.dynamodb``), the ``secrets`` and ``ssm`` resolvers and the SNS
 notifier build their clients from :class:`AwsClientConfig` through the one
 builder of :mod:`loom.core.connections.aws.client`.

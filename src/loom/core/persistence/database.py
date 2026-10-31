@@ -1,10 +1,10 @@
-"""The single contract of a relational ``database`` section.
+"""The single contract of a relational store section.
 
 The API, the Celery worker and the streaming sinks read the same section shape
-— at ``database``, at ``database.<name>`` for a shared streaming database, or
-inline in a sink — and build their engine through the same constructor. The
-pool keys live under ``database.pool``; each key left out takes the default of
-the entry point's :class:`~loom.core.persistence.profile.RuntimeProfile`.
+— at ``stores.<name>`` for a store whose backend is ``sqlalchemy``, or inline
+in a sink — and build their engine through the same constructor. The pool
+keys live under ``stores.<name>.pool``; each key left out takes the default
+of the entry point's :class:`~loom.core.persistence.profile.RuntimeProfile`.
 
 The section follows the connection standard of :mod:`loom.core.connections`:
 ``url``, ``connect_timeout`` and ``read_timeout`` in seconds, ``pool.size``
@@ -26,8 +26,11 @@ from loom.core.connections import ConnectionPool, ConnectionSettings, require_te
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
+from loom.core.persistence.stores import StoreKey, StoreSpec, load_catalog
 
 EXTERNAL: Final = "external"
+SQLALCHEMY_BACKEND: Final = "sqlalchemy"
+"""The backend whose stores hold a relational database section."""
 
 _ASYNCPG: Final = "postgresql+asyncpg"
 _ASYNCPG_TIMEOUTS: Final = {"connect_timeout": "timeout", "read_timeout": "command_timeout"}
@@ -35,35 +38,35 @@ _ASYNCPG_TIMEOUTS: Final = {"connect_timeout": "timeout", "read_timeout": "comma
 
 
 class SchemaRoles(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema.roles``: the roles owning and migrating the schema."""
+    """``stores.<name>.schema.roles``: the roles owning and migrating the schema."""
 
     owner: str
     migrator: str
 
 
 class SchemaUser(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """One entry of ``database.schema.database_users``."""
+    """One entry of ``stores.<name>.schema.database_users``."""
 
     login: bool
     access: str
 
 
 class SchemaGroups(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema.groups``: the reader and writer group roles."""
+    """``stores.<name>.schema.groups``: the reader and writer group roles."""
 
     readers: str
     writers: str
 
 
 class SchemaVersionTables(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema.version_tables``: where structure and data migrations are recorded."""
+    """``stores.<name>.schema.version_tables``: where structure and data migrations are recorded."""
 
     structure: str
     data: str
 
 
 class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema``: the one definition every reader of the section shares.
+    """``stores.<name>.schema``: the one definition every reader of the section shares.
 
     Startup (``mode``, ``allow_unprotected_dialect``, ``scopes``, ``guard``),
     the migrations and the row-level-security tooling read it; every name is
@@ -88,7 +91,7 @@ class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fie
 
 
 class PoolConfig(ConnectionPool, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """``database.pool``: connection-pool keys; ``None`` means "not declared".
+    """``stores.<name>.pool``: connection-pool keys; ``None`` means "not declared".
 
     Args:
         size: Connections kept open.
@@ -115,15 +118,14 @@ class PoolConfig(ConnectionPool, frozen=True, kw_only=True, forbid_unknown_field
         )
 
 
-class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unknown_fields=False):
+class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """A relational database section.
 
-    Keys outside this contract are tolerated at the top level: the section
-    also holds the named databases of streaming sinks (``database.<name>``).
-    ``pool`` and ``schema``, each with a single definition, refuse them. The
-    address hides its password, and ``connect_args`` hides its secret-named
-    values. ``username`` and ``password``, when set, win over credentials in
-    the URL.
+    A key outside this contract is refused, at the top level as in ``pool``
+    and ``schema``: a store section holds one database, so a misspelt key
+    fails at startup instead of being ignored. The address
+    hides its password, and ``connect_args`` hides its secret-named values.
+    ``username`` and ``password``, when set, win over credentials in the URL.
 
     Args:
         url: SQLAlchemy async URL; never empty.
@@ -208,7 +210,7 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
 
 
 def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseConfig:
-    """Decode a resolved ``database`` mapping read from *path*.
+    """Decode a resolved relational store mapping read from *path*.
 
     Args:
         data: The section as plain data, interpolations already resolved.
@@ -230,15 +232,36 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
     return config
 
 
-def load_database_config(
-    ctx: ConfigContext, key: str | ConfigKey = ConfigKey.DATABASE
-) -> DatabaseConfig:
-    """Read and decode the ``database`` section at *key* of *ctx*.
+def load_database_config(ctx: ConfigContext, store: str) -> DatabaseConfig:
+    """Read and decode the relational section of the store *store* of *ctx*.
+
+    Args:
+        ctx: The application configuration.
+        store: Key of the store, declared under ``stores.<store>``.
 
     Raises:
-        ConfigError: When the section is absent or fails :func:`decode_database_config`.
+        ConfigError: When the catalog does not load, the store is not
+            declared, or it fails :func:`database_config_of`.
     """
-    return decode_database_config(ctx.section(key, dict), path=str(key))
+    spec = load_catalog(ctx).specs.get(StoreKey(store))
+    if spec is None:
+        raise ConfigError(f"{ConfigKey.STORES}.{store} is not declared")
+    return database_config_of(spec)
+
+
+def database_config_of(spec: StoreSpec) -> DatabaseConfig:
+    """Decode the relational section of the store *spec* declares.
+
+    Raises:
+        ConfigError: When the store's backend is not ``sqlalchemy``, or its
+            section fails :func:`decode_database_config`.
+    """
+    if spec.backend != SQLALCHEMY_BACKEND:
+        raise ConfigError(
+            f"{spec.path}.backend is {spec.backend!r}, but a relational database "
+            f"needs backend: {SQLALCHEMY_BACKEND}"
+        )
+    return decode_database_config(spec.settings(), path=spec.path)
 
 
 def reject_retired_pool_keys(data: Mapping[str, Any], path: str) -> None:
@@ -259,6 +282,8 @@ __all__ = [
     "SchemaRoles",
     "SchemaUser",
     "SchemaVersionTables",
+    "SQLALCHEMY_BACKEND",
+    "database_config_of",
     "decode_database_config",
     "load_database_config",
     "reject_retired_pool_keys",

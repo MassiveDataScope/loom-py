@@ -234,7 +234,7 @@ def _base_config(tmp_path: Path) -> dict[str, Any]:
             },
             "rest": {"version": _APP_VERSION},
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
 

@@ -23,7 +23,7 @@ def _select_sqlalchemy_with(blocked: str) -> subprocess.CompletedProcess[str]:
         "class Row:\n"
         "    id: int\n"
         "config = SqlAlchemySinkConfig.from_config("
-        "{'table': 'events', 'database': 'db'}, default_table='events')\n"
+        "{'table': 'events', 'store': 'db'}, default_table='events')\n"
         "try:\n"
         "    IntoTable(payload=Row).build_partition("
         "config, 0, 1, bridge=object(), session_manager=object())\n"

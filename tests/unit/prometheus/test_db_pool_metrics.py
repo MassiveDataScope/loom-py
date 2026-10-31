@@ -114,7 +114,7 @@ def test_create_app_with_prometheus_enabled_reports_its_pool(tmp_path: Path) -> 
     config_path = write_project(
         tmp_path,
         observability={"prometheus": {"enabled": True}},
-        database={"url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
+        store={"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
     )
 
     create_app(config_path, metrics_registry=registry, environment=Environment.TEST)
@@ -126,7 +126,8 @@ def test_create_app_with_prometheus_enabled_reports_its_pool(tmp_path: Path) -> 
 def test_create_app_without_prometheus_reports_no_pool(tmp_path: Path) -> None:
     registry = CollectorRegistry()
     config_path = write_project(
-        tmp_path, database={"url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"}
+        tmp_path,
+        store={"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"},
     )
 
     create_app(config_path, metrics_registry=registry, environment=Environment.TEST)

@@ -253,7 +253,7 @@ def _gate_interface(
     if repository_type is None:
         raise RuntimeError(
             f"{interface.__name__} generates CRUD routes over {model.__name__}, but "
-            f"persistence.backend {backend_name!r} serves no repositories."
+            f"stores.default.backend {backend_name!r} serves no repositories."
         )
     supported = supported_crud_ops(repository_type)
     if interface.include:

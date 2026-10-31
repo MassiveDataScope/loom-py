@@ -86,7 +86,7 @@ def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str
                 "interfaces": {"modules": [module], "warn_recommended": False},
             },
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     config_file = tmp_path / "app.yaml"

@@ -69,14 +69,14 @@ def _application(tmp_path: Path, config: dict[str, Any], adapter: CeleryAdapter)
 
 
 class TestBackendRule:
-    """The rest of the rule (no database, named databases, a stray key) is pinned by
+    """The rest of the rule (no default store, sink stores only, a retired key) is pinned by
     ``test_bootstrap_database``."""
 
     @pytest.mark.parametrize("backend", ["none", "mongo", "dynamodb"])
     def test_an_explicit_backend_wins_over_the_database_section(
         self, tmp_path: Path, backend: str
     ) -> None:
-        config = {"persistence": {"backend": backend}, "database": {"url": _SQLITE}}
+        config = {"stores": {"default": {"backend": backend, "url": _SQLITE}}}
 
         recipe = CeleryAdapter(jobs=[_PingJob]).recipe(_source(tmp_path, config))
 
@@ -84,7 +84,7 @@ class TestBackendRule:
 
     def test_a_database_url_without_backend_serves_sqlalchemy(self, tmp_path: Path) -> None:
         recipe = CeleryAdapter(jobs=[_PingJob]).recipe(
-            _source(tmp_path, {"database": {"url": _SQLITE}})
+            _source(tmp_path, {"stores": {"default": {"backend": "sqlalchemy", "url": _SQLITE}}})
         )
 
         assert recipe.backend.name == "sqlalchemy"
@@ -92,7 +92,9 @@ class TestBackendRule:
     def test_credentials_without_url_are_the_workers_own_section_decoded_strictly(
         self, tmp_path: Path
     ) -> None:
-        source = _source(tmp_path, {"database": {"username": "app"}})
+        source = _source(
+            tmp_path, {"stores": {"default": {"backend": "sqlalchemy", "username": "app"}}}
+        )
 
         recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
 
@@ -135,7 +137,7 @@ class TestRecipe:
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
         with pytest.raises(ConfigError):
-            adapter.recipe(_source(tmp_path, {"database": {"URL": "x"}}))
+            adapter.recipe(_source(tmp_path, {"stores": {"default": {"URL": "x"}}}))
 
         assert adapter.recipe(_source(tmp_path, {})).profile is WORKER_PROFILE
 

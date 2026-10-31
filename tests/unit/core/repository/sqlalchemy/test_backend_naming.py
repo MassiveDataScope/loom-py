@@ -30,19 +30,22 @@ def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
             "name": "rosters",
             "discovery": {"mode": "modules", "modules": {"include": [rosters.__name__]}},
         },
-        "database": {
-            "url": "sqlite+aiosqlite:///",
-            "schema": {
-                "mode": "external",
-                "name": "rosters",
-                "roles": {"owner": "rosters_owner", "migrator": "rosters_migrator"},
-                "database_users": {"rosters_rw": {"login": True, "access": "write"}},
-                "scopes": dict(rosters.SCOPE_BINDINGS),
-                "guard": "loom_guard_rosters",
-                "groups": {"readers": "rosters_readers", "writers": "rosters_writers"},
-                "version_tables": {"structure": "alembic_version", "data": "alembic_data"},
-                "naming_convention": naming_convention,
-            },
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": "sqlite+aiosqlite:///",
+                "schema": {
+                    "mode": "external",
+                    "name": "rosters",
+                    "roles": {"owner": "rosters_owner", "migrator": "rosters_migrator"},
+                    "database_users": {"rosters_rw": {"login": True, "access": "write"}},
+                    "scopes": dict(rosters.SCOPE_BINDINGS),
+                    "guard": "loom_guard_rosters",
+                    "groups": {"readers": "rosters_readers", "writers": "rosters_writers"},
+                    "version_tables": {"structure": "alembic_version", "data": "alembic_data"},
+                    "naming_convention": naming_convention,
+                },
+            }
         },
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
@@ -78,7 +81,7 @@ def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(tmp_path
     path = _config_file(tmp_path, {"primary": "pk_%(table_name)s"})
 
     backend, context = SQLAlchemyBackend(), ConfigContext.from_yaml(str(path))
-    with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"):
         backend.build(context, rosters.MODELS, BackendRuntime(SERVER_PROFILE))
 
 
@@ -102,9 +105,12 @@ async def test_closing_leaves_the_compiled_naming_convention() -> None:
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "database": {
-                "url": "sqlite+aiosqlite:///",
-                "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": "sqlite+aiosqlite:///",
+                    "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+                }
             },
             "persistence": {"cursors": {"signing": "ephemeral"}},
         }

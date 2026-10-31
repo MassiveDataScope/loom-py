@@ -21,7 +21,7 @@ def _wiring(url: str, cursors: dict[str, str] | None = None) -> PersistenceWirin
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "database": {"url": url},
+            "stores": {"default": {"backend": "sqlalchemy", "url": url}},
             "persistence": {"cursors": {"signing": "ephemeral"} if cursors is None else cursors},
         }
     )

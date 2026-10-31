@@ -191,6 +191,7 @@ def _bootstrap(application: Application) -> BootstrapConfig:
     bootstrap = application.bootstrap
     if bootstrap is None:
         raise ConfigError(
-            "partitions need database.schema.name, roles and database_users in the configuration"
+            "partitions need stores.default.schema.name, roles and database_users "
+            "in the configuration"
         )
     return bootstrap

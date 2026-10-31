@@ -30,13 +30,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 from celery.concurrency import get_implementation  # type: ignore[import-untyped]
 from celery.concurrency.prefork import TaskPool as PreforkPool  # type: ignore[import-untyped]
@@ -67,15 +66,13 @@ from loom.composition import Application, ApplicationHost, CompositionSource, Re
 from loom.core.async_bridge import build_backend_options
 from loom.core.bootstrap import KernelRuntime
 from loom.core.checks import REST_CHECKS
-from loom.core.config import ConfigContext, ConfigKey
-from loom.core.config.errors import ConfigError
+from loom.core.config import ConfigKey
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compilable import Compilable
 from loom.core.persistence import (
     WORKER_PROFILE,
     resolve_backend,
 )
-from loom.core.persistence.database import DatabaseConfig
 from loom.core.runner import shutdown_runner
 from loom.core.use_case.agent_markers import declaring_agent_bindings
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
@@ -89,8 +86,6 @@ _logger = logging.getLogger(__name__)
 
 _EX_FAILURE = 1
 """Exit status of a worker that cannot start."""
-
-_DATABASE_FIELDS = frozenset(field.encode_name for field in msgspec.structs.fields(DatabaseConfig))
 
 _SIGNAL_UIDS = {
     worker_init: "loom.celery.worker.init",
@@ -106,46 +101,17 @@ _SIGNAL_UIDS = {
 
 
 def _worker_backend_name(source: CompositionSource) -> str:
-    """``persistence.backend``; else ``sqlalchemy`` for a ``database`` of its own, else ``none``.
+    """``stores.default.backend``; ``none`` when the worker declares no default store.
 
-    A worker that runs only pure jobs declares no database and pays for no
-    persistence at all.
-
-    Raises:
-        ConfigError: When ``database`` is neither the worker's own section nor
-            named databases (see :func:`_declares_own_database`).
-    """
-    # An empty default tells an absent key from a declared one.
-    explicit = source.backend_name(default="")
-    if explicit:
-        return explicit
-    return "sqlalchemy" if _declares_own_database(source.config) else "none"
-
-
-def _declares_own_database(config: ConfigContext) -> bool:
-    """Whether ``database`` is the worker's own section rather than absent or named entries.
-
-    A section holding any key of the ``database`` contract is the worker's own
-    and the backend decodes it strictly, so a missing or misspelt ``url``
-    fails the worker. A section of named entries only (``database.<name>``)
-    belongs to streaming sinks.
+    A worker that runs only pure jobs declares no store and pays for no
+    persistence at all. A ``stores`` section holding only the stores of
+    streaming sinks declares no default store either.
 
     Raises:
-        ConfigError: When the section is neither: a key outside the contract
-            whose value is not a named database mapping (``URL: ...``).
+        ConfigError: When the store catalog does not load, a retired
+            persistence key included.
     """
-    section = config.raw(ConfigKey.DATABASE)
-    if not isinstance(section, Mapping):
-        return False
-    if _DATABASE_FIELDS.intersection(section):
-        return True
-    stray = sorted(str(key) for key, value in section.items() if not isinstance(value, Mapping))
-    if stray:
-        raise ConfigError(
-            f"database.{stray[0]} is neither a key of the database section "
-            f"({', '.join(sorted(_DATABASE_FIELDS))}) nor a named database"
-        )
-    return False
+    return source.backend_name(default="none")
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +435,7 @@ class CeleryAdapter:
         """Decode ``celery``, discover the worker's components and apply the per-job config.
 
         Raises:
-            ConfigError: When ``celery`` or ``database`` is misdeclared, or no
+            ConfigError: When ``celery`` or ``stores`` is misdeclared, or no
                 backend is registered under the name the worker resolves.
             RuntimeError: When no job is passed and no ``app.discovery`` is
                 configured, or this instance already composed an application.

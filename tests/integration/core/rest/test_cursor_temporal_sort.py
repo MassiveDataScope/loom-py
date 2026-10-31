@@ -57,7 +57,12 @@ def _config(tmp_path: Path) -> str:
                         "interfaces": {"modules": [module], "warn_recommended": False},
                     },
                 },
-                "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'slots.sqlite'}"},
+                "stores": {
+                    "default": {
+                        "backend": "sqlalchemy",
+                        "url": f"sqlite+aiosqlite:///{tmp_path / 'slots.sqlite'}",
+                    }
+                },
                 "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         ),

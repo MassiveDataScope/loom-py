@@ -15,29 +15,38 @@ Supported backends
   Requires a ``uri`` key in the resolved config section.
   Install: ``pip install deltalake polars``.
 - ``Backend.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
-  Requires a ``database`` reference whose ``database.<name>`` section is a
-  ClickHouse connection (``url``, optional credentials and timeouts).
+  Requires a ``store`` reference to a ``stores.<name>`` section with
+  ``backend: clickhouse``: a connection-only store holding the ClickHouse
+  connection (``url``, optional credentials and timeouts).
   Install: ``pip install clickhouse-connect``.
 
 Config example (streaming.sinks.<name>)::
 
-    database:
+    stores:
       warehouse:
+        backend: sqlalchemy
         url: postgresql+asyncpg://user:pass@host/db
         pool:
           size: 2
           pre_ping: true
+      events_ch:
+        backend: clickhouse       # connection-only store: no model, no unit of work
+        url: clickhouse://ch:8123/analytics
 
     streaming:
       sinks:
         orders_sink:
-          database: warehouse
+          store: warehouse
           table: orders
           chunk_size: 500
 
         events_sink:
           uri: s3://data-lake/events
           mode: append            # delta write mode (default: append)
+
+        clicks_sink:
+          store: events_ch
+          table: clicks
 
 SQLAlchemy example::
 
@@ -51,7 +60,7 @@ SQLAlchemy example::
         ctx.section("streaming.sinks.orders_sink", dict),
         default_table="orders",
     )
-    db_cfg = load_database_config(ctx, f"database.{sink_cfg.database}")
+    db_cfg = load_database_config(ctx, sink_cfg.store)
     session_manager = build_session_manager(db_cfg, STREAMING_PROFILE)
 
 Delta example::
@@ -297,8 +306,10 @@ _BUFFER_KEYS: frozenset[str] = frozenset(
 SQLALCHEMY_INLINE_DATABASE_KEYS: frozenset[str] = frozenset(DatabaseConfig.__struct_fields__) - {
     "schema"
 }
-"""Database keys an inline-``url`` sink takes: the ``database`` contract but ``schema``."""
-_SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "database", "url", "chunk_size"}
+"""Database keys an inline-``url`` sink takes: the relational store contract but ``schema``."""
+_SQLALCHEMY_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {"table", "store", "url", "chunk_size"}
+RETIRED_STORE_REFERENCE = "database"
+"""The sink key that named a ``database.<name>`` section before ``store``."""
 _DELTA_SINK_KEYS: frozenset[str] = _BUFFER_KEYS | {
     "table",
     "uri",
@@ -354,15 +365,15 @@ class SqlAlchemySinkConfig:
     """Resolved ``IntoTable`` settings for the SQLAlchemy backend.
 
     Args:
-        database: Shared ``database.<name>`` reference. Empty when using
-            inline ``url`` resolution.
+        store: Key of the ``stores.<name>`` section holding the connection.
+            Empty when using inline ``url`` resolution.
         url: Inline SQLAlchemy URL fallback.
         table: Final target table name.
         chunk_size: Number of rows per bulk ``executemany`` call.
         buffer_policy: Common flush policy shared with other backends.
     """
 
-    database: str
+    store: str
     url: Dsn | None
     table: str
     chunk_size: int
@@ -370,21 +381,31 @@ class SqlAlchemySinkConfig:
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], *, default_table: str) -> Self:
-        """Build SQLAlchemy sink settings from a resolved sink config."""
+        """Build SQLAlchemy sink settings from a resolved sink config.
+
+        Raises:
+            ValueError: If the config uses the retired ``database`` key,
+                carries a key the sink does not read, or names no table.
+        """
+        if RETIRED_STORE_REFERENCE in config:
+            raise ValueError(
+                "SQLAlchemy sink config key 'database' was renamed to 'store'; "
+                "name a stores.<name> section (ADR 0008)."
+            )
         table = str(config.get("table") or default_table).strip()
-        database = str(config.get("database") or "").strip()
+        store = str(config.get("store") or "").strip()
         url_text = str(config.get("url") or "").strip()
         url = Dsn(url_text) if url_text else None
         known = (
             _SQLALCHEMY_SINK_KEYS
-            if database
+            if store
             else _SQLALCHEMY_SINK_KEYS | SQLALCHEMY_INLINE_DATABASE_KEYS
         )
         _refuse_unknown_keys(config, known, sink="SQLAlchemy")
         if not table:
             raise ValueError("SQLAlchemy sink config requires a non-empty table name.")
         return cls(
-            database=database,
+            store=store,
             url=url,
             table=table,
             chunk_size=_optional_int(config.get("chunk_size"), 500),
@@ -469,7 +490,7 @@ class DeltaSinkConfig:
 class ClickHouseSinkConfig:
     """Resolved ``IntoTable`` settings for the ClickHouse backend.
 
-    The connection is the ``database.<name>`` section the sink names, decoded
+    The connection is the ``stores.<name>`` section the sink names, decoded
     as the :class:`~loom.core.connections.ClickHouseConnection` every loom
     context reading ClickHouse shares: DSN, credentials and bounds.
 
@@ -500,7 +521,7 @@ class ClickHouseSinkConfig:
         Args:
             config: The sink section.
             default_table: Table used when the section names none.
-            connection: The ClickHouse connection of the sink's database.
+            connection: The ClickHouse connection of the sink's store.
 
         Raises:
             ValueError: If the table is empty or the config carries a key the

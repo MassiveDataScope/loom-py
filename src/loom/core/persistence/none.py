@@ -13,10 +13,10 @@ from loom.core.persistence.profile import BackendRuntime
 
 
 class NoneBackend:
-    """Backend for ``persistence.backend: none``.
+    """Backend for ``stores.default.backend: none``, and for a worker without ``stores``.
 
-    No unit-of-work factory, no repositories, no startup resource; a
-    ``database`` section, if present, is ignored.
+    No unit-of-work factory, no repositories, no startup resource; the rest
+    of the store section, if any, is ignored.
     """
 
     name: ClassVar[str] = "none"

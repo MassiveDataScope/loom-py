@@ -47,7 +47,7 @@ def _queued(
 def _wiring(url: str, *models: type[BaseModel], **schema: object):
     config = {
         "app": {"name": "demo"},
-        "database": {"url": url, "schema": schema},
+        "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     return SQLAlchemyBackend().build(

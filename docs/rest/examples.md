@@ -583,8 +583,10 @@ app:
     version: 0.1.0
     docs_url: /docs
 
-database:
-  url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///./store.db}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///./store.db}
 
 observability:
   log:

@@ -111,7 +111,7 @@ def probed_backend(monkeypatch: pytest.MonkeyPatch) -> type[_ProbedBackend]:
 
 
 def _probed_app(tmp_path: Path) -> FastAPI:
-    return create_app(write_project(tmp_path, persistence={"backend": "probed"}, database=None))
+    return create_app(write_project(tmp_path, store={"backend": "probed"}))
 
 
 class TestHealthResponse:
@@ -132,7 +132,7 @@ class TestHealthResponse:
         assert body == {"status": "degraded", "backends": {"probed": False}}
 
     def test_the_none_backend_reports_no_backends(self, tmp_path: Path) -> None:
-        config_path = write_project(tmp_path, persistence={"backend": "none"}, database=None)
+        config_path = write_project(tmp_path, store={"backend": "none"})
 
         status, body = _get(create_app(config_path), _HEALTH)
 

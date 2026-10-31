@@ -170,12 +170,19 @@ _DEPLOYED_DOCUMENT: dict[str, Any] = {
     },
     "observability": {"log": {"config": {"level": "INFO"}}, "prometheus": {"enabled": True}},
     "checks": {"silenced": ["loom.rest.W001"]},
-    "database": {
-        "url": "postgresql+asyncpg://app@db/app",
-        "pool": {"size": 5},
-        "warehouse": {"url": "postgresql+asyncpg://app@wh/wh", "pool": {"size": 2}},
+    "stores": {
+        "default": {
+            "backend": "sqlalchemy",
+            "url": "postgresql+asyncpg://app@db/app",
+            "pool": {"size": 5},
+        },
+        "warehouse": {
+            "backend": "sqlalchemy",
+            "url": "postgresql+asyncpg://app@wh/wh",
+            "pool": {"size": 2},
+        },
+        "sessions": {"backend": "dynamodb", "region": "eu-west-1", "table": "t", "read_timeout": 5},
     },
-    "persistence": {"dynamodb": {"region": "eu-west-1", "table": "t", "read_timeout": 5}},
 }
 
 
@@ -209,24 +216,17 @@ def deployed_file(tmp_path: Path) -> str:
             "5",
             "sql.connections.analytics.connect_timeout",
         ),
-        ("LOOM__DATABASE__POOL__SIZE", "1", "database.pool.size"),
-        ("LOOM__DATABASE__POOL__MAX_OVERFLOW", "0", "database.pool.max_overflow"),
-        ("LOOM__DATABASE__POOL__TIMEOUT", "5", "database.pool.timeout"),
-        ("LOOM__DATABASE__POOL__RECYCLE", "300", "database.pool.recycle"),
-        ("LOOM__DATABASE__CONNECT_TIMEOUT", "5", "database.connect_timeout"),
-        ("LOOM__DATABASE__READ_TIMEOUT", "30", "database.read_timeout"),
-        ("LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT", "2", "persistence.dynamodb.read_timeout"),
-        (
-            "LOOM__PERSISTENCE__DYNAMODB__CONNECT_TIMEOUT",
-            "1",
-            "persistence.dynamodb.connect_timeout",
-        ),
-        ("LOOM__PERSISTENCE__DYNAMODB__MAX_ATTEMPTS", "2", "persistence.dynamodb.max_attempts"),
-        (
-            "LOOM__PERSISTENCE__DYNAMODB__POOL__SIZE",
-            "8",
-            "persistence.dynamodb.pool.size",
-        ),
+        ("LOOM__STORES__DEFAULT__POOL__SIZE", "1", "stores.default.pool.size"),
+        ("LOOM__STORES__DEFAULT__POOL__MAX_OVERFLOW", "0", "stores.default.pool.max_overflow"),
+        ("LOOM__STORES__DEFAULT__POOL__TIMEOUT", "5", "stores.default.pool.timeout"),
+        ("LOOM__STORES__DEFAULT__POOL__RECYCLE", "300", "stores.default.pool.recycle"),
+        ("LOOM__STORES__DEFAULT__CONNECT_TIMEOUT", "5", "stores.default.connect_timeout"),
+        ("LOOM__STORES__DEFAULT__READ_TIMEOUT", "30", "stores.default.read_timeout"),
+        ("LOOM__STORES__WAREHOUSE__POOL__SIZE", "1", "stores.warehouse.pool.size"),
+        ("LOOM__STORES__SESSIONS__READ_TIMEOUT", "2", "stores.sessions.read_timeout"),
+        ("LOOM__STORES__SESSIONS__CONNECT_TIMEOUT", "1", "stores.sessions.connect_timeout"),
+        ("LOOM__STORES__SESSIONS__MAX_ATTEMPTS", "2", "stores.sessions.max_attempts"),
+        ("LOOM__STORES__SESSIONS__POOL__SIZE", "8", "stores.sessions.pool.size"),
         ("LOOM__STORAGE__DYNAMODB__READ_TIMEOUT", "9", "storage.dynamodb.read_timeout"),
         ("LOOM__STORAGE__DYNAMODB__CONNECT_TIMEOUT", "1", "storage.dynamodb.connect_timeout"),
         ("LOOM__STORAGE__DYNAMODB__MAX_ATTEMPTS", "2", "storage.dynamodb.max_attempts"),
@@ -260,9 +260,9 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         ("LOOM__APP__REST__INTERFACES__ORDERS__FILTERABLE", "all"),
         ("LOOM__APP__REST__INTERFACES__ORDERS__SORTABLE", "[total]"),
         ("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned"),
-        ("LOOM__DATABASE__URL", "postgresql+asyncpg://evil@db/app"),
-        ("LOOM__DATABASE__POOL__PRE_PING", "false"),
-        ("LOOM__DATABASE__WAREHOUSE__POOL__SIZE", "1"),
+        ("LOOM__STORES__DEFAULT__URL", "postgresql+asyncpg://evil@db/app"),
+        ("LOOM__STORES__DEFAULT__POOL__PRE_PING", "false"),
+        ("LOOM__STORES__DEFAULT__BACKEND", "none"),
     ],
     ids=[
         "a key a reviewed key references, off the allowlist",
@@ -279,7 +279,7 @@ def test_a_deployed_environment_takes_overrides_of_loom_operational_keys(
         "cursor signing",
         "the database url",
         "the pre-ping safety check",
-        "a named database, which a wildcard would confuse with the section's own keys",
+        "the backend of a store",
     ],
 )
 def test_a_deployed_environment_refuses_every_key_off_the_allowlist(
@@ -352,7 +352,7 @@ def test_config_overridable_refuses_an_entry_that_opens_a_protected_key(
 
 
 @pytest.mark.parametrize(
-    "entry", ["app.code_path", "app.*", "app.rest.auth.custom", "persistence.backend"]
+    "entry", ["app.code_path", "app.*", "app.rest.auth.custom", "stores.default.backend"]
 )
 def test_config_overridable_accepts_other_keys_since_a_deploy_check_judges_the_merged_value(
     tmp_path: Path, entry: str
@@ -505,10 +505,10 @@ def test_reaching_inside_an_interpolated_key_is_refused_without_resolving_it(
     calls: list[str] = []
     OmegaConf.register_new_resolver("overrides_probe", lambda key: calls.append(key) or {})
     path = tmp_path / "base.yaml"
-    path.write_text("database: ${overrides_probe:db}\napp: {name: x}\n", encoding="utf-8")
-    monkeypatch.setenv("LOOM__DATABASE__POOL_PRE_PING", "false")
+    path.write_text("stores: ${overrides_probe:db}\napp: {name: x}\n", encoding="utf-8")
+    monkeypatch.setenv("LOOM__STORES__POOL_PRE_PING", "false")
     try:
-        with pytest.raises(ConfigError, match="LOOM__DATABASE__POOL_PRE_PING"):
+        with pytest.raises(ConfigError, match="LOOM__STORES__POOL_PRE_PING"):
             load_application_config(str(path))
     finally:
         OmegaConf.clear_resolver("overrides_probe")

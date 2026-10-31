@@ -55,15 +55,12 @@ def test_auto_compares_no_backend_name() -> None:
 def test_dynamodb_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
     config_path = write_project(
         tmp_path,
-        persistence={
+        store={
             "backend": "dynamodb",
-            "dynamodb": {
-                "region": "eu-west-1",
-                "table": "records",
-                "url": "http://localhost:8000",
-            },
+            "region": "eu-west-1",
+            "table": "records",
+            "url": "http://localhost:8000",
         },
-        database=None,
     )
     env = {
         **os.environ,
@@ -78,11 +75,7 @@ def test_dynamodb_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
 def test_mongo_app_boots_without_sqlalchemy(tmp_path: Path) -> None:
     config_path = write_project(
         tmp_path,
-        persistence={
-            "backend": "mongo",
-            "mongo": {"url": "mongodb://localhost:27017", "database": "records"},
-        },
-        database=None,
+        store={"backend": "mongo", "url": "mongodb://localhost:27017", "database": "records"},
         id_field=UUID4_ID_FIELD,
     )
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(_SRC), str(_SRC.parent)])}

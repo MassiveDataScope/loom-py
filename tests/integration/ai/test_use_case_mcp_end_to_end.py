@@ -439,7 +439,7 @@ class TestWithNoAiSectionStartupAbortsIfAUseCaseDeclaresTheMarker:
                 "code_path": str(tmp_path),
                 "discovery": {"mode": "manifest", "manifest": {"module": manifest_module}},
             },
-            "database": {"url": "sqlite+aiosqlite:///"},
+            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
             "persistence": {"cursors": {"signing": "ephemeral"}},
             # Deliberately no 'ai:' section: FR-08 / T501 item 6, the case
             # 'ctx.has(ConfigKey.AI)' being false must still abort a

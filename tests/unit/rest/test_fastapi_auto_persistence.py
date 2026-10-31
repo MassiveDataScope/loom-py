@@ -46,11 +46,8 @@ _DYNAMODB_SECTION = {
     "table": "products",
     "url": "http://localhost:8000",
 }
-_DYNAMODB_PERSISTENCE = {"backend": "dynamodb", "dynamodb": _DYNAMODB_SECTION}
-_MONGO_PERSISTENCE = {
-    "backend": "mongo",
-    "mongo": {"url": "mongodb://localhost:27017", "database": "demo"},
-}
+_DYNAMODB_STORE = {"backend": "dynamodb", **_DYNAMODB_SECTION}
+_MONGO_STORE = {"backend": "mongo", "url": "mongodb://localhost:27017", "database": "demo"}
 
 
 class PersistenceNoneRecord(BaseModel):
@@ -60,13 +57,15 @@ class PersistenceNoneRecord(BaseModel):
     name: str = ColumnField(length=50)
 
 
-def _ctx(persistence: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
-    cursors = {"cursors": {"signing": "ephemeral"}}
+_SQLITE_STORE = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
+
+
+def _ctx(store: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
     return ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "database": {"url": "sqlite+aiosqlite:///"},
-            "persistence": {**cursors, **(persistence or {})},
+            "stores": {"default": dict(store or _SQLITE_STORE)},
+            "persistence": {"cursors": {"signing": "ephemeral"}},
             **sections,
         }
     )
@@ -110,13 +109,13 @@ def agents_only_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestBackendSelection:
     @pytest.mark.parametrize(
-        "persistence",
-        [pytest.param(None, id="default"), pytest.param({"backend": "sqlalchemy"}, id="explicit")],
+        "store",
+        [pytest.param(None, id="default"), pytest.param(_SQLITE_STORE, id="explicit")],
     )
     def test_defaults_to_sqlalchemy(
-        self, agents_only_discovery: None, persistence: dict[str, object] | None
+        self, agents_only_discovery: None, store: dict[str, object] | None
     ) -> None:
-        ctx = _ctx() if persistence is None else _ctx(persistence=persistence)
+        ctx = _ctx(store=store)
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
             _AppConfig(name="demo"), ctx
         )
@@ -127,7 +126,7 @@ class TestBackendSelection:
         self, agents_only_discovery: None, aws_test_credentials: None
     ) -> None:
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(persistence=_DYNAMODB_PERSISTENCE)
+            _AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
         assert isinstance(wiring.uow_factory, DynamoUnitOfWorkFactory)
@@ -136,20 +135,22 @@ class TestBackendSelection:
         self, agents_only_discovery: None, fake_mongo_client: FakeMongoClient
     ) -> None:
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(persistence=_MONGO_PERSISTENCE)
+            _AppConfig(name="demo"), _ctx(store=_MONGO_STORE)
         )
 
         assert isinstance(wiring.uow_factory, MongoUnitOfWorkFactory)
 
     def test_none_has_no_unit_of_work(self, agents_only_discovery: None) -> None:
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(persistence={"backend": "none"})
+            _AppConfig(name="demo"), _ctx(store={"backend": "none"})
         )
 
         assert wiring.uow_factory is None
 
     def test_unknown_backend_lists_registered_names(self, tmp_path: Path) -> None:
-        config_path = write_project(tmp_path, persistence={"backend": "mongodb"})
+        config_path = write_project(
+            tmp_path, store={"backend": "mongodb", "url": "sqlite+aiosqlite:///"}
+        )
 
         with pytest.raises(ConfigError, match="Unknown persistence backend 'mongodb'") as exc_info:
             create_app(config_path)
@@ -159,12 +160,20 @@ class TestBackendSelection:
         assert "dynamodb" in message
         assert "none" in message
 
+    def test_without_a_default_store_the_api_selects_sqlalchemy_and_names_the_section(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = write_project(tmp_path, store=None)
+
+        with pytest.raises(ConfigError, match=r"'sqlalchemy' backend needs stores\.default"):
+            create_app(config_path)
+
 
 class TestDynamoDBBoot:
     def test_requires_its_config_section(self, tmp_path: Path) -> None:
-        config_path = write_project(tmp_path, persistence={"backend": "dynamodb"})
+        config_path = write_project(tmp_path, store={"backend": "dynamodb"})
 
-        with pytest.raises(ConfigError, match="persistence.dynamodb"):
+        with pytest.raises(ConfigError, match="stores.default"):
             create_app(config_path)
 
 
@@ -172,22 +181,20 @@ class TestMongoBoot:
     def test_boots_without_a_database_section(
         self, tmp_path: Path, fake_mongo_client: FakeMongoClient
     ) -> None:
-        config_path = write_project(
-            tmp_path, persistence=_MONGO_PERSISTENCE, database=None, id_field=UUID4_ID_FIELD
-        )
+        config_path = write_project(tmp_path, store=_MONGO_STORE, id_field=UUID4_ID_FIELD)
 
         assert create_app(config_path) is not None
 
     def test_requires_its_config_section(self, tmp_path: Path) -> None:
-        config_path = write_project(tmp_path, persistence={"backend": "mongo"})
+        config_path = write_project(tmp_path, store={"backend": "mongo"})
 
-        with pytest.raises(ConfigError, match="persistence.mongo"):
+        with pytest.raises(ConfigError, match="stores.default"):
             create_app(config_path)
 
     def test_rejects_an_autoincrement_key_naming_the_model(
         self, tmp_path: Path, fake_mongo_client: FakeMongoClient
     ) -> None:
-        config_path = write_project(tmp_path, persistence=_MONGO_PERSISTENCE, database=None)
+        config_path = write_project(tmp_path, store=_MONGO_STORE)
 
         with pytest.raises(ConfigError, match="ConfigRecord.id"):
             create_app(config_path)
@@ -195,19 +202,19 @@ class TestMongoBoot:
 
 class TestNoneBoot:
     @pytest.mark.parametrize(
-        "database",
+        "store",
         [
-            pytest.param(None, id="no-database-section"),
+            pytest.param({"backend": "none"}, id="no-database-section"),
             pytest.param(
-                {"url": "postgresql+asyncpg://nobody@unreachable/nothing"},
+                {"backend": "none", "url": "postgresql+asyncpg://nobody@unreachable/nothing"},
                 id="unusable-database-section",
             ),
         ],
     )
     def test_boots_regardless_of_the_database_section(
-        self, tmp_path: Path, database: dict[str, object] | None
+        self, tmp_path: Path, store: dict[str, object]
     ) -> None:
-        config_path = write_project(tmp_path, persistence={"backend": "none"}, database=database)
+        config_path = write_project(tmp_path, store=store)
 
         assert create_app(config_path) is not None
 
@@ -256,7 +263,7 @@ def test_injected_backend_boots_and_prepares_models_after_build(
     """A backend registered by another package boots through ``create_app`` unchanged."""
     monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
     monkeypatch.setattr(_RecordingBackend, "events", [])
-    config_path = write_project(tmp_path, persistence={"backend": "recording"}, database=None)
+    config_path = write_project(tmp_path, store={"backend": "recording"})
 
     assert create_app(config_path) is not None
 
@@ -273,7 +280,7 @@ def test_create_app_builds_the_backend_with_the_server_profile(
     monkeypatch.setattr(entrypoints_module, "entry_points", lambda: _RecordingEntryPoints())
     monkeypatch.setattr(_RecordingBackend, "events", [])
     monkeypatch.setattr(_RecordingBackend, "runtimes", [])
-    config_path = write_project(tmp_path, persistence={"backend": "recording"}, database=None)
+    config_path = write_project(tmp_path, store={"backend": "recording"})
 
     create_app(config_path)
 
@@ -315,19 +322,19 @@ def test_build_bootstrap_sqlalchemy_without_models_warns_and_starts(
     assert runtime is not None
     assert wiring is not None
     assert "no BaseModel classes discovered" in caplog.text
-    assert "persistence.backend: none" in caplog.text
+    assert "stores.default.backend: none" in caplog.text
 
 
 @pytest.mark.parametrize(
-    "persistence",
+    "store",
     [
         pytest.param(None, id="sqlalchemy"),
         pytest.param({"backend": "none"}, id="none"),
-        pytest.param(_DYNAMODB_PERSISTENCE, id="dynamodb"),
+        pytest.param(_DYNAMODB_STORE, id="dynamodb"),
     ],
 )
 def test_build_bootstrap_rejects_autocrud_without_model_on_any_backend(
-    persistence: dict[str, object] | None,
+    store: dict[str, object] | None,
     monkeypatch: pytest.MonkeyPatch,
     aws_test_credentials: None,
 ) -> None:
@@ -343,7 +350,7 @@ def test_build_bootstrap_rejects_autocrud_without_model_on_any_backend(
             models=(), use_cases=(), interfaces=_interfaces(OrphanOnAnyBackend), agent_specs=()
         ),
     )
-    ctx = _ctx() if persistence is None else _ctx(persistence=persistence)
+    ctx = _ctx(store=store)
     app_config = _AppConfig(name="demo")
 
     with pytest.raises(RuntimeError, match="OrphanOnAnyBackend") as exc_info:

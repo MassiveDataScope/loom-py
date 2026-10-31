@@ -870,7 +870,7 @@ def get_metadata() -> MetaData:
 
 
 def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
-    """Validate the ``database.schema.naming_convention`` setting.
+    """Validate the ``stores.default.schema.naming_convention`` setting.
 
     Raises:
         ConfigError: Naming the setting and the first unknown kind.
@@ -878,7 +878,7 @@ def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, s
     try:
         return naming_convention(value)
     except ValueError as exc:
-        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
+        raise ConfigError(f"stores.default.schema.naming_convention: {exc}") from exc
 
 
 def reset_registry(
@@ -887,7 +887,7 @@ def reset_registry(
     """Clear compiled models and, when asked, set the shared metadata's naming convention.
 
     The runtime compiles into the shared metadata after this call, so the
-    convention it receives, the one ``database.schema.naming_convention``
+    convention it receives, the one ``stores.default.schema.naming_convention``
     declares, names the tables ``create_all`` creates exactly as the
     application metadata of the migration path does. Without the argument the
     convention is left as it is; ``None`` restores SQLAlchemy's default.

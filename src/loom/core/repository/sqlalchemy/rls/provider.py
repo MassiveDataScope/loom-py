@@ -64,7 +64,7 @@ def scoped_session_settings(
     scopes = _declared_scopes(scoped)
     missing = sorted(scope for scope in scopes if scope not in scope_sources)
     if missing:
-        raise ConfigError(f"database.schema.scopes is missing bindings for {missing}")
+        raise ConfigError(f"stores.default.schema.scopes is missing bindings for {missing}")
     validate_bindings({scope: scope_sources[scope] for scope in scopes})
     return _ScopedProvider(scopes, scope_sources, product)
 

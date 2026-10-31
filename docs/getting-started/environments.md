@@ -125,14 +125,18 @@ app:
     mode: modules
     modules:
       include: [app.product.model, app.product.interface]
-database:
-  url: ${oc.env:DATABASE_URL}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL}
 ```
 
 ```yaml
 # config/development.yaml
-database:
-  url: sqlite+aiosqlite:///store.db
+stores:
+  default:
+    backend: sqlalchemy
+    url: sqlite+aiosqlite:///store.db
 persistence:
   cursors:
     signing: ephemeral   # a random key per process; see the persistence guide
@@ -140,8 +144,10 @@ persistence:
 
 ```yaml
 # config/test.yaml
-database:
-  url: sqlite+aiosqlite:///
+stores:
+  default:
+    backend: sqlalchemy
+    url: sqlite+aiosqlite:///
 persistence:
   cursors:
     signing: unsigned
@@ -186,7 +192,7 @@ staging only an allowlisted key can (below):
 ```bash
 LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
 LOOM__SQL__CONNECTIONS__ANALYTICS__POOL__SIZE=20  # sql.connections.analytics.pool.size
-LOOM__DATABASE__POOL__SIZE=1                      # database.pool.size
+LOOM__STORES__DEFAULT__POOL__SIZE=1               # stores.default.pool.size
 LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
 ```
 
@@ -196,7 +202,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   added in lower case; the section types that refuse unknown keys
   (`app.rest`, the `observability` sub-sections, `sql`, `celery`, `jobs`,
   `storage`, `kafka`, the bytewax runtime, `dynamodb`) then refuse a typo.
-  The keys of `app`, `database`, `persistence` and the top of
+  The keys of `app`, a `sqlalchemy` store, `persistence` and the top of
   `observability`, which several readers share, are not checked.
 - The first level must name a section the configuration declares or loom
   knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
@@ -209,9 +215,11 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   scalars is a leaf.
 - In production and staging an override may set only an allowlisted key:
   the operational keys loom ships (log levels, Celery and streaming worker
-  counts and timeouts, SQL and database pool sizes, driver and DynamoDB
+  counts and timeouts, SQL and store pool sizes, driver and DynamoDB
   timeouts; the full list and
-  the reason for each are in ADR 0005), plus the keys your reviewed files
+  the reason for each are in ADR 0005, whose `database.*` and
+  `persistence.dynamodb.*` entries are now `stores.*.<key>` for every store),
+  plus the keys your reviewed files
   list:
 
   ```yaml
@@ -320,8 +328,10 @@ injects them as variables, and the YAML references them with
 
 ```yaml
 # config/base.yaml
-database:
-  url: ${oc.env:DATABASE_URL}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL}
 payments:
   api_key: ${oc.env:PAYMENTS_API_KEY}
 persistence:
@@ -380,7 +390,7 @@ check fails startup, a `W` check logs a warning.
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
 | `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
-| `loom.cursors.E001` | A `database` or `persistence.mongo` section is set and pagination cursors are not signed with a configured key: `persistence.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
+| `loom.cursors.E001` | A store whose backend is `sqlalchemy` or `mongo` is declared and pagination cursors are not signed with a configured key: `persistence.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 
 Processes that serve no HTTP (the worker and the runners) skip the
 `loom.rest` checks. A runner built from a whole configuration (a file, a

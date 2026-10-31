@@ -115,10 +115,10 @@ def bootstrap_worker(
     kernel, ``JobService`` and ``SqlQueryService``, then the Celery tasks and
     the lifecycle signals. The environment is registered in the container.
 
-    Persistence note: ``persistence.backend`` selects the backend; without
-    it a ``database`` section of the worker's own selects ``sqlalchemy``,
-    with row-level security bound exactly as in the API, and its absence
-    selects ``none``, suitable for pure jobs that use no repository.
+    Persistence note: ``stores.default.backend`` selects the backend, with
+    row-level security bound exactly as in the API for ``sqlalchemy``;
+    without a ``stores.default`` section the worker selects ``none``,
+    suitable for pure jobs that use no repository.
 
     Args:
         *config_paths: Paths to YAML configuration files, merged

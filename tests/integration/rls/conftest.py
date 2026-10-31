@@ -215,22 +215,28 @@ def application_for(
             "name": name,
             "discovery": {"mode": "modules", "modules": {"include": [product.__name__]}},
         },
-        "database": {
-            "url": database.write,
-            "schema": {
-                "mode": "external",
-                "name": name,
-                "roles": {"owner": f"{name}_owner", "migrator": f"{name}_migrator"},
-                "database_users": {
-                    f"{name}_{suffix}": {"login": True, "access": access}
-                    for suffix, access in FIXTURE_USERS.items()
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": database.write,
+                "schema": {
+                    "mode": "external",
+                    "name": name,
+                    "roles": {"owner": f"{name}_owner", "migrator": f"{name}_migrator"},
+                    "database_users": {
+                        f"{name}_{suffix}": {"login": True, "access": access}
+                        for suffix, access in FIXTURE_USERS.items()
+                    },
+                    "scopes": dict(product.SCOPE_BINDINGS),
+                    "guard": f"loom_guard_{name}",
+                    "groups": {"readers": f"{name}_readers", "writers": f"{name}_writers"},
+                    "version_tables": {
+                        "structure": "alembic_version",
+                        "data": "alembic_version_data",
+                    },
+                    "naming_convention": getattr(product, "NAMING_CONVENTION", None),
                 },
-                "scopes": dict(product.SCOPE_BINDINGS),
-                "guard": f"loom_guard_{name}",
-                "groups": {"readers": f"{name}_readers", "writers": f"{name}_writers"},
-                "version_tables": {"structure": "alembic_version", "data": "alembic_version_data"},
-                "naming_convention": getattr(product, "NAMING_CONVENTION", None),
-            },
+            }
         },
     }
     path = tmp_path / f"{name}.yaml"

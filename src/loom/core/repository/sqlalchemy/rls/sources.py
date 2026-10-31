@@ -41,7 +41,7 @@ def validate_bindings(scope_sources: Mapping[str, str]) -> None:
         kind, name = _parse(scope, binding)
         if kind == "request" and name not in _sources:
             raise ConfigError(
-                f"database.schema.scopes.{scope} binds {binding!r} but no scope source "
+                f"stores.default.schema.scopes.{scope} binds {binding!r} but no scope source "
                 f"named {name!r} was registered"
             )
 
@@ -62,7 +62,7 @@ def _parse(scope: str, binding: str) -> tuple[str, str]:
     match = _BINDING.fullmatch(binding)
     if match is None:
         raise ConfigError(
-            f"database.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
+            f"stores.default.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
             "or request.<name>"
         )
     return match.group(1), match.group(2)

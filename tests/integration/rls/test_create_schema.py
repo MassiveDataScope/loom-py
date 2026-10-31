@@ -79,13 +79,16 @@ async def test_the_standard_backend_wires_scopes_and_refuses_bypass_connections(
     def backend(url: str):
         config = {
             "app": {"name": "wired"},
-            "database": {
-                "url": url,
-                "schema": {
-                    "mode": "external",
-                    "scopes": {"owner": "identity.subject", "editor": "request.editor"},
-                    "guard": "loom_guard_notes_wired",
-                },
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": url,
+                    "schema": {
+                        "mode": "external",
+                        "scopes": {"owner": "identity.subject", "editor": "request.editor"},
+                        "guard": "loom_guard_notes_wired",
+                    },
+                }
             },
             "persistence": {"cursors": {"signing": "ephemeral"}},
         }
@@ -150,7 +153,13 @@ async def test_external_mode_refuses_a_bypass_connection_without_scoped_tables(
     )
     config = {
         "app": {"name": "plain"},
-        "database": {"url": database.bypass, "schema": {"mode": "external"}},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": database.bypass,
+                "schema": {"mode": "external"},
+            }
+        },
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     wiring = SQLAlchemyBackend().build(

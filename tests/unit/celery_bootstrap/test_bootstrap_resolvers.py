@@ -28,8 +28,10 @@ def _write_worker_yaml(tmp_path: Path, broker_url: str) -> str:
         f"  broker_url: {broker_url}\n"
         "  result_backend: cache+memory://\n"
         "  task_always_eager: true\n"
-        "database:\n"
-        "  url: sqlite+aiosqlite:///test.db\n",
+        "stores:\n"
+        "  default:\n"
+        "    backend: sqlalchemy\n"
+        "    url: sqlite+aiosqlite:///test.db\n",
         encoding="utf-8",
     )
     return str(path)

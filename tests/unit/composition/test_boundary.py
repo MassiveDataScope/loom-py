@@ -92,8 +92,9 @@ _CONFIG = """
 app:
   name: boundary
   code_path: .
-persistence:
-  backend: none
+stores:
+  default:
+    backend: none
 celery:
   broker_url: "memory://"
   result_backend: "cache+memory://"

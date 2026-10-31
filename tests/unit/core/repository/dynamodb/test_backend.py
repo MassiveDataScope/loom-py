@@ -22,9 +22,8 @@ def _wiring(
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "persistence": {
-                "backend": "dynamodb",
-                "dynamodb": {"region": "eu-west-1", "table": table},
+            "stores": {
+                "default": {"backend": "dynamodb", "region": "eu-west-1", "table": table},
             },
         }
     )

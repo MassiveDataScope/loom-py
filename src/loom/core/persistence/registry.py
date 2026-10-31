@@ -6,7 +6,11 @@ from typing import cast
 
 from loom.core.config import ConfigError
 from loom.core.persistence.abc import PersistenceBackend
-from loom.core.plugins.entrypoints import EntryPointNotFoundError, load_entry_point
+from loom.core.plugins.entrypoints import (
+    EntryPointNotFoundError,
+    list_entry_points,
+    load_entry_point,
+)
 
 BACKEND_ENTRY_POINT_GROUP = "loom.persistence.backends"
 """Entry point group persistence backends register under."""
@@ -16,7 +20,7 @@ def resolve_backend(name: str) -> PersistenceBackend:
     """Resolve the persistence backend registered under ``name``.
 
     Args:
-        name: ``persistence.backend`` value naming the backend.
+        name: ``stores.<name>.backend`` value naming the backend.
 
     Returns:
         An instance of the registered backend class.
@@ -30,7 +34,7 @@ def resolve_backend(name: str) -> PersistenceBackend:
     try:
         target = load_entry_point(BACKEND_ENTRY_POINT_GROUP, name, on_duplicate="error")
     except EntryPointNotFoundError as exc:
-        raise ConfigError(_unknown_backend_message(name, exc.available)) from exc
+        raise ConfigError(unknown_backend_message(name, exc.available)) from exc
     except ImportError as exc:
         raise ConfigError(
             f"Persistence backend {name!r} could not be imported ({exc}). Install the "
@@ -40,11 +44,22 @@ def resolve_backend(name: str) -> PersistenceBackend:
     return backend_cls()
 
 
-def _unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
+def registered_backends() -> tuple[str, ...]:
+    """Return the names registered in the backends group, sorted, importing none of them."""
+    return tuple(sorted({entry.name for entry in list_entry_points(BACKEND_ENTRY_POINT_GROUP)}))
+
+
+def unknown_backend_message(name: str, available: tuple[str, ...]) -> str:
+    """Return the message naming an unknown backend *name* and the *available* ones."""
     if not available:
         return f"Unknown persistence backend {name!r}. No persistence backends are registered."
     registered = ", ".join(available)
     return f"Unknown persistence backend {name!r}. Registered backends: {registered}."
 
 
-__all__ = ["BACKEND_ENTRY_POINT_GROUP", "resolve_backend"]
+__all__ = [
+    "BACKEND_ENTRY_POINT_GROUP",
+    "registered_backends",
+    "resolve_backend",
+    "unknown_backend_message",
+]

@@ -90,7 +90,7 @@ A `Recipe` is a frozen dataclass:
 
 | Field | Meaning |
 |---|---|
-| `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `database.pool` still wins. |
+| `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
 | `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the adapter added or pruned. |
 | `backend` | The `PersistenceBackend` serving the models. |
 | `skip_checks` | Deploy-check areas the entry point does not serve, such as `REST_CHECKS` for a worker. |
@@ -114,7 +114,7 @@ class ScriptAdapter:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=source.discover(),               # app.discovery
-            backend=source.backend(default="sqlalchemy"),  # persistence.backend
+            backend=source.backend(default="sqlalchemy"),  # stores.default.backend
             skip_checks=frozenset({REST_CHECKS}),
         )
 
@@ -272,4 +272,4 @@ The composition is the base of two later deliveries of the same
 specification, which add no promise to this page yet: several named stores
 in one application, each with its own unit of work, and AWS Lambda adapters
 for HTTP and SQS. Until they land, an application serves one persistence
-backend, selected by `persistence.backend`.
+backend, its `stores.default` store, selected by `stores.default.backend`.

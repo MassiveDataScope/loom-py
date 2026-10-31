@@ -4,8 +4,8 @@
 command line and the schema tools share: it reads the file named by
 ``LOOM_CONFIG`` (or an explicit path), discovers the models the same way the
 server does, compiles them into a ``MetaData`` owned by the returned
-``Application`` and builds the bootstrap declaration from the ``database``
-section. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
+``Application`` and builds the bootstrap declaration from the
+``stores.default`` section. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from loom.core.persistence.database import (
     SchemaUser,
     load_database_config,
 )
+from loom.core.persistence.stores import DEFAULT_STORE, load_catalog, require_default_store
 from loom.core.schema_names import SchemaNames, schema_identifier
 
 if TYPE_CHECKING:
@@ -128,9 +129,10 @@ def load_application(config_path: str | None = None) -> Application:
     paths = config_source_paths(path, environment)
     context = load_application_config(*paths, environment=environment)
     app = context.section(ConfigKey.APP, _AppSection)
-    database = load_database_config(context)
+    database = load_database_config(context, DEFAULT_STORE)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
     models = _discover(app.discovery).models
+    require_default_store(models, load_catalog(context))
     metadata = MetaData(
         naming_convention=configured_naming_convention(database.schema.naming_convention)
     )
@@ -190,7 +192,7 @@ def _schema_name(name: str) -> str:
     try:
         return schema_identifier(name)
     except ValueError as exc:
-        raise ConfigError(f"database.schema.name: {exc}") from exc
+        raise ConfigError(f"stores.default.schema.name: {exc}") from exc
 
 
 def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
@@ -216,7 +218,7 @@ def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
     try:
         return config.validated()
     except ValueError as exc:
-        raise ConfigError(f"database.schema: {exc}") from exc
+        raise ConfigError(f"stores.default.schema: {exc}") from exc
 
 
 def _database_user(user: str, section: SchemaUser) -> DatabaseUser:
@@ -226,7 +228,7 @@ def _database_user(user: str, section: SchemaUser) -> DatabaseUser:
     access: Access | None = next((c for c in choices if c == section.access), None)
     if access is None:
         raise ConfigError(
-            f"database.schema.database_users.{user}.access {section.access!r} "
+            f"stores.default.schema.database_users.{user}.access {section.access!r} "
             f"is not one of {', '.join(choices)}"
         )
     return DatabaseUser(login=section.login, access=access)
@@ -239,10 +241,10 @@ def _scope_sources(
     declared = {scope.scope for table in scoped.values() for scope in table.scopes}
     for scope in sorted(declared):
         if scope not in sources:
-            raise ConfigError(f"database.schema.scopes.{scope} is missing")
+            raise ConfigError(f"stores.default.schema.scopes.{scope} is missing")
         if not _SCOPE_SOURCE.fullmatch(sources[scope]):
             raise ConfigError(
-                f"database.schema.scopes.{scope} {sources[scope]!r} must be "
+                f"stores.default.schema.scopes.{scope} {sources[scope]!r} must be "
                 "identity.<attribute> or request.<name>"
             )
     return {scope: sources[scope] for scope in sorted(declared)}
@@ -251,7 +253,7 @@ def _scope_sources(
 def _required(value: _T | None, key: str) -> _T:
     if value is None:
         raise ConfigError(
-            f"database.schema.{key} is required when a model is RowScoped: "
+            f"stores.default.schema.{key} is required when a model is RowScoped: "
             "run `loom schema init <schema>` to write the derived names"
         )
     return value

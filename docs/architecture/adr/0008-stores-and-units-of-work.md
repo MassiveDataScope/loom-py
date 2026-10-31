@@ -52,6 +52,19 @@ possible without changing the use-case DSL.
   checks, readiness and pool metrics. A foreign key or relation across stores
   fails at startup.
 
+### Connection-only stores
+
+- `stores.<name>` with `backend: clickhouse` declares a connection-only
+  store: the ClickHouse connection (`url`, `username`, `password`, ...) and
+  nothing else. It is not a persistence backend.
+- It serves no model and no repository: a model whose `__store__` names it
+  fails at startup. It is never transactional, so it is never a primary store
+  and can never be `Joined`.
+- Streaming and ETL sinks (`store: <name>`) and, later, post-commit and
+  outbox writers take their connection from it. A ClickHouse sink requires
+  `backend: clickhouse` and a SQLAlchemy sink `backend: sqlalchemy`; a
+  mismatch fails when the flow compiles.
+
 ### One unit of work per store, owned by the invocation
 
 - An invocation scope owns a map from store key to unit of work, for every

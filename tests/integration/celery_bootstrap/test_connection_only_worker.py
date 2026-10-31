@@ -97,7 +97,7 @@ def _worker(tmp_path: Path, url: str) -> Any:
     source = composition_source(
         ConfigContext.from_dict(
             {
-                "database": {"url": url},
+                "stores": {"default": {"backend": "sqlalchemy", "url": url}},
                 "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
             }
         ),

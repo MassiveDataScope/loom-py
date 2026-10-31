@@ -191,7 +191,7 @@ def check_dialect(
     if not allow_unprotected:
         raise ConfigError(
             f"dialect {dialect!r} cannot protect scoped tables {', '.join(names)}; "
-            "set database.schema.allow_unprotected_dialect: true only for tests"
+            "set stores.default.schema.allow_unprotected_dialect: true only for tests"
         )
     return names
 

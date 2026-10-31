@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery import (
     InterfacesDiscoveryEngine,
     ManifestDiscoveryEngine,
@@ -17,6 +17,7 @@ from loom.core.discovery import (
 )
 from loom.core.locator import DEFAULT_CODE_PATH
 from loom.core.persistence import resolve_backend
+from loom.core.persistence.stores import DEFAULT_STORE, load_catalog
 
 if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
@@ -53,10 +54,6 @@ class AppConfig(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
     discovery: DiscoveryConfig = msgspec.field(default_factory=DiscoveryConfig)
-
-
-class _PersistenceConfig(msgspec.Struct, kw_only=True):
-    backend: str | None = None
 
 
 _DISCOVERY_ENGINES: dict[str, Callable[[DiscoveryConfig], DiscoveryResult]] = {
@@ -107,16 +104,28 @@ class CompositionSource:
         return discover(self.app.discovery)
 
     def backend_name(self, default: str) -> str:
-        """Return ``persistence.backend``, or *default* when the key is absent."""
-        persistence = self.config.section_or_default(
-            ConfigKey.PERSISTENCE, _PersistenceConfig, _PersistenceConfig()
-        )
-        return persistence.backend or default
+        """Return ``stores.default.backend``, or *default* when that store is not declared.
+
+        Raises:
+            ConfigError: When the store catalog does not load, a retired
+                persistence key included, or ``stores.default`` is a
+                connection-only store.
+        """
+        spec = load_catalog(self.config).specs.get(DEFAULT_STORE)
+        if spec is None:
+            return default
+        if spec.connection_only:
+            raise ConfigError(
+                f"{spec.path}.backend is {spec.backend!r}, a connection-only store that "
+                "serves no model; declare the application's persistence backend there"
+            )
+        return spec.backend
 
     def backend(self, default: str) -> PersistenceBackend:
         """Build the backend :meth:`backend_name` names.
 
         Raises:
-            ConfigError: When no backend is registered under that name.
+            ConfigError: As :meth:`backend_name`, or when no backend is
+                registered under that name.
         """
         return resolve_backend(self.backend_name(default))

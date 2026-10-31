@@ -55,7 +55,7 @@ def test_an_inline_url_sink_refuses_the_schema_it_does_not_read() -> None:
 def test_a_shared_database_sink_refuses_the_pool_it_does_not_read() -> None:
     with pytest.raises(ValueError, match="unknown key 'pool'"):
         SqlAlchemySinkConfig.from_config(
-            {"database": "warehouse", "pool": {"size": 5}}, default_table="orders"
+            {"store": "warehouse", "pool": {"size": 5}}, default_table="orders"
         )
 
 
@@ -79,8 +79,14 @@ def test_an_inline_sink_reads_its_pool_through_the_database_contract() -> None:
 def test_a_shared_database_reads_its_pool_through_the_database_contract() -> None:
     resolved = _resolve(
         {
-            "database": {"warehouse": {"url": "sqlite+aiosqlite:///", "pool": {"size": 4}}},
-            "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+            "stores": {
+                "warehouse": {
+                    "backend": "sqlalchemy",
+                    "url": "sqlite+aiosqlite:///",
+                    "pool": {"size": 4},
+                }
+            },
+            "streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}},
         }
     )
 
@@ -99,10 +105,16 @@ def test_a_retired_flat_key_inline_names_its_replacement() -> None:
 
 
 def test_a_retired_flat_key_in_a_shared_database_names_its_replacement() -> None:
-    with pytest.raises(ConfigError, match=r"database\.warehouse\.pool\.size"):
+    with pytest.raises(ConfigError, match=r"stores\.warehouse\.pool\.size"):
         _resolve(
             {
-                "database": {"warehouse": {"url": "sqlite+aiosqlite:///", "pool_size": 4}},
-                "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+                "stores": {
+                    "warehouse": {
+                        "backend": "sqlalchemy",
+                        "url": "sqlite+aiosqlite:///",
+                        "pool_size": 4,
+                    }
+                },
+                "streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}},
             }
         )

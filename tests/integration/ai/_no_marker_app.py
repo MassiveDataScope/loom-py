@@ -63,7 +63,7 @@ def _write_project(root: Path) -> str:
                 "manifest": {"module": _MANIFEST_MODULE},
             },
         },
-        "persistence": {"backend": "none"},
+        "stores": {"default": {"backend": "none"}},
         # Deliberately no 'ai:' section: this is exactly the absent-section
         # case FR-050 covers.
     }

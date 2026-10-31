@@ -317,7 +317,7 @@ for the process ahead of the entry point, which is what tests use.
 {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
 `elevations` names a scope that no compiled model declares, or one that is not elevable.
 The standard SQLAlchemy backend calls it at startup, with the compiled scoped tables,
-when `database.schema.mode` is `external` on Postgres; it remains available for
+when `stores.default.schema.mode` is `external` on Postgres; it remains available for
 programmatic use.
 
 ## Elevating a write scope

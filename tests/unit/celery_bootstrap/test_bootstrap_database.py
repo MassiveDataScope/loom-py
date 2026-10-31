@@ -1,4 +1,4 @@
-"""The worker reads ``database`` through the shared contract and the worker profile."""
+"""The worker reads ``stores.default`` through the shared contract and the worker profile."""
 
 from __future__ import annotations
 
@@ -45,19 +45,21 @@ def test_without_a_database_section_the_worker_runs_without_a_unit_of_work() -> 
 
 
 def test_named_streaming_databases_alone_give_the_worker_no_unit_of_work() -> None:
-    config = {"database": {"orders": {"url": _POSTGRES}}}
+    config = {"stores": {"orders": {"backend": "sqlalchemy", "url": _POSTGRES}}}
 
     assert _resolve_uow_factory(config) is None
 
 
 def test_the_worker_profile_sizes_an_undeclared_pool() -> None:
-    pool = _pool({"database": {"url": _POSTGRES}})
+    pool = _pool({"stores": {"default": {"backend": "sqlalchemy", "url": _POSTGRES}}})
 
     assert (pool.size(), pool._max_overflow, pool._timeout, pool._recycle) == (2, 0, 30, 1800)
 
 
 def test_a_declared_pool_key_wins_over_the_worker_profile() -> None:
-    pool = _pool({"database": {"url": _POSTGRES, "pool": {"size": 4}}})
+    pool = _pool(
+        {"stores": {"default": {"backend": "sqlalchemy", "url": _POSTGRES, "pool": {"size": 4}}}}
+    )
 
     assert (pool.size(), pool._max_overflow) == (4, 0)
 
@@ -77,4 +79,4 @@ def test_an_invalid_database_section_fails_the_worker_instead_of_dropping_the_da
     database: dict[str, Any],
 ) -> None:
     with pytest.raises(ConfigError):
-        _resolve_uow_factory({"database": database})
+        _resolve_uow_factory({"stores": {"default": {"backend": "sqlalchemy", **database}}})

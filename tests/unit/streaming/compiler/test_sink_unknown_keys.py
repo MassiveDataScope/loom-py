@@ -19,7 +19,7 @@ _SINK = "results_sink"
 _SECTIONS: dict[Backend, dict[str, object]] = {
     Backend.DELTA: {"uri": "s3://lake/results"},
     Backend.SQLALCHEMY: {"url": "sqlite+aiosqlite:///:memory:"},
-    Backend.CLICKHOUSE: {"database": "clickhouse"},
+    Backend.CLICKHOUSE: {"store": "clickhouse"},
 }
 
 
@@ -37,9 +37,12 @@ def _config(base: DictConfig, section: dict[str, object]) -> ConfigContext:
         base,
         OmegaConf.create(
             {
-                "database": {
-                    "clickhouse": {"url": "clickhouse://localhost:8123/default"},
-                    "warehouse": {"url": "sqlite+aiosqlite:///:memory:"},
+                "stores": {
+                    "clickhouse": {
+                        "backend": "clickhouse",
+                        "url": "clickhouse://localhost:8123/default",
+                    },
+                    "warehouse": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"},
                 },
                 "streaming": {"sinks": {_SINK: section}},
             }
@@ -76,24 +79,26 @@ def test_an_unknown_key_is_a_sink_config_issue_naming_the_key(
 
 
 @pytest.mark.parametrize(
-    ("backend", "database", "remedy"),
+    ("backend", "key", "database", "remedy"),
     [
         (
             Backend.SQLALCHEMY,
+            "store",
             "warehouse",
-            "set 'database' for a shared section or 'url' inline, not both",
+            "set 'store' for a stores.<name> section or 'url' inline, not both",
         ),
         (
             Backend.CLICKHOUSE,
+            "store",
             "clickhouse",
-            "the url comes from database.<name>, so set 'database' only",
+            "the url comes from stores.<name>, so set 'store' only",
         ),
     ],
 )
 def test_a_section_with_both_url_and_database_is_refused(
-    streaming_kafka_config: DictConfig, backend: Backend, database: str, remedy: str
+    streaming_kafka_config: DictConfig, backend: Backend, key: str, database: str, remedy: str
 ) -> None:
-    section = {"url": "sqlite+aiosqlite:///:memory:", "database": database}
+    section = {"url": "sqlite+aiosqlite:///:memory:", key: database}
     flow = _flow(backend)
     context = _config(streaming_kafka_config, section)
 
@@ -106,5 +111,5 @@ def test_a_section_with_both_url_and_database_is_refused(
         if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
     ]
     assert len(issues) == 1
-    assert "both 'url' and 'database'" in issues[0].message
+    assert f"both 'url' and '{key}'" in issues[0].message
     assert remedy in issues[0].message

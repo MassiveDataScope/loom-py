@@ -86,7 +86,8 @@ def test_a_database_section_names_the_sqlalchemy_extra_when_missing(
     """A ``database`` section without the SQLAlchemy extra raises a hinting error."""
     monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.backend", None)
     config_path = _write_worker_config(
-        tmp_path, {"database": {"url": "sqlite+aiosqlite:///test.db"}}
+        tmp_path,
+        {"stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}}},
     )
 
     with pytest.raises(ConfigError, match=r"loom-kernel\[sqlalchemy\]"):

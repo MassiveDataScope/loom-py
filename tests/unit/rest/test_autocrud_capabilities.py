@@ -46,13 +46,11 @@ from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
 from tests.unit.rest._fixture_app import write_project
 
-_DYNAMODB_PERSISTENCE = {
+_DYNAMODB_STORE = {
     "backend": "dynamodb",
-    "dynamodb": {
-        "region": "eu-west-1",
-        "table": "capability_records",
-        "url": "http://localhost:8000",
-    },
+    "region": "eu-west-1",
+    "table": "capability_records",
+    "url": "http://localhost:8000",
 }
 _KEY_OPS = {CrudOp.GET, CrudOp.CREATE, CrudOp.UPDATE, CrudOp.DELETE}
 
@@ -118,13 +116,15 @@ class TestSupportedOpsFollowTheRegisteredRepository:
         assert tuple(crud_op_of(route.use_case) for route in routes) == (CrudOp.CREATE, CrudOp.GET)
 
 
-def _ctx(persistence: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
-    cursors = {"cursors": {"signing": "ephemeral"}}
+_SQLITE_STORE = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
+
+
+def _ctx(store: Mapping[str, object] | None = None, **sections: object) -> ConfigContext:
     return ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "database": {"url": "sqlite+aiosqlite:///"},
-            "persistence": {**cursors, **(persistence or {})},
+            "stores": {"default": dict(store or _SQLITE_STORE)},
+            "persistence": {"cursors": {"signing": "ephemeral"}},
             **sections,
         }
     )
@@ -166,7 +166,7 @@ class TestDefaultInclude:
 
         discover(RecordsOnDynamo)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(persistence=_DYNAMODB_PERSISTENCE))
+        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
 
         assert _ops(RecordsOnDynamo) == _KEY_OPS
 
@@ -177,10 +177,10 @@ class TestDefaultInclude:
 
         discover(RecordsOnBoth)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(persistence=_DYNAMODB_PERSISTENCE))
+        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
         assert CrudOp.LIST not in _ops(RecordsOnBoth)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(persistence={"backend": "sqlalchemy"}))
+        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_SQLITE_STORE))
         assert _ops(RecordsOnBoth) == _KEY_OPS | {CrudOp.LIST}
 
     def test_a_pruned_use_case_mounted_elsewhere_survives(self, discover: Any) -> None:
@@ -214,7 +214,7 @@ class TestDefaultInclude:
         )
 
         runtime, _wiring, discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(persistence=_DYNAMODB_PERSISTENCE)
+            _AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
         assert shared_list in discovered.use_cases
@@ -231,7 +231,7 @@ class TestDefaultInclude:
 
         discover(BulkOnly, models=(BulkOnlyRecord,))
         app_config = _AppConfig(name="demo")
-        ctx = _ctx(persistence={"backend": "sqlalchemy"})
+        ctx = _ctx(store=_SQLITE_STORE)
 
         with pytest.raises(RuntimeError, match="BulkOnly") as exc_info:
             _build_bootstrap(app_config, ctx)
@@ -249,7 +249,7 @@ class TestDefaultInclude:
 
         discover(RecordsOnNothing)
         app_config = _AppConfig(name="demo")
-        ctx = _ctx(persistence={"backend": "none"})
+        ctx = _ctx(store={"backend": "none"})
 
         with pytest.raises(RuntimeError, match="RecordsOnNothing") as exc_info:
             _build_bootstrap(app_config, ctx)
@@ -268,7 +268,7 @@ class TestExplicitInclude:
 
         discover(RecordListing)
         app_config = _AppConfig(name="demo")
-        ctx = _ctx(persistence=_DYNAMODB_PERSISTENCE)
+        ctx = _ctx(store=_DYNAMODB_STORE)
 
         with pytest.raises(RuntimeError, match="RecordListing") as exc_info:
             _build_bootstrap(app_config, ctx)
@@ -286,7 +286,7 @@ class TestExplicitInclude:
 
         discover(RecordReads)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(persistence=_DYNAMODB_PERSISTENCE))
+        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
 
         assert [crud_op_of(r.use_case) for r in RecordReads.routes] == [CrudOp.GET, CrudOp.CREATE]
 
@@ -326,7 +326,7 @@ class TestHandWrittenCapabilityDependency:
         self, tmp_path: Path, discover: Any
     ) -> None:
         discover(_CountInterface)
-        config_path = write_project(tmp_path, persistence=_DYNAMODB_PERSISTENCE, database=None)
+        config_path = write_project(tmp_path, store=_DYNAMODB_STORE)
 
         with pytest.raises(ResolutionError, match="_CountRecords") as exc_info:
             create_app(config_path)
@@ -338,7 +338,7 @@ class TestHandWrittenCapabilityDependency:
 
     def test_boots_on_a_backend_that_binds_it(self, tmp_path: Path, discover: Any) -> None:
         discover(_CountInterface)
-        config_path = write_project(tmp_path, persistence={"backend": "sqlalchemy"})
+        config_path = write_project(tmp_path, store=_SQLITE_STORE)
 
         assert create_app(config_path) is not None
 
@@ -360,7 +360,7 @@ def test_model_bound_use_case_on_backend_none_fails_at_create_app(
 ) -> None:
     """The implicit ``main_repo`` has no provider on ``none``; refuse at boot, not per request."""
     discover(_EchoInterface)
-    config_path = write_project(tmp_path, persistence={"backend": "none"}, database=None)
+    config_path = write_project(tmp_path, store={"backend": "none"})
 
     with pytest.raises(ResolutionError, match="_EchoRecord") as exc_info:
         create_app(config_path)

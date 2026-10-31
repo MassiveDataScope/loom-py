@@ -103,8 +103,10 @@ def test_the_locator_puts_the_code_path_on_sys_path(tmp_path, monkeypatch) -> No
         "    mode: modules\n"
         "    modules:\n"
         "      include: [located_pkg.models]\n"
-        "database:\n"
-        "  url: sqlite+aiosqlite://\n"
+        "stores:\n"
+        "  default:\n"
+        "    backend: sqlalchemy\n"
+        "    url: sqlite+aiosqlite://\n"
     )
     monkeypatch.setattr(sys, "path", list(sys.path))
 

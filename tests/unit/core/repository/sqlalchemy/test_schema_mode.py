@@ -124,7 +124,7 @@ def test_startup_never_creates_the_schema_with_the_application_session() -> None
 def _wiring(url: str, *models: type, **schema: object):
     config = {
         "app": {"name": "demo"},
-        "database": {"url": url, "schema": schema},
+        "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     return SQLAlchemyBackend().build(

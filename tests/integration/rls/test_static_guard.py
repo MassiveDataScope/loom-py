@@ -387,13 +387,16 @@ async def test_startup_refuses_a_tampered_guard_as_the_application_user(
     )
     config = {
         "app": {"name": "tampered"},
-        "database": {
-            "url": installed.database.write,
-            "schema": {
-                "mode": "external",
-                "scopes": dict(notes.SCOPE_BINDINGS),
-                "guard": installed.guard,
-            },
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": installed.database.write,
+                "schema": {
+                    "mode": "external",
+                    "scopes": dict(notes.SCOPE_BINDINGS),
+                    "guard": installed.guard,
+                },
+            }
         },
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }

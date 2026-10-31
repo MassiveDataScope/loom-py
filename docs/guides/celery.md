@@ -356,8 +356,10 @@ persistence:
   cursors:
     signing: ephemeral   # development.yaml only; production.yaml configures keys
 
-database:
-  url: ${oc.env:DATABASE_URL}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL}
 ```
 
 ```python
@@ -405,8 +407,10 @@ persistence:
   cursors:
     signing: ephemeral   # development.yaml only; production.yaml configures keys
 
-database:
-  url: ${oc.env:DATABASE_URL}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL}
 ```
 
 ### Option 3: Explicit jobs in code
@@ -605,11 +609,10 @@ celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
 The worker resolves its backend like the API, through the
 `loom.persistence.backends` entry points:
 
-1. `persistence.backend`, when set — `sqlalchemy`, `mongo`, `dynamodb`,
-   `none` or a backend of your own;
-2. else `sqlalchemy`, when `database` is the worker's own section (it holds
-   a key of the `database` contract, such as `url`);
-3. else `none`: a worker of pure jobs pays for no persistence.
+1. `stores.default.backend`, when the `stores.default` section is declared —
+   `sqlalchemy`, `mongo`, `dynamodb`, `none` or a backend of your own;
+2. else `none`: a worker of pure jobs pays for no persistence, and stores
+   declared only for streaming sinks (`stores.<name>`) do not change that.
 
 With `sqlalchemy` the worker applies row-level security exactly as the API
 does: session settings per transaction, the pool reset, and the

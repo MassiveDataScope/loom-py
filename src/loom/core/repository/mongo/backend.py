@@ -15,13 +15,13 @@ from typing import Any, ClassVar, Literal
 
 from pymongo import AsyncMongoClient
 
-from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
-from loom.core.config.keys import ConfigKey
+from loom.core.config import ConfigContext, reject_retired_keys
 from loom.core.connections.mongo import MongoConnection
 from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.stores import default_store
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -33,15 +33,13 @@ from loom.core.repository.mongo.registry import build_mongo_repository_registrat
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
 
-_SECTION = ConfigKey.PERSISTENCE_MONGO.value
-
 _logger = logging.getLogger(__name__)
 
 _ID_POLICIES: dict[str, type[IdPolicy]] = {"uuid4": Uuid4IdPolicy, "objectid": ObjectIdPolicy}
 
 
 class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
-    """``persistence.mongo``: the Mongo connection plus how the repository uses it.
+    """A ``mongo`` store section: the Mongo connection plus how the repository uses it.
 
     Every key of :class:`~loom.core.connections.MongoConnection` applies, as
     in every other context reading MongoDB.
@@ -58,9 +56,9 @@ class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
 
 
 class MongoBackend:
-    """Backend for ``persistence.backend: mongo``.
+    """Backend for ``stores.default.backend: mongo``.
 
-    Reads the ``persistence.mongo`` and ``persistence.cursors`` sections,
+    Reads the ``stores.default`` and ``persistence.cursors`` sections,
     opens one async client shared by the unit of work and every repository,
     binds each model to a collection of the configured database and closes
     the client at shutdown.
@@ -78,7 +76,7 @@ class MongoBackend:
         """Build the Mongo wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``persistence.mongo`` section.
+            ctx: Configuration context holding the ``stores.default`` section.
             models: Models whose repositories the DI module registers.
             runtime: Entry-point defaults; the Mongo client takes none of them yet.
 
@@ -86,17 +84,13 @@ class MongoBackend:
             The Mongo wiring.
 
         Raises:
-            ConfigError: When the ``persistence.mongo`` section is missing or
-                holds a retired key, or ``persistence.cursors`` cannot build a
-                cursor codec.
+            ConfigError: When the ``stores.default`` section is missing, names
+                another backend, holds a retired key or is invalid, or
+                ``persistence.cursors`` cannot build a cursor codec.
         """
-        reject_retired_keys(ctx.raw(_SECTION), _SECTION, MongoRepositoryConfig)
-        mongo_cfg = ctx.section_optional(_SECTION, MongoRepositoryConfig)
-        if mongo_cfg is None:
-            raise ConfigError(
-                f"persistence.backend is {self.name!r} but the {_SECTION!r} "
-                "section (url, database) is missing."
-            )
+        spec = default_store(ctx, self.name)
+        reject_retired_keys(spec.settings(), spec.path, MongoRepositoryConfig)
+        mongo_cfg = spec.decode(MongoRepositoryConfig)
         cursor_codec = CursorCodec.from_context(ctx)
         # tz_aware: datetimes read back as aware UTC, the form the repository writes.
         client = build_async_mongo_client(mongo_cfg, tz_aware=True)

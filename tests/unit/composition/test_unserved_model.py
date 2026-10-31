@@ -72,7 +72,9 @@ def _source(tmp_path: Path) -> CompositionSource:
     return composition_source(
         ConfigContext.from_dict(
             {
-                "database": {"url": "sqlite+aiosqlite:///:memory:"},
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}
+                },
                 "persistence": {"cursors": {"signing": "ephemeral"}},
             }
         ),

@@ -1,4 +1,4 @@
-"""``persistence.dynamodb``: timeouts, retries and parallelism reach the boto3 client."""
+"""A ``dynamodb`` store: timeouts, retries and parallelism reach the boto3 client."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _build(monkeypatch: pytest.MonkeyPatch, section: dict[str, Any]) -> dict[str
 
     monkeypatch.setattr(boto3, "Session", _Session)
     ctx = ConfigContext.from_dict(
-        {"persistence": {"backend": "dynamodb", "dynamodb": {**_REQUIRED, **section}}}
+        {"stores": {"default": {"backend": "dynamodb", **_REQUIRED, **section}}}
     )
     DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
     return seen
@@ -84,9 +84,9 @@ def test_an_invalid_key_is_refused_naming_it(section: dict[str, Any], named: str
 
 
 def test_a_missing_section_still_names_the_section() -> None:
-    ctx = ConfigContext.from_dict({"persistence": {"backend": "dynamodb"}})
+    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb"}}})
 
-    with pytest.raises(ConfigError, match="persistence.dynamodb"):
+    with pytest.raises(ConfigError, match="stores.default"):
         DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 

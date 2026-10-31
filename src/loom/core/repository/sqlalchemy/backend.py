@@ -28,8 +28,9 @@ from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
-from loom.core.persistence.database import EXTERNAL, SchemaConfig, load_database_config
+from loom.core.persistence.database import EXTERNAL, SchemaConfig, database_config_of
 from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.stores import default_store
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
@@ -56,9 +57,9 @@ _PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
 
 
 class SQLAlchemyBackend:
-    """Backend for ``persistence.backend: sqlalchemy``.
+    """Backend for ``stores.default.backend: sqlalchemy``.
 
-    Reads the ``database`` and ``persistence.cursors`` sections, opens one
+    Reads the ``stores.default`` and ``persistence.cursors`` sections, opens one
     engine shared by the unit of work and every repository, creates the
     compiled tables at startup and disposes the engine at shutdown. Built
     connection-only, its startup probes the connection instead.
@@ -76,7 +77,7 @@ class SQLAlchemyBackend:
         """Build the SQLAlchemy wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``database`` section.
+            ctx: Configuration context holding the ``stores.default`` section.
             models: Models whose repositories the DI module registers.
             runtime: Entry-point pool defaults and the optional pool-metrics receiver.
 
@@ -87,11 +88,12 @@ class SQLAlchemyBackend:
         :class:`~loom.core.persistence.BackendRuntime`.
 
         Raises:
-            ConfigError: When the ``database`` section is missing or invalid,
+            ConfigError: When the ``stores.default`` section is missing, names
+                another backend or is invalid,
                 or repositories are served and ``persistence.cursors`` cannot
                 build a cursor codec.
         """
-        db_cfg = load_database_config(ctx)
+        db_cfg = database_config_of(default_store(ctx, self.name))
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
             DeferredScopedSettings(db_cfg.schema.scopes or {})
@@ -196,7 +198,7 @@ def _prepare_models(
         _logger.warning(
             "no BaseModel classes discovered: the application starts with an empty "
             "relational schema. Declare your first model, or set "
-            "persistence.backend: none if it never persists."
+            "stores.default.backend: none if it never persists."
         )
     reset_registry(naming_convention=convention)
     compile_all(*models)
@@ -243,7 +245,7 @@ def startup_checks(
     if has_session_settings:
         raise ConfigError(
             "the schema is never created with the application's session settings; "
-            "use database.schema.mode: external and create_schema(migrator_url, application)"
+            "use stores.default.schema.mode: external and create_schema(migrator_url, application)"
         )
     unprotected = check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
     if dialect == POSTGRES_DIALECT:
@@ -258,7 +260,7 @@ def _refuse_unprotected_scoped(scoped: Mapping[tuple[str | None, str], ScopedTab
     names = ", ".join(sorted(table.name for table in scoped.values()))
     raise ConfigError(
         f"create_all cannot protect scoped tables {names}; run "
-        "create_schema(migrator_url, application) and set database.schema.mode: external"
+        "create_schema(migrator_url, application) and set stores.default.schema.mode: external"
     )
 
 
@@ -373,7 +375,7 @@ async def _check_external(
     missing = sorted(name for name in names if name not in present)
     if missing:
         raise ConfigError(
-            f"database.schema.mode is external but tables are missing: {', '.join(missing)}"
+            f"stores.default.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
     if connection.dialect.name == POSTGRES_DIALECT:
         await _reject_privileged_connection(connection)
@@ -395,7 +397,7 @@ async def _check_guard(
     """
     if guard is None:
         raise ConfigError(
-            "database.schema.guard is required when a model is RowScoped: "
+            "stores.default.schema.guard is required when a model is RowScoped: "
             "run `loom schema init <schema>` to write the derived names"
         )
     problems = await startup_problems(connection, guard, scoped)

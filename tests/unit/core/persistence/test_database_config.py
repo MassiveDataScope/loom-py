@@ -1,4 +1,4 @@
-"""The single ``database`` section: decoding, validation and pool resolution."""
+"""The single relational store section: decoding, validation and pool resolution."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from loom.core.persistence.database import (
     load_database_config,
 )
 from loom.core.persistence.profile import SERVER_PROFILE, WORKER_PROFILE, PoolDefaults
+from loom.core.persistence.stores import DEFAULT_STORE
 
 _URL = "postgresql+asyncpg://app@db/app"
 
@@ -57,13 +58,15 @@ def test_an_unknown_pool_key_is_refused_naming_it() -> None:
         decode_database_config({"url": _URL, "pool": {"sise": 2}}, path="database")
 
 
-def test_keys_other_readers_own_are_tolerated() -> None:
+def test_a_key_outside_the_contract_is_refused_naming_it() -> None:
     config = decode_database_config(
-        {"url": _URL, "schema": {"mode": "external", "database_users": {}}, "orders": {}},
-        path="database",
+        {"url": _URL, "schema": {"mode": "external", "database_users": {}}},
+        path="stores.default",
     )
 
     assert config.schema.mode == "external"
+    with pytest.raises(ConfigError, match="orders"):
+        decode_database_config({"url": _URL, "orders": {}}, path="stores.default")
 
 
 @pytest.mark.parametrize(
@@ -124,13 +127,17 @@ def test_a_fully_declared_pool_ignores_the_profile() -> None:
 
 
 def test_load_reads_the_section_from_the_context() -> None:
-    ctx = ConfigContext.from_dict({"database": {"url": _URL, "pool": {"size": 4}}})
+    ctx = ConfigContext.from_dict(
+        {"stores": {"default": {"backend": "sqlalchemy", "url": _URL, "pool": {"size": 4}}}}
+    )
 
-    assert load_database_config(ctx).pool.size == 4
+    assert load_database_config(ctx, DEFAULT_STORE).pool.size == 4
 
 
 def test_load_reports_retired_keys_from_the_context_too() -> None:
-    ctx = ConfigContext.from_dict({"database": {"url": _URL, "pool_size": 4}})
+    ctx = ConfigContext.from_dict(
+        {"stores": {"default": {"backend": "sqlalchemy", "url": _URL, "pool_size": 4}}}
+    )
 
-    with pytest.raises(ConfigError, match=r"database\.pool\.size"):
-        load_database_config(ctx)
+    with pytest.raises(ConfigError, match=r"stores\.default\.pool\.size"):
+        load_database_config(ctx, DEFAULT_STORE)

@@ -1,7 +1,7 @@
 """Deploy check of pagination cursors: tokens a deployed application cannot trust.
 
-``loom.cursors.E001``: a process that serves repositories (a ``database``
-section for SQLAlchemy, ``persistence.mongo`` for Mongo) does not sign its
+``loom.cursors.E001``: a process that serves repositories (a ``stores.<name>``
+section whose backend is ``sqlalchemy`` or ``mongo``) does not sign its
 cursors with a configured key. ``signing: unsigned`` lets any client forge a
 position, and ``signing: ephemeral`` signs with a key no other instance or
 restart shares. A ``signed`` section without a ``current_key_id`` naming one
@@ -25,7 +25,8 @@ if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 _SECTION = ConfigKey.PERSISTENCE_CURSORS
-_REPOSITORY_SECTIONS = (ConfigKey.DATABASE, ConfigKey.PERSISTENCE_MONGO)
+_CURSOR_BACKENDS = frozenset({"sqlalchemy", "mongo"})
+"""Backends whose repositories page with cursors."""
 _SIGNED = CursorConfig().signing
 _HINT = (
     f"drop {_SECTION}.signing from the deployed configuration (signed is the default) "
@@ -36,7 +37,7 @@ _HINT = (
 
 @deploy_check(CURSOR_SIGNING_CHECK)
 def _cursors_signed(config: ConfigContext) -> Finding | None:
-    if all(config.raw(section) is None for section in _REPOSITORY_SECTIONS):
+    if not _serves_repositories(config):
         return None
     written = config.raw(_SECTION, {})
     cursors = written if isinstance(written, dict) else {}
@@ -54,6 +55,17 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
     return Finding(
         message=f"{_SECTION} names no signing key: current_key_id must name an entry of keys.",
         hint=_HINT,
+    )
+
+
+def _serves_repositories(config: ConfigContext) -> bool:
+    """Whether a store, as written, names a backend whose repositories page with cursors."""
+    stores = config.raw(ConfigKey.STORES)
+    if not isinstance(stores, dict):
+        return False
+    return any(
+        isinstance(store, dict) and store.get("backend") in _CURSOR_BACKENDS
+        for store in stores.values()
     )
 
 

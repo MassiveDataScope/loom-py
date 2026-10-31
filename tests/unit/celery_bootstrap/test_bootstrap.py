@@ -62,7 +62,7 @@ def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
             "result_backend": "cache+memory://",
             "task_always_eager": True,
         },
-        "database": {"url": "sqlite+aiosqlite:///test.db"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if extra:
@@ -138,7 +138,7 @@ class TestBootstrapWorkerTaskRegistration:
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
             },
-            "database": {"url": "sqlite+aiosqlite:///test.db"},
+            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}},
             "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         if extra_cfg:
@@ -178,7 +178,7 @@ class TestBootstrapWorkerTaskRegistration:
                 "task_always_eager": True,
                 "runtime": runtime_cfg,
             },
-            "database": {"url": "sqlite+aiosqlite:///test.db"},
+            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}},
         }
         config_path = tmp_path / "worker_with_runtime.yaml"
         config_path.write_text(yaml.dump(cfg))
@@ -328,9 +328,12 @@ class TestBootstrapWorkerTaskRegistration:
         sys.modules[module_name] = module
         cfg = {
             "app": {"discovery": {"mode": "manifest", "manifest": {"module": module_name}}},
-            "database": {
-                "url": "sqlite+aiosqlite:///test.db",
-                "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": "sqlite+aiosqlite:///test.db",
+                    "schema": {"naming_convention": {"pk": "pk_%(table_name)s"}},
+                }
             },
         }
         try:

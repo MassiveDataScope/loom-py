@@ -4,7 +4,7 @@ An entry point knows how many operations one of its processes runs at once —
 a server many, a prefork worker one — and so it, not the configuration, owns
 the default size of the connection pool. Each entry point hands its
 :class:`RuntimeProfile` to the persistence it builds; a value declared in
-``database.pool`` always wins over the profile, key by key.
+``stores.<name>.pool`` always wins over the profile, key by key.
 
 This module imports no driver, so a host can name a profile without the
 SQLAlchemy extra installed.

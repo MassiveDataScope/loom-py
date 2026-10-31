@@ -90,7 +90,7 @@ async def apply_bootstrap(
         config.validated()
         validate_timeout(lock_timeout)
     except ValueError as exc:
-        raise ConfigError(f"database.schema: {exc}") from exc
+        raise ConfigError(f"stores.default.schema: {exc}") from exc
     verifiers = {
         user: scram_sha256_verifier(
             password, salt=salt_factory(), iterations=config.scram_iterations

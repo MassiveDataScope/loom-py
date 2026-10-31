@@ -47,7 +47,7 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
     raw = OmegaConf.create(
         {
             "app": {"name": "demo"},
-            "database": {"url": "sqlite+aiosqlite:///"},
+            "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
             # Development refuses an unsigned cursor keyring. The section under
             # test is observability; the opt-out only lets composition finish.
             "persistence": {"cursors": {"signing": "ephemeral"}},

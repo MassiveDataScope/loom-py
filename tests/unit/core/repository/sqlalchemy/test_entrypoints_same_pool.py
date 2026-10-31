@@ -31,7 +31,10 @@ def _pool_settings(manager: SessionManager) -> tuple[Any, ...]:
 
 def _api_manager(database: dict[str, Any]) -> SessionManager:
     ctx = ConfigContext.from_dict(
-        {"database": database, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {"default": {"backend": "sqlalchemy", **database}},
+            "persistence": {"cursors": {"signing": "ephemeral"}},
+        }
     )
     wiring = SQLAlchemyBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
     factory: Any = wiring.uow_factory
@@ -50,7 +53,9 @@ def _worker_manager(database: dict[str, Any]) -> SessionManager:
 
     celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
     source = composition_source(
-        ConfigContext.from_dict({"database": database, "celery": celery}),
+        ConfigContext.from_dict(
+            {"stores": {"default": {"backend": "sqlalchemy", **database}}, "celery": celery}
+        ),
         app=AppConfig(name="worker"),
     )
     factory: Any = compose_application(
@@ -62,8 +67,8 @@ def _worker_manager(database: dict[str, Any]) -> SessionManager:
 def _streaming_manager(database: dict[str, Any]) -> SessionManager:
     ctx = ConfigContext.from_dict(
         {
-            "database": {"warehouse": database},
-            "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+            "stores": {"warehouse": {"backend": "sqlalchemy", **database}},
+            "streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}},
         }
     )
     node = IntoTable(payload=_Row, table="orders", name="orders_sink")
@@ -85,9 +90,10 @@ def test_a_fully_declared_pool_is_identical_in_every_entry_point() -> None:
 
 def test_the_same_section_reads_identically_wherever_it_lives() -> None:
     database = {"url": _POSTGRES, "pool": _FULL_POOL, "connect_args": {"command_timeout": 5}}
-    ctx = ConfigContext.from_dict({"database": {**database, "warehouse": database}})
+    store = {"backend": "sqlalchemy", **database}
+    ctx = ConfigContext.from_dict({"stores": {"default": store, "warehouse": store}})
 
-    assert load_database_config(ctx) == load_database_config(ctx, "database.warehouse")
+    assert load_database_config(ctx, "default") == load_database_config(ctx, "warehouse")
 
 
 def test_without_a_pool_the_api_takes_the_server_profile() -> None:

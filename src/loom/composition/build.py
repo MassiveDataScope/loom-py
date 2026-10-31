@@ -34,6 +34,7 @@ from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
+from loom.core.persistence.stores import load_catalog, require_default_store
 from loom.core.use_case.factory import ModelRead
 
 if TYPE_CHECKING:
@@ -219,6 +220,7 @@ def compose_application(
     runtime = BackendRuntime(
         recipe.profile, pool_metrics=recipe.pool_metrics, connection_only=recipe.connection_only
     )
+    require_default_store(discovered.models, load_catalog(ctx))
     wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
     # Caller modules first, then repositories, then the framework's own. A

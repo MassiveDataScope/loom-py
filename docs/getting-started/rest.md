@@ -60,8 +60,10 @@ persistence:
   cursors:
     signing: ephemeral   # development.yaml only; production.yaml configures keys
 
-database:
-  url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
 observability:
   log:
@@ -345,8 +347,10 @@ persistence:
   cursors:
     signing: ephemeral   # development.yaml only; production.yaml configures keys
 
-database:
-  url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
 observability:
   log:
@@ -387,15 +391,17 @@ discovery:
 ### Choose the persistence backend
 
 Backends are plugins resolved by name from the `loom.persistence.backends`
-entry point group; `database:` is read by the default one. `persistence.backend`
-selects it:
+entry point group. `stores.default.backend` selects it, and the rest of
+`stores.default` is the connection it reads. Without a `stores.default`
+section the API selects `sqlalchemy` and fails at startup naming the missing
+section:
 
-| `persistence.backend` | Reads | What the app gets |
+| `stores.default.backend` | Reads | What the app gets |
 |---|---|---|
-| `sqlalchemy` (default) | `database:` | unit of work, repositories with every capability (`create_many` included) and compiled tables for every discovered model; needs the `sqlalchemy` extra, a driver and a reachable database even with zero models |
-| `dynamodb` | `persistence.dynamodb:` | key-value repositories (`Readable`, `Creatable`, `Updatable`, `Deletable`); auto-CRUD mounts get, create, update and delete — `list` and `count` are not mounted, and `get_by` / `exists_by` on a non-key field raise `UnsupportedQuery`; no relational tables |
-| `mongo` | `persistence.mongo:` | one collection per model in one database, repositories with every capability (`create_many` included), offset and cursor pagination, `QuerySpec` filters and sorts; unit of work is a no-op unless `transactions: true` (needs a replica set); ids minted by loom (`uuid4`, or `objectid` per config), `autoincrement` refused at startup; needs the `mongo` extra |
-| `none` | nothing | no unit of work, no repositories; discovered models are accepted but not compiled, a `database:` section is ignored, deferred job dispatch never fires, and an interface with `auto_crud_model` refuses to boot |
+| `sqlalchemy` | `stores.default` (`url`, `pool`, `schema`, ...) | unit of work, repositories with every capability (`create_many` included) and compiled tables for every discovered model; needs the `sqlalchemy` extra, a driver and a reachable database even with zero models |
+| `dynamodb` | `stores.default` (`region`, `table`, ...) | key-value repositories (`Readable`, `Creatable`, `Updatable`, `Deletable`); auto-CRUD mounts get, create, update and delete — `list` and `count` are not mounted, and `get_by` / `exists_by` on a non-key field raise `UnsupportedQuery`; no relational tables |
+| `mongo` | `stores.default` (`url`, `database`, ...) | one collection per model in one database, repositories with every capability (`create_many` included), offset and cursor pagination, `QuerySpec` filters and sorts; unit of work is a no-op unless `transactions: true` (needs a replica set); ids minted by loom (`uuid4`, or `objectid` per config), `autoincrement` refused at startup; needs the `mongo` extra |
+| `none` | nothing | no unit of work, no repositories; discovered models are accepted but not compiled, the rest of the section is ignored, deferred job dispatch never fires, and an interface with `auto_crud_model` refuses to boot |
 
 Auto-CRUD is gated by the capabilities the serving repository class declares:
 an interface with an empty `include` mounts only the operations the backend
@@ -406,8 +412,9 @@ recipe for a model that runs unchanged on every backend are described in
 [Persistence backends](../rest/persistence-backends.md).
 
 ```yaml
-persistence:
-  backend: none
+stores:
+  default:
+    backend: none
 ```
 
 A backend that serves repositories (`sqlalchemy`, `mongo`) signs its
@@ -420,8 +427,8 @@ described in
 
 `none` is for an application whose only content is agents (see
 [An application that is only agents](../ai/overview.md#an-application-that-is-only-agents)).
-It is never inferred: with the default backend and no discovered models the
-application starts with a WARNING that names `persistence.backend: none`, and
+It is never inferred: with `sqlalchemy` and no discovered models the
+application starts with a WARNING that names `stores.default.backend: none`, and
 still opens a connection — so the driver and the database have to be there.
 
 ### `GET /health`
@@ -434,7 +441,7 @@ of every interface router and outside the OpenAPI schema:
 ```
 
 - `status` is `ok` when every backend is ready and `degraded` — with HTTP
-  `503` — when any is not. Each key of `backends` is the `persistence.backend`
+  `503` — when any is not. Each key of `backends` is the `stores.default.backend`
   name and its readiness (`SELECT 1` for `sqlalchemy`, `DescribeTable` with an
   `ACTIVE` or `UPDATING` table for `dynamodb`, `ping` for `mongo`).
 - `none`, or a backend without a readiness probe, answers
@@ -459,8 +466,10 @@ factory reads a secret with no code beyond the factory call:
 
 ```yaml
 # config/api.yaml
-database:
-  url: ${secrets:/prod/store/database-url}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${secrets:/prod/store/database-url}
 
 sql:
   connections:

@@ -224,7 +224,9 @@ class TestApplyJobConfig:
 
 class TestCreateCeleryApp:
     def test_sets_broker_url(self) -> None:
-        cfg = CeleryConfig(broker_url=Dsn("redis://b:6379/0"), result_backend=Dsn("redis://r:6379/1"))
+        cfg = CeleryConfig(
+            broker_url=Dsn("redis://b:6379/0"), result_backend=Dsn("redis://r:6379/1")
+        )
         mock_celery_cls = MagicMock()
         mock_app = MagicMock()
         mock_celery_cls.return_value = mock_app

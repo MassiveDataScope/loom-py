@@ -92,7 +92,12 @@ def _config(tmp_path: Path, *, discover: bool) -> str:
             "result_backend": "cache+memory://",
             "task_always_eager": True,
         },
-        "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
+            }
+        },
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if discover:

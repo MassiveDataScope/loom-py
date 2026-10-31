@@ -11,6 +11,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.stores import StoreKey, load_catalog
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.core.sql.config import reject_retired_sql_keys
 from loom.etl.storage._config import normalise_storage_section
@@ -38,9 +39,9 @@ def _names(path: str, retired: str, replacement: str) -> str:
 @pytest.mark.parametrize(("retired", "value", "replacement"), _AWS_RETIRED)
 def test_persistence_dynamodb(retired: str, value: Any, replacement: str) -> None:
     section = {"region": "eu-west-1", "table": "t", retired: value}
-    ctx = ConfigContext.from_dict({"persistence": {"backend": "dynamodb", "dynamodb": section}})
+    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **section}}})
 
-    with pytest.raises(ConfigError, match=_names("persistence.dynamodb", retired, replacement)):
+    with pytest.raises(ConfigError, match=_names("stores.default", retired, replacement)):
         DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
@@ -50,9 +51,9 @@ def test_persistence_mongo(retired: str, value: Any, replacement: str) -> None:
     from loom.core.repository.mongo.backend import MongoBackend
 
     section = {"url": "mongodb://h", "database": "app", retired: value}
-    ctx = ConfigContext.from_dict({"persistence": {"backend": "mongo", "mongo": section}})
+    ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})
 
-    with pytest.raises(ConfigError, match=_names("persistence.mongo", retired, replacement)):
+    with pytest.raises(ConfigError, match=_names("stores.default", retired, replacement)):
         MongoBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
 
 
@@ -94,11 +95,11 @@ def test_the_sql_registry_refuses_a_retired_key_before_decoding() -> None:
 def test_a_streaming_sink_database(retired: str, value: Any, replacement: str) -> None:
     from loom.streaming.nodes._table.config import _clickhouse_connection
 
-    database = {"url": "clickhouse://h/db", retired: value}
-    ctx = ConfigContext.from_dict({"database": {"warehouse": database}})
+    store = {"backend": "clickhouse", "url": "clickhouse://h/db", retired: value}
+    ctx = ConfigContext.from_dict({"stores": {"warehouse": store}})
 
-    with pytest.raises(ConfigError, match=_names("database.warehouse", retired, replacement)):
-        _clickhouse_connection(ctx, "database.warehouse")
+    with pytest.raises(ConfigError, match=_names("stores.warehouse", retired, replacement)):
+        _clickhouse_connection(load_catalog(ctx).specs[StoreKey("warehouse")])
 
 
 @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)

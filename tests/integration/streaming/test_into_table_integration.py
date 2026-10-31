@@ -407,15 +407,16 @@ class TestIntoTableSQLAlchemyIntegration:
                         "topics": ["orders.raw"],
                     }
                 },
-                "database": {
+                "stores": {
                     "warehouse": {
+                        "backend": "sqlalchemy",
                         "url": _async_url(path),
                     },
                 },
                 "streaming": {
                     "sinks": {
                         "orders_sink": {
-                            "database": "warehouse",
+                            "store": "warehouse",
                             "table": "orders",
                             "chunk_size": 500,
                             "buffer_max_records": 10_000,

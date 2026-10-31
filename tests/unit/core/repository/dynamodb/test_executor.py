@@ -75,9 +75,13 @@ def test_the_backend_sizes_its_executor_by_the_pool_size(
     monkeypatch.setattr(backend_module, "build_aws_client", lambda _service, _cfg: _SlowClient())
     ctx = ConfigContext.from_dict(
         {
-            "persistence": {
-                "backend": "dynamodb",
-                "dynamodb": {"region": "eu-west-1", "table": "t", "pool": {"size": 16}},
+            "stores": {
+                "default": {
+                    "backend": "dynamodb",
+                    "region": "eu-west-1",
+                    "table": "t",
+                    "pool": {"size": 16},
+                }
             }
         }
     )

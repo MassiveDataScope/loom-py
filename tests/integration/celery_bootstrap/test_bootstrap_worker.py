@@ -87,7 +87,12 @@ def worker_config(tmp_path: Path) -> str:
             "result_backend": "cache+memory://",
             "task_always_eager": True,
         },
-        "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
+            }
+        },
     }
     config_file = tmp_path / "worker.yaml"
     config_file.write_text(yaml.dump(cfg))
@@ -145,7 +150,12 @@ class TestBootstrapWorkerResult:
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
             },
-            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
+                }
+            },
             # A deployed worker with a database signs its cursors (loom.cursors.E001).
             "persistence": {
                 "cursors": {"current_key_id": "k1", "keys": {"k1": {"env": "CURSOR_KEY_WORKER"}}}
@@ -184,7 +194,12 @@ class TestBootstrapWorkerResult:
     ) -> None:
         cfg: dict[str, Any] = {
             "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
-            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
+                }
+            },
             "persistence": {"cursors": {"signing": "unsigned"}},
         }
         config_file = tmp_path / "worker_unsigned.yaml"
@@ -245,7 +260,12 @@ class TestBootstrapWorkerJobConfigOverride:
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
             },
-            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
+                }
+            },
             "jobs": {"_DoubleSyncJob": {"retries": 3}},
         }
         config_file = tmp_path / "worker_with_override.yaml"
