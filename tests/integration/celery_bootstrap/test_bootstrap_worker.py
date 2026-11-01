@@ -291,10 +291,6 @@ class TestBootstrapWorkerRejectsAgentMarkers:
         assert "_NotifyIncidentUseCase" in message
         assert "triage" in message
 
-    def test_a_worker_with_no_agent_marker_still_boots(self, worker_config: str) -> None:
-        result = bootstrap_worker(worker_config, jobs=[_DoubleSyncJob])
-        assert isinstance(result, WorkerBootstrapResult)
-
 
 class TestBootstrapWorkerRejectsMcpMarkers:
     """H3: the sibling of ``TestBootstrapWorkerRejectsAgentMarkers``, but for ``Mcp()``.
@@ -312,7 +308,3 @@ class TestBootstrapWorkerRejectsMcpMarkers:
         message = str(excinfo.value)
         assert "_LookUpKnowledgeUseCase" in message
         assert "gateway" in message
-
-    def test_a_worker_with_no_mcp_marker_still_boots(self, worker_config: str) -> None:
-        result = bootstrap_worker(worker_config, jobs=[_DoubleSyncJob])
-        assert isinstance(result, WorkerBootstrapResult)

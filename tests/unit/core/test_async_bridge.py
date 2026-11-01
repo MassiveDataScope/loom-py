@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
-from loom.core.async_bridge import AsyncBridge
+from loom.core.async_bridge import AsyncBridge, build_backend_options
 
 
 async def _return_value(x: int) -> int:
@@ -113,3 +114,23 @@ class TestAsyncBridgeBackend:
             bridge.shutdown()
 
         assert result == 7
+
+
+class TestBuildBackendOptions:
+    """The anyio backend options every bridge (Celery, Bytewax) builds from its config."""
+
+    @pytest.mark.parametrize(
+        ("backend", "use_uvloop"), [("asyncio", False), ("trio", True), ("trio", False)]
+    )
+    def test_only_asyncio_with_uvloop_sets_a_loop_factory(
+        self, backend: str, use_uvloop: bool
+    ) -> None:
+        assert build_backend_options(backend, use_uvloop=use_uvloop) == {}
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="uvloop is not available on Windows")
+    def test_asyncio_with_uvloop_runs_on_uvloop(self) -> None:
+        import uvloop
+
+        assert build_backend_options("asyncio", use_uvloop=True) == {
+            "loop_factory": uvloop.new_event_loop
+        }

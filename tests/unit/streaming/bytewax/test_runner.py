@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import msgspec
 import pytest
-import uvloop
 
 from tests.helpers.version_limited_extras import require_bytewax
 
@@ -21,7 +19,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (  # noqa: E4
     InMemorySpanExporter,
 )
 
-from loom.core.async_bridge import build_backend_options as _build_backend_options  # noqa: E402
 from loom.core.config import ConfigContext  # noqa: E402
 from loom.core.observability.event import (  # noqa: E402
     EventKind,
@@ -299,22 +296,6 @@ class TestBytewaxRuntimeConfig:
         assert cfg.async_backend == "trio"
         assert cfg.use_uvloop is True
         assert cfg.force_shutdown_timeout_ms == 5000
-
-
-class TestBuildBackendOptions:
-    def test_asyncio_without_uvloop_returns_empty(self) -> None:
-        assert _build_backend_options("asyncio", use_uvloop=False) == {}
-
-    def test_trio_with_uvloop_flag_returns_empty(self) -> None:
-        assert _build_backend_options("trio", use_uvloop=True) == {}
-
-    def test_asyncio_with_uvloop_adds_loop_factory(self) -> None:
-        if sys.platform == "win32":
-            pytest.skip("uvloop not available on Windows")
-
-        opts = _build_backend_options("asyncio", use_uvloop=True)
-
-        assert opts.get("loop_factory") is uvloop.new_event_loop
 
 
 class TestRunFlowSpan:

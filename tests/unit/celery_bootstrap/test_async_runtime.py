@@ -8,7 +8,6 @@ import pytest
 
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.runner import _CeleryAsyncRuntime
-from loom.core.async_bridge import build_backend_options as _build_backend_options
 
 
 class TestCeleryAsyncRuntime:
@@ -77,12 +76,3 @@ class TestCeleryRuntimeConfig:
         assert cfg.backend == "asyncio"
         assert cfg.use_uvloop is False
         assert cfg.shutdown_timeout_ms is None
-
-    def test_backend_options_helper_matches_uvloop_policy(self) -> None:
-        import sys
-
-        if sys.platform == "win32":
-            assert _build_backend_options("asyncio", use_uvloop=True) == {}
-        else:
-            opts = _build_backend_options("asyncio", use_uvloop=True)
-            assert "loop_factory" in opts
