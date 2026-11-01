@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,11 +10,7 @@ from typing import TYPE_CHECKING
 import msgspec
 
 from loom.core.config import ConfigContext
-from loom.core.discovery import (
-    InterfacesDiscoveryEngine,
-    ManifestDiscoveryEngine,
-    ModulesDiscoveryEngine,
-)
+from loom.core.discovery.config import DiscoveryConfig, discover
 from loom.core.locator import DEFAULT_CODE_PATH
 from loom.core.persistence import resolve_backend
 from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, load_catalog
@@ -27,56 +22,12 @@ if TYPE_CHECKING:
     from loom.core.persistence import PersistenceBackend
 
 
-class DiscoveryInterfaces(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    modules: list[str] = msgspec.field(default_factory=list)
-    warn_recommended: bool = True
-
-
-class DiscoveryModules(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    include: list[str] = msgspec.field(default_factory=list)
-
-
-class DiscoveryManifest(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    module: str = ""
-
-
-class DiscoveryConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
-    """The ``app.discovery`` section."""
-
-    mode: str = "interfaces"
-    interfaces: DiscoveryInterfaces = msgspec.field(default_factory=DiscoveryInterfaces)
-    modules: DiscoveryModules = msgspec.field(default_factory=DiscoveryModules)
-    manifest: DiscoveryManifest = msgspec.field(default_factory=DiscoveryManifest)
-
-
 class AppConfig(msgspec.Struct, kw_only=True):
     """The keys of ``app`` every entry point reads; a transport reads its own."""
 
     name: str
     code_path: str = DEFAULT_CODE_PATH
     discovery: DiscoveryConfig = msgspec.field(default_factory=DiscoveryConfig)
-
-
-_DISCOVERY_ENGINES: dict[str, Callable[[DiscoveryConfig], DiscoveryResult]] = {
-    "interfaces": lambda cfg: InterfacesDiscoveryEngine(
-        cfg.interfaces.modules,
-        warn_recommended=cfg.interfaces.warn_recommended,
-    ).discover(),
-    "modules": lambda cfg: ModulesDiscoveryEngine(cfg.modules.include).discover(),
-    "manifest": lambda cfg: ManifestDiscoveryEngine(cfg.manifest.module).discover(),
-}
-
-
-def discover(discovery: DiscoveryConfig) -> DiscoveryResult:
-    """Run the discovery engine *discovery* names.
-
-    Raises:
-        ValueError: When the mode is not one of the engines.
-    """
-    engine = _DISCOVERY_ENGINES.get(discovery.mode)
-    if engine is None:
-        raise ValueError(f"Unsupported discovery mode: {discovery.mode!r}")
-    return engine(discovery)
 
 
 @dataclass(frozen=True, kw_only=True)

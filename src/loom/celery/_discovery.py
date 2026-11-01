@@ -12,15 +12,14 @@ import inspect
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeVar
-
-import msgspec
+from typing import Any, Final, TypeVar
 
 from loom.celery.config import JobConfig, apply_job_config
 from loom.celery.constants import WorkerManifestAttr
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.discovery._utils import collect_from_modules, import_modules
+from loom.core.discovery.config import DiscoveryConfig, decode_discovery
 from loom.core.engine.compilable import Compilable
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
@@ -30,27 +29,8 @@ _logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
-# ---------------------------------------------------------------------------
-# Local config structs — private to this module
-# ---------------------------------------------------------------------------
-
-
-class _DiscoveryModules(msgspec.Struct, kw_only=True):
-    include: list[str] = msgspec.field(default_factory=list)
-
-
-class _DiscoveryManifest(msgspec.Struct, kw_only=True):
-    module: str = ""
-
-
-class _DiscoveryConfig(msgspec.Struct, kw_only=True):
-    mode: Literal["modules", "manifest"] = "modules"
-    modules: _DiscoveryModules = msgspec.field(default_factory=_DiscoveryModules)
-    manifest: _DiscoveryManifest = msgspec.field(default_factory=_DiscoveryManifest)
-
-
-class _WorkerAppConfig(msgspec.Struct, kw_only=True):
-    discovery: _DiscoveryConfig = msgspec.field(default_factory=_DiscoveryConfig)
+_WORKER_MODES: Final = ("modules", "manifest")
+"""The ``app.discovery.mode`` values a worker scans; the first is its default."""
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +296,7 @@ def _resolved_from_manifest(manifest: WorkerManifest) -> _WorkerResolved:
     )
 
 
-def _discover_from_modules(discovery_cfg: _DiscoveryConfig) -> _WorkerResolved:
+def _discover_from_modules(discovery_cfg: DiscoveryConfig) -> _WorkerResolved:
     """Discover worker components from module include paths."""
     modules = import_modules(discovery_cfg.modules.include)
     models, use_cases, interfaces, discovered_jobs = collect_from_modules(modules)
@@ -332,25 +312,46 @@ def _discover_from_modules(discovery_cfg: _DiscoveryConfig) -> _WorkerResolved:
     )
 
 
-def _discover_from_manifest(discovery_cfg: _DiscoveryConfig) -> _WorkerResolved:
+def _discover_from_manifest(discovery_cfg: DiscoveryConfig) -> _WorkerResolved:
     """Discover worker components from a manifest module."""
     return _resolved_from_manifest(_read_worker_manifest(discovery_cfg.manifest.module))
 
 
+def _worker_discovery(ctx: ConfigContext) -> DiscoveryConfig:
+    """Decode ``app.discovery`` as a worker reads it.
+
+    The mode defaults to ``modules``, and keys the section does not declare
+    are ignored.
+
+    Raises:
+        ConfigError: When ``app`` is absent, the section fails validation
+            or its mode is neither ``modules`` nor ``manifest``.
+    """
+    app = ctx.section(ConfigKey.APP, dict[str, Any])
+    discovery = decode_discovery(
+        app.get("discovery", {}), default_mode=_WORKER_MODES[0], strict=False
+    )
+    if discovery.mode not in _WORKER_MODES:
+        raise ConfigError(
+            f"app.discovery.mode {discovery.mode!r} is not one a worker scans: "
+            f"{' or '.join(_WORKER_MODES)}"
+        )
+    return discovery
+
+
 def _discover_compilables_from_config(
-    discovery_cfg: _DiscoveryConfig,
+    discovery_cfg: DiscoveryConfig,
 ) -> _WorkerResolved:
     if discovery_cfg.mode == "modules":
         return _discover_from_modules(discovery_cfg)
-    # mode == "manifest" — Literal type guarantees no other value is possible
+    # _worker_discovery admits no mode but modules and manifest.
     return _discover_from_manifest(discovery_cfg)
 
 
 def _try_discover_components(ctx: ConfigContext) -> _WorkerResolved:
     """Best-effort discovery; returns empty _WorkerResolved if config is absent."""
     try:
-        app_cfg = ctx.section(ConfigKey.APP, _WorkerAppConfig)
-        return _discover_compilables_from_config(app_cfg.discovery)
+        return _discover_compilables_from_config(_worker_discovery(ctx))
     except (ConfigError, RuntimeError, ValueError, TypeError):
         return _WorkerResolved(compilables=(), jobs=(), models=(), callbacks=())
 
@@ -375,12 +376,12 @@ def _resolve_compilables_and_jobs(
         )
 
     try:
-        app_cfg = ctx.section(ConfigKey.APP, _WorkerAppConfig)
+        discovery_cfg = _worker_discovery(ctx)
     except ConfigError as exc:
         raise RuntimeError(
             "No jobs provided and no app.discovery configured for worker bootstrap."
         ) from exc
-    discovered = _discover_compilables_from_config(app_cfg.discovery)
+    discovered = _discover_compilables_from_config(discovery_cfg)
     if not discovered.jobs:
         _logger.warning(
             "no Job classes discovered: the worker starts with no task registered. "

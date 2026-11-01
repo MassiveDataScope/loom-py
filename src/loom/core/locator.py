@@ -13,19 +13,16 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, get_args
+from typing import TYPE_CHECKING, Any, Final, get_args
 
 import msgspec
 
 from loom.core.config import ConfigError, ConfigKey
 from loom.core.config.overrides import load_application_config
-from loom.core.discovery.base import DiscoveryResult
-from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
-from loom.core.discovery.manifest import ManifestDiscoveryEngine
-from loom.core.discovery.modules import ModulesDiscoveryEngine
+from loom.core.discovery.config import DISCOVERY_MODES, decode_discovery, discover
 from loom.core.environment import (
     CONFIG_VARIABLE,
     config_source_paths,
@@ -62,30 +59,11 @@ DEFAULT_CODE_PATH: Final = "src"
 """``app.code_path`` when the configuration names none."""
 
 
-class _DiscoveryInterfaces(msgspec.Struct, kw_only=True):
-    modules: list[str] = msgspec.field(default_factory=list)
-    warn_recommended: bool = True
-
-
-class _DiscoveryModules(msgspec.Struct, kw_only=True):
-    include: list[str] = msgspec.field(default_factory=list)
-
-
-class _DiscoveryManifest(msgspec.Struct, kw_only=True):
-    module: str = ""
-
-
-class _Discovery(msgspec.Struct, kw_only=True):
-    mode: str = "interfaces"
-    interfaces: _DiscoveryInterfaces = msgspec.field(default_factory=_DiscoveryInterfaces)
-    modules: _DiscoveryModules = msgspec.field(default_factory=_DiscoveryModules)
-    manifest: _DiscoveryManifest = msgspec.field(default_factory=_DiscoveryManifest)
-
-
 class _AppSection(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
-    discovery: _Discovery = msgspec.field(default_factory=_Discovery)
+    # Decoded by decode_discovery, which ignores the keys it does not declare.
+    discovery: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,15 +98,6 @@ class Application:
         return self.bootstrap
 
 
-_ENGINES: dict[str, Callable[[_Discovery], DiscoveryResult]] = {
-    "interfaces": lambda cfg: InterfacesDiscoveryEngine(
-        cfg.interfaces.modules, warn_recommended=cfg.interfaces.warn_recommended
-    ).discover(),
-    "modules": lambda cfg: ModulesDiscoveryEngine(cfg.modules.include).discover(),
-    "manifest": lambda cfg: ManifestDiscoveryEngine(cfg.manifest.module).discover(),
-}
-
-
 def load_application(config_path: str | None = None) -> Application:
     """Load, discover and compile the application described by ``config_path``.
 
@@ -160,7 +129,7 @@ def load_application(config_path: str | None = None) -> Application:
     )
     database = database_config(spec)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
-    models = _discover(app.discovery).models
+    models = _discover(app.discovery)
     require_single_store(models)
     schema = database.schema
     metadata = MetaData(
@@ -212,11 +181,12 @@ def _resolve_path(config_path: str | None) -> str:
     return from_env
 
 
-def _discover(discovery: _Discovery) -> DiscoveryResult:
-    engine = _ENGINES.get(discovery.mode)
-    if engine is None:
+def _discover(section: Mapping[str, Any]) -> tuple[type, ...]:
+    """Discover the models ``app.discovery`` names; its unknown keys are ignored."""
+    discovery = decode_discovery(section, strict=False)
+    if discovery.mode not in DISCOVERY_MODES:
         raise ConfigError(f"app.discovery.mode {discovery.mode!r} is not supported")
-    return engine(discovery)
+    return discover(discovery).models
 
 
 def _schema_name(name: str, path: str) -> str:
