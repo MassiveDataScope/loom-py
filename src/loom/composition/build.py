@@ -380,5 +380,5 @@ def _store_resource(key: StoreKey, wiring: PersistenceWiring, *, label: str) -> 
         manager=wiring.lifespan_init,
         check=wiring.startup_checks,
         readiness=wiring.readiness,
-        readiness_label=label,
+        readiness_key=label,
     )
