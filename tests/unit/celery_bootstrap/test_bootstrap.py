@@ -319,7 +319,8 @@ class TestBootstrapWorkerTaskRegistration:
 
     def test_compiles_models_under_the_configured_naming_convention(self, tmp_path: Any) -> None:
         """The worker names constraints as the REST runtime and the migrations do."""
-        from loom.core.backend.sqlalchemy import get_metadata, reset_registry
+        from loom.core.backend.sqlalchemy import reset_registry
+        from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
         module_name = "tests.unit.celery_bootstrap._manifest_naming_for_test"
         module = types.ModuleType(module_name)
@@ -337,8 +338,9 @@ class TestBootstrapWorkerTaskRegistration:
             },
         }
         try:
-            self._run(tmp_path, extra_cfg=cfg, jobs=None)
-            table = get_metadata().tables[_DiscoveredModel.__tablename__]
+            result = self._run(tmp_path, extra_cfg=cfg, jobs=None)
+            metadata = result.container.resolve(SessionManager).metadata
+            table = metadata.tables[_DiscoveredModel.__tablename__]
             assert table.primary_key.name == f"pk_{_DiscoveredModel.__tablename__}"
         finally:
             sys.modules.pop(module_name, None)

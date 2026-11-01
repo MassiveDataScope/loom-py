@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from sqlalchemy import event
+from sqlalchemy import MetaData, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.ext.asyncio import (
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
+from loom.core.backend.sqlalchemy import get_metadata
 from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
@@ -46,6 +47,7 @@ class SessionManager:
         connect_args: dict[str, object] | None = None,
         inject_trace_id: bool = True,
         session_settings: SessionSettings | None = None,
+        metadata: MetaData | None = None,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -72,6 +74,10 @@ class SessionManager:
                 only, and incompatible with ``isolation_level="AUTOCOMMIT"``, which
                 would discard the settings after each statement; when ``None``,
                 the manager behaves exactly as it does without this option.
+            metadata: The metadata the models of this manager's store are
+                compiled into, where its repositories look them up; ``None``
+                takes the shared metadata :func:`~loom.core.backend.sqlalchemy.compile_all`
+                fills by default.
             **engine_kwargs: Additional keyword arguments forwarded to ``create_async_engine``.
 
         Raises:
@@ -108,6 +114,7 @@ class SessionManager:
         self._log = get_logger(__name__).bind(module="session_manager")
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
+        self._metadata = metadata if metadata is not None else get_metadata()
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -133,6 +140,11 @@ class SessionManager:
     def has_session_settings(self) -> bool:
         """Whether every transaction of this manager starts with the product's settings."""
         return self._session_settings is not None
+
+    @property
+    def metadata(self) -> MetaData:
+        """The metadata this store's models are compiled into."""
+        return self._metadata
 
     def current_settings(self) -> Mapping[str, str]:
         """The settings a transaction opened now would start with; empty without a provider."""

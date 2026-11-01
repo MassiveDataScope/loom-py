@@ -6,6 +6,7 @@ import functools
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, ClassVar, Final
 
 from sqlalchemy import MetaData, Time, inspect, make_url, text
@@ -15,26 +16,22 @@ from sqlalchemy.pool import QueuePool
 from loom.core.authz.elevation import ElevationSink
 from loom.core.authz.product import load_authz_product
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
-from loom.core.backend.sqlalchemy import (
-    compile_all,
-    configured_naming_convention,
-    get_metadata,
-    reset_registry,
-    scoped_tables,
-)
+from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
-from loom.core.persistence.database import EXTERNAL, SchemaConfig, database_config_of
+from loom.core.persistence.database import EXTERNAL, SchemaConfig, decode_database_config
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.persistence.stores import (
-    DEFAULT_STORE,
+    DEFAULT_STORE_PATH,
     SQLALCHEMY_BACKEND,
     StoreCapabilities,
+    StoreKey,
     StoreSpec,
+    store_binding,
 )
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
@@ -61,13 +58,34 @@ _PROBE: Final = text(PROBE)
 _PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
 
 
-class SQLAlchemyBackend:
-    """Backend for ``stores.default.backend: sqlalchemy``.
+@dataclass(frozen=True)
+class _Store:
+    """One SQLAlchemy store, as its startup checks and its model preparation see it.
 
-    Reads the ``stores.default`` and ``persistence.cursors`` sections, opens one
-    engine shared by the unit of work and every repository, creates the
-    compiled tables at startup and disposes the engine at shutdown. Built
-    connection-only, its startup probes the connection instead.
+    Args:
+        path: Dotted path of the store's section, for error messages.
+        schema: The store's ``schema`` section.
+        session_manager: Its engine, and the metadata its models compile into.
+    """
+
+    path: str
+    schema: SchemaConfig
+    session_manager: SessionManager
+
+    @property
+    def metadata(self) -> MetaData:
+        """The metadata this store's models compile into, and its checks read."""
+        return self.session_manager.metadata
+
+
+class SQLAlchemyBackend:
+    """Backend for ``stores.<name>.backend: sqlalchemy``.
+
+    Reads the section of the store the host hands it (``runtime.store``) and
+    ``persistence.cursors``, opens one engine shared by the unit of work and
+    every repository of that store, compiles its models into a metadata of its
+    own, creates their tables at startup and disposes the engine at shutdown.
+    Built connection-only, its startup probes the connection instead.
     """
 
     name: ClassVar[str] = SQLALCHEMY_BACKEND
@@ -84,77 +102,89 @@ class SQLAlchemyBackend:
         models: Sequence[type[BaseModel]],
         runtime: BackendRuntime,
     ) -> PersistenceWiring:
-        """Build the SQLAlchemy wiring for the discovered models.
+        """Build the SQLAlchemy wiring of the store ``runtime.store`` for the discovered models.
 
         Args:
             ctx: Configuration context holding the ``persistence.cursors`` section.
             models: Models whose repositories the DI module registers.
             runtime: Entry-point pool defaults, the optional pool-metrics
-                receiver and the catalog holding ``stores.default``.
+                receiver, the catalog and the store to serve.
 
         Returns:
-            The SQLAlchemy wiring.
+            The SQLAlchemy wiring. A store other than the default one registers
+            its session manager and elevation sink under
+            :func:`~loom.core.persistence.stores.store_binding` keys.
 
         With ``runtime.connection_only`` no repository is served; see
         :class:`~loom.core.persistence.BackendRuntime`.
 
         Raises:
-            ConfigError: When the ``stores.default`` section is missing, names
-                another backend or is invalid,
-                or repositories are served and ``persistence.cursors`` cannot
-                build a cursor codec.
+            ConfigError: When the store's section is missing, names another
+                backend or is invalid, or repositories are served and
+                ``persistence.cursors`` cannot build a cursor codec.
         """
-        db_cfg = database_config_of(
-            runtime.catalog, DEFAULT_STORE, purpose=f"the {self.name!r} backend"
-        )
+        spec = runtime.catalog.served_by(self.name, runtime.store)
+        db_cfg = decode_database_config(spec.settings(), path=spec.path)
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
-            DeferredScopedSettings(db_cfg.schema.scopes or {})
+            DeferredScopedSettings(db_cfg.schema.scopes or {}, path=spec.path)
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
         # Before the engine: an invalid persistence.cursors fails with none built.
         register: Callable[[SessionManager], Callable[[LoomContainer], None]]
         prepare: Callable[[Sequence[type[BaseModel]]], None]
-        check: Callable[[SessionManager, SchemaConfig], Awaitable[None]]
+        check: Callable[[_Store], Awaitable[None]]
+        metadata: MetaData | None
         if runtime.connection_only:
+            # The caller's compiled registry stays the one its session manager serves.
+            metadata = None
             prepare = no_model_preparation
-            register = _session_manager_module
+            register = functools.partial(_session_manager_module, store=spec.key)
             check = _probe_connection
         else:
+            metadata = MetaData(
+                naming_convention=configured_naming_convention(
+                    db_cfg.schema.naming_convention, path=spec.path
+                )
+            )
             check = _run_startup_checks
             prepare = functools.partial(
-                _prepare_models,
-                convention=configured_naming_convention(db_cfg.schema.naming_convention),
-                settings=settings,
+                _prepare_models, path=spec.path, metadata=metadata, settings=settings
             )
             register = functools.partial(
                 _repositories_module,
                 models=models,
                 cursor_codec=CursorCodec.from_context(ctx),
+                store=spec.key,
                 elevation=settings is not None,
             )
         session_manager = build_session_manager(
             db_cfg,
             runtime.profile,
             pool_metrics=runtime.pool_metrics,
+            database=spec.key,
             session_settings=settings,
+            metadata=metadata,
         )
         if settings is not None:
             install_pool_reset(session_manager.engine)
+        store = _Store(path=spec.path, schema=db_cfg.schema, session_manager=session_manager)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
             repo_registration_module=register(session_manager),
             lifespan_init=lambda: _lifespan(session_manager),
             prepare_models=prepare,
-            startup_checks=functools.partial(check, session_manager, db_cfg.schema),
+            startup_checks=functools.partial(check, store),
             readiness=lambda: _readiness(session_manager),
         )
 
 
-def _session_manager_module(session_manager: SessionManager) -> Callable[[LoomContainer], None]:
+def _session_manager_module(
+    session_manager: SessionManager, *, store: StoreKey
+) -> Callable[[LoomContainer], None]:
     """The module of a backend serving no repository: the session manager only."""
-    return functools.partial(_register_session_manager, session_manager)
+    return functools.partial(_register_session_manager, session_manager, store)
 
 
 def _repositories_module(
@@ -162,36 +192,42 @@ def _repositories_module(
     *,
     models: Sequence[type[BaseModel]],
     cursor_codec: CursorCodec,
+    store: StoreKey,
     elevation: bool,
 ) -> Callable[[LoomContainer], None]:
     """The module registering a repository per model, and the elevation sink when scoped."""
     return _with_elevation_sink(
         build_sqlalchemy_repository_registration_module(
-            session_manager, models, cursor_codec=cursor_codec
+            session_manager, models, cursor_codec=cursor_codec, store=store
         ),
+        store=store,
         enabled=elevation,
     )
 
 
-def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
-    """Register the backend's session manager, the one every consumer shares.
+def _register_session_manager(
+    session_manager: SessionManager, store: StoreKey, container: LoomContainer
+) -> None:
+    """Register the store's session manager, the one every consumer of that store shares.
 
     ``SessionManager`` is framework-owned: the composition refuses a caller's
     module binding it, so the unit of work, the pool reset and the startup
     checks hold the same instance the container serves.
     """
-    container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
+    container.register(
+        store_binding(SessionManager, store), lambda: session_manager, scope=Scope.APPLICATION
+    )
 
 
 def _with_elevation_sink(
-    module: Callable[[LoomContainer], None], *, enabled: bool
+    module: Callable[[LoomContainer], None], *, store: StoreKey, enabled: bool
 ) -> Callable[[LoomContainer], None]:
     if not enabled:
         return module
 
     def register(container: LoomContainer) -> None:
         module(container)
-        container.register_instance(ElevationSink, SQLAlchemyElevationSink())
+        container.register_instance(store_binding(ElevationSink, store), SQLAlchemyElevationSink())
 
     return register
 
@@ -199,25 +235,26 @@ def _with_elevation_sink(
 def _prepare_models(
     models: Sequence[type[BaseModel]],
     *,
-    convention: Mapping[str, str] | None = None,
-    settings: DeferredScopedSettings | None = None,
+    path: str,
+    metadata: MetaData,
+    settings: DeferredScopedSettings | None,
 ) -> None:
-    """Compile the discovered models and bind in-memory row-level security.
+    """Compile the discovered models into the store's metadata and bind row-level security.
 
     The database is not contacted. A later ``startup_checks`` is what creates
-    or verifies the schema.
+    or verifies the schema, from the scoped tables this compilation captured.
     """
     if not models:
         _logger.warning(
             "no BaseModel classes discovered: the application starts with an empty "
             "relational schema. Declare your first model, or set "
-            "stores.default.backend: none if it never persists."
+            "%s.backend: none if it never persists.",
+            path,
         )
-    reset_registry(naming_convention=convention)
-    compile_all(*models)
+    compile_all(*models, metadata=metadata)
     if settings is None:
         return
-    scoped = scoped_tables()
+    scoped = scoped_tables(metadata)
     settings.bind(scoped)
     product = load_authz_product()
     if product is not None:
@@ -245,35 +282,46 @@ def startup_checks(
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     *,
     has_session_settings: bool,
+    path: str = DEFAULT_STORE_PATH,
 ) -> tuple[str, ...]:
     """Decide what startup may do; return the scoped tables left unprotected on purpose.
+
+    Args:
+        config: The store's ``schema`` section.
+        dialect: The engine's dialect name.
+        scoped: The scoped tables compiled for the store.
+        has_session_settings: Whether the store's sessions carry the scoped settings.
+        path: Dotted path of the store's section, which the messages name.
 
     Raises:
         ConfigError: When ``create_all`` would run with the application's session
             settings, when scoped tables exist on a non-Postgres dialect without
             the opt-out, or when ``create_all`` meets scoped tables on Postgres.
     """
+    allow = config.allow_unprotected_dialect
     if config.mode == EXTERNAL:
-        return check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
+        return check_dialect(dialect, scoped, allow_unprotected=allow, path=path)
     if has_session_settings:
         raise ConfigError(
             "the schema is never created with the application's session settings; "
-            "use stores.default.schema.mode: external and create_schema(migrator_url, application)"
+            f"use {path}.schema.mode: external and create_schema(migrator_url, application)"
         )
-    unprotected = check_dialect(dialect, scoped, allow_unprotected=config.allow_unprotected_dialect)
+    unprotected = check_dialect(dialect, scoped, allow_unprotected=allow, path=path)
     if dialect == POSTGRES_DIALECT:
-        _refuse_unprotected_scoped(scoped)
+        _refuse_unprotected_scoped(scoped, path)
     return unprotected
 
 
-def _refuse_unprotected_scoped(scoped: Mapping[tuple[str | None, str], ScopedTable]) -> None:
+def _refuse_unprotected_scoped(
+    scoped: Mapping[tuple[str | None, str], ScopedTable], path: str
+) -> None:
     """Refuse scoped tables on Postgres outside an external schema: nothing protects them."""
     if not scoped:
         return
     names = ", ".join(sorted(table.name for table in scoped.values()))
     raise ConfigError(
         f"create_all cannot protect scoped tables {names}; run "
-        "create_schema(migrator_url, application) and set stores.default.schema.mode: external"
+        f"create_schema(migrator_url, application) and set {path}.schema.mode: external"
     )
 
 
@@ -302,22 +350,25 @@ def check_time_zone_columns(dialect: str, metadata: MetaData) -> None:
         )
 
 
-async def _run_startup_checks(session_manager: SessionManager, config: SchemaConfig) -> None:
-    """Create or verify the schema, then drop queued connections.
+async def _run_startup_checks(store: _Store) -> None:
+    """Create or verify the store's schema, then drop queued connections.
 
-    An in-memory SQLite pool is the database itself, so that connection stays.
-    A failed check releases a queued pool too: the connection must not sit
-    there after the error.
+    The checks read the tables :func:`_prepare_models` compiled into the
+    store's metadata, scoped ones included. An in-memory SQLite pool is the
+    database itself, so that connection stays. A failed check releases a
+    queued pool too: the connection must not sit there after the error.
     """
-    scoped = scoped_tables()
+    session_manager, metadata, config = store.session_manager, store.metadata, store.schema
+    scoped = scoped_tables(metadata)
     dialect = session_manager.engine.dialect.name
     unprotected = startup_checks(
         config,
         dialect,
         scoped,
         has_session_settings=session_manager.has_session_settings,
+        path=store.path,
     )
-    check_time_zone_columns(dialect, get_metadata())
+    check_time_zone_columns(dialect, metadata)
     if unprotected:
         _logger.warning(
             "scoped tables left unprotected on this dialect: %s", ", ".join(unprotected)
@@ -325,14 +376,14 @@ async def _run_startup_checks(session_manager: SessionManager, config: SchemaCon
     try:
         async with session_manager.engine.begin() as connection:
             if config.mode == EXTERNAL:
-                await _check_external(connection, scoped, config.guard)
+                await _check_external(connection, store, scoped)
             else:
-                await connection.run_sync(get_metadata().create_all)
+                await connection.run_sync(metadata.create_all)
     finally:
         await _release_queued(session_manager)
 
 
-async def _probe_connection(session_manager: SessionManager, config: SchemaConfig) -> None:
+async def _probe_connection(store: _Store) -> None:
     """Open one connection and run ``SELECT 1``, then drop queued connections.
 
     The startup of a backend serving no repository: the process-wide metadata
@@ -347,9 +398,10 @@ async def _probe_connection(session_manager: SessionManager, config: SchemaConfi
     Raises:
         ConfigError: When a Postgres connection would bypass row-level security.
     """
+    session_manager = store.session_manager
     postgres = session_manager.engine.dialect.name == POSTGRES_DIALECT
-    if postgres and config.mode != EXTERNAL:
-        _refuse_unprotected_scoped(scoped_tables())
+    if postgres and store.schema.mode != EXTERNAL:
+        _refuse_unprotected_scoped(scoped_tables(store.metadata), store.path)
     try:
         async with session_manager.engine.connect() as connection:
             await connection.execute(_PROBE)
@@ -369,8 +421,8 @@ async def _release_queued(session_manager: SessionManager) -> None:
 async def _lifespan(session_manager: SessionManager) -> AsyncIterator[None]:
     """Open nothing up front and release the engine on the way out.
 
-    Schema checks belong to ``startup_checks``. The compiled registry stays:
-    the next ``prepare_models`` is what resets it.
+    Schema checks belong to ``startup_checks``. The compiled models stay:
+    they belong to the store's metadata.
     """
     try:
         yield
@@ -380,26 +432,26 @@ async def _lifespan(session_manager: SessionManager) -> AsyncIterator[None]:
 
 async def _check_external(
     connection: AsyncConnection,
+    store: _Store,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
-    guard: str | None,
 ) -> None:
-    names = [table.name for table in get_metadata().sorted_tables]
+    names = [table.name for table in store.metadata.sorted_tables]
     present = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
     missing = sorted(name for name in names if name not in present)
     if missing:
         raise ConfigError(
-            f"stores.default.schema.mode is external but tables are missing: {', '.join(missing)}"
+            f"{store.path}.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
     if connection.dialect.name == POSTGRES_DIALECT:
         await _reject_privileged_connection(connection)
         if scoped:
-            await _check_guard(connection, scoped, guard)
+            await _check_guard(connection, scoped, store)
 
 
 async def _check_guard(
     connection: AsyncConnection,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
-    guard: str | None,
+    store: _Store,
 ) -> None:
     """Check, as the application user, the guard and every scoped table's protection.
 
@@ -408,9 +460,10 @@ async def _check_guard(
     permissive policies and owner trigger bound to this guard. The guard's
     configuration row is not readable here; ``verify`` checks it.
     """
+    guard = store.schema.guard
     if guard is None:
         raise ConfigError(
-            "stores.default.schema.guard is required when a model is RowScoped: "
+            f"{store.path}.schema.guard is required when a model is RowScoped: "
             "run `loom schema init <schema>` to write the derived names"
         )
     problems = await startup_problems(connection, guard, scoped)

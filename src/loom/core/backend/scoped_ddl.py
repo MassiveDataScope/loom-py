@@ -21,6 +21,7 @@ from loom.core.model.field import Reach
 from loom.core.model.partition import PartitionRange
 from loom.core.model.privilege import Privilege
 from loom.core.model.scoped import ScopedTable
+from loom.core.persistence.stores import DEFAULT_STORE_PATH
 from loom.core.schema_names import schema_identifier, sql_identifier
 
 SCHEMA_KEY: Final = "loom.schema"
@@ -177,9 +178,19 @@ def validate_timeout(value: str) -> str:
 
 
 def check_dialect(
-    dialect: str, scoped: Mapping[tuple[str | None, str], ScopedTable], *, allow_unprotected: bool
+    dialect: str,
+    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    *,
+    allow_unprotected: bool,
+    path: str = DEFAULT_STORE_PATH,
 ) -> tuple[str, ...]:
     """Return the scoped tables a non-Postgres dialect leaves unprotected, or raise.
+
+    Args:
+        dialect: The engine's dialect name.
+        scoped: The store's scoped tables.
+        allow_unprotected: The store's ``schema.allow_unprotected_dialect``.
+        path: Dotted path of the store's section, which the message names.
 
     Raises:
         ConfigError: When scoped tables exist on a non-Postgres dialect and the
@@ -191,7 +202,7 @@ def check_dialect(
     if not allow_unprotected:
         raise ConfigError(
             f"dialect {dialect!r} cannot protect scoped tables {', '.join(names)}; "
-            "set stores.default.schema.allow_unprotected_dialect: true only for tests"
+            f"set {path}.schema.allow_unprotected_dialect: true only for tests"
         )
     return names
 

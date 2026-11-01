@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+
 if TYPE_CHECKING:
     from loom.core.persistence.stores import StoreCatalog
 
@@ -100,14 +102,19 @@ class BackendRuntime:
             stay installed but unbound, so they fail closed.
         catalog: The stores the configuration declares, loaded once by the
             host; the backend takes its store from it
-            (``catalog.require(DEFAULT_STORE, backend=..., purpose=...)``)
-            instead of reading ``stores`` from the configuration again.
+            (``catalog.served_by(name, runtime.store)``) instead of reading
+            ``stores`` from the configuration again.
+        store: The store the backend serves. The host passes
+            :data:`~loom.core.persistence.stores.DEFAULT_STORE` unless it
+            builds another store; a backend that ignores it, written before
+            it existed, keeps serving the default store.
     """
 
     profile: RuntimeProfile
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
     catalog: StoreCatalog = field(kw_only=True)
+    store: StoreKey = field(default=DEFAULT_STORE, kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(

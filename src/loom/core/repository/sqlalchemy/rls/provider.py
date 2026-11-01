@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
+from loom.core.persistence.stores import DEFAULT_STORE_PATH
 from loom.core.repository.sqlalchemy.rls.sources import resolve_binding, validate_bindings
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
 
@@ -54,8 +55,16 @@ def scoped_session_settings(
     scope_sources: Mapping[str, str],
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     product: SessionSettings | None = None,
+    *,
+    path: str = DEFAULT_STORE_PATH,
 ) -> Callable[[], Mapping[str, str]]:
     """Build the provider from the scope bindings and the compiled scoped tables.
+
+    Args:
+        scope_sources: The store's ``schema.scopes``, binding per scope.
+        scoped: The store's compiled scoped tables.
+        product: The product's own settings, merged in.
+        path: Dotted path of the store's section, which the messages name.
 
     Raises:
         ConfigError: When a declared scope has no binding, or a binding is
@@ -64,8 +73,8 @@ def scoped_session_settings(
     scopes = _declared_scopes(scoped)
     missing = sorted(scope for scope in scopes if scope not in scope_sources)
     if missing:
-        raise ConfigError(f"stores.default.schema.scopes is missing bindings for {missing}")
-    validate_bindings({scope: scope_sources[scope] for scope in scopes})
+        raise ConfigError(f"{path}.schema.scopes is missing bindings for {missing}")
+    validate_bindings({scope: scope_sources[scope] for scope in scopes}, path=path)
     return _ScopedProvider(scopes, scope_sources, product)
 
 
@@ -98,13 +107,14 @@ class DeferredScopedSettings:
     scoped tables are only known at startup; until then any use fails.
     """
 
-    def __init__(self, scope_sources: Mapping[str, str]) -> None:
+    def __init__(self, scope_sources: Mapping[str, str], *, path: str = DEFAULT_STORE_PATH) -> None:
         self._scope_sources = dict(scope_sources)
+        self._path = path
         self._provide: Callable[[], Mapping[str, str]] | None = None
 
     def bind(self, scoped: Mapping[tuple[str | None, str], ScopedTable]) -> None:
         """Build the provider for the compiled scoped tables; validates every binding."""
-        self._provide = scoped_session_settings(self._scope_sources, scoped)
+        self._provide = scoped_session_settings(self._scope_sources, scoped, path=self._path)
 
     def __call__(self) -> Mapping[str, str]:
         if self._provide is None:

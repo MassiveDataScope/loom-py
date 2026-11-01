@@ -9,7 +9,7 @@ import msgspec
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.backend.sqlalchemy import compile_all, reset_registry
+from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.model import BaseModel, Field, Integer
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mutation import MutationEvent
@@ -26,6 +26,8 @@ class _DummyModel(BaseModel):
 
 
 class MockSessionManager:
+    metadata = get_metadata()
+
     def __init__(self, session: Any) -> None:
         self._session = session
 

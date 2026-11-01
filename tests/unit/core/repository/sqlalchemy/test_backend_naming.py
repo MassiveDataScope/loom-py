@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -12,6 +13,7 @@ from sqlalchemy import MetaData
 from loom.core.backend.sqlalchemy import get_metadata, reset_registry
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import load_application
+from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from tests.helpers.persistence import build_backend
@@ -55,6 +57,11 @@ def _config_file(tmp_path: Path, naming_convention: dict[str, str]) -> Path:
     return path
 
 
+def _store_metadata(wiring: PersistenceWiring) -> MetaData:
+    """The metadata the wiring's store compiles its models into."""
+    return cast(Any, wiring.uow_factory)._session_manager.metadata
+
+
 def _names(metadata: MetaData) -> dict[str, set[str]]:
     return {
         name: {str(item.name) for item in (*table.constraints, *table.indexes) if item.name}
@@ -74,8 +81,9 @@ def test_runtime_compilation_names_constraints_as_the_migration_metadata_does(
     assert wiring.prepare_models is not None
     wiring.prepare_models(rosters.MODELS)
 
-    assert _names(get_metadata()) == _names(application.metadata)
-    assert "fk_seats_tenant_id_roster_id" in _names(get_metadata())["seats"]
+    runtime = _names(_store_metadata(wiring))
+    assert runtime == _names(application.metadata)
+    assert "fk_seats_tenant_id_roster_id" in runtime["seats"]
 
 
 def test_an_unknown_kind_in_the_runtime_naming_convention_names_the_key(tmp_path: Path) -> None:
@@ -121,7 +129,8 @@ async def test_closing_leaves_the_compiled_naming_convention() -> None:
     assert wiring.lifespan_init is not None
     wiring.prepare_models(())
 
+    metadata = _store_metadata(wiring)
     async with wiring.lifespan_init():
-        assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
+        assert metadata.naming_convention["pk"] == "pk_%(table_name)s"
 
-    assert get_metadata().naming_convention["pk"] == "pk_%(table_name)s"
+    assert metadata.naming_convention["pk"] == "pk_%(table_name)s"

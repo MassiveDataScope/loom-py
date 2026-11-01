@@ -10,7 +10,7 @@ from sqlalchemy import and_, exists, func, insert, inspect, select, tuple_
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.core.backend.sqlalchemy import get_compiled_core
+from loom.core.backend.sqlalchemy import get_compiled, get_compiled_core
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value, to_struct
 from loom.core.model.introspection import (
@@ -72,9 +72,8 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     def _init_struct_model(self) -> None:
         """Resolve SA model and metadata from a Struct-based model definition."""
-        from loom.core.backend.sqlalchemy import get_compiled
-
-        sa = get_compiled(self.model)
+        metadata = self.session_manager.metadata
+        sa = get_compiled(self.model, metadata=metadata)
         if sa is None:
             raise RuntimeError(
                 f"Model {self.model.__name__} has not been compiled. "
@@ -90,7 +89,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
         )
         self._cursor_columns = scalar_column_annotations(self.model)
         self._relations_cache = get_relations(self.model)
-        self._core_model = get_compiled_core(self.model)
+        self._core_model = get_compiled_core(self.model, metadata=metadata)
         if self._core_model is None:
             raise RuntimeError(
                 f"Model {self.model.__name__} core read artifact was not compiled. "

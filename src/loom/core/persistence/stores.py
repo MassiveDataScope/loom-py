@@ -44,6 +44,9 @@ StoreKey = NewType("StoreKey", str)
 DEFAULT_STORE: Final = StoreKey("default")
 """The store of every model that declares no ``__store__``."""
 
+DEFAULT_STORE_PATH: Final = f"{ConfigKey.STORES}.{DEFAULT_STORE}"
+"""Dotted path of the default store's section, for messages about a store none names."""
+
 BACKEND_KEY: Final = "backend"
 """The key of a store section naming its backend."""
 
@@ -184,13 +187,17 @@ class StoreCatalog:
             )
         return spec
 
-    def served_by(self, backend: str) -> StoreSpec:
-        """Return :data:`DEFAULT_STORE`, the store the persistence *backend* serves.
+    def served_by(self, backend: str, key: str = DEFAULT_STORE) -> StoreSpec:
+        """Return the store *key*, :data:`DEFAULT_STORE` by default, that *backend* serves.
+
+        Args:
+            backend: The backend the store must declare.
+            key: The store's name; a backend takes it from ``runtime.store``.
 
         Raises:
             ConfigError: As :meth:`require`.
         """
-        return self.require(DEFAULT_STORE, backend=backend, purpose=f"the {backend!r} backend")
+        return self.require(key, backend=backend, purpose=f"the {backend!r} backend")
 
     def models_by_store(
         self, models: Sequence[type[BaseModel]]
@@ -221,6 +228,33 @@ class StoreCatalog:
                 )
             groups[spec.key].append(model)
         return {key: tuple(members) for key, members in groups.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class StoreBinding:
+    """DI key of a store's own *interface* (its session manager, its unit of work, ...).
+
+    Only a store other than :data:`DEFAULT_STORE` registers under one; the
+    default store keeps the bare interface, which every existing consumer
+    resolves. Build it with :func:`store_binding`.
+    """
+
+    interface: type[Any]
+    store: StoreKey
+
+
+def store_binding(interface: type[Any], store: StoreKey) -> type[Any] | StoreBinding:
+    """Return the DI key under which *store* registers its *interface*.
+
+    Args:
+        interface: What the store registers.
+        store: The store registering it.
+
+    Returns:
+        *interface* itself for :data:`DEFAULT_STORE`, a :class:`StoreBinding`
+        for any other store, so two stores never register the same key.
+    """
+    return interface if store == DEFAULT_STORE else StoreBinding(interface, store)
 
 
 def store_of(model: type[BaseModel]) -> StoreKey:
@@ -350,15 +384,18 @@ __all__ = [
     "CLICKHOUSE_BACKEND",
     "CONNECTION_ONLY_BACKENDS",
     "DEFAULT_STORE",
+    "DEFAULT_STORE_PATH",
     "MODELS_ONLY",
     "NO_CAPABILITIES",
     "NONE_BACKEND",
     "SQLALCHEMY_BACKEND",
+    "StoreBinding",
     "StoreCatalog",
     "StoreCapabilities",
     "StoreKey",
     "StoreSpec",
     "load_catalog",
     "require_single_store",
+    "store_binding",
     "store_of",
 ]

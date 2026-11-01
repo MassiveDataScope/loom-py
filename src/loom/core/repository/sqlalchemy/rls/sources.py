@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping
 
 from loom.core.config import ConfigError
 from loom.core.identity import current_identity
+from loom.core.persistence.stores import DEFAULT_STORE_PATH
 
 ScopeSource = Callable[[], object | None]
 
@@ -31,24 +32,28 @@ def clear_scope_sources() -> None:
     _sources.clear()
 
 
-def validate_bindings(scope_sources: Mapping[str, str]) -> None:
+def validate_bindings(scope_sources: Mapping[str, str], *, path: str = DEFAULT_STORE_PATH) -> None:
     """Fail at startup when a binding is malformed or names an unregistered source.
+
+    Args:
+        scope_sources: The store's ``schema.scopes``, binding per scope.
+        path: Dotted path of the store's section, which the messages name.
 
     Raises:
         ConfigError: Naming the scope and the binding.
     """
     for scope, binding in scope_sources.items():
-        kind, name = _parse(scope, binding)
+        kind, name = _parse(scope, binding, path)
         if kind == "request" and name not in _sources:
             raise ConfigError(
-                f"stores.default.schema.scopes.{scope} binds {binding!r} but no scope source "
+                f"{path}.schema.scopes.{scope} binds {binding!r} but no scope source "
                 f"named {name!r} was registered"
             )
 
 
 def resolve_binding(binding: str) -> object | None:
     """Return the current value of ``binding`` or ``None`` when there is none."""
-    kind, name = _parse("", binding)
+    kind, name = _parse("", binding, DEFAULT_STORE_PATH)
     if kind == "identity":
         identity = current_identity()
         if name == "subject":
@@ -58,11 +63,11 @@ def resolve_binding(binding: str) -> object | None:
     return source() if source is not None else None
 
 
-def _parse(scope: str, binding: str) -> tuple[str, str]:
+def _parse(scope: str, binding: str, path: str) -> tuple[str, str]:
     match = _BINDING.fullmatch(binding)
     if match is None:
         raise ConfigError(
-            f"stores.default.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
+            f"{path}.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
             "or request.<name>"
         )
     return match.group(1), match.group(2)

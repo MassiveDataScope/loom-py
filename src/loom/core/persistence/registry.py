@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from loom.core.config import ConfigError
-from loom.core.persistence.abc import PersistenceBackend
 from loom.core.plugins.entrypoints import (
     EntryPointNotFoundError,
     load_entry_point,
 )
+
+if TYPE_CHECKING:  # abc imports the store catalog, which imports this module
+    from loom.core.persistence.abc import PersistenceBackend
 
 BACKEND_ENTRY_POINT_GROUP = "loom.persistence.backends"
 """Entry point group persistence backends register under."""
@@ -39,7 +41,7 @@ def resolve_backend(name: str) -> PersistenceBackend:
             f"Persistence backend {name!r} could not be imported ({exc}). Install the "
             f"distribution providing it (built-in backends: `pip install 'loom-kernel[{name}]'`)."
         ) from exc
-    backend_cls = cast(type[PersistenceBackend], target)
+    backend_cls = cast("type[PersistenceBackend]", target)
     return backend_cls()
 
 
