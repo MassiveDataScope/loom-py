@@ -1,10 +1,10 @@
-"""``GET /health``: aggregated readiness of the persistence backend.
+"""``GET /health``: aggregated readiness of each store.
 
 The route is registered ahead of every interface router so a catch-all route
 can never capture it, and it belongs to the default authentication exclusions
 so an orchestrator needs no credentials to ask.
 
-Internal module: consumed by :func:`loom.rest.fastapi.auto.create_app`.
+Internal module: consumed by :meth:`loom.rest.fastapi.adapter.FastAPIAdapter.bind`.
 """
 
 from __future__ import annotations

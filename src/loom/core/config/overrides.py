@@ -149,9 +149,9 @@ def load_application_config(
             collides with another variable, replaces a declared structure,
             reaches inside an interpolated key, holds ``${``, or does not
             parse or merge. The error names the variable, never the value.
-            Also when the result declares a persistence key ``stores``
-            replaced (``database``, ``persistence.backend``, ...), naming
-            its replacement.
+            Also when the result declares a retired persistence key
+            (``database``, ``persistence.backend``, ...), naming its
+            ``stores`` replacement.
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
     resolved = resolve_environment(environment)

@@ -48,8 +48,8 @@ class Application:
         observability: Logging, tracing and metrics runtime.
         sql: SQL registry and services.
         ai: Agent runtime and its plans.
-        persistence: Wiring of the one store this delivery serves; the
-            catalogue of named stores replaces it.
+        persistence: Wiring of the default store, the only one an
+            application composes.
         resources: What the application owns, in any order.
     """
 
@@ -114,13 +114,15 @@ class Application:
 
         Raises:
             ApplicationAlreadyOpenError: When the application is already open.
-            ExceptionGroup: When several resources fail to close. A single
+            BaseExceptionGroup: When several resources fail to close. A single
                 failure is raised as itself, after every other resource
                 closed. A failure to open is raised as itself, with the
                 failures to close what had opened as notes.
         """
         if self._open:
             raise ApplicationAlreadyOpenError
+        # Set before opening: a concurrent second running() fails instead of
+        # opening twice.
         self._open = True
         failures: list[BaseException] = []
         opened = False

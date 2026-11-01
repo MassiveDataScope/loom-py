@@ -101,8 +101,8 @@ def session_to_join(session_manager: SessionManager) -> AsyncSession | None:
 
     Returns:
         The active session, or ``None`` when none is bound. A session bound
-        without its owner (:func:`set_active_session` called without
-        ``owner``) is joined, as before owners were recorded.
+        without an owner (:func:`set_active_session` called without
+        ``owner``) is joined unchecked.
 
     Raises:
         ForeignSessionError: When another session manager opened it.

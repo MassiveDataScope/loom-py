@@ -195,7 +195,7 @@ def build_session_manager(
     database: str = "default",
     **manager_kwargs: Any,
 ) -> SessionManager:
-    """Build the session manager of a ``database`` section for one entry point.
+    """Build the session manager of a relational store section for one entry point.
 
     The single constructor every runtime entry point uses: each pool key the
     section declares wins, the rest come from *profile*. A dialect whose
@@ -203,11 +203,12 @@ def build_session_manager(
     nor timeout, so a profile never breaks a test or a local run.
 
     Args:
-        config: The decoded ``database`` section.
+        config: The decoded store section.
         profile: Defaults of the entry point building the engine.
         pool_metrics: Receiver of pool measurements; ``None`` keeps the
             dialect's pool class untouched.
-        database: Label the measurements carry (``default`` or a shared name).
+        database: Key of the store: labels the pool measurements and names
+            the store in errors.
         **manager_kwargs: Further :class:`SessionManager` options
             (``session_settings``, ``inject_trace_id``, engine keywords).
 

@@ -81,7 +81,8 @@ class PersistenceBackend(Protocol):
     ``runtime.catalog.served_by(name, runtime.store)``. It reads any other
     section (``persistence.cursors``) from the context it is given. A backend
     written before ``runtime.store`` existed keeps working: ``served_by(name)``
-    still returns the default store, the only one a composition builds today.
+    still returns the default store, the only store a composition builds (see
+    :func:`~loom.core.persistence.stores.require_single_store`).
     """
 
     name: ClassVar[str]

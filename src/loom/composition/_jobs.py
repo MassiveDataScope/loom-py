@@ -32,6 +32,8 @@ def build_celery_service(
     Args:
         ctx: Resolved configuration context.
         result: Kernel runtime carrying container, factory and executor.
+        observability_runtime: Observability runtime the producer traces
+            with, or ``None``.
 
     Returns:
         ``CeleryJobService`` instance, or ``None``.
@@ -94,6 +96,12 @@ def configure_job_service(
     Args:
         ctx: Resolved configuration context.
         result: Kernel runtime carrying container, factory and executor.
+        observability_runtime: Observability runtime the Celery producer
+            traces with, or ``None``.
+
+    Returns:
+        The Celery producer's resource to close, or ``None`` when no Celery
+        service was built.
     """
     if result.container.is_registered(JobService):
         return None

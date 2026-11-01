@@ -78,6 +78,9 @@ def create_app(
         What *adapter* binds: an ASGI app, a Celery app, a handler.
 
     Raises:
+        ConfigError: When the configuration is incomplete or invalid.
+        DeployCheckError: When a deploy check of level error fails in a
+            deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
     application = build_application(
@@ -211,6 +214,8 @@ def compose_application(
         The composed, closed application.
 
     Raises:
+        ConfigError: When a model declares a store other than the default, or
+            the store section is invalid.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
@@ -223,9 +228,9 @@ def compose_application(
 
     discovered = recipe.discovered
     catalog = source.catalog
-    # One store until the invocation scope of ADR 0008 exists: the active
-    # session, the session manager, the elevation sink and the unit of work
-    # are still one per process, so another store's models would share them.
+    # One store until ADR 0008's invocation scope exists: the unit of work,
+    # the session manager and the elevation sink are still one per
+    # application, so another store's models would share them.
     require_single_store(discovered.models)
     runtime = BackendRuntime(
         recipe.profile,

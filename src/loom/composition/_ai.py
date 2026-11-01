@@ -52,12 +52,12 @@ class AgentDepsFactory:
 
     Structural implementation of ``loom.ai.abc.DepsFactory``: it lives in the
     composition root, and depends only on ``loom.core``, so an application with
-    no ``ai:`` section never imports the AI pillar to obtain it (FR-050).
+    no ``ai:`` section never imports the AI pillar to obtain it.
 
     Binding the invoker to the caller happens here, at the one point that knows
     both: a granted use case declaring ``Caller()`` is executed as the identity
     that invoked the agent, and the capability never has to discover the caller
-    from ambient state (FR-043).
+    from ambient state.
 
     Args:
         invoker: Unbound application invoker of this application.
@@ -172,7 +172,7 @@ def resolve_ai(
         return AiWiring(config=None, runtime=None)
     # Local imports: the AI pillar is optional, and importing it from an
     # application without an 'ai:' section would pull the whole agent layer
-    # into every Loom app (FR-050) — the same rule 'build_sql_registry'
+    # into every Loom app — the same rule 'build_sql_registry'
     # follows for the ClickHouse extra.
     from loom.ai.bootstrap import build_agent_runtime
     from loom.ai.config import AiConfig
@@ -271,7 +271,7 @@ def verify_mcp_markers(
     The AI section is decoded a second time here, once per boot, only when at
     least one use case declares the marker — ``ConfigContext.section`` caches
     nothing. Accepted overhead, in exchange for one call site that also
-    covers the no-``ai:``-section case (FR-08) instead of two call sites keyed
+    covers the no-``ai:``-section case instead of two call sites keyed
     on whether the section exists.
 
     Args:
@@ -292,9 +292,9 @@ def verify_mcp_markers(
     if not declaring:
         # No use case declares Mcp(): importing 'loom.ai' here, only to find
         # nothing to check, would be exactly the containment leak
-        # 'resolve_ai' itself avoids for the same absent-section case
-        # (FR-050) — an app with no 'ai:' section must never pull the pillar
-        # in just because start-up ran.
+        # 'resolve_ai' itself avoids for the same absent-section case —
+        # an app with no 'ai:' section must never pull the pillar in just
+        # because start-up ran.
         return declaring
     # Local imports: same containment rule as 'resolve_ai'.
     from loom.ai._startup import verify_mcp_markers
@@ -396,9 +396,9 @@ def verify_agent_markers(
     if not declaring:
         # No use case declares Agent(): importing 'loom.ai' here, only to
         # find nothing to check, would be exactly the containment leak
-        # 'resolve_ai' itself avoids for the same absent-section case
-        # (FR-050) — an app with no 'ai:' section must never pull the pillar
-        # in just because start-up ran.
+        # 'resolve_ai' itself avoids for the same absent-section case —
+        # an app with no 'ai:' section must never pull the pillar in just
+        # because start-up ran.
         return
 
     # Local import: same containment rule as 'resolve_ai'.

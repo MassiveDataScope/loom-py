@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class SqlWiring:
-    """Resolved SQL subsystem pieces for the auto-bootstrap REST app.
+    """Resolved SQL registry, service and configuration of a composed application.
 
     Args:
         config: Parsed ``sql:`` section, or ``None`` when absent.
@@ -97,7 +97,7 @@ def build_sql_registry(sql_cfg: SqlConfig) -> ClickHouseConnectionRegistry:
 def register_sql_collaborators(
     container: LoomContainer, sql: SqlWiring, observability: ObservabilityRuntime
 ) -> None:
-    """Register both SQL collaborators (APPLICATION scope) — always present (M5).
+    """Register both SQL collaborators (APPLICATION scope).
 
     ``SqlQueryService`` is the unbound path, for system work with no caller;
     ``CallerBoundSql`` derives the roles from the verified identity and is what

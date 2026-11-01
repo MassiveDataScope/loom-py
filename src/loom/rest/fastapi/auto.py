@@ -113,7 +113,7 @@ def create_app(
             ``DefaultRepositoryBuilder``) are overridable: a module's binding
             is kept.  ``SessionManager``, ``SqlQueryService``,
             ``CallerBoundSql``, ``ObservabilityRuntime``, ``ElevationSink``,
-            ``RuntimeExecutor``, ``UseCaseRegistry`` and
+            ``RuntimeExecutor``, ``UseCaseRegistry``, ``StoreCatalog`` and
             ``ApplicationInvoker`` are reserved: a module binding one fails
             start-up with
             :class:`~loom.composition.errors.ReservedBindingError`.

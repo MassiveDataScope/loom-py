@@ -14,7 +14,7 @@ which leave no connection open, and each prefork child opens the
 application on its own async bridge in ``worker_process_init``.  See
 :mod:`loom.celery.adapter` for the signal table.
 
-Typical YAML layout (database optional for pure in-memory jobs)::
+Typical YAML layout (stores optional for pure in-memory jobs)::
 
     celery:
       broker_url: "redis://redis:6379/0"
@@ -23,8 +23,10 @@ Typical YAML layout (database optional for pure in-memory jobs)::
         backend: "asyncio"
         use_uvloop: true
 
-    database:
-      url: "postgresql+asyncpg://user:pass@db/mydb"  # optional
+    stores:
+      default:
+        backend: sqlalchemy
+        url: "postgresql+asyncpg://user:pass@db/mydb"  # optional
 
     jobs:
       RecalcPricesJob:

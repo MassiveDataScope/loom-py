@@ -74,7 +74,7 @@ class StoreCapabilities:
     serves_models: bool
     """Whether the store can serve model repositories."""
     transactional: bool
-    """Whether its unit of work can roll back, allowing a future ``Joined`` store."""
+    """Whether its unit of work can roll back."""
     pages_with_cursors: bool
     """Whether its repositories page with cursors."""
 

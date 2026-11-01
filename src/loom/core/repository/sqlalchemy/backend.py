@@ -145,7 +145,8 @@ class SQLAlchemyBackend:
         check: Callable[[_Store], Awaitable[None]]
         metadata: MetaData | None
         if runtime.connection_only:
-            # The caller's compiled registry stays the one its session manager serves.
+            # metadata=None: the manager serves the shared metadata, where the
+            # caller's own compile_all() put its models.
             metadata = None
             prepare = no_model_preparation
             register = _session_manager_module
