@@ -137,10 +137,10 @@ async def test_a_repository_never_writes_through_another_applications_unit_of_wo
     async with first.running(), second.running():
         foreign = second.kernel.container.resolve_repo(_Invoice)
         assert first.persistence.uow_factory is not None
-        with pytest.raises(
-            ForeignSessionError, match=r"b\.db.*cannot join the active session.*a\.db"
-        ):
-            async with first.persistence.uow_factory.create():
+        async with first.persistence.uow_factory.create():
+            with pytest.raises(
+                ForeignSessionError, match=r"b\.db.*cannot join the active session.*a\.db"
+            ):
                 await foreign.create(_NewInvoice(number="B-1"))
 
     with sqlite3.connect(invoices) as a, sqlite3.connect(shipments) as b:

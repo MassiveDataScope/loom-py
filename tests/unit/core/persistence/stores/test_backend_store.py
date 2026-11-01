@@ -14,6 +14,7 @@ from loom.core.persistence.stores import StoreKey, load_catalog
 def test_a_backend_asks_the_catalog_for_the_store_it_was_handed(name: str) -> None:
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": name}}})
     runtime = BackendRuntime(SERVER_PROFILE, catalog=load_catalog(ctx), store=StoreKey("events"))
+    backend = resolve_backend(name)
 
     with pytest.raises(ConfigError, match=rf"the '{name}' backend needs stores\.events"):
-        resolve_backend(name).build(ctx, (), runtime)
+        backend.build(ctx, (), runtime)

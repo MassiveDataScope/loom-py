@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Any, Protocol
 
 from loom.core.model import BaseModel
 from loom.core.use_case.use_case import UseCase
@@ -34,6 +34,11 @@ class DiscoveryResult:
     use_cases: tuple[type[UseCase[object, object]], ...]
     interfaces: tuple[type[RestInterface[object]], ...]
     agent_specs: tuple[str, ...] = ()
+
+    def with_changes(self, **changes: Any) -> DiscoveryResult:
+        """Return a copy with *changes* applied, keeping every other field (later ones too)."""
+        current = {field.name: getattr(self, field.name) for field in fields(self)}
+        return DiscoveryResult(**(current | changes))
 
 
 class DiscoveryEngine(Protocol):

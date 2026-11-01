@@ -95,9 +95,10 @@ class _CeleryAsyncRuntime:
         Raises:
             WorkerNotOpenError: When :meth:`refuse` recorded a failure to open.
         """
-        cause: BaseException | None = self._open_failure
-        if cause is not None:
-            raise WorkerNotOpenError(cause) from cause
+        failure = self._open_failure
+        if failure is None:
+            return
+        raise WorkerNotOpenError(failure) from failure
 
     def run(
         self,

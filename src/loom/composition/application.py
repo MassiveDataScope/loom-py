@@ -141,12 +141,13 @@ class Application:
                 for failure in failures:
                     error.add_note(f"also failed to close: {failure!r}")
             elif failures:
-                raise _close_error(failures) from error
+                # The resources' own failures, re-raised; not a generic exception.
+                raise _close_error(failures) from error  # NOSONAR S112 - re-raises them
             raise
         finally:
             self._open = False
         if failures:
-            raise _close_error(failures)
+            raise _close_error(failures)  # NOSONAR S112 - re-raises the failures to close
 
 
 def _recorded(exit_: _Exit, resource: Resource, failures: list[BaseException]) -> _Exit:
