@@ -76,9 +76,12 @@ class PersistenceBackend(Protocol):
     """Factory a persistence backend exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
-    registry instantiates it. Each backend takes its store from the catalog
-    the host loaded once (``runtime.catalog``) and reads any other section
-    (``persistence.cursors``) from the context it is given.
+    registry instantiates it. Each backend serves the store the host names
+    (``runtime.store``), taken from the catalog the host loaded once:
+    ``runtime.catalog.served_by(name, runtime.store)``. It reads any other
+    section (``persistence.cursors``) from the context it is given. A backend
+    written before ``runtime.store`` existed keeps working: ``served_by(name)``
+    still returns the default store, the only one a composition builds today.
     """
 
     name: ClassVar[str]
