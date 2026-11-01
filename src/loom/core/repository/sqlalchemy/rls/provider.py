@@ -48,7 +48,9 @@ def rls_session_settings(
         ConfigError: When a scope binding is missing, malformed or unregistered.
         ValueError: At call time, when the product emits a key under ``loom.scope.``.
     """
-    return scoped_session_settings(application.scope_sources, application.scoped, product)
+    return scoped_session_settings(
+        application.scope_sources, application.scoped, product, path=application.path
+    )
 
 
 def scoped_session_settings(

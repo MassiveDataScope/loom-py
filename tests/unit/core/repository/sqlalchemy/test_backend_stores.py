@@ -3,8 +3,10 @@
 ADR 0008: each store has its own section, metadata, metrics label and DI
 keys. The default store keeps the bare ``SessionManager`` and
 ``ElevationSink`` keys every consumer resolves; another store registers
-under :func:`~loom.core.persistence.stores.store_binding`, so building it
-next to the default store never replaces the default store's bindings.
+those two under :func:`~loom.core.persistence.stores.store_binding`. Its
+repositories, cursor codec and default repository builder are still
+registered unkeyed: two stores serving repositories cannot share one
+container until the invocation scope exists.
 """
 
 from __future__ import annotations

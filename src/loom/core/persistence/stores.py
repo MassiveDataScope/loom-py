@@ -292,7 +292,8 @@ def require_single_store(models: Sequence[type[BaseModel]]) -> None:
         if key != DEFAULT_STORE:
             raise ConfigError(
                 f"{model.__name__} belongs to store {key!r}, but an application "
-                f"composes the {DEFAULT_STORE!r} store only"
+                f"composes the {DEFAULT_STORE!r} store only, until one unit of work per store "
+                "exists (ADR 0008)"
             )
 
 
