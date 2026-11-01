@@ -19,7 +19,7 @@ from loom.core.persistence.stores import (
 
 
 class NoneBackend:
-    """Backend for ``stores.default.backend: none``, and for a worker without ``stores``.
+    """Backend for ``stores.<name>.backend: none``, and for a worker without ``stores``.
 
     No unit-of-work factory, no repositories, no startup resource; the rest
     of the store section, if any, is ignored.

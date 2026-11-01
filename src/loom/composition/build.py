@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -34,7 +34,12 @@ from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.stores import StoreCatalog, require_single_store
+from loom.core.persistence.stores import (
+    DEFAULT_STORE,
+    StoreCatalog,
+    StoreKey,
+    require_single_store,
+)
 from loom.core.use_case.factory import ModelRead
 
 if TYPE_CHECKING:
@@ -218,12 +223,16 @@ def compose_application(
 
     discovered = recipe.discovered
     catalog = source.catalog
+    # One store until the invocation scope of ADR 0008 exists: the active
+    # session, the session manager, the elevation sink and the unit of work
+    # are still one per process, so another store's models would share them.
     require_single_store(discovered.models)
     runtime = BackendRuntime(
         recipe.profile,
         pool_metrics=recipe.pool_metrics,
         connection_only=recipe.connection_only,
         catalog=catalog,
+        store=DEFAULT_STORE,
     )
     wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
@@ -266,8 +275,7 @@ def compose_application(
         persistence=wiring,
         resources=_resources(
             kernel=kernel,
-            wiring=wiring,
-            backend_name=recipe.backend.name,
+            stores={DEFAULT_STORE: wiring},
             sql=sql,
             ai=ai,
             job_resource=job_resource,
@@ -321,8 +329,7 @@ def _compose_agents(
 def _resources(
     *,
     kernel: KernelRuntime,
-    wiring: PersistenceWiring,
-    backend_name: str,
+    stores: Mapping[StoreKey, PersistenceWiring],
     sql: SqlWiring,
     ai: AiWiring,
     job_resource: Resource | None,
@@ -349,13 +356,14 @@ def _resources(
         )
     if runtime is not None:
         resources.append(Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime))
-    resources.append(
+    resources.extend(
         Resource(
             kind=ResourceKind.STORE,
-            name=backend_name,
+            name=key,
             manager=wiring.lifespan_init,
             check=wiring.startup_checks,
             readiness=wiring.readiness,
         )
+        for key, wiring in stores.items()
     )
     return tuple(resources)

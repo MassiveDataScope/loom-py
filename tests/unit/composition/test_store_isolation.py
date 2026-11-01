@@ -10,9 +10,18 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe, compose_application
+import pytest
+
+from loom.composition import (
+    AppConfig,
+    Application,
+    CompositionSource,
+    Recipe,
+    ResourceKind,
+    compose_application,
+)
 from loom.core.command import Command
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
@@ -107,3 +116,30 @@ async def test_one_model_composed_twice_serves_each_application_from_its_own_sto
 
     assert page.items == ()
     assert _tables(left) == _tables(right) == {"isolation_invoices"}
+
+
+class _AuditEntry(BaseModel):
+    __tablename__ = "isolation_audit_entries"
+    __store__ = "audit"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
+async def test_each_store_is_a_resource_named_by_its_key_with_its_readiness(
+    tmp_path: Path,
+) -> None:
+    application = _compose(tmp_path / "ready.db", _Invoice)
+
+    stores = [r.name for r in application.resources if r.kind is ResourceKind.STORE]
+    async with application.running():
+        ready = await application.readiness()
+
+    assert stores == ["default"]
+    assert ready == {"default": True}
+
+
+def test_a_model_of_another_store_is_refused_until_the_invocation_scope_exists(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ConfigError, match="_AuditEntry belongs to store 'audit'"):
+        _compose(tmp_path / "refused.db", _Invoice, _AuditEntry)

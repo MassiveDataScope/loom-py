@@ -41,7 +41,7 @@ from loom.core.persistence import (
     PersistenceBackend,
     PoolMetricsSink,
 )
-from loom.core.persistence.stores import SQLALCHEMY_BACKEND
+from loom.core.persistence.stores import DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.use_case.constants import CrudOp
 from loom.prometheus import PrometheusMetricsAdapter
 from loom.prometheus.db_pool import PrometheusPoolMetrics
@@ -539,6 +539,8 @@ class _Declared:
     auth: _AuthWiring
     metrics_cfg: PrometheusObservabilityConfig
     routes: RouteSources
+    backend_name: str
+    """Name of the default store's backend: the key ``/health`` reports its readiness under."""
 
 
 class FastAPIAdapter:
@@ -611,6 +613,7 @@ class FastAPIAdapter:
                 config=config_interfaces,
                 disabled=tuple((d.method, d.path) for d in app_cfg.rest.disable_routes),
             ),
+            backend_name=backend.name,
         )
         return Recipe(
             profile=SERVER_PROFILE,
@@ -650,8 +653,12 @@ class FastAPIAdapter:
             openapi_url=app_cfg.rest.openapi_url,
             lifespan=lifespan,
         )
-        store = next(r for r in application.resources if r.kind is ResourceKind.STORE)
-        mount_health(app, store.name, store.readiness)
+        store = next(
+            r
+            for r in application.resources
+            if r.kind is ResourceKind.STORE and r.name == DEFAULT_STORE
+        )
+        mount_health(app, declared.backend_name, store.readiness)
         _mount_authentication(app, auth)
         _mount_optional_middlewares(app, app_cfg.rest, declared.metrics_cfg, self._metrics_registry)
         sql = application.sql

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from loom.composition.resources import Resource, in_opening_order
+from loom.composition.resources import Resource, ResourceKind, in_opening_order
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,6 +71,19 @@ class Application:
     def is_open(self) -> bool:
         """Whether :meth:`running` is between opening and closing."""
         return self._open
+
+    async def readiness(self) -> dict[str, bool]:
+        """Ask every store with a readiness probe whether it can serve now.
+
+        Returns:
+            Each probed store's answer, by store key; a store without a probe
+            is left out. A probe answers and never raises.
+        """
+        return {
+            resource.name: await resource.readiness()
+            for resource in self.resources
+            if resource.kind is ResourceKind.STORE and resource.readiness is not None
+        }
 
     async def check(self) -> None:
         """Run every resource's startup checks without opening anything.

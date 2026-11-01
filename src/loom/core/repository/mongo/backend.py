@@ -56,9 +56,9 @@ class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
 
 
 class MongoBackend:
-    """Backend for ``stores.default.backend: mongo``.
+    """Backend for ``stores.<name>.backend: mongo``.
 
-    Reads the ``stores.default`` and ``persistence.cursors`` sections,
+    Reads the section of the store it serves and ``persistence.cursors``,
     opens one async client shared by the unit of work and every repository,
     binds each model to a collection of the configured database and closes
     the client at shutdown.
@@ -85,18 +85,18 @@ class MongoBackend:
         Args:
             ctx: Configuration context holding the ``persistence.cursors`` section.
             models: Models whose repositories the DI module registers.
-            runtime: The catalog holding ``stores.default``; the Mongo client
-                takes none of the entry-point defaults yet.
+            runtime: The catalog and the store it serves (``runtime.store``);
+                the Mongo client takes none of the entry-point defaults yet.
 
         Returns:
             The Mongo wiring.
 
         Raises:
-            ConfigError: When the ``stores.default`` section is missing, names
+            ConfigError: When the store's section is missing, names
                 another backend, holds a retired key or is invalid, or
                 ``persistence.cursors`` cannot build a cursor codec.
         """
-        spec = runtime.catalog.served_by(self.name)
+        spec = runtime.catalog.served_by(self.name, runtime.store)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
         cursor_codec = CursorCodec.from_context(ctx)
         # tz_aware: datetimes read back as aware UTC, the form the repository writes.

@@ -47,9 +47,9 @@ class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
 
 
 class DynamoDBBackend:
-    """Backend for ``stores.default.backend: dynamodb``.
+    """Backend for ``stores.<name>.backend: dynamodb``.
 
-    Reads the ``stores.default`` section and binds every model to the
+    Reads the section of the store it serves and binds every model to the
     configured table through one shared boto3 client. Models need no
     compilation and startup allocates no shared resource.
     """
@@ -73,17 +73,17 @@ class DynamoDBBackend:
         Args:
             ctx: Ignored; the store's section comes from ``runtime.catalog``.
             models: Models whose repositories the DI module registers.
-            runtime: The catalog holding ``stores.default``; the DynamoDB client
-                takes none of the entry-point defaults yet.
+            runtime: The catalog and the store it serves (``runtime.store``);
+                the DynamoDB client takes none of the entry-point defaults yet.
 
         Returns:
             The DynamoDB wiring.
 
         Raises:
-            ConfigError: When the ``stores.default`` section is missing, names
+            ConfigError: When the store's section is missing, names
                 another backend, holds a retired key or is invalid.
         """
-        spec = runtime.catalog.served_by(self.name)
+        spec = runtime.catalog.served_by(self.name, runtime.store)
         del ctx
         dynamo_cfg = spec.decode(DynamoDBRepositoryConfig)
         # The low-level client, not the resource: it is thread-safe, and
