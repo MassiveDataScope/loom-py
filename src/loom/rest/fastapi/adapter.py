@@ -7,7 +7,7 @@ import logging
 import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import msgspec
 import prometheus_client
@@ -82,14 +82,9 @@ from loom.rest.model import RestInterface
 
 _logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    # Annotations only: the AI pillar and the ClickHouse extra are imported at
-    # run time solely by the branch that needs them.
-    pass
-
 
 # Written as data, never imported here: an application without an 'ai:'
-# section must not gain a single AI import (FR-050).  The reference resolves
+# section must not gain a single AI import.  The reference resolves
 # inside 'describe_app', and only when a description is asked for.
 _AGENTS_SECTION = "agents"
 _AGENTS_CONTRIBUTOR = "loom.ai.describe:describe_agents"
@@ -483,7 +478,7 @@ def _build_introspection(app_cfg: _AppConfig, ai: AiWiring) -> AppIntrospection:
 
     The AI contribution is a *string* reference resolved only when the
     description is asked for, so an application without an ``ai:`` section
-    never imports the pillar (FR-050).
+    never imports the pillar.
     """
     contributors: tuple[ContributorRef, ...] = ()
     if ai.config is not None:
