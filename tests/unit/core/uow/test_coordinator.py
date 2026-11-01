@@ -1,19 +1,25 @@
-"""Ordered commits: enlistment, commit order, outcomes, teardown and logging.
+"""Ordered commits: enlistment, commit order, outcomes, interruptions and logging.
 
-The fault matrix lives in ``test_coordinator_faults.py``; these tests pin
-the rules it relies on, one at a time.
+The generated fault matrix lives in ``test_coordinator_faults.py``; these
+tests pin its rules one at a time, and some of its cases by hand.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
+from unittest.mock import MagicMock
 
+import anyio
 import pytest
 
 from loom.core.persistence.stores import StoreKey
+from loom.core.repository.mongo.uow import MongoUnitOfWork
+from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     UNKNOWN_PHYSICAL,
     Committed,
@@ -21,6 +27,7 @@ from loom.core.uow.coordinator import (
     InvocationOutcome,
     NonTransactional,
     OrderedCommits,
+    PhasedUnitOfWork,
     PhysicalStore,
     RolledBack,
     StoreOutcome,
@@ -32,6 +39,7 @@ from ._coordinator_fakes import (
     Effect,
     Factory,
     Fault,
+    Kind,
     Ledger,
     NonTransactionalStore,
     PhasedStore,
@@ -41,8 +49,10 @@ from ._coordinator_fakes import (
 
 S0, S1, S2, S3 = (StoreKey(f"s{index}") for index in range(4))
 
+AnyStore = PhasedStore | ThirdPartyStore
 
-def _coordinator(*stores: PhasedStore | ThirdPartyStore) -> OrderedCommits:
+
+def _coordinator(*stores: AnyStore) -> OrderedCommits:
     return OrderedCommits({store.key: Factory(store) for store in stores})
 
 
@@ -55,13 +65,37 @@ def _calls(ledger: Ledger, call: str) -> list[StoreKey]:
     return [key for key, made in ledger.calls if made == call]
 
 
+def _ends(ledger: Ledger) -> list[StoreKey]:
+    return [key for key, _ in ledger.terminal_calls()]
+
+
+class _Interrupt(BaseException):
+    """An interruption that is not an ``Exception`` and that asyncio does not special-case."""
+
+
+class _InterruptedCommit(PhasedStore):
+    async def commit(self) -> None:
+        self._record("commit")
+        raise _Interrupt
+
+
+class _CloseFails(PhasedStore):
+    async def close(self) -> None:
+        await super().close()
+        raise Boom("close failed")
+
+
+class _FlushOnly(ThirdPartyStore):
+    async def flush(self) -> None:
+        """A phase without the rest of the phased contract."""
+
+
 class TestEnlist:
     async def test_begins_the_unit_of_work_and_registers_the_participant(self) -> None:
         ledger = Ledger()
-        store = PhasedStore(S0, ledger)
-        scope = Scope()
+        coordinator, scope = _coordinator(PhasedStore(S0, ledger)), Scope()
 
-        participant = await _coordinator(store).enlist(scope, S0)
+        participant = await coordinator.enlist(scope, S0)
 
         assert scope.participants == {S0: participant}
         assert ledger.calls == [(S0, "begin")]
@@ -70,8 +104,7 @@ class TestEnlist:
         self,
     ) -> None:
         ledger = Ledger()
-        coordinator = _coordinator(PhasedStore(S0, ledger))
-        scope = Scope()
+        coordinator, scope = _coordinator(PhasedStore(S0, ledger)), Scope()
         first = await coordinator.enlist(scope, S0)
 
         second = await coordinator.enlist(scope, S0)
@@ -79,14 +112,22 @@ class TestEnlist:
         assert second is first
         assert ledger.calls == [(S0, "begin")]
 
-    async def test_a_participant_whose_begin_fails_is_not_registered(self) -> None:
-        store = PhasedStore(S0, Ledger(), Fault("begin", Effect.RAISE))
-        coordinator, scope = _coordinator(store), Scope()
+    @pytest.mark.parametrize(
+        "store_type", [PhasedStore, _CloseFails], ids=["closes", "close-fails"]
+    )
+    async def test_a_failed_phased_begin_is_closed_and_not_registered(
+        self, store_type: type[PhasedStore]
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(store_type(S0, ledger, Fault("begin", Effect.RAISE)))
+        scope = Scope()
 
-        with pytest.raises(Boom):
+        with pytest.raises(Boom, match="begin failed"):
             await coordinator.enlist(scope, S0)
 
         assert scope.participants == {}
+        assert ledger.calls == [(S0, "begin"), (S0, "close")]
+        assert in_atomic_transaction() is False
 
     async def test_a_store_without_a_factory_is_a_key_error(self) -> None:
         coordinator, scope = OrderedCommits({}), Scope()
@@ -94,29 +135,45 @@ class TestEnlist:
         with pytest.raises(KeyError):
             await coordinator.enlist(scope, S0)
 
+    async def test_a_partly_phased_unit_of_work_is_rejected(self) -> None:
+        coordinator, scope = _coordinator(_FlushOnly(S0, Ledger())), Scope()
+
+        with pytest.raises(TypeError, match="defines flush, but a phased unit"):
+            await coordinator.enlist(scope, S0)
+
     @pytest.mark.parametrize(
-        ("store_type", "physical"),
+        ("store_type", "phased", "physical"),
         [
-            (PhasedStore, PhysicalStore(backend="fake", target="memory://s0")),
-            (ThirdPartyStore, UNKNOWN_PHYSICAL),
+            (PhasedStore, True, PhysicalStore(backend="fake", target="memory://s0")),
+            (ThirdPartyStore, False, UNKNOWN_PHYSICAL),
         ],
         ids=["phased-declares-it", "third-party-unknown"],
     )
-    async def test_exposes_the_physical_identity_of_the_store(
-        self, store_type: type[PhasedStore | ThirdPartyStore], physical: PhysicalStore
+    async def test_exposes_whether_it_is_phased_and_its_physical_identity(
+        self, store_type: type[AnyStore], phased: bool, physical: PhysicalStore
     ) -> None:
-        store = store_type(S0, Ledger())
+        coordinator = _coordinator(store_type(S0, Ledger()))
 
-        participant = await _coordinator(store).enlist(Scope(), S0)
+        participant = await coordinator.enlist(Scope(), S0)
 
-        assert participant.physical == physical
+        assert (participant.phased, participant.physical) == (phased, physical)
+
+
+@pytest.mark.xfail(strict=True, reason="T047b / PR 2: loom's own units of work become phased")
+@pytest.mark.parametrize(
+    "uow",
+    [SQLAlchemyUnitOfWork(MagicMock()), MongoUnitOfWork(MagicMock())],
+    ids=["sqlalchemy", "mongo"],
+)
+def test_loom_transactional_units_of_work_are_phased(uow: UnitOfWork) -> None:
+    assert isinstance(uow, PhasedUnitOfWork)
 
 
 class TestCommitOrder:
     async def test_writers_commit_by_first_write_then_the_rest_by_enlistment(self) -> None:
         ledger = Ledger()
-        stores = [PhasedStore(key, ledger) for key in (S0, S1, S2, S3)]
-        coordinator, scope = _coordinator(*stores), Scope()
+        coordinator = _coordinator(*(PhasedStore(key, ledger) for key in (S0, S1, S2, S3)))
+        scope = Scope()
         await _enlist_all(coordinator, scope, S0, S1, S2, S3)
         scope.participants[S2].record_write(0)
         scope.participants[S0].record_write(1)
@@ -137,7 +194,8 @@ class TestCommitOrder:
 
     async def test_flush_runs_on_every_phased_store_before_any_commit(self) -> None:
         ledger = Ledger()
-        coordinator, scope = _coordinator(PhasedStore(S0, ledger), PhasedStore(S1, ledger)), Scope()
+        coordinator = _coordinator(PhasedStore(S0, ledger), PhasedStore(S1, ledger))
+        scope = Scope()
         await _enlist_all(coordinator, scope, S0, S1)
 
         await coordinator.finish(scope, None)
@@ -149,12 +207,10 @@ class TestCommitOrder:
         self,
     ) -> None:
         ledger = Ledger()
-        third_a, phased, third_b = (
-            ThirdPartyStore(S0, ledger),
-            PhasedStore(S1, ledger),
-            ThirdPartyStore(S2, ledger),
+        coordinator = _coordinator(
+            ThirdPartyStore(S0, ledger), PhasedStore(S1, ledger), ThirdPartyStore(S2, ledger)
         )
-        coordinator, scope = _coordinator(third_a, phased, third_b), Scope()
+        scope = Scope()
         await _enlist_all(coordinator, scope, S0, S1, S2)
 
         outcome = await coordinator.finish(scope, None)
@@ -169,8 +225,99 @@ class TestCommitOrder:
         outcome = await OrderedCommits({}).finish(scope, None)
 
         assert outcome == InvocationOutcome(stores=())
-        assert outcome.succeeded is True
-        assert scope.closed is True
+        assert (scope.outcome, scope.closed) == (outcome, True)
+
+
+@dataclass(frozen=True)
+class _KeyCase:
+    """A case of the matrix with its expectations written out by hand."""
+
+    kinds: tuple[Kind, ...]
+    writes: tuple[int, ...]
+    fault: tuple[int, Fault] | None
+    outcome: list[tuple[str, StoreKey, object]]
+    persisted: dict[StoreKey, list[str]]
+
+
+_KEY_CASES = {
+    "second-commit-fails-after-a-non-transactional-write": _KeyCase(
+        (Kind.PHASED, Kind.NON_TRANSACTIONAL, Kind.THIRD_PARTY),
+        writes=(1, 0, 2),
+        fault=(0, Fault("commit", Effect.RAISE)),
+        outcome=[
+            ("NonTransactional", S1, True),
+            ("RolledBack", S0, Boom),
+            ("RolledBack", S2, Boom),
+        ],
+        persisted={S0: [], S1: ["row-s1"], S2: []},
+    ),
+    "lost-ack-on-the-second-commit": _KeyCase(
+        (Kind.PHASED, Kind.PHASED),
+        writes=(0, 1),
+        fault=(1, Fault("commit", Effect.UNCERTAIN)),
+        outcome=[("Committed", S0, None), ("Uncertain", S1, ConnectionError)],
+        persisted={S0: ["row-s0"], S1: ["row-s1"]},
+    ),
+    "flush-fails-before-a-third-party-commit": _KeyCase(
+        (Kind.THIRD_PARTY, Kind.PHASED),
+        writes=(0, 1),
+        fault=(1, Fault("flush", Effect.RAISE)),
+        outcome=[("RolledBack", S1, Boom), ("RolledBack", S0, Boom)],
+        persisted={S0: [], S1: []},
+    ),
+    "non-transactional-commit-fails-without-a-write": _KeyCase(
+        (Kind.NON_TRANSACTIONAL,),
+        writes=(),
+        fault=(0, Fault("commit", Effect.RAISE)),
+        outcome=[("RolledBack", S0, Boom)],
+        persisted={S0: []},
+    ),
+    "non-transactional-commit-fails-after-a-write": _KeyCase(
+        (Kind.NON_TRANSACTIONAL,),
+        writes=(0,),
+        fault=(0, Fault("commit", Effect.RAISE)),
+        outcome=[("Uncertain", S0, Boom)],
+        persisted={S0: ["row-s0"]},
+    ),
+    "write-order-differs-from-lifo": _KeyCase(
+        (Kind.PHASED, Kind.THIRD_PARTY, Kind.PHASED),
+        writes=(0, 2, 1),
+        fault=None,
+        outcome=[("Committed", S0, None), ("Committed", S2, None), ("Committed", S1, None)],
+        persisted={S0: ["row-s0"], S1: ["row-s1"], S2: ["row-s2"]},
+    ),
+}
+
+
+def _shape(outcome: StoreOutcome) -> tuple[str, StoreKey, object]:
+    match outcome:
+        case Committed(key):
+            return ("Committed", key, None)
+        case RolledBack(key, cause) | Uncertain(key, cause):
+            return (type(outcome).__name__, key, type(cause))
+        case NonTransactional(key, wrote):
+            return ("NonTransactional", key, wrote)
+
+
+@pytest.mark.parametrize("case", _KEY_CASES.values(), ids=_KEY_CASES.keys())
+async def test_key_cases_written_out_by_hand(case: _KeyCase) -> None:
+    ledger = Ledger()
+    target, fault = case.fault if case.fault is not None else (None, None)
+    keys = [StoreKey(f"s{index}") for index in range(len(case.kinds))]
+    stores = [
+        kind.store(key, ledger, fault if index == target else None)
+        for index, (kind, key) in enumerate(zip(case.kinds, keys, strict=True))
+    ]
+    coordinator, scope = OrderedCommits({s.key: Factory(s) for s in stores}), Scope()
+    await _enlist_all(coordinator, scope, *keys)
+    for order, index in enumerate(case.writes):
+        stores[index].write(f"row-{keys[index]}")
+        scope.participants[keys[index]].record_write(order)
+
+    outcome = await coordinator.finish(scope, None)
+
+    assert [_shape(store) for store in outcome.stores] == case.outcome
+    assert {key: ledger.persisted[key] for key in keys} == case.persisted
 
 
 class TestOutcome:
@@ -197,8 +344,7 @@ class TestOutcome:
         assert CommitUncertain(cause).cause is cause
 
     async def test_a_non_transactional_store_that_never_wrote_says_so(self) -> None:
-        store = NonTransactionalStore(S0, Ledger())
-        coordinator, scope = _coordinator(store), Scope()
+        coordinator, scope = _coordinator(NonTransactionalStore(S0, Ledger())), Scope()
         await coordinator.enlist(scope, S0)
 
         outcome = await coordinator.finish(scope, None)
@@ -218,7 +364,7 @@ class TestTeardownFailures:
     )
     async def test_a_failed_teardown_step_is_logged_and_the_others_still_end(
         self,
-        store_type: type[PhasedStore | ThirdPartyStore],
+        store_type: type[AnyStore],
         phase: str,
         event: str,
         caplog: pytest.LogCaptureFixture,
@@ -236,29 +382,54 @@ class TestTeardownFailures:
         assert {store.key: store for store in outcome.stores} == {
             key: RolledBack(key, error) for key in (S0, S1, S2)
         }
-        assert [key for key, _ in ledger.terminal_calls()] == [S2, S1, S0]
+        assert _ends(ledger) == [S2, S1, S0]
         assert event in caplog.text
 
 
 @dataclass
-class _Teardown:
-    """State observed once a cancelled teardown has finished."""
+class _Seen:
+    """State observed in the invocation's own task once ``finish`` has returned or raised."""
 
     closed: bool = False
     signal: bool = True
-    calls: list[tuple[StoreKey, str]] = field(default_factory=list)
+    outcome: InvocationOutcome | None = None
 
 
-class TestCancellationDuringTeardown:
+async def _cancel_when_blocked(ledger: Ledger, cancel: Callable[[], object]) -> None:
+    """Cancel once a store blocks, keep cancelling for a few turns, then open the gate."""
+    await ledger.blocked.wait()
+    for _ in range(3):
+        cancel()
+        await asyncio.sleep(0)
+    ledger.gate.set()
+
+
+class TestInterruptions:
+    async def test_a_cancelled_phased_rollback_still_runs_to_completion(self) -> None:
+        ledger = Ledger()
+
+        async def _invocation() -> None:
+            faulty = PhasedStore(S1, ledger, Fault("rollback", Effect.CANCEL))
+            coordinator, scope = _coordinator(PhasedStore(S0, ledger), faulty), Scope()
+            await _enlist_all(coordinator, scope, S0, S1)
+            await coordinator.finish(scope, Boom("business"))
+
+        task = asyncio.create_task(_invocation())
+        await _cancel_when_blocked(ledger, task.cancel)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert ledger.calls_of(S1)[-3:] == ["rollback", "unblocked", "close"]
+
     @pytest.mark.parametrize(
         ("store_type", "phase"),
         [(PhasedStore, "rollback"), (ThirdPartyStore, "rollback"), (PhasedStore, "close")],
         ids=["phased-rollback", "third-party-rollback", "phased-close"],
     )
-    async def test_every_store_still_ends_and_the_cancellation_is_raised_after(
-        self, store_type: type[PhasedStore | ThirdPartyStore], phase: str
+    async def test_a_cancelled_teardown_ends_every_store_then_raises(
+        self, store_type: type[AnyStore], phase: str
     ) -> None:
-        ledger, seen = Ledger(), _Teardown()
+        ledger, seen = Ledger(), _Seen()
 
         async def _invocation() -> None:
             faulty = store_type(S1, ledger, Fault(phase, Effect.CANCEL))
@@ -271,20 +442,18 @@ class TestCancellationDuringTeardown:
                 seen.closed, seen.signal = scope.closed, in_atomic_transaction()
 
         task = asyncio.create_task(_invocation())
-        await ledger.blocked.wait()
-        task.cancel()
+        await _cancel_when_blocked(ledger, task.cancel)
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        assert [key for key, _ in ledger.terminal_calls()] == [S2, S1, S0]
+        assert _ends(ledger) == [S2, S1, S0]
         assert _calls(ledger, "rollback") == [S2, S1, S0]
         assert (seen.closed, seen.signal) == (True, False)
 
     async def test_a_cancellation_while_closing_stops_a_third_party_store_from_committing(
         self,
     ) -> None:
-        ledger, seen = Ledger(), _Teardown()
-        outcomes: list[InvocationOutcome] = []
+        ledger, seen = Ledger(), _Seen()
 
         async def _invocation() -> None:
             third = ThirdPartyStore(S0, ledger)
@@ -294,19 +463,68 @@ class TestCancellationDuringTeardown:
             third.write("row-s0")
             phased.write("row-s1")
             try:
-                outcomes.append(await coordinator.finish(scope, None))
+                await coordinator.finish(scope, None)
             finally:
-                seen.closed, seen.signal = scope.closed, in_atomic_transaction()
+                seen.outcome, seen.signal = scope.outcome, in_atomic_transaction()
 
         task = asyncio.create_task(_invocation())
-        await ledger.blocked.wait()
-        task.cancel()
+        await _cancel_when_blocked(ledger, task.cancel)
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        assert outcomes == []
+        assert seen.outcome is not None
+        assert [_shape(store) for store in seen.outcome.stores] == [
+            ("Committed", S1, None),
+            ("RolledBack", S0, asyncio.CancelledError),
+        ]
         assert ledger.terminal_calls() == [(S1, "close"), (S0, "exit-rollback")]
         assert dict(ledger.persisted) == {S1: ["row-s1"]}
+        assert seen.signal is False
+
+    async def test_an_interruption_that_is_not_an_exception_ends_every_store_then_propagates(
+        self,
+    ) -> None:
+        ledger = Ledger()
+        coordinator = _coordinator(
+            PhasedStore(S0, ledger), _InterruptedCommit(S1, ledger), ThirdPartyStore(S2, ledger)
+        )
+        scope = Scope()
+        await _enlist_all(coordinator, scope, S0, S1, S2)
+
+        with pytest.raises(_Interrupt):
+            await coordinator.finish(scope, None)
+
+        assert scope.outcome is not None
+        assert [_shape(store) for store in scope.outcome.stores] == [
+            ("Committed", S0, None),
+            ("Uncertain", S1, _Interrupt),
+            ("RolledBack", S2, _Interrupt),
+        ]
+        assert _ends(ledger) == [S2, S1, S0]
+        assert in_atomic_transaction() is False
+
+    async def test_level_cancellation_still_rolls_back_and_closes_every_store_once(self) -> None:
+        ledger, seen = Ledger(), _Seen()
+        coordinator = _coordinator(
+            PhasedStore(S0, ledger),
+            PhasedStore(S1, ledger, Fault("rollback", Effect.CANCEL)),
+            ThirdPartyStore(S2, ledger),
+        )
+        scope, cancel_scope = Scope(), anyio.CancelScope()
+        releaser = asyncio.create_task(_cancel_when_blocked(ledger, cancel_scope.cancel))
+
+        with cancel_scope:
+            await _enlist_all(coordinator, scope, S0, S1, S2)
+            try:
+                await coordinator.finish(scope, Boom("business"))
+            finally:
+                seen.closed, seen.signal = scope.closed, in_atomic_transaction()
+        await releaser
+
+        assert cancel_scope.cancelled_caught is True
+        assert _calls(ledger, "unblocked") == [S1]
+        assert _calls(ledger, "rollback") == [S2, S1, S0]
+        assert _ends(ledger) == [S2, S1, S0]
         assert (seen.closed, seen.signal) == (True, False)
 
 

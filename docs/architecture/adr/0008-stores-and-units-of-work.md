@@ -98,6 +98,10 @@ Callers ask the capability, never the backend's name.
   2. commit in first-write order;
   3. stop at the first failure and roll back the participants not yet
      committed.
+- Participants close in reverse enlistment order. A third-party unit of work
+  that only has `__aenter__`/`__aexit__` commits and closes in one call, so it
+  commits at that closing position, after the stores loom drives phase by
+  phase, never in first-write order.
 - It is named for what it is, ordered commits. Nothing in loom calls it a
   transaction across stores, and no API promises atomicity across stores.
 - The result is a typed outcome per store: committed, rolled back, uncertain

@@ -19,7 +19,12 @@ from typing import ClassVar
 from loom.core.persistence.stores import StoreKey
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import CommitUncertain, Participant, PhysicalStore
+from loom.core.uow.coordinator import (
+    CommitUncertain,
+    InvocationOutcome,
+    Participant,
+    PhysicalStore,
+)
 
 
 class Boom(Exception):
@@ -58,6 +63,7 @@ class Ledger:
     calls: list[tuple[StoreKey, str]] = field(default_factory=list)
     persisted: defaultdict[StoreKey, list[str]] = field(default_factory=lambda: defaultdict(list))
     blocked: asyncio.Event = field(default_factory=asyncio.Event)
+    gate: asyncio.Event = field(default_factory=asyncio.Event)
 
     def calls_of(self, key: StoreKey) -> list[str]:
         return [call for store, call in self.calls if store == key]
@@ -109,8 +115,10 @@ class _RecordingStore:
             await self._block()
 
     async def _block(self) -> None:
+        """Wait at the gate; a cancellation interrupts the wait unless the step is drained."""
         self.ledger.blocked.set()
-        await asyncio.Event().wait()
+        await self.ledger.gate.wait()
+        self._record("unblocked")
 
 
 class PhasedStore(_RecordingStore):
@@ -122,9 +130,9 @@ class PhasedStore(_RecordingStore):
         self._token: Token[bool] | None = None
 
     async def begin(self) -> None:
-        await self._run("begin")
         if self.transactional:
             self._token = open_atomic_transaction()
+        await self._run("begin")
 
     async def flush(self) -> None:
         await self._run("flush")
@@ -137,10 +145,12 @@ class PhasedStore(_RecordingStore):
         await self._run("rollback")
 
     async def close(self) -> None:
-        if self._token is not None:
-            close_atomic_transaction(self._token)
-            self._token = None
-        await self._run("close")
+        try:
+            await self._run("close")
+        finally:
+            if self._token is not None:
+                close_atomic_transaction(self._token)
+                self._token = None
 
     async def __aenter__(self) -> PhasedStore:
         raise AssertionError("the coordinator drives a phased unit of work phase by phase")
@@ -239,3 +249,4 @@ class Scope:
 
     participants: dict[StoreKey, Participant] = field(default_factory=dict)
     closed: bool = False
+    outcome: InvocationOutcome | None = None
