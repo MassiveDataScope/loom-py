@@ -82,11 +82,6 @@ class _Store:
     schema: SchemaConfig
     session_manager: SessionManager
 
-    @property
-    def metadata(self) -> MetaData:
-        """The metadata this store's models compile into, and its checks read."""
-        return self.session_manager.metadata
-
 
 class SQLAlchemyBackend:
     """Backend for ``stores.<name>.backend: sqlalchemy``.
@@ -139,34 +134,19 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
-        # Before the engine: an invalid persistence.cursors fails with none built.
-        register: Callable[[SessionManager], Callable[[LoomContainer], None]]
-        prepare: Callable[[Sequence[type[BaseModel]]], None]
-        check: Callable[[_Store], Awaitable[None]]
-        metadata: MetaData | None
-        if runtime.connection_only:
-            # metadata=None: the manager serves the shared metadata, where the
-            # caller's own compile_all() put its models.
-            metadata = None
-            prepare = no_model_preparation
-            register = _session_manager_module
-            check = _probe_connection
-        else:
-            metadata = MetaData(
+        # metadata=None: the manager serves the shared metadata, where the
+        # caller's own compile_all() put its models.
+        metadata = (
+            None
+            if runtime.connection_only
+            else MetaData(
                 naming_convention=configured_naming_convention(
                     db_cfg.schema.naming_convention, path=spec.path
                 )
             )
-            check = _run_startup_checks
-            prepare = functools.partial(
-                _prepare_models, path=spec.path, metadata=metadata, settings=settings
-            )
-            register = functools.partial(
-                _repositories_module,
-                models=models,
-                cursor_codec=CursorCodec.from_context(ctx),
-                elevation=settings is not None,
-            )
+        )
+        # Before the engine: an invalid persistence.cursors fails with none built.
+        cursor_codec = None if runtime.connection_only else CursorCodec.from_context(ctx)
         session_manager = build_session_manager(
             db_cfg,
             runtime.profile,
@@ -177,36 +157,36 @@ class SQLAlchemyBackend:
         )
         if settings is not None:
             install_pool_reset(session_manager.engine)
+        module: Callable[[LoomContainer], None]
+        prepare: Callable[[Sequence[type[BaseModel]]], None]
+        check: Callable[[_Store], Awaitable[None]]
+        if cursor_codec is None:  # connection_only: no repository is served
+            module = functools.partial(_register_session_manager, session_manager)
+            prepare = no_model_preparation
+            check = _probe_connection
+        else:
+            module = _with_elevation_sink(
+                build_sqlalchemy_repository_registration_module(
+                    session_manager, models, cursor_codec=cursor_codec
+                ),
+                enabled=settings is not None,
+            )
+            prepare = functools.partial(
+                _prepare_models,
+                path=spec.path,
+                metadata=session_manager.metadata,
+                settings=settings,
+            )
+            check = _run_startup_checks
         store = _Store(path=spec.path, schema=db_cfg.schema, session_manager=session_manager)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
-            repo_registration_module=register(session_manager),
+            repo_registration_module=module,
             lifespan_init=lambda: _lifespan(session_manager),
             prepare_models=prepare,
             startup_checks=functools.partial(check, store),
             readiness=lambda: _readiness(session_manager),
         )
-
-
-def _session_manager_module(session_manager: SessionManager) -> Callable[[LoomContainer], None]:
-    """The module of a backend serving no repository: the session manager only."""
-    return functools.partial(_register_session_manager, session_manager)
-
-
-def _repositories_module(
-    session_manager: SessionManager,
-    *,
-    models: Sequence[type[BaseModel]],
-    cursor_codec: CursorCodec,
-    elevation: bool,
-) -> Callable[[LoomContainer], None]:
-    """The module registering a repository per model, and the elevation sink when scoped."""
-    return _with_elevation_sink(
-        build_sqlalchemy_repository_registration_module(
-            session_manager, models, cursor_codec=cursor_codec
-        ),
-        enabled=elevation,
-    )
 
 
 def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
@@ -366,7 +346,8 @@ async def _run_startup_checks(store: _Store) -> None:
     database itself, so that connection stays. A failed check releases a
     queued pool too: the connection must not sit there after the error.
     """
-    session_manager, metadata, config = store.session_manager, store.metadata, store.schema
+    session_manager, config = store.session_manager, store.schema
+    metadata = session_manager.metadata
     scoped = scoped_tables(metadata)
     dialect = session_manager.engine.dialect.name
     unprotected = startup_checks(
@@ -414,7 +395,7 @@ async def _probe_connection(store: _Store) -> None:
     postgres = session_manager.engine.dialect.name == POSTGRES_DIALECT
     guarded = postgres and store.schema.mode != EXTERNAL
     if guarded:
-        _refuse_unprotected_scoped(scoped_tables(store.metadata), store.path)
+        _refuse_unprotected_scoped(scoped_tables(store.session_manager.metadata), store.path)
     try:
         async with session_manager.engine.connect() as connection:
             await connection.execute(_PROBE)
@@ -450,7 +431,7 @@ async def _check_external(
     store: _Store,
     scoped: Mapping[tuple[str | None, str], ScopedTable],
 ) -> None:
-    names = [table.name for table in store.metadata.sorted_tables]
+    names = [table.name for table in store.session_manager.metadata.sorted_tables]
     present = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
     missing = sorted(name for name in names if name not in present)
     if missing:
