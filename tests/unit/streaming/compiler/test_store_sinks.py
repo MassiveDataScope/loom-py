@@ -51,22 +51,28 @@ def test_a_clickhouse_sink_takes_its_connection_from_the_store_it_names() -> Non
 def test_a_clickhouse_sink_refuses_a_sqlalchemy_store() -> None:
     ctx = _context({"warehouse": _SQLITE_STORE}, {"store": "warehouse"})
 
+    node = _node(Backend.CLICKHOUSE)
+    catalog = load_catalog(ctx)
     with pytest.raises(ConfigError, match=r"stores\.warehouse\.backend is 'sqlalchemy'"):
-        resolve_clickhouse_table_config(_node(Backend.CLICKHOUSE), ctx, load_catalog(ctx))
+        resolve_clickhouse_table_config(node, ctx, catalog)
 
 
 def test_a_sqlalchemy_sink_refuses_a_clickhouse_store() -> None:
     ctx = _context({"events": _CLICKHOUSE_STORE}, {"store": "events"})
 
+    node = _node(Backend.SQLALCHEMY)
+    catalog = load_catalog(ctx)
     with pytest.raises(ConfigError, match=r"stores\.events\.backend is 'clickhouse'"):
-        resolve_sqlalchemy_table_config(_node(Backend.SQLALCHEMY), ctx, load_catalog(ctx))
+        resolve_sqlalchemy_table_config(node, ctx, catalog)
 
 
 def test_a_clickhouse_sink_names_the_renamed_database_key() -> None:
     ctx = _context({"events": _CLICKHOUSE_STORE}, {"database": "events"})
 
+    node = _node(Backend.CLICKHOUSE)
+    catalog = load_catalog(ctx)
     with pytest.raises(ValueError, match="'database' was renamed to 'store'"):
-        resolve_clickhouse_table_config(_node(Backend.CLICKHOUSE), ctx, load_catalog(ctx))
+        resolve_clickhouse_table_config(node, ctx, catalog)
 
 
 def test_a_flow_with_a_clickhouse_and_a_sqlalchemy_sink_compiles_from_a_file(
@@ -182,8 +188,9 @@ def test_a_sink_naming_a_store_it_cannot_use_is_a_compile_issue(
         process=Process(cast(Any, _node(Backend.CLICKHOUSE))),
     )
 
+    config = ConfigContext.from_dict(document)
     with pytest.raises(CompilationError) as caught:
-        compile_flow(flow, config=ConfigContext.from_dict(document))
+        compile_flow(flow, config=config)
 
     (issue,) = caught.value.issues
     assert issue.code is StreamingErrorCode.SINK_CONFIG_INVALID

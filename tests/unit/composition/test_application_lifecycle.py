@@ -9,6 +9,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import pytest
 
 from loom.composition import Application, Resource, ResourceKind, closing
+from loom.composition.errors import ApplicationAlreadyOpenError, CompositionErrorCode
 from tests.helpers.composition import application_of
 
 
@@ -107,9 +108,10 @@ async def test_opening_an_open_application_fails_without_touching_it() -> None:
     application = _application(journal)
 
     async with application.running():
-        with pytest.raises(RuntimeError, match="already open"):
+        with pytest.raises(ApplicationAlreadyOpenError, match="already open") as raised:
             async with application.running():
                 pass  # pragma: no cover - never entered
+        assert raised.value.issue.code is CompositionErrorCode.APPLICATION_ALREADY_OPEN
         assert journal.events == OPEN
         assert application.is_open
 

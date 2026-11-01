@@ -176,12 +176,13 @@ def _fold_config_interfaces(
             models.append(model)
             known_models.add(model)
     # ``replace`` copies fields added later.
-    return dataclasses.replace(
+    updated: DiscoveryResult = dataclasses.replace(
         discovered,
         models=tuple(models),
         use_cases=discovered.use_cases + tuple(new_use_cases),
         interfaces=discovered.interfaces + config_interfaces,
     )
+    return updated
 
 
 def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
@@ -237,10 +238,11 @@ def _gate_autocrud_capabilities(
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
     # ``replace`` copies fields added later.
-    return dataclasses.replace(
+    updated: DiscoveryResult = dataclasses.replace(
         discovered,
         use_cases=tuple(uc for uc in discovered.use_cases if uc not in dropped),
     )
+    return updated
 
 
 def _gate_interface(

@@ -101,8 +101,9 @@ def test_the_worker_builds_its_catalog_once_and_binds_that_one(
 def test_a_connection_only_default_store_fails_the_composition() -> None:
     source = _worker_source({DEFAULT_STORE: {"backend": "clickhouse", "url": "clickhouse://ch"}})
 
+    adapter = CeleryAdapter(jobs=[_PingJob])
     with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-        compose_application(source, CeleryAdapter(jobs=[_PingJob]))
+        compose_application(source, adapter)
 
 
 def test_a_sqlalchemy_store_resolves_its_section_once_per_composition(

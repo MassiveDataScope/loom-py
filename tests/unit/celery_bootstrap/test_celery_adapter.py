@@ -99,8 +99,9 @@ class TestBackendRule:
         recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
 
         assert recipe.backend.name == "sqlalchemy"
+        adapter = CeleryAdapter(jobs=[_PingJob])
         with pytest.raises(ConfigError, match="url"):
-            compose(source, CeleryAdapter(jobs=[_PingJob]))
+            compose(source, adapter)
 
 
 class TestRecipe:
@@ -131,13 +132,15 @@ class TestRecipe:
         adapter = CeleryAdapter(jobs=[_PingJob])
         adapter.recipe(_source(tmp_path, {}))
 
+        source = _source(tmp_path, {})
         with pytest.raises(RuntimeError, match="one adapter instance composes one application"):
-            adapter.recipe(_source(tmp_path, {}))
+            adapter.recipe(source)
 
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
+        source = _source(tmp_path, {"stores": {"default": {"URL": "x"}}})
         with pytest.raises(ConfigError):
-            adapter.recipe(_source(tmp_path, {"stores": {"default": {"URL": "x"}}}))
+            adapter.recipe(source)
 
         assert adapter.recipe(_source(tmp_path, {})).profile is WORKER_PROFILE
 
@@ -156,8 +159,9 @@ class TestBind:
         adapter = CeleryAdapter(jobs=[_PingJob])
         application = _application(tmp_path, {}, adapter)
 
+        unbound = CeleryAdapter(jobs=[_PingJob])
         with pytest.raises(RuntimeError, match="recipe"):
-            CeleryAdapter(jobs=[_PingJob]).bind(application)
+            unbound.bind(application)
 
     def test_an_ai_section_is_ignored(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])

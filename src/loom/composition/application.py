@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from loom.composition.errors import ApplicationAlreadyOpenError
 from loom.composition.resources import Resource, ResourceKind, in_opening_order
 
 if TYPE_CHECKING:
@@ -112,14 +113,14 @@ class Application:
                 with ``check=False``.
 
         Raises:
-            RuntimeError: When the application is already open.
+            ApplicationAlreadyOpenError: When the application is already open.
             ExceptionGroup: When several resources fail to close. A single
                 failure is raised as itself, after every other resource
                 closed. A failure to open is raised as itself, with the
                 failures to close what had opened as notes.
         """
         if self._open:
-            raise RuntimeError("Application is already open; close it before opening it again")
+            raise ApplicationAlreadyOpenError
         self._open = True
         failures: list[BaseException] = []
         opened = False
@@ -133,7 +134,9 @@ class Application:
                     stack.push_async_exit(_recorded(manager.__aexit__, resource, failures))
                 opened = True
                 yield self
-        except BaseException as error:
+        # Every BaseException (a trio/anyio cancellation included) must close what
+        # opened; the handler always re-raises.
+        except BaseException as error:  # NOSONAR S5754 - re-raised below
             if not opened:
                 for failure in failures:
                     error.add_note(f"also failed to close: {failure!r}")
@@ -156,7 +159,8 @@ def _recorded(exit_: _Exit, resource: Resource, failures: list[BaseException]) -
     ) -> bool:
         try:
             await exit_(exc_type, exc, traceback)
-        except BaseException as failure:
+        # Recorded, then raised with the others once every resource has closed.
+        except BaseException as failure:  # NOSONAR S5754 - re-raised by running()
             failure.add_note(f"while closing {resource.label}")
             failures.append(failure)
         return False

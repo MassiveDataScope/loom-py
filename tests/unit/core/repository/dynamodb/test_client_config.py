@@ -87,8 +87,9 @@ def test_an_invalid_key_is_refused_naming_it(section: dict[str, Any], named: str
 def test_a_missing_section_still_names_the_section() -> None:
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb"}}})
 
+    backend = DynamoDBBackend()
     with pytest.raises(ConfigError, match="stores.default"):
-        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+        build_backend(backend, ctx, (), SERVER_PROFILE)
 
 
 async def test_a_silent_service_fails_within_the_declared_bounds(

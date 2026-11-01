@@ -108,10 +108,9 @@ def _config(tmp_path: Path, *, discover: bool) -> str:
 
 
 def test_a_job_loading_an_undeclared_model_fails_the_start_up(tmp_path: Path) -> None:
+    config = _config(tmp_path, discover=False)
     with pytest.raises(UnservedModelError) as caught:
-        bootstrap_worker(
-            _config(tmp_path, discover=False), jobs=[_LoadOrderJob], environment="test"
-        )
+        bootstrap_worker(config, jobs=[_LoadOrderJob], environment="test")
 
     issue = caught.value.issue
     assert issue.code is UseCaseErrorCode.UNSERVED_MODEL
@@ -121,10 +120,9 @@ def test_a_job_loading_an_undeclared_model_fails_the_start_up(tmp_path: Path) ->
 
 
 def test_a_main_repository_over_an_undeclared_model_fails_the_start_up(tmp_path: Path) -> None:
+    config = _config(tmp_path, discover=False)
     with pytest.raises(UnservedModelError) as caught:
-        bootstrap_worker(
-            _config(tmp_path, discover=False), use_cases=[_CountOrders], environment="test"
-        )
+        bootstrap_worker(config, use_cases=[_CountOrders], environment="test")
 
     issue = caught.value.issue
     assert issue.code is UseCaseErrorCode.UNSERVED_MODEL

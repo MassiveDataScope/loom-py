@@ -60,8 +60,11 @@ def test_clickhouse_has_fixed_connection_only_capabilities() -> None:
 
 
 def test_capabilities_are_immutable() -> None:
+    capabilities = StoreCapabilities(
+        serves_models=True, transactional=True, pages_with_cursors=True
+    )
     with pytest.raises(FrozenInstanceError):
-        _ALL.transactional = False  # type: ignore[misc]
+        capabilities.transactional = False  # type: ignore[misc]
 
 
 def test_capabilities_take_keywords_only() -> None:
@@ -129,7 +132,7 @@ def test_plugin_capabilities_are_asked_lazily_once_per_store(
         "entry_points",
         lambda: _EntryPoints(_EntryPoint("custom", _CustomBackend)),
     )
-    _CustomBackend.calls = 0
+    monkeypatch.setattr(_CustomBackend, "calls", 0)
     ctx = ConfigContext.from_dict(
         {
             "stores": {

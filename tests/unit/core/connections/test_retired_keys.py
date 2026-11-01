@@ -42,8 +42,10 @@ def test_persistence_dynamodb(retired: str, value: Any, replacement: str) -> Non
     section = {"region": "eu-west-1", "table": "t", retired: value}
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "dynamodb", **section}}})
 
-    with pytest.raises(ConfigError, match=_names("stores.default", retired, replacement)):
-        build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
+    message = _names("stores.default", retired, replacement)
+    backend = DynamoDBBackend()
+    with pytest.raises(ConfigError, match=message):
+        build_backend(backend, ctx, (), SERVER_PROFILE)
 
 
 @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)
@@ -54,8 +56,10 @@ def test_persistence_mongo(retired: str, value: Any, replacement: str) -> None:
     section = {"url": "mongodb://h", "database": "app", retired: value}
     ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "mongo", **section}}})
 
-    with pytest.raises(ConfigError, match=_names("stores.default", retired, replacement)):
-        build_backend(MongoBackend(), ctx, (), SERVER_PROFILE)
+    message = _names("stores.default", retired, replacement)
+    backend = MongoBackend()
+    with pytest.raises(ConfigError, match=message):
+        build_backend(backend, ctx, (), SERVER_PROFILE)
 
 
 @pytest.mark.parametrize(
@@ -99,8 +103,10 @@ def test_a_streaming_sink_database(retired: str, value: Any, replacement: str) -
     store = {"backend": "clickhouse", "url": "clickhouse://h/db", retired: value}
     ctx = ConfigContext.from_dict({"stores": {"warehouse": store}})
 
-    with pytest.raises(ConfigError, match=_names("stores.warehouse", retired, replacement)):
-        _clickhouse_connection(load_catalog(ctx).specs[StoreKey("warehouse")])
+    message = _names("stores.warehouse", retired, replacement)
+    spec = load_catalog(ctx).specs[StoreKey("warehouse")]
+    with pytest.raises(ConfigError, match=message):
+        _clickhouse_connection(spec)
 
 
 @pytest.mark.parametrize(("retired", "value", "replacement"), _MONGO_RETIRED)

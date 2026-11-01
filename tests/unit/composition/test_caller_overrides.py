@@ -85,13 +85,11 @@ def _assert_reserved(error: ReservedBindingError, key: BindingKey) -> None:
 def test_the_api_refuses_a_module_binding_a_reserved_key(
     fixture_project: ProjectFactory, key: BindingKey
 ) -> None:
+    project = fixture_project()
+    adapter = FastAPIAdapter()
+    module = _module(key)
     with pytest.raises(ReservedBindingError) as caught:
-        build_application(
-            fixture_project(),
-            adapter=FastAPIAdapter(),
-            environment="test",
-            modules=[_module(key)],
-        )
+        build_application(project, adapter=adapter, environment="test", modules=[module])
 
     _assert_reserved(caught.value, key)
 
@@ -100,15 +98,17 @@ def test_the_api_refuses_a_module_binding_a_reserved_key(
 def test_the_worker_refuses_a_module_binding_a_reserved_key(
     tmp_path: Path, key: BindingKey
 ) -> None:
+    module = _module(key)
     with pytest.raises(ReservedBindingError) as caught:
-        _worker(tmp_path, _module(key))
+        _worker(tmp_path, module)
 
     _assert_reserved(caught.value, key)
 
 
 def test_the_error_is_a_bootstrap_error_naming_the_key(tmp_path: Path) -> None:
+    module = _module(SqlQueryService)
     with pytest.raises(BootstrapError, match="SqlQueryService"):
-        _worker(tmp_path, _module(SqlQueryService))
+        _worker(tmp_path, module)
 
 
 def test_the_composition_registers_one_session_manager_for_repositories(

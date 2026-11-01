@@ -90,8 +90,10 @@ def _source(tmp_path: Path) -> CompositionSource:
 def test_a_marker_over_an_undiscovered_model_fails_the_composition(
     tmp_path: Path, use_case: type[UseCase[Any, Any]], parameter: str
 ) -> None:
+    source = _source(tmp_path)
+    adapter = _Serving(use_case, models=False)
     with pytest.raises(UnservedModelError) as caught:
-        compose_application(_source(tmp_path), _Serving(use_case, models=False))
+        compose_application(source, adapter)
 
     issue = caught.value.issue
     assert issue.code is UseCaseErrorCode.UNSERVED_MODEL

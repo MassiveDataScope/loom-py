@@ -34,6 +34,18 @@ class CompositionErrorCode(IssueCode):
             field="{key}",
         ),
     )
+    APPLICATION_ALREADY_OPEN = (
+        "APPLICATION_ALREADY_OPEN",
+        Template("Application is already open; close it before opening it again", component=""),
+    )
+
+
+class ApplicationAlreadyOpenError(RuntimeError):
+    """Raised when an application's resources are opened a second time."""
+
+    def __init__(self) -> None:
+        self.issue = CompositionErrorCode.APPLICATION_ALREADY_OPEN.issue()
+        super().__init__(self.issue.message)
 
 
 class ReservedBindingError(BootstrapError):
@@ -66,4 +78,4 @@ class ReservedBindingError(BootstrapError):
         return cls(issue, key)
 
 
-__all__ = ["CompositionErrorCode", "ReservedBindingError"]
+__all__ = ["ApplicationAlreadyOpenError", "CompositionErrorCode", "ReservedBindingError"]

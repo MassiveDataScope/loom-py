@@ -157,13 +157,13 @@ def _failure_to_close(owner: asyncio.Task[None]) -> BaseException | None:
     :meth:`Application.running` records a failure to close what had opened as
     a note on the error that interrupted the opening, a cancellation included.
     """
-    try:
-        owner.result()
-    except asyncio.CancelledError as cancelled:
-        return cancelled if getattr(cancelled, "__notes__", None) else None
-    except BaseException as failure:
-        return failure
-    return None
+    if owner.cancelled():
+        try:
+            owner.exception()
+        except asyncio.CancelledError as error:
+            return error if getattr(error, "__notes__", None) else None
+        return None
+    return owner.exception()
 
 
 def _stopped_while_opening() -> RuntimeError:

@@ -277,7 +277,8 @@ class TestStopping:
         second = asyncio.create_task(host.stop())
         await gate.closing.wait()
         await asyncio.sleep(0)
-        assert not first.done() and not second.done()
+        assert not first.done()
+        assert not second.done()
         gate.release.set()
         await asyncio.gather(first, second)
 
@@ -294,7 +295,8 @@ class TestStopping:
         gate.release.set()
         outcomes = await asyncio.gather(first, second, return_exceptions=True)
 
-        assert isinstance(outcomes[0], RuntimeError) and str(outcomes[0]) == "pool gone"
+        assert isinstance(outcomes[0], RuntimeError)
+        assert str(outcomes[0]) == "pool gone"
         assert outcomes[1] is None
 
     async def test_a_failure_to_close_after_a_cancelled_stop_is_logged(

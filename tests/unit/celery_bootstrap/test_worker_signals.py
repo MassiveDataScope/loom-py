@@ -137,7 +137,8 @@ class TestPrefork:
 
         worker_process_init.send(sender=None)
         try:
-            assert bridge._bridge is not None and bridge._bridge.is_alive
+            assert bridge._bridge is not None
+            assert bridge._bridge.is_alive
             assert application.events == ["check", "open(check=False)"]
         finally:
             worker_process_shutdown.send(sender=None)
@@ -156,8 +157,9 @@ class TestPrefork:
         application = _ApplicationSpy(check_error=RuntimeError("schema missing"))
         _connect(application)
 
+        sender = WorkerDouble("prefork")
         with pytest.raises(WorkerTerminate) as caught:
-            worker_init.send(sender=WorkerDouble("prefork"))
+            worker_init.send(sender=sender)
 
         assert isinstance(caught.value.__cause__, RuntimeError)
 
@@ -183,7 +185,8 @@ class TestSingleProcessPools:
         worker_init.send(sender=WorkerDouble(pool))
         try:
             assert application.events == ["open(check=True)"]
-            assert bridge._bridge is not None and bridge._bridge.is_alive
+            assert bridge._bridge is not None
+            assert bridge._bridge.is_alive
         finally:
             worker_shutdown.send(sender=None)
 
@@ -194,8 +197,9 @@ class TestSingleProcessPools:
         application = _ApplicationSpy(open_error=RuntimeError("schema missing"))
         bridge = _connect(application)
 
+        sender = WorkerDouble("solo")
         with pytest.raises(WorkerTerminate) as caught:
-            worker_init.send(sender=WorkerDouble("solo"))
+            worker_init.send(sender=sender)
 
         assert isinstance(caught.value.__cause__, RuntimeError)
         assert bridge._bridge is None

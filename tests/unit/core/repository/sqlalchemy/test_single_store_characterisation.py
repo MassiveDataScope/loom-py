@@ -247,9 +247,12 @@ async def test_an_exception_in_execute_after_create_rolls_the_row_back(
         _project(fixture_project, db_path, "rollback"), _creating(fail=True)
     )
 
-    with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
+    async def invoke_failing() -> None:
         async with application.running():
             await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+
+    with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
+        await invoke_failing()
 
     assert _count_rows(db_path, _RECORD) == 0
 
@@ -280,9 +283,12 @@ async def test_a_nested_write_rolls_back_when_the_outer_use_case_fails(
         _project(fixture_project, db_path, "nested_rollback"), _nesting(fail=True)
     )
 
-    with pytest.raises(RuntimeError, match=_OUTER_FAILED):
+    async def invoke_failing() -> None:
         async with application.running():
             await application.kernel.app.invoke(outer, payload={"name": "outer"})
+
+    with pytest.raises(RuntimeError, match=_OUTER_FAILED):
+        await invoke_failing()
 
     assert _count_rows(db_path, _RECORD) == 0
 
@@ -337,9 +343,12 @@ async def test_a_post_commit_action_does_not_run_when_execute_raises(
         _enqueueing(lambda: seen.append(_count_rows(db_path, _RECORD)), fail=True),
     )
 
-    with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
+    async def invoke_failing() -> None:
         async with application.running():
             await application.kernel.app.invoke(use_case, payload={"name": "lost"})
+
+    with pytest.raises(RuntimeError, match=_EXECUTE_FAILED):
+        await invoke_failing()
 
     assert seen == []
     assert _count_rows(db_path, _RECORD) == 0
@@ -419,7 +428,7 @@ async def test_a_write_outside_the_active_session_does_not_commit_on_its_own(
     primary = _note_repo(first)
     other = _note_repo(second)
 
-    with pytest.raises(RuntimeError, match=_OUTER_FAILED):
+    async def write_then_fail() -> None:
         async with SQLAlchemyUnitOfWork(first):
             await primary.create(_NoteCommand(name="primary"))
             await asyncio.create_task(
@@ -427,6 +436,9 @@ async def test_a_write_outside_the_active_session_does_not_commit_on_its_own(
                 context=contextvars.Context(),
             )
             raise RuntimeError(_OUTER_FAILED)
+
+    with pytest.raises(RuntimeError, match=_OUTER_FAILED):
+        await write_then_fail()
 
     in_first = _count_rows(first_path, _NOTE)
     in_second = _count_rows(second_path, _NOTE)
