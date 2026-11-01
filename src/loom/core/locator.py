@@ -34,7 +34,6 @@ from loom.core.persistence.database import (
     DatabaseConfig,
     SchemaConfig,
     SchemaUser,
-    database_config,
     require_schema_key,
 )
 from loom.core.persistence.stores import (
@@ -127,7 +126,7 @@ def load_application(config_path: str | None = None) -> Application:
     spec = load_catalog(context).require(
         DEFAULT_STORE, backend=SQLALCHEMY_BACKEND, purpose="the application's schema"
     )
-    database = database_config(spec)
+    database = spec.decode(DatabaseConfig)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
     models = _discover(app.discovery)
     require_single_store(models)

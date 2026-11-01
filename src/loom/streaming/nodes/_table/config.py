@@ -6,15 +6,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
-from loom.core.persistence.database import (
-    DatabaseConfig,
-    database_config_of,
-    decode_database_config,
-    reject_retired_pool_keys,
+from loom.core.persistence.database import DatabaseConfig, decode_database_config
+from loom.core.persistence.stores import (
+    CLICKHOUSE_BACKEND,
+    SQLALCHEMY_BACKEND,
+    StoreCatalog,
+    StoreSpec,
 )
-from loom.core.persistence.stores import CLICKHOUSE_BACKEND, StoreCatalog, StoreSpec
 from loom.streaming.nodes._table.common import (
     SQLALCHEMY_INLINE_DATABASE_KEYS,
     ClickHouseSinkConfig,
@@ -65,10 +65,13 @@ def resolve_sqlalchemy_table_config(
     sink_key, section = _store_sink_section(
         node, ctx, remedy="set 'store' for a stores.<name> section or 'url' inline, not both"
     )
-    reject_retired_pool_keys(section, sink_key)
+    reject_retired_keys(section, sink_key, DatabaseConfig)
     sink = SqlAlchemySinkConfig.from_config(section, default_table=node.table)
     if sink.store:
-        database = database_config_of(catalog, sink.store, purpose=f"IntoTable {node.name!r}")
+        spec = catalog.require(
+            sink.store, backend=SQLALCHEMY_BACKEND, purpose=f"IntoTable {node.name!r}"
+        )
+        database = spec.decode(DatabaseConfig)
     elif sink.url:
         database = decode_database_config(_inline_database(section), path=sink_key)
     else:

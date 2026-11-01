@@ -21,17 +21,12 @@ from typing import Any, ClassVar, Final, Literal, TypeVar
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
-from loom.core.config.convert import convert_config
+from loom.core.config.loader import convert_section
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import (
-    SQLALCHEMY_BACKEND,
-    StoreCatalog,
-    StoreSpec,
-    load_catalog,
-)
+from loom.core.persistence.stores import SQLALCHEMY_BACKEND, load_catalog
 
 EXTERNAL: Final = "external"
 
@@ -227,38 +222,29 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
             ``pool`` replacement), a key is unknown, a value is out of range,
             the URL is empty or a timeout does not apply to the URL's driver.
     """
-    reject_retired_pool_keys(data, path)
-    try:
-        config = convert_config(dict(data), DatabaseConfig, strict=False)
-    except msgspec.ValidationError as exc:
-        raise ConfigError(f"Config section {path!r} failed validation: {exc}") from exc
-    return config
+    reject_retired_keys(data, path, DatabaseConfig)
+    return convert_section(dict(data), path, DatabaseConfig)
 
 
 def load_database_config(ctx: ConfigContext, store: str) -> DatabaseConfig:
     """Read and decode the relational section of the store *store* of *ctx*.
 
-    For a caller outside a composition; a composition reads its own catalog
-    through :func:`database_config_of`.
+    For a caller outside a composition; a composition decodes the store of
+    its own catalog with :meth:`~loom.core.persistence.stores.StoreSpec.decode`.
 
     Args:
         ctx: The application configuration.
         store: Key of the store, declared under ``stores.<store>``.
 
     Raises:
-        ConfigError: When the catalog does not load, or as :func:`database_config_of`.
+        ConfigError: When the catalog does not load, the store is not
+            declared, its backend is not ``sqlalchemy``, or its section
+            fails :func:`decode_database_config`.
     """
-    return database_config_of(load_catalog(ctx), store, purpose="a relational database")
-
-
-def database_config_of(catalog: StoreCatalog, store: str, *, purpose: str) -> DatabaseConfig:
-    """Decode the relational section of the store *store* of *catalog*, which *purpose* needs.
-
-    Raises:
-        ConfigError: When the store is not declared, its backend is not
-            ``sqlalchemy``, or its section fails :func:`decode_database_config`.
-    """
-    return database_config(catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose=purpose))
+    spec = load_catalog(ctx).require(
+        store, backend=SQLALCHEMY_BACKEND, purpose="a relational database"
+    )
+    return spec.decode(DatabaseConfig)
 
 
 _T = TypeVar("_T")
@@ -278,24 +264,6 @@ def require_schema_key(value: _T | None, path: str, key: str) -> _T:
     return value
 
 
-def database_config(spec: StoreSpec) -> DatabaseConfig:
-    """Decode the relational section of *spec*, whose path the messages name.
-
-    Raises:
-        ConfigError: As :func:`decode_database_config`.
-    """
-    return decode_database_config(spec.settings(), path=spec.path)
-
-
-def reject_retired_pool_keys(data: Mapping[str, Any], path: str) -> None:
-    """Fail when *data*, read from *path*, holds a flat pool key that moved under ``pool``.
-
-    Raises:
-        ConfigError: Naming the retired key and its ``<path>.pool.<key>`` replacement.
-    """
-    reject_retired_keys(data, path, DatabaseConfig)
-
-
 __all__ = [
     "EXTERNAL",
     "DatabaseConfig",
@@ -305,10 +273,7 @@ __all__ = [
     "SchemaRoles",
     "SchemaUser",
     "SchemaVersionTables",
-    "database_config",
-    "database_config_of",
     "decode_database_config",
     "load_database_config",
-    "reject_retired_pool_keys",
     "require_schema_key",
 ]
