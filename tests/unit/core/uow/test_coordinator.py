@@ -81,18 +81,18 @@ class TestEnlist:
 
     async def test_a_participant_whose_begin_fails_is_not_registered(self) -> None:
         store = PhasedStore(S0, Ledger(), Fault("begin", Effect.RAISE))
-        scope = Scope()
+        coordinator, scope = _coordinator(store), Scope()
 
         with pytest.raises(Boom):
-            await _coordinator(store).enlist(scope, S0)
+            await coordinator.enlist(scope, S0)
 
         assert scope.participants == {}
 
     async def test_a_store_without_a_factory_is_a_key_error(self) -> None:
-        scope = Scope()
+        coordinator, scope = OrderedCommits({}), Scope()
 
         with pytest.raises(KeyError):
-            await OrderedCommits({}).enlist(scope, S0)
+            await coordinator.enlist(scope, S0)
 
     @pytest.mark.parametrize(
         ("store_type", "physical"),
@@ -278,6 +278,35 @@ class TestCancellationDuringTeardown:
 
         assert [key for key, _ in ledger.terminal_calls()] == [S2, S1, S0]
         assert _calls(ledger, "rollback") == [S2, S1, S0]
+        assert (seen.closed, seen.signal) == (True, False)
+
+    async def test_a_cancellation_while_closing_stops_a_third_party_store_from_committing(
+        self,
+    ) -> None:
+        ledger, seen = Ledger(), _Teardown()
+        outcomes: list[InvocationOutcome] = []
+
+        async def _invocation() -> None:
+            third = ThirdPartyStore(S0, ledger)
+            phased = PhasedStore(S1, ledger, Fault("close", Effect.CANCEL))
+            coordinator, scope = _coordinator(third, phased), Scope()
+            await _enlist_all(coordinator, scope, S0, S1)
+            third.write("row-s0")
+            phased.write("row-s1")
+            try:
+                outcomes.append(await coordinator.finish(scope, None))
+            finally:
+                seen.closed, seen.signal = scope.closed, in_atomic_transaction()
+
+        task = asyncio.create_task(_invocation())
+        await ledger.blocked.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert outcomes == []
+        assert ledger.terminal_calls() == [(S1, "close"), (S0, "exit-rollback")]
+        assert dict(ledger.persisted) == {S1: ["row-s1"]}
         assert (seen.closed, seen.signal) == (True, False)
 
 

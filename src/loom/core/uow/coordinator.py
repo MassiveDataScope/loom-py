@@ -460,10 +460,16 @@ class _Settlement:
     async def _quietly(
         self, step: Callable[[], Awaitable[None]], event: str, participant: Participant
     ) -> None:
-        """Run a teardown step; log its failure and defer its cancellation."""
+        """Run a teardown step; log its failure and defer its cancellation.
+
+        A cancellation also becomes the failure, so no single-phase
+        participant still to end commits after it.
+        """
         try:
             await step()
         except asyncio.CancelledError as exc:
+            # A single-phase participant later in the sweep must not commit.
+            self._failure = self._failure or exc
             self._interrupt = self._interrupt or exc
         except Exception:
             _log.exception(event, store=participant.key)
