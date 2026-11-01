@@ -56,15 +56,16 @@ PROBE: Final = "SELECT 1"
 PRIVILEGED_ROLE: Final = (
     "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
 )
-_PROBE: Final = text(PROBE)
-_PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
-_SCOPED_ON_SEARCH_PATH: Final = text(
+SCOPED_ON_SEARCH_PATH: Final = (
     "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
     "WHERE n.nspname = ANY (current_schemas(false)) AND c.relkind IN ('r', 'p') "
     "AND (c.relrowsecurity OR EXISTS (SELECT 1 FROM pg_trigger t "
     "WHERE t.tgrelid = c.oid AND t.tgname = :owner_trigger))"
 )
 """Tables on the connection's search path that row-level security or loom's guard protects."""
+_PROBE: Final = text(PROBE)
+_PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
+_SCOPED_ON_SEARCH_PATH: Final = text(SCOPED_ON_SEARCH_PATH)
 
 
 @dataclass(frozen=True)
