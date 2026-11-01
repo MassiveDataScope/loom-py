@@ -11,6 +11,7 @@ import pytest
 from loom.etl import ETLParams, ETLStep, FromConfig, IntoTable
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target._table import ReplaceSpec
+from loom.etl.schema._schema import LoomDtype
 from loom.etl.testing import spark as spark_testing
 
 
@@ -194,3 +195,15 @@ class TestSparkStepRunner:
         result = runner.run(_Step, _Params())
 
         assert result.to_polars()["token"].to_list() == ["fake"]
+
+    def test_seed_temp_is_not_supported(self) -> None:
+        runner = spark_testing.SparkStepRunner(cast(Any, object()))
+
+        with pytest.raises(NotImplementedError, match="seed_temp"):
+            runner.seed_temp("normalized", [(1,)], ["id"])
+
+    def test_typed_seeds_are_not_supported(self) -> None:
+        runner = spark_testing.SparkStepRunner(cast(Any, object()))
+
+        with pytest.raises(NotImplementedError, match="schema="):
+            runner.seed("raw.orders", [(1,)], ["id"], schema={"id": LoomDtype.INT64})

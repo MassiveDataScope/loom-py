@@ -37,14 +37,14 @@ def test_fetch_uses_the_token():
     result.assert_not_empty()
 ```
 
-A step whose target the harness cannot capture (an `IntoTemp`, say) can be
-called directly: `FetchMessages().execute(params, api_token="fake", ...)`.
+A step can also be called directly:
+`FetchMessages().execute(params, api_token="fake", ...)`.
 
 ### Sources that declare `parse_json`
 
-The harness passes seeded frames to the step as they are; it does not decode
-the columns a source declares with `parse_json`. To give the step what the
-Polars reader would, decode the seed with `decode_json_columns`, which runs
+`PolarsStepRunner` reads seeds as the Polars reader does, so a `parse_json`
+column is seeded as JSON text and reaches the step decoded. When calling
+`execute()` directly, decode the frame with `decode_json_columns`, which runs
 the reader's own decoding (including the normalisation of fields whose JSON
 type changes between rows) on an eager or lazy frame:
 

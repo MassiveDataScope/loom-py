@@ -125,6 +125,12 @@ class UpsertSpec:
                         Mutually exclusive with *upsert_include*.
         upsert_include: Explicit allow-list for ``UPDATE SET``.
                         Mutually exclusive with *upsert_exclude*.
+        delete_flag:    Optional boolean source column. Rows where it is true
+                        delete the matched target row and are not inserted
+                        when unmatched. A false or null value keeps the normal
+                        update or insert; null is read as false. The column is
+                        removed before schema alignment, so it is not written
+                        and does not appear in the update or insert maps.
     """
 
     table_ref: TableRef
@@ -133,6 +139,27 @@ class UpsertSpec:
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     upsert_exclude: tuple[str, ...] = field(default_factory=tuple)
     upsert_include: tuple[str, ...] = field(default_factory=tuple)
+    delete_flag: str | None = None
+
+
+def upsert_delete_flag_conflict(spec: UpsertSpec) -> str | None:
+    """Return the upsert option ``delete_flag`` names, or ``None`` when it is usable.
+
+    The option is ``keys``, ``partition_cols``, ``exclude``, or ``include``.
+    ``None`` when ``delete_flag`` is unset or names none of those options.
+    """
+    flag = spec.delete_flag
+    if flag is None:
+        return None
+    if flag in spec.upsert_keys:
+        return "keys"
+    if flag in spec.partition_cols:
+        return "partition_cols"
+    if flag in spec.upsert_exclude:
+        return "exclude"
+    if flag in spec.upsert_include:
+        return "include"
+    return None
 
 
 @dataclass(frozen=True)
@@ -179,3 +206,8 @@ class UpdateSpec:
     def upsert_include(self) -> tuple[str, ...]:
         """Merge-protocol alias for :attr:`include`."""
         return self.include
+
+    @property
+    def delete_flag(self) -> None:
+        """Merge-protocol field: an update never deletes, so it has no delete flag."""
+        return None

@@ -25,6 +25,7 @@ from loom.etl.declarative.target import (
     TargetSpec,
     TempFanInSpec,
     TempSpec,
+    UnsupportedUpsertDeleteFlagError,
     UpdateSpec,
     UpsertSpec,
 )
@@ -232,24 +233,14 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         """
         existing = self._physical_schema(target)
         if existing is None:
-            _ensure_can_create_missing_table(
-                target=target,
+            self._create_missing(
+                frame,
+                target,
                 schema_mode=schema_mode,
-                missing_table_policy=self._missing_table_policy,
+                streaming=streaming,
+                partition_cols=create_partition_cols,
+                allow_empty=allow_empty,
             )
-            materialized = self._materialize_checked(
-                frame, target, streaming, allow_empty=allow_empty
-            )
-            try:
-                self._create(
-                    materialized,
-                    target,
-                    schema_mode=schema_mode,
-                    partition_cols=create_partition_cols,
-                )
-            finally:
-                if not allow_empty:
-                    self._release_pinned(materialized)
             return None
         if require_physical_partitions is not None:
             self._require_physical_partitions(target, require_physical_partitions)
@@ -258,6 +249,40 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             frame=self._materialize_checked(aligned, target, streaming, allow_empty=allow_empty),
             existing_schema=existing,
         )
+
+    def _create_missing(
+        self,
+        frame: InputFrameT,
+        target: ResolvedTarget,
+        *,
+        schema_mode: SchemaMode,
+        streaming: bool,
+        partition_cols: tuple[str, ...] = (),
+        allow_empty: bool = True,
+    ) -> None:
+        """Create the absent destination table from *frame*.
+
+        Raises:
+            SchemaNotFoundError: The schema mode and the missing-table policy
+                do not allow creating the table.
+            EmptyReplaceError: *allow_empty* is ``False`` and *frame* has no rows.
+        """
+        _ensure_can_create_missing_table(
+            target=target,
+            schema_mode=schema_mode,
+            missing_table_policy=self._missing_table_policy,
+        )
+        materialized = self._materialize_checked(frame, target, streaming, allow_empty=allow_empty)
+        try:
+            self._create(
+                materialized,
+                target,
+                schema_mode=schema_mode,
+                partition_cols=partition_cols,
+            )
+        finally:
+            if not allow_empty:
+                self._release_pinned(materialized)
 
     def _do_append(
         self,
@@ -375,7 +400,14 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
         spec: UpsertSpec,
         streaming: bool,
     ) -> None:
-        """Upsert policy: check exists → create OR align+write."""
+        """Upsert policy: check exists → create OR align+write.
+
+        A spec with ``delete_flag`` set is handled by :meth:`_upsert_deleting`.
+        The default implementation refuses that spec.
+        """
+        if spec.delete_flag is not None:
+            self._upsert_deleting(frame, target, spec, spec.delete_flag)
+            return
         prepared = self._prepare_write(
             frame,
             target,
@@ -391,6 +423,22 @@ class _WritePolicy(TargetWriter, Generic[InputFrameT, WriteFrameT, PhysicalSchem
             spec=spec,
             existing_schema=prepared.existing_schema,
         )
+
+    def _upsert_deleting(
+        self,
+        frame: InputFrameT,
+        target: ResolvedTarget,
+        spec: UpsertSpec,
+        flag: str,
+    ) -> None:
+        """Delete matched rows whose *flag* column is true, and upsert the rest.
+
+        Raises:
+            UnsupportedUpsertDeleteFlagError: This writer does not implement
+                ``delete_flag``.
+        """
+        _ = (frame, target, spec)
+        raise UnsupportedUpsertDeleteFlagError(type(self).__name__, flag)
 
     def _do_update(
         self,

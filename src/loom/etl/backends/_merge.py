@@ -52,6 +52,9 @@ class _UpsertLike(Protocol):
     @property
     def upsert_include(self) -> tuple[str, ...]: ...
 
+    @property
+    def delete_flag(self) -> str | None: ...
+
 
 SOURCE_ALIAS = "s"
 _SQL_AND = " AND "
@@ -59,11 +62,20 @@ _SQL_AND = " AND "
 
 @dataclass(frozen=True)
 class _MergePlan:
-    """Prepared merge payload reused by backend-specific Delta APIs."""
+    """Prepared merge payload reused by backend-specific Delta APIs.
+
+    The three predicate fields are ``None`` when the spec has no
+    ``delete_flag``. A null flag is false: the delete predicate is
+    ``coalesce(alias.flag, false)`` and the update and insert predicates
+    are its negation.
+    """
 
     predicate: str
     update_set: dict[str, str]
     insert_values: dict[str, str]
+    matched_delete_predicate: str | None = None
+    matched_update_predicate: str | None = None
+    not_matched_insert_predicate: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +200,22 @@ def _build_insert_values(
     return {col: f"{source_alias}.{col}" for col in all_columns}
 
 
+def _without_delete_flag(columns: tuple[str, ...], flag: str | None) -> tuple[str, ...]:
+    """Drop the *flag* column from ``columns`` when a flag is named."""
+    if flag is None:
+        return columns
+    return tuple(column for column in columns if column != flag)
+
+
+def _delete_flag_predicates(flag: str, source_alias: str) -> tuple[str, str]:
+    """Return the matched-delete predicate and the predicate that keeps a row.
+
+    A null flag is false.
+    """
+    coalesced = f"coalesce({source_alias}.{flag}, false)"
+    return coalesced, f"NOT {coalesced}"
+
+
 def _build_merge_plan(
     *,
     combos: list[dict[str, Any]],
@@ -197,14 +225,26 @@ def _build_merge_plan(
     source_alias: str,
 ) -> _MergePlan:
     """Build predicate and column maps required by Delta MERGE."""
+    flag = spec.delete_flag
+    columns = _without_delete_flag(df_columns, flag)
     predicate = _build_upsert_predicate(combos, spec, target_alias, source_alias)
-    update_cols = _build_upsert_update_cols(df_columns, spec)
+    update_cols = _build_upsert_update_cols(columns, spec)
     update_set = _build_update_set(update_cols, source_alias)
-    insert_values = _build_insert_values(df_columns, source_alias)
+    insert_values = _build_insert_values(columns, source_alias)
+    if flag is None:
+        return _MergePlan(
+            predicate=predicate,
+            update_set=update_set,
+            insert_values=insert_values,
+        )
+    delete_predicate, keep_predicate = _delete_flag_predicates(flag, source_alias)
     return _MergePlan(
         predicate=predicate,
         update_set=update_set,
         insert_values=insert_values,
+        matched_delete_predicate=delete_predicate,
+        matched_update_predicate=keep_predicate,
+        not_matched_insert_predicate=keep_predicate,
     )
 
 

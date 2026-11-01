@@ -11,10 +11,12 @@ from loom.etl.backends._merge import (
     TARGET_ALIAS,
     _build_insert_values,
     _build_join_clause,
+    _build_merge_plan,
     _build_partition_predicate,
     _build_update_set,
     _build_upsert_predicate,
     _build_upsert_update_cols,
+    _MergePlan,
 )
 from loom.etl.backends._predicate import sql_literal
 from loom.etl.declarative.expr._refs import TableRef
@@ -212,3 +214,49 @@ class TestInsertAndUpdateMaps:
         expected: dict[str, str],
     ) -> None:
         assert builder(columns, alias) == expected
+
+
+def test_merge_plan_without_delete_flag_matches_the_pre_flag_clauses() -> None:
+    """Pin the MERGE shape produced when delete_flag is unset."""
+    spec = _upsert_spec(keys=("id",), partition_cols=("year",), exclude=("created_at",))
+    plan = _build_merge_plan(
+        combos=[{"year": 2024}],
+        spec=spec,
+        df_columns=("id", "year", "name", "created_at"),
+        target_alias=TARGET_ALIAS,
+        source_alias=SOURCE_ALIAS,
+    )
+
+    assert plan == _MergePlan(
+        predicate="((t.year = 2024)) AND (t.id = s.id AND t.year = s.year)",
+        update_set={"name": "s.name"},
+        insert_values={
+            "id": "s.id",
+            "year": "s.year",
+            "name": "s.name",
+            "created_at": "s.created_at",
+        },
+    )
+
+
+def test_merge_plan_delete_flag_drops_the_column_and_sets_predicates() -> None:
+    """A delete flag stays out of the column maps and gates every MERGE action."""
+    spec = UpsertSpec(
+        table_ref=TableRef("test.table"),
+        upsert_keys=("id",),
+        delete_flag="_deleted",
+    )
+    plan = _build_merge_plan(
+        combos=[],
+        spec=spec,
+        df_columns=("id", "name", "_deleted"),
+        target_alias=TARGET_ALIAS,
+        source_alias=SOURCE_ALIAS,
+    )
+
+    assert plan.predicate == "t.id = s.id"
+    assert plan.update_set == {"name": "s.name"}
+    assert plan.insert_values == {"id": "s.id", "name": "s.name"}
+    assert plan.matched_delete_predicate == "coalesce(s._deleted, false)"
+    assert plan.matched_update_predicate == "NOT coalesce(s._deleted, false)"
+    assert plan.not_matched_insert_predicate == "NOT coalesce(s._deleted, false)"

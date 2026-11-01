@@ -31,6 +31,7 @@ from loom.etl.declarative._write_options import WriteOptions
 from loom.etl.declarative.expr._params import ParamExpr
 from loom.etl.declarative.expr._predicate import AndPred, EqPred, PredicateNode
 from loom.etl.declarative.expr._refs import TableRef, UnboundColumnRef
+from loom.etl.declarative.target._errors import UpsertDeleteFlagError
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._table import (
     AppendSpec,
@@ -369,6 +370,7 @@ class IntoTable:
         exclude: tuple[str, ...] = (),
         include: tuple[str, ...] = (),
         schema: SchemaMode = SchemaMode.STRICT,
+        delete_flag: str | None = None,
     ) -> IntoTable:
         """Write mode: merge rows using the given key columns (UPSERT / MERGE).
 
@@ -379,6 +381,25 @@ class IntoTable:
         Declaring ``partition_cols`` is strongly recommended for large tables —
         it allows Delta to prune files at the log level before evaluating the
         join condition.  Without it, every MERGE forces a full table scan.
+
+        ``delete_flag`` names an optional boolean column of the source frame.
+        Rows where that column is true delete the matched target row and are
+        not inserted when they match nothing.  A false or null value keeps the
+        normal update or insert; null is read as false (``coalesce(flag, false)``).
+        The column is removed before schema alignment, including
+        :attr:`~SchemaMode.STRICT`, so it is never written to the target and
+        never appears in the update or insert maps.  It must exist on the
+        source frame, be boolean, must not be a key, a partition column, or
+        listed in ``exclude`` or ``include``, and must not name a column of the
+        target table.  On first write the table is created from the rows whose
+        flag is false or null, so a batch where every row is flagged creates
+        an empty table.  Each key may appear once in the source: a key carried
+        by a flagged row and an unflagged row in the same batch fails the
+        MERGE.  The Polars writer accepts it; any other writer raises
+        :class:`UnsupportedUpsertDeleteFlagError`.
+
+        With :attr:`~SchemaMode.EVOLVE` the MERGE does not add new source
+        columns to an existing table, with or without ``delete_flag``.
 
         Args:
             keys:           Columns that uniquely identify a row.  Used in the
@@ -394,9 +415,16 @@ class IntoTable:
                             if listed here.  Mutually exclusive with *exclude*.
             schema:         Schema evolution strategy.  Defaults to
                             :attr:`~SchemaMode.STRICT`.
+            delete_flag:    Boolean source column that deletes matched rows
+                            when true and skips unmatched rows.  ``None``
+                            leaves the MERGE as update-plus-insert.  Null
+                            values in the column are false.
 
         Returns:
             New ``IntoTable`` with UPSERT mode.
+
+        Raises:
+            UpsertDeleteFlagError: If ``delete_flag`` is empty or blank.
 
         Example::
 
@@ -404,8 +432,11 @@ class IntoTable:
                 keys=("order_id",),
                 partition_cols=("year", "month"),
                 exclude=("created_at",),
+                delete_flag="_deleted",
             )
         """
+        if delete_flag is not None and not delete_flag.strip():
+            raise UpsertDeleteFlagError(delete_flag, "must name a source column")
         return self._with(
             UpsertSpec(
                 table_ref=self._ref,
@@ -414,6 +445,7 @@ class IntoTable:
                 upsert_exclude=exclude,
                 upsert_include=include,
                 schema_mode=schema,
+                delete_flag=delete_flag,
             )
         )
 

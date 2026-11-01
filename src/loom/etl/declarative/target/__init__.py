@@ -40,11 +40,17 @@ SCD2 support types:
 Write errors:
 
 * :class:`EmptyReplaceError` — ``replace(allow_empty=False)`` received no rows
+* :class:`UpsertDeleteFlagError` — ``upsert(delete_flag=...)`` column unusable
+* :class:`UnsupportedUpsertDeleteFlagError` — writer cannot apply ``delete_flag``
 """
 
 from loom.core.schema import SchemaMode
 from loom.etl.declarative.target._client import ClientSpec, IntoClient
-from loom.etl.declarative.target._errors import EmptyReplaceError
+from loom.etl.declarative.target._errors import (
+    EmptyReplaceError,
+    UnsupportedUpsertDeleteFlagError,
+    UpsertDeleteFlagError,
+)
 from loom.etl.declarative.target._file import FileSpec
 from loom.etl.declarative.target._history import (
     DeletePolicy,
@@ -137,4 +143,6 @@ __all__ = [
     "HistorifyTemporalConflictError",
     # write errors
     "EmptyReplaceError",
+    "UpsertDeleteFlagError",
+    "UnsupportedUpsertDeleteFlagError",
 ]

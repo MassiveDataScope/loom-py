@@ -437,11 +437,40 @@ target = IntoTable("events.orders").upsert(
     keys=("order_id",),
     partition_cols=("year", "month"),  # strongly recommended for large tables
     exclude=("created_at",),           # columns excluded from UPDATE SET
+    delete_flag="_deleted",            # optional boolean column; omit to keep update+insert
 )
 ```
 
 `partition_cols` is optional but strongly recommended — without it every MERGE
 forces a full table scan.
+
+`delete_flag` is optional. It names a boolean column of the source frame.
+Rows where the column is true delete the matched target row and are not
+inserted when they match nothing. A false or null value keeps the normal
+update or insert: null is read as false, via `coalesce(s.<flag>, false)` on
+the delete clause and `NOT coalesce(s.<flag>, false)` on the update and
+insert clauses. The column is removed before schema alignment, including
+`SchemaMode.STRICT`, so it is never written to the target and never appears
+in the update or insert maps. It must exist on the source frame, be boolean,
+must not be a key, a partition column, or listed in `exclude` or `include`,
+and must not name a column of the target table. A blank name, or a column
+that breaks one of these rules, raises `UpsertDeleteFlagError` before
+anything is written. A conflict with a key, a partition column, `exclude` or
+`include` declared in a step is caught earlier, when the pipeline compiles,
+as `ETLCompilationError` with code `UPSERT_DELETE_FLAG_CONFLICT`. The Polars
+writer applies it. Any other writer, including Spark,
+raises `UnsupportedUpsertDeleteFlagError` and does not write. Omitting `delete_flag` (or passing `None`) leaves the MERGE as it is
+today: matched rows are updated and unmatched rows are inserted, with no
+delete clause.
+
+- First write: the table is created from the rows whose flag is false or
+  null. A batch where every row is flagged creates an empty table and logs
+  `write_produced_no_rows`.
+- Each key may appear once in the source batch. A key carried by a flagged
+  row and an unflagged row in the same batch fails the MERGE and leaves the
+  table unchanged; deduplicate upstream.
+- With `SchemaMode.EVOLVE` the MERGE does not add new source columns to an
+  existing table. This is the same with or without `delete_flag`.
 
 ### update
 

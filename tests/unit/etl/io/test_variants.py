@@ -51,6 +51,7 @@ class TestTableVariants:
         assert spec.partition_cols == ()
         assert spec.upsert_exclude == ()
         assert spec.upsert_include == ()
+        assert spec.delete_flag is None
 
     def test_update_keys_and_defaults(self) -> None:
         spec = UpdateSpec(table_ref=_REF, keys=("id",))
