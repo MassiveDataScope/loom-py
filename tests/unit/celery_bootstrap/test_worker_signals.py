@@ -8,6 +8,7 @@ and best effort.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import AsyncIterator
@@ -25,6 +26,7 @@ from celery.signals import (
     worker_shutdown,
 )
 
+import loom.celery.adapter as adapter_module
 from loom.celery.adapter import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
 from loom.celery.constants import (
     TASK_CALLBACK_ERROR_PREFIX,
@@ -33,7 +35,7 @@ from loom.celery.constants import (
 )
 from loom.celery.errors import WorkerNotOpenError
 from loom.celery.runner import _CeleryAsyncRuntime
-from loom.composition import AppConfig, Application, compose_application
+from loom.composition import AppConfig, Application, ApplicationHost, compose_application
 from loom.core.config import ConfigContext
 from loom.core.job.job import Job
 from tests.helpers.celery import WorkerDouble, isolated_signals
@@ -77,8 +79,10 @@ class _ApplicationSpy:
 class _RuntimeSpy:
     """A bridge double that runs nothing, so a failure to run can be forced."""
 
-    def __init__(self, backend: str = "asyncio") -> None:
+    def __init__(self, backend: str = "asyncio", *, execute: bool = False) -> None:
         self.backend = backend
+        # Executing runs every call on one long-lived loop, as a real bridge does.
+        self._loop = asyncio.Runner() if execute else None
         self.initialize_calls = 0
         self.shutdown_calls = 0
         self.ran: list[Any] = []
@@ -95,11 +99,18 @@ class _RuntimeSpy:
         self.ran.append(coro)
         if self.run_error is not None:
             raise self.run_error
+        if self._loop is not None:
+            return self._loop.run(coro)
         coro.close()
         return None
 
     def shutdown(self) -> None:
         self.shutdown_calls += 1
+
+    def close_loop(self) -> None:
+        """Close the loop; only the test does, so closing it never closes what leaked."""
+        if self._loop is not None:
+            self._loop.close()
 
 
 def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
@@ -348,29 +359,37 @@ class TestTaskAffineResources:
 class TestBackends:
     """Only asyncio has the task an :class:`ApplicationHost` owns the application from."""
 
-    @pytest.mark.parametrize(
-        ("backend", "opening", "closing"),
-        [
-            ("asyncio", "ApplicationHost.start", "ApplicationHost.stop"),
-            # Trio enters and exits in two bridge calls, as before: the worker
-            # hosts no agents, the task-affine resources of asyncio.
-            ("trio", "__aenter__", "__aexit__"),
-        ],
-    )
-    def test_the_backend_decides_how_the_application_opens(
-        self, backend: str, opening: str, closing: str
+    @pytest.mark.parametrize(("backend", "hosted"), [("asyncio", True), ("trio", False)])
+    def test_only_asyncio_opens_the_application_through_a_host(
+        self, backend: str, hosted: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        runtime = _RuntimeSpy(backend=backend)
-        _connect(_ApplicationSpy(), runtime)
+        hosts: list[ApplicationHost] = []
+
+        class _HostSpy(ApplicationHost):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                hosts.append(self)
+
+        monkeypatch.setattr(adapter_module, "ApplicationHost", _HostSpy)
+        _connect(_ApplicationSpy(), _RuntimeSpy(backend=backend))
 
         worker_init.send(sender=WorkerDouble("solo"))
-        worker_shutdown.send(sender=None)
 
-        ran = [coroutine.__qualname__ for coroutine in runtime.ran]
-        assert [name.removeprefix("_AsyncGeneratorContextManager.") for name in ran] == [
-            opening,
-            closing,
-        ]
+        assert bool(hosts) is hosted
+
+    def test_trio_enters_and_exits_the_application_in_two_bridge_calls(self) -> None:
+        application = _ApplicationSpy()
+        runtime = _RuntimeSpy(backend="trio", execute=True)
+        _connect(application, runtime)
+
+        try:
+            worker_init.send(sender=WorkerDouble("solo"))
+            assert application.events == ["open(check=True)"]
+
+            worker_shutdown.send(sender=None)
+            assert application.events == ["open(check=True)", "close"]
+        finally:
+            runtime.close_loop()
 
 
 class TestConnecting:

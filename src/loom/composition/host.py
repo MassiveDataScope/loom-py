@@ -43,7 +43,7 @@ class ApplicationHost:
         self._started = False
         self._owner: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
-        self._failure_claimed = False
+        self._close_failure: BaseException | None = None
 
     async def start(self) -> None:
         """Open the application in a new owner task and return once it is open.
@@ -63,19 +63,16 @@ class ApplicationHost:
         self._started = True
         opened: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         owner = asyncio.create_task(self._own(opened))
-        owner.add_done_callback(self._log_unless_stopping)
+        owner.add_done_callback(self._record_close_failure)
         self._owner = owner
         try:
             # Shielded: a cancelled caller must not cancel the future the owner
             # reports to, only the owner itself.
             await asyncio.shield(opened)
-        except asyncio.CancelledError:
+        except BaseException as error:
             self._owner = None
-            owner.cancel()
-            await asyncio.wait({owner})
-            raise
-        except BaseException:
-            self._owner = None
+            if isinstance(error, asyncio.CancelledError):
+                owner.cancel()
             await asyncio.wait({owner})
             raise
 
@@ -101,11 +98,13 @@ class ApplicationHost:
         except asyncio.CancelledError:
             if first:
                 # No one is left to raise it: log it once the owner finishes.
-                owner.add_done_callback(self._log_failure)
+                owner.add_done_callback(lambda _: self._log_failure())
             raise
         if not first:
             return
-        failure = self._claim_failure(owner)
+        # Recorded already: the owner's done-callbacks run in the order they
+        # were added, so _record_close_failure ran before this wait returned.
+        failure = self._take_close_failure()
         if isinstance(failure, asyncio.CancelledError):
             _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
         elif failure is not None:
@@ -134,21 +133,20 @@ class ApplicationHost:
         if not opened.done():
             opened.set_exception(_stopped_while_opening())
 
-    def _claim_failure(self, owner: asyncio.Task[None]) -> BaseException | None:
-        """The owner's failure to close, handed to one reporter only."""
-        if self._failure_claimed:
-            return None
-        self._failure_claimed = True
-        return _failure_to_close(owner)
-
-    def _log_unless_stopping(self, owner: asyncio.Task[None]) -> None:
-        """Log a failure to close unless a :meth:`stop` is waiting to raise it."""
+    def _record_close_failure(self, owner: asyncio.Task[None]) -> None:
+        """Keep the owner's failure to close for :meth:`stop`, or log it if none is waiting."""
+        self._close_failure = _failure_to_close(owner)
         if not self._stopping.is_set():
-            self._log_failure(owner)
+            self._log_failure()
 
-    def _log_failure(self, owner: asyncio.Task[None]) -> None:
+    def _take_close_failure(self) -> BaseException | None:
+        """Return the recorded failure to close and forget it, so it is reported once."""
+        failure, self._close_failure = self._close_failure, None
+        return failure
+
+    def _log_failure(self) -> None:
         """Log the owner's failure to close, unless it was already reported."""
-        failure = self._claim_failure(owner)
+        failure = self._take_close_failure()
         if failure is not None:
             _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
 

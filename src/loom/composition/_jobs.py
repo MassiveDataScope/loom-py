@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import warnings
 from typing import TYPE_CHECKING
 
+from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
@@ -45,19 +47,12 @@ def build_celery_service(
             )
         return None
     try:
-        from loom.celery.config import (  # type: ignore[import-untyped,unused-ignore]
-            CeleryConfig as _CC,
-        )
-        from loom.celery.config import (
-            create_celery_app,
-        )
-        from loom.celery.service import (
-            CeleryJobService,  # type: ignore[import-untyped,unused-ignore]
-        )
+        from loom.celery.config import CeleryConfig, create_celery_app
+        from loom.celery.service import CeleryJobService
 
     except ImportError:
         return None
-    celery_cfg = ctx.section(ConfigKey.CELERY, _CC)
+    celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
     return CeleryJobService(
         create_celery_app(celery_cfg),
         metrics=result.metrics,
@@ -83,7 +78,7 @@ def configure_job_service(
     ctx: ConfigContext,
     result: KernelRuntime,
     observability_runtime: ObservabilityRuntime | None,
-) -> CeleryJobService | None:
+) -> Resource | None:
     """Register a ``JobService`` implementation in the container.
 
     Registers :class:`~loom.celery.service.CeleryJobService` when a
@@ -105,4 +100,10 @@ def configure_job_service(
     celery_service = build_celery_service(ctx, result, observability_runtime)
     svc = celery_service or build_inline_service(result)
     result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)
-    return celery_service
+    if celery_service is None:
+        return None
+    return Resource(
+        kind=ResourceKind.CELERY,
+        name="jobs",
+        manager=closing(lambda: asyncio.to_thread(celery_service.close)),
+    )

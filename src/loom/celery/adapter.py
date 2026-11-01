@@ -31,7 +31,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import msgspec
@@ -340,7 +342,8 @@ class _WorkerLifecycle:
             host = ApplicationHost(self._application, check=check)
             return host.start, host.stop
         running = self._application.running(check=check)
-        return running.__aenter__, lambda: running.__aexit__(None, None, None)
+        stack = AsyncExitStack()
+        return partial(stack.enter_async_context, running), stack.aclose
 
 
 def _connect_lifecycle_signals(lifecycle: _WorkerLifecycle) -> None:
@@ -529,7 +532,6 @@ class CeleryAdapter:
 
         async_runtime = _build_async_runtime(declared.celery.runtime)
         celery_app = create_celery_app(declared.celery)
-        celery_app.set_current()
         _register_tasks(celery_app, declared, application, async_runtime, self._metrics)
         _connect_lifecycle_signals(_WorkerLifecycle(application, async_runtime))
         return celery_app

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -38,7 +37,6 @@ from loom.core.persistence import BackendRuntime, PersistenceWiring
 from loom.core.use_case.factory import ModelRead
 
 if TYPE_CHECKING:
-    from loom.celery.service import CeleryJobService
     from loom.composition.recipe import Adapter, Recipe
     from loom.core.config import ConfigContext
     from loom.core.di.container import LoomContainer
@@ -237,7 +235,7 @@ def compose_application(
         metrics=recipe.metrics,
         environment=source.environment,
     )
-    celery_service = configure_job_service(ctx, kernel, observability)
+    job_resource = configure_job_service(ctx, kernel, observability)
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
     # Registered, not merely passed: capability spans resolve it from the
@@ -258,7 +256,14 @@ def compose_application(
         sql=sql,
         ai=ai,
         persistence=wiring,
-        resources=_resources(kernel, wiring, recipe.backend.name, sql, ai, celery_service),
+        resources=_resources(
+            kernel=kernel,
+            wiring=wiring,
+            backend_name=recipe.backend.name,
+            sql=sql,
+            ai=ai,
+            job_resource=job_resource,
+        ),
     )
 
 
@@ -306,23 +311,18 @@ def _compose_agents(
 
 
 def _resources(
+    *,
     kernel: KernelRuntime,
     wiring: PersistenceWiring,
     backend_name: str,
     sql: SqlWiring,
     ai: AiWiring,
-    celery_service: CeleryJobService | None,
+    job_resource: Resource | None,
 ) -> tuple[Resource, ...]:
     """Everything the application owns; :class:`Application` orders it by kind."""
     resources: list[Resource] = []
-    if celery_service is not None:
-        resources.append(
-            Resource(
-                kind=ResourceKind.CELERY,
-                name="jobs",
-                manager=closing(lambda: asyncio.to_thread(celery_service.celery_app.close)),
-            )
-        )
+    if job_resource is not None:
+        resources.append(job_resource)
     if kernel.container.is_registered(CacheGateways):
         gateways = kernel.container.resolve(CacheGateways).distinct()
         for name, gateway in zip(("data", "counters"), gateways, strict=False):

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import pytest
+import pytest_asyncio
 
 from loom.composition import ApplicationHost, Resource, ResourceKind, closing
 from tests.helpers.composition import TaskAffine, application_of
@@ -28,6 +29,28 @@ def _failing_to_open(message: str) -> Resource:
         yield
 
     return Resource(kind=ResourceKind.STORE, name="default", manager=resource)
+
+
+def _store(*, check: Callable[[], Awaitable[None]] | None = None) -> Resource:
+    return Resource(
+        kind=ResourceKind.STORE,
+        name="default",
+        manager=closing(_noop),
+        check=check,
+    )
+
+
+@pytest_asyncio.fixture
+async def loop_errors() -> AsyncIterator[list[dict[str, object]]]:
+    """Capture loop exception reports and restore the previous handler."""
+    loop = asyncio.get_running_loop()
+    handler = loop.get_exception_handler()
+    reported: list[dict[str, object]] = []
+    loop.set_exception_handler(lambda _, context: reported.append(context))
+    try:
+        yield reported
+    finally:
+        loop.set_exception_handler(handler)
 
 
 class _Gate:
@@ -81,9 +104,7 @@ class TestOpening:
         async def check() -> None:
             checks.append("check")
 
-        store = Resource(
-            kind=ResourceKind.STORE, name="default", manager=closing(_noop), check=check
-        )
+        store = _store(check=check)
         checked, unchecked = (
             ApplicationHost(application_of(store)),
             ApplicationHost(application_of(store), check=False),
@@ -121,9 +142,7 @@ class TestOpening:
             opened.set()
             await asyncio.sleep(3600)
 
-        store = Resource(
-            kind=ResourceKind.STORE, name="default", manager=closing(_noop), check=slow_check
-        )
+        store = _store(check=slow_check)
         application = application_of(affine.resource(), store)
         host = ApplicationHost(application)
         starting = asyncio.create_task(host.start())
@@ -155,37 +174,30 @@ class TestOpening:
         await stopping
 
     async def test_a_failure_to_close_after_a_cancelled_start_is_logged(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, loop_errors: list[dict[str, object]]
     ) -> None:
         cache = _failing_to_close("pool gone")
+        checking = asyncio.Event()
 
         async def hanging_check() -> None:
+            checking.set()
             await asyncio.sleep(3600)
 
-        store = Resource(
-            kind=ResourceKind.STORE, name="default", manager=closing(_noop), check=hanging_check
-        )
+        store = _store(check=hanging_check)
         host = ApplicationHost(application_of(cache, store))
-        loop = asyncio.get_running_loop()
-        handler = loop.get_exception_handler()
-        reported: list[dict[str, object]] = []
-        loop.set_exception_handler(lambda _, context: reported.append(context))
-        try:
-            starting = asyncio.create_task(host.start())
-            await asyncio.sleep(0.01)
-            with caplog.at_level(logging.WARNING, logger="loom.composition.host"):
-                starting.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await starting
-                await asyncio.sleep(0)
-                del starting
-                gc.collect()
-        finally:
-            loop.set_exception_handler(handler)
+        starting = asyncio.create_task(host.start())
+        await checking.wait()
+        with caplog.at_level(logging.WARNING, logger="loom.composition.host"):
+            starting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await starting
+            await asyncio.sleep(0)
+            del starting
+            gc.collect()
 
         assert "pool gone" in caplog.text
         # Nothing reached the loop's handler: no "exception was never retrieved".
-        assert reported == []
+        assert loop_errors == []
 
 
 class TestTaskAffinity:
@@ -215,11 +227,7 @@ class TestTaskAffinity:
         pytest.importorskip("loom.ai.runtime")
         from loom.ai.runtime import AgentRuntime
         from loom.core.di import LoomContainer
-        from tests.integration.ai.conftest import (
-            CountingEngineProvider,
-            StubDepsFactory,
-            make_ai_config,
-        )
+        from tests.helpers.ai import CountingEngineProvider, StubDepsFactory, make_ai_config
 
         runtime = AgentRuntime(
             plans=[],

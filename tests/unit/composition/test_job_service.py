@@ -65,7 +65,7 @@ async def test_application_closes_its_celery_service_once(tmp_path: Path) -> Non
     assert isinstance(service, CeleryJobService)
     assert [resource.kind for resource in application.resources].count(ResourceKind.CELERY) == 1
 
-    with patch.object(service.celery_app, "close", wraps=service.celery_app.close) as close:
+    with patch.object(service, "close", wraps=service.close) as close:
         async with application.running(check=False):
             close.assert_not_called()
         close.assert_called_once_with()
