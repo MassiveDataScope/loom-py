@@ -326,11 +326,7 @@ class A2AConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             _warn_plaintext_loopback("ai.a2a.base_url", address)
         if fault is not None:
             raise AgentCompilationError(
-                [
-                    AgentErrorCode.A2A_BASE_URL_INVALID.issue(
-                        url=_redact_url(address), reason=fault
-                    )
-                ]
+                [AgentErrorCode.A2A_BASE_URL_INVALID.issue(url=_redact_url(address), reason=fault)]
             )
 
 

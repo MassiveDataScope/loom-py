@@ -35,6 +35,7 @@ def _remote_settings(settings: dict[str, Any]) -> dict[str, Any]:
         prepared["auth"] = RedactedMap(auth)
     return prepared
 
+
 _SERVER = "knowledge"
 _URL = "https://knowledge.example.com/mcp"
 _AGENT = "market"
