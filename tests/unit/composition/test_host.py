@@ -11,7 +11,8 @@ from contextlib import asynccontextmanager
 import pytest
 import pytest_asyncio
 
-from loom.composition import ApplicationHost, Resource, ResourceKind, closing
+from loom.composition import ApplicationHost
+from loom.composition.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import TaskAffine, application_of
 
 

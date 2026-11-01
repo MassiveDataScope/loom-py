@@ -17,9 +17,9 @@ from loom.composition import (
     Application,
     CompositionSource,
     Recipe,
-    ResourceKind,
     compose_application,
 )
+from loom.composition.resources import ResourceKind
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult

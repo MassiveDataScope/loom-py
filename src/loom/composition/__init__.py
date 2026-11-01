@@ -14,7 +14,6 @@ from loom.composition.errors import (
 )
 from loom.composition.host import ApplicationHost
 from loom.composition.recipe import Adapter, Recipe
-from loom.composition.resources import Resource, ResourceKind, closing
 from loom.composition.source import AppConfig, CompositionSource
 
 __all__ = [
@@ -27,10 +26,7 @@ __all__ = [
     "CompositionSource",
     "Recipe",
     "ReservedBindingError",
-    "Resource",
-    "ResourceKind",
     "build_application",
-    "closing",
     "compose_application",
     "create_app",
 ]

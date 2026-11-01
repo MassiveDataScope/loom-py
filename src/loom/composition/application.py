@@ -35,7 +35,7 @@ class Application:
     """A compiled kernel and the resources it owns, independent of any transport.
 
     :meth:`running` opens the resources in the order of their
-    :class:`~loom.composition.ResourceKind`, running each one's startup checks
+    :class:`~loom.composition.resources.ResourceKind`, running each one's startup checks
     right before it opens, and closes them in reverse. A transport adapter
     enters :meth:`running` and never opens these resources itself.
 

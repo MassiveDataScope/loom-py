@@ -11,7 +11,8 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource, Resource, ResourceKind
+from loom.composition import AppConfig, Application, CompositionSource
+from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig

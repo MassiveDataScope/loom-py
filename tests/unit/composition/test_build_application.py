@@ -11,10 +11,10 @@ from loom.composition import (
     Application,
     CompositionSource,
     Recipe,
-    ResourceKind,
     build_application,
     create_app,
 )
+from loom.composition.resources import ResourceKind
 from loom.core.command import Command
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel

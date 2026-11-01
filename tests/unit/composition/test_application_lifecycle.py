@@ -8,8 +8,9 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 import pytest
 
-from loom.composition import Application, Resource, ResourceKind, closing
+from loom.composition import Application
 from loom.composition.errors import ApplicationAlreadyOpenError, CompositionErrorCode
+from loom.composition.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import application_of
 
 
