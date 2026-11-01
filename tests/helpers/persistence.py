@@ -17,7 +17,7 @@ from loom.core.persistence import (
     PoolMetricsSink,
     RuntimeProfile,
 )
-from loom.core.persistence.stores import StoreCatalog, load_catalog
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
 
 
 def build_backend(
@@ -28,13 +28,15 @@ def build_backend(
     *,
     pool_metrics: PoolMetricsSink | None = None,
     connection_only: bool = False,
+    store: StoreKey = DEFAULT_STORE,
 ) -> PersistenceWiring:
-    """Build *backend* from *ctx* with the catalog of *ctx*, loaded once, as a composition does."""
+    """Build *backend* for *store* with the catalog of *ctx*, loaded once, as a composition does."""
     runtime = BackendRuntime(
         profile,
         pool_metrics=pool_metrics,
         connection_only=connection_only,
         catalog=load_catalog(ctx),
+        store=store,
     )
     return backend.build(ctx, models, runtime)
 

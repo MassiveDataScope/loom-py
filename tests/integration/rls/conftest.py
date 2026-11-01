@@ -27,8 +27,10 @@ from sqlalchemy.pool import NullPool
 from loom.core.locator import Application, load_application
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
+URI_ENV_VAR_B = "LOOM_PG_IT_URI_B"
 FIXTURE_USERS = {"ro": "read", "rw": "write", "ops": "bypass"}
 COMPOSE_COMMAND = "docker compose -f docker-compose.local.yaml up -d postgres"
+COMPOSE_COMMAND_B = "docker compose -f docker-compose.local.yaml up -d postgres-b"
 
 
 async def _run(uri: str, *statements: str, autocommit: bool = False) -> None:
@@ -76,20 +78,43 @@ async def _connection_problem(uri: str) -> str | None:
     return None
 
 
-@pytest.fixture(scope="session")
-def pg_admin_uri() -> str:
-    uri = os.environ.get(URI_ENV_VAR)
+def _admin_uri(env_var: str, compose_command: str) -> str:
+    """The admin URI in *env_var*, or skip naming how to start that server."""
+    uri = os.environ.get(env_var)
     if not uri:
-        pytest.skip(
-            f"{URI_ENV_VAR} is not set; start Postgres with `{COMPOSE_COMMAND}` and export it"
-        )
+        pytest.skip(f"{env_var} is not set; start Postgres with `{compose_command}` and export it")
     problem = asyncio.run(_connection_problem(uri))
     if problem is not None:
         pytest.skip(
-            f"Postgres at ${URI_ENV_VAR} is not reachable ({problem});"
-            f" start it with `{COMPOSE_COMMAND}`"
+            f"Postgres at ${env_var} is not reachable ({problem});"
+            f" start it with `{compose_command}`"
         )
     return uri
+
+
+def _module_database(admin_uri: str, created_roles: set[str]) -> Iterator[str]:
+    """Create a database on the server of *admin_uri*; drop it and *created_roles* after."""
+    name = f"loom_rls_{secrets.token_hex(4)}"
+    asyncio.run(_run(admin_uri, f'CREATE DATABASE "{name}"', autocommit=True))
+    uri = make_url(admin_uri).set(database=name).render_as_string(hide_password=False)
+    try:
+        yield uri
+    finally:
+        asyncio.run(_run(admin_uri, f'DROP DATABASE "{name}" WITH (FORCE)', autocommit=True))
+        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles))
+        if drops:
+            asyncio.run(_run(admin_uri, *drops, autocommit=True))
+
+
+@pytest.fixture(scope="session")
+def pg_admin_uri() -> str:
+    return _admin_uri(URI_ENV_VAR, COMPOSE_COMMAND)
+
+
+@pytest.fixture(scope="session")
+def pg_admin_uri_b() -> str:
+    """The second, independent Postgres server: two stores on separate servers (ADR 0008)."""
+    return _admin_uri(URI_ENV_VAR_B, COMPOSE_COMMAND_B)
 
 
 @pytest.fixture(scope="module")
@@ -99,17 +124,19 @@ def created_roles() -> set[str]:
 
 
 @pytest.fixture(scope="module")
+def created_roles_b() -> set[str]:
+    """The roles a module creates on server B, whose cluster is not server A's."""
+    return set()
+
+
+@pytest.fixture(scope="module")
 def module_database_uri(pg_admin_uri: str, created_roles: set[str]) -> Iterator[str]:
-    name = f"loom_rls_{secrets.token_hex(4)}"
-    asyncio.run(_run(pg_admin_uri, f'CREATE DATABASE "{name}"', autocommit=True))
-    uri = make_url(pg_admin_uri).set(database=name).render_as_string(hide_password=False)
-    try:
-        yield uri
-    finally:
-        asyncio.run(_run(pg_admin_uri, f'DROP DATABASE "{name}" WITH (FORCE)', autocommit=True))
-        drops = tuple(f'DROP ROLE IF EXISTS "{role}"' for role in sorted(created_roles))
-        if drops:
-            asyncio.run(_run(pg_admin_uri, *drops, autocommit=True))
+    yield from _module_database(pg_admin_uri, created_roles)
+
+
+@pytest.fixture(scope="module")
+def module_database_uri_b(pg_admin_uri_b: str, created_roles_b: set[str]) -> Iterator[str]:
+    yield from _module_database(pg_admin_uri_b, created_roles_b)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +163,18 @@ BootstrapFactory = Callable[..., Coroutine[Any, Any, ScopedDatabase]]
 
 @pytest.fixture
 def scoped_database(module_database_uri: str, created_roles: set[str]) -> BootstrapFactory:
-    """Apply a product bootstrap for ``schema`` and return its user URLs.
+    """Apply a product bootstrap for ``schema`` and return its user URLs."""
+    return _bootstrap_factory(module_database_uri, created_roles)
+
+
+@pytest.fixture
+def scoped_database_b(module_database_uri_b: str, created_roles_b: set[str]) -> BootstrapFactory:
+    """:func:`scoped_database` on server B."""
+    return _bootstrap_factory(module_database_uri_b, created_roles_b)
+
+
+def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> BootstrapFactory:
+    """The factory applying a bootstrap in *module_database_uri*, recording its roles.
 
     The factory imports the bootstrap API lazily so this module stays
     importable while the mechanism is still red.
