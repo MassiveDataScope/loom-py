@@ -48,7 +48,7 @@ nothing reads them any more. `persistence.cursors` stays where it is.
 ## Writing a backend
 
 A backend is a class with a no-argument constructor, a `name`, a
-`repository_type` and one method:
+`repository_type` and a `build` method:
 `build(ctx, models, runtime) -> PersistenceWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
 `None` means the backend serves no repositories. `runtime` is a
@@ -67,6 +67,18 @@ work only, no repository and no cursor codec, and its startup checks only
 probe the connection. `sqlalchemy` honours it (see
 [Workers without models](../getting-started/composition.md#workers-without-models));
 a backend that ignores it builds as usual.
+
+### Store capabilities
+
+A backend can declare `capabilities(self, spec: StoreSpec) -> StoreCapabilities`,
+returning `serves_models`, `transactional` (its unit of work can roll back)
+and `pages_with_cursors`, all keyword-only. The catalog asks it the first
+time something reads `spec.capabilities`, once per store, so loading the
+catalog resolves no secret. When a capability depends on a setting, read only
+that key, as `mongo` does with `transactions`; decoding the whole section
+would resolve the connection too. A backend without the method gets
+`serves_models=True` and nothing else. The connection-only `clickhouse` kind
+supports none of the three.
 
 ```python
 # billing_ledger/backend.py

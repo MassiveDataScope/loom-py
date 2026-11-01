@@ -30,7 +30,12 @@ from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
 from loom.core.persistence.database import EXTERNAL, SchemaConfig, database_config_of
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import DEFAULT_STORE, SQLALCHEMY_BACKEND
+from loom.core.persistence.stores import (
+    DEFAULT_STORE,
+    SQLALCHEMY_BACKEND,
+    StoreCapabilities,
+    StoreSpec,
+)
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
@@ -67,6 +72,10 @@ class SQLAlchemyBackend:
 
     name: ClassVar[str] = SQLALCHEMY_BACKEND
     repository_type: ClassVar[type[Any] | None] = RepositorySQLAlchemy
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe SQLAlchemy's model, rollback, and cursor support."""
+        return StoreCapabilities(serves_models=True, transactional=True, pages_with_cursors=True)
 
     def build(
         self,

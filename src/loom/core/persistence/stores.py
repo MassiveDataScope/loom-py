@@ -11,7 +11,7 @@ declares ``__store__``; without it, it belongs to :data:`DEFAULT_STORE`
 
 Loading the catalog resolves nothing but each ``backend``: a deploy check or
 CI can load it without the secrets the connections name. A store resolves
-the rest of its section the first time it is read, and only then.
+the rest of its section, and its capabilities, the first time they are read.
 """
 
 from __future__ import annotations
@@ -57,6 +57,29 @@ _RETIRED_ATTRIBUTE: Final = "__database__"
 _KEY_PATTERN: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StoreCapabilities:
+    """Capabilities of a configured store."""
+
+    serves_models: bool
+    """Whether the store can serve model repositories."""
+    transactional: bool
+    """Whether its unit of work can roll back, allowing a future ``Joined`` store."""
+    pages_with_cursors: bool
+    """Whether its repositories page with cursors."""
+
+
+DEFAULT_CAPABILITIES: Final = StoreCapabilities(
+    serves_models=True, transactional=False, pages_with_cursors=False
+)
+"""Conservative descriptor for older third-party backends."""
+
+CLICKHOUSE_CAPABILITIES: Final = StoreCapabilities(
+    serves_models=False, transactional=False, pages_with_cursors=False
+)
+"""Descriptor of the connection-only ClickHouse store kind."""
+
+
 @dataclass(frozen=True)
 class StoreSpec:
     """One declared store.
@@ -73,10 +96,20 @@ class StoreSpec:
     backend: str
     config: ConfigContext
 
-    @property
-    def serves_models(self) -> bool:
-        """Whether the store serves models, unlike a connection-only one."""
-        return self.backend not in CONNECTION_ONLY_BACKENDS
+    @functools.cached_property
+    def capabilities(self) -> StoreCapabilities:
+        """What the store supports, asked of its backend on first read and kept.
+
+        A connection-only store has fixed capabilities. A third-party backend
+        without a ``capabilities`` method gets the conservative
+        :data:`DEFAULT_CAPABILITIES`.
+        """
+        if self.backend in CONNECTION_ONLY_BACKENDS:
+            return CLICKHOUSE_CAPABILITIES
+        from loom.core.persistence.registry import resolve_backend  # registry imports this module
+
+        describe = getattr(resolve_backend(self.backend), "capabilities", None)
+        return DEFAULT_CAPABILITIES if describe is None else describe(self)
 
     @property
     def path(self) -> str:
@@ -160,7 +193,7 @@ class StoreCatalog:
         groups: dict[StoreKey, list[type[BaseModel]]] = {key: [] for key in keys}
         for model in models:
             spec = self.require(store_of(model), purpose=f"model {model.__name__}")
-            if not spec.serves_models:
+            if not spec.capabilities.serves_models:
                 raise ConfigError(
                     f"{model.__name__} belongs to store {spec.key!r}, a connection-only "
                     f"{spec.backend} store that serves no model; {spec.path} only hands its "
@@ -295,11 +328,13 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
 __all__ = [
     "BACKEND_KEY",
     "CLICKHOUSE_BACKEND",
+    "CLICKHOUSE_CAPABILITIES",
     "CONNECTION_ONLY_BACKENDS",
     "DEFAULT_STORE",
     "NONE_BACKEND",
     "SQLALCHEMY_BACKEND",
     "StoreCatalog",
+    "StoreCapabilities",
     "StoreKey",
     "StoreSpec",
     "load_catalog",

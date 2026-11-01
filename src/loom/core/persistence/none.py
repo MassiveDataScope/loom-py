@@ -10,7 +10,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import NONE_BACKEND
+from loom.core.persistence.stores import NONE_BACKEND, StoreCapabilities, StoreSpec
 
 
 class NoneBackend:
@@ -22,6 +22,10 @@ class NoneBackend:
 
     name: ClassVar[str] = NONE_BACKEND
     repository_type: ClassVar[type[Any] | None] = None
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe a backend that serves no models or cursors."""
+        return StoreCapabilities(serves_models=False, transactional=False, pages_with_cursors=False)
 
     def build(
         self,

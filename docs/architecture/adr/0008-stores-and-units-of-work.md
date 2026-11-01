@@ -42,6 +42,12 @@ possible without changing the use-case DSL.
 
 ### Stores
 
+Each store answers what it supports through `StoreCapabilities`: whether it
+serves models, whether its unit of work can roll back (a future `Joined`
+store), and whether its repositories page with cursors. Its backend
+describes it on first read, so loading the catalog still resolves no secret.
+Callers ask the capability, never the backend's name.
+
 - `stores.<name>` declares each store with its backend (`sqlalchemy`,
   `mongo`, `dynamodb`) and connection.
 - A model declares `__store__`; without it, the model belongs to `default`.

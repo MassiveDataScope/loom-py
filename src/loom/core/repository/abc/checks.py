@@ -1,7 +1,7 @@
 """Deploy check of pagination cursors: tokens a deployed application cannot trust.
 
 ``loom.cursors.E001``: a process that serves repositories (a ``stores.<name>``
-section whose backend is ``sqlalchemy`` or ``mongo``) does not sign its
+section whose backend pages with cursors) does not sign its
 cursors with a configured key. ``signing: unsigned`` lets any client forge a
 position, and ``signing: ephemeral`` signs with a key no other instance or
 restart shares. A ``signed`` section without a ``current_key_id`` naming one
@@ -19,15 +19,13 @@ from typing import TYPE_CHECKING
 
 from loom.core.checks import Finding, deploy_check
 from loom.core.config.keys import ConfigKey
-from loom.core.persistence.stores import BACKEND_KEY, SQLALCHEMY_BACKEND
+from loom.core.persistence.stores import load_catalog
 from loom.core.repository.abc.cursor import CURSOR_SIGNING_CHECK, CursorConfig
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 _SECTION = ConfigKey.PERSISTENCE_CURSORS
-_CURSOR_BACKENDS = frozenset({SQLALCHEMY_BACKEND, "mongo"})
-"""Backends whose repositories page with cursors."""
 _SIGNED = CursorConfig().signing
 _HINT = (
     f"drop {_SECTION}.signing from the deployed configuration (signed is the default) "
@@ -60,14 +58,8 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
 
 
 def _serves_repositories(config: ConfigContext) -> bool:
-    """Whether a store, as written, names a backend whose repositories page with cursors."""
-    stores = config.raw(ConfigKey.STORES)
-    if not isinstance(stores, dict):
-        return False
-    return any(
-        isinstance(store, dict) and store.get(BACKEND_KEY) in _CURSOR_BACKENDS
-        for store in stores.values()
-    )
+    """Whether any configured store pages with cursors."""
+    return any(spec.capabilities.pages_with_cursors for spec in load_catalog(config).specs.values())
 
 
 __all__: list[str] = []

@@ -61,7 +61,11 @@ def test_catalog_loads_all_declared_store_keys_and_backends() -> None:
                     "default": {"backend": "sqlalchemy"},
                     "audit": {"backend": "sqlalchemy"},
                     "sessions": {"backend": "dynamodb"},
-                    "legacy": {"backend": "mongo"},
+                    "legacy": {
+                        "backend": "mongo",
+                        "url": "mongodb://localhost",
+                        "database": "test",
+                    },
                 }
             }
         )
@@ -171,7 +175,19 @@ def test_legacy_database_model_attribute_names_store_replacement() -> None:
         __database__ = "x"
         id: int = ColumnField(Integer, primary_key=True)
 
-    catalog = load_catalog(ConfigContext.from_dict({"stores": {"default": {"backend": "mongo"}}}))
+    catalog = load_catalog(
+        ConfigContext.from_dict(
+            {
+                "stores": {
+                    "default": {
+                        "backend": "mongo",
+                        "url": "mongodb://localhost",
+                        "database": "test",
+                    }
+                }
+            }
+        )
+    )
 
     with pytest.raises(ConfigError) as error:
         catalog.models_by_store([LegacyRecord])
@@ -192,7 +208,12 @@ def test_store_of_reads_a_models_declared_store() -> None:
 def test_models_by_store_groups_default_first_and_preserves_model_order() -> None:
     catalog = load_catalog(
         ConfigContext.from_dict(
-            {"stores": {"audit": {"backend": "mongo"}, "default": {"backend": "sqlalchemy"}}}
+            {
+                "stores": {
+                    "audit": {"backend": "mongo", "url": "mongodb://localhost", "database": "test"},
+                    "default": {"backend": "sqlalchemy"},
+                }
+            }
         )
     )
 
@@ -204,7 +225,19 @@ def test_models_by_store_groups_default_first_and_preserves_model_order() -> Non
 
 
 def test_model_declaring_an_unknown_store_names_model_and_store() -> None:
-    catalog = load_catalog(ConfigContext.from_dict({"stores": {"default": {"backend": "mongo"}}}))
+    catalog = load_catalog(
+        ConfigContext.from_dict(
+            {
+                "stores": {
+                    "default": {
+                        "backend": "mongo",
+                        "url": "mongodb://localhost",
+                        "database": "test",
+                    }
+                }
+            }
+        )
+    )
 
     with pytest.raises(ConfigError) as error:
         catalog.models_by_store([AuditRecord])

@@ -21,7 +21,7 @@ from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreSpec
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -66,6 +66,13 @@ class MongoBackend:
 
     name: ClassVar[str] = "mongo"
     repository_type: ClassVar[type[Any] | None] = RepositoryMongo
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe the store, resolving only its ``transactions`` key, never its connection."""
+        transactional = spec.config.section_or_default(f"{spec.path}.transactions", bool, False)
+        return StoreCapabilities(
+            serves_models=True, transactional=transactional, pages_with_cursors=True
+        )
 
     def build(
         self,

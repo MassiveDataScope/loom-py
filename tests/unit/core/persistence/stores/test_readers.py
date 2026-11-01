@@ -82,7 +82,7 @@ _CLICKHOUSE = {"backend": "clickhouse", "url": "clickhouse://ch:8123/analytics"}
 def test_a_clickhouse_store_is_a_connection_only_kind_of_the_catalog() -> None:
     spec = _catalog({"events": _CLICKHOUSE}).specs[StoreKey("events")]
 
-    assert (spec.backend, spec.serves_models) == ("clickhouse", False)
+    assert (spec.backend, spec.capabilities.serves_models) == ("clickhouse", False)
     assert spec.settings() == {"url": "clickhouse://ch:8123/analytics"}
 
 

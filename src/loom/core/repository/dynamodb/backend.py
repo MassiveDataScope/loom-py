@@ -13,7 +13,7 @@ from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreSpec
 from loom.core.repository.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
@@ -56,6 +56,10 @@ class DynamoDBBackend:
 
     name: ClassVar[str] = "dynamodb"
     repository_type: ClassVar[type[Any] | None] = RepositoryDynamoDB
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe DynamoDB's model support without rollback or cursor paging."""
+        return StoreCapabilities(serves_models=True, transactional=False, pages_with_cursors=False)
 
     def build(
         self,

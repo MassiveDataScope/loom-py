@@ -13,13 +13,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.uow.abc import UnitOfWorkFactory
+
+if TYPE_CHECKING:
+    from loom.core.persistence.stores import StoreCapabilities, StoreSpec
 
 
 def no_model_preparation(models: Sequence[type[BaseModel]]) -> None:
@@ -80,6 +83,10 @@ class PersistenceBackend(Protocol):
 
     name: ClassVar[str]
     repository_type: ClassVar[type[Any] | None]
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe the configured store without building its resources."""
+        ...
 
     def build(
         self,
