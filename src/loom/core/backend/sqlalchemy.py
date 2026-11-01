@@ -71,7 +71,6 @@ from loom.core.model.introspection import (
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn, ScopedTable
-from loom.core.persistence.stores import DEFAULT_STORE_PATH
 from loom.core.projection.runtime import ProjectionStep, build_projection_plan_from_steps
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH, naming_convention
 
@@ -847,8 +846,7 @@ def compile_all(*classes: type, metadata: MetaData | None = None) -> None:
 
 def get_compiled(struct_cls: type, *, metadata: MetaData | None = None) -> type | None:
     """Look up the SA class *struct_cls* compiled into *metadata*, the shared one by default."""
-    compiled: type | None = _compilation_for(metadata).compiled.get(struct_cls)
-    return compiled
+    return _compilation_for(metadata).compiled.get(struct_cls)
 
 
 def get_compiled_core(struct_cls: type, *, metadata: MetaData | None = None) -> CoreModel | None:
@@ -877,7 +875,7 @@ def get_metadata() -> MetaData:
 
 
 def configured_naming_convention(
-    value: Mapping[str, str] | None, *, path: str = DEFAULT_STORE_PATH
+    value: Mapping[str, str] | None, *, path: str
 ) -> dict[str, str] | None:
     """Validate a store's ``schema.naming_convention`` setting.
 

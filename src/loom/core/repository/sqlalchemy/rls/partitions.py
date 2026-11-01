@@ -140,7 +140,7 @@ def _partitioned(application: Application, model: type | str) -> ScopedTable:
 async def _guarded(
     target: str | AsyncConnection, application: Application, lock_timeout: str
 ) -> AsyncIterator[tuple[AsyncConnection, str]]:
-    bootstrap = _bootstrap(application)
+    bootstrap = application.require_bootstrap("partitions")
     try:
         validate_timeout(lock_timeout)
     except ValueError as exc:
@@ -185,13 +185,3 @@ async def _prepared(
 
 def _path(bootstrap: BootstrapConfig) -> dict[str, str]:
     return {"schema": bootstrap.schema, "guard": bootstrap.names.guard}
-
-
-def _bootstrap(application: Application) -> BootstrapConfig:
-    bootstrap = application.bootstrap
-    if bootstrap is None:
-        raise ConfigError(
-            f"partitions need {application.path}.schema.name, roles and database_users "
-            "in the configuration"
-        )
-    return bootstrap

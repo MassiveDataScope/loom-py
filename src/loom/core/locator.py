@@ -16,7 +16,7 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, TypeVar, get_args
+from typing import TYPE_CHECKING, Final, get_args
 
 import msgspec
 
@@ -38,6 +38,7 @@ from loom.core.persistence.database import (
     SchemaConfig,
     SchemaUser,
     database_config,
+    require_schema_key,
 )
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
@@ -55,7 +56,6 @@ if TYPE_CHECKING:
 
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
-_T = TypeVar("_T")
 
 
 DEFAULT_CODE_PATH: Final = "src"
@@ -104,6 +104,20 @@ class Application:
     scoped: Mapping[tuple[str | None, str], ScopedTable]
     scope_sources: Mapping[str, str]
     path: str = DEFAULT_STORE_PATH
+
+    def require_bootstrap(self, purpose: str) -> BootstrapConfig:
+        """Return the bootstrap declaration, which *purpose* (``"migrations"``, ...) needs.
+
+        Raises:
+            ConfigError: When the store declares no schema name, roles or
+                database users, naming its section.
+        """
+        if self.bootstrap is None:
+            raise ConfigError(
+                f"{purpose} need {self.path}.schema.name, roles and database_users "
+                "in the configuration"
+            )
+        return self.bootstrap
 
 
 _ENGINES: dict[str, Callable[[_Discovery], DiscoveryResult]] = {
@@ -215,11 +229,11 @@ def _schema_name(name: str, path: str) -> str:
 def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
     from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseRoles
 
-    name = _required(schema.name, path, "name")
-    roles = _required(schema.roles, path, "roles")
-    users = _required(schema.database_users, path, "database_users")
-    groups = _required(schema.groups, path, "groups")
-    version_tables = _required(schema.version_tables, path, "version_tables")
+    name = require_schema_key(schema.name, path, "name")
+    roles = require_schema_key(schema.roles, path, "roles")
+    users = require_schema_key(schema.database_users, path, "database_users")
+    groups = require_schema_key(schema.groups, path, "groups")
+    version_tables = require_schema_key(schema.version_tables, path, "version_tables")
     config = BootstrapConfig(
         schema=name,
         roles=DatabaseRoles(owner=roles.owner, migrator=roles.migrator),
@@ -227,7 +241,7 @@ def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
             user: _database_user(user, section, path) for user, section in users.items()
         },
         names=SchemaNames(
-            guard=_required(schema.guard, path, "guard"),
+            guard=require_schema_key(schema.guard, path, "guard"),
             readers=groups.readers,
             writers=groups.writers,
             version_table=version_tables.structure,
@@ -256,7 +270,7 @@ def _database_user(user: str, section: SchemaUser, path: str) -> DatabaseUser:
 def _scope_sources(
     schema: SchemaConfig, scoped: Mapping[tuple[str | None, str], ScopedTable], path: str
 ) -> dict[str, str]:
-    sources = _required(schema.scopes, path, "scopes")
+    sources = require_schema_key(schema.scopes, path, "scopes")
     declared = {scope.scope for table in scoped.values() for scope in table.scopes}
     for scope in sorted(declared):
         if scope not in sources:
@@ -267,12 +281,3 @@ def _scope_sources(
                 "identity.<attribute> or request.<name>"
             )
     return {scope: sources[scope] for scope in sorted(declared)}
-
-
-def _required(value: _T | None, path: str, key: str) -> _T:
-    if value is None:
-        raise ConfigError(
-            f"{path}.schema.{key} is required when a model is RowScoped: "
-            "run `loom schema init <schema>` to write the derived names"
-        )
-    return value

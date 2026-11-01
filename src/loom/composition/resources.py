@@ -40,6 +40,7 @@ class Resource:
             :meth:`~loom.composition.Application.check`; they leave no
             connection open.
         readiness: Probe answering whether it can serve now.
+        readiness_label: Key its readiness is reported under; its name when empty.
     """
 
     kind: ResourceKind
@@ -47,6 +48,12 @@ class Resource:
     manager: Callable[[], AbstractAsyncContextManager[object]]
     check: Callable[[], Awaitable[None]] | None = None
     readiness: Callable[[], Awaitable[bool]] | None = None
+    readiness_label: str = ""
+
+    @property
+    def readiness_key(self) -> str:
+        """The key its readiness is reported under: :attr:`readiness_label`, else its name."""
+        return self.readiness_label or self.name
 
     @property
     def label(self) -> str:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Literal
+from typing import Any, ClassVar, Final, Literal, TypeVar
 
 import msgspec
 
@@ -261,6 +261,23 @@ def database_config_of(catalog: StoreCatalog, store: str, *, purpose: str) -> Da
     return database_config(catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose=purpose))
 
 
+_T = TypeVar("_T")
+
+
+def require_schema_key(value: _T | None, path: str, key: str) -> _T:
+    """Return *value*, the ``schema.<key>`` of the store at *path*, which a row-scoped model needs.
+
+    Raises:
+        ConfigError: When it is not declared, naming the key and how to write it.
+    """
+    if value is None:
+        raise ConfigError(
+            f"{path}.schema.{key} is required when a model is RowScoped: "
+            "run `loom schema init <schema>` to write the derived names"
+        )
+    return value
+
+
 def database_config(spec: StoreSpec) -> DatabaseConfig:
     """Decode the relational section of *spec*, whose path the messages name.
 
@@ -293,4 +310,5 @@ __all__ = [
     "decode_database_config",
     "load_database_config",
     "reject_retired_pool_keys",
+    "require_schema_key",
 ]

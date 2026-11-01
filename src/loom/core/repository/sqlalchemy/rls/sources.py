@@ -12,7 +12,6 @@ from collections.abc import Callable, Mapping
 
 from loom.core.config import ConfigError
 from loom.core.identity import current_identity
-from loom.core.persistence.stores import DEFAULT_STORE_PATH
 
 ScopeSource = Callable[[], object | None]
 
@@ -32,7 +31,7 @@ def clear_scope_sources() -> None:
     _sources.clear()
 
 
-def validate_bindings(scope_sources: Mapping[str, str], *, path: str = DEFAULT_STORE_PATH) -> None:
+def validate_bindings(scope_sources: Mapping[str, str], *, path: str) -> None:
     """Fail at startup when a binding is malformed or names an unregistered source.
 
     Args:
@@ -43,7 +42,12 @@ def validate_bindings(scope_sources: Mapping[str, str], *, path: str = DEFAULT_S
         ConfigError: Naming the scope and the binding.
     """
     for scope, binding in scope_sources.items():
-        kind, name = _parse(scope, binding, path)
+        if _BINDING.fullmatch(binding) is None:
+            raise ConfigError(
+                f"{path}.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
+                "or request.<name>"
+            )
+        kind, name = binding.split(".", 1)
         if kind == "request" and name not in _sources:
             raise ConfigError(
                 f"{path}.schema.scopes.{scope} binds {binding!r} but no scope source "
@@ -52,8 +56,11 @@ def validate_bindings(scope_sources: Mapping[str, str], *, path: str = DEFAULT_S
 
 
 def resolve_binding(binding: str) -> object | None:
-    """Return the current value of ``binding`` or ``None`` when there is none."""
-    kind, name = _parse("", binding, DEFAULT_STORE_PATH)
+    """Return the current value of ``binding`` or ``None`` when there is none.
+
+    *binding* is one :func:`validate_bindings` accepted at startup.
+    """
+    kind, name = binding.split(".", 1)
     if kind == "identity":
         identity = current_identity()
         if name == "subject":
@@ -61,13 +68,3 @@ def resolve_binding(binding: str) -> object | None:
         return identity.attribute(name)
     source = _sources.get(name)
     return source() if source is not None else None
-
-
-def _parse(scope: str, binding: str, path: str) -> tuple[str, str]:
-    match = _BINDING.fullmatch(binding)
-    if match is None:
-        raise ConfigError(
-            f"{path}.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
-            "or request.<name>"
-        )
-    return match.group(1), match.group(2)

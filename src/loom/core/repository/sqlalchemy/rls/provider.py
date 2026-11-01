@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
-from loom.core.persistence.stores import DEFAULT_STORE_PATH
 from loom.core.repository.sqlalchemy.rls.sources import resolve_binding, validate_bindings
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
 
@@ -58,7 +57,7 @@ def scoped_session_settings(
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     product: SessionSettings | None = None,
     *,
-    path: str = DEFAULT_STORE_PATH,
+    path: str,
 ) -> Callable[[], Mapping[str, str]]:
     """Build the provider from the scope bindings and the compiled scoped tables.
 
@@ -109,7 +108,7 @@ class DeferredScopedSettings:
     scoped tables are only known at startup; until then any use fails.
     """
 
-    def __init__(self, scope_sources: Mapping[str, str], *, path: str = DEFAULT_STORE_PATH) -> None:
+    def __init__(self, scope_sources: Mapping[str, str], *, path: str) -> None:
         self._scope_sources = dict(scope_sources)
         self._path = path
         self._provide: Callable[[], Mapping[str, str]] | None = None

@@ -7,7 +7,6 @@ from typing import Any
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.repository import (
     DefaultRepositoryBuilder,
     RepositoryBuildContext,
@@ -76,7 +75,6 @@ def build_sqlalchemy_repository_registration_module(
     *,
     cursor_codec: CursorCodec,
     logical_models: Sequence[type[Any]] = (),
-    store: StoreKey = DEFAULT_STORE,
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers model repositories and their capability bindings.
 
@@ -92,10 +90,6 @@ def build_sqlalchemy_repository_registration_module(
     To swap the default builder, register your own ``DefaultRepositoryBuilder``
     in the container *before* loading this module — the module will not
     overwrite an existing registration.
-
-    A *store* other than the default one registers its ``SessionManager``
-    under :func:`~loom.core.persistence.stores.store_binding`; the default
-    store keeps the bare ``SessionManager`` key.
     """
 
     def _registered_builder(
@@ -131,9 +125,7 @@ def build_sqlalchemy_repository_registration_module(
 
     def _register_with_session(container: LoomContainer) -> None:
         # The one session manager: the composition refuses a caller binding the key.
-        container.register(
-            store_binding(SessionManager, store), lambda: session_manager, scope=Scope.APPLICATION
-        )
+        container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
         register_cursor_codec(container, cursor_codec)
         if not container.is_registered(DefaultRepositoryBuilder):
             container.register_instance(

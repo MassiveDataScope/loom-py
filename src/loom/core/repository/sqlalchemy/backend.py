@@ -23,15 +23,17 @@ from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
-from loom.core.persistence.database import EXTERNAL, SchemaConfig, database_config
+from loom.core.persistence.database import (
+    EXTERNAL,
+    SchemaConfig,
+    database_config,
+    require_schema_key,
+)
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.persistence.stores import (
-    DEFAULT_STORE_PATH,
     SQLALCHEMY_BACKEND,
     StoreCapabilities,
-    StoreKey,
     StoreSpec,
-    store_binding,
 )
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
@@ -111,9 +113,7 @@ class SQLAlchemyBackend:
                 receiver, the catalog and the store to serve.
 
         Returns:
-            The SQLAlchemy wiring. A store other than the default one registers
-            its session manager and elevation sink under
-            :func:`~loom.core.persistence.stores.store_binding` keys.
+            The SQLAlchemy wiring.
 
         With ``runtime.connection_only`` no repository is served; see
         :class:`~loom.core.persistence.BackendRuntime`.
@@ -140,7 +140,7 @@ class SQLAlchemyBackend:
             # The caller's compiled registry stays the one its session manager serves.
             metadata = None
             prepare = no_model_preparation
-            register = functools.partial(_session_manager_module, store=spec.key)
+            register = _session_manager_module
             check = _probe_connection
         else:
             metadata = MetaData(
@@ -156,7 +156,6 @@ class SQLAlchemyBackend:
                 _repositories_module,
                 models=models,
                 cursor_codec=CursorCodec.from_context(ctx),
-                store=spec.key,
                 elevation=settings is not None,
             )
         session_manager = build_session_manager(
@@ -180,11 +179,9 @@ class SQLAlchemyBackend:
         )
 
 
-def _session_manager_module(
-    session_manager: SessionManager, *, store: StoreKey
-) -> Callable[[LoomContainer], None]:
+def _session_manager_module(session_manager: SessionManager) -> Callable[[LoomContainer], None]:
     """The module of a backend serving no repository: the session manager only."""
-    return functools.partial(_register_session_manager, session_manager, store)
+    return functools.partial(_register_session_manager, session_manager)
 
 
 def _repositories_module(
@@ -192,42 +189,36 @@ def _repositories_module(
     *,
     models: Sequence[type[BaseModel]],
     cursor_codec: CursorCodec,
-    store: StoreKey,
     elevation: bool,
 ) -> Callable[[LoomContainer], None]:
     """The module registering a repository per model, and the elevation sink when scoped."""
     return _with_elevation_sink(
         build_sqlalchemy_repository_registration_module(
-            session_manager, models, cursor_codec=cursor_codec, store=store
+            session_manager, models, cursor_codec=cursor_codec
         ),
-        store=store,
         enabled=elevation,
     )
 
 
-def _register_session_manager(
-    session_manager: SessionManager, store: StoreKey, container: LoomContainer
-) -> None:
-    """Register the store's session manager, the one every consumer of that store shares.
+def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
+    """Register the backend's session manager, the one every consumer shares.
 
     ``SessionManager`` is framework-owned: the composition refuses a caller's
     module binding it, so the unit of work, the pool reset and the startup
     checks hold the same instance the container serves.
     """
-    container.register(
-        store_binding(SessionManager, store), lambda: session_manager, scope=Scope.APPLICATION
-    )
+    container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
 
 
 def _with_elevation_sink(
-    module: Callable[[LoomContainer], None], *, store: StoreKey, enabled: bool
+    module: Callable[[LoomContainer], None], *, enabled: bool
 ) -> Callable[[LoomContainer], None]:
     if not enabled:
         return module
 
     def register(container: LoomContainer) -> None:
         module(container)
-        container.register_instance(store_binding(ElevationSink, store), SQLAlchemyElevationSink())
+        container.register_instance(ElevationSink, SQLAlchemyElevationSink())
 
     return register
 
@@ -282,7 +273,7 @@ def startup_checks(
     scoped: Mapping[tuple[str | None, str], ScopedTable],
     *,
     has_session_settings: bool,
-    path: str = DEFAULT_STORE_PATH,
+    path: str,
 ) -> tuple[str, ...]:
     """Decide what startup may do; return the scoped tables left unprotected on purpose.
 
@@ -460,12 +451,7 @@ async def _check_guard(
     permissive policies and owner trigger bound to this guard. The guard's
     configuration row is not readable here; ``verify`` checks it.
     """
-    guard = store.schema.guard
-    if guard is None:
-        raise ConfigError(
-            f"{store.path}.schema.guard is required when a model is RowScoped: "
-            "run `loom schema init <schema>` to write the derived names"
-        )
+    guard = require_schema_key(store.schema.guard, store.path, "guard")
     problems = await startup_problems(connection, guard, scoped)
     if problems:
         details = "; ".join(f"{p.check} {p.subject}: {p.actual}" for p in problems)

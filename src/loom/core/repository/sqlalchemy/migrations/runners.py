@@ -229,12 +229,7 @@ async def _registry_drift(config: Config, application: Application) -> None:
 
 
 def _require_bootstrap(application: Application) -> BootstrapConfig:
-    bootstrap = application.bootstrap
-    if bootstrap is None:
-        raise ConfigError(
-            f"migrations need {application.path}.schema.name, roles and database_users "
-            "in the configuration"
-        )
+    bootstrap = application.require_bootstrap("migrations")
     try:
         return bootstrap.validated()
     except ValueError as exc:

@@ -281,9 +281,23 @@ class TestHealthProbeBudget:
     ) -> None:
         monkeypatch.setattr(health_module, "PROBE_TIMEOUT_SECONDS", 0.01)
         app = FastAPI()
-        health_module.mount_health(app, "slow", _sleeping_probe)
+        health_module.mount_health(app, {"slow": _sleeping_probe})
 
         status, body = _get(app, _HEALTH)
 
         assert status == 503
         assert body == {"status": "degraded", "backends": {"slow": False}}
+
+    def test_a_slow_store_does_not_hide_a_ready_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(health_module, "PROBE_TIMEOUT_SECONDS", 0.01)
+
+        async def ready() -> bool:
+            return True
+
+        app = FastAPI()
+        health_module.mount_health(app, {"slow": _sleeping_probe, "ready": ready})
+
+        status, body = _get(app, _HEALTH)
+
+        assert status == 503
+        assert body == {"status": "degraded", "backends": {"slow": False, "ready": True}}

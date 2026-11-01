@@ -44,6 +44,13 @@ class _Shipment(BaseModel):
     carrier: str = ColumnField(length=20)
 
 
+class _AuditEntry(BaseModel):
+    __tablename__ = "isolation_audit_entries"
+    __store__ = "audit"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
 class _NewInvoice(Command, frozen=True):
     number: str
 
@@ -118,24 +125,17 @@ async def test_one_model_composed_twice_serves_each_application_from_its_own_sto
     assert _tables(left) == _tables(right) == {"isolation_invoices"}
 
 
-class _AuditEntry(BaseModel):
-    __tablename__ = "isolation_audit_entries"
-    __store__ = "audit"
-
-    id: int = ColumnField(primary_key=True, autoincrement=True)
-
-
-async def test_each_store_is_a_resource_named_by_its_key_with_its_readiness(
+async def test_the_store_resource_is_named_by_its_key_and_probed_under_its_backend(
     tmp_path: Path,
 ) -> None:
     application = _compose(tmp_path / "ready.db", _Invoice)
 
     stores = [r.name for r in application.resources if r.kind is ResourceKind.STORE]
     async with application.running():
-        ready = await application.readiness()
+        ready = {key: await probe() for key, probe in application.readiness_probes().items()}
 
     assert stores == ["default"]
-    assert ready == {"default": True}
+    assert ready == {"sqlalchemy": True}
 
 
 def test_a_model_of_another_store_is_refused_until_the_invocation_scope_exists(

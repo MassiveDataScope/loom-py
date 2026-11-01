@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -275,7 +275,7 @@ def compose_application(
         persistence=wiring,
         resources=_resources(
             kernel=kernel,
-            stores={DEFAULT_STORE: wiring},
+            stores=(_store_resource(DEFAULT_STORE, wiring, label=recipe.backend.name),),
             sql=sql,
             ai=ai,
             job_resource=job_resource,
@@ -329,7 +329,7 @@ def _compose_agents(
 def _resources(
     *,
     kernel: KernelRuntime,
-    stores: Mapping[StoreKey, PersistenceWiring],
+    stores: Sequence[Resource],
     sql: SqlWiring,
     ai: AiWiring,
     job_resource: Resource | None,
@@ -356,14 +356,21 @@ def _resources(
         )
     if runtime is not None:
         resources.append(Resource(kind=ResourceKind.AGENTS, name="agents", manager=lambda: runtime))
-    resources.extend(
-        Resource(
-            kind=ResourceKind.STORE,
-            name=key,
-            manager=wiring.lifespan_init,
-            check=wiring.startup_checks,
-            readiness=wiring.readiness,
-        )
-        for key, wiring in stores.items()
-    )
+    resources.extend(stores)
     return tuple(resources)
+
+
+def _store_resource(key: StoreKey, wiring: PersistenceWiring, *, label: str) -> Resource:
+    """The resource of store *key*, whose readiness is reported under *label*.
+
+    The default store keeps its backend's name as the label: ``/health`` has
+    always reported it under that key.
+    """
+    return Resource(
+        kind=ResourceKind.STORE,
+        name=key,
+        manager=wiring.lifespan_init,
+        check=wiring.startup_checks,
+        readiness=wiring.readiness,
+        readiness_label=label,
+    )

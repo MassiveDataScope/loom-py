@@ -72,15 +72,15 @@ class Application:
         """Whether :meth:`running` is between opening and closing."""
         return self._open
 
-    async def readiness(self) -> dict[str, bool]:
-        """Ask every store with a readiness probe whether it can serve now.
+    def readiness_probes(self) -> dict[str, Callable[[], Awaitable[bool]]]:
+        """Return each store's readiness probe, by the key its readiness is reported under.
 
-        Returns:
-            Each probed store's answer, by store key; a store without a probe
-            is left out. A probe answers and never raises.
+        A store without a probe is left out. Each probe answers whether its
+        store can serve now and never raises; a transport bounds and caches
+        each one on its own, so one slow store does not hide the others.
         """
         return {
-            resource.name: await resource.readiness()
+            resource.readiness_key: resource.readiness
             for resource in self.resources
             if resource.kind is ResourceKind.STORE and resource.readiness is not None
         }
