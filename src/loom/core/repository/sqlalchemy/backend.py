@@ -44,7 +44,7 @@ from loom.core.repository.sqlalchemy.rls.elevate import (
     SQLAlchemyElevationSink,
     validate_elevations,
 )
-from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
+from loom.core.repository.sqlalchemy.rls.integrity import OWNER_TRIGGER, startup_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -58,6 +58,13 @@ PRIVILEGED_ROLE: Final = (
 )
 _PROBE: Final = text(PROBE)
 _PRIVILEGED_ROLE: Final = text(PRIVILEGED_ROLE)
+_SCOPED_ON_SEARCH_PATH: Final = text(
+    "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = ANY (current_schemas(false)) AND c.relkind IN ('r', 'p') "
+    "AND (c.relrowsecurity OR EXISTS (SELECT 1 FROM pg_trigger t "
+    "WHERE t.tgrelid = c.oid AND t.tgname = :owner_trigger))"
+)
+"""Tables on the connection's search path that row-level security or loom's guard protects."""
 
 
 @dataclass(frozen=True)
@@ -307,11 +314,19 @@ def _refuse_unprotected_scoped(
     scoped: Mapping[tuple[str | None, str], ScopedTable], path: str
 ) -> None:
     """Refuse scoped tables on Postgres outside an external schema: nothing protects them."""
-    if not scoped:
+    _refuse_unprotected(sorted(table.name for table in scoped.values()), path)
+
+
+def _refuse_unprotected(names: Sequence[str], path: str) -> None:
+    """Refuse the scoped tables *names* outside ``schema.mode: external``, if any.
+
+    Raises:
+        ConfigError: Naming the tables and the setting that protects them.
+    """
+    if not names:
         return
-    names = ", ".join(sorted(table.name for table in scoped.values()))
     raise ConfigError(
-        f"create_all cannot protect scoped tables {names}; run "
+        f"create_all cannot protect scoped tables {', '.join(names)}; run "
         f"create_schema(migrator_url, application) and set {path}.schema.mode: external"
     )
 
@@ -377,25 +392,32 @@ async def _run_startup_checks(store: _Store) -> None:
 async def _probe_connection(store: _Store) -> None:
     """Open one connection and run ``SELECT 1``, then drop queued connections.
 
-    The startup of a backend serving no repository: the process-wide metadata
-    holds tables this host does not serve, so none is created or inspected.
-    On Postgres the two refusals that protect row-level security still hold:
-    scoped tables in that metadata outside ``schema.mode: external``, before
-    connecting, and a superuser or bypass role, on the probe's connection.
-    The engine is used directly, not a session, so unbound row-level security
-    settings do not refuse the probe. A failure to connect propagates as the
-    driver raised it.
+    The startup of a backend serving no repository: it compiles no model, so
+    no table is created or inspected. On Postgres the refusals that protect
+    row-level security still hold. Outside ``schema.mode: external`` it
+    refuses scoped tables wherever they are known: those compiled by hand
+    into the shared registry, before connecting, and, on the probe's
+    connection, any table on the search path with row-level security
+    enabled or loom's owner trigger, which an application composed in
+    another process (or in this one, into its own metadata) created. It
+    also refuses a superuser or bypass role. The engine is used directly,
+    not a session, so unbound row-level security settings do not refuse the
+    probe. A failure to connect propagates as the driver raised it.
 
     Raises:
-        ConfigError: When a Postgres connection would bypass row-level security.
+        ConfigError: When a Postgres connection would bypass row-level
+            security, or scoped tables exist outside an external schema.
     """
     session_manager = store.session_manager
     postgres = session_manager.engine.dialect.name == POSTGRES_DIALECT
-    if postgres and store.schema.mode != EXTERNAL:
+    guarded = postgres and store.schema.mode != EXTERNAL
+    if guarded:
         _refuse_unprotected_scoped(scoped_tables(store.metadata), store.path)
     try:
         async with session_manager.engine.connect() as connection:
             await connection.execute(_PROBE)
+            if guarded:
+                await _refuse_scoped_in_database(connection, store.path)
             if postgres:
                 await _reject_privileged_connection(connection)
     finally:
@@ -459,6 +481,16 @@ async def _check_guard(
             f"the guard {guard} or the scoped tables differ from what this release of loom "
             f"ships: {details}"
         )
+
+
+async def _refuse_scoped_in_database(connection: AsyncConnection, path: str) -> None:
+    """Refuse the protected tables on the search path; see :func:`_probe_connection`.
+
+    Raises:
+        ConfigError: As :func:`_refuse_unprotected`.
+    """
+    found = await connection.execute(_SCOPED_ON_SEARCH_PATH, {"owner_trigger": OWNER_TRIGGER})
+    _refuse_unprotected(sorted(found.scalars()), path)
 
 
 async def _reject_privileged_connection(connection: AsyncConnection) -> None:
