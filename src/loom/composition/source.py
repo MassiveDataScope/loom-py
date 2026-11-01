@@ -69,20 +69,12 @@ class CompositionSource:
         """
         return load_catalog(self.config)
 
-    def backend_name(self, default: str) -> str:
-        """Return ``stores.default.backend``, or *default* when that store is not declared.
-
-        Raises:
-            ConfigError: As :attr:`catalog`.
-        """
-        spec = self.catalog.specs.get(DEFAULT_STORE)
-        return default if spec is None else spec.backend
-
     def backend(self, default: str) -> PersistenceBackend:
-        """Build the backend :meth:`backend_name` names.
+        """Build the backend ``stores.default.backend`` names; *default* without that store.
 
         Raises:
-            ConfigError: As :meth:`backend_name`, or when no backend is
+            ConfigError: As :attr:`catalog`, or when no backend is
                 registered under that name.
         """
-        return resolve_backend(self.backend_name(default))
+        spec = self.catalog.specs.get(DEFAULT_STORE)
+        return resolve_backend(default if spec is None else spec.backend)

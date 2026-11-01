@@ -187,7 +187,7 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
 
 
 def _gate_autocrud_capabilities(
-    discovered: DiscoveryResult, backend: PersistenceBackend, backend_name: str
+    discovered: DiscoveryResult, backend: PersistenceBackend
 ) -> DiscoveryResult:
     """Mount only the CRUD operations the serving repository class declares.
 
@@ -209,9 +209,7 @@ def _gate_autocrud_capabilities(
     pruned: set[type[Any]] = set()
     for interface in discovered.interfaces:
         if interface.auto_crud_model is not None:
-            pruned.update(
-                _gate_interface(interface, interface.auto_crud_model, backend, backend_name)
-            )
+            pruned.update(_gate_interface(interface, interface.auto_crud_model, backend))
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
     return discovered.with_changes(
@@ -223,9 +221,9 @@ def _gate_interface(
     interface: type[RestInterface[Any]],
     model: type[Any],
     backend: PersistenceBackend,
-    backend_name: str,
 ) -> frozenset[type[Any]]:
     """Narrow one interface's generated routes; return the use cases pruned from it."""
+    backend_name = backend.name
     repository_type = _serving_repository_type(model, backend)
     if repository_type is None:
         raise RuntimeError(
@@ -577,7 +575,7 @@ class FastAPIAdapter:
         # Runs before the backend allocates resources: building it creates them.
         _reject_autocrud_without_model(discovered)
         backend = source.backend(default=SQLALCHEMY_BACKEND)
-        discovered = _gate_autocrud_capabilities(discovered, backend, backend.name)
+        discovered = _gate_autocrud_capabilities(discovered, backend)
 
         self._declared = _Declared(
             name=source.app.name,
