@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from loom.celery.service import CeleryJobService
 
 
-def build_celery_service(
+def _build_celery_service(
     ctx: ConfigContext,
     result: KernelRuntime,
     observability_runtime: ObservabilityRuntime | None,
@@ -27,7 +27,8 @@ def build_celery_service(
 
     Returns ``None`` when the ``loom[celery]`` extra is absent or the
     ``celery`` section is, so the caller can fall back to
-    :func:`build_inline_service`. A section that fails validation raises.
+    :class:`~loom.core.job.service.InlineJobService`. A section that fails
+    validation raises.
 
     Args:
         ctx: Resolved configuration context.
@@ -64,18 +65,6 @@ def build_celery_service(
     )
 
 
-def build_inline_service(result: KernelRuntime) -> InlineJobService:
-    """Return an ``InlineJobService`` backed by the kernel's factory and executor.
-
-    Args:
-        result: Kernel runtime carrying factory and executor.
-
-    Returns:
-        ``InlineJobService`` instance.
-    """
-    return InlineJobService(result.factory, result.executor)
-
-
 def configure_job_service(
     ctx: ConfigContext,
     result: KernelRuntime,
@@ -105,8 +94,8 @@ def configure_job_service(
     """
     if result.container.is_registered(JobService):
         return None
-    celery_service = build_celery_service(ctx, result, observability_runtime)
-    svc = celery_service or build_inline_service(result)
+    celery_service = _build_celery_service(ctx, result, observability_runtime)
+    svc = celery_service or InlineJobService(result.factory, result.executor)
     result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)
     if celery_service is None:
         return None
