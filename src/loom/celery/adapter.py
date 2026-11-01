@@ -94,7 +94,7 @@ _SIGNAL_UIDS = {
 
 
 # ---------------------------------------------------------------------------
-# Agent() and Mcp() marker refusal (T402, spec 015 T202)
+# Agent() and Mcp() marker refusal
 # ---------------------------------------------------------------------------
 
 
@@ -170,7 +170,7 @@ class _AsyncRuntimeProtocol(Protocol):
 
     def initialize(self) -> None: ...
 
-    def refuse(self, cause: BaseException) -> None: ...
+    def refuse(self, cause: Exception) -> None: ...
 
     def run(self, coro: Any, *, eager_fallback: bool) -> Any: ...
 
@@ -457,8 +457,9 @@ class CeleryAdapter:
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,
-            # Without models the worker serves only a unit of work, as it always
-            # has: no cursor keys needed, and models the caller compiled stay.
+            # Without models the worker serves only a unit of work: no cursor
+            # codec is built, and the shared metadata the caller compiled into
+            # stays as it is.
             connection_only=not resolved.models,
         )
 

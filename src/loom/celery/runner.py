@@ -1,9 +1,9 @@
 """Celery task factories for Job and Callback execution on the worker side.
 
 Each ``_make_*`` function registers one Celery task against a given
-``celery_app`` and returns the task object.  They are called once during
-worker bootstrap (see :func:`~loom.celery.bootstrap.bootstrap_worker`)
-and never again.
+``celery_app`` and returns the task object.  They are called once, when
+:meth:`~loom.celery.adapter.CeleryAdapter.bind` registers the tasks, and
+never again.
 
 Every task is registered with ``shared=False``: it belongs to its
 ``celery_app`` alone. A shared task joins Celery's process-wide finalizers,
@@ -70,7 +70,7 @@ class _CeleryAsyncRuntime:
     backend_options: dict[str, Any] = field(default_factory=dict)
     shutdown_timeout_ms: int | None = None
     _bridge: AsyncBridge | None = None
-    _open_failure: BaseException | None = None
+    _open_failure: Exception | None = None
 
     def initialize(self) -> None:
         """Create the async bridge once per forked worker process."""
@@ -82,7 +82,7 @@ class _CeleryAsyncRuntime:
             shutdown_timeout_ms=self.shutdown_timeout_ms,
         )
 
-    def refuse(self, cause: BaseException) -> None:
+    def refuse(self, cause: Exception) -> None:
         """Fail every later :meth:`run` of this process: its application did not open."""
         self._open_failure = cause
 
@@ -98,8 +98,7 @@ class _CeleryAsyncRuntime:
         failure = self._open_failure
         if failure is None:
             return
-        # ``failure`` is the BaseException refuse() recorded; Sonar does not narrow it.
-        raise WorkerNotOpenError(failure) from failure  # NOSONAR S5707 - always an exception
+        raise WorkerNotOpenError(failure) from failure
 
     def run(
         self,

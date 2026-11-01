@@ -91,7 +91,7 @@ class _RuntimeSpy:
     def initialize(self) -> None:
         self.initialize_calls += 1
 
-    def refuse(self, cause: BaseException) -> None:
+    def refuse(self, cause: Exception) -> None:
         raise AssertionError(f"unexpected refusal: {cause!r}")
 
     def run(self, coro: Any, *, eager_fallback: bool) -> Any:
