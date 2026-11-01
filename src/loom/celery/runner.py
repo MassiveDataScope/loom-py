@@ -98,7 +98,8 @@ class _CeleryAsyncRuntime:
         failure = self._open_failure
         if failure is None:
             return
-        raise WorkerNotOpenError(failure) from failure
+        # ``failure`` is the BaseException refuse() recorded; Sonar does not narrow it.
+        raise WorkerNotOpenError(failure) from failure  # NOSONAR S5707 - always an exception
 
     def run(
         self,

@@ -404,9 +404,10 @@ async def test_a_repository_of_another_engine_refuses_the_active_session(
     first, second, first_path, second_path = two_stores
     other = _note_repo(second)
 
+    note = _NoteCommand(name="audit")
     async with SQLAlchemyUnitOfWork(first):
         with pytest.raises(ForeignSessionError, match="cannot join the active session") as raised:
-            await other.create(_NoteCommand(name="audit"))
+            await other.create(note)
 
     assert raised.value.code == "foreign_session"
     assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
