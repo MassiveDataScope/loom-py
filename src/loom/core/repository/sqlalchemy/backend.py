@@ -420,7 +420,7 @@ async def _probe_connection(store: _Store) -> None:
             if guarded:
                 await _refuse_scoped_in_database(connection, store.path)
             if postgres:
-                await _reject_privileged_connection(connection)
+                await _reject_privileged_connection(connection, store.path)
     finally:
         await _release_queued(session_manager)
 
@@ -457,7 +457,7 @@ async def _check_external(
             f"{store.path}.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
     if connection.dialect.name == POSTGRES_DIALECT:
-        await _reject_privileged_connection(connection)
+        await _reject_privileged_connection(connection, store.path)
         if scoped:
             await _check_guard(connection, scoped, store)
 
@@ -494,10 +494,11 @@ async def _refuse_scoped_in_database(connection: AsyncConnection, path: str) -> 
     _refuse_unprotected(sorted(found.scalars()), path)
 
 
-async def _reject_privileged_connection(connection: AsyncConnection) -> None:
+async def _reject_privileged_connection(connection: AsyncConnection, path: str) -> None:
+    """Refuse a connection whose role ignores row-level security, naming the store's *path*."""
     if (await connection.execute(_PRIVILEGED_ROLE)).scalar():
         raise ConfigError(
-            "the application connects as a superuser or a bypass role, which ignores "
+            f"{path}.url connects as a superuser or a bypass role, which ignores "
             "row-level security; use the URL of a read or write database user"
         )
 

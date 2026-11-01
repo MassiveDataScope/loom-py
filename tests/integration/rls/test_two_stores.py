@@ -310,7 +310,9 @@ async def test_a_bypass_role_is_refused_on_its_store_while_the_other_store_start
     async with _wired(ctx) as stores:
         await stores[healthy].wiring.startup_checks()
         seen = await _as(U1, lambda: _visible(stores[healthy]))
-        with pytest.raises(ConfigError, match="superuser or a bypass role"):
+        with pytest.raises(
+            ConfigError, match=rf"stores\.{privileged}\.url connects as a superuser"
+        ):
             await stores[privileged].wiring.startup_checks()
 
     assert seen == _expected(U1, healthy)
