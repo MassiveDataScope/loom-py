@@ -76,7 +76,6 @@ from loom.core.use_case.agent_markers import declaring_agent_bindings
 from loom.core.use_case.mcp_markers import declaring_mcp_bindings
 
 if TYPE_CHECKING:
-    from loom.core.engine.compiler import UseCaseCompiler
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
 
@@ -98,66 +97,44 @@ _SIGNAL_UIDS = {
 # ---------------------------------------------------------------------------
 
 
-def _reject_markers(
-    compilables: Sequence[type[Compilable]],
-    kernel: KernelRuntime,
-    *,
-    declaring_bindings: Callable[[Sequence[type[Compilable]], UseCaseCompiler], Sequence[object]],
-    verifier: str,
-) -> None:
-    """Abort worker start-up when a compiled use case declares a marker of the AI pillar.
+def _reject_ai_markers(compilables: Sequence[type[Compilable]], kernel: KernelRuntime) -> None:
+    """Abort worker start-up when a compiled use case declares ``Agent()`` or ``Mcp()``.
 
     A task worker never builds an AI runtime (its recipe declares
-    ``agents=False``), so a use case declaring the marker would compile here
+    ``agents=False``), so a use case declaring either marker would compile here
     and only fail once a task actually invoked it. Refusing at start-up
-    instead reuses the check the API runs, ``loom.ai._startup.<verifier>``,
-    called with nothing configured, which reports every declared name as
-    unknown.
+    instead reuses the checks the API runs, :func:`loom.ai._startup.verify_agent_markers`
+    then :func:`loom.ai._startup.verify_mcp_markers`, called with nothing
+    configured, which reports every declared name as unknown.
 
     Args:
         compilables: Every use case and job compiled for this worker.
         kernel: The kernel runtime, whose compiler already holds each of
             their plans and whose registry names them in the error.
-        declaring_bindings: Returns the use cases declaring the marker.
-        verifier: Name of the check in :mod:`loom.ai._startup`.
 
     Raises:
         AgentCompilationError: Naming each declaring use case and its marked
-            parameter, when at least one declares the marker.
+            parameter, when at least one declares a marker.
     """
-    declaring = declaring_bindings(compilables, kernel.compiler)
-    if not declaring:
-        # Nothing declares the marker: importing 'loom.ai' here, only to find
+    agents = declaring_agent_bindings(compilables, kernel.compiler)
+    mcp = declaring_mcp_bindings(compilables, kernel.compiler)
+    if not agents and not mcp:
+        # Nothing declares a marker: importing 'loom.ai' here, only to find
         # nothing to check, would pull the AI pillar into every worker
         # process regardless of whether any job or use case ever reaches it.
         return
 
     # Local import: the AI pillar is optional and this branch only runs once
     # a declaring use case is already known to exist.
-    from loom.ai import _startup
+    from loom.ai._startup import verify_agent_markers, verify_mcp_markers
 
-    verify: Callable[..., None] = getattr(_startup, verifier)
-    verify(declaring, kernel.registry, {})
-
-
-def _reject_agent_markers(compilables: Sequence[type[Compilable]], kernel: KernelRuntime) -> None:
-    """Refuse an ``Agent()`` marker through :func:`loom.ai._startup.verify_agent_markers`."""
-    _reject_markers(
-        compilables,
-        kernel,
-        declaring_bindings=declaring_agent_bindings,
-        verifier="verify_agent_markers",
+    checks: tuple[tuple[Sequence[object], Callable[..., None]], ...] = (
+        (agents, verify_agent_markers),
+        (mcp, verify_mcp_markers),
     )
-
-
-def _reject_mcp_markers(compilables: Sequence[type[Compilable]], kernel: KernelRuntime) -> None:
-    """Refuse an ``Mcp()`` marker through :func:`loom.ai._startup.verify_mcp_markers`."""
-    _reject_markers(
-        compilables,
-        kernel,
-        declaring_bindings=declaring_mcp_bindings,
-        verifier="verify_mcp_markers",
-    )
+    for declaring, verify in checks:
+        if declaring:
+            verify(declaring, kernel.registry, {})
 
 
 # ---------------------------------------------------------------------------
@@ -474,9 +451,7 @@ class CeleryAdapter:
         if self._declared is None:
             raise RuntimeError("CeleryAdapter.bind needs the recipe it declared; call recipe first")
         declared = self._declared
-        use_cases = application.discovered.use_cases
-        _reject_agent_markers(use_cases, application.kernel)
-        _reject_mcp_markers(use_cases, application.kernel)
+        _reject_ai_markers(application.discovered.use_cases, application.kernel)
 
         async_runtime = _build_async_runtime(declared.celery.runtime)
         celery_app = create_celery_app(declared.celery)

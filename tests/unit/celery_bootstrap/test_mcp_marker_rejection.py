@@ -3,9 +3,9 @@
 A Celery task worker never builds an AI runtime — no ``AgentRuntime`` is
 constructed anywhere under ``loom.celery`` — so a use case declaring
 ``Mcp()`` must be refused at ``bootstrap_worker()`` time, not on its first
-task execution. ``_reject_mcp_markers`` reuses
+task execution. ``_reject_ai_markers`` reuses
 ``loom.ai._startup.verify_mcp_markers``, wired here with no configured
-servers at all, mirroring ``_reject_agent_markers``.
+servers at all, after the ``Agent()`` check.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.celery.adapter import _reject_mcp_markers
+from loom.celery.adapter import _reject_ai_markers
 from loom.core.bootstrap import KernelRuntime
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
@@ -68,7 +68,7 @@ class TestNoUseCaseDeclaresTheMarker:
     def test_no_marker_does_not_raise(self) -> None:
         kernel = _kernel_runtime(SendReceiptUseCase)
 
-        _reject_mcp_markers((SendReceiptUseCase,), kernel)  # no raise
+        _reject_ai_markers((SendReceiptUseCase,), kernel)  # no raise
 
 
 class TestOneUseCaseDeclaresTheMarker:
@@ -76,7 +76,7 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(LookUpKnowledgeUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_mcp_markers((LookUpKnowledgeUseCase,), kernel)
+            _reject_ai_markers((LookUpKnowledgeUseCase,), kernel)
 
         message = str(excinfo.value)
         codes = {issue.code for issue in excinfo.value.issues}
@@ -90,6 +90,6 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(LookUpKnowledgeUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_mcp_markers((LookUpKnowledgeUseCase,), kernel)
+            _reject_ai_markers((LookUpKnowledgeUseCase,), kernel)
 
         assert "none" in str(excinfo.value)

@@ -3,7 +3,7 @@
 A Celery task worker never builds an AI runtime — no ``AgentRuntime`` is
 constructed anywhere under ``loom.celery`` — so a use case declaring
 ``Agent()`` must be refused at ``bootstrap_worker()`` time, not on its first
-task execution. ``_reject_agent_markers`` reuses the check
+task execution. ``_reject_ai_markers`` reuses the check
 ``loom.rest.fastapi.auto`` runs, wired here with no compiled agent plans at
 all.
 """
@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import AgentHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.celery.adapter import _reject_agent_markers
+from loom.celery.adapter import _reject_ai_markers
 from loom.core.bootstrap import KernelRuntime
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
@@ -68,7 +68,7 @@ class TestNoUseCaseDeclaresTheMarker:
     def test_no_marker_does_not_raise(self) -> None:
         kernel = _kernel_runtime(SendReceiptUseCase)
 
-        _reject_agent_markers((SendReceiptUseCase,), kernel)  # no raise
+        _reject_ai_markers((SendReceiptUseCase,), kernel)  # no raise
 
 
 class TestOneUseCaseDeclaresTheMarker:
@@ -76,7 +76,7 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(NotifyIncidentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_agent_markers((NotifyIncidentUseCase,), kernel)
+            _reject_ai_markers((NotifyIncidentUseCase,), kernel)
 
         message = str(excinfo.value)
         codes = {issue.code for issue in excinfo.value.issues}
@@ -89,6 +89,6 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(NotifyIncidentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_agent_markers((NotifyIncidentUseCase,), kernel)
+            _reject_ai_markers((NotifyIncidentUseCase,), kernel)
 
         assert "none" in str(excinfo.value)
