@@ -235,3 +235,12 @@ Consulted on 2026-10-21 (official documentation and source code):
 - The cache instances (`CacheConfig`, `CacheGateway`, `CacheGateways`,
   `GenerationalDependencyResolver`) are still registered by the cache module
   over a caller's binding and are not in the reserved list.
+
+## Known duplication
+
+Each adapter keeps what its `recipe` resolved for its `bind` in a private
+`_Declared` record, guarded by the same two checks: a second `recipe` on one
+instance fails, and `bind` before `recipe` fails. FastAPI and Celery repeat
+that state machine, and the planned Lambda adapters would repeat it again.
+Moving it into the composition (for instance, `recipe` returning the state
+`bind` receives) is a candidate for a later change; it is left as is here.
