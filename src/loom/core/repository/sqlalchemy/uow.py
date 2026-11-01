@@ -104,7 +104,7 @@ class SQLAlchemyUnitOfWork:
     def _bind(self, session: AsyncSession) -> None:
         """Publish ``session`` and a fresh mutation list to the current context."""
         self._session = session
-        self._session_token = set_active_session(session)
+        self._session_token = set_active_session(session, owner=self._session_manager)
         _, self._mutations_token = set_active_mutations()
         self._transaction_token = open_atomic_transaction()
 

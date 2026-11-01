@@ -5,8 +5,10 @@ success, rolls back when ``execute`` raises, a nested invocation joins that one
 unit of work, a read outside it sees committed rows, and post-commit actions
 run only after the commit.
 
-The two strict xfails pin the faults the ADR names. Fault B is reproduced on
-the own-session path, because fault A masks the literal shape (see that test).
+Of the two faults the ADR names, fault A (a repository of another engine
+writing into the active session) now fails closed with ``ForeignSessionError``
+until the invocation scope gives each store its own unit of work. Fault B
+stays a strict xfail, reproduced on the own-session path (see that test).
 """
 
 from __future__ import annotations
@@ -32,7 +34,10 @@ from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session
+from loom.core.repository.sqlalchemy.transactional import (
+    ForeignSessionError,
+    get_active_session,
+)
 from loom.core.repository.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
     SQLAlchemyUnitOfWorkFactory,
@@ -47,10 +52,6 @@ _RECORD = "config_records_fixture"
 _NOTE = "characterisation_notes"
 _EXECUTE_FAILED = "execute failed after create"
 _OUTER_FAILED = "outer fails after both creates"
-_FAULT_A = (
-    "ADR 0008: a repository of another engine writes into the active session "
-    "of the default unit of work"
-)
 _FAULT_B = "ADR 0008: a write to another store commits on its own, outside the unit of work"
 
 _UseCases = Callable[[type[BaseModel]], tuple[type, ...]]
@@ -388,30 +389,27 @@ def _note_repo(manager: SessionManager) -> RepositorySQLAlchemy[_Note, int]:
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_FAULT_A)
-async def test_a_repository_of_another_engine_persists_in_its_own_database(
+async def test_a_repository_of_another_engine_refuses_the_active_session(
     two_stores: tuple[SessionManager, SessionManager, Path, Path],
 ) -> None:
     first, second, first_path, second_path = two_stores
     other = _note_repo(second)
 
-    async with SQLAlchemyUnitOfWork(first):
-        await other.create(_NoteCommand(name="audit"))
+    with pytest.raises(ForeignSessionError, match="cannot join the active session") as raised:
+        async with SQLAlchemyUnitOfWork(first):
+            await other.create(_NoteCommand(name="audit"))
 
-    in_first = _count_rows(first_path, _NOTE)
-    in_second = _count_rows(second_path, _NOTE)
-    assert (in_first, in_second) == (0, 1)
+    assert raised.value.code == "foreign_session"
+    assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=_FAULT_B)
 async def test_a_write_outside_the_active_session_does_not_commit_on_its_own(
     two_stores: tuple[SessionManager, SessionManager, Path, Path],
 ) -> None:
-    # Fault A masks the literal shape of fault B. Inside SQLAlchemyUnitOfWork
-    # on the first engine, get_active_session() is never None, so a repository
-    # of the second engine joins the first session and the unit of work's
-    # rollback discards that write too: the second database would stay empty
-    # and a strict xfail would XPASS. The own-session path is
+    # Inside SQLAlchemyUnitOfWork on the first engine a repository of the
+    # second engine refuses the active session (fault A fails closed), so the
+    # literal shape of fault B never writes. The own-session path is
     # RepositorySQLAlchemy._session_scope -> session_manager.session() ->
     # commit(), and it runs only when no active session is bound. A task
     # started with a fresh contextvars.Context() is that path: it stands in

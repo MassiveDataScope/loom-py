@@ -2,15 +2,30 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from functools import partial, wraps
-from typing import Any, Concatenate, ParamSpec, Protocol, TypeVar, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Concatenate,
+    ParamSpec,
+    Protocol,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.errors import LoomError
+from loom.core.errors.codes import ErrorCode
 from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
+
+if TYPE_CHECKING:  # session_manager is the heavier module; it does not import this one
+    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 
 @runtime_checkable
@@ -23,7 +38,39 @@ class SupportsPostCommit(Protocol):
 T = TypeVar("T")
 P = ParamSpec("P")
 
-_active_session: contextvars.ContextVar[AsyncSession | None] = contextvars.ContextVar(
+
+@dataclass(frozen=True, slots=True)
+class _Bound:
+    """The session bound to the context, and the session manager that opened it, if known."""
+
+    session: AsyncSession
+    owner: SessionManager | None
+
+
+class ForeignSessionError(LoomError):
+    """A repository met the active session of another session manager.
+
+    Each store, and each application, has its own session manager. Until the
+    invocation scope of ADR 0008 opens one unit of work per store, a
+    repository refuses to join a session it did not open rather than write
+    through another engine with another store's row-level security
+    settings.
+
+    Args:
+        own: The session manager of the repository.
+        active: The session manager that opened the active session.
+    """
+
+    def __init__(self, *, own: SessionManager, active: SessionManager) -> None:
+        super().__init__(
+            f"a repository of store {own.store!r} ({own.engine.url!r}) cannot join the active "
+            f"session of store {active.store!r} ({active.engine.url!r}): one unit of work "
+            "serves one session manager",
+            code=ErrorCode.FOREIGN_SESSION,
+        )
+
+
+_active_session: contextvars.ContextVar[_Bound | None] = contextvars.ContextVar(
     "_active_session",
     default=None,
 )
@@ -42,12 +89,37 @@ def get_active_session() -> AsyncSession | None:
         or inside a :class:`~loom.core.repository.sqlalchemy.uow.SQLAlchemyUnitOfWork`
         managed by :class:`~loom.core.engine.executor.RuntimeExecutor`.
     """
-    return _active_session.get()
+    bound = _active_session.get()
+    return None if bound is None else bound.session
+
+
+def session_to_join(session_manager: SessionManager) -> AsyncSession | None:
+    """Return the active session a repository of *session_manager* joins, if any.
+
+    Args:
+        session_manager: The repository's own session manager.
+
+    Returns:
+        The active session, or ``None`` when none is bound. A session bound
+        without its owner (:func:`set_active_session` called without
+        ``owner``) is joined, as before owners were recorded.
+
+    Raises:
+        ForeignSessionError: When another session manager opened it.
+    """
+    bound = _active_session.get()
+    if bound is None:
+        return None
+    if bound.owner is not None and bound.owner is not session_manager:
+        raise ForeignSessionError(own=session_manager, active=bound.owner)
+    return bound.session
 
 
 def set_active_session(
     session: AsyncSession,
-) -> contextvars.Token[AsyncSession | None]:
+    *,
+    owner: SessionManager | None = None,
+) -> contextvars.Token[_Bound | None]:
     """Bind ``session`` to the current async context.
 
     Used by :class:`~loom.core.repository.sqlalchemy.uow.SQLAlchemyUnitOfWork`
@@ -57,14 +129,16 @@ def set_active_session(
 
     Args:
         session: The ``AsyncSession`` to bind.
+        owner: The session manager that opened it; a repository of another
+            manager then refuses to join it (:func:`session_to_join`).
 
     Returns:
         A reset token that must be passed to :func:`reset_active_session`.
     """
-    return _active_session.set(session)
+    return _active_session.set(_Bound(session, owner))
 
 
-def reset_active_session(token: contextvars.Token[AsyncSession | None]) -> None:
+def reset_active_session(token: contextvars.Token[_Bound | None]) -> None:
     """Restore the session ContextVar to its previous state.
 
     Args:
@@ -214,7 +288,7 @@ async def _run_in_owned_session(
 ) -> T:
     """Open the session, run ``method``, commit and enqueue the hooks on ``channel``."""
     async with session_manager.session() as session:
-        session_token = _active_session.set(session)
+        session_token = set_active_session(session, owner=session_manager)
         mutations_token = _mutations.set([])
         transaction_token = open_atomic_transaction()
         try:

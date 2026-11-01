@@ -49,6 +49,7 @@ class ErrorCode(StrEnum):
     SYSTEM_ERROR = "system_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
     POST_COMMIT_FAILURE = "post_commit_failure"
+    FOREIGN_SESSION = "foreign_session"
 
 
 class Template(NamedTuple):

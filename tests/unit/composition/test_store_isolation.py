@@ -27,6 +27,7 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.abc import PageParams
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
 from tests.helpers.composition import composition_source
 
 
@@ -123,6 +124,28 @@ async def test_one_model_composed_twice_serves_each_application_from_its_own_sto
 
     assert page.items == ()
     assert _tables(left) == _tables(right) == {"isolation_invoices"}
+
+
+async def test_a_repository_never_writes_through_another_applications_unit_of_work(
+    tmp_path: Path,
+) -> None:
+    """Fail closed: B's repository inside A's unit of work would use A's engine and settings."""
+    invoices, shipments = tmp_path / "a.db", tmp_path / "b.db"
+    first = _compose(invoices, _Invoice)
+    second = _compose(shipments, _Invoice)
+
+    async with first.running(), second.running():
+        foreign = second.kernel.container.resolve_repo(_Invoice)
+        assert first.persistence.uow_factory is not None
+        with pytest.raises(
+            ForeignSessionError, match=r"b\.db.*cannot join the active session.*a\.db"
+        ):
+            async with first.persistence.uow_factory.create():
+                await foreign.create(_NewInvoice(number="B-1"))
+
+    with sqlite3.connect(invoices) as a, sqlite3.connect(shipments) as b:
+        counts = [db.execute("SELECT COUNT(*) FROM isolation_invoices").fetchone() for db in (a, b)]
+    assert counts == [(0,), (0,)]
 
 
 async def test_the_store_resource_is_named_by_its_key_and_probed_under_its_backend(

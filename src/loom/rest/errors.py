@@ -108,6 +108,7 @@ class HttpErrorMapper:
         ErrorCode.SYSTEM_ERROR: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.SERVICE_UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
         ErrorCode.POST_COMMIT_FAILURE: HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.FOREIGN_SESSION: HTTPStatus.INTERNAL_SERVER_ERROR,
     }
 
     def to_http(self, error: LoomError) -> HTTPException:

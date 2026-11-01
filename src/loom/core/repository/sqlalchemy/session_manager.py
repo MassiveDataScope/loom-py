@@ -21,6 +21,7 @@ from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
@@ -48,6 +49,7 @@ class SessionManager:
         inject_trace_id: bool = True,
         session_settings: SessionSettings | None = None,
         metadata: MetaData | None = None,
+        store: str = DEFAULT_STORE,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -78,6 +80,7 @@ class SessionManager:
                 compiled into, where its repositories look them up; ``None``
                 takes the shared metadata :func:`~loom.core.backend.sqlalchemy.compile_all`
                 fills by default.
+            store: Key of the store this manager serves, which errors name.
             **engine_kwargs: Additional keyword arguments forwarded to ``create_async_engine``.
 
         Raises:
@@ -115,6 +118,7 @@ class SessionManager:
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
+        self.store = store
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -229,6 +233,7 @@ def build_session_manager(
         pool_timeout=pool.timeout_s if queued else None,
         pool_recycle=pool.recycle_s,
         connect_args=reveal_for_driver(config.client_options()),
+        store=database,
         **manager_kwargs,
     )
     if instrumented:
