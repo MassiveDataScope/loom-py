@@ -7,13 +7,13 @@ from collections.abc import Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
-from loom.core.config import ConfigContext, reject_retired_keys
+from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreSpec
+from loom.core.persistence.stores import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.repository.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
@@ -58,8 +58,9 @@ class DynamoDBBackend:
     repository_type: ClassVar[type[Any] | None] = RepositoryDynamoDB
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
-        """Describe DynamoDB's model support without rollback or cursor paging."""
-        return StoreCapabilities(serves_models=True, transactional=False, pages_with_cursors=False)
+        """Describe DynamoDB: models, without rollback or cursor paging, whatever *spec* says."""
+        del spec
+        return MODELS_ONLY
 
     def build(
         self,
@@ -82,10 +83,8 @@ class DynamoDBBackend:
             ConfigError: When the ``stores.default`` section is missing, names
                 another backend, holds a retired key or is invalid.
         """
-        spec = runtime.catalog.require(
-            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
-        )
-        reject_retired_keys(spec.settings(), spec.path, DynamoDBRepositoryConfig)
+        spec = runtime.catalog.served_by(self.name)
+        del ctx
         dynamo_cfg = spec.decode(DynamoDBRepositoryConfig)
         # The low-level client, not the resource: it is thread-safe, and
         # repository calls share it across the executor's threads.

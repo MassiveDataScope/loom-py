@@ -85,7 +85,13 @@ class PersistenceBackend(Protocol):
     repository_type: ClassVar[type[Any] | None]
 
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
-        """Describe the configured store without building its resources."""
+        """Describe the configured store without building its resources.
+
+        Optional at runtime: a backend written before this method gets
+        :data:`~loom.core.persistence.stores.MODELS_ONLY`. Read only the
+        settings a capability depends on; the catalog asks this before any
+        connection's secrets need to resolve.
+        """
         ...
 
     def build(

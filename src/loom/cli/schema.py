@@ -53,7 +53,8 @@ def _write(config: Path, block: dict[str, Any]) -> None:
     backend = store.setdefault(BACKEND_KEY, SQLALCHEMY_BACKEND)
     if backend != SQLALCHEMY_BACKEND:
         raise ValueError(
-            f"{_STORE_PATH}.backend is {backend!r}; a row-scoped schema needs {SQLALCHEMY_BACKEND}"
+            f"{_STORE_PATH}.{BACKEND_KEY} is {backend!r}; "
+            f"a row-scoped schema needs {SQLALCHEMY_BACKEND}"
         )
     schema = _section(store, "schema", f"{_STORE_PATH}.schema")
     conflicts = _merge(schema, block, f"{_STORE_PATH}.schema")

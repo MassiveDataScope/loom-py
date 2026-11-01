@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from loom.core.config import ConfigContext, reject_retired_keys
+from loom.core.config import ConfigContext
 from loom.core.connections.clickhouse import ClickHouseConnection
 from loom.core.persistence.database import (
     DatabaseConfig,
@@ -140,7 +140,6 @@ def _clickhouse_connection(spec: StoreSpec) -> ClickHouseConnection:
             valid ClickHouse connection.
     """
     raw = spec.settings()
-    reject_retired_keys(raw, spec.path, ClickHouseConnection)
     if "http_url" in raw:
         raise ValueError(f"{spec.path}.http_url was renamed to url; rename the key")
     url = str(raw.get("url") or "")
@@ -185,7 +184,8 @@ def _store_sink_section(
     sink_key, section = _sink_section(node, ctx)
     if _RETIRED_STORE_KEY in section:
         raise ValueError(
-            f"IntoTable '{node.name}': sink config key 'database' was renamed to 'store'; "
+            f"IntoTable '{node.name}': sink config key {_RETIRED_STORE_KEY!r} was renamed to "
+            "'store'; "
             "name a stores.<name> section (ADR 0008)."
         )
     if "url" in section and "store" in section:

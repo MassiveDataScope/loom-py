@@ -23,8 +23,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Final, NewType, TypeVar
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_sections
+from loom.core.config import (
+    ConfigContext,
+    ConfigError,
+    ConfigKey,
+    reject_retired_keys,
+    reject_retired_sections,
+)
 from loom.core.config.loader import convert_section
+from loom.core.connections import ConnectionSettings
 from loom.core.model import BaseModel
 from loom.core.persistence.registry import BACKEND_ENTRY_POINT_GROUP, unknown_backend_message
 from loom.core.plugins.entrypoints import registered_names
@@ -69,15 +76,16 @@ class StoreCapabilities:
     """Whether its repositories page with cursors."""
 
 
-DEFAULT_CAPABILITIES: Final = StoreCapabilities(
+MODELS_ONLY: Final = StoreCapabilities(
     serves_models=True, transactional=False, pages_with_cursors=False
 )
-"""Conservative descriptor for older third-party backends."""
+"""A store that serves models, without rollback or cursor paging; the
+conservative default of a backend that does not describe itself."""
 
-CLICKHOUSE_CAPABILITIES: Final = StoreCapabilities(
+NO_CAPABILITIES: Final = StoreCapabilities(
     serves_models=False, transactional=False, pages_with_cursors=False
 )
-"""Descriptor of the connection-only ClickHouse store kind."""
+"""A store that supports none of them: ``none``, or a connection-only kind."""
 
 
 @dataclass(frozen=True)
@@ -102,14 +110,14 @@ class StoreSpec:
 
         A connection-only store has fixed capabilities. A third-party backend
         without a ``capabilities`` method gets the conservative
-        :data:`DEFAULT_CAPABILITIES`.
+        :data:`MODELS_ONLY`.
         """
         if self.backend in CONNECTION_ONLY_BACKENDS:
-            return CLICKHOUSE_CAPABILITIES
+            return NO_CAPABILITIES
         from loom.core.persistence.registry import resolve_backend  # registry imports this module
 
         describe = getattr(resolve_backend(self.backend), "capabilities", None)
-        return DEFAULT_CAPABILITIES if describe is None else describe(self)
+        return MODELS_ONLY if describe is None else describe(self)
 
     @property
     def path(self) -> str:
@@ -134,10 +142,14 @@ class StoreSpec:
     def decode(self, target: type[T]) -> T:
         """Decode :meth:`settings` into *target*, as a section of the configuration decodes.
 
+        A connection type's retired keys fail first, naming their replacement.
+
         Raises:
-            ConfigError: When the section does not resolve or fails validation,
-                naming the store's path.
+            ConfigError: When the section holds a retired key, does not
+                resolve or fails validation, naming the store's path.
         """
+        if isinstance(target, type) and issubclass(target, ConnectionSettings):
+            reject_retired_keys(self._resolved, self.path, target)
         return convert_section(self._resolved, self.path, target)
 
 
@@ -171,6 +183,14 @@ class StoreCatalog:
                 f"{BACKEND_KEY}: {backend}"
             )
         return spec
+
+    def served_by(self, backend: str) -> StoreSpec:
+        """Return :data:`DEFAULT_STORE`, the store the persistence *backend* serves.
+
+        Raises:
+            ConfigError: As :meth:`require`.
+        """
+        return self.require(DEFAULT_STORE, backend=backend, purpose=f"the {backend!r} backend")
 
     def models_by_store(
         self, models: Sequence[type[BaseModel]]
@@ -328,9 +348,10 @@ def _spec(ctx: ConfigContext, key: StoreKey, registered: tuple[str, ...]) -> Sto
 __all__ = [
     "BACKEND_KEY",
     "CLICKHOUSE_BACKEND",
-    "CLICKHOUSE_CAPABILITIES",
     "CONNECTION_ONLY_BACKENDS",
     "DEFAULT_STORE",
+    "MODELS_ONLY",
+    "NO_CAPABILITIES",
     "NONE_BACKEND",
     "SQLALCHEMY_BACKEND",
     "StoreCatalog",

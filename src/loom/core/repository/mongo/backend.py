@@ -15,13 +15,13 @@ from typing import Any, ClassVar, Literal
 
 from pymongo import AsyncMongoClient
 
-from loom.core.config import ConfigContext, reject_retired_keys
+from loom.core.config import ConfigContext
 from loom.core.connections.mongo import MongoConnection
 from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreSpec
+from loom.core.persistence.stores import StoreCapabilities, StoreSpec
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -96,10 +96,7 @@ class MongoBackend:
                 another backend, holds a retired key or is invalid, or
                 ``persistence.cursors`` cannot build a cursor codec.
         """
-        spec = runtime.catalog.require(
-            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
-        )
-        reject_retired_keys(spec.settings(), spec.path, MongoRepositoryConfig)
+        spec = runtime.catalog.served_by(self.name)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
         cursor_codec = CursorCodec.from_context(ctx)
         # tz_aware: datetimes read back as aware UTC, the form the repository writes.
