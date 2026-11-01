@@ -18,6 +18,7 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, load_catal
 if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
+    from loom.core.observability.config import ObservabilityConfig
     from loom.core.observability.runtime import ObservabilityRuntime
     from loom.core.persistence import PersistenceBackend
 
@@ -42,6 +43,8 @@ class CompositionSource:
         app: The ``app`` keys every entry point reads.
         observability: Logging, tracing and metrics, configured before
             anything else can fail.
+        observability_config: The ``observability`` section *observability*
+            was built from; an adapter reads its own keys there.
     """
 
     config: ConfigContext
@@ -50,6 +53,7 @@ class CompositionSource:
     config_root: Path
     app: AppConfig
     observability: ObservabilityRuntime
+    observability_config: ObservabilityConfig
 
     def discover(self) -> DiscoveryResult:
         """Discover the use cases, models, interfaces and agents ``app.discovery`` names."""

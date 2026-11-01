@@ -171,9 +171,11 @@ def load_source(
     ctx = load_application_config(
         *paths, resolvers=with_default_resolvers(resolvers), environment=resolved_environment
     )
+    observability_config = ctx.section_or_default(
+        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+    )
     observability = ObservabilityRuntime.from_config(
-        ctx.section_or_default(ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()),
-        environment=resolved_environment,
+        observability_config, environment=resolved_environment
     )
     app_cfg = (
         ctx.section(ConfigKey.APP, AppConfig)
@@ -190,6 +192,7 @@ def load_source(
         config_root=config_root,
         app=app_cfg,
         observability=observability,
+        observability_config=observability_config,
     )
 
 

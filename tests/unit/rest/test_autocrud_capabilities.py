@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import loom.core.repository as repository_package
+from loom.composition import AppConfig
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
@@ -38,7 +39,6 @@ from loom.core.use_case.use_case import UseCase
 from loom.rest.autocrud import build_auto_routes, crud_op_of
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
-from loom.rest.fastapi.adapter import _AppConfig
 from loom.rest.fastapi.auto import create_app
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
@@ -148,7 +148,7 @@ class TestDefaultInclude:
 
         discover(RecordsOnDynamo)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
+        _build_bootstrap(AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
 
         assert _ops(RecordsOnDynamo) == _KEY_OPS
 
@@ -159,10 +159,10 @@ class TestDefaultInclude:
 
         discover(RecordsOnBoth)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
+        _build_bootstrap(AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
         assert CrudOp.LIST not in _ops(RecordsOnBoth)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=SQLITE_STORE))
+        _build_bootstrap(AppConfig(name="demo"), _ctx(store=SQLITE_STORE))
         assert _ops(RecordsOnBoth) == _KEY_OPS | {CrudOp.LIST}
 
     def test_a_pruned_use_case_mounted_elsewhere_survives(self, discover: Any) -> None:
@@ -196,7 +196,7 @@ class TestDefaultInclude:
         )
 
         runtime, _wiring, discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
+            AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
         assert shared_list in discovered.use_cases
@@ -212,7 +212,7 @@ class TestDefaultInclude:
             auto = True
 
         discover(BulkOnly, models=(BulkOnlyRecord,))
-        app_config = _AppConfig(name="demo")
+        app_config = AppConfig(name="demo")
         ctx = _ctx(store=SQLITE_STORE)
 
         with pytest.raises(RuntimeError, match="BulkOnly") as exc_info:
@@ -230,7 +230,7 @@ class TestDefaultInclude:
             auto = True
 
         discover(RecordsOnNothing)
-        app_config = _AppConfig(name="demo")
+        app_config = AppConfig(name="demo")
         ctx = _ctx(store={"backend": "none"})
 
         with pytest.raises(RuntimeError, match="RecordsOnNothing") as exc_info:
@@ -249,7 +249,7 @@ class TestExplicitInclude:
             include = ("get", "list")
 
         discover(RecordListing)
-        app_config = _AppConfig(name="demo")
+        app_config = AppConfig(name="demo")
         ctx = _ctx(store=_DYNAMODB_STORE)
 
         with pytest.raises(RuntimeError, match="RecordListing") as exc_info:
@@ -268,7 +268,7 @@ class TestExplicitInclude:
 
         discover(RecordReads)
 
-        _build_bootstrap(_AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
+        _build_bootstrap(AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE))
 
         assert [crud_op_of(r.use_case) for r in RecordReads.routes] == [CrudOp.GET, CrudOp.CREATE]
 

@@ -16,13 +16,12 @@ from prometheus_client import CollectorRegistry
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe
+from loom.composition import Application, CompositionSource, Recipe
 from loom.composition._ai import (
     AiWiring,
 )
 from loom.core.config import (
     ConfigContext,
-    ConfigKey,
 )
 from loom.core.config.errors import ConfigError
 from loom.core.discovery._utils import (
@@ -35,7 +34,7 @@ from loom.core.introspection import (
     AppIntrospection,
     ContributorRef,
 )
-from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
+from loom.core.observability.config import PrometheusObservabilityConfig
 from loom.core.persistence import (
     SERVER_PROFILE,
     PersistenceBackend,
@@ -98,6 +97,9 @@ class _RestAuthConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     exclude_paths: tuple[str, ...] = DEFAULT_EXCLUDE_PATHS
 
 
+_REST_SECTION = "app.rest"
+
+
 class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     backend: str = "fastapi"
     title: str = "Loom API"
@@ -116,23 +118,6 @@ class _RestConfig(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
     # declared in Python, or startup aborts (see
     # RestInterfaceCompiler.compile_sources).
     disable_routes: tuple[DisableRouteConfig, ...] = ()
-
-
-class _AppConfig(AppConfig, kw_only=True):
-    """``app`` as the REST entry point reads it: the shared keys plus ``rest``."""
-
-    rest: _RestConfig = msgspec.field(default_factory=_RestConfig)
-
-
-def _load_observability_config(ctx: ConfigContext) -> ObservabilityConfig:
-    """Load the top-level observability config; defaults only when it is absent.
-
-    A section that fails validation stops startup: falling back to defaults
-    would silently drop every setting it holds.
-    """
-    return ctx.section_or_default(
-        ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
-    )
 
 
 def _fold_config_interfaces(
@@ -435,14 +420,14 @@ def _mount_metrics(
     app.add_api_route(f"{path}/", _scrape_trailing_slash, methods=["GET"], include_in_schema=False)
 
 
-def _section_app_config(ctx: ConfigContext) -> _AppConfig:
-    """Decode ``app``, naming the interface behind an unknown ``app.rest`` key.
+def _section_rest_config(ctx: ConfigContext) -> _RestConfig:
+    """Decode ``app.rest``, naming the interface behind an unknown key.
 
     Validates ``app.rest.interfaces`` and ``app.rest.disable_routes`` against
     their raw, not-yet-decoded mapping first, since a ``dict``-keyed value
     (an interface name) is not information ``msgspec`` can recover once
     conversion to :class:`~loom.rest.config.RestInterfaceConfig` has already
-    failed. Every other section of ``app`` decodes exactly as
+    failed. Every other key of ``app.rest`` decodes exactly as
     :func:`~loom.core.config.loader.section` already does — this only adds a
     check ahead of it for this one section.
 
@@ -458,7 +443,7 @@ def _section_app_config(ctx: ConfigContext) -> _AppConfig:
         ctx: Config context built from the supplied YAML files.
 
     Returns:
-        The decoded :class:`_AppConfig`.
+        The decoded :class:`_RestConfig`; its defaults when ``app.rest`` is absent.
 
     Raises:
         RestInterfaceConfigError: If an interface, route, or disable-routes
@@ -470,10 +455,10 @@ def _section_app_config(ctx: ConfigContext) -> _AppConfig:
     validate_interfaces_config(raw_interfaces)
     raw_disable_routes = ctx.section_or_default("app.rest.disable_routes", tuple[Any, ...], ())
     validate_disable_routes_config(raw_disable_routes)
-    return ctx.section(ConfigKey.APP, _AppConfig)
+    return ctx.section_or_default(_REST_SECTION, _RestConfig, _RestConfig())
 
 
-def _build_introspection(app_cfg: _AppConfig, ai: AiWiring) -> AppIntrospection:
+def _build_introspection(name: str, rest_cfg: _RestConfig, ai: AiWiring) -> AppIntrospection:
     """Build the self-description of the application under construction.
 
     The AI contribution is a *string* reference resolved only when the
@@ -490,8 +475,8 @@ def _build_introspection(app_cfg: _AppConfig, ai: AiWiring) -> AppIntrospection:
             ),
         )
     return AppIntrospection(
-        name=app_cfg.name,
-        version=app_cfg.rest.version,
+        name=name,
+        version=rest_cfg.version,
         contributors=contributors,
     )
 
@@ -526,7 +511,8 @@ def _warn_anonymous_schema(rest_cfg: _RestConfig, auth: _AuthWiring) -> None:
 class _Declared:
     """What :meth:`FastAPIAdapter.recipe` resolved and :meth:`FastAPIAdapter.bind` mounts."""
 
-    app_cfg: _AppConfig
+    name: str
+    rest: _RestConfig
     auth: _AuthWiring
     metrics_cfg: PrometheusObservabilityConfig
     routes: RouteSources
@@ -572,19 +558,19 @@ class FastAPIAdapter:
                 "one adapter instance composes one application; create another adapter"
             )
         ctx = source.config
-        app_cfg = _section_app_config(ctx)
-        metrics_cfg = _load_observability_config(ctx).prometheus
+        rest_cfg = _section_rest_config(ctx)
+        metrics_cfg = source.observability_config.prometheus
         auth = _resolve_authentication(
-            app_cfg,
+            rest_cfg.auth,
             self._authenticator,
-            _documentation_paths(app_cfg.rest, metrics_cfg),
+            _documentation_paths(rest_cfg, metrics_cfg),
         )
         _check_sql_section(ctx, auth)
 
         # Built ahead of discovery's pruning so their use cases join CRUD
         # gating, model registration and compilation exactly like a
         # Python-discovered interface's, in Python-then-config order.
-        config_interfaces = build_interfaces_from_config(app_cfg.rest.interfaces)
+        config_interfaces = build_interfaces_from_config(rest_cfg.interfaces)
         discovered = _discover_components(source)
         python_interfaces = discovered.interfaces
         discovered = _fold_config_interfaces(discovered, config_interfaces)
@@ -594,13 +580,14 @@ class FastAPIAdapter:
         discovered = _gate_autocrud_capabilities(discovered, backend, backend.name)
 
         self._declared = _Declared(
-            app_cfg=app_cfg,
+            name=source.app.name,
+            rest=rest_cfg,
             auth=auth,
             metrics_cfg=metrics_cfg,
             routes=RouteSources(
                 python=python_interfaces,
                 config=config_interfaces,
-                disabled=tuple((d.method, d.path) for d in app_cfg.rest.disable_routes),
+                disabled=tuple((d.method, d.path) for d in rest_cfg.disable_routes),
             ),
         )
         return Recipe(
@@ -609,7 +596,7 @@ class FastAPIAdapter:
             backend=backend,
             agents=True,
             metrics=_build_metrics_adapter(metrics_cfg, self._metrics_registry),
-            pool_metrics=_build_pool_metrics(metrics_cfg, self._metrics_registry, app_cfg.name),
+            pool_metrics=_build_pool_metrics(metrics_cfg, self._metrics_registry, source.app.name),
         )
 
     def bind(self, application: Application) -> FastAPI:
@@ -623,7 +610,7 @@ class FastAPIAdapter:
                 "FastAPIAdapter.bind needs the recipe it declared; call recipe first"
             )
         declared = self._declared
-        app_cfg, auth = declared.app_cfg, declared.auth
+        rest_cfg, auth = declared.rest, declared.auth
 
         @asynccontextmanager
         async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -634,16 +621,16 @@ class FastAPIAdapter:
             application.kernel,
             declared.routes,
             observability_runtime=application.observability,
-            title=app_cfg.rest.title,
-            version=app_cfg.rest.version,
-            docs_url=app_cfg.rest.docs_url,
-            redoc_url=app_cfg.rest.redoc_url,
-            openapi_url=app_cfg.rest.openapi_url,
+            title=rest_cfg.title,
+            version=rest_cfg.version,
+            docs_url=rest_cfg.docs_url,
+            redoc_url=rest_cfg.redoc_url,
+            openapi_url=rest_cfg.openapi_url,
             lifespan=lifespan,
         )
         mount_health(app, application.readiness_probes())
         _mount_authentication(app, auth)
-        _mount_optional_middlewares(app, app_cfg.rest, declared.metrics_cfg, self._metrics_registry)
+        _mount_optional_middlewares(app, rest_cfg, declared.metrics_cfg, self._metrics_registry)
         sql = application.sql
         if sql.config is not None:
             bind_sql_endpoints(
@@ -655,10 +642,14 @@ class FastAPIAdapter:
             )
             _warn_sql_endpoints(sql.config, auth)
         _bind_agent_surface(app, application.ai, auth, application.observability)
-        setattr(app.state, INTROSPECTION_STATE_ATTR, _build_introspection(app_cfg, application.ai))
+        setattr(
+            app.state,
+            INTROSPECTION_STATE_ATTR,
+            _build_introspection(declared.name, rest_cfg, application.ai),
+        )
         # Last: every route the application will ever serve is registered by now,
         # which is what makes the exclusion and collision checks meaningful.
         reject_health_collision(app)
         verify_exclusion_paths(app, auth.exclude_paths)
-        _warn_anonymous_schema(app_cfg.rest, auth)
+        _warn_anonymous_schema(rest_cfg, auth)
         return app

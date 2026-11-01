@@ -17,6 +17,7 @@ import pytest
 import loom.core.plugins.entrypoints as entrypoints_module
 import loom.core.repository.mongo.backend as mongo_backend_module
 import loom.core.repository.sqlalchemy.backend as sqlalchemy_backend_module
+from loom.composition import AppConfig
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
@@ -27,7 +28,7 @@ from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.adapter import _AppConfig, _discover_components
+from loom.rest.fastapi.adapter import _discover_components
 from loom.rest.fastapi.auto import create_app
 from loom.rest.model import RestInterface, RestRoute
 from tests.helpers.composition import composition_source
@@ -100,7 +101,7 @@ class TestBackendSelection:
     ) -> None:
         ctx = _ctx(store=store)
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), ctx
+            AppConfig(name="demo"), ctx
         )
 
         assert isinstance(wiring.uow_factory, SQLAlchemyUnitOfWorkFactory)
@@ -109,7 +110,7 @@ class TestBackendSelection:
         self, agents_only_discovery: None, aws_test_credentials: None
     ) -> None:
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
+            AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
         assert isinstance(wiring.uow_factory, DynamoUnitOfWorkFactory)
@@ -118,14 +119,14 @@ class TestBackendSelection:
         self, agents_only_discovery: None, fake_mongo_client: FakeMongoClient
     ) -> None:
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(store=_MONGO_STORE)
+            AppConfig(name="demo"), _ctx(store=_MONGO_STORE)
         )
 
         assert isinstance(wiring.uow_factory, MongoUnitOfWorkFactory)
 
     def test_none_has_no_unit_of_work(self, agents_only_discovery: None) -> None:
         _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
-            _AppConfig(name="demo"), _ctx(store={"backend": "none"})
+            AppConfig(name="demo"), _ctx(store={"backend": "none"})
         )
 
         assert wiring.uow_factory is None
@@ -295,7 +296,7 @@ def test_build_bootstrap_sqlalchemy_without_models_warns_and_starts(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A project whose relational schema is still empty boots, with a warning."""
-    app_cfg = _AppConfig(name="demo")
+    app_cfg = AppConfig(name="demo")
     ctx = _ctx()
 
     with caplog.at_level(logging.WARNING, logger=sqlalchemy_backend_module.__name__):
@@ -334,7 +335,7 @@ def test_build_bootstrap_rejects_autocrud_without_model_on_any_backend(
         ),
     )
     ctx = _ctx(store=store)
-    app_config = _AppConfig(name="demo")
+    app_config = AppConfig(name="demo")
 
     with pytest.raises(RuntimeError, match="OrphanOnAnyBackend") as exc_info:
         _build_bootstrap(app_config, ctx)
@@ -365,7 +366,7 @@ def test_build_bootstrap_accepts_auto_true_with_hand_declared_routes(
     )
 
     runtime, _wiring, discovered, _python_interfaces = _build_bootstrap(
-        _AppConfig(name="demo"), _ctx()
+        AppConfig(name="demo"), _ctx()
     )
 
     assert runtime is not None

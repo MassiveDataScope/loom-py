@@ -14,6 +14,7 @@ import pytest
 from loom.composition import AppConfig, Application, CompositionSource, Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.environment import Environment
+from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from tests.unit.rest._fixture_app import write_project
 
@@ -30,8 +31,9 @@ def composition_source(
 ) -> CompositionSource:
     """What ``build_application`` would have resolved from files holding *ctx*.
 
-    Without *app*, the ``app`` section of *ctx* is decoded; the paths default
-    to the working directory.
+    Without *app*, the ``app`` section of *ctx* is decoded, as its
+    ``observability`` section always is; the paths default to the working
+    directory.
     """
     return CompositionSource(
         config=ctx,
@@ -40,6 +42,9 @@ def composition_source(
         config_root=config_root if config_root is not None else Path.cwd(),
         app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),
         observability=ObservabilityRuntime.noop(),
+        observability_config=ctx.section_or_default(
+            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+        ),
     )
 
 
