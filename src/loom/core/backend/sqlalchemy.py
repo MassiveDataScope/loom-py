@@ -868,7 +868,11 @@ def get_compiled_core(struct_cls: type, *, metadata: MetaData | None = None) -> 
 
 
 def get_metadata() -> MetaData:
-    """Return the shared metadata for Alembic and table creation."""
+    """Return the shared metadata: what :func:`compile_all` fills without a ``metadata``.
+
+    A composed store compiles into its own metadata instead, which its
+    session manager carries (``SessionManager.metadata``).
+    """
     return SABase.metadata
 
 
@@ -893,13 +897,12 @@ def configured_naming_convention(
 def reset_registry(
     *, naming_convention: Mapping[str, str] | None | _Keep = _KEEP_CONVENTION
 ) -> None:
-    """Clear compiled models and, when asked, set the shared metadata's naming convention.
+    """Clear the shared registry and, when asked, set the shared metadata's naming convention.
 
-    The runtime compiles into the shared metadata after this call, so the
-    convention it receives, the one ``stores.default.schema.naming_convention``
-    declares, names the tables ``create_all`` creates exactly as the
-    application metadata of the migration path does. Without the argument the
-    convention is left as it is; ``None`` restores SQLAlchemy's default.
+    Only what :func:`compile_all` compiled without a ``metadata`` lives there:
+    a composed store compiles into a metadata of its own, which this leaves
+    alone. Without the argument the convention is left as it is; ``None``
+    restores SQLAlchemy's default.
     """
     _registry.clear()
     _table_registry.clear()

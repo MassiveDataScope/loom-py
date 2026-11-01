@@ -23,7 +23,7 @@ from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
-from loom.core.persistence.database import EXTERNAL, SchemaConfig, decode_database_config
+from loom.core.persistence.database import EXTERNAL, SchemaConfig, database_config
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.persistence.stores import (
     DEFAULT_STORE_PATH,
@@ -124,7 +124,7 @@ class SQLAlchemyBackend:
                 ``persistence.cursors`` cannot build a cursor codec.
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
-        db_cfg = decode_database_config(spec.settings(), path=spec.path)
+        db_cfg = database_config(spec)
         postgres = make_url(str(db_cfg.url)).get_backend_name() == POSTGRES_DIALECT
         settings = (
             DeferredScopedSettings(db_cfg.schema.scopes or {}, path=spec.path)

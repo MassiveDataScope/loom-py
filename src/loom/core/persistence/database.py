@@ -26,7 +26,12 @@ from loom.core.connections import ConnectionPool, ConnectionSettings, require_te
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import SQLALCHEMY_BACKEND, StoreCatalog, load_catalog
+from loom.core.persistence.stores import (
+    SQLALCHEMY_BACKEND,
+    StoreCatalog,
+    StoreSpec,
+    load_catalog,
+)
 
 EXTERNAL: Final = "external"
 
@@ -253,7 +258,15 @@ def database_config_of(catalog: StoreCatalog, store: str, *, purpose: str) -> Da
         ConfigError: When the store is not declared, its backend is not
             ``sqlalchemy``, or its section fails :func:`decode_database_config`.
     """
-    spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose=purpose)
+    return database_config(catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose=purpose))
+
+
+def database_config(spec: StoreSpec) -> DatabaseConfig:
+    """Decode the relational section of *spec*, whose path the messages name.
+
+    Raises:
+        ConfigError: As :func:`decode_database_config`.
+    """
     return decode_database_config(spec.settings(), path=spec.path)
 
 
@@ -275,6 +288,7 @@ __all__ = [
     "SchemaRoles",
     "SchemaUser",
     "SchemaVersionTables",
+    "database_config",
     "database_config_of",
     "decode_database_config",
     "load_database_config",

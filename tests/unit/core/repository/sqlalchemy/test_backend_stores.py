@@ -144,3 +144,12 @@ async def test_startup_checks_name_the_section_of_the_store_they_check() -> None
 
     with pytest.raises(ConfigError, match=r"set stores\.audit\.schema\.allow_unprotected_dialect"):
         await wiring.startup_checks()
+
+
+def test_row_level_security_bindings_are_named_under_the_store_they_belong_to() -> None:
+    schema = {"mode": "external", "scopes": {"tenant": "identity.subject"}}
+    ctx = _context(audit={"backend": "sqlalchemy", "url": _POSTGRES, "schema": schema})
+    wiring = _build(ctx, _AUDIT, _Entry)
+
+    with pytest.raises(ConfigError, match=r"stores\.audit\.schema\.scopes is missing .*holder"):
+        wiring.prepare_models((_Entry,))
