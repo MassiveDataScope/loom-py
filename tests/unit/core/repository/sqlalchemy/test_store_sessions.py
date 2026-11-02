@@ -13,14 +13,19 @@ from dataclasses import dataclass
 
 import pytest
 
+from loom.core.command import Command
 from loom.core.errors.errors import ForeignSessionError
+from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.repository.abc import CursorCodec, PageParams
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import Frame, InvocationScope, ScopeOwnershipError, invocation
+from tests.unit.core.conftest import SessionManagerFactory
 
 AUDIT = StoreKey("audit")
 
@@ -148,11 +153,22 @@ class TestTransactional:
 
         assert service.sessions == [expected]
 
-    async def test_a_store_that_is_not_enlisted_is_refused(self, stores: _Stores) -> None:
+    async def test_a_store_outside_the_frame_is_refused(self, stores: _Stores) -> None:
         service = _AuditService(stores.audit)
 
         async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
             with pytest.raises(ForeignSessionError, match="'audit'"):
+                await service.record()
+
+        assert service.sessions == []
+
+    async def test_a_store_that_is_not_enlisted_is_refused_even_without_a_frame(
+        self, stores: _Stores
+    ) -> None:
+        service = _AuditService(stores.audit)
+
+        async with invocation(stores.coordinator()):
+            with pytest.raises(ForeignSessionError, match="'audit'.*this invocation"):
                 await service.record()
 
         assert service.sessions == []
@@ -195,3 +211,63 @@ async def _begin_transaction(manager: SessionManager) -> None:
     session = manager.active_session
     assert session is not None
     await session.connection()
+
+
+class _Row(BaseModel):
+    __tablename__ = "store_session_rows"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=32)
+
+
+class _NewRow(Command, frozen=True):
+    name: str
+
+
+class _RowUpdate(Command, frozen=True):
+    name: str
+
+
+@pytest.fixture
+async def rows(sqlite_manager_for: SessionManagerFactory) -> RepositorySQLAlchemy[_Row, int]:
+    manager = await sqlite_manager_for(_Row)
+    return RepositorySQLAlchemy(manager, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+
+
+_OPERATIONS = {
+    "get_by_id": lambda repo: repo.get_by_id(1),
+    "count": lambda repo: repo.count(),
+    "list_paginated": lambda repo: repo.list_paginated(PageParams(page=1, limit=5)),
+    "create": lambda repo: repo.create(_NewRow(name="b")),
+    "create_many": lambda repo: repo.create_many([_NewRow(name="b")]),
+    "update": lambda repo: repo.update(1, _RowUpdate(name="c")),
+    "delete": lambda repo: repo.delete(1),
+}
+
+
+class TestRepositoryWriteIntent:
+    @pytest.mark.parametrize(
+        ("operation", "writes"),
+        [
+            ("get_by_id", False),
+            ("count", False),
+            ("list_paginated", False),
+            ("create", True),
+            ("create_many", True),
+            ("update", True),
+            ("delete", True),
+        ],
+    )
+    async def test_only_a_write_marks_the_participant(
+        self, rows: RepositorySQLAlchemy[_Row, int], operation: str, writes: bool
+    ) -> None:
+        await rows.create(_NewRow(name="a"))
+        coordinator = OrderedCommits(
+            {DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(rows.session_manager)}
+        )
+
+        async with invocation(coordinator) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            await _OPERATIONS[operation](rows)
+            wrote = scope.participants[DEFAULT_STORE].wrote
+
+        assert wrote is writes
