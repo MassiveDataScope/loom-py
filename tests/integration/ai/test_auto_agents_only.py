@@ -2,7 +2,7 @@
 
 Drives the real :func:`loom.rest.fastapi.auto.create_app` over a manifest that
 declares one keyed use case and one agent — no models, no interfaces, no
-``database:`` section, ``persistence.backend: none``. The engine provider is
+``stores`` section but ``stores.default.backend: none``. The engine provider is
 defined here and does what a real engine does with a ``usecase`` grant: it
 builds the per-invocation bundle through the ``DepsFactory`` it was handed and
 runs the granted use case through the bound invoker, so the call travels the
@@ -231,7 +231,7 @@ def _write_project(tmp_path: Path) -> str:
                 }
             },
         },
-        "persistence": {"backend": "none"},
+        "stores": {"default": {"backend": "none"}},
         "ai": {
             "engine": _ENGINE_NAME,
             "models": {"default": {"provider": "fake", "model": "fake-model"}},

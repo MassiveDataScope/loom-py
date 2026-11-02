@@ -184,8 +184,9 @@ app:
     manifest:
       module: myapp.manifest
 
-persistence:
-  backend: none
+stores:
+  default:
+    backend: none
 
 ai:
   engine: pydantic-ai
@@ -210,13 +211,13 @@ only inside the `sqlalchemy` wiring, so an agents-only process never loads it.
 (`loom.celery` still imports it at module level; this recipe is about the REST
 application, not every loom module.)
 
-What `persistence.backend: none` means:
+What `stores.default.backend: none` means:
 
 - No unit of work and no repositories. A granted `usecase` capability still
   runs through the kernel executor, just without a transaction around it.
 - Discovered models are accepted but **not compiled**, and they get no
   repository. Declaring them under `none` is harmless and pointless.
-- A `database:` section is ignored, silently.
+- The rest of the `stores.default` section is ignored, silently.
 - Deferred job dispatch does not fire. `JobService.dispatch` queues the call to
   run after the unit of work commits, and with no unit of work nothing flushes
   the queue, so a job dispatched from a use case is dropped without an error.
@@ -227,11 +228,11 @@ Only `manifest` discovery can describe this application: the `interfaces` and
 `RuntimeError` raised when discovery finds no use case, no interface and no
 agent — say so by naming `app.discovery.mode: manifest` and `AGENTS`.
 
-`persistence.backend` still defaults to `sqlalchemy`; loom never infers `none`
-from the absence of models or of a `database:` section. Leaving the default in
-place with no models starts the application with a WARNING that names
-`persistence.backend: none` as the way out, and still requires a reachable
-database.
+The API never infers `none` from the absence of models: without a
+`stores.default` section it selects `sqlalchemy` and stops startup naming the
+missing section. A `sqlalchemy` store with no models starts the application
+with a WARNING that names `stores.default.backend: none` as the way out, and
+still requires a reachable database.
 
 ## When loom is not enough: the escape hatch
 

@@ -13,13 +13,14 @@ from loom.core.config.convert import convert_config
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.persistence.database import DatabaseConfig, SchemaConfig
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
     check_time_zone_columns,
     startup_checks,
 )
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from tests.helpers.persistence import build_backend
 
 
 class Plain(BaseModel):
@@ -87,7 +88,12 @@ def test_has_session_settings_is_false_without_a_provider_and_true_with_one() ->
 
 
 def test_startup_without_scoped_models_changes_nothing() -> None:
-    assert startup_checks(SchemaConfig(), "sqlite", {}, has_session_settings=False) == ()
+    assert (
+        startup_checks(
+            SchemaConfig(), "sqlite", {}, has_session_settings=False, path="stores.default"
+        )
+        == ()
+    )
 
 
 def test_startup_refuses_create_all_with_scoped_models_on_postgres() -> None:
@@ -95,7 +101,13 @@ def test_startup_refuses_create_all_with_scoped_models_on_postgres() -> None:
     scoped_models = _scoped()
 
     with pytest.raises(ConfigError, match=r"create_schema\(migrator_url"):
-        startup_checks(schema_config, "postgresql", scoped_models, has_session_settings=False)
+        startup_checks(
+            schema_config,
+            "postgresql",
+            scoped_models,
+            has_session_settings=False,
+            path="stores.default",
+        )
 
 
 def test_startup_refuses_scoped_models_on_another_dialect_unless_allowed() -> None:
@@ -104,11 +116,17 @@ def test_startup_refuses_scoped_models_on_another_dialect_unless_allowed() -> No
     allowed = SchemaConfig(allow_unprotected_dialect=True)
 
     with pytest.raises(ConfigError, match=r"sqlite.*scoped_items"):
-        startup_checks(schema_config, "sqlite", scoped_models, has_session_settings=False)
+        startup_checks(
+            schema_config,
+            "sqlite",
+            scoped_models,
+            has_session_settings=False,
+            path="stores.default",
+        )
 
-    assert startup_checks(allowed, "sqlite", scoped_models, has_session_settings=False) == (
-        "scoped_items",
-    )
+    assert startup_checks(
+        allowed, "sqlite", scoped_models, has_session_settings=False, path="stores.default"
+    ) == ("scoped_items",)
 
 
 def test_startup_never_creates_the_schema_with_the_application_session() -> None:
@@ -116,19 +134,24 @@ def test_startup_never_creates_the_schema_with_the_application_session() -> None
     external = SchemaConfig(mode="external")
 
     with pytest.raises(ConfigError, match="session settings"):
-        startup_checks(schema_config, "sqlite", {}, has_session_settings=True)
+        startup_checks(
+            schema_config, "sqlite", {}, has_session_settings=True, path="stores.default"
+        )
 
-    assert startup_checks(external, "sqlite", {}, has_session_settings=True) == ()
+    assert (
+        startup_checks(external, "sqlite", {}, has_session_settings=True, path="stores.default")
+        == ()
+    )
 
 
 def _wiring(url: str, *models: type, **schema: object):
     config = {
         "app": {"name": "demo"},
-        "database": {"url": url, "schema": schema},
+        "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
-    return SQLAlchemyBackend().build(
-        ConfigContext.from_dict(config), models, BackendRuntime(SERVER_PROFILE)
+    return build_backend(
+        SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE
     )
 
 
@@ -172,11 +195,13 @@ def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed()
     allowed = SchemaConfig(mode="external", allow_unprotected_dialect=True)
 
     with pytest.raises(ConfigError, match="scoped_items"):
-        startup_checks(external, "sqlite", scoped_models, has_session_settings=True)
+        startup_checks(
+            external, "sqlite", scoped_models, has_session_settings=True, path="stores.default"
+        )
 
-    assert startup_checks(allowed, "sqlite", scoped_models, has_session_settings=True) == (
-        "scoped_items",
-    )
+    assert startup_checks(
+        allowed, "sqlite", scoped_models, has_session_settings=True, path="stores.default"
+    ) == ("scoped_items",)
 
 
 def test_external_mode_wires_the_scoped_provider_and_the_elevation_sink() -> None:
@@ -214,8 +239,15 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 
-    sink = SQLAlchemyElevationSink()
     config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
+    manager = SessionManager(
+        "sqlite+aiosqlite://",
+        pool_size=None,
+        max_overflow=None,
+        pool_timeout=None,
+        pool_recycle=None,
+    )
+    sink = SQLAlchemyElevationSink(manager)
 
     def register(container: LoomContainer) -> None:
         container.register_instance(ElevationSink, sink)

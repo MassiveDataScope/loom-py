@@ -125,7 +125,7 @@ class _OpenedClient:
 class UseCaseMcpGrant:
     """One verified ``Mcp()`` marker binding, compiled into a runtime input.
 
-    Built by :mod:`loom.rest.fastapi.auto` (``_resolve_ai``) once the marker's
+    Built by :mod:`loom.composition._ai` (``resolve_ai``) once the marker's
     server name has already been verified against ``ai.mcp_servers``, and
     handed to :class:`AgentRuntime` so the server it names joins the set the
     runtime opens even when no agent plan declares it. ``capability`` carries

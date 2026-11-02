@@ -115,7 +115,7 @@ class _FakeEntryPoint:
 class _FakeEntryPoints:
     """Fakes ``_GROUP`` only; every other group hits the real registrations.
 
-    ``create_app`` also resolves the persistence backend (``persistence:
+    ``create_app`` also resolves the persistence backend (``stores.default.backend:
     none``) through the same loader, so a fake that blinds every group would
     make that lookup fail too.
     """
@@ -144,7 +144,7 @@ def _write_project(root: Path) -> str:
                 "manifest": {"module": _MANIFEST_MODULE},
             },
         },
-        "persistence": {"backend": "none"},
+        "stores": {"default": {"backend": "none"}},
         "ai": {
             "engine": _ENGINE_NAME,
             "models": {"default": {"provider": "fake", "model": "fake-model"}},

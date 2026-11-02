@@ -1,9 +1,15 @@
 """Celery task factories for Job and Callback execution on the worker side.
 
 Each ``_make_*`` function registers one Celery task against a given
-``celery_app`` and returns the task object.  They are called once during
-worker bootstrap (see :func:`~loom.celery.bootstrap.bootstrap_worker`)
-and never again.
+``celery_app`` and returns the task object.  They are called once, when
+:meth:`~loom.celery.adapter.CeleryAdapter.bind` registers the tasks, and
+never again.
+
+Every task is registered with ``shared=False``: it belongs to its
+``celery_app`` alone. A shared task joins Celery's process-wide finalizers,
+so a second application finalized in the same process would also receive
+it, and the first task registered under a name wins — the second
+application would serve a task bound to the first one's runtime.
 
 All jobs — both sync and async ``execute()`` — are executed through the
 :class:`~loom.core.engine.executor.RuntimeExecutor` via a per-process
@@ -15,7 +21,9 @@ tasks.
 
 Callbacks follow the same pattern: async ``on_success`` / ``on_failure``
 methods are submitted to the shared :class:`~loom.core.async_bridge.AsyncBridge`;
-sync methods are called directly from the task thread.
+sync methods are called directly from the task thread. Every task body first
+calls ``ensure_open``, so a process whose application failed to open refuses
+sync and async work alike.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ from celery import Celery  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import PostCommitError
@@ -61,6 +70,7 @@ class _CeleryAsyncRuntime:
     backend_options: dict[str, Any] = field(default_factory=dict)
     shutdown_timeout_ms: int | None = None
     _bridge: AsyncBridge | None = None
+    _open_failure: Exception | None = None
 
     def initialize(self) -> None:
         """Create the async bridge once per forked worker process."""
@@ -72,6 +82,25 @@ class _CeleryAsyncRuntime:
             shutdown_timeout_ms=self.shutdown_timeout_ms,
         )
 
+    def refuse(self, cause: Exception) -> None:
+        """Fail every later :meth:`run` of this process: its application did not open."""
+        self._open_failure = cause
+
+    def ensure_open(self) -> None:
+        """Refuse a task of a process whose application failed to open.
+
+        Every task body calls it first: a sync callback never reaches
+        :meth:`run`, so the gate there alone would let it run.
+
+        Raises:
+            WorkerNotOpenError: When :meth:`refuse` recorded a failure to open.
+        """
+        failure = self._open_failure
+        if failure is None:
+            return
+        # S5707 false positive: refuse() only ever records an Exception.
+        raise WorkerNotOpenError(failure) from failure  # NOSONAR S5707
+
     def run(
         self,
         coro: Any,
@@ -79,7 +108,17 @@ class _CeleryAsyncRuntime:
         timeout: float | None = None,
         eager_fallback: bool,
     ) -> Any:
-        """Run *coro* through the worker bridge or fall back to asyncio."""
+        """Run *coro* through the worker bridge or fall back to asyncio.
+
+        Raises:
+            WorkerNotOpenError: When :meth:`refuse` recorded that this
+                process's application failed to open; *coro* is closed unrun.
+        """
+        try:
+            self.ensure_open()
+        except WorkerNotOpenError:
+            _close_unrun(coro)
+            raise
         if self._bridge is not None and self._bridge.is_alive:
             return self._bridge.run(coro, timeout=timeout)
 
@@ -92,9 +131,7 @@ class _CeleryAsyncRuntime:
 
             return asyncio.run(_with_timeout())
 
-        close = getattr(coro, "close", None)
-        if callable(close):
-            close()
+        _close_unrun(coro)
         raise RuntimeError(
             "Celery async bridge is not initialized and eager fallback is disabled. "
             "Use a Celery worker process or enable task_always_eager."
@@ -106,6 +143,13 @@ class _CeleryAsyncRuntime:
             return
         self._bridge.shutdown()
         self._bridge = None
+
+
+def _close_unrun(coro: Any) -> None:
+    """Close a coroutine that will never run, so it is not reported as never awaited."""
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +337,8 @@ def _make_job_task(
         trace_id: str | None,
     ) -> Any:
         """Build the job instance and run it under the job span."""
+        # Inside the task's retry handling: a retry may land on a healthy process.
+        async_runtime.ensure_open()
         with runtime.span(
             Scope.JOB,
             name,
@@ -324,6 +370,7 @@ def _make_job_task(
 
     @celery_app.task(  # type: ignore[untyped-decorator]
         name=f"{TASK_JOB_PREFIX}.{job_type.__qualname__}",
+        shared=False,
         bind=True,
         acks_late=True,
         reject_on_worker_lost=True,
@@ -398,7 +445,9 @@ def _make_callback_task(
     _on_success_is_async = inspect.iscoroutinefunction(callback_type.on_success)
     runtime = observability_runtime or ObservabilityRuntime.noop()
 
-    @celery_app.task(name=f"{TASK_CALLBACK_PREFIX}.{callback_type.__qualname__}")  # type: ignore[untyped-decorator]
+    @celery_app.task(  # type: ignore[untyped-decorator]
+        name=f"{TASK_CALLBACK_PREFIX}.{callback_type.__qualname__}", shared=False
+    )
     def _callback_task(
         result: Any,
         *,
@@ -406,6 +455,7 @@ def _make_callback_task(
         context: dict[str, Any],
         trace_id: str | None = None,
     ) -> None:
+        async_runtime.ensure_open()
         token = _install_trace(trace_id)
         try:
             with runtime.span(
@@ -429,7 +479,7 @@ def _make_callback_task(
     return _callback_task
 
 
-def _resolve_error_info(job_id: str) -> tuple[str, str]:
+def _resolve_error_info(job_id: str, app: Celery) -> tuple[str, str]:
     """Look up the exception that caused a job to fail via the result backend.
 
     Falls back to empty strings if the backend does not hold the result or
@@ -437,11 +487,12 @@ def _resolve_error_info(job_id: str) -> tuple[str, str]:
 
     Args:
         job_id: Celery task UUID of the *failed* job.
+        app: The worker application holding the result backend.
 
     Returns:
         A ``(exc_type, exc_msg)`` tuple ready to forward to ``on_failure``.
     """
-    exc = AsyncResult(job_id).result
+    exc = AsyncResult(job_id, app=app).result
     if isinstance(exc, Exception):
         return type(exc).__qualname__, str(exc)
     return "Unknown", ""
@@ -476,13 +527,16 @@ def _make_callback_error_task(
     _on_failure_is_async = inspect.iscoroutinefunction(callback_type.on_failure)
     runtime = observability_runtime or ObservabilityRuntime.noop()
 
-    @celery_app.task(name=f"{TASK_CALLBACK_ERROR_PREFIX}.{callback_type.__qualname__}")  # type: ignore[untyped-decorator]
+    @celery_app.task(  # type: ignore[untyped-decorator]
+        name=f"{TASK_CALLBACK_ERROR_PREFIX}.{callback_type.__qualname__}", shared=False
+    )
     def _callback_error_task(
         *,
         job_id: str,
         context: dict[str, Any],
         trace_id: str | None = None,
     ) -> None:
+        async_runtime.ensure_open()
         token = _install_trace(trace_id)
         try:
             with runtime.span(
@@ -492,7 +546,7 @@ def _make_callback_error_task(
                 id=job_id,
                 callback="failure",
             ):
-                exc_type, exc_msg = _resolve_error_info(job_id)
+                exc_type, exc_msg = _resolve_error_info(job_id, celery_app)
                 cb = factory.build(callback_type)
                 if _on_failure_is_async:
                     async_runtime.run(

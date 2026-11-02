@@ -295,7 +295,7 @@ def compile_mcp_capability(
     """Resolve a server name and filter into a :class:`CompiledMcpCapability`.
 
     Shared by the agent ``mcp`` capability (:func:`_compile_mcp`) and the
-    use-case ``Mcp()`` marker path (:mod:`loom.rest.fastapi.auto`), so both
+    use-case ``Mcp()`` marker path (:mod:`loom.composition._ai`), so both
     produce an identical compiled capability from identical inputs and the
     agent path's behaviour cannot drift from an independent copy.
 

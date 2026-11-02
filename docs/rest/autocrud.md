@@ -218,8 +218,10 @@ persistence:
   cursors:
     signing: ephemeral   # development.yaml only; production.yaml configures keys
 
-database:
-  url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 ```
 
 ```python

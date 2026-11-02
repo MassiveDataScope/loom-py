@@ -1,10 +1,10 @@
-"""The single contract of a relational ``database`` section.
+"""The single contract of a relational store section.
 
 The API, the Celery worker and the streaming sinks read the same section shape
-— at ``database``, at ``database.<name>`` for a shared streaming database, or
-inline in a sink — and build their engine through the same constructor. The
-pool keys live under ``database.pool``; each key left out takes the default of
-the entry point's :class:`~loom.core.persistence.profile.RuntimeProfile`.
+— at ``stores.<name>`` for a store whose backend is ``sqlalchemy``, or inline
+in a sink — and build their engine through the same constructor. The pool
+keys live under ``stores.<name>.pool``; each key left out takes the default
+of the entry point's :class:`~loom.core.persistence.profile.RuntimeProfile`.
 
 The section follows the connection standard of :mod:`loom.core.connections`:
 ``url``, ``connect_timeout`` and ``read_timeout`` in seconds, ``pool.size``
@@ -16,16 +16,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Literal
+from typing import Any, ClassVar, Final, Literal, TypeVar
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError, ConfigKey, reject_retired_keys
-from loom.core.config.convert import convert_config
+from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
+from loom.core.config.loader import convert_section
 from loom.core.connections import ConnectionPool, ConnectionSettings, require_text
 from loom.core.model.redaction import Dsn, RedactedMap, Secret
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.profile import PoolDefaults, RuntimeProfile
+from loom.core.persistence.stores import SQLALCHEMY_BACKEND, load_catalog
 
 EXTERNAL: Final = "external"
 
@@ -35,35 +36,35 @@ _ASYNCPG_TIMEOUTS: Final = {"connect_timeout": "timeout", "read_timeout": "comma
 
 
 class SchemaRoles(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema.roles``: the roles owning and migrating the schema."""
+    """``stores.<name>.schema.roles``: the roles owning and migrating the schema."""
 
     owner: str
     migrator: str
 
 
 class SchemaUser(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """One entry of ``database.schema.database_users``."""
+    """One entry of ``stores.<name>.schema.database_users``."""
 
     login: bool
     access: str
 
 
 class SchemaGroups(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema.groups``: the reader and writer group roles."""
+    """``stores.<name>.schema.groups``: the reader and writer group roles."""
 
     readers: str
     writers: str
 
 
 class SchemaVersionTables(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema.version_tables``: where structure and data migrations are recorded."""
+    """``stores.<name>.schema.version_tables``: where structure and data migrations are recorded."""
 
     structure: str
     data: str
 
 
 class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fields=True):
-    """``database.schema``: the one definition every reader of the section shares.
+    """``stores.<name>.schema``: the one definition every reader of the section shares.
 
     Startup (``mode``, ``allow_unprotected_dialect``, ``scopes``, ``guard``),
     the migrations and the row-level-security tooling read it; every name is
@@ -88,7 +89,7 @@ class SchemaConfig(msgspec.Struct, kw_only=True, frozen=True, forbid_unknown_fie
 
 
 class PoolConfig(ConnectionPool, frozen=True, kw_only=True, forbid_unknown_fields=True):
-    """``database.pool``: connection-pool keys; ``None`` means "not declared".
+    """``stores.<name>.pool``: connection-pool keys; ``None`` means "not declared".
 
     Args:
         size: Connections kept open.
@@ -115,15 +116,14 @@ class PoolConfig(ConnectionPool, frozen=True, kw_only=True, forbid_unknown_field
         )
 
 
-class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unknown_fields=False):
+class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unknown_fields=True):
     """A relational database section.
 
-    Keys outside this contract are tolerated at the top level: the section
-    also holds the named databases of streaming sinks (``database.<name>``).
-    ``pool`` and ``schema``, each with a single definition, refuse them. The
-    address hides its password, and ``connect_args`` hides its secret-named
-    values. ``username`` and ``password``, when set, win over credentials in
-    the URL.
+    A key outside this contract is refused, at the top level as in ``pool``
+    and ``schema``: a store section holds one database, so a misspelt key
+    fails at startup instead of being ignored. The address
+    hides its password, and ``connect_args`` hides its secret-named values.
+    ``username`` and ``password``, when set, win over credentials in the URL.
 
     Args:
         url: SQLAlchemy async URL; never empty.
@@ -208,7 +208,7 @@ class DatabaseConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkno
 
 
 def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseConfig:
-    """Decode a resolved ``database`` mapping read from *path*.
+    """Decode a resolved relational store mapping read from *path*.
 
     Args:
         data: The section as plain data, interpolations already resolved.
@@ -222,32 +222,46 @@ def decode_database_config(data: Mapping[str, Any], *, path: str) -> DatabaseCon
             ``pool`` replacement), a key is unknown, a value is out of range,
             the URL is empty or a timeout does not apply to the URL's driver.
     """
-    reject_retired_pool_keys(data, path)
-    try:
-        config = convert_config(dict(data), DatabaseConfig, strict=False)
-    except msgspec.ValidationError as exc:
-        raise ConfigError(f"Config section {path!r} failed validation: {exc}") from exc
-    return config
-
-
-def load_database_config(
-    ctx: ConfigContext, key: str | ConfigKey = ConfigKey.DATABASE
-) -> DatabaseConfig:
-    """Read and decode the ``database`` section at *key* of *ctx*.
-
-    Raises:
-        ConfigError: When the section is absent or fails :func:`decode_database_config`.
-    """
-    return decode_database_config(ctx.section(key, dict), path=str(key))
-
-
-def reject_retired_pool_keys(data: Mapping[str, Any], path: str) -> None:
-    """Fail when *data*, read from *path*, holds a flat pool key that moved under ``pool``.
-
-    Raises:
-        ConfigError: Naming the retired key and its ``<path>.pool.<key>`` replacement.
-    """
     reject_retired_keys(data, path, DatabaseConfig)
+    return convert_section(dict(data), path, DatabaseConfig)
+
+
+def load_database_config(ctx: ConfigContext, store: str) -> DatabaseConfig:
+    """Read and decode the relational section of the store *store* of *ctx*.
+
+    For a caller outside a composition; a composition decodes the store of
+    its own catalog with :meth:`~loom.core.persistence.stores.StoreSpec.decode`.
+
+    Args:
+        ctx: The application configuration.
+        store: Key of the store, declared under ``stores.<store>``.
+
+    Raises:
+        ConfigError: When the catalog does not load, the store is not
+            declared, its backend is not ``sqlalchemy``, or its section
+            fails :func:`decode_database_config`.
+    """
+    spec = load_catalog(ctx).require(
+        store, backend=SQLALCHEMY_BACKEND, purpose="a relational database"
+    )
+    return spec.decode(DatabaseConfig)
+
+
+_T = TypeVar("_T")
+
+
+def require_schema_key(value: _T | None, path: str, key: str) -> _T:
+    """Return *value*, the ``schema.<key>`` of the store at *path*, which a row-scoped model needs.
+
+    Raises:
+        ConfigError: When it is not declared, naming the key and how to write it.
+    """
+    if value is None:
+        raise ConfigError(
+            f"{path}.schema.{key} is required when a model is RowScoped: "
+            "run `loom schema init <schema>` to write the derived names"
+        )
+    return value
 
 
 __all__ = [
@@ -261,5 +275,5 @@ __all__ = [
     "SchemaVersionTables",
     "decode_database_config",
     "load_database_config",
-    "reject_retired_pool_keys",
+    "require_schema_key",
 ]

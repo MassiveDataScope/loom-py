@@ -116,7 +116,7 @@ def write_project(
             "code_path": ".",
             "discovery": {"mode": "modules", "modules": {"include": [module]}},
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if rest is not None:

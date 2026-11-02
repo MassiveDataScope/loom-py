@@ -7,6 +7,7 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import LoomStruct
 from loom.core.persistence.database import PoolConfig
+from loom.core.persistence.stores import load_catalog
 from loom.streaming.nodes._table import IntoTable, SqlAlchemySinkConfig
 from loom.streaming.nodes._table.config import (
     ResolvedSqlAlchemyTableConfig,
@@ -55,13 +56,14 @@ def test_an_inline_url_sink_refuses_the_schema_it_does_not_read() -> None:
 def test_a_shared_database_sink_refuses_the_pool_it_does_not_read() -> None:
     with pytest.raises(ValueError, match="unknown key 'pool'"):
         SqlAlchemySinkConfig.from_config(
-            {"database": "warehouse", "pool": {"size": 5}}, default_table="orders"
+            {"store": "warehouse", "pool": {"size": 5}}, default_table="orders"
         )
 
 
 def _resolve(config: dict[str, object]) -> ResolvedSqlAlchemyTableConfig:
     node = IntoTable(payload=_Row, table="orders", name="orders_sink")
-    return resolve_sqlalchemy_table_config(node, ConfigContext.from_dict(config))
+    ctx = ConfigContext.from_dict(config)
+    return resolve_sqlalchemy_table_config(node, ctx, load_catalog(ctx))
 
 
 def test_an_inline_sink_reads_its_pool_through_the_database_contract() -> None:
@@ -79,8 +81,14 @@ def test_an_inline_sink_reads_its_pool_through_the_database_contract() -> None:
 def test_a_shared_database_reads_its_pool_through_the_database_contract() -> None:
     resolved = _resolve(
         {
-            "database": {"warehouse": {"url": "sqlite+aiosqlite:///", "pool": {"size": 4}}},
-            "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+            "stores": {
+                "warehouse": {
+                    "backend": "sqlalchemy",
+                    "url": "sqlite+aiosqlite:///",
+                    "pool": {"size": 4},
+                }
+            },
+            "streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}},
         }
     )
 
@@ -99,10 +107,42 @@ def test_a_retired_flat_key_inline_names_its_replacement() -> None:
 
 
 def test_a_retired_flat_key_in_a_shared_database_names_its_replacement() -> None:
-    with pytest.raises(ConfigError, match=r"database\.warehouse\.pool\.size"):
+    with pytest.raises(ConfigError, match=r"stores\.warehouse\.pool\.size"):
         _resolve(
             {
-                "database": {"warehouse": {"url": "sqlite+aiosqlite:///", "pool_size": 4}},
-                "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+                "stores": {
+                    "warehouse": {
+                        "backend": "sqlalchemy",
+                        "url": "sqlite+aiosqlite:///",
+                        "pool_size": 4,
+                    }
+                },
+                "streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}},
             }
         )
+
+
+def test_a_relational_sink_refuses_a_store_of_another_backend() -> None:
+    config = {
+        "stores": {"events": {"backend": "mongo", "url": "mongodb://h", "database": "app"}},
+        "streaming": {"sinks": {"orders_sink": {"store": "events"}}},
+    }
+
+    with pytest.raises(ConfigError, match=r"stores\.events\.backend is 'mongo'"):
+        _resolve(config)
+
+
+def test_a_relational_sink_refuses_an_undeclared_store() -> None:
+    config = {"streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}}}
+
+    with pytest.raises(
+        ConfigError, match=r"'orders_sink' needs stores\.warehouse, which is not declared"
+    ):
+        _resolve(config)
+
+
+def test_a_relational_sink_names_the_renamed_database_key() -> None:
+    config = {"streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}}}
+
+    with pytest.raises(ValueError, match="'database' was renamed to 'store'"):
+        _resolve(config)

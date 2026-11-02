@@ -14,7 +14,7 @@ from tests.helpers.version_limited_extras import require_pyspark
 require_pyspark()
 
 from loom.core.connections import ClickHouseConnection  # noqa: E402
-from loom.core.model.redaction import Dsn, RedactedMap, Secret
+from loom.core.model.redaction import Dsn, RedactedMap, Secret  # noqa: E402
 from loom.etl.backends.spark.provider import SparkProvider  # noqa: E402
 from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend  # noqa: E402
 from loom.etl.lineage._config import LineageConfig  # noqa: E402

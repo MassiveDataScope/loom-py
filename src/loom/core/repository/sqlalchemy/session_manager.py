@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from sqlalchemy import event
+from sqlalchemy import MetaData, event
 from sqlalchemy.engine import make_url
 from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.ext.asyncio import (
@@ -16,10 +16,12 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import Pool, QueuePool
 
+from loom.core.backend.sqlalchemy import get_metadata
 from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
@@ -46,6 +48,8 @@ class SessionManager:
         connect_args: dict[str, object] | None = None,
         inject_trace_id: bool = True,
         session_settings: SessionSettings | None = None,
+        metadata: MetaData | None = None,
+        store: str = DEFAULT_STORE,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -72,6 +76,11 @@ class SessionManager:
                 only, and incompatible with ``isolation_level="AUTOCOMMIT"``, which
                 would discard the settings after each statement; when ``None``,
                 the manager behaves exactly as it does without this option.
+            metadata: The metadata the models of this manager's store are
+                compiled into, where its repositories look them up; ``None``
+                takes the shared metadata :func:`~loom.core.backend.sqlalchemy.compile_all`
+                fills by default.
+            store: Key of the store this manager serves, which errors name.
             **engine_kwargs: Additional keyword arguments forwarded to ``create_async_engine``.
 
         Raises:
@@ -108,6 +117,8 @@ class SessionManager:
         self._log = get_logger(__name__).bind(module="session_manager")
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
+        self._metadata = metadata if metadata is not None else get_metadata()
+        self.store = store
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -133,6 +144,11 @@ class SessionManager:
     def has_session_settings(self) -> bool:
         """Whether every transaction of this manager starts with the product's settings."""
         return self._session_settings is not None
+
+    @property
+    def metadata(self) -> MetaData:
+        """The metadata this store's models are compiled into."""
+        return self._metadata
 
     def current_settings(self) -> Mapping[str, str]:
         """The settings a transaction opened now would start with; empty without a provider."""
@@ -179,7 +195,7 @@ def build_session_manager(
     database: str = "default",
     **manager_kwargs: Any,
 ) -> SessionManager:
-    """Build the session manager of a ``database`` section for one entry point.
+    """Build the session manager of a relational store section for one entry point.
 
     The single constructor every runtime entry point uses: each pool key the
     section declares wins, the rest come from *profile*. A dialect whose
@@ -187,11 +203,12 @@ def build_session_manager(
     nor timeout, so a profile never breaks a test or a local run.
 
     Args:
-        config: The decoded ``database`` section.
+        config: The decoded store section.
         profile: Defaults of the entry point building the engine.
         pool_metrics: Receiver of pool measurements; ``None`` keeps the
             dialect's pool class untouched.
-        database: Label the measurements carry (``default`` or a shared name).
+        database: Key of the store: labels the pool measurements and names
+            the store in errors.
         **manager_kwargs: Further :class:`SessionManager` options
             (``session_settings``, ``inject_trace_id``, engine keywords).
 
@@ -217,6 +234,7 @@ def build_session_manager(
         pool_timeout=pool.timeout_s if queued else None,
         pool_recycle=pool.recycle_s,
         connect_args=reveal_for_driver(config.client_options()),
+        store=database,
         **manager_kwargs,
     )
     if instrumented:

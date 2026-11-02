@@ -8,7 +8,12 @@ from typing import Annotated, Any
 import typer
 import yaml
 
+from loom.core.config.keys import ConfigKey
+from loom.core.persistence.stores import BACKEND_KEY, DEFAULT_STORE, SQLALCHEMY_BACKEND
 from loom.core.schema_names import SchemaNames
+
+_STORES = str(ConfigKey.STORES)  # a plain str: yaml.safe_dump refuses a StrEnum key
+_STORE_PATH = f"{_STORES}.{DEFAULT_STORE}"
 
 schema_app = typer.Typer(no_args_is_help=True, help="Prepare a row-scoped schema.")
 
@@ -24,13 +29,17 @@ def init(
     """Derive the names around a schema once and write them into the configuration.
 
     Without ``--config`` the block is printed. With it the names are merged
-    into ``database.schema``; a name the product already changed is never
-    overwritten.
+    into ``stores.default.schema``, declaring the store with ``backend:
+    sqlalchemy`` when the file does not; a name the product already changed
+    is never overwritten.
     """
     try:
         block = _block(name, SchemaNames.derived(name))
         if config is None:
-            typer.echo(yaml.safe_dump({"database": {"schema": block}}, sort_keys=False), nl=False)
+            document = {
+                _STORES: {DEFAULT_STORE: {BACKEND_KEY: SQLALCHEMY_BACKEND, "schema": block}}
+            }
+            typer.echo(yaml.safe_dump(document, sort_keys=False), nl=False)
             return
         _write(config, block)
     except (ValueError, yaml.YAMLError) as exc:
@@ -40,9 +49,15 @@ def init(
 
 def _write(config: Path, block: dict[str, Any]) -> None:
     document = _load(config)
-    database = _section(document, "database", "database")
-    schema = _section(database, "schema", "database.schema")
-    conflicts = _merge(schema, block, "database.schema")
+    store = _section(_section(document, _STORES, _STORES), DEFAULT_STORE, _STORE_PATH)
+    backend = store.setdefault(BACKEND_KEY, SQLALCHEMY_BACKEND)
+    if backend != SQLALCHEMY_BACKEND:
+        raise ValueError(
+            f"{_STORE_PATH}.{BACKEND_KEY} is {backend!r}; "
+            f"a row-scoped schema needs {SQLALCHEMY_BACKEND}"
+        )
+    schema = _section(store, "schema", f"{_STORE_PATH}.schema")
+    conflicts = _merge(schema, block, f"{_STORE_PATH}.schema")
     if conflicts:
         raise ValueError(
             "these names differ from the derived ones and were kept: " + ", ".join(conflicts)

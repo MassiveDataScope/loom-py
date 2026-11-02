@@ -1,11 +1,11 @@
-"""Worker start-up refusal of the ``Mcp()`` marker (spec 015, T202).
+"""Start-up refusal of the ``Mcp()`` marker without agents (spec 015, T202).
 
-A Celery task worker never builds an AI runtime — no ``AgentRuntime`` is
-constructed anywhere under ``loom.celery`` — so a use case declaring
-``Mcp()`` must be refused at ``bootstrap_worker()`` time, not on its first
-task execution. ``_reject_mcp_markers`` reuses
+An entry point whose recipe declares ``agents=False`` (a Celery task worker,
+for instance) never builds an AI runtime, so a use case declaring ``Mcp()``
+must be refused when the application is composed, not on its first
+execution. ``reject_ai_markers`` reuses
 ``loom.ai._startup.verify_mcp_markers``, wired here with no configured
-servers at all, mirroring ``_reject_agent_markers``.
+servers at all, after the ``Agent()`` check.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.celery.bootstrap import _reject_mcp_markers
+from loom.composition._ai import reject_ai_markers
 from loom.core.bootstrap import KernelRuntime
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
@@ -68,7 +68,7 @@ class TestNoUseCaseDeclaresTheMarker:
     def test_no_marker_does_not_raise(self) -> None:
         kernel = _kernel_runtime(SendReceiptUseCase)
 
-        _reject_mcp_markers((SendReceiptUseCase,), kernel)  # no raise
+        reject_ai_markers((SendReceiptUseCase,), kernel.compiler, kernel.registry)  # no raise
 
 
 class TestOneUseCaseDeclaresTheMarker:
@@ -76,7 +76,7 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(LookUpKnowledgeUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_mcp_markers((LookUpKnowledgeUseCase,), kernel)
+            reject_ai_markers((LookUpKnowledgeUseCase,), kernel.compiler, kernel.registry)
 
         message = str(excinfo.value)
         codes = {issue.code for issue in excinfo.value.issues}
@@ -90,6 +90,6 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(LookUpKnowledgeUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_mcp_markers((LookUpKnowledgeUseCase,), kernel)
+            reject_ai_markers((LookUpKnowledgeUseCase,), kernel.compiler, kernel.registry)
 
         assert "none" in str(excinfo.value)

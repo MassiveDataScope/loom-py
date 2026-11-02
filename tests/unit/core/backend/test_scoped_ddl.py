@@ -269,10 +269,12 @@ def test_scoped_models_on_another_dialect_raise_unless_explicitly_allowed() -> N
     scoped = scoped_tables(metadata)
 
     with pytest.raises(ConfigError, match=r"sqlite.*notes"):
-        check_dialect("sqlite", scoped, allow_unprotected=False)
+        check_dialect("sqlite", scoped, allow_unprotected=False, path="stores.default")
 
-    assert check_dialect("sqlite", scoped, allow_unprotected=True) == ("notes",)
-    assert check_dialect("postgresql", scoped, allow_unprotected=False) == ()
+    assert check_dialect("sqlite", scoped, allow_unprotected=True, path="stores.default") == (
+        "notes",
+    )
+    assert check_dialect("postgresql", scoped, allow_unprotected=False, path="stores.default") == ()
 
 
 def test_a_guard_call_inside_create_schema_resolves_the_guard_first() -> None:

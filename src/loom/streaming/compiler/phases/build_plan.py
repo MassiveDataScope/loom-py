@@ -9,6 +9,7 @@ from typing import Any, Literal, get_args, get_origin
 from loom.core.config import ConfigContext
 from loom.core.config.keys import ConfigKey
 from loom.core.model.redaction import RedactedMap
+from loom.core.persistence.stores import StoreCatalog
 from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,
@@ -44,12 +45,15 @@ from loom.streaming.nodes._table.config import (
 from loom.streaming.nodes._with import With, WithAsync
 
 
-def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
+def build_plan(
+    flow: StreamFlow[Any, Any], ctx: ConfigContext, catalog: StoreCatalog
+) -> CompiledPlan:
     """Build a compiled plan from a validated flow and runtime config context.
 
     Args:
         flow: Validated stream flow.
         ctx: Runtime config context providing Kafka settings and section access.
+        catalog: The stores the compilation loaded, which the table sinks name.
 
     Returns:
         Immutable compiled plan ready for adapter wiring.
@@ -57,7 +61,7 @@ def build_plan(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledPlan:
     source = _build_source(flow, ctx)
     nodes = _build_nodes(flow)
     output = _build_sink(flow.output, ctx) if flow.output else None
-    terminal_sinks, terminal_storage_sinks = _build_terminal_sinks(flow.process.nodes, ctx)
+    terminal_sinks, terminal_storage_sinks = _build_terminal_sinks(flow.process.nodes, ctx, catalog)
     error_routes = {kind: _build_sink(topic, ctx) for kind, topic in flow.errors.items()}
     needs_async = any(
         _node_needs_async_bridge(node) for node in walk_process_nodes(flow.process.nodes)
@@ -198,6 +202,7 @@ _TerminalSinks = tuple[
 def _build_terminal_sinks(
     nodes: Iterable[object],
     ctx: ConfigContext,
+    catalog: StoreCatalog,
     *,
     path_prefix: tuple[int, ...] = (),
 ) -> _TerminalSinks:
@@ -209,16 +214,18 @@ def _build_terminal_sinks(
             sinks[path] = _build_sink(node, ctx)
             continue
         if isinstance(node, IntoSink):
-            storage_sinks[path] = _build_storage_sink(node, ctx)
+            storage_sinks[path] = _build_storage_sink(node, ctx, catalog)
             continue
         if is_branching_node(node):
-            sub_sinks, sub_storage = _build_branch_terminal_sinks(node, ctx, path_prefix=path)
+            sub_sinks, sub_storage = _build_branch_terminal_sinks(
+                node, ctx, catalog, path_prefix=path
+            )
             sinks.update(sub_sinks)
             storage_sinks.update(sub_storage)
             continue
         if isinstance(node, WithAsync) or (isinstance(node, With) and node.process is not None):
             sub_sinks, sub_storage = _build_terminal_sinks(
-                node.process.nodes, ctx, path_prefix=path
+                node.process.nodes, ctx, catalog, path_prefix=path
             )
             sinks.update(sub_sinks)
             storage_sinks.update(sub_storage)
@@ -228,6 +235,7 @@ def _build_terminal_sinks(
 def _build_branch_terminal_sinks(
     node: object,
     ctx: ConfigContext,
+    catalog: StoreCatalog,
     *,
     path_prefix: tuple[int, ...],
 ) -> _TerminalSinks:
@@ -238,7 +246,9 @@ def _build_branch_terminal_sinks(
         branch_path = path_prefix + (branch.index,)
         if branch.output is not None:
             sinks[branch_path] = _build_sink(branch.output, ctx)
-        sub_sinks, sub_storage = _build_terminal_sinks(branch.nodes, ctx, path_prefix=branch_path)
+        sub_sinks, sub_storage = _build_terminal_sinks(
+            branch.nodes, ctx, catalog, path_prefix=branch_path
+        )
         sinks.update(sub_sinks)
         storage_sinks.update(sub_storage)
     return sinks, storage_sinks
@@ -255,10 +265,12 @@ def _build_sink(topic: IntoTopic[Any], ctx: ConfigContext) -> CompiledSink:
     )
 
 
-def _build_storage_sink(node: IntoSink[Any], ctx: ConfigContext) -> CompiledStorageSink:
+def _build_storage_sink(
+    node: IntoSink[Any], ctx: ConfigContext, catalog: StoreCatalog
+) -> CompiledStorageSink:
     if isinstance(node, IntoTable):
         if node.backend is Backend.SQLALCHEMY:
-            sql_resolved = resolve_sqlalchemy_table_config(node, ctx)
+            sql_resolved = resolve_sqlalchemy_table_config(node, ctx, catalog)
             return CompiledStorageSink(
                 node=node,
                 config=sql_resolved.sink,
@@ -272,7 +284,7 @@ def _build_storage_sink(node: IntoSink[Any], ctx: ConfigContext) -> CompiledStor
                 database_config=None,
             )
         if node.backend is Backend.CLICKHOUSE:
-            ch_resolved = resolve_clickhouse_table_config(node, ctx)
+            ch_resolved = resolve_clickhouse_table_config(node, ctx, catalog)
             return CompiledStorageSink(
                 node=node,
                 config=ch_resolved.sink,

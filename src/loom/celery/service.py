@@ -251,6 +251,10 @@ class CeleryJobService:
         self._executor = executor
         self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
 
+    def close(self) -> None:
+        """Close the Celery application owned by this service."""
+        self._app.close()
+
     # ------------------------------------------------------------------
     # JobService protocol
     # ------------------------------------------------------------------

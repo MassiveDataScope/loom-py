@@ -9,7 +9,7 @@ Example::
     from loom.core.config import load_config, section
 
     cfg = load_config("config/base.yaml", "config/local.yaml")
-    db = section(cfg, "database", DatabaseConfig)
+    cache = section(cfg, "cache", CacheConfig)
 """
 
 from loom.core.config._includes import expand_config_glob, is_cloud_uri
@@ -26,7 +26,7 @@ from loom.core.config.resolver import (
     merge_resolvers,
     with_default_resolvers,
 )
-from loom.core.config.retired import reject_retired_keys
+from loom.core.config.retired import reject_retired_keys, reject_retired_sections
 from loom.core.config.secrets import SecretsManagerResolver
 from loom.core.config.ssm import SsmResolver
 
@@ -47,6 +47,7 @@ __all__ = [
     "load_config",
     "merge_resolvers",
     "reject_retired_keys",
+    "reject_retired_sections",
     "section",
     "with_default_resolvers",
 ]

@@ -186,7 +186,7 @@ def test_the_minimum_server_version_is_postgres_14() -> None:
 async def test_an_invalid_config_is_refused_before_connecting() -> None:
     config = _config(schema="my-schema")
 
-    with pytest.raises(ConfigError, match=r"database\.schema:.*identifier"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*identifier"):
         await apply_bootstrap("postgresql+asyncpg://nobody@127.0.0.1:1/none", config, {})
 
 

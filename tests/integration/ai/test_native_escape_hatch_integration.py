@@ -24,10 +24,10 @@ from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.ai.runtime import AgentRuntime
 from loom.ai.runtime._handle import agent_marker_resolver
+from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.sql.service import NullSqlQueryService
-from loom.rest.fastapi.auto import _AgentDepsFactory
 from tests.integration.ai.conftest import make_ai_config, make_plan
 from tests.integration.ai.test_capabilities import (
     ScriptedToolModel,
@@ -58,7 +58,7 @@ async def _runtime_and_model() -> tuple[AgentRuntime, ScriptedToolModel]:
         plans=[plan],
         config=make_ai_config(),
         engine_provider=provider,  # type: ignore[arg-type]
-        deps=_AgentDepsFactory(kernel.app),
+        deps=AgentDepsFactory(kernel.app),
         container=kernel.container,
     )
     return runtime, model

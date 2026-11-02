@@ -21,7 +21,13 @@ def _config(module: str, **schema: object) -> dict[str, object]:
             "name": "fixture",
             "discovery": {"mode": "modules", "modules": {"include": [module]}},
         },
-        "database": {"url": "postgresql+asyncpg://u:p@localhost/db", "schema": schema},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": "postgresql+asyncpg://u:p@localhost/db",
+                "schema": schema,
+            }
+        },
     }
 
 
@@ -106,7 +112,7 @@ def test_a_missing_schema_key_names_itself(tmp_path: Path, missing: str) -> None
 
     config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=rf"database\.schema\.{missing}"):
+    with pytest.raises(ConfigError, match=rf"stores\.default\.schema\.{missing}"):
         load_application(config_path)
 
 
@@ -126,7 +132,7 @@ def test_groups_sharing_a_name_with_a_role_are_rejected(tmp_path: Path) -> None:
 
     config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=r"database\.schema:.*distinct names"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*distinct names"):
         load_application(config_path)
 
 
@@ -136,7 +142,7 @@ def test_a_version_table_that_is_not_an_identifier_is_rejected(tmp_path: Path) -
 
     config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=r"database\.schema:.*'Versions'"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema:.*'Versions'"):
         load_application(config_path)
 
 
@@ -146,7 +152,7 @@ def test_a_declared_scope_without_a_source_names_the_scope(tmp_path: Path) -> No
 
     config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=r"database\.schema\.scopes\.editor"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema\.scopes\.editor"):
         load_application(config_path)
 
 
@@ -230,7 +236,7 @@ def test_an_invalid_schema_name_is_a_config_error_naming_the_key(tmp_path: Path)
 
     config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=r"database\.schema"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema"):
         load_application(config_path)
 
 
@@ -262,7 +268,7 @@ def test_a_naming_convention_for_an_unknown_kind_names_the_key(tmp_path: Path) -
 
     config_path = _write(tmp_path, "bad.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=r"database\.schema\.naming_convention.*'primary'"):
+    with pytest.raises(ConfigError, match=r"stores\.default\.schema\.naming_convention.*'primary'"):
         load_application(config_path)
 
 
@@ -271,7 +277,15 @@ def test_a_config_directory_layers_the_overlay_of_the_environment(
 ) -> None:
     base = _config(PLAIN_MODULE, mode="create_all")
     _write(tmp_path, "base.yaml", base)
-    _write(tmp_path, "staging.yaml", {"database": {"url": "postgresql+asyncpg://u:p@stage/db"}})
+    _write(
+        tmp_path,
+        "staging.yaml",
+        {
+            "stores": {
+                "default": {"backend": "sqlalchemy", "url": "postgresql+asyncpg://u:p@stage/db"}
+            }
+        },
+    )
     monkeypatch.setenv("LOOM_ENV", "staging")
     monkeypatch.setenv("LOOM_CONFIG", str(tmp_path))
 

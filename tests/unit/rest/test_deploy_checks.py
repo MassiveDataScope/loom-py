@@ -352,7 +352,7 @@ def test_a_use_case_injects_the_resolved_environment(tmp_path: Path) -> None:
                         "interfaces": {"modules": [module], "warn_recommended": False},
                     },
                 },
-                "database": {"url": "sqlite+aiosqlite:///"},
+                "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
                 # The default "signed" needs a key; in development no deploy
                 # check runs.
                 "persistence": {"cursors": {"signing": "ephemeral"}},

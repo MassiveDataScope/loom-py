@@ -1693,7 +1693,7 @@ def test_does_not_import_loom_ai_when_the_config_has_no_ai_section(tmp_path: Pat
                 "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
             },
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     config_path = tmp_path / "app.yaml"

@@ -9,13 +9,15 @@ zero per-request reflection.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, TypeVar, get_args, get_origin
+from typing import Any, NamedTuple, TypeVar, get_args, get_origin
 
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model.introspection import generic_type_arg, resolve_type_hints
 from loom.core.repository.abc import RepoFor
 from loom.core.repository.registration import is_direct_protocol, is_standard_capability
+from loom.core.use_case.errors import UnservedModelError
 from loom.core.use_case.use_case import UseCase
 
 ResultT = TypeVar("ResultT")
@@ -23,6 +25,20 @@ _T = TypeVar("_T")
 
 # Sentinel params that are never treated as injectable dependencies.
 _SKIP_PARAMS: frozenset[str] = frozenset({"self", "return"})
+
+
+class ModelRead(NamedTuple):
+    """A model a use case or job reads: through which parameter, and which model.
+
+    Args:
+        component: The use case or job.
+        parameter: The parameter that reads it.
+        model: The model read.
+    """
+
+    component: type[object]
+    parameter: str
+    model: type[object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +135,7 @@ class UseCaseFactory:
         """
         self._get_deps(use_case_type)
 
-    def verify(self) -> None:
+    def verify(self, *, reads: Iterable[ModelRead] = ()) -> None:
         """Check every registered class against the container's bindings.
 
         Call once the host has finished wiring, so that a missing binding
@@ -127,10 +143,20 @@ class UseCaseFactory:
         declared with a standard capability contract (``Listable[Order]``)
         must be mapped for its model *and* registered under that capability.
 
+        Args:
+            reads: Models the registered classes read besides their main
+                repository (the ``LoadById``, ``Load`` and ``Exists`` markers
+                of their compiled plans); each must have a repository too.
+
         Raises:
+            UnservedModelError: When a main repository or one of *reads*
+                names a model no repository is registered for.
             ~loom.core.di.container.ResolutionError: Naming the class, the
                 constructor parameter and the key the container lacks.
         """
+        for component, parameter, model in (*self._main_repository_reads(), *reads):
+            if not self._container.has_repo_mapping(model):
+                raise UnservedModelError.for_parameter(component, parameter, model)
         for use_case_type, deps in self._dep_cache.items():
             for name, dep in deps:
                 missing = self._missing_key(dep)
@@ -140,6 +166,14 @@ class UseCaseFactory:
                         "which is not registered in the container."
                     )
 
+    def _main_repository_reads(self) -> list[ModelRead]:
+        return [
+            ModelRead(use_case_type, name, dep.model)
+            for use_case_type, deps in self._dep_cache.items()
+            for name, dep in deps
+            if isinstance(dep, _MainRepoDep)
+        ]
+
     def _missing_key(self, dep: DepToken) -> str | None:
         """Describe the key the container lacks for ``dep``; ``None`` when provided."""
         if isinstance(dep, _MainRepoDep):
@@ -147,8 +181,7 @@ class UseCaseFactory:
         return None if self._container.is_registered(dep) else _describe_key(dep)
 
     def _missing_main_repo_key(self, dep: _MainRepoDep) -> str | None:
-        if not self._container.has_repo_mapping(dep.model):
-            return f"repository for {dep.model.__qualname__}"
+        """The capability key a mapped main repository lacks; the mapping is checked first."""
         key = dep.capability_key
         if key is not None and not self._container.is_registered(key):
             return f"{_describe_key(key)} (main repository capability)"

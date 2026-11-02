@@ -129,15 +129,15 @@ def test_a_naming_convention_names_keys_foreign_keys_and_checks() -> None:
 
 
 def test_a_configured_naming_convention_is_validated_and_copied() -> None:
-    assert configured_naming_convention(None) is None
-    assert configured_naming_convention(CONVENTION) == CONVENTION
+    assert configured_naming_convention(None, path="stores.default") is None
+    assert configured_naming_convention(CONVENTION, path="stores.default") == CONVENTION
 
 
 def test_a_configured_naming_convention_with_an_unknown_kind_names_the_setting() -> None:
     with pytest.raises(
-        ConfigError, match=r"^database\.schema\.naming_convention: unknown kind 'primary'"
+        ConfigError, match=r"^stores\.default\.schema\.naming_convention: unknown kind 'primary'"
     ):
-        configured_naming_convention({"primary": "pk_%(table_name)s"})
+        configured_naming_convention({"primary": "pk_%(table_name)s"}, path="stores.default")
 
 
 def test_a_naming_convention_does_not_rename_explicitly_named_indexes() -> None:

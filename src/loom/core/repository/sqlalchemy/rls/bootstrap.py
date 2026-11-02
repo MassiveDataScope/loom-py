@@ -28,6 +28,7 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.backend.scoped_ddl import LOCK_TIMEOUT, SCHEMA_LOCK, validate_timeout
 from loom.core.config import ConfigError
+from loom.core.persistence.stores import DEFAULT_STORE_PATH
 from loom.core.repository.sqlalchemy.rls.config import POSTGRES_SCRAM_ITERATIONS, BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.guard_manifest import pending_revisions, preflight_sql
 from loom.core.repository.sqlalchemy.rls.integrity import guard_problems
@@ -77,8 +78,12 @@ async def apply_bootstrap(
     *,
     salt_factory: Callable[[], bytes] = lambda: os.urandom(16),
     lock_timeout: str = "5s",
+    path: str = DEFAULT_STORE_PATH,
 ) -> None:
     """Install or upgrade the guard of ``config.schema`` and configure it, in one transaction.
+
+    *path* is the dotted path of the store section *config* was read from
+    (``application.path``), which a refused name or timeout names.
 
     Raises:
         ConfigError: When a name or the lock timeout is invalid, the server
@@ -90,7 +95,7 @@ async def apply_bootstrap(
         config.validated()
         validate_timeout(lock_timeout)
     except ValueError as exc:
-        raise ConfigError(f"database.schema: {exc}") from exc
+        raise ConfigError(f"{path}.schema: {exc}") from exc
     verifiers = {
         user: scram_sha256_verifier(
             password, salt=salt_factory(), iterations=config.scram_iterations

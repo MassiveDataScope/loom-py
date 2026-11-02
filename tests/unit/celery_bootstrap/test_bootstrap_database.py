@@ -1,4 +1,4 @@
-"""The worker reads ``database`` through the shared contract and the worker profile."""
+"""The worker reads ``stores.default`` through the shared contract and the worker profile."""
 
 from __future__ import annotations
 
@@ -8,36 +8,58 @@ import pytest
 
 pytest.importorskip("celery")
 
-from loom.celery.bootstrap import _resolve_uow_factory  # noqa: E402
+from loom.celery.adapter import CeleryAdapter  # noqa: E402
+from loom.composition import AppConfig, compose_application  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
+from loom.core.job.job import Job  # noqa: E402
+from loom.core.uow.abc import UnitOfWorkFactory  # noqa: E402
+from tests.helpers.composition import composition_source  # noqa: E402
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 
 
+class _PingJob(Job[int]):
+    def execute(self) -> int:
+        return 1
+
+
+def _resolve_uow_factory(config: dict[str, Any]) -> UnitOfWorkFactory | None:
+    """Compose a worker from *config* and return the unit-of-work factory it runs jobs with."""
+    source = composition_source(
+        ConfigContext.from_dict(
+            {"celery": {"broker_url": "memory://", "result_backend": "cache+memory://"}, **config}
+        ),
+        app=AppConfig(name="worker"),
+    )
+    return compose_application(source, CeleryAdapter(jobs=[_PingJob])).persistence.uow_factory
+
+
 def _pool(config: dict[str, Any]) -> Any:
-    _factory, manager = _resolve_uow_factory(ConfigContext.from_dict(config))
-    assert manager is not None
-    return manager.engine.sync_engine.pool
+    factory: Any = _resolve_uow_factory(config)
+    assert factory is not None
+    return factory._session_manager.engine.sync_engine.pool
 
 
 def test_without_a_database_section_the_worker_runs_without_a_unit_of_work() -> None:
-    assert _resolve_uow_factory(ConfigContext.from_dict({})) == (None, None)
+    assert _resolve_uow_factory({}) is None
 
 
 def test_named_streaming_databases_alone_give_the_worker_no_unit_of_work() -> None:
-    config = {"database": {"orders": {"url": _POSTGRES}}}
+    config = {"stores": {"orders": {"backend": "sqlalchemy", "url": _POSTGRES}}}
 
-    assert _resolve_uow_factory(ConfigContext.from_dict(config)) == (None, None)
+    assert _resolve_uow_factory(config) is None
 
 
 def test_the_worker_profile_sizes_an_undeclared_pool() -> None:
-    pool = _pool({"database": {"url": _POSTGRES}})
+    pool = _pool({"stores": {"default": {"backend": "sqlalchemy", "url": _POSTGRES}}})
 
     assert (pool.size(), pool._max_overflow, pool._timeout, pool._recycle) == (2, 0, 30, 1800)
 
 
 def test_a_declared_pool_key_wins_over_the_worker_profile() -> None:
-    pool = _pool({"database": {"url": _POSTGRES, "pool": {"size": 4}}})
+    pool = _pool(
+        {"stores": {"default": {"backend": "sqlalchemy", "url": _POSTGRES, "pool": {"size": 4}}}}
+    )
 
     assert (pool.size(), pool._max_overflow) == (4, 0)
 
@@ -57,4 +79,4 @@ def test_an_invalid_database_section_fails_the_worker_instead_of_dropping_the_da
     database: dict[str, Any],
 ) -> None:
     with pytest.raises(ConfigError):
-        _resolve_uow_factory(ConfigContext.from_dict({"database": database}))
+        _resolve_uow_factory({"stores": {"default": {"backend": "sqlalchemy", **database}}})

@@ -3,7 +3,7 @@
 The check runs in a subprocess because the block must be in place before any
 loom module is imported, and this test session already has the SQLAlchemy
 backend loaded.  The child (``_agents_only_app.py``) installs the finder as its
-first statement, builds the app with ``persistence.backend: none`` and proves
+first statement, builds the app with ``stores.default.backend: none`` and proves
 the block is effective by importing ``loom.core.backend``.
 """
 

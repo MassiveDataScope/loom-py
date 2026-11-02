@@ -14,7 +14,6 @@ from loom.celery.config import (
     apply_job_config,
     create_celery_app,
 )
-from loom.core.async_bridge import build_backend_options as _build_backend_options
 from loom.core.config.convert import convert_config
 from loom.core.job.job import Job
 from loom.core.model.redaction import Dsn
@@ -108,25 +107,6 @@ class TestCeleryRuntimeConfig:
         assert cfg.backend == "trio"
         assert cfg.use_uvloop is True
         assert cfg.shutdown_timeout_ms == 10
-
-
-class TestBuildBackendOptions:
-    def test_non_asyncio_returns_empty(self) -> None:
-        assert _build_backend_options("trio", use_uvloop=True) == {}
-
-    def test_asyncio_without_uvloop_returns_empty(self) -> None:
-        assert _build_backend_options("asyncio", use_uvloop=False) == {}
-
-    def test_asyncio_with_uvloop_adds_loop_factory(self) -> None:
-        import sys
-
-        if sys.platform == "win32":
-            pytest.skip("uvloop not available on Windows")
-
-        import uvloop
-
-        opts = _build_backend_options("asyncio", use_uvloop=True)
-        assert opts.get("loop_factory") is uvloop.new_event_loop
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +204,9 @@ class TestApplyJobConfig:
 
 class TestCreateCeleryApp:
     def test_sets_broker_url(self) -> None:
-        cfg = CeleryConfig(broker_url=Dsn("redis://b:6379/0"), result_backend=Dsn("redis://r:6379/1"))
+        cfg = CeleryConfig(
+            broker_url=Dsn("redis://b:6379/0"), result_backend=Dsn("redis://r:6379/1")
+        )
         mock_celery_cls = MagicMock()
         mock_app = MagicMock()
         mock_celery_cls.return_value = mock_app

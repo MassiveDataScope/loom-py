@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from celery import Celery
 
 from loom.celery.constants import (
     TASK_CALLBACK_ERROR_PREFIX,
@@ -680,11 +681,19 @@ class TestEmitHelpers:
 
 
 class TestResolveErrorInfo:
+    def test_looks_up_result_on_the_worker_app(self) -> None:
+        app = Celery("worker", set_as_current=False)
+        mock_result = MagicMock()
+        mock_result.result = ValueError("bad")
+        with patch("loom.celery.runner.AsyncResult", return_value=mock_result) as result:
+            assert _resolve_error_info("some-task-id", app) == ("ValueError", "bad")
+        result.assert_called_once_with("some-task-id", app=app)
+
     def test_returns_qualname_and_message_for_exception(self) -> None:
         mock_result = MagicMock()
         mock_result.result = ValueError("something went wrong")
         with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            exc_type, exc_msg = _resolve_error_info("some-task-id")
+            exc_type, exc_msg = _resolve_error_info("some-task-id", Celery(set_as_current=False))
         assert exc_type == "ValueError"
         assert exc_msg == "something went wrong"
 
@@ -692,7 +701,7 @@ class TestResolveErrorInfo:
         mock_result = MagicMock()
         mock_result.result = None
         with patch("loom.celery.runner.AsyncResult", return_value=mock_result):
-            exc_type, exc_msg = _resolve_error_info("some-task-id")
+            exc_type, exc_msg = _resolve_error_info("some-task-id", Celery(set_as_current=False))
         assert exc_type == "Unknown"
         assert exc_msg == ""
 
@@ -808,3 +817,85 @@ class TestMakeCallbackErrorTask:
         with patch("loom.celery.runner._resolve_error_info", return_value=("E", "m")):
             task_fn(job_id="uuid-5", context={})
         runtime.run.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Two Celery applications in one process
+# ---------------------------------------------------------------------------
+
+
+class _TwinJob(Job[int]):
+    """Registered on two applications under the same task name."""
+
+    __retries__ = 0
+
+    def execute(self) -> int:
+        return 0
+
+
+class _TwinCallback:
+    def on_success(self, job_id: str, result: object, **ctx: object) -> None:
+        pass  # intentional no-op stub
+
+    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **ctx: object) -> None:
+        pass  # intentional no-op stub
+
+
+def _two_apps() -> tuple[Celery, Celery]:
+    """Two applications, neither finalized: both register before either reads its tasks."""
+    return (
+        Celery("first", set_as_current=False),
+        Celery("second", set_as_current=False),
+    )
+
+
+class TestTwoApplicationsInOneProcess:
+    """Each application serves its own task, never one registered for another.
+
+    A task shared through Celery's process-wide finalizers is registered on
+    every application finalized afterwards, and the first one under a name
+    wins: both applications would then run the same closure, bound to one
+    runtime. Both register before either is finalized, so a shared task
+    always lands on the wrong application for one of them.
+    """
+
+    def test_each_job_task_runs_against_its_own_runtime(self) -> None:
+        first, second = _two_apps()
+        for app, answer in ((first, 1), (second, 2)):
+            _make_job_task(
+                app,
+                _TwinJob,
+                _mock_factory(_TwinJob()),
+                MagicMock(),
+                _mock_runtime(return_value=answer),
+            )
+        name = f"{TASK_JOB_PREFIX}.{_TwinJob.__qualname__}"
+
+        assert first.tasks[name] is not second.tasks[name]
+        assert first.tasks[name].apply().get() == 1
+        assert second.tasks[name].apply().get() == 2
+
+    def test_each_success_callback_builds_from_its_own_factory(self) -> None:
+        first, second = _two_apps()
+        factories = (_mock_factory(MagicMock()), _mock_factory(MagicMock()))
+        for app, factory in zip((first, second), factories, strict=True):
+            _make_callback_task(app, _TwinCallback, factory, _mock_runtime())
+        name = f"{TASK_CALLBACK_PREFIX}.{_TwinCallback.__qualname__}"
+
+        for app, factory in zip((first, second), factories, strict=True):
+            app.tasks[name].apply(args=(None,), kwargs={"job_id": "j", "context": {}}).get()
+
+            factory.build.assert_called_once_with(_TwinCallback)
+
+    def test_each_failure_callback_builds_from_its_own_factory(self) -> None:
+        first, second = _two_apps()
+        factories = (_mock_factory(MagicMock()), _mock_factory(MagicMock()))
+        for app, factory in zip((first, second), factories, strict=True):
+            _make_callback_error_task(app, _TwinCallback, factory, _mock_runtime())
+        name = f"{TASK_CALLBACK_ERROR_PREFIX}.{_TwinCallback.__qualname__}"
+
+        for app, factory in zip((first, second), factories, strict=True):
+            with patch("loom.celery.runner._resolve_error_info", return_value=("E", "m")):
+                app.tasks[name].apply(kwargs={"job_id": "j", "context": {}}).get()
+
+            factory.build.assert_called_once_with(_TwinCallback)

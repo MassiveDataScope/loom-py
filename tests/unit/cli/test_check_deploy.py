@@ -154,7 +154,7 @@ def test_a_fresh_process_loads_the_checks_of_every_installed_area(tmp_path: Path
         tmp_path / "app.yaml",
         {
             "app": _UNAUTHENTICATED_APP,
-            "database": {"url": "${oc.env:DATABASE_URL}"},
+            "stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}},
             "persistence": {"cursors": {"signing": "unsigned"}},
         },
     )

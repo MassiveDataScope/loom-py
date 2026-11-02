@@ -117,7 +117,7 @@ def _write_project(
                 "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
             },
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     auth: dict[str, Any] = {}

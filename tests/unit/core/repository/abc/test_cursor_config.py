@@ -76,7 +76,7 @@ class TestSection:
             CursorCodec.from_context(ctx)
 
     def test_an_absent_section_is_the_signed_default(self) -> None:
-        ctx = ConfigContext.from_dict({"persistence": {"backend": "sqlalchemy"}})
+        ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy"}}})
 
         with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
             CursorCodec.from_context(ctx)

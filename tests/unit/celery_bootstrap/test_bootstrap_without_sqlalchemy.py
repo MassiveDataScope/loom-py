@@ -16,7 +16,8 @@ import pytest
 import yaml
 
 import loom.celery.bootstrap as boot
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigError
+from loom.core.job.job import Job
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
 
@@ -38,6 +39,11 @@ assert any(name.endswith("PureJob") for name in app.tasks), sorted(app.tasks)
 """
 
 
+class _PureJob(Job[int]):
+    def execute(self, value: int = 0) -> int:
+        return value * 2
+
+
 def _run_in_clean_interpreter(script: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Run ``script`` in a fresh interpreter that can see the repository ``src``."""
     env = {**os.environ, "PYTHONPATH": str(_SRC)}
@@ -53,6 +59,7 @@ def _run_in_clean_interpreter(script: str, *args: str) -> subprocess.CompletedPr
 def _write_worker_config(tmp_path: Path, extra: dict[str, Any] | None = None) -> Path:
     """Write a worker YAML config with an in-memory broker and no database section."""
     cfg: dict[str, Any] = {
+        "app": {"name": "worker"},
         "celery": {
             "broker_url": "memory://",
             "result_backend": "cache+memory://",
@@ -74,28 +81,15 @@ def test_create_app_without_database_section_starts_without_sqlalchemy(tmp_path:
     assert result.returncode == 0, f"create_app failed:\n{result.stderr}"
 
 
-def test_resolve_uow_factory_names_sqlalchemy_extra_when_missing(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_database_section_names_the_sqlalchemy_extra_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A ``database`` section without the SQLAlchemy extra raises a hinting ImportError."""
-    monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.session_manager", None)
+    """A ``database`` section without the SQLAlchemy extra raises a hinting error."""
+    monkeypatch.setitem(sys.modules, "loom.core.repository.sqlalchemy.backend", None)
+    config_path = _write_worker_config(
+        tmp_path,
+        {"stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///test.db"}}},
+    )
 
-    with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        boot._resolve_uow_factory({"database": {"url": "sqlite+aiosqlite:///test.db"}})
-
-
-def test_compile_db_layer_names_sqlalchemy_extra_when_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Compiling models for a configured database without the extra raises a hinting ImportError."""
-    monkeypatch.setitem(sys.modules, "loom.core.backend.sqlalchemy", None)
-
-    session_manager = object()
-    with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
-        boot._compile_db_layer(
-            session_manager,  # type: ignore[arg-type]
-            [boot.BaseModel],
-            (),
-            naming_convention=None,
-            ctx=ConfigContext.from_dict({"persistence": {"cursors": {"signing": "unsigned"}}}),
-        )
+    with pytest.raises(ConfigError, match=r"loom-kernel\[sqlalchemy\]"):
+        boot.bootstrap_worker(str(config_path), jobs=[_PureJob])

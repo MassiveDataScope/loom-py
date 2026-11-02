@@ -67,6 +67,7 @@ async def create_schema(
             manager.engine.dialect.name,
             application.scoped,
             allow_unprotected=application.database.schema.allow_unprotected_dialect,
+            path=application.path,
         )
         bootstrap = application.bootstrap if application.scoped else None
         async with manager.engine.begin() as connection:

@@ -1,0 +1,106 @@
+"""Job service wiring for the composition root."""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import warnings
+from typing import TYPE_CHECKING
+
+from loom.composition.resources import Resource, ResourceKind, closing
+from loom.core.bootstrap import KernelRuntime
+from loom.core.config import ConfigContext, ConfigKey
+from loom.core.di.scope import Scope
+from loom.core.job.service import InlineJobService, JobService
+from loom.core.observability.runtime import ObservabilityRuntime
+
+if TYPE_CHECKING:
+    from loom.celery.service import CeleryJobService
+
+
+def _build_celery_service(
+    ctx: ConfigContext,
+    result: KernelRuntime,
+    observability_runtime: ObservabilityRuntime | None,
+) -> CeleryJobService | None:
+    """Return a ``CeleryJobService`` if the celery extra is installed and configured.
+
+    Returns ``None`` when the ``loom[celery]`` extra is absent or the
+    ``celery`` section is, so the caller can fall back to
+    :class:`~loom.core.job.service.InlineJobService`. A section that fails
+    validation raises.
+
+    Args:
+        ctx: Resolved configuration context.
+        result: Kernel runtime carrying container, factory and executor.
+        observability_runtime: Observability runtime the producer traces
+            with, or ``None``.
+
+    Returns:
+        ``CeleryJobService`` instance, or ``None``.
+    """
+    if not ctx.has(ConfigKey.CELERY):
+        # Checked before any import: an application without a celery section
+        # must not pay for loading Celery. find_spec locates without importing.
+        if importlib.util.find_spec("celery") is not None:
+            warnings.warn(
+                "Celery config section is missing — falling back to InlineJobService. "
+                "Add a 'celery' section to your config to suppress this.",
+                stacklevel=3,
+            )
+        return None
+    try:
+        from loom.celery.config import CeleryConfig, create_celery_app
+        from loom.celery.service import CeleryJobService
+
+    except ImportError:
+        return None
+    celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
+    return CeleryJobService(
+        create_celery_app(celery_cfg),
+        metrics=result.metrics,
+        factory=result.factory,
+        executor=result.executor,
+        observability_runtime=observability_runtime,
+    )
+
+
+def configure_job_service(
+    ctx: ConfigContext,
+    result: KernelRuntime,
+    observability_runtime: ObservabilityRuntime | None,
+) -> Resource | None:
+    """Register a ``JobService`` implementation in the container.
+
+    Registers :class:`~loom.celery.service.CeleryJobService` when a
+    ``celery`` config section is present and the ``loom[celery]`` extra is
+    installed.  Falls back to
+    :class:`~loom.core.job.service.InlineJobService` otherwise — enabling
+    local development and tests without a broker.
+
+    The registration uses ``APPLICATION`` scope so the service is created
+    once and shared across all requests. A ``JobService`` a caller's DI
+    module already registered is kept.
+
+    Args:
+        ctx: Resolved configuration context.
+        result: Kernel runtime carrying container, factory and executor.
+        observability_runtime: Observability runtime the Celery producer
+            traces with, or ``None``.
+
+    Returns:
+        The Celery producer's resource to close, or ``None`` when no Celery
+        service was built.
+    """
+    if result.container.is_registered(JobService):
+        return None
+    celery_service = _build_celery_service(ctx, result, observability_runtime)
+    svc = celery_service or InlineJobService(result.factory, result.executor)
+    result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)
+    if celery_service is None:
+        return None
+    return Resource(
+        kind=ResourceKind.CELERY,
+        name="jobs",
+        manager=closing(lambda: asyncio.to_thread(celery_service.close)),
+    )

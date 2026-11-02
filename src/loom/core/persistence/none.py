@@ -10,17 +10,28 @@ from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.stores import (
+    NO_CAPABILITIES,
+    NONE_BACKEND,
+    StoreCapabilities,
+    StoreSpec,
+)
 
 
 class NoneBackend:
-    """Backend for ``persistence.backend: none``.
+    """Backend for ``stores.<name>.backend: none``, and for a worker without ``stores``.
 
-    No unit-of-work factory, no repositories, no startup resource; a
-    ``database`` section, if present, is ignored.
+    No unit-of-work factory, no repositories, no startup resource; the rest
+    of the store section, if any, is ignored.
     """
 
-    name: ClassVar[str] = "none"
+    name: ClassVar[str] = NONE_BACKEND
     repository_type: ClassVar[type[Any] | None] = None
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe a backend that serves no models or cursors, whatever *spec* says."""
+        del spec
+        return NO_CAPABILITIES
 
     def build(
         self,

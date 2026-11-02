@@ -18,7 +18,7 @@ async def test_null_service_raises_actionable_config_error_on_first_use() -> Non
 
 
 def test_container_resolves_the_null_service_without_resolution_error() -> None:
-    """Registered always (``_configure_job_service`` pattern), resolving never fails."""
+    """Registered always (``configure_job_service`` pattern), resolving never fails."""
     container = LoomContainer()
     container.register(SqlQueryService, NullSqlQueryService, scope=Scope.APPLICATION)
     assert isinstance(container.resolve(SqlQueryService), NullSqlQueryService)

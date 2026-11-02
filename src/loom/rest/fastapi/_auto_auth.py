@@ -12,7 +12,7 @@ from loom.rest.auth import AuthenticationMiddleware, Authenticator, JwtAuthConfi
 from loom.rest.auth.config import DEFAULT_EXCLUDE_PATHS
 
 if TYPE_CHECKING:
-    from loom.rest.fastapi.auto import _AppConfig, _RestAuthConfig
+    from loom.rest.fastapi.adapter import _RestAuthConfig
 
 
 @dataclass(frozen=True)
@@ -34,14 +34,14 @@ class _AuthWiring:
 
 
 def _resolve_authentication(
-    app_cfg: _AppConfig,
+    auth_cfg: _RestAuthConfig,
     authenticator: Authenticator | None,
     documentation_paths: tuple[str, ...],
 ) -> _AuthWiring:
     """Pick the single authentication mechanism of the application.
 
     Args:
-        app_cfg: Parsed ``app`` section.
+        auth_cfg: Parsed ``app.rest.auth`` section.
         authenticator: Mechanism supplied by the composition root, if any.
         documentation_paths: Effective docs/schema/metrics/health paths, used
             as the default exclusion list.
@@ -54,7 +54,6 @@ def _resolve_authentication(
         ConfigError: When ``custom: true`` and ``jwt`` are both declared, or
             when *authenticator* and ``custom: true`` do not come together.
     """
-    auth_cfg = app_cfg.rest.auth
     jwt_cfg = auth_cfg.jwt
     _require_declared_mechanism(auth_cfg, authenticator)
     if authenticator is not None:

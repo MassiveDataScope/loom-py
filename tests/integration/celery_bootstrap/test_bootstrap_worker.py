@@ -6,14 +6,14 @@ import base64
 import dataclasses
 import secrets
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 import yaml  # type: ignore[import-untyped]
 from celery import Celery  # type: ignore[import-untyped]
 
-import loom.celery.bootstrap as boot
+import loom.celery.adapter as adapter
 import loom.celery.runner as _runner
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError
@@ -82,12 +82,18 @@ class _LookUpKnowledgeUseCase(UseCase[object, object]):
 def worker_config(tmp_path: Path) -> str:
     """Write a minimal worker YAML with task_always_eager enabled."""
     cfg: dict[str, Any] = {
+        "app": {"name": "worker"},
         "celery": {
             "broker_url": "memory://",
             "result_backend": "cache+memory://",
             "task_always_eager": True,
         },
-        "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
+            }
+        },
     }
     config_file = tmp_path / "worker.yaml"
     config_file.write_text(yaml.dump(cfg))
@@ -139,13 +145,19 @@ class TestBootstrapWorkerResult:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "observability": {"log": {"enabled": False}},
             "celery": {
                 "broker_url": "memory://",
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
             },
-            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
+                }
+            },
             # A deployed worker with a database signs its cursors (loom.cursors.E001).
             "persistence": {
                 "cursors": {"current_key_id": "k1", "keys": {"k1": {"env": "CURSOR_KEY_WORKER"}}}
@@ -168,9 +180,8 @@ class TestBootstrapWorkerResult:
             captured["environment"] = environment
             return runtime
 
-        boot_module = cast(Any, boot)
         monkeypatch.setattr(
-            boot_module.ObservabilityRuntime,
+            ObservabilityRuntime,
             "from_config",
             classmethod(_fake_from_config),
         )
@@ -184,8 +195,14 @@ class TestBootstrapWorkerResult:
         self, tmp_path: Path
     ) -> None:
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
-            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
+                }
+            },
             "persistence": {"cursors": {"signing": "unsigned"}},
         }
         config_file = tmp_path / "worker_unsigned.yaml"
@@ -241,18 +258,24 @@ class TestBootstrapWorkerJobConfigOverride:
             return _runner._make_job_task(celery_app, job_type, *args, **kwargs)
 
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "celery": {
                 "broker_url": "memory://",
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
             },
-            "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}"},
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
+                }
+            },
             "jobs": {"_DoubleSyncJob": {"retries": 3}},
         }
         config_file = tmp_path / "worker_with_override.yaml"
         config_file.write_text(yaml.dump(cfg))
 
-        with patch.object(boot, "_make_job_task", side_effect=_spy):
+        with patch.object(adapter, "_make_job_task", side_effect=_spy):
             bootstrap_worker(str(config_file), jobs=[_DoubleSyncJob])
 
         assert captured_retries == [3], (
@@ -272,10 +295,6 @@ class TestBootstrapWorkerRejectsAgentMarkers:
         assert "_NotifyIncidentUseCase" in message
         assert "triage" in message
 
-    def test_a_worker_with_no_agent_marker_still_boots(self, worker_config: str) -> None:
-        result = bootstrap_worker(worker_config, jobs=[_DoubleSyncJob])
-        assert isinstance(result, WorkerBootstrapResult)
-
 
 class TestBootstrapWorkerRejectsMcpMarkers:
     """H3: the sibling of ``TestBootstrapWorkerRejectsAgentMarkers``, but for ``Mcp()``.
@@ -293,7 +312,3 @@ class TestBootstrapWorkerRejectsMcpMarkers:
         message = str(excinfo.value)
         assert "_LookUpKnowledgeUseCase" in message
         assert "gateway" in message
-
-    def test_a_worker_with_no_mcp_marker_still_boots(self, worker_config: str) -> None:
-        result = bootstrap_worker(worker_config, jobs=[_DoubleSyncJob])
-        assert isinstance(result, WorkerBootstrapResult)

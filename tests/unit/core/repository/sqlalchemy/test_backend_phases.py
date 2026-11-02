@@ -13,8 +13,9 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
 from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+from tests.helpers.persistence import build_backend
 
 
 class Plain(BaseModel):
@@ -47,11 +48,11 @@ def _queued(
 def _wiring(url: str, *models: type[BaseModel], **schema: object):
     config = {
         "app": {"name": "demo"},
-        "database": {"url": url, "schema": schema},
+        "stores": {"default": {"backend": "sqlalchemy", "url": url, "schema": schema}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
-    return SQLAlchemyBackend().build(
-        ConfigContext.from_dict(config), models, BackendRuntime(SERVER_PROFILE)
+    return build_backend(
+        SQLAlchemyBackend(), ConfigContext.from_dict(config), models, SERVER_PROFILE
     )
 
 
@@ -81,11 +82,22 @@ async def test_opening_does_not_verify_an_external_schema() -> None:
 async def test_closing_leaves_the_compiled_model() -> None:
     wiring = _wiring("sqlite+aiosqlite://", Plain)
     wiring.prepare_models((Plain,))
+    metadata = wiring.uow_factory._session_manager.metadata  # type: ignore[union-attr]
 
     async with wiring.lifespan_init():
         pass
 
-    assert get_compiled(Plain) is not None
+    assert get_compiled(Plain, metadata=metadata) is not None
+
+
+def test_prepare_compiles_into_the_store_and_leaves_the_shared_registry_alone() -> None:
+    wiring = _wiring("sqlite+aiosqlite://", Plain)
+
+    wiring.prepare_models((Plain,))
+
+    metadata = wiring.uow_factory._session_manager.metadata  # type: ignore[union-attr]
+    assert set(metadata.tables) == {"phase_items"}
+    assert get_compiled(Plain) is None
 
 
 def test_prepare_binds_scoped_settings_before_any_check() -> None:

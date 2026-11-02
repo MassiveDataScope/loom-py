@@ -31,10 +31,26 @@ pip install "loom-kernel[streaming,kafka,mongo]"
 A source under `mongo.source` or `mongo.sources.<name>` takes the MongoDB
 connection keys every loom context shares (`url`, `database`, `username`,
 `password`, `connect_timeout`, `read_timeout`, `server_selection_timeout`, all
-in seconds, and `pool.size`/`pool.timeout`). A ClickHouse sink's
-`database.<name>` takes the ClickHouse keys (`url`, `username`, `password`,
-`connect_timeout`, `read_timeout`, `pool.size`). See
-ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
+in seconds, and `pool.size`/`pool.timeout`). A table sink names a store
+with `store: <name>`: a ClickHouse sink needs a connection-only
+`stores.<name>` with `backend: clickhouse`, which takes the ClickHouse keys
+(`url`, `username`, `password`, `connect_timeout`, `read_timeout`,
+`pool.size`), and a SQLAlchemy sink needs `backend: sqlalchemy`; any other
+backend fails when the flow compiles. See
+ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`) and ADR 0008
+(`docs/architecture/adr/0008-stores-and-units-of-work.md`).
+
+```yaml
+stores:
+  events:
+    backend: clickhouse        # connection-only: no model, no unit of work
+    url: ${oc.env:CLICKHOUSE_URL}
+streaming:
+  sinks:
+    clicks:
+      store: events
+      table: clicks
+```
 
 Upgrade note: `uri` is now `url`, `max_pool_size` is now `pool.size` and
 `server_selection_timeout_ms` is now `server_selection_timeout`, in seconds;

@@ -164,7 +164,7 @@ def naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
     """Validate a SQLAlchemy ``naming_convention`` keyed by constraint kind.
 
     ``None`` keeps SQLAlchemy's default. The REST runtime, the Celery worker and
-    the migration path all read ``database.schema.naming_convention`` through
+    the migration path all read a store's ``schema.naming_convention`` through
     this function, so they compile the same names.
 
     Raises:

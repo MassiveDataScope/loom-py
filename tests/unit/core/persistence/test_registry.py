@@ -22,6 +22,7 @@ from loom.core.persistence import (
 )
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.plugins.entrypoints import DuplicateEntryPointError
+from tests.helpers.persistence import build_backend
 
 _GROUP = "loom.persistence.backends"
 _SRC = Path(__file__).resolve().parents[4] / "src"
@@ -123,7 +124,7 @@ class TestResolveBackend:
 class TestNoneBackend:
     def _wiring(self) -> PersistenceWiring:
         backend: PersistenceBackend = NoneBackend()
-        return backend.build(ConfigContext.from_dict({}), (), BackendRuntime(SERVER_PROFILE))
+        return build_backend(backend, ConfigContext.from_dict({}), (), SERVER_PROFILE)
 
     def test_build_has_no_unit_of_work_and_no_default_repository_type(self) -> None:
         wiring = self._wiring()

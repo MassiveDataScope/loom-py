@@ -148,8 +148,9 @@ class TestAsyncBridgeDetection:
             streaming_kafka_config,
             OmegaConf.create(
                 {
-                    "database": {
+                    "stores": {
                         "warehouse": {
+                            "backend": "sqlalchemy",
                             "url": "sqlite+aiosqlite:///:memory:",
                             "pool": {"pre_ping": True},
                         }
@@ -157,7 +158,7 @@ class TestAsyncBridgeDetection:
                     "streaming": {
                         "sinks": {
                             "results_sink": {
-                                "database": "warehouse",
+                                "store": "warehouse",
                                 "table": "results",
                                 "chunk_size": 250,
                             }
@@ -172,7 +173,7 @@ class TestAsyncBridgeDetection:
         compiled = plan.terminal_storage_sinks[(0,)]
         expected_sink = SqlAlchemySinkConfig.from_config(
             {
-                "database": "warehouse",
+                "store": "warehouse",
                 "table": "results",
                 "chunk_size": 250,
             },

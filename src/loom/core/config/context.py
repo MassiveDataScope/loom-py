@@ -41,9 +41,9 @@ class ConfigContext:
     Example::
 
         ctx = ConfigContext.from_yaml("config.yaml")
-        db   = ctx.section("database", DatabaseConfig)
-        step = ctx.bind(ReadOrdersStep, path="pipeline.steps.orders")
-        dep  = ctx.resolve(MyDep.from_config("services.dep", label="prod"))
+        cache = ctx.section("cache", CacheConfig)
+        step  = ctx.bind(ReadOrdersStep, path="pipeline.steps.orders")
+        dep   = ctx.resolve(MyDep.from_config("services.dep", label="prod"))
     """
 
     __slots__ = ("_binder", "_config")

@@ -844,33 +844,44 @@ def compile_all(*classes: type, metadata: MetaData | None = None) -> None:
         _compile_core_model(cls, comp)
 
 
-def get_compiled(struct_cls: type) -> type | None:
-    """Look up the compiled SA class for a given Struct model."""
-    return _registry.get(struct_cls)
+def get_compiled(struct_cls: type, *, metadata: MetaData | None = None) -> type | None:
+    """Look up the SA class *struct_cls* compiled into *metadata*, the shared one by default."""
+    return _compilation_for(metadata).compiled.get(struct_cls)
 
 
-def get_compiled_core(struct_cls: type) -> CoreModel | None:
+def get_compiled_core(struct_cls: type, *, metadata: MetaData | None = None) -> CoreModel | None:
     """Look up the compiled :class:`~loom.core.backend.core_model.CoreModel` for a Struct model.
 
     Returns ``None`` if the model has not been compiled via :func:`compile_all`.
 
     Args:
         struct_cls: The ``BaseModel`` Struct class.
+        metadata: The metadata it was compiled into; the shared one by default.
 
     Returns:
         :class:`CoreModel` instance with column expressions and read methods,
         or ``None``.
     """
-    return _core_registry.get(struct_cls)
+    return _compilation_for(metadata).core.get(struct_cls)
 
 
 def get_metadata() -> MetaData:
-    """Return the shared metadata for Alembic and table creation."""
+    """Return the shared metadata: what :func:`compile_all` fills without a ``metadata``.
+
+    A composed store compiles into its own metadata instead, which its
+    session manager carries (``SessionManager.metadata``).
+    """
     return SABase.metadata
 
 
-def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, str] | None:
-    """Validate the ``database.schema.naming_convention`` setting.
+def configured_naming_convention(
+    value: Mapping[str, str] | None, *, path: str
+) -> dict[str, str] | None:
+    """Validate a store's ``schema.naming_convention`` setting.
+
+    Args:
+        value: The setting as written.
+        path: Dotted path of the store's section, which the message names.
 
     Raises:
         ConfigError: Naming the setting and the first unknown kind.
@@ -878,19 +889,18 @@ def configured_naming_convention(value: Mapping[str, str] | None) -> dict[str, s
     try:
         return naming_convention(value)
     except ValueError as exc:
-        raise ConfigError(f"database.schema.naming_convention: {exc}") from exc
+        raise ConfigError(f"{path}.schema.naming_convention: {exc}") from exc
 
 
 def reset_registry(
     *, naming_convention: Mapping[str, str] | None | _Keep = _KEEP_CONVENTION
 ) -> None:
-    """Clear compiled models and, when asked, set the shared metadata's naming convention.
+    """Clear the shared registry and, when asked, set the shared metadata's naming convention.
 
-    The runtime compiles into the shared metadata after this call, so the
-    convention it receives, the one ``database.schema.naming_convention``
-    declares, names the tables ``create_all`` creates exactly as the
-    application metadata of the migration path does. Without the argument the
-    convention is left as it is; ``None`` restores SQLAlchemy's default.
+    Only what :func:`compile_all` compiled without a ``metadata`` lives there:
+    a composed store compiles into a metadata of its own, which this leaves
+    alone. Without the argument the convention is left as it is; ``None``
+    restores SQLAlchemy's default.
     """
     _registry.clear()
     _table_registry.clear()

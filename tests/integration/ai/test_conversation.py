@@ -598,9 +598,11 @@ class TestLoaderFailures:
         runtime = _runtime(engine, plan, deps=conversation_deps, container=container)
 
         async with runtime:
-            with caplog.at_level(logging.ERROR, logger="loom.ai.runtime._bounded"):
-                with pytest.raises(AgentRunError) as failure:
-                    await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
+            with (
+                caplog.at_level(logging.ERROR, logger="loom.ai.runtime._bounded"),
+                pytest.raises(AgentRunError) as failure,
+            ):
+                await runtime.run(_AGENT, "prompt", identity=identity, conversation_id="c-42")
 
         error = failure.value
         assert error.code is AgentRunErrorCode.CONVERSATION_LOAD_FAILED

@@ -3,7 +3,7 @@
 Mirrors :mod:`loom.core.repository.dynamodb.registry`: every model is bound
 to a collection of one shared database. The collection is named by the
 model's ``__tablename__``, the same source the SQL backends use for the
-table, unless ``persistence.mongo.collections`` maps the model's class name
+table, unless ``stores.<name>.collections`` maps the model's class name
 to another one.
 """
 

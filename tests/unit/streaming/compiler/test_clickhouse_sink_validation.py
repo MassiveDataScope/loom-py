@@ -38,14 +38,19 @@ def _flow() -> StreamFlow[Order, Result]:
 def test_compiles_when_the_sinks_database_is_declared(
     streaming_kafka_config: DictConfig,
 ) -> None:
-    """With the sink and its database declared, compilation succeeds."""
+    """With the sink and its store declared, compilation succeeds."""
     config = OmegaConf.merge(
         streaming_kafka_config,
         OmegaConf.create(
             {
-                "database": {"clickhouse": {"url": "clickhouse://localhost:8123/default"}},
+                "stores": {
+                    "clickhouse": {
+                        "backend": "clickhouse",
+                        "url": "clickhouse://localhost:8123/default",
+                    }
+                },
                 "streaming": {
-                    "sinks": {"results_sink": {"database": "clickhouse", "table": "results"}}
+                    "sinks": {"results_sink": {"store": "clickhouse", "table": "results"}}
                 },
             }
         ),
@@ -59,11 +64,11 @@ def test_compiles_when_the_sinks_database_is_declared(
 def test_compilation_fails_when_the_sinks_database_is_missing(
     streaming_kafka_config: DictConfig,
 ) -> None:
-    """A missing ``database`` section is a compilation issue, not a runtime crash."""
+    """A missing ``stores.<name>`` section is a compilation issue, not a runtime crash."""
     config = OmegaConf.merge(
         streaming_kafka_config,
         OmegaConf.create(
-            {"streaming": {"sinks": {"results_sink": {"database": "clickhouse", "table": "r"}}}}
+            {"streaming": {"sinks": {"results_sink": {"store": "clickhouse", "table": "r"}}}}
         ),
     )
 

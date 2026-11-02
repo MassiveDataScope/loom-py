@@ -20,7 +20,7 @@ from loom.core.observability.config import (
 )
 from loom.rest.auth import JwtAuthConfig
 from loom.rest.cors import CorsConfig
-from loom.rest.fastapi.auto import _RestAuthConfig, _RestConfig
+from loom.rest.fastapi.adapter import _RestAuthConfig, _RestConfig
 
 
 @pytest.mark.parametrize(

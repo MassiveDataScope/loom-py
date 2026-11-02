@@ -1,7 +1,7 @@
 """Unit of work for the Mongo backend.
 
 MongoDB transactions need a replica set and a client session, so they are
-opt-in (``persistence.mongo.transactions: true``):
+opt-in (``stores.<name>.transactions: true``):
 
 - :class:`MongoUnitOfWork` starts a client session and a transaction in
   ``begin``, commits or aborts it, and ends the session afterwards. The

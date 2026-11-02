@@ -9,8 +9,9 @@ import pytest
 import loom.core.repository.dynamodb.backend as backend_module
 from loom.core.config import ConfigContext
 from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
+from tests.helpers.persistence import build_backend
 
 from .conftest import FakeClient
 
@@ -22,13 +23,12 @@ def _wiring(
     ctx = ConfigContext.from_dict(
         {
             "app": {"name": "demo"},
-            "persistence": {
-                "backend": "dynamodb",
-                "dynamodb": {"region": "eu-west-1", "table": table},
+            "stores": {
+                "default": {"backend": "dynamodb", "region": "eu-west-1", "table": table},
             },
         }
     )
-    return DynamoDBBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+    return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
 
 @pytest.mark.asyncio

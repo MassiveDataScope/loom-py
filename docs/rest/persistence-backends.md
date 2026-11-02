@@ -1,28 +1,85 @@
 # Persistence backends
 
-`persistence.backend` names a plugin. loom resolves it from the
-`loom.persistence.backends` entry point group at bootstrap, asks it once for
-everything the host needs, and never imports a backend it was not asked for.
-Four ship with loom — `sqlalchemy`, `dynamodb`, `mongo` and `none` — and a
-package of your own registers a fifth the same way.
+Each store is declared under `stores.<name>`: its `backend` names a plugin,
+and the rest of the section is the connection that backend reads. loom
+resolves the backend from the `loom.persistence.backends` entry point group
+at bootstrap, asks it once for everything the host needs, and never imports a
+backend it was not asked for. Four ship with loom — `sqlalchemy`, `dynamodb`,
+`mongo` and `none` — and a package of your own registers a fifth the same way.
 
 ```yaml
-persistence:
-  backend: ledger          # resolved by name; unknown → startup error listing the registered ones
+stores:
+  default:
+    backend: ledger        # resolved by name; unknown → startup error listing the registered ones
+    url: https://ledger.internal
 ```
+
+An application composes its `default` store: the API, the worker, the
+migrations and the row-level-security tooling read `stores.default`. A model
+belongs to `default` unless it declares `__store__`; a model of another store
+fails at startup until several stores can be composed (ADR 0008,
+`docs/architecture/adr/0008-stores-and-units-of-work.md`). A streaming sink
+names any store with `store: <name>`. A `clickhouse` store is
+connection-only: it is no persistence backend, serves no model, never joins a
+unit of work, and only hands its connection to the sinks that name it (a
+model whose `__store__` points at it fails at startup). Without a
+`stores.default` section the API fails at startup, as it did without `database`, and the Celery worker runs
+without persistence (`none`).
+
+## Migrating from `database` and `persistence.backend`
+
+The old keys stop startup with a `ConfigError` naming their replacement;
+nothing reads them any more. `persistence.cursors` stays where it is.
+
+| Old key | New key |
+|---|---|
+| `persistence.backend: <name>` | `stores.default.backend: <name>` |
+| `database: {url, pool, schema, ...}` | `stores.default: {backend: sqlalchemy, url, pool, schema, ...}` |
+| `database.<name>` named by a SQLAlchemy sink | `stores.<name>: {backend: sqlalchemy, ...}` |
+| `database.<name>` named by a ClickHouse sink | `stores.<name>: {backend: clickhouse, url, username, password, ...}` (connection-only store) |
+| `streaming.sinks.<sink>.database: <name>` (SQLAlchemy or ClickHouse) | `streaming.sinks.<sink>.store: <name>` |
+| `persistence.mongo: {...}` | `stores.default: {backend: mongo, ...}` |
+| `persistence.dynamodb: {...}` | `stores.default: {backend: dynamodb, ...}` |
+| `LOOM__DATABASE__POOL__SIZE` (and the other `database.*` overrides) | `LOOM__STORES__DEFAULT__POOL__SIZE` (`stores.*.pool.size`, ...) |
+| `LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT` (and the other `persistence.dynamodb.*` overrides) | `LOOM__STORES__DEFAULT__READ_TIMEOUT` (`stores.*.read_timeout`, ...) |
+| model `__database__ = "<name>"` | model `__store__ = "<name>"` |
+| `persistence.cursors` | unchanged |
 
 ## Writing a backend
 
 A backend is a class with a no-argument constructor, a `name`, a
-`repository_type` and one method:
+`repository_type` and a `build` method:
 `build(ctx, models, runtime) -> PersistenceWiring`. `repository_type` is the
 repository class the auto-CRUD gate inspects, and it is known before `build`.
-`None` means the backend serves no repositories. The class reads its own
-configuration section from the context it is given; the host knows nothing
-about that section. `runtime` is a `BackendRuntime`: the
-`RuntimeProfile` of the entry point building it (`server`, `worker`, ...),
-whose defaults size any connection pool the backend opens, and an optional
-pool-metrics sink. A backend with no pool ignores it.
+`None` means the backend serves no repositories. `runtime` is a
+`BackendRuntime`: the `RuntimeProfile` of the entry point building it
+(`server`, `worker`, ...), whose defaults size any connection pool the backend
+opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
+`StoreCatalog` the composition loaded once. The class takes its store,
+`stores.default`, from that catalog
+(`runtime.catalog.require(DEFAULT_STORE, backend=self.name, purpose=...)`)
+and decodes its section; the host knows nothing about the keys of that
+section. It reads any other section (`persistence.cursors`) from `ctx`. A
+backend with no pool ignores the profile.
+`connection_only` is set by an entry point with no model (a worker running
+raw-SQL jobs): a backend that honours it serves its connection and unit of
+work only, no repository and no cursor codec, and its startup checks only
+probe the connection. `sqlalchemy` honours it (see
+[Workers without models](../getting-started/composition.md#workers-without-models));
+a backend that ignores it builds as usual.
+
+### Store capabilities
+
+Every backend must declare `capabilities(self, spec: StoreSpec) -> StoreCapabilities`,
+returning `serves_models`, `transactional` (its unit of work can roll back)
+and `pages_with_cursors`, all keyword-only. The catalog asks it the first
+time something reads `spec.capabilities`, once per store, so loading the
+catalog resolves no secret. When a capability depends on a setting, read only
+that key, as `mongo` does with `transactions`; decoding the whole section
+would resolve the connection too. A backend without the method fails the
+first read of `spec.capabilities` with a `ConfigError` naming the backend and
+the missing method. The connection-only `clickhouse` kind supports none of
+the three.
 
 ```python
 # billing_ledger/backend.py
@@ -34,10 +91,11 @@ from typing import Any, ClassVar
 
 import msgspec
 
-from loom.core.config import ConfigContext, ConfigError
+from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
 from loom.core.persistence import BackendRuntime, PersistenceWiring
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -56,9 +114,11 @@ class LedgerBackend:
     def build(
         self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
     ) -> PersistenceWiring:
-        cfg = ctx.section_optional("persistence.ledger", _LedgerConfig)
-        if cfg is None:
-            raise ConfigError("persistence.backend is 'ledger' but 'persistence.ledger' is missing.")
+        # ConfigError when stores.default is missing, names another backend or is invalid.
+        store = runtime.catalog.require(
+            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
+        )
+        cfg = store.decode(_LedgerConfig)
         client = LedgerClient(cfg.url, cfg.namespace)
         return PersistenceWiring(
             uow_factory=None,
@@ -109,8 +169,8 @@ startup: the host fails closed instead of picking one.
 | `uow_factory` | Bound to the kernel executor. `None` means "no unit of work": use cases run without one, and deferred job dispatch never fires. |
 | `prepare_models` | Called right after `build` with the discovered models — the slot where SQLAlchemy compiles its tables, binds in-memory row-level settings and where a document store validates identifiers. Raise `ConfigError` for a model the backend cannot serve. Defaults to `no_model_preparation`. |
 | `repo_registration_module` | A DI module run against the container; registers one repository per model. |
-| `startup_checks` | Awaited before `lifespan_init`. Schema and role checks. When they finish, a queued pool holds no connection; an in-memory pool is the database and stays open. Defaults to `no_startup_checks`. |
-| `lifespan_init` | An async context manager entered at application startup and exited at shutdown, after the SQL registry and the AI runtime so their clients close even when it fails. It does not check the schema and it does not reset the compiled registry. Defaults to `no_lifespan`. |
+| `startup_checks` | Run by `Application.check()`, and by `Application.running()` right before `lifespan_init` unless it is entered with `check=False`. Schema and role checks. When they finish, a queued pool holds no connection; an in-memory pool is the database and stays open. A prefork worker runs them once, in the parent. Defaults to `no_startup_checks`. |
+| `lifespan_init` | An async context manager entered when `Application.running()` opens and exited when it closes, last to open and first to close, after the cache gateways, the SQL registry and the AI runtime. It does not check the schema and it does not reset the compiled registry, so a closed application reopens. Defaults to `no_lifespan`. |
 | `readiness` | Optional `async () -> bool`. Aggregated by `GET /health`; absent, the route reports no backends. |
 
 A readiness probe never raises: log the failure and answer `False`, so the
@@ -182,12 +242,20 @@ raise UnsupportedQuery("dynamodb", "orders.Order", "get_by on 'customer_id' need
 ## Dependency verification at boot
 
 Once every service is registered — persistence, job service, SQL, observability,
-AI — `create_app` calls `UseCaseFactory.verify()`. Every registered use case's
-constructor is checked against the container, and a missing binding raises
-`ResolutionError` naming the use case, the parameter and the key. A backend
-that registers `Readable[Order]` but not `Listable[Order]` therefore fails the
-bootstrap of a use case injecting `Listable[Order]`, not its first request.
-Use cases of routes the gate pruned are dropped before that check.
+AI — the composition calls `UseCaseFactory.verify()`, for the API and the
+worker alike. Every registered use case's constructor is checked against the
+container, and a missing binding raises `ResolutionError` naming the use case,
+the parameter and the key. A backend that registers `Readable[Order]` but not
+`Listable[Order]` therefore fails the bootstrap of a use case injecting
+`Listable[Order]`, not its first request. Use cases of routes the gate pruned
+are dropped before that check.
+
+The models a use case or job reads are checked too: its main repository, and
+every model its plan loads through `LoadById`, `Load` or `Exists`. A model no
+repository serves — left out of `MODELS` or of `app.discovery` — raises
+`UnservedModelError` (`loom.core.use_case.errors`), a `ResolutionError`
+carrying the typed issue (`UNSERVED_MODEL`, the component, the parameter) and
+the model.
 
 ## Cursor tokens
 
@@ -262,7 +330,7 @@ the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
 
 Production uses `signed`. In production and staging the deploy check
 `loom.cursors.E001` fails startup, and `loom check --deploy` fails, when a
-`database` or `persistence.mongo` section is set and `signing` is anything but
+store whose backend is `sqlalchemy` or `mongo` is declared and `signing` is anything but
 `signed` or `current_key_id` names no entry of `keys` (see
 [Environments](../getting-started/environments.md#deploy-checks)).
 `persistence.cursors` cannot be set from a `LOOM__*` variable in those
@@ -323,22 +391,24 @@ the first page.
 ## `sqlalchemy` connection pool
 
 The API, the Celery worker and the streaming SQLAlchemy sinks read the same
-`database` section — at `database`, at `database.<name>` for a shared
-streaming database, or inline in a sink with `url` — and build their engine
-through one constructor. Pool keys live under `database.pool`:
+section — `stores.<name>` with `backend: sqlalchemy`, or inline in a sink
+with `url` — and build their engine through one constructor. Pool keys live
+under `stores.<name>.pool`:
 
 ```yaml
-database:
-  url: postgresql+asyncpg://app@db/app
-  connect_args:              # passed to the driver's connect() as written
-    timeout: 5               # asyncpg: seconds to establish a connection
-    command_timeout: 10      # asyncpg: seconds per statement
-  pool:
-    size: 5                  # connections kept open, > 0
-    max_overflow: 5          # extra connections under load, >= 0
-    timeout: 10              # seconds a caller waits for a free connection, > 0
-    recycle: 1800            # seconds before a connection is replaced, > 0
-    pre_ping: true           # check a connection before handing it out
+stores:
+  default:
+    backend: sqlalchemy
+    url: postgresql+asyncpg://app@db/app
+    connect_args:              # passed to the driver's connect() as written
+      timeout: 5               # asyncpg: seconds to establish a connection
+      command_timeout: 10      # asyncpg: seconds per statement
+    pool:
+      size: 5                  # connections kept open, > 0
+      max_overflow: 5          # extra connections under load, >= 0
+      timeout: 10              # seconds a caller waits for a free connection, > 0
+      recycle: 1800            # seconds before a connection is replaced, > 0
+      pre_ping: true           # check a connection before handing it out
 ```
 
 Each key left out takes the default of the entry point, sized for how many
@@ -355,19 +425,19 @@ operations one of its processes runs at once:
   finds the pool exhausted waits `timeout` seconds, then fails with a
   checkout timeout rather than hanging.
 - A Celery worker running `worker_pool: threads` or `gevent` with a
-  concurrency above one per process needs `database.pool.size` at least that
+  concurrency above one per process needs `stores.default.pool.size` at least that
   concurrency.
 - Keep `recycle` below the idle timeout of the server or of any proxy in
   front of it, so a connection the other side dropped is never reused.
 - In-memory SQLite (`sqlite+aiosqlite:///`) holds a single shared connection:
   `size`, `max_overflow` and `timeout` do not apply to it and are left out.
-- Unknown keys under `database.pool` stop startup naming the key. The flat
+- Unknown keys under `stores.<name>.pool` stop startup naming the key. The flat
   keys this section once took (`pool_size`, `max_overflow`, `pool_timeout`,
   `pool_recycle`, `pool_pre_ping`) stop startup naming their `pool.`
-  replacement. Keys outside `pool` and `schema` are left to the other readers
-  of the section (migrations, row-level security, streaming).
+  replacement. A key outside the section's contract stops startup naming it:
+  a store section holds one database.
 - The size, overflow, timeout and recycle keys can be overridden per deploy
-  (`LOOM__DATABASE__POOL__SIZE=1`); see [Environments](../getting-started/environments.md).
+  (`LOOM__STORES__DEFAULT__POOL__SIZE=1`); see [Environments](../getting-started/environments.md).
 
 ### Pool metrics
 
@@ -394,9 +464,9 @@ Every bound of the boto3 client is finite by default; botocore's own read
 timeout (60 s) is longer than a typical serverless invocation.
 
 ```yaml
-persistence:
-  backend: dynamodb
-  dynamodb:
+stores:
+  default:
+    backend: dynamodb
     region: eu-west-1
     table: app
     pool:
@@ -411,7 +481,7 @@ Repository calls run on a thread pool as wide as `pool.size`, so
 that many calls proceed in parallel in one process; the trace id and other
 context variables stay visible inside the threads.
 
-The section is `AwsClientConfig` plus `table`: the same keys and defaults
+The section, `backend` aside, is `AwsClientConfig` plus `table`: the same keys and defaults
 apply wherever loom calls AWS (the ETL's `storage.dynamodb`, the `secrets`
 and `ssm` resolvers, the SNS notifier), and `profile` and `url` (an
 endpoint override; absent, the AWS regional endpoint) are accepted too. Credentials never come from configuration; boto3's default
@@ -438,15 +508,15 @@ repositories use. Without it the probe logs the refusal and `/health` answers
 
 ## `mongo`
 
-`persistence.backend: mongo` binds every discovered model to a collection of
+`stores.default.backend: mongo` binds every discovered model to a collection of
 one database through pymongo's async client. Needs the `mongo` extra
 (`loom-kernel[mongo]`, pymongo ≥ 4.9 for the async API); selecting the
 backend without it fails at startup naming the extra.
 
 ```yaml
-persistence:
-  backend: mongo
-  mongo:
+stores:
+  default:
+    backend: mongo
     url: mongodb://localhost:27017/?replicaSet=rs0
     database: shop
     transactions: false          # true needs a replica set
@@ -557,9 +627,9 @@ Switching the store is the backend name plus its section; the model, the use
 cases and the routes do not change:
 
 ```yaml
-persistence:
-  backend: mongo            # was: sqlalchemy
-  mongo:
+stores:
+  default:
+    backend: mongo            # was: sqlalchemy
     url: mongodb://localhost:27017/?replicaSet=rs0
     database: shop
 ```
@@ -632,6 +702,42 @@ class Measurement(BaseModel):
 
 ## Upgrade notes
 
+- Persistence is declared under `stores.<name>` (ADR 0008): `database`,
+  `database.<name>`, `persistence.backend`, `persistence.mongo`,
+  `persistence.dynamodb` and a model's `__database__` stop startup naming
+  their replacement; see
+  [Migrating from `database` and `persistence.backend`](#migrating-from-database-and-persistencebackend).
+  The worker's backend is `stores.default.backend`, or `none` without a
+  `stores.default` section. A SQLAlchemy or ClickHouse sink names its store
+  with `store:`; a ClickHouse sink's connection is a connection-only
+  `backend: clickhouse` store. A store section refuses a key outside its
+  contract, `sqlalchemy` included.
+  Error messages name `stores.default.schema.*` where they named
+  `database.schema.*`.
+- The application is composed once, transport-neutrally, by
+  `loom.composition` ([Composition and lifecycle](../getting-started/composition.md)),
+  and the API and the worker are adapters over it:
+  - `PersistenceWiring.default_repository_type` is gone: a backend declares
+    `repository_type` as a class variable.
+  - `lifespan_init` only opens and releases; the schema and role checks moved
+    to `startup_checks`. Closing a SQLAlchemy backend no longer resets the
+    compiled registry: `prepare_models` resets it before compiling.
+  - The deploy checks run after discovery, and still before any resource is
+    built.
+  - The worker selects its backend like the API (`persistence.backend`, else
+    `sqlalchemy` when `database` holds a key of its own contract, such as
+    `url`, else `none`) and applies row-level security. A worker that serves
+    models now runs the startup checks too: without `schema.mode: external`,
+    it runs `create_all`. A missing backend extra is a `ConfigError`, not an
+    `ImportError`. Its cache gateways are closed.
+  - A `LoadById`, `Load` or `Exists` over a model no repository serves fails
+    at startup with `UnservedModelError`, in the API as well as the worker.
+  - A `JobService` your `modules` register is kept instead of being replaced;
+    the framework-owned keys (`SessionManager`, `SqlQueryService`,
+    `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`,
+    `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
+    and a module that binds one fails startup; see
+    [Caller bindings and framework defaults](../getting-started/composition.md#caller-bindings-and-framework-defaults).
 - Every engine's connection follows one standard
   (ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)):
   `url`, `username`/`password`, `connect_timeout` and `read_timeout` in

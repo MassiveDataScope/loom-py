@@ -1,3 +1,6 @@
+app:
+  name: worker
+
 celery:
   broker_url: memory://
   result_backend: cache+memory://
@@ -7,11 +10,13 @@ persistence:
   cursors:
     signing: ephemeral
 
-database:
-  url: ${oc.env:LOOM_TEST_DATABASE_URL}
-  echo: false
-  pool:
-    pre_ping: true
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:LOOM_TEST_DATABASE_URL}
+    echo: false
+    pool:
+      pre_ping: true
 
 jobs:
   _CreateRecordViaUseCaseJob:

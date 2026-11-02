@@ -415,7 +415,7 @@ def validate_interfaces_config(raw: Mapping[str, Any]) -> None:
 
     Each entry is read as ``Any``, not ``Mapping[str, Any]``: the caller
     decodes the section that way on purpose (see
-    :func:`~loom.rest.fastapi.auto._section_app_config`) so a malformed
+    :func:`~loom.rest.fastapi.adapter._section_rest_config`) so a malformed
     entry — a string where a mapping belongs — reaches the type guard below
     instead of failing earlier inside ``msgspec`` with a diagnostic that
     does not name the interface.

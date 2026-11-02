@@ -7,26 +7,26 @@ from collections.abc import Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
-from loom.core.config import ConfigContext, ConfigError, reject_retired_keys
+from loom.core.config import ConfigContext
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.stores import MODELS_ONLY, StoreCapabilities, StoreSpec
 from loom.core.repository.dynamodb.registry import (
     build_dynamodb_repository_registration_module,
 )
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB, run_in_executor
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 
-_SECTION = "persistence.dynamodb"
 _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
 
 _logger = logging.getLogger(__name__)
 
 
 class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
-    """``persistence.dynamodb``: the AWS client settings plus the table backing every model.
+    """A ``dynamodb`` store section: the AWS client settings plus the table backing every model.
 
     Every key of :class:`~loom.core.connections.AwsClientConfig` applies, with
     the same defaults as anywhere else loom calls AWS; this context only adds
@@ -47,15 +47,20 @@ class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
 
 
 class DynamoDBBackend:
-    """Backend for ``persistence.backend: dynamodb``.
+    """Backend for ``stores.<name>.backend: dynamodb``.
 
-    Reads the ``persistence.dynamodb`` section and binds every model to the
+    Reads the section of the store it serves and binds every model to the
     configured table through one shared boto3 client. Models need no
     compilation and startup allocates no shared resource.
     """
 
     name: ClassVar[str] = "dynamodb"
     repository_type: ClassVar[type[Any] | None] = RepositoryDynamoDB
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe DynamoDB: models, without rollback or cursor paging, whatever *spec* says."""
+        del spec
+        return MODELS_ONLY
 
     def build(
         self,
@@ -66,24 +71,21 @@ class DynamoDBBackend:
         """Build the DynamoDB wiring for the discovered models.
 
         Args:
-            ctx: Configuration context holding the ``persistence.dynamodb`` section.
+            ctx: Ignored; the store's section comes from ``runtime.catalog``.
             models: Models whose repositories the DI module registers.
-            runtime: Entry-point defaults; the DynamoDB client takes none of them yet.
+            runtime: The catalog and the store it serves (``runtime.store``);
+                the DynamoDB client takes none of the entry-point defaults yet.
 
         Returns:
             The DynamoDB wiring.
 
         Raises:
-            ConfigError: When the ``persistence.dynamodb`` section is missing or
-                holds a retired key.
+            ConfigError: When the store's section is missing, names
+                another backend, holds a retired key or is invalid.
         """
-        reject_retired_keys(ctx.raw(_SECTION), _SECTION, DynamoDBRepositoryConfig)
-        dynamo_cfg = ctx.section_optional(_SECTION, DynamoDBRepositoryConfig)
-        if dynamo_cfg is None:
-            raise ConfigError(
-                f"persistence.backend is {self.name!r} but the {_SECTION!r} "
-                "section (region, table) is missing."
-            )
+        spec = runtime.catalog.served_by(self.name, runtime.store)
+        del ctx
+        dynamo_cfg = spec.decode(DynamoDBRepositoryConfig)
         # The low-level client, not the resource: it is thread-safe, and
         # repository calls share it across the executor's threads.
         client = build_aws_client("dynamodb", dynamo_cfg)

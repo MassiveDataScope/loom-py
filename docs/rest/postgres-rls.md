@@ -328,7 +328,7 @@ naming the model and the rule. The guard holds a partial unique index to the sam
 as any other: one without the boundary column is refused with `LG002`.
 
 Names are final where loom builds them (`ix_...`, `uq_<table>_<rule>`) and follow
-`database.schema.naming_convention` otherwise; see [Configuration](#configuration). A
+`stores.default.schema.naming_convention` otherwise; see [Configuration](#configuration). A
 check, `__indexes__` or `__partial_unique__` name longer than the 63 bytes Postgres keeps
 raises `ValueError` at compile time instead of being truncated, and so do two
 constraints or indexes of one table that resolve to the same name.
@@ -384,7 +384,7 @@ column of type `char(n)`, which pads, or one with a nondeterministic collation.
 
 ### Session values
 
-Every declared scope needs an explicit source under `database.schema.scopes`:
+Every declared scope needs an explicit source under `stores.default.schema.scopes`:
 
 | Source | Value |
 |---|---|
@@ -402,14 +402,14 @@ from loom.core.repository.sqlalchemy.rls import register_scope_source
 register_scope_source("desk", current_desk)
 ```
 
-The rest is wired by loom. With `database.schema.mode: external` and a Postgres URL, the
+The rest is wired by loom. With `stores.default.schema.mode: external` and a Postgres URL, the
 standard SQLAlchemy backend:
 
 - installs the scoped session-settings provider on the application's session manager, and
   {func}`~loom.core.repository.sqlalchemy.rls.install_pool_reset`, which runs `RESET ALL`
   when a connection returns to the pool;
 - binds the provider at startup to the compiled scoped tables and validates the bindings
-  of `database.schema.scopes` against the scopes they declare;
+  of `stores.default.schema.scopes` against the scopes they declare;
 - validates the registered product's `elevations` with
   {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations`;
 - registers {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink` in the
@@ -449,26 +449,28 @@ under an elevation, is refused with `400 unsupported_query` anywhere else (see
 ### Configuration
 
 ```yaml
-database:
-  url: ${DATABASE_URL}
-  schema:
-    mode: external
-    name: ledger
-    guard: loom_guard_ledger
-    groups:
-      readers: ledger_readers
-      writers: ledger_writers
-    version_tables:
-      structure: alembic_version
-      data: alembic_version_data
-    roles: {owner: ledger_owner, migrator: ledger_migrator}
-    database_users:
-      ledger_rw: {login: true, access: write}
-      ledger_ro: {login: true, access: read}
-      ledger_ops: {login: true, access: bypass}
-    scopes:
-      account: identity.account
-      clerk: identity.subject
+stores:
+  default:
+    backend: sqlalchemy
+    url: ${DATABASE_URL}
+    schema:
+      mode: external
+      name: ledger
+      guard: loom_guard_ledger
+      groups:
+        readers: ledger_readers
+        writers: ledger_writers
+      version_tables:
+        structure: alembic_version
+        data: alembic_version_data
+      roles: {owner: ledger_owner, migrator: ledger_migrator}
+      database_users:
+        ledger_rw: {login: true, access: write}
+        ledger_ro: {login: true, access: read}
+        ledger_ops: {login: true, access: bypass}
+      scopes:
+        account: identity.account
+        clerk: identity.subject
 ```
 
 | Key | Default | Meaning |
@@ -487,14 +489,16 @@ database:
 A convention that names every constraint loom compiles:
 
 ```yaml
-database:
-  schema:
-    naming_convention:
-      pk: "pk_%(table_name)s"
-      fk: "fk_%(table_name)s_%(column_0_N_name)s"
-      uq: "uq_%(table_name)s_%(column_0_N_name)s"
-      ck: "ck_%(table_name)s_%(constraint_name)s"
-      ix: "ix_%(table_name)s_%(column_0_N_name)s"
+stores:
+  default:
+    backend: sqlalchemy
+    schema:
+      naming_convention:
+        pk: "pk_%(table_name)s"
+        fk: "fk_%(table_name)s_%(column_0_N_name)s"
+        uq: "uq_%(table_name)s_%(column_0_N_name)s"
+        ck: "ck_%(table_name)s_%(constraint_name)s"
+        ix: "ix_%(table_name)s_%(column_0_N_name)s"
 ```
 
 Use `%(column_0_N_name)s` for `fk`, not `%(column_0_name)s`: every composite FK of a
@@ -546,11 +550,11 @@ the database users, the product declares the names of
 loom schema init ledger --config config/app.yaml
 ```
 
-Without `--config` it prints the `database.schema` block. With it, it merges the block
+Without `--config` it prints the `stores.default.schema` block. With it, it merges the block
 into the file and fills only the names that are absent. A name the product already
 changed is kept: the command lists it on standard error, exits with status 1 and leaves
 the file untouched. The file is rewritten with PyYAML, so comments are not preserved.
-A file whose top level, `database` or `database.schema` is not a mapping, or that is not
+A file whose top level, `stores`, `stores.default` or `stores.default.schema` is not a mapping, or that is not
 valid YAML, is refused the same way. From then on the names belong to the product; loom
 never derives them again, and a missing one raises `ConfigError` pointing at
 `loom schema init`.
@@ -575,7 +579,7 @@ The roles, groups and users must have distinct names, and the two version tables
 differ. A name Postgres would fold, truncate or resolve to something else never reaches
 the server: {meth}`~loom.core.repository.sqlalchemy.rls.BootstrapConfig.validated` and
 `SchemaNames.derived` raise `ValueError`, while `load_application`, `apply_bootstrap`
-and the migration runners raise `ConfigError` naming `database.schema`. A valid name
+and the migration runners raise `ConfigError` naming `stores.default.schema`. A valid name
 still reaches Postgres only as a bound parameter, and the guard quotes it itself.
 
 ### Database users and groups
@@ -1296,11 +1300,20 @@ Every `LG001` and `LG002` message starts with `loom_guard[<schema>]:`.
 
 Scoped models on SQLite or any non-Postgres dialect raise `ConfigError` at startup, in
 either mode, and in `create_schema`. Tests that want them anyway declare
-`database.schema.allow_unprotected_dialect: true`: the marker then emits nothing, the
+`stores.default.schema.allow_unprotected_dialect: true`: the marker then emits nothing, the
 tables are created as plain tables, and startup logs a warning naming them. Never set it
 outside tests.
 
 ### Jobs that cross boundaries
+
+A Celery job runs under the same protection as a request: the worker runs the
+same composition as the API, so its SQLAlchemy backend installs the same
+session settings, resets the pool the same way and runs the same
+`schema.mode: external` checks, once, before it forks its children (see
+[Celery worker](celery.md#application-lifecycle)). A worker with no model runs
+connection-only: it inspects no schema, but its probe still refuses a
+superuser or `BYPASSRLS` role and `create_all` over scoped tables, and its
+unbound session settings fail closed.
 
 A job that must read or write every boundary uses a second
 {class}`~loom.core.repository.sqlalchemy.session_manager.SessionManager` on the URL of
@@ -1442,7 +1455,7 @@ loom cannot enforce these; the product must.
 
 | | Obligation |
 |---|---|
-| P1 | Bind every scope in `database.schema.scopes` and register every `request.<name>` source before startup |
+| P1 | Bind every scope in `stores.default.schema.scopes` and register every `request.<name>` source before startup |
 | P2 | Call `elevate` only with a decision evaluated at the scope of the boundary |
 | P3 | Before applying an edit to a custom role that is already granted, run `can_grant` for every holder's grant and refuse on any failure |
 | P4 | Put data revisions in `alembic/data` with `data_migration = True`, apply them with the bypass user's URL, and run cross-boundary jobs on a second `SessionManager` with that URL |

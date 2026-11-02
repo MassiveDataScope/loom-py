@@ -111,7 +111,7 @@ def probed_backend(monkeypatch: pytest.MonkeyPatch) -> type[_ProbedBackend]:
 
 
 def _probed_app(tmp_path: Path) -> FastAPI:
-    return create_app(write_project(tmp_path, persistence={"backend": "probed"}, database=None))
+    return create_app(write_project(tmp_path, store={"backend": "probed"}))
 
 
 class TestHealthResponse:
@@ -132,7 +132,7 @@ class TestHealthResponse:
         assert body == {"status": "degraded", "backends": {"probed": False}}
 
     def test_the_none_backend_reports_no_backends(self, tmp_path: Path) -> None:
-        config_path = write_project(tmp_path, persistence={"backend": "none"}, database=None)
+        config_path = write_project(tmp_path, store={"backend": "none"})
 
         status, body = _get(create_app(config_path), _HEALTH)
 
@@ -281,9 +281,23 @@ class TestHealthProbeBudget:
     ) -> None:
         monkeypatch.setattr(health_module, "PROBE_TIMEOUT_SECONDS", 0.01)
         app = FastAPI()
-        health_module.mount_health(app, "slow", _sleeping_probe)
+        health_module.mount_health(app, {"slow": _sleeping_probe})
 
         status, body = _get(app, _HEALTH)
 
         assert status == 503
         assert body == {"status": "degraded", "backends": {"slow": False}}
+
+    def test_a_slow_store_does_not_hide_a_ready_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(health_module, "PROBE_TIMEOUT_SECONDS", 0.01)
+
+        async def ready() -> bool:
+            return True
+
+        app = FastAPI()
+        health_module.mount_health(app, {"slow": _sleeping_probe, "ready": ready})
+
+        status, body = _get(app, _HEALTH)
+
+        assert status == 503
+        assert body == {"status": "degraded", "backends": {"slow": False, "ready": True}}

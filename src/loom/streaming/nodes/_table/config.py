@@ -8,11 +8,12 @@ from typing import Any
 
 from loom.core.config import ConfigContext, reject_retired_keys
 from loom.core.connections.clickhouse import ClickHouseConnection
-from loom.core.persistence.database import (
-    DatabaseConfig,
-    decode_database_config,
-    load_database_config,
-    reject_retired_pool_keys,
+from loom.core.persistence.database import DatabaseConfig, decode_database_config
+from loom.core.persistence.stores import (
+    CLICKHOUSE_BACKEND,
+    SQLALCHEMY_BACKEND,
+    StoreCatalog,
+    StoreSpec,
 )
 from loom.streaming.nodes._table.common import (
     SQLALCHEMY_INLINE_DATABASE_KEYS,
@@ -23,6 +24,8 @@ from loom.streaming.nodes._table.common import (
 )
 
 _ERR_EMPTY_NAME = "IntoTable requires a non-empty name so it can resolve streaming.sinks.<name>."
+_RETIRED_STORE_KEY = "database"
+"""The sink key that named a ``database.<name>`` section before ``store``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,44 +53,37 @@ class ResolvedClickHouseTableConfig:
 def resolve_sqlalchemy_table_config(
     node: IntoTable[Any],
     ctx: ConfigContext,
+    catalog: StoreCatalog,
 ) -> ResolvedSqlAlchemyTableConfig:
-    """Resolve one SQLAlchemy IntoTable node against ``ConfigContext``."""
-    if not node.name:
-        raise ValueError(_ERR_EMPTY_NAME)
-    sink_key = f"streaming.sinks.{node.name}"
-    if not ctx.has(sink_key):
-        raise ValueError(f"IntoTable '{node.name}': no config section found at {sink_key}")
-    sink_cfg = ctx.section_or_default(sink_key, dict, {})
-    _refuse_url_and_database(
-        node, sink_cfg, remedy="set 'database' for a shared section or 'url' inline, not both"
+    """Resolve one SQLAlchemy IntoTable node: a ``sqlalchemy`` store of *catalog*, or ``url``.
+
+    Raises:
+        ValueError: When the sink section is invalid or names no connection.
+        ConfigError: When the store is missing or not ``sqlalchemy``, or the
+            connection fails validation.
+    """
+    sink_key, section = _store_sink_section(
+        node, ctx, remedy="set 'store' for a stores.<name> section or 'url' inline, not both"
     )
-    effective_cfg = dict(sink_cfg)
-    if node.table:
-        effective_cfg["table"] = node.table
-    reject_retired_pool_keys(effective_cfg, sink_key)
-    sink = SqlAlchemySinkConfig.from_config(
-        effective_cfg,
-        default_table=node.table,
-    )
-    if not sink.database and not sink.url:
-        raise ValueError(
-            f"IntoTable '{node.name}': SQLAlchemy sink requires either a shared "
-            "'database' reference or an inline 'url'."
+    reject_retired_keys(section, sink_key, DatabaseConfig)
+    sink = SqlAlchemySinkConfig.from_config(section, default_table=node.table)
+    if sink.store:
+        spec = catalog.require(
+            sink.store, backend=SQLALCHEMY_BACKEND, purpose=f"IntoTable {node.name!r}"
         )
-    if sink.database:
-        database_key = f"database.{sink.database}"
-        if not ctx.has(database_key):
-            raise ValueError(
-                f"IntoTable '{node.name}': missing shared config section at {database_key}"
-            )
-        database = load_database_config(ctx, database_key)
+        database = spec.decode(DatabaseConfig)
+    elif sink.url:
+        database = decode_database_config(_inline_database(section), path=sink_key)
     else:
-        database = decode_database_config(_inline_database(effective_cfg), path=sink_key)
+        raise ValueError(
+            f"IntoTable '{node.name}': SQLAlchemy sink requires either a 'store' "
+            "reference or an inline 'url'."
+        )
     return ResolvedSqlAlchemyTableConfig(sink=sink, database=database)
 
 
 def _inline_database(sink_cfg: Mapping[str, Any]) -> dict[str, Any]:
-    """The ``database`` keys of a sink that declares its connection inline."""
+    """The relational store keys of a sink that declares its connection inline."""
     return {key: sink_cfg[key] for key in SQLALCHEMY_INLINE_DATABASE_KEYS if key in sink_cfg}
 
 
@@ -95,54 +91,41 @@ def resolve_delta_table_config(
     node: IntoTable[Any],
     ctx: ConfigContext,
 ) -> ResolvedDeltaTableConfig:
-    """Resolve one Delta IntoTable node against ``ConfigContext``."""
-    if not node.name:
-        raise ValueError(_ERR_EMPTY_NAME)
-    sink_key = f"streaming.sinks.{node.name}"
-    if not ctx.has(sink_key):
-        raise ValueError(f"IntoTable '{node.name}': no config section found at {sink_key}")
-    sink_cfg = ctx.section_or_default(sink_key, dict, {})
-    effective_cfg = dict(sink_cfg)
-    if node.table:
-        effective_cfg["table"] = node.table
-    sink = DeltaSinkConfig.from_config(
-        effective_cfg,
-        default_table=node.table,
+    """Resolve one Delta IntoTable node against ``ConfigContext``.
+
+    Raises:
+        ValueError: When the sink section is missing or invalid.
+    """
+    _, section = _sink_section(node, ctx)
+    return ResolvedDeltaTableConfig(
+        sink=DeltaSinkConfig.from_config(section, default_table=node.table)
     )
-    return ResolvedDeltaTableConfig(sink=sink)
 
 
 def resolve_clickhouse_table_config(
     node: IntoTable[Any],
     ctx: ConfigContext,
+    catalog: StoreCatalog,
 ) -> ResolvedClickHouseTableConfig:
-    """Resolve one ClickHouse IntoTable node against ``ConfigContext``."""
-    if not node.name:
-        raise ValueError(_ERR_EMPTY_NAME)
-    sink_key = f"streaming.sinks.{node.name}"
-    if not ctx.has(sink_key):
-        raise ValueError(f"IntoTable '{node.name}': no config section found at {sink_key}")
-    sink_cfg = ctx.section_or_default(sink_key, dict, {})
-    _refuse_url_and_database(
-        node, sink_cfg, remedy="the url comes from database.<name>, so set 'database' only"
+    """Resolve one ClickHouse IntoTable node: the ``clickhouse`` store of *catalog* it names.
+
+    Raises:
+        ValueError: When the sink section is invalid or names no store, or
+            the store's connection is not a ClickHouse one.
+        ConfigError: When the store is missing or not ``clickhouse``, or the
+            connection fails validation.
+    """
+    _, section = _store_sink_section(
+        node, ctx, remedy="the url comes from stores.<name>, so set 'store' only"
     )
-    effective_cfg = dict(sink_cfg)
-    if node.table:
-        effective_cfg["table"] = node.table
-    database_name = str(effective_cfg.get("database") or "").strip()
-    if not database_name:
-        raise ValueError(
-            f"IntoTable '{node.name}': ClickHouse sink requires a 'database' reference."
-        )
-    database_key = f"database.{database_name}"
-    if not ctx.has(database_key):
-        raise ValueError(
-            f"IntoTable '{node.name}': missing shared config section at {database_key}"
-        )
-    connection = _clickhouse_connection(ctx, database_key)
-    effective_cfg.pop("database", None)
+    store = str(section.pop("store", None) or "").strip()
+    if not store:
+        raise ValueError(f"IntoTable '{node.name}': ClickHouse sink requires a 'store' reference.")
+    spec = catalog.require(
+        store, backend=CLICKHOUSE_BACKEND, purpose=f"ClickHouse sink {node.name!r}"
+    )
     sink = ClickHouseSinkConfig.from_config(
-        effective_cfg, default_table=node.table, connection=connection
+        section, default_table=node.table, connection=_clickhouse_connection(spec)
     )
     return ResolvedClickHouseTableConfig(sink=sink)
 
@@ -150,8 +133,8 @@ def resolve_clickhouse_table_config(
 _CLICKHOUSE_SCHEMES = frozenset({"clickhouse", "clickhouses", "http", "https"})
 
 
-def _clickhouse_connection(ctx: ConfigContext, database_key: str) -> ClickHouseConnection:
-    """Decode ``database.<name>`` as the ClickHouse connection every context shares.
+def _clickhouse_connection(spec: StoreSpec) -> ClickHouseConnection:
+    """Decode the ``clickhouse`` store *spec* as the ClickHouse connection every context shares.
 
     Raises:
         ValueError: When the section uses the retired ``http_url`` key or holds
@@ -159,32 +142,60 @@ def _clickhouse_connection(ctx: ConfigContext, database_key: str) -> ClickHouseC
         ConfigError: When the section holds another retired key or is not a
             valid ClickHouse connection.
     """
-    raw = ctx.section_or_default(database_key, dict, {})
-    reject_retired_keys(raw, database_key, ClickHouseConnection)
+    raw = spec.settings()
     if "http_url" in raw:
-        raise ValueError(f"{database_key}.http_url was renamed to url; rename the key")
+        raise ValueError(f"{spec.path}.http_url was renamed to url; rename the key")
     url = str(raw.get("url") or "")
     scheme = url.split("://", 1)[0].lower() if "://" in url else ""
     if scheme and scheme.split("+", 1)[0] not in _CLICKHOUSE_SCHEMES:
         raise ValueError(
-            f"{database_key} holds a {scheme!r} database, but a ClickHouse sink needs a "
+            f"{spec.path} holds a {scheme!r} database, but a ClickHouse sink needs a "
             "ClickHouse connection (a clickhouse:// or http(s):// url)"
         )
-    return ctx.section(database_key, ClickHouseConnection)
+    return spec.decode(ClickHouseConnection)
 
 
-def _refuse_url_and_database(
-    node: IntoTable[Any], sink_cfg: Mapping[str, Any], *, remedy: str
-) -> None:
-    """Refuse a sink section that names its connection twice.
+def _sink_section(node: IntoTable[Any], ctx: ConfigContext) -> tuple[str, dict[str, Any]]:
+    """Return the path of *node*'s ``streaming.sinks.<name>`` section and a copy of it.
+
+    The node's ``table``, when set, replaces the section's.
 
     Raises:
-        ValueError: If the section sets both ``url`` and ``database``.
+        ValueError: When the node has no name or the section is missing.
     """
-    if "url" in sink_cfg and "database" in sink_cfg:
+    if not node.name:
+        raise ValueError(_ERR_EMPTY_NAME)
+    sink_key = f"streaming.sinks.{node.name}"
+    if not ctx.has(sink_key):
+        raise ValueError(f"IntoTable '{node.name}': no config section found at {sink_key}")
+    section = dict(ctx.section_or_default(sink_key, dict, {}))
+    if node.table:
+        section["table"] = node.table
+    return sink_key, section
+
+
+def _store_sink_section(
+    node: IntoTable[Any], ctx: ConfigContext, *, remedy: str
+) -> tuple[str, dict[str, Any]]:
+    """Return :func:`_sink_section` for a sink that may name a store of the catalog.
+
+    Raises:
+        ValueError: As :func:`_sink_section`, when the section uses the
+            retired ``database`` key, or sets both ``url`` and ``store``,
+            naming *remedy*.
+    """
+    sink_key, section = _sink_section(node, ctx)
+    if _RETIRED_STORE_KEY in section:
         raise ValueError(
-            f"IntoTable '{node.name}': the sink section sets both 'url' and 'database'; {remedy}."
+            f"IntoTable '{node.name}': sink config key {_RETIRED_STORE_KEY!r} was renamed to "
+            "'store'; "
+            "name a stores.<name> section (ADR 0008)."
         )
+    if "url" in section and "store" in section:
+        raise ValueError(
+            f"IntoTable '{node.name}': the sink section sets both 'url' and 'store'; {remedy}."
+        )
+    return sink_key, section
 
 
 __all__ = [

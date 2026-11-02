@@ -133,7 +133,7 @@ def _write_project(
             },
             "rest": {"auth": {"jwt": {**jwt_section, "secret_path": str(secret_path)}}},
         },
-        "database": {"url": "sqlite+aiosqlite:///"},
+        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
         "persistence": {"cursors": {"signing": "ephemeral"}},
         "ai": {
             "engine": _ENGINE_NAME,

@@ -292,7 +292,7 @@ class TestValidateInterfacesConfig:
         assert "unknown key" not in message
 
     def test_a_non_mapping_interface_entry_is_a_clear_type_error(self) -> None:
-        # `_section_app_config` decodes app.rest.interfaces as dict[str, Any]
+        # `_section_rest_config` decodes app.rest.interfaces as dict[str, Any]
         # precisely so a malformed entry like this one reaches this guard
         # instead of failing earlier inside msgspec with a message that does
         # not name the interface (H3) — no cast needed, entry is really Any.
@@ -330,7 +330,7 @@ class TestValidateDisableRoutesConfig:
         assert "path" in message  # listed among the valid keys
 
     def test_a_non_mapping_entry_is_a_clear_type_error(self) -> None:
-        # `_section_app_config` decodes app.rest.disable_routes as
+        # `_section_rest_config` decodes app.rest.disable_routes as
         # tuple[Any, ...] for the same reason interfaces are — see H3.
         with pytest.raises(RestInterfaceConfigError) as excinfo:
             validate_disable_routes_config(["oops"])

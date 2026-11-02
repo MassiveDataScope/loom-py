@@ -25,7 +25,9 @@ def test_init_prints_the_derived_names() -> None:
     result = runner.invoke(app, ["schema", "init", "notes"])
 
     assert result.exit_code == 0, result.output
-    assert yaml.safe_load(result.output) == {"database": {"schema": DERIVED}}
+    assert yaml.safe_load(result.output) == {
+        "stores": {"default": {"backend": "sqlalchemy", "schema": DERIVED}}
+    }
 
 
 def test_init_merges_into_an_existing_configuration_without_touching_other_keys(
@@ -34,7 +36,12 @@ def test_init_merges_into_an_existing_configuration_without_touching_other_keys(
     config = tmp_path / "loom.yaml"
     config.write_text(
         yaml.safe_dump(
-            {"app": {"name": "x"}, "database": {"url": "u", "schema": {"mode": "external"}}}
+            {
+                "app": {"name": "x"},
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": "u", "schema": {"mode": "external"}}
+                },
+            }
         )
     )
 
@@ -43,30 +50,38 @@ def test_init_merges_into_an_existing_configuration_without_touching_other_keys(
     assert result.exit_code == 0, result.output
     written = yaml.safe_load(config.read_text())
     assert written["app"] == {"name": "x"}
-    assert written["database"]["url"] == "u"
-    assert written["database"]["schema"] == {"mode": "external", **DERIVED}
+    assert written["stores"]["default"]["url"] == "u"
+    assert written["stores"]["default"]["schema"] == {"mode": "external", **DERIVED}
 
 
 def test_init_is_idempotent(tmp_path: Path) -> None:
     config = tmp_path / "loom.yaml"
-    config.write_text(yaml.safe_dump({"database": {"schema": DERIVED}}))
+    config.write_text(
+        yaml.safe_dump({"stores": {"default": {"backend": "sqlalchemy", "schema": DERIVED}}})
+    )
 
     result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
     assert result.exit_code == 0, result.output
-    assert yaml.safe_load(config.read_text()) == {"database": {"schema": DERIVED}}
+    assert yaml.safe_load(config.read_text()) == {
+        "stores": {"default": {"backend": "sqlalchemy", "schema": DERIVED}}
+    }
 
 
 def test_init_never_overwrites_a_name_the_product_changed(tmp_path: Path) -> None:
     config = tmp_path / "loom.yaml"
     changed = {**DERIVED, "guard": "notes_guard"}
-    config.write_text(yaml.safe_dump({"database": {"schema": changed}}))
+    config.write_text(
+        yaml.safe_dump({"stores": {"default": {"backend": "sqlalchemy", "schema": changed}}})
+    )
 
     result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
     assert result.exit_code == 1
-    assert "database.schema.guard" in result.output
-    assert yaml.safe_load(config.read_text()) == {"database": {"schema": changed}}
+    assert "stores.default.schema.guard" in result.output
+    assert yaml.safe_load(config.read_text()) == {
+        "stores": {"default": {"backend": "sqlalchemy", "schema": changed}}
+    }
 
 
 def test_init_rejects_a_schema_name_postgres_would_change() -> None:
@@ -78,14 +93,14 @@ def test_init_rejects_a_schema_name_postgres_would_change() -> None:
 
 def test_init_fills_a_null_database_section(tmp_path: Path) -> None:
     config = tmp_path / "loom.yaml"
-    config.write_text("app:\n  name: x\ndatabase:\n")
+    config.write_text("app:\n  name: x\nstores:\n")
 
     result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(config.read_text()) == {
         "app": {"name": "x"},
-        "database": {"schema": DERIVED},
+        "stores": {"default": {"backend": "sqlalchemy", "schema": DERIVED}},
     }
 
 
@@ -102,23 +117,27 @@ def test_init_refuses_a_configuration_that_is_not_a_mapping(tmp_path: Path) -> N
 
 def test_init_refuses_a_database_section_that_is_not_a_mapping(tmp_path: Path) -> None:
     config = tmp_path / "loom.yaml"
-    config.write_text("database: postgres\n")
+    config.write_text("stores: postgres\n")
 
     result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
     assert result.exit_code == 1
-    assert "database" in result.output
-    assert config.read_text() == "database: postgres\n"
+    assert "stores" in result.output
+    assert config.read_text() == "stores: postgres\n"
 
 
 def test_init_reports_a_section_the_product_replaced_by_a_value(tmp_path: Path) -> None:
     config = tmp_path / "loom.yaml"
-    config.write_text(yaml.safe_dump({"database": {"schema": {"groups": "custom"}}}))
+    config.write_text(
+        yaml.safe_dump(
+            {"stores": {"default": {"backend": "sqlalchemy", "schema": {"groups": "custom"}}}}
+        )
+    )
 
     result = runner.invoke(app, ["schema", "init", "notes", "--config", str(config)])
 
     assert result.exit_code == 1
-    assert "database.schema.groups" in result.output
+    assert "stores.default.schema.groups" in result.output
 
 
 def _run(script: str) -> subprocess.CompletedProcess[str]:
@@ -144,7 +163,9 @@ def test_init_works_without_sqlalchemy() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert yaml.safe_load(result.stdout) == {"database": {"schema": DERIVED}}
+    assert yaml.safe_load(result.stdout) == {
+        "stores": {"default": {"backend": "sqlalchemy", "schema": DERIVED}}
+    }
 
 
 def test_loom_without_the_cli_extra_prints_the_install_hint() -> None:

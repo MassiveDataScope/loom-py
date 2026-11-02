@@ -350,9 +350,7 @@ class TestRunnerFromConfig:
 
         config = StorageConfig(
             defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
-            temp=TempConfig(
-                root=Dsn("s3://bucket/checkpoints") if checkpoint_enabled else None
-            ),
+            temp=TempConfig(root=Dsn("s3://bucket/checkpoints") if checkpoint_enabled else None),
         )
         runner = ETLRunner.from_config(config)
 

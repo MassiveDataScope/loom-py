@@ -1,6 +1,6 @@
 """FR-050 pinned by execution: no ``ai:`` section means no ``loom.ai`` import.
 
-``_resolve_ai`` and ``_verify_agent_markers`` (in ``loom.rest.fastapi.auto``)
+``resolve_ai`` and ``verify_agent_markers`` (in ``loom.composition._ai``)
 both carry a docstring or an inline comment arguing that an application with
 no ``ai:`` section must never pull the AI pillar in — but until this test,
 nothing ran ``create_app`` on such an application and inspected

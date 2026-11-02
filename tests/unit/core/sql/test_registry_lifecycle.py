@@ -178,3 +178,43 @@ async def test_using_the_registry_outside_the_context_fails_explicitly() -> None
     registry = _registry(RecordingClientFactory(), analytics=make_connection_config())
     with pytest.raises(RuntimeError):
         registry.executor("analytics")
+
+
+async def test_check_probes_on_temporary_clients_and_closes_them() -> None:
+    """``check`` verifies and probes without leaving any client or executor behind."""
+    factory = RecordingClientFactory()
+    registry = _registry(factory, analytics=make_connection_config())
+
+    await registry.check()
+
+    assert [client.closed for client in factory.created] == [True]
+    with pytest.raises(RuntimeError):
+        registry.executor("analytics")
+
+
+async def test_check_failure_closes_every_temporary_client() -> None:
+    """A probe failure in ``check`` still closes the clients it created."""
+    factory = RecordingClientFactory(FakeClickHouseClient(), FakeClickHouseClient(ignore_role=True))
+    registry = _registry(
+        factory,
+        analytics=make_connection_config(),
+        reporting=make_connection_config(),
+    )
+    with pytest.raises(ConfigError):
+        await registry.check()
+    assert all(client.closed for client in factory.created)
+
+
+async def test_entering_after_a_passed_check_keeps_the_driver_checks() -> None:
+    """After ``check``, entering skips the probe but still refuses a driver without roles."""
+    factory = RecordingClientFactory(
+        FakeClickHouseClient(),
+        FakeClickHouseClient(transport_settings=frozenset({"readonly", "limit"})),
+    )
+    registry = _registry(factory, analytics=make_connection_config())
+    await registry.check()
+
+    with pytest.raises(ConfigError, match="per-query transport setting"):
+        async with registry:
+            pass
+    assert factory.created[1].queries == []

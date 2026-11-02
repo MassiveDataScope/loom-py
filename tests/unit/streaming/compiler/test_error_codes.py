@@ -9,6 +9,7 @@ from typing import Any, ClassVar, cast
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
+from loom.core.persistence.stores import StoreCatalog
 from loom.streaming import (
     Backend,
     BatchExpandStep,
@@ -182,8 +183,9 @@ class TestBuildPhaseCodes:
         not_a_table = _NotATable()
         empty_config = OmegaConf.create({})
 
+        catalog = StoreCatalog(specs={})
         with pytest.raises(CompilationError) as exc_info:
-            _build_storage_sink(not_a_table, empty_config)
+            _build_storage_sink(not_a_table, empty_config, catalog)
 
         issue = exc_info.value.issues[0]
         assert issue.code is StreamingErrorCode.STORAGE_SINK_UNSUPPORTED

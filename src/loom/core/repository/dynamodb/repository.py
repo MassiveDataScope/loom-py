@@ -10,7 +10,7 @@ container binds no such capability. A lookup on a field other than the key
 raises :class:`~loom.core.repository.abc.UnsupportedQuery`.
 
 Model-to-table mapping is intentionally simple: every model is stored in the
-single table configured under ``persistence.dynamodb.table``. The item primary
+single table configured under ``stores.<name>.table``. The item primary
 key attribute is the model's ``primary_key`` field, resolved via
 :func:`loom.core.model.introspection.get_id_attribute`.
 """

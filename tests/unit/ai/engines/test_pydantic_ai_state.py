@@ -3,8 +3,8 @@
 ``PydanticAIEngine.run``/``run_stream`` receive ``state`` already resolved
 by :class:`~loom.ai.runtime.AgentRuntime` and forward it to
 :class:`~loom.ai.abc.DepsFactory` unchanged (FR-009). This is the last hop
-before it reaches the composition root's ``_AgentDeps.state``
-(``rest/fastapi/auto.py``), which T301 already covers untouched.
+before it reaches the composition root's ``AgentDeps.state``
+(``loom/composition/_ai.py``), which T301 already covers untouched.
 """
 
 from __future__ import annotations

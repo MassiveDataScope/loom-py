@@ -1,8 +1,8 @@
 """Start-up verification of the ``Mcp()`` marker (spec 015, T202).
 
-White-box unit tests of ``_verify_mcp_markers``, the private helper
-``create_app`` calls immediately before ``_resolve_ai`` — never in the
-``_verify_agent_markers`` slot after it, so an unknown server name dies
+White-box unit tests of ``verify_mcp_markers``, the private helper
+``create_app`` calls immediately before ``resolve_ai`` — never in the
+``verify_agent_markers`` slot after it, so an unknown server name dies
 before the shared MCP capability compiler could ever be asked to report it
 for a use case.
 """
@@ -21,6 +21,7 @@ import pytest
 from loom.ai.abc import McpHandle
 from loom.ai.config import McpServerConfig
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.composition._ai import compile_use_case_mcp, verify_mcp_markers
 from loom.core.config import ConfigContext
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.plan import McpBinding
@@ -29,7 +30,6 @@ from loom.core.use_case import Mcp, UseCase
 from loom.core.use_case.keys import use_case_key
 from loom.core.use_case.mcp_markers import DeclaringMcpBindings
 from loom.core.use_case.registry import UseCaseRegistry
-from loom.rest.fastapi.auto import _compile_use_case_mcp, _verify_mcp_markers
 
 _KNOWN_SERVER = "knowledge"
 
@@ -43,7 +43,7 @@ from loom.core.config import ConfigContext
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.auto import _verify_mcp_markers
+from loom.composition._ai import verify_mcp_markers
 
 
 class NoMarkerUseCase(UseCase):
@@ -56,7 +56,7 @@ compiler.compile(NoMarkerUseCase)
 registry = UseCaseRegistry.build([NoMarkerUseCase])
 ctx = ConfigContext.from_dict({})
 
-_verify_mcp_markers((NoMarkerUseCase,), compiler, registry, ctx)
+verify_mcp_markers((NoMarkerUseCase,), compiler, registry, ctx)
 
 leaked = [name for name in sys.modules if name == "loom.ai" or name.startswith("loom.ai.")]
 print(json.dumps(sorted(leaked)))
@@ -115,7 +115,7 @@ class TestUnUsoSinMarcadorNuncaSeInspecciona:
         compiler, registry = _compiled(NoMarkerUseCase)
         ctx = _ctx_without_ai()
 
-        result = _verify_mcp_markers((NoMarkerUseCase,), compiler, registry, ctx)
+        result = verify_mcp_markers((NoMarkerUseCase,), compiler, registry, ctx)
 
         assert result == []
 
@@ -142,7 +142,7 @@ class TestServidorConocido:
         compiler, registry = _compiled(KnownServerUseCase)
         ctx = _ctx_with_server()
 
-        result = _verify_mcp_markers((KnownServerUseCase,), compiler, registry, ctx)
+        result = verify_mcp_markers((KnownServerUseCase,), compiler, registry, ctx)
 
         [(uc_type, bindings)] = result
         assert uc_type is KnownServerUseCase
@@ -155,7 +155,7 @@ class TestServidorDesconocido:
         ctx = _ctx_with_server()
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _verify_mcp_markers((UnknownServerUseCase,), compiler, registry, ctx)
+            verify_mcp_markers((UnknownServerUseCase,), compiler, registry, ctx)
 
         codes = {issue.code for issue in excinfo.value.issues}
         assert codes == {AgentErrorCode.MCP_MARKER_UNKNOWN}
@@ -169,7 +169,7 @@ class TestServidorDesconocido:
         ctx = _ctx_without_ai()
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _verify_mcp_markers((UnknownServerUseCase,), compiler, registry, ctx)
+            verify_mcp_markers((UnknownServerUseCase,), compiler, registry, ctx)
 
         assert "none" in str(excinfo.value)
 
@@ -177,7 +177,7 @@ class TestServidorDesconocido:
 class TestCompileUseCaseMcpPreservaElInclude:
     """H2: el ``include`` declarado en el marcador debe llegar intacto al grant.
 
-    ``_compile_use_case_mcp`` es el pegamento entre el binding verificado y
+    ``compile_use_case_mcp`` es el pegamento entre el binding verificado y
     ``UseCaseMcpGrant``; ningún otro test ejercita esta función directamente,
     así que sustituir el ``include`` real por ``()`` en la llamada a
     ``compile_mcp_capability`` dejaría la suite entera verde sin este caso.
@@ -191,7 +191,7 @@ class TestCompileUseCaseMcpPreservaElInclude:
         binding = McpBinding(name="gateway", server=_KNOWN_SERVER, include=("search_*", "fetch"))
         declaring: DeclaringMcpBindings = [(KnownServerUseCase, (binding,))]
 
-        (grant,) = _compile_use_case_mcp(declaring, registry, servers)
+        (grant,) = compile_use_case_mcp(declaring, registry, servers)
 
         assert grant.capability.include == ("search_*", "fetch")
         assert grant.parameter == "gateway"
@@ -216,6 +216,6 @@ class TestCompileUseCaseMcpPreservaElInclude:
         binding = McpBinding(name="gateway", server=_KNOWN_SERVER, include=("search_*",))
         declaring: DeclaringMcpBindings = [(RegisteredGatewayUseCase, (binding,))]
 
-        (grant,) = _compile_use_case_mcp(declaring, registry, servers)
+        (grant,) = compile_use_case_mcp(declaring, registry, servers)
 
         assert grant.usecase == "known.gateway"

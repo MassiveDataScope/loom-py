@@ -39,9 +39,9 @@ from loom.core.repository.registration import RepositoryDecorator
 class CacheGateways:
     """The data and counter gateways a deployment opened.
 
-    Shutdown is the only consumer: the REST lifespan closes each member of
-    :meth:`distinct`, while a Celery worker relies on process exit, having no
-    ``worker_shutdown`` hook today.
+    Shutdown is the only consumer: closing the composed application (the REST
+    lifespan, a worker's shutdown signals) closes each member of
+    :meth:`distinct`.
 
     Attributes:
         data: Gateway over ``config.aiocache_alias``.

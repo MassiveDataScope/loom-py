@@ -1,6 +1,6 @@
 """MongoDB connection settings shared by the repository, the ETL and CDC streaming.
 
-The repository (``persistence.mongo``), the ETL sources (``storage.mongo``) and
+The repository (a ``mongo`` store), the ETL sources (``storage.mongo``) and
 the change-stream sources (``mongo.source`` / ``mongo.sources.<name>``) declare
 :class:`MongoConnection` or a subclass of it, and build their clients through
 :mod:`loom.core.connections.mongo.client`. Unset bounds keep the driver's

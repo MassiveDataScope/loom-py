@@ -19,7 +19,7 @@ from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.rest.auth import AuthenticationMiddleware, RequestCredentials
 from loom.rest.cors import CorsConfig
-from loom.rest.fastapi.auto import _mount_cors
+from loom.rest.fastapi.adapter import _mount_cors
 
 _ORIGIN = "https://app.example.com"
 _OTHER_ORIGIN = "https://evil.example.com"

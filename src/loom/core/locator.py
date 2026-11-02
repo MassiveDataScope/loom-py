@@ -4,8 +4,8 @@
 command line and the schema tools share: it reads the file named by
 ``LOOM_CONFIG`` (or an explicit path), discovers the models the same way the
 server does, compiles them into a ``MetaData`` owned by the returned
-``Application`` and builds the bootstrap declaration from the ``database``
-section. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
+``Application`` and builds the bootstrap declaration from the
+``stores.default`` section. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
 """
 
 from __future__ import annotations
@@ -13,19 +13,16 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, TypeVar, get_args
+from typing import TYPE_CHECKING, Any, Final, get_args
 
 import msgspec
 
 from loom.core.config import ConfigError, ConfigKey
 from loom.core.config.overrides import load_application_config
-from loom.core.discovery.base import DiscoveryResult
-from loom.core.discovery.interfaces import InterfacesDiscoveryEngine
-from loom.core.discovery.manifest import ManifestDiscoveryEngine
-from loom.core.discovery.modules import ModulesDiscoveryEngine
+from loom.core.discovery.config import DISCOVERY_MODES, decode_discovery, discover
 from loom.core.environment import (
     CONFIG_VARIABLE,
     config_source_paths,
@@ -37,7 +34,14 @@ from loom.core.persistence.database import (
     DatabaseConfig,
     SchemaConfig,
     SchemaUser,
-    load_database_config,
+    require_schema_key,
+)
+from loom.core.persistence.stores import (
+    DEFAULT_STORE,
+    DEFAULT_STORE_PATH,
+    SQLALCHEMY_BACKEND,
+    load_catalog,
+    require_single_store,
 )
 from loom.core.schema_names import SchemaNames, schema_identifier
 
@@ -48,42 +52,27 @@ if TYPE_CHECKING:
 
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
-_T = TypeVar("_T")
 
 
 DEFAULT_CODE_PATH: Final = "src"
 """``app.code_path`` when the configuration names none."""
 
 
-class _DiscoveryInterfaces(msgspec.Struct, kw_only=True):
-    modules: list[str] = msgspec.field(default_factory=list)
-    warn_recommended: bool = True
-
-
-class _DiscoveryModules(msgspec.Struct, kw_only=True):
-    include: list[str] = msgspec.field(default_factory=list)
-
-
-class _DiscoveryManifest(msgspec.Struct, kw_only=True):
-    module: str = ""
-
-
-class _Discovery(msgspec.Struct, kw_only=True):
-    mode: str = "interfaces"
-    interfaces: _DiscoveryInterfaces = msgspec.field(default_factory=_DiscoveryInterfaces)
-    modules: _DiscoveryModules = msgspec.field(default_factory=_DiscoveryModules)
-    manifest: _DiscoveryManifest = msgspec.field(default_factory=_DiscoveryManifest)
-
-
 class _AppSection(msgspec.Struct, kw_only=True):
     name: str
     code_path: str = DEFAULT_CODE_PATH
-    discovery: _Discovery = msgspec.field(default_factory=_Discovery)
+    # Decoded by decode_discovery, which ignores the keys it does not declare.
+    discovery: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class Application:
-    """One application: its models compiled into their own metadata and its declarations."""
+    """One application: its models compiled into their own metadata and its declarations.
+
+    Attributes:
+        path: Dotted path of the store section the declarations were read
+            from, which every message about them names.
+    """
 
     models: tuple[type, ...]
     metadata: MetaData
@@ -91,15 +80,21 @@ class Application:
     bootstrap: BootstrapConfig | None
     scoped: Mapping[tuple[str | None, str], ScopedTable]
     scope_sources: Mapping[str, str]
+    path: str = DEFAULT_STORE_PATH
 
+    def require_bootstrap(self, purpose: str) -> BootstrapConfig:
+        """Return the bootstrap declaration, which *purpose* (``"migrations"``, ...) needs.
 
-_ENGINES: dict[str, Callable[[_Discovery], DiscoveryResult]] = {
-    "interfaces": lambda cfg: InterfacesDiscoveryEngine(
-        cfg.interfaces.modules, warn_recommended=cfg.interfaces.warn_recommended
-    ).discover(),
-    "modules": lambda cfg: ModulesDiscoveryEngine(cfg.modules.include).discover(),
-    "manifest": lambda cfg: ManifestDiscoveryEngine(cfg.manifest.module).discover(),
-}
+        Raises:
+            ConfigError: When the store declares no schema name, roles or
+                database users, naming its section.
+        """
+        if self.bootstrap is None:
+            raise ConfigError(
+                f"{purpose} need {self.path}.schema.name, roles and database_users "
+                "in the configuration"
+            )
+        return self.bootstrap
 
 
 def load_application(config_path: str | None = None) -> Application:
@@ -128,18 +123,23 @@ def load_application(config_path: str | None = None) -> Application:
     paths = config_source_paths(path, environment)
     context = load_application_config(*paths, environment=environment)
     app = context.section(ConfigKey.APP, _AppSection)
-    database = load_database_config(context)
-    add_code_path(app.code_path, Path(paths[0]).resolve().parent)
-    models = _discover(app.discovery).models
-    metadata = MetaData(
-        naming_convention=configured_naming_convention(database.schema.naming_convention)
+    spec = load_catalog(context).require(
+        DEFAULT_STORE, backend=SQLALCHEMY_BACKEND, purpose="the application's schema"
     )
-    if database.schema.name is not None:
-        metadata.info[SCHEMA_KEY] = _schema_name(database.schema.name)
+    database = spec.decode(DatabaseConfig)
+    add_code_path(app.code_path, Path(paths[0]).resolve().parent)
+    models = _discover(app.discovery)
+    require_single_store(models)
+    schema = database.schema
+    metadata = MetaData(
+        naming_convention=configured_naming_convention(schema.naming_convention, path=spec.path)
+    )
+    if schema.name is not None:
+        metadata.info[SCHEMA_KEY] = _schema_name(schema.name, spec.path)
     compile_all(*models, metadata=metadata)
     scoped = scoped_tables(metadata)
-    bootstrap = _bootstrap(database.schema) if scoped else None
-    scope_sources = _scope_sources(database.schema, scoped) if scoped else {}
+    bootstrap = _bootstrap(schema, spec.path) if scoped else None
+    scope_sources = _scope_sources(schema, scoped, spec.path) if scoped else {}
     return Application(
         models=tuple(models),
         metadata=metadata,
@@ -147,6 +147,7 @@ def load_application(config_path: str | None = None) -> Application:
         bootstrap=bootstrap,
         scoped=scoped,
         scope_sources=scope_sources,
+        path=spec.path,
     )
 
 
@@ -179,34 +180,37 @@ def _resolve_path(config_path: str | None) -> str:
     return from_env
 
 
-def _discover(discovery: _Discovery) -> DiscoveryResult:
-    engine = _ENGINES.get(discovery.mode)
-    if engine is None:
+def _discover(section: Mapping[str, Any]) -> tuple[type, ...]:
+    """Discover the models ``app.discovery`` names; its unknown keys are ignored."""
+    discovery = decode_discovery(section, strict=False)
+    if discovery.mode not in DISCOVERY_MODES:
         raise ConfigError(f"app.discovery.mode {discovery.mode!r} is not supported")
-    return engine(discovery)
+    return discover(discovery).models
 
 
-def _schema_name(name: str) -> str:
+def _schema_name(name: str, path: str) -> str:
     try:
         return schema_identifier(name)
     except ValueError as exc:
-        raise ConfigError(f"database.schema.name: {exc}") from exc
+        raise ConfigError(f"{path}.schema.name: {exc}") from exc
 
 
-def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
+def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
     from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseRoles
 
-    name = _required(schema.name, "name")
-    roles = _required(schema.roles, "roles")
-    users = _required(schema.database_users, "database_users")
-    groups = _required(schema.groups, "groups")
-    version_tables = _required(schema.version_tables, "version_tables")
+    name = require_schema_key(schema.name, path, "name")
+    roles = require_schema_key(schema.roles, path, "roles")
+    users = require_schema_key(schema.database_users, path, "database_users")
+    groups = require_schema_key(schema.groups, path, "groups")
+    version_tables = require_schema_key(schema.version_tables, path, "version_tables")
     config = BootstrapConfig(
         schema=name,
         roles=DatabaseRoles(owner=roles.owner, migrator=roles.migrator),
-        database_users={user: _database_user(user, section) for user, section in users.items()},
+        database_users={
+            user: _database_user(user, section, path) for user, section in users.items()
+        },
         names=SchemaNames(
-            guard=_required(schema.guard, "guard"),
+            guard=require_schema_key(schema.guard, path, "guard"),
             readers=groups.readers,
             writers=groups.writers,
             version_table=version_tables.structure,
@@ -216,42 +220,33 @@ def _bootstrap(schema: SchemaConfig) -> BootstrapConfig:
     try:
         return config.validated()
     except ValueError as exc:
-        raise ConfigError(f"database.schema: {exc}") from exc
+        raise ConfigError(f"{path}.schema: {exc}") from exc
 
 
-def _database_user(user: str, section: SchemaUser) -> DatabaseUser:
+def _database_user(user: str, section: SchemaUser, path: str) -> DatabaseUser:
     from loom.core.repository.sqlalchemy.rls.config import Access, DatabaseUser
 
     choices: tuple[Access, ...] = get_args(Access)
     access: Access | None = next((c for c in choices if c == section.access), None)
     if access is None:
         raise ConfigError(
-            f"database.schema.database_users.{user}.access {section.access!r} "
+            f"{path}.schema.database_users.{user}.access {section.access!r} "
             f"is not one of {', '.join(choices)}"
         )
     return DatabaseUser(login=section.login, access=access)
 
 
 def _scope_sources(
-    schema: SchemaConfig, scoped: Mapping[tuple[str | None, str], ScopedTable]
+    schema: SchemaConfig, scoped: Mapping[tuple[str | None, str], ScopedTable], path: str
 ) -> dict[str, str]:
-    sources = _required(schema.scopes, "scopes")
+    sources = require_schema_key(schema.scopes, path, "scopes")
     declared = {scope.scope for table in scoped.values() for scope in table.scopes}
     for scope in sorted(declared):
         if scope not in sources:
-            raise ConfigError(f"database.schema.scopes.{scope} is missing")
+            raise ConfigError(f"{path}.schema.scopes.{scope} is missing")
         if not _SCOPE_SOURCE.fullmatch(sources[scope]):
             raise ConfigError(
-                f"database.schema.scopes.{scope} {sources[scope]!r} must be "
+                f"{path}.schema.scopes.{scope} {sources[scope]!r} must be "
                 "identity.<attribute> or request.<name>"
             )
     return {scope: sources[scope] for scope in sorted(declared)}
-
-
-def _required(value: _T | None, key: str) -> _T:
-    if value is None:
-        raise ConfigError(
-            f"database.schema.{key} is required when a model is RowScoped: "
-            "run `loom schema init <schema>` to write the derived names"
-        )
-    return value

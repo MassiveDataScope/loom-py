@@ -52,9 +52,17 @@ def _bootstrap(tmp_path: Path, cache: dict[str, Any] | None) -> Any:
             "result_backend": "cache+memory://",
             "task_always_eager": True,
         },
-        "database": {"url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}"},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": f"sqlite+aiosqlite:///{tmp_path / 'worker.db'}",
+            }
+        },
         "persistence": {"cursors": {"signing": "ephemeral"}},
-        "app": {"discovery": {"mode": "modules", "modules": {"include": [__name__]}}},
+        "app": {
+            "name": "worker",
+            "discovery": {"mode": "modules", "modules": {"include": [__name__]}},
+        },
     }
     if cache is not None:
         cfg["cache"] = cache

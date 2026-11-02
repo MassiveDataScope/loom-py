@@ -605,7 +605,7 @@ def section(cfg: DictConfig, key: str, target_type: type[T]) -> T:
             ) from exc
 
     if not omega_conf.is_config(node):
-        return _convert_section(node, key, target_type)
+        return convert_section(node, key, target_type)
     try:
         data = omega_conf.to_container(node, resolve=True)
     except Exception as exc:
@@ -614,11 +614,11 @@ def section(cfg: DictConfig, key: str, target_type: type[T]) -> T:
             f"(check ${{oc.env:VAR}} interpolations): {exc}"
         ) from exc
 
-    return _convert_section(data, key, target_type)
+    return convert_section(data, key, target_type)
 
 
-def _convert_section(data: Any, key: str, target_type: type[T]) -> T:
-    """Convert resolved section data to ``target_type`` leniently.
+def convert_section(data: Any, key: str, target_type: type[T]) -> T:
+    """Convert resolved section data, read from *key*, to ``target_type`` leniently.
 
     Raises:
         ConfigError: When ``msgspec`` validation fails.

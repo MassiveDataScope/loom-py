@@ -13,13 +13,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.persistence.profile import BackendRuntime
 from loom.core.uow.abc import UnitOfWorkFactory
+
+if TYPE_CHECKING:
+    from loom.core.persistence.stores import StoreCapabilities, StoreSpec
 
 
 def no_model_preparation(models: Sequence[type[BaseModel]]) -> None:
@@ -73,12 +76,27 @@ class PersistenceBackend(Protocol):
     """Factory a persistence backend exposes through its entry point.
 
     The entry point targets a class with a no-argument constructor; the
-    registry instantiates it. Each backend reads its own configuration
-    section from the context it is given.
+    registry instantiates it. Each backend serves the store the host names
+    (``runtime.store``), taken from the catalog the host loaded once:
+    ``runtime.catalog.served_by(name, runtime.store)``. It reads any other
+    section (``persistence.cursors``) from the context it is given. A backend
+    written before ``runtime.store`` existed keeps working: ``served_by(name)``
+    still returns the default store, the only store a composition builds (see
+    :func:`~loom.core.persistence.stores.require_single_store`).
     """
 
     name: ClassVar[str]
     repository_type: ClassVar[type[Any] | None]
+
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        """Describe the configured store without building its resources.
+
+        Required: the catalog fails with a ``ConfigError`` naming a backend
+        that does not implement it. Read only the settings a capability
+        depends on; the catalog asks this before any connection's secrets
+        need to resolve.
+        """
+        ...
 
     def build(
         self,
@@ -89,10 +107,10 @@ class PersistenceBackend(Protocol):
         """Build the persistence wiring for the discovered models.
 
         Args:
-            ctx: Configuration context the backend reads its section from.
+            ctx: Configuration context the backend reads its other sections from.
             models: Models discovered by the host.
-            runtime: Defaults of the entry point building the backend and the
-                optional pool-metrics receiver.
+            runtime: Defaults of the entry point building the backend, the
+                optional pool-metrics receiver and the store catalog.
 
         Returns:
             The resolved wiring.

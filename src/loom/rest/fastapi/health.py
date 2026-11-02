@@ -1,16 +1,16 @@
-"""``GET /health``: aggregated readiness of the persistence backend.
+"""``GET /health``: aggregated readiness of each store.
 
 The route is registered ahead of every interface router so a catch-all route
 can never capture it, and it belongs to the default authentication exclusions
 so an orchestrator needs no credentials to ask.
 
-Internal module: consumed by :func:`loom.rest.fastapi.auto.create_app`.
+Internal module: consumed by :meth:`loom.rest.fastapi.adapter.FastAPIAdapter.bind`.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from http import HTTPStatus
 from time import monotonic
 
@@ -62,27 +62,25 @@ class _CachedProbe:
             return False
 
 
-def mount_health(app: FastAPI, backend: str, readiness: ReadinessProbe | None) -> None:
+def mount_health(app: FastAPI, probes: Mapping[str, ReadinessProbe]) -> None:
     """Register ``GET /health`` ahead of every route already on *app*.
 
     The response is ``{"status": "ok" | "degraded", "backends": {name: bool}}``
-    with ``503`` when any backend is not ready. A backend without a probe
-    reports no backends and is always ``ok``. The probe is wrapped in
+    with ``503`` when any backend is not ready; with no probe it reports no
+    backends and is always ``ok``. Each probe is wrapped in its own
     :class:`_CachedProbe`: its result is cached for :data:`PROBE_TTL_SECONDS`,
     concurrent requests share one probe, and one running longer than
-    :data:`PROBE_TIMEOUT_SECONDS` reports the backend as not ready.
+    :data:`PROBE_TIMEOUT_SECONDS` reports that backend alone as not ready.
 
     Args:
         app: Application to mutate.
-        backend: Name of the persistence backend, the key of its readiness
-            in the response.
-        readiness: The backend's probe; ``None`` when it has nothing to probe.
+        probes: Each store's probe, by the key the response reports it under
+            (:meth:`~loom.composition.Application.readiness_probes`).
     """
-    probe = None if readiness is None else _CachedProbe(readiness)
+    cached = {key: _CachedProbe(probe) for key, probe in probes.items()}
 
     async def _health() -> JSONResponse:
-        backends = {} if probe is None else {backend: await probe()}
-        return _health_response(backends)
+        return _health_response({key: await probe() for key, probe in cached.items()})
 
     route = APIRoute(HEALTH_PATH, _health, methods=["GET"], include_in_schema=False)
     app.router.routes.insert(0, route)

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy import types as sa_types
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
+from loom.core.backend.sqlalchemy import compile_all, get_compiled, get_metadata
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import (
     JSON,
@@ -57,7 +57,7 @@ def test_the_repository_write_path_and_to_column_row_give_the_same_column_values
     compile_all(_Station)
     compiled = cast(Any, get_compiled(_Station))
     repository: RepositorySQLAlchemy[_Station, int] = RepositorySQLAlchemy(
-        session_manager=MagicMock(),
+        session_manager=MagicMock(metadata=get_metadata()),
         model=_Station,
         cursor_codec=CursorCodec(signing="ephemeral"),
     )

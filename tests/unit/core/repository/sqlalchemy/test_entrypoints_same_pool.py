@@ -9,11 +9,14 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.core.model import LoomStruct
 from loom.core.persistence.database import load_database_config
-from loom.core.persistence.profile import SERVER_PROFILE, STREAMING_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE, STREAMING_PROFILE
+from loom.core.persistence.stores import load_catalog
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
+from tests.helpers.composition import composition_source
+from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 _FULL_POOL = {"size": 3, "max_overflow": 1, "timeout": 4, "recycle": 60, "pre_ping": False}
@@ -30,31 +33,48 @@ def _pool_settings(manager: SessionManager) -> tuple[Any, ...]:
 
 def _api_manager(database: dict[str, Any]) -> SessionManager:
     ctx = ConfigContext.from_dict(
-        {"database": database, "persistence": {"cursors": {"signing": "ephemeral"}}}
+        {
+            "stores": {"default": {"backend": "sqlalchemy", **database}},
+            "persistence": {"cursors": {"signing": "ephemeral"}},
+        }
     )
-    wiring = SQLAlchemyBackend().build(ctx, (), BackendRuntime(SERVER_PROFILE))
+    wiring = build_backend(SQLAlchemyBackend(), ctx, (), SERVER_PROFILE)
     factory: Any = wiring.uow_factory
     return factory._session_manager
 
 
 def _worker_manager(database: dict[str, Any]) -> SessionManager:
     pytest.importorskip("celery")
-    from loom.celery.bootstrap import _resolve_uow_factory
+    from loom.celery.adapter import CeleryAdapter
+    from loom.composition import AppConfig, compose_application
+    from loom.core.job.job import Job
 
-    _factory, manager = _resolve_uow_factory(ConfigContext.from_dict({"database": database}))
-    assert manager is not None
-    return manager
+    class _PingJob(Job[int]):
+        def execute(self) -> int:
+            return 1
+
+    celery = {"broker_url": "memory://", "result_backend": "cache+memory://"}
+    source = composition_source(
+        ConfigContext.from_dict(
+            {"stores": {"default": {"backend": "sqlalchemy", **database}}, "celery": celery}
+        ),
+        app=AppConfig(name="worker"),
+    )
+    factory: Any = compose_application(
+        source, CeleryAdapter(jobs=[_PingJob])
+    ).persistence.uow_factory
+    return factory._session_manager
 
 
 def _streaming_manager(database: dict[str, Any]) -> SessionManager:
     ctx = ConfigContext.from_dict(
         {
-            "database": {"warehouse": database},
-            "streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}},
+            "stores": {"warehouse": {"backend": "sqlalchemy", **database}},
+            "streaming": {"sinks": {"orders_sink": {"store": "warehouse"}}},
         }
     )
     node = IntoTable(payload=_Row, table="orders", name="orders_sink")
-    resolved = resolve_sqlalchemy_table_config(node, ctx)
+    resolved = resolve_sqlalchemy_table_config(node, ctx, load_catalog(ctx))
     return build_session_manager(resolved.database, STREAMING_PROFILE)
 
 
@@ -72,9 +92,10 @@ def test_a_fully_declared_pool_is_identical_in_every_entry_point() -> None:
 
 def test_the_same_section_reads_identically_wherever_it_lives() -> None:
     database = {"url": _POSTGRES, "pool": _FULL_POOL, "connect_args": {"command_timeout": 5}}
-    ctx = ConfigContext.from_dict({"database": {**database, "warehouse": database}})
+    store = {"backend": "sqlalchemy", **database}
+    ctx = ConfigContext.from_dict({"stores": {"default": store, "warehouse": store}})
 
-    assert load_database_config(ctx) == load_database_config(ctx, "database.warehouse")
+    assert load_database_config(ctx, "default") == load_database_config(ctx, "warehouse")
 
 
 def test_without_a_pool_the_api_takes_the_server_profile() -> None:

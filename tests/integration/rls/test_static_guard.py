@@ -20,11 +20,12 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.locator import Application
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.rls import create_schema, verify
 from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source
+from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
 
@@ -387,20 +388,23 @@ async def test_startup_refuses_a_tampered_guard_as_the_application_user(
     )
     config = {
         "app": {"name": "tampered"},
-        "database": {
-            "url": installed.database.write,
-            "schema": {
-                "mode": "external",
-                "scopes": dict(notes.SCOPE_BINDINGS),
-                "guard": installed.guard,
-            },
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": installed.database.write,
+                "schema": {
+                    "mode": "external",
+                    "scopes": dict(notes.SCOPE_BINDINGS),
+                    "guard": installed.guard,
+                },
+            }
         },
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     register_scope_source("editor", lambda: None)
     try:
-        wiring = SQLAlchemyBackend().build(
-            ConfigContext.from_dict(config), notes.MODELS, BackendRuntime(SERVER_PROFILE)
+        wiring = build_backend(
+            SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
         )
         wiring.prepare_models(notes.MODELS)
         with pytest.raises(ConfigError, match="guard.relation_grants"):

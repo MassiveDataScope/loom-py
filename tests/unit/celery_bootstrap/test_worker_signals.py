@@ -1,0 +1,408 @@
+"""The Celery signals check, open and close the worker's application (US4, T027).
+
+Prefork: ``worker_init`` checks once in the parent and opens nothing; each
+child opens with ``check=False`` in ``worker_process_init``. Solo and threads:
+``worker_init`` checks and opens. Either shutdown signal closes, idempotently
+and best effort.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, ClassVar, cast
+
+import pytest
+from celery.concurrency.prefork import TaskPool as PreforkPool
+from celery.exceptions import WorkerTerminate
+from celery.signals import (
+    worker_init,
+    worker_process_init,
+    worker_process_shutdown,
+    worker_shutdown,
+)
+
+import loom.celery.adapter as adapter_module
+from loom.celery.adapter import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
+from loom.celery.constants import (
+    TASK_CALLBACK_ERROR_PREFIX,
+    TASK_CALLBACK_PREFIX,
+    TASK_JOB_PREFIX,
+)
+from loom.celery.errors import WorkerNotOpenError
+from loom.celery.runner import _CeleryAsyncRuntime
+from loom.composition import AppConfig, Application, ApplicationHost, compose_application
+from loom.core.config import ConfigContext
+from loom.core.job.job import Job
+from tests.helpers.celery import WorkerDouble, isolated_signals
+from tests.helpers.composition import TaskAffine, application_of, composition_source
+
+_SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
+
+
+isolated_celery_signals = isolated_signals(*_SIGNALS, clear=True)
+
+
+class _ApplicationSpy:
+    """Records what the lifecycle asks of an application."""
+
+    def __init__(
+        self, *, check_error: Exception | None = None, open_error: Exception | None = None
+    ) -> None:
+        self.events: list[str] = []
+        self.close_error: Exception | None = None
+        self._check_error = check_error
+        self._open_error = open_error
+
+    async def check(self) -> None:
+        self.events.append("check")
+        if self._check_error is not None:
+            raise self._check_error
+
+    @asynccontextmanager
+    async def running(self, *, check: bool = True) -> AsyncIterator[_ApplicationSpy]:
+        self.events.append(f"open(check={check})")
+        if self._open_error is not None:
+            raise self._open_error
+        try:
+            yield self
+        finally:
+            self.events.append("close")
+            if self.close_error is not None:
+                raise self.close_error
+
+
+class _RuntimeSpy:
+    """A bridge double that runs nothing, so a failure to run can be forced."""
+
+    def __init__(self, backend: str = "asyncio", *, execute: bool = False) -> None:
+        self.backend = backend
+        # Executing runs every call on one long-lived loop, as a real bridge does.
+        self._loop = asyncio.Runner() if execute else None
+        self.initialize_calls = 0
+        self.shutdown_calls = 0
+        self.ran: list[Any] = []
+        self.run_error: Exception | None = None
+
+    def initialize(self) -> None:
+        self.initialize_calls += 1
+
+    def refuse(self, cause: Exception) -> None:
+        raise AssertionError(f"unexpected refusal: {cause!r}")
+
+    def run(self, coro: Any, *, eager_fallback: bool) -> Any:
+        assert eager_fallback is False
+        self.ran.append(coro)
+        if self.run_error is not None:
+            raise self.run_error
+        if self._loop is not None:
+            return self._loop.run(coro)
+        coro.close()
+        return None
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+    def close_loop(self) -> None:
+        """Close the loop; only the test does, so closing it never closes what leaked."""
+        if self._loop is not None:
+            self._loop.close()
+
+
+def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
+    bridge = runtime if runtime is not None else _CeleryAsyncRuntime()
+    _connect_lifecycle_signals(_WorkerLifecycle(cast(Any, application), bridge))
+    return bridge
+
+
+class TestPrefork:
+    @pytest.mark.parametrize("pool", ["prefork", "processes", PreforkPool])
+    def test_worker_init_checks_once_and_opens_nothing(self, pool: object) -> None:
+        application = _ApplicationSpy()
+        bridge = _connect(application)
+
+        worker_init.send(sender=WorkerDouble(pool))
+
+        assert application.events == ["check"]
+        assert bridge._bridge is None
+
+    def test_worker_process_init_starts_the_bridge_and_opens_without_checking(self) -> None:
+        application = _ApplicationSpy()
+        bridge = _connect(application)
+        worker_init.send(sender=WorkerDouble("prefork"))
+
+        worker_process_init.send(sender=None)
+        try:
+            assert bridge._bridge is not None
+            assert bridge._bridge.is_alive
+            assert application.events == ["check", "open(check=False)"]
+        finally:
+            worker_process_shutdown.send(sender=None)
+
+    def test_worker_process_shutdown_closes_and_stops_the_bridge(self) -> None:
+        application = _ApplicationSpy()
+        bridge = _connect(application)
+        worker_process_init.send(sender=None)
+
+        worker_process_shutdown.send(sender=None)
+
+        assert application.events == ["open(check=False)", "close"]
+        assert bridge._bridge is None
+
+    def test_a_failed_check_stops_the_worker(self) -> None:
+        application = _ApplicationSpy(check_error=RuntimeError("schema missing"))
+        _connect(application)
+
+        sender = WorkerDouble("prefork")
+        with pytest.raises(WorkerTerminate) as caught:
+            worker_init.send(sender=sender)
+
+        assert isinstance(caught.value.__cause__, RuntimeError)
+
+    def test_the_parent_closes_nothing_it_never_opened(self) -> None:
+        application = _ApplicationSpy()
+        runtime = _RuntimeSpy()
+        _connect(application, runtime)
+        worker_init.send(sender=WorkerDouble("prefork"))
+
+        worker_shutdown.send(sender=None)
+
+        assert application.events == ["check"]
+        assert runtime.ran == []
+        assert runtime.shutdown_calls == 1
+
+
+class TestSingleProcessPools:
+    @pytest.mark.parametrize("pool", ["solo", "threads"])
+    def test_worker_init_checks_and_opens(self, pool: str) -> None:
+        application = _ApplicationSpy()
+        bridge = _connect(application)
+
+        worker_init.send(sender=WorkerDouble(pool))
+        try:
+            assert application.events == ["open(check=True)"]
+            assert bridge._bridge is not None
+            assert bridge._bridge.is_alive
+        finally:
+            worker_shutdown.send(sender=None)
+
+        assert application.events == ["open(check=True)", "close"]
+        assert bridge._bridge is None
+
+    def test_a_failed_open_stops_the_worker(self) -> None:
+        application = _ApplicationSpy(open_error=RuntimeError("schema missing"))
+        bridge = _connect(application)
+
+        sender = WorkerDouble("solo")
+        with pytest.raises(WorkerTerminate) as caught:
+            worker_init.send(sender=sender)
+
+        assert isinstance(caught.value.__cause__, RuntimeError)
+        assert bridge._bridge is None
+
+
+class _PingJob(Job[int]):
+    __retries__ = 0
+
+    def execute(self) -> int:
+        return 1
+
+
+class _SyncCallback:
+    """Sync hooks run in the task thread, not on the bridge: they must still refuse."""
+
+    calls: ClassVar[list[str]] = []
+
+    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
+        self.calls.append("success")
+
+    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+        self.calls.append("failure")
+
+
+class TestFailedChildOpen:
+    """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
+
+    def _worker(self, tmp_path: Path) -> Any:
+        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_SyncCallback])
+        source = composition_source(
+            ConfigContext.from_dict(
+                {
+                    "celery": {
+                        "broker_url": "memory://",
+                        "result_backend": "cache+memory://",
+                        "task_always_eager": True,
+                    }
+                }
+            ),
+            app=AppConfig(name="worker"),
+            code_path=tmp_path,
+            config_root=tmp_path,
+        )
+        application = compose_application(source, adapter)
+
+        @asynccontextmanager
+        async def _failing(*, check: bool = True) -> AsyncIterator[Application]:
+            del check
+            raise RuntimeError("clickhouse unreachable")
+            yield application
+
+        cast(Any, application).running = _failing
+        return adapter.bind(application)
+
+    def test_every_task_fails_fast_naming_the_failure_to_open(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        task = self._worker(tmp_path).tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
+
+        with caplog.at_level(logging.ERROR, logger="loom.celery.adapter"):
+            worker_process_init.send(sender=None)
+            failures = [task.apply().result for _ in range(2)]
+
+        for failure in failures:
+            assert isinstance(failure, WorkerNotOpenError)
+            assert isinstance(failure.__cause__, RuntimeError)
+            assert "RuntimeError: clickhouse unreachable" in str(failure)
+        opening = [r for r in caplog.records if "failed to open its application" in r.message]
+        assert len(opening) == 1
+
+    @pytest.mark.parametrize(
+        ("prefix", "kwargs"),
+        [
+            (TASK_CALLBACK_PREFIX, {"args": (1,)}),
+            (TASK_CALLBACK_ERROR_PREFIX, {}),
+        ],
+        ids=["on_success", "on_failure"],
+    )
+    def test_a_sync_callback_task_refuses_too(
+        self, tmp_path: Path, prefix: str, kwargs: dict[str, Any]
+    ) -> None:
+        celery_app = self._worker(tmp_path)
+        task = celery_app.tasks[f"{prefix}.{_SyncCallback.__qualname__}"]
+        _SyncCallback.calls.clear()
+
+        worker_process_init.send(sender=None)
+        failure = task.apply(**kwargs, kwargs={"job_id": "job-1", "context": {}}).result
+
+        assert isinstance(failure, WorkerNotOpenError)
+        assert _SyncCallback.calls == []
+
+
+class TestClosing:
+    def test_both_shutdown_signals_close_once(self) -> None:
+        application = _ApplicationSpy()
+        _connect(application)
+        worker_process_init.send(sender=None)
+
+        worker_process_shutdown.send(sender=None)
+        worker_shutdown.send(sender=None)
+
+        assert application.events.count("close") == 1
+
+    def test_a_failure_to_close_is_logged_and_still_stops_the_bridge(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        application = _ApplicationSpy()
+        application.close_error = RuntimeError("pool gone")
+        bridge = _connect(application)
+        worker_process_init.send(sender=None)
+
+        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
+            worker_process_shutdown.send(sender=None)
+
+        assert "pool gone" in caplog.text
+        assert bridge._bridge is None
+
+    def test_a_bridge_that_cannot_run_the_close_still_shuts_down(self) -> None:
+        application = _ApplicationSpy()
+        runtime = _RuntimeSpy()
+        _connect(application, runtime)
+        worker_process_init.send(sender=None)
+        runtime.run_error = RuntimeError("loop stopped")
+
+        worker_process_shutdown.send(sender=None)
+
+        exit_coroutine = runtime.ran[-1]
+        assert inspect.getcoroutinestate(exit_coroutine) == inspect.CORO_CLOSED
+        assert runtime.shutdown_calls == 1
+
+
+class TestTaskAffineResources:
+    """Opening and closing run in one task on the bridge, never in two bridge calls."""
+
+    @pytest.mark.parametrize(
+        ("pool", "opening", "closing"),
+        [
+            ("prefork", worker_process_init, worker_process_shutdown),
+            ("solo", worker_init, worker_shutdown),
+        ],
+    )
+    def test_a_task_affine_resource_closes_cleanly(
+        self, pool: str, opening: Any, closing: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        affine = TaskAffine()
+        application = application_of(affine.resource())
+        bridge = _connect(cast(Any, application))
+        worker_init.send(sender=WorkerDouble(pool))
+
+        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
+            opening.send(sender=None)
+            assert application.is_open
+            closing.send(sender=None)
+
+        assert affine.exited_in is not None
+        assert not application.is_open
+        assert "failed to close" not in caplog.text
+        assert bridge._bridge is None
+
+
+class TestBackends:
+    """Only asyncio has the task an :class:`ApplicationHost` owns the application from."""
+
+    @pytest.mark.parametrize(("backend", "hosted"), [("asyncio", True), ("trio", False)])
+    def test_only_asyncio_opens_the_application_through_a_host(
+        self, backend: str, hosted: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hosts: list[ApplicationHost] = []
+
+        class _HostSpy(ApplicationHost):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                hosts.append(self)
+
+        monkeypatch.setattr(adapter_module, "ApplicationHost", _HostSpy)
+        _connect(_ApplicationSpy(), _RuntimeSpy(backend=backend))
+
+        worker_init.send(sender=WorkerDouble("solo"))
+
+        assert bool(hosts) is hosted
+
+    def test_trio_enters_and_exits_the_application_in_two_bridge_calls(self) -> None:
+        application = _ApplicationSpy()
+        runtime = _RuntimeSpy(backend="trio", execute=True)
+        _connect(application, runtime)
+
+        try:
+            worker_init.send(sender=WorkerDouble("solo"))
+            assert application.events == ["open(check=True)"]
+
+            worker_shutdown.send(sender=None)
+            assert application.events == ["open(check=True)", "close"]
+        finally:
+            runtime.close_loop()
+
+
+class TestConnecting:
+    def test_a_second_connect_replaces_the_first(self) -> None:
+        first, second = _ApplicationSpy(), _ApplicationSpy()
+        _connect(first)
+        _connect(second)
+
+        worker_init.send(sender=WorkerDouble("prefork"))
+
+        assert first.events == []
+        assert second.events == ["check"]

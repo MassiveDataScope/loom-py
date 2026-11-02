@@ -1,7 +1,7 @@
 """Deploy check of pagination cursors: tokens a deployed application cannot trust.
 
-``loom.cursors.E001``: a process that serves repositories (a ``database``
-section for SQLAlchemy, ``persistence.mongo`` for Mongo) does not sign its
+``loom.cursors.E001``: a process that serves repositories (a ``stores.<name>``
+section whose backend pages with cursors) does not sign its
 cursors with a configured key. ``signing: unsigned`` lets any client forge a
 position, and ``signing: ephemeral`` signs with a key no other instance or
 restart shares. A ``signed`` section without a ``current_key_id`` naming one
@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 
 from loom.core.checks import Finding, deploy_check
 from loom.core.config.keys import ConfigKey
+from loom.core.persistence.stores import load_catalog
 from loom.core.repository.abc.cursor import CURSOR_SIGNING_CHECK, CursorConfig
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
 _SECTION = ConfigKey.PERSISTENCE_CURSORS
-_REPOSITORY_SECTIONS = (ConfigKey.DATABASE, ConfigKey.PERSISTENCE_MONGO)
 _SIGNED = CursorConfig().signing
 _HINT = (
     f"drop {_SECTION}.signing from the deployed configuration (signed is the default) "
@@ -36,7 +36,7 @@ _HINT = (
 
 @deploy_check(CURSOR_SIGNING_CHECK)
 def _cursors_signed(config: ConfigContext) -> Finding | None:
-    if all(config.raw(section) is None for section in _REPOSITORY_SECTIONS):
+    if not _serves_repositories(config):
         return None
     written = config.raw(_SECTION, {})
     cursors = written if isinstance(written, dict) else {}
@@ -55,6 +55,11 @@ def _cursors_signed(config: ConfigContext) -> Finding | None:
         message=f"{_SECTION} names no signing key: current_key_id must name an entry of keys.",
         hint=_HINT,
     )
+
+
+def _serves_repositories(config: ConfigContext) -> bool:
+    """Whether any configured store pages with cursors."""
+    return any(spec.capabilities.pages_with_cursors for spec in load_catalog(config).specs.values())
 
 
 __all__: list[str] = []

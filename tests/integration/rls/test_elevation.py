@@ -84,7 +84,9 @@ async def test_read_then_authorize_sets_the_flag_on_the_open_transaction_and_com
         async with manager.session() as session:
             active = set_active_session(session)
             try:
-                async with elevation_scope(owns_transaction=True, sink=SQLAlchemyElevationSink()):
+                async with elevation_scope(
+                    owns_transaction=True, sink=SQLAlchemyElevationSink(manager)
+                ):
                     assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
                     assert (await session.execute(text(FLAG))).scalar() == ""
 
@@ -118,7 +120,7 @@ async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
     decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
     identity = set_identity(Identity(subject=U1))
     try:
-        async with elevation_scope(owns_transaction=True, sink=SQLAlchemyElevationSink()):
+        async with elevation_scope(owns_transaction=True, sink=SQLAlchemyElevationSink(manager)):
             await elevate("editor", decision, at=Scope.of(U1))
             async with manager.session() as session:
                 assert (await session.execute(text(FLAG))).scalar() == "on"

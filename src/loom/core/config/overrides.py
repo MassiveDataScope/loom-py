@@ -62,6 +62,7 @@ from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.keys import ConfigKey
 from loom.core.config.loader import load_config
+from loom.core.config.retired import reject_retired_sections
 from loom.core.environment import (
     OVERRIDE_PREFIX,
     Environment,
@@ -104,16 +105,13 @@ OVERRIDABLE: Final = (
     "sql.connections.*.executor_threads",
     "sql.connections.*.connect_timeout",
     "sql.connections.*.read_timeout",
-    "database.pool.size",
-    "database.pool.max_overflow",
-    "database.pool.timeout",
-    "database.pool.recycle",
-    "database.connect_timeout",
-    "database.read_timeout",
-    "persistence.dynamodb.pool.size",
-    "persistence.dynamodb.connect_timeout",
-    "persistence.dynamodb.read_timeout",
-    "persistence.dynamodb.max_attempts",
+    "stores.*.pool.size",
+    "stores.*.pool.max_overflow",
+    "stores.*.pool.timeout",
+    "stores.*.pool.recycle",
+    "stores.*.connect_timeout",
+    "stores.*.read_timeout",
+    "stores.*.max_attempts",
     "storage.dynamodb.pool.size",
     "storage.dynamodb.connect_timeout",
     "storage.dynamodb.read_timeout",
@@ -151,10 +149,15 @@ def load_application_config(
             collides with another variable, replaces a declared structure,
             reaches inside an interpolated key, holds ``${``, or does not
             parse or merge. The error names the variable, never the value.
+            Also when the result declares a retired persistence key
+            (``database``, ``persistence.backend``, ...), naming its
+            ``stores`` replacement.
     """
     config = load_config(*paths, resolvers=resolvers, keyed=keyed)
     resolved = resolve_environment(environment)
-    return ConfigContext(_apply_overrides(config, override_variables(), resolved))
+    context = ConfigContext(_apply_overrides(config, override_variables(), resolved))
+    reject_retired_sections(context)
+    return context
 
 
 def _apply_overrides(

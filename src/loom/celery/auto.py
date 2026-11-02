@@ -39,7 +39,9 @@ def create_app(
         jobs: Concrete ``Job`` subclasses to register as Celery tasks.
             Optional when ``app.discovery`` (modules/manifest) is configured.
         callbacks: Optional callback classes for success/failure hooks.
-        modules: Optional DI registration modules.
+        modules: Optional DI registration modules; a module binding a
+            framework-owned key fails with
+            :class:`~loom.composition.errors.ReservedBindingError`.
         metrics: Optional metrics adapter.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver

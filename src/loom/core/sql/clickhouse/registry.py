@@ -3,6 +3,9 @@
 The registry is an async context manager. Entering it creates one client per
 configured connection, asserts per-query role support on the driver and runs
 the sentinel-role startup probe (spec §2); leaving it closes every client.
+:meth:`ClickHouseConnectionRegistry.check` runs the same checks and probe on
+temporary clients, so a prefork parent probes once before forking and its
+children open without probing again.
 """
 
 from __future__ import annotations
@@ -49,7 +52,8 @@ class ClickHouseConnectionRegistry:
     ``__aenter__`` and ``__aexit__``, which eliminates any intermediate
     started/stopped state. Startup is fail-closed: a driver without per-query
     role support or a server that silently ignores roles aborts the enter and
-    closes everything created so far.
+    closes everything created so far. Once :meth:`check` has passed, entering
+    skips the network probe and keeps the driver checks.
 
     Args:
         config: Parsed ``sql:`` section with the named connections.
@@ -73,6 +77,7 @@ class ClickHouseConnectionRegistry:
         self._clients: dict[str, AsyncClickHouseClient] = {}
         self._executors: dict[str, ClickHouseSqlExecutor] = {}
         self._entered = False
+        self._probed = False
 
     @classmethod
     def from_config(cls, raw: Mapping[str, Any]) -> Self:
@@ -96,8 +101,12 @@ class ClickHouseConnectionRegistry:
             raise ConfigError(f"Invalid 'sql' config section: {exc}") from exc
         return cls(config=config)
 
-    async def __aenter__(self) -> Self:
-        """Create, verify and probe one client per configured connection.
+    async def check(self) -> None:
+        """Verify and probe one temporary client per connection, then close them all.
+
+        Opens nothing that outlives the call. After it passes, entering the
+        registry no longer runs the probe: a prefork child inherits the
+        result and does not repeat it.
 
         Raises:
             ImportError: When ``clickhouse-connect`` is missing and no custom
@@ -105,7 +114,28 @@ class ClickHouseConnectionRegistry:
             ConfigError: When a client lacks per-query role support or the
                 startup probe detects that roles are silently ignored.
         """
-        factory = self._client_factory if self._client_factory is not None else create_driver_client
+        factory = self._factory()
+        clients: dict[str, AsyncClickHouseClient] = {}
+        try:
+            for name, connection in self._config.connections.items():
+                client = await factory(**_client_kwargs(connection))
+                clients[name] = client
+                await _verify_connection(name, connection, client, probe=True)
+        finally:
+            await _aclose_all(clients)
+        self._probed = True
+
+    async def __aenter__(self) -> Self:
+        """Create and verify one client per configured connection; probe unless checked.
+
+        Raises:
+            ImportError: When ``clickhouse-connect`` is missing and no custom
+                factory was provided.
+            ConfigError: When a client lacks per-query role support or, when
+                :meth:`check` has not passed, the startup probe detects that
+                roles are silently ignored.
+        """
+        factory = self._factory()
         try:
             for name, connection in self._config.connections.items():
                 await self._open_connection(name, connection, factory)
@@ -156,23 +186,46 @@ class ClickHouseConnectionRegistry:
     ) -> None:
         client = await factory(**_client_kwargs(connection))
         self._clients[name] = client
-        _require_role_transport_setting(name, client)
-        _require_multi_role_transport(name, connection)
-        if _roles_configured(connection):
-            await _probe_role_enforcement(name, client)
+        await _verify_connection(name, connection, client, probe=not self._probed)
         self._executors[name] = ClickHouseSqlExecutor(client=client, config=connection)
+
+    def _factory(self) -> ClickHouseClientFactory:
+        return self._client_factory if self._client_factory is not None else create_driver_client
 
     async def _aclose_clients(self) -> None:
         """Close every client in isolation: one failing close never leaks the rest."""
-        for name, client in self._clients.items():
-            try:
-                await client.close()
-            except Exception:
-                _logger.warning(
-                    "Failed to close ClickHouse client for connection %r", name, exc_info=True
-                )
-        self._clients.clear()
+        await _aclose_all(self._clients)
         self._executors.clear()
+
+
+async def _aclose_all(clients: dict[str, AsyncClickHouseClient]) -> None:
+    """Close every client of *clients* in isolation, then forget them."""
+    for name, client in clients.items():
+        try:
+            await client.close()
+        except Exception:
+            _logger.warning(
+                "Failed to close ClickHouse client for connection %r", name, exc_info=True
+            )
+    clients.clear()
+
+
+async def _verify_connection(
+    name: str,
+    connection: SqlConnectionConfig,
+    client: AsyncClickHouseClient,
+    *,
+    probe: bool,
+) -> None:
+    """Run the driver checks, and the sentinel-role probe when *probe* and roles apply.
+
+    The driver checks always run: they cost no round trip, and the multi-role
+    one also enables the driver workaround in this process.
+    """
+    _require_role_transport_setting(name, client)
+    _require_multi_role_transport(name, connection)
+    if probe and _roles_configured(connection):
+        await _probe_role_enforcement(name, client)
 
 
 def _client_kwargs(connection: SqlConnectionConfig) -> dict[str, Any]:

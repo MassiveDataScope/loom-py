@@ -29,7 +29,7 @@ from loom.core.repository.sqlalchemy.mixins import (
     SQLAlchemyUpdateMixin,
 )
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session
+from loom.core.repository.sqlalchemy.transactional import get_active_session, session_to_join
 
 R = TypeVar("R")
 
@@ -135,7 +135,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             yield session
             return
 
-        context_session = get_active_session()
+        context_session = session_to_join(self.session_manager)
         if context_session is not None:
             yield context_session
             return

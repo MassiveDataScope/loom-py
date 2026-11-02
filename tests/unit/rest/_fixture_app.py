@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 
 _MODULE_PREFIX = "loom_config_fixture_app"
-_DEFAULT_DATABASE: dict[str, Any] = {"url": "sqlite+aiosqlite:///"}
+_DEFAULT_STORE: dict[str, Any] = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
 _NON_IDENTIFIER = re.compile(r"\W", re.ASCII)
 _AUTOINCREMENT_ID_FIELD = "id: int = ColumnField(primary_key=True, autoincrement=True)"
 UUID4_ID_FIELD = "id: str = ColumnField(primary_key=True, server_default=ServerDefault.UUID4)"
@@ -122,7 +122,7 @@ def write_project(
     sql: dict[str, Any] | None = None,
     observability: dict[str, Any] | None = None,
     persistence: dict[str, Any] | None = None,
-    database: dict[str, Any] | None = _DEFAULT_DATABASE,
+    store: dict[str, Any] | None = _DEFAULT_STORE,
     cache: dict[str, Any] | None = None,
     prefix: str = "/ping",
     route_path: str = "/",
@@ -138,7 +138,7 @@ def write_project(
         observability: Contents of the ``observability`` section.
         persistence: Contents of the ``persistence`` section, on top of an
             explicit ``cursors.signing: ephemeral``.
-        database: Contents of the ``database`` section; ``None`` omits it.
+        store: Contents of the ``stores.default`` section; ``None`` omits it.
         cache: Contents of the ``cache`` section; ``None`` omits it.
         prefix: Prefix of the generated REST interface.
         route_path: Path of its single route, relative to *prefix*.
@@ -167,8 +167,8 @@ def write_project(
             },
         },
     }
-    if database is not None:
-        config["database"] = dict(database)
+    if store is not None:
+        config["stores"] = {"default": dict(store)}
     if cache is not None:
         config["cache"] = dict(cache)
     if rest is not None:

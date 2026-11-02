@@ -19,29 +19,45 @@ def _report(raw: dict[str, Any]) -> tuple[list[str], tuple[str, ...]]:
 
 
 def test_a_url_without_a_password_passes() -> None:
-    messages, _silenced = _report({"database": {"url": "postgresql://db.internal/app"}})
+    messages, _silenced = _report(
+        {"stores": {"default": {"backend": "sqlalchemy", "url": "postgresql://db.internal/app"}}}
+    )
 
     assert messages == []
 
 
 def test_an_embedded_password_names_the_key_and_hides_the_value() -> None:
     messages, _silenced = _report(
-        {"database": {"url": f"postgresql://user:{_PASSWORD}@db.internal/app"}}
+        {
+            "stores": {
+                "default": {
+                    "backend": "sqlalchemy",
+                    "url": f"postgresql://user:{_PASSWORD}@db.internal/app",
+                }
+            }
+        }
     )
 
-    assert messages == ["database.url embeds a password in a URL."]
+    assert messages == ["stores.default.url embeds a password in a URL."]
     assert _PASSWORD not in messages[0]
 
 
 def test_a_placeholder_is_not_judged() -> None:
-    messages, _silenced = _report({"database": {"url": "${oc.env:DATABASE_URL}"}})
+    messages, _silenced = _report(
+        {"stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}}}
+    )
 
     assert messages == []
 
 
 def test_a_silenced_id_does_not_report() -> None:
     raw = {
-        "database": {"url": f"postgresql://user:{_PASSWORD}@db.internal/app"},
+        "stores": {
+            "default": {
+                "backend": "sqlalchemy",
+                "url": f"postgresql://user:{_PASSWORD}@db.internal/app",
+            }
+        },
         "checks": {"silenced": [EMBEDDED_PASSWORD_CHECK]},
     }
 

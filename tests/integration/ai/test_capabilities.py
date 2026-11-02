@@ -57,6 +57,7 @@ from loom.ai.engines.pydantic_ai._events import translate
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.errors import AgentCompilationError, AgentRunErrorCode
 from loom.ai.runtime import AgentRunError
+from loom.composition._ai import AgentDepsFactory
 from loom.core.bootstrap import create_kernel
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
@@ -70,7 +71,6 @@ from loom.core.sql.service import SqlQueryService
 from loom.core.use_case import Caller
 from loom.core.use_case.invoker import ApplicationInvoker, EntityInvoker
 from loom.core.use_case.use_case import UseCase
-from loom.rest.fastapi.auto import _AgentDepsFactory
 from tests.integration.ai.conftest import make_plan, make_policies
 
 CANARY = "SECRET-CANARY-9931"
@@ -1658,7 +1658,7 @@ class TestIdentityReachesTheExecutor:
             capabilities=(whoami_capability(),),
             model=model,
             container=kernel.container,
-            deps=_AgentDepsFactory(kernel.app),
+            deps=AgentDepsFactory(kernel.app),
         )
         return engine, model
 

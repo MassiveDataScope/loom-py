@@ -106,12 +106,16 @@ async def elevate_scope(
     if scope in frame.scopes:
         return
     frame.scopes.add(scope)
-    if frame.sink is not None and frame.sink.in_transaction():
-        try:
+    if frame.sink is None:
+        return
+    try:
+        if frame.sink.in_transaction():
             await frame.sink.set_flag(scope)
-        except BaseException:
-            frame.scopes.discard(scope)
-            raise
+    except BaseException:
+        # A refused or failed sink leaves the scope unelevated, so neither the
+        # next session nor a retry can pick it up.
+        frame.scopes.discard(scope)
+        raise
 
 
 def _check(
@@ -131,11 +135,13 @@ def _check(
 
 
 async def _clear_added(frame: _Frame) -> None:
-    if frame.owns_transaction or frame.sink is None or not frame.sink.in_transaction():
+    if frame.owns_transaction or frame.sink is None:
         return
     inherited = frame.parent.scopes if frame.parent is not None else set()
     added = frozenset(frame.scopes - inherited)
-    if not added:
+    # The sink is asked only when there is something to clear: a frame that
+    # elevated nothing closes without touching the session.
+    if not added or not frame.sink.in_transaction():
         return
     try:
         await asyncio.shield(frame.sink.clear_flags(added))

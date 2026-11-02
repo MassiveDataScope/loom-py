@@ -4,7 +4,7 @@ An entry point knows how many operations one of its processes runs at once —
 a server many, a prefork worker one — and so it, not the configuration, owns
 the default size of the connection pool. Each entry point hands its
 :class:`RuntimeProfile` to the persistence it builds; a value declared in
-``database.pool`` always wins over the profile, key by key.
+``stores.<name>.pool`` always wins over the profile, key by key.
 
 This module imports no driver, so a host can name a profile without the
 SQLAlchemy extra installed.
@@ -12,8 +12,13 @@ SQLAlchemy extra installed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol
+
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+
+if TYPE_CHECKING:
+    from loom.core.persistence.stores import StoreCatalog
 
 
 @dataclass(frozen=True)
@@ -86,10 +91,30 @@ class BackendRuntime:
         profile: Defaults of the entry point building the backend.
         pool_metrics: Receiver of pool measurements; ``None`` when metrics are
             disabled, in which case the pool is built exactly as without them.
+        connection_only: Serve the connection and nothing else, for a host
+            with no model (a worker running raw-SQL jobs). A backend that
+            honours it (``sqlalchemy``) then registers its session manager
+            and unit of work, builds no cursor codec, registers no repository
+            and leaves the compiled registry as it is. Its startup checks
+            open one connection, run ``SELECT 1`` and release the pool: no
+            table is created, no external schema or connecting role is
+            inspected and no column is checked. Row-level security settings
+            stay installed but unbound, so they fail closed.
+        catalog: The stores the configuration declares, loaded once by the
+            host; the backend takes its store from it
+            (``catalog.served_by(name, runtime.store)``) instead of reading
+            ``stores`` from the configuration again.
+        store: The store the backend serves. The host passes
+            :data:`~loom.core.persistence.stores.DEFAULT_STORE` unless it
+            builds another store; a backend that ignores it, written before
+            it existed, keeps serving the default store.
     """
 
     profile: RuntimeProfile
     pool_metrics: PoolMetricsSink | None = None
+    connection_only: bool = False
+    catalog: StoreCatalog = field(kw_only=True)
+    store: StoreKey = field(default=DEFAULT_STORE, kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(

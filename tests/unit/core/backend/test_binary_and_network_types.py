@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any, cast
 
 import msgspec
@@ -10,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all, reset_registry
+from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.model import BaseModel, Bytes, ColumnField, Postgres, get_column_fields
 from loom.core.model.types import Integer
 from loom.core.repository.abc import CursorCodec
@@ -59,7 +60,7 @@ def shared_registry() -> Iterator[None]:
 def test_bytes_reach_the_column_as_bytes_not_base64() -> None:
     compile_all(Device)
     repository: RepositorySQLAlchemy[Device, int] = RepositorySQLAlchemy(
-        session_manager=cast(Any, None),
+        session_manager=cast(Any, SimpleNamespace(metadata=get_metadata())),
         model=Device,
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
