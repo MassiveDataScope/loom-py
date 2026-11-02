@@ -180,7 +180,8 @@ class TestEnlist:
 
         participant = await coordinator.enlist(Scope(), S0)
 
-        assert (participant.phased, participant.physical) == (phased, physical)
+        assert participant.phased is phased
+        assert participant.physical == physical
 
 
 @pytest.mark.xfail(strict=True, reason="T047b / PR 2: loom's own units of work become phased")
@@ -214,7 +215,8 @@ class TestCommitOrder:
         participant.record_write(4)
         participant.record_write(1)
 
-        assert (participant.first_write, participant.wrote) == (4, True)
+        assert participant.first_write == 4
+        assert participant.wrote is True
 
     async def test_flush_runs_on_every_phased_store_before_any_commit(self) -> None:
         ledger = Ledger()
@@ -249,7 +251,8 @@ class TestCommitOrder:
         outcome = await OrderedCommits({}).finish(scope, None)
 
         assert outcome == InvocationOutcome(stores=())
-        assert (scope.outcome, scope.closed) == (outcome, True)
+        assert scope.outcome == outcome
+        assert scope.closed is True
 
 
 @dataclass(frozen=True)
@@ -472,7 +475,8 @@ class TestInterruptions:
 
         assert _ends(ledger) == [S2, S1, S0]
         assert _calls(ledger, "rollback") == [S2, S1, S0]
-        assert (seen.closed, seen.signal) == (True, False)
+        assert seen.closed is True
+        assert seen.signal is False
 
     async def test_a_cancellation_while_closing_stops_a_third_party_store_from_committing(
         self,
@@ -549,7 +553,8 @@ class TestInterruptions:
         assert _calls(ledger, "unblocked") == [S1]
         assert _calls(ledger, "rollback") == [S2, S1, S0]
         assert _ends(ledger) == [S2, S1, S0]
-        assert (seen.closed, seen.signal) == (True, False)
+        assert seen.closed is True
+        assert seen.signal is False
 
 
 class TestOutcomeLog:
