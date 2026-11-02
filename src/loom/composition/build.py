@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, overload
 
 from loom.composition._ai import (
     AiWiring,
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+@overload
 def create_app(
     *config_paths: str,
     adapter: Adapter[T],
@@ -59,12 +60,36 @@ def create_app(
     code_path: str | None = None,
     resolvers: Sequence[ConfigResolver] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
-) -> T:
+) -> T: ...
+
+
+@overload
+def create_app(
+    *config_paths: str,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
+    code_path: str | None = None,
+    resolvers: Sequence[ConfigResolver] = (),
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
+) -> object: ...
+
+
+def create_app(
+    *config_paths: str,
+    adapter: Adapter[object] | None = None,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
+    code_path: str | None = None,
+    resolvers: Sequence[ConfigResolver] = (),
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
+) -> object:
     """Compose an application from configuration and mount *adapter*'s transport on it.
 
     Args:
         *config_paths: YAML files merged left to right; exclusive with *config_dir*.
-        adapter: The transport, and how it wants the application composed.
+        adapter: The transport, and how it wants the application composed;
+            ``app.entry`` picks it when omitted: ``fastapi``, ``lambda_http``,
+            ``lambda_sqs`` or a function of ``lambda.functions``.
         config_dir: Directory with ``base.yaml`` and the per-environment overlays.
         environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Overrides ``app.code_path``, relative to the first config file.
@@ -84,16 +109,38 @@ def create_app(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    application = build_application(
+    source = load_source(
         *config_paths,
-        adapter=adapter,
         config_dir=config_dir,
         environment=environment,
         code_path=code_path,
         resolvers=resolvers,
-        modules=modules,
+        caller="create_app",
     )
-    return adapter.bind(application)
+    resolved = adapter if adapter is not None else _adapter_from_entry(source)
+    application = compose_application(source, resolved, modules=modules)
+    return resolved.bind(application)
+
+
+def _adapter_from_entry(source: CompositionSource) -> Adapter[object]:
+    entry = source.app.entry
+    if entry is None:
+        raise ConfigError("create_app needs adapter= or app.entry")
+    if entry == "fastapi":
+        from loom.rest.fastapi.adapter import FastAPIAdapter
+
+        return FastAPIAdapter()
+    if entry == "lambda_http":
+        from loom.aws_lambda.http import LambdaHTTPAdapter
+
+        return LambdaHTTPAdapter()
+    if entry == "lambda_sqs":
+        from loom.aws_lambda.sqs import LambdaSQSAdapter
+
+        return LambdaSQSAdapter()
+    from loom.aws_lambda.functions import function_adapter
+
+    return function_adapter(source.config, entry)
 
 
 def build_application(
