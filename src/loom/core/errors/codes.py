@@ -50,6 +50,9 @@ class ErrorCode(StrEnum):
     SERVICE_UNAVAILABLE = "service_unavailable"
     POST_COMMIT_FAILURE = "post_commit_failure"
     FOREIGN_SESSION = "foreign_session"
+    INVOCATION_SCOPE_FOREIGN_TASK = "invocation_scope_foreign_task"
+    STORES_NOT_COMMITTED = "stores_not_committed"
+    UOW_INSIDE_SCOPE = "uow_inside_scope"
 
 
 class Template(NamedTuple):

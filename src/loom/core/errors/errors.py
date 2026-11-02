@@ -46,10 +46,39 @@ class SystemError(LoomError):
 
     Args:
         message: Description of the system failure.
+        code: The subclass's own code; ``system_error`` by default.
     """
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.SYSTEM_ERROR)
+    def __init__(self, message: str, *, code: ErrorCode = ErrorCode.SYSTEM_ERROR) -> None:
+        super().__init__(message, code=code)
+
+
+class ForeignSessionError(LoomError):
+    """A repository, ``@transactional`` service or elevation sink met another owner's session.
+
+    Each store, and each application, has its own session manager or client.
+    A repository, a ``@transactional`` service and the elevation sink refuse
+    to join a session their own manager did not open rather than write, or
+    set elevation flags, through another engine with another store's
+    row-level security settings. The invocation scope refuses a participant
+    whose owner is not the caller's in the same way.
+
+    Args:
+        own: The store and connection of the caller, as the message names them.
+        active: The store and connection that opened the active session.
+    """
+
+    def __init__(self, own: str, active: str) -> None:
+        self.own = own
+        self.active = active
+        super().__init__(
+            f"a repository of {own} cannot join the active session of {active}: "
+            "one unit of work serves one session manager",
+            code=ErrorCode.FOREIGN_SESSION,
+        )
+
+    def __reduce__(self) -> tuple[type[ForeignSessionError], tuple[str, str], dict[str, Any]]:
+        return type(self), (self.own, self.active), self.__dict__
 
 
 class NotFound(DomainError):

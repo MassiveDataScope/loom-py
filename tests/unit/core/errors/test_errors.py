@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import pickle
 from types import ModuleType
 from typing import Any
 
@@ -21,6 +22,7 @@ from loom.core.errors import (
     Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
+from loom.core.errors.errors import ForeignSessionError
 from loom.core.use_case import rule as rule_module
 
 # ---------------------------------------------------------------------------
@@ -326,3 +328,41 @@ class TestInsufficientAuthentication:
     def test_refuses_what_a_challenge_cannot_carry(self, kwargs: dict[str, Any]) -> None:
         with pytest.raises(ValueError, match="InsufficientAuthentication"):
             InsufficientAuthentication(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# SystemError codes and ForeignSessionError
+# ---------------------------------------------------------------------------
+
+
+class TestSystemErrorCode:
+    def test_a_subclass_carries_its_own_code(self) -> None:
+        assert SystemError("x", code=ErrorCode.STORES_NOT_COMMITTED).code == "stores_not_committed"
+
+    def test_the_default_code_is_system_error(self) -> None:
+        assert SystemError("x").code == ErrorCode.SYSTEM_ERROR
+
+
+class TestForeignSessionError:
+    def test_the_message_names_both_sides(self) -> None:
+        error = ForeignSessionError("store 'b' (b.db)", "store 'a' (a.db)")
+
+        assert str(error) == (
+            "a repository of store 'b' (b.db) cannot join the active session of store 'a' "
+            "(a.db): one unit of work serves one session manager"
+        )
+
+    def test_its_code_is_foreign_session(self) -> None:
+        assert ForeignSessionError("own", "active").code == ErrorCode.FOREIGN_SESSION
+
+    def test_it_survives_pickling_with_its_message(self) -> None:
+        error = ForeignSessionError("store 'b' (b.db)", "store 'a' (a.db)")
+
+        restored = pickle.loads(pickle.dumps(error))
+
+        assert (type(restored), str(restored)) == (ForeignSessionError, str(error))
+
+    def test_it_survives_pickling_with_both_sides(self) -> None:
+        restored = pickle.loads(pickle.dumps(ForeignSessionError("own", "active")))
+
+        assert (restored.own, restored.active) == ("own", "active")
