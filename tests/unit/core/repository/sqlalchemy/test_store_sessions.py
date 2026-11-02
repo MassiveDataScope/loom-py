@@ -30,9 +30,9 @@ from tests.unit.core.conftest import SessionManagerFactory
 AUDIT = StoreKey("audit")
 
 
-def _manager(store: StoreKey) -> SessionManager:
+def _manager(store: StoreKey, url: str = "sqlite+aiosqlite:///:memory:") -> SessionManager:
     return SessionManager(
-        "sqlite+aiosqlite:///:memory:",
+        url,
         pool_size=None,
         max_overflow=None,
         pool_timeout=None,
@@ -172,6 +172,35 @@ class TestTransactional:
                 await service.record()
 
         assert service.sessions == []
+
+    async def test_without_any_store_enlisted_the_refusal_says_so(self, stores: _Stores) -> None:
+        service = _AuditService(stores.audit)
+
+        async with invocation(stores.coordinator()):
+            with pytest.raises(ForeignSessionError, match="with no store enlisted"):
+                await service.record()
+
+    async def test_the_refusal_names_the_stores_this_invocation_enlisted(
+        self, stores: _Stores
+    ) -> None:
+        service = _AuditService(stores.audit)
+
+        async with invocation(stores.coordinator()) as scope:
+            await scope.coordinator.enlist(scope, DEFAULT_STORE)
+            with pytest.raises(ForeignSessionError, match="store 'default' \\(this invocation\\)"):
+                await service.record()
+
+    async def test_the_refusal_never_prints_the_url_s_query(self, stores: _Stores) -> None:
+        manager = _manager(AUDIT, "postgresql+asyncpg://loom@db.internal/audit?sslpassword=hunter2")
+        service = _AuditService(manager)
+        try:
+            async with invocation(stores.coordinator()):
+                with pytest.raises(ForeignSessionError) as raised:
+                    await service.record()
+        finally:
+            await manager.dispose()
+
+        assert "hunter2" not in str(raised.value)
 
     async def test_a_gather_child_is_refused(self, stores: _Stores) -> None:
         service = _AuditService(stores.default)

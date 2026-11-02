@@ -166,9 +166,12 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
             another session manager's unit of work holds it.
     """
     if scope.participant_for(session_manager.store, session_manager, write=True) is None:
+        enlisted = ", ".join(scope.participants)
         raise ForeignSessionError.between(
-            ForeignSessionError.side(session_manager.store, repr(session_manager.engine.url)),
-            ForeignSessionError.side(", ".join(scope.participants), "this invocation"),
+            ForeignSessionError.side(session_manager.store, session_manager.target),
+            ForeignSessionError.side(enlisted, "this invocation")
+            if enlisted
+            else "this invocation, with no store enlisted",
         )
 
 
