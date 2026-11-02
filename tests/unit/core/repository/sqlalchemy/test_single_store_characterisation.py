@@ -25,6 +25,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.discovery.base import DiscoveryResult
@@ -460,6 +462,28 @@ async def test_an_elevation_sink_of_another_store_refuses_its_transaction(
     async with SQLAlchemyUnitOfWork(first):
         with pytest.raises(ForeignSessionError, match="cannot join the active session"):
             sink.in_transaction()
+
+
+_WRITE = Permission("rows.write")
+_CATALOG = RoleCatalog((_WRITE,), (Role("editor", (_WRITE,)),))
+_BOUNDARY = Scope.of("b1")
+
+
+async def test_an_elevation_refused_by_another_store_leaves_the_scope_unelevated(
+    two_stores: tuple[SessionManager, SessionManager, Path, Path],
+) -> None:
+    first, second, _, _ = two_stores
+    decision = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=_BOUNDARY))
+
+    async with (
+        SQLAlchemyUnitOfWork(first),
+        elevation_scope(owns_transaction=False, sink=SQLAlchemyElevationSink(second)),
+    ):
+        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+            await elevate_scope(
+                "editor", decision, at=_BOUNDARY, permission=_WRITE, catalog=_CATALOG
+            )
+        assert elevated_scopes() == frozenset()
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=_FAULT_B)

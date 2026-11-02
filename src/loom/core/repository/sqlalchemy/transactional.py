@@ -48,16 +48,17 @@ class _Bound:
 
 
 class ForeignSessionError(LoomError):
-    """A repository met the active session of another session manager.
+    """A repository, ``@transactional`` service or elevation sink met another manager's session.
 
     Each store, and each application, has its own session manager. Until the
     invocation scope of ADR 0008 opens one unit of work per store, a
-    repository refuses to join a session it did not open rather than write
-    through another engine with another store's row-level security
-    settings.
+    repository, a ``@transactional`` service and the elevation sink refuse to
+    join a session their session manager did not open rather than write, or
+    set elevation flags, through another engine with another store's
+    row-level security settings.
 
     Args:
-        own: The session manager of the repository.
+        own: The session manager of the repository, service or sink.
         active: The session manager that opened the active session.
     """
 
