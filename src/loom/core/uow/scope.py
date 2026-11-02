@@ -144,15 +144,16 @@ class Frame:
     Attributes:
         primary: The store the execution writes to.
         joined: Further stores it may write to (``Joined[...]``, T046).
+        stores: The primary store, then the joined stores in name order.
     """
 
     primary: StoreKey
     joined: frozenset[StoreKey] = frozenset()
+    stores: tuple[StoreKey, ...] = field(init=False, repr=False, compare=False)
 
-    @property
-    def stores(self) -> tuple[StoreKey, ...]:
-        """The primary store, then the joined stores in name order."""
-        return (self.primary, *sorted(self.joined - {self.primary}))
+    def __post_init__(self) -> None:
+        stores = (self.primary, *sorted(self.joined - {self.primary}))
+        object.__setattr__(self, "stores", stores)
 
 
 @dataclass(eq=False)
