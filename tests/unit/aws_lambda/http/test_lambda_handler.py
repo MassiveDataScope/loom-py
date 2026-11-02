@@ -26,6 +26,7 @@ from loom.composition import (
 )
 from loom.core.config.errors import ConfigError
 from loom.core.persistence import LAMBDA_PROFILE
+from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.unit.aws_lambda.http._contract_app import PUBLIC_PATH, bearer, seen_by
 from tests.unit.aws_lambda.http.conftest import lambda_client
@@ -262,6 +263,26 @@ def test_an_exclusion_reaching_a_templated_route_aborts_startup(
 
     with pytest.raises(ConfigError, match=r"served by the route '/items/\{item_id\}'"):
         create_app(config, adapter=adapter(), environment="test")
+
+
+def test_a_route_at_a_default_exclusion_requires_a_token_on_lambda(
+    contract_project: ProjectFactory,
+) -> None:
+    config = contract_project(exclude_paths=None, health_route=True)
+    handler = create_app(config, adapter=LambdaHTTPAdapter(), environment="test")
+    try:
+        reply = lambda_client(handler)("POST", "/health")
+    finally:
+        handler.close()
+
+    assert reply.status == 401
+
+
+def test_fastapi_refuses_a_route_at_its_health_path(contract_project: ProjectFactory) -> None:
+    config = contract_project(exclude_paths=None, health_route=True)
+
+    with pytest.raises(InterfaceCompilationError, match="reserved for the readiness route"):
+        create_app(config, adapter=FastAPIAdapter(), environment="test")
 
 
 def test_bind_before_recipe_is_refused() -> None:

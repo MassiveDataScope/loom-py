@@ -108,6 +108,13 @@ class PublicInterface(RestInterface[Item]):
     routes = (RestRoute(use_case=WhoAmI, method="POST", path="/whoami"),)
 '''
 
+_HEALTH_ROUTE_SOURCE = """
+
+class HealthLikeInterface(RestInterface[Item]):
+    prefix = "/health"
+    routes = (RestRoute(use_case=WhoAmI, method="POST", path=""),)
+"""
+
 
 def _module_of(directory: Path) -> str:
     # One module per project: the interpreter caches imports by name.
@@ -137,22 +144,27 @@ def write_contract_project(
     directory: Path,
     *,
     agents: tuple[str, ...] = (),
-    exclude_paths: tuple[str, ...] = (PUBLIC_PATH,),
+    exclude_paths: tuple[str, ...] | None = (PUBLIC_PATH,),
+    health_route: bool = False,
     **sections: Any,
 ) -> str:
     """Write the contract module and its YAML config into *directory*; return the config path.
 
     Args:
         directory: Where the project lives.
-        exclude_paths: Paths served without a token.
+        exclude_paths: Paths served without a token; ``None`` leaves the
+            default exclusions.
+        health_route: Also serve a business route at the literal ``/health``.
         agents: Agent artifacts a manifest declares; without them, the
             interfaces are discovered from the module.
         **sections: Extra top-level configuration sections.
     """
     module = _module_of(directory)
-    (directory / f"{module}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    source = _APP_SOURCE + (_HEALTH_ROUTE_SOURCE if health_route else "")
+    (directory / f"{module}.py").write_text(source, encoding="utf-8")
     secret_path = directory / "jwt.key"
     secret_path.write_text(SECRET, encoding="utf-8")
+    exclusions = {} if exclude_paths is None else {"exclude_paths": list(exclude_paths)}
     config: dict[str, Any] = {
         "app": {
             "name": "contract",
@@ -169,7 +181,7 @@ def write_contract_project(
                         "algorithms": ["HS256"],
                         "audience": AUDIENCE,
                         "roles_claim": "roles",
-                        "exclude_paths": list(exclude_paths),
+                        **exclusions,
                     }
                 },
                 "cors": {

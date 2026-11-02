@@ -64,7 +64,10 @@ class LambdaHTTPAdapter:
     ``create_app`` is the whole change: the same configuration and code serve
     the same routes, authentication and error bodies. Health, metrics, SQL
     endpoints, agents and OpenAPI are not served; a configuration declaring
-    metrics, an SQL endpoint or agents is refused.
+    metrics, an SQL endpoint or agents is refused. Left at their default, the
+    authentication exclusions are therefore none: a route at ``/health`` or
+    ``/docs`` requires a token. An explicit ``exclude_paths`` is honoured as
+    written.
 
     Unlike other adapters, :meth:`bind` opens the application: Lambda calls
     ``create_app`` at Init, and the returned :class:`LambdaHTTPHandler` keeps
@@ -98,7 +101,9 @@ class LambdaHTTPAdapter:
             )
         _refuse_metrics(source)
         _refuse_ai_section(source.config)
-        recipe, declared = compose_rest(source, authenticator=self._authenticator)
+        recipe, declared = compose_rest(
+            source, authenticator=self._authenticator, serves_documentation=False
+        )
         _refuse_sql_endpoints(source.config)
         _refuse_manifest_agents(recipe.discovered)
         self._declared = declared
