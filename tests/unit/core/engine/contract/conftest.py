@@ -222,22 +222,19 @@ class LifecycleProbe:
     phased: ClassVar[bool]
 
     def __init__(self, inner: UnitOfWork, log: Log) -> None:
-        self.inner = inner
+        # ``Any``: a phased adapter's ``flush``/``close``/``owner`` are not on ``UnitOfWork``.
+        self.inner: Any = inner
         self._log = log
         self.calls: list[str] = []
         self.ended: list[str] = []
 
     @property
-    def _phased_inner(self) -> Any:
-        return self.inner
-
-    @property
     def owner(self) -> object:
-        return self._phased_inner.owner
+        return self.inner.owner
 
     @property
     def physical(self) -> Any:
-        return self._phased_inner.physical
+        return self.inner.physical
 
     async def begin(self) -> None:
         self.calls.append("begin")
@@ -246,7 +243,7 @@ class LifecycleProbe:
 
     async def flush(self) -> None:
         self.calls.append("flush")
-        await self._phased_inner.flush()
+        await self.inner.flush()
 
     async def commit(self) -> None:
         self.calls.append("commit")
@@ -261,7 +258,7 @@ class LifecycleProbe:
     async def close(self) -> None:
         self.calls.append("close")
         try:
-            await self._phased_inner.close()
+            await self.inner.close()
         finally:
             self._log("uow.exit")
 
