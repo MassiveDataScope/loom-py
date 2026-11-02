@@ -7,11 +7,13 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.engine import make_url
 
-from loom.core.repository.sqlalchemy.transactional import get_active_session
+from loom.core.repository.sqlalchemy.transactional import _mutations, get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.uow.coordinator import PhysicalStore
 
 from ..conftest import RecordingSessionManager, make_session
 from .conftest import SessionPair, make_session_manager
@@ -359,6 +361,126 @@ class TestRollbackFailure:
         assert broken_rollback.manager.exits == 1
         assert "UoWRollbackFailed" in caplog.text
         assert get_active_session() is None
+
+
+# ---------------------------------------------------------------------------
+# Phased surface (driven by the ordered-commits coordinator)
+# ---------------------------------------------------------------------------
+
+
+class TestPhased:
+    def test_owner_is_the_session_manager(self) -> None:
+        sm = make_session_manager(make_session())
+
+        assert SQLAlchemyUnitOfWork(sm).owner is sm
+
+    def test_physical_names_the_url_without_credentials(self) -> None:
+        sm = make_session_manager(make_session())
+        sm.engine.url = make_url("postgresql+asyncpg://loom:secret@db:5432/app")
+
+        physical = SQLAlchemyUnitOfWork(sm).physical
+
+        assert physical == PhysicalStore(
+            backend="sqlalchemy", target="postgresql+asyncpg://db:5432/app"
+        )
+
+    async def test_flush_flushes_the_session(self) -> None:
+        session = make_session()
+        session.flush = AsyncMock()
+        uow = SQLAlchemyUnitOfWork(make_session_manager(session))
+        await uow.begin()
+
+        await uow.flush()
+
+        session.flush.assert_awaited_once()
+        await uow.close()
+
+    async def test_flush_before_begin_is_refused(self) -> None:
+        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+
+        with pytest.raises(RuntimeError, match=r"flush\(\) called before begin"):
+            await uow.flush()
+
+    async def test_close_exits_the_session(self) -> None:
+        sm = RecordingSessionManager(make_session())
+        uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
+        await uow.begin()
+
+        await uow.close()
+
+        assert sm.exits == 1
+
+    async def test_close_resets_the_active_session(self) -> None:
+        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        await uow.begin()
+
+        await uow.close()
+
+        assert get_active_session() is None
+
+    async def test_close_closes_the_atomic_transaction_signal(self) -> None:
+        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        await uow.begin()
+
+        await uow.close()
+
+        assert in_atomic_transaction() is False
+
+    async def test_close_resets_the_mutation_list(self) -> None:
+        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+        await uow.begin()
+
+        await uow.close()
+
+        assert _mutations.get() is None
+
+    async def test_a_failure_to_close_still_resets_the_tokens_and_propagates(self) -> None:
+        sm = RecordingSessionManager(make_session(), exit_error=ConnectionError("pool gone"))
+        uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
+        await uow.begin()
+
+        with pytest.raises(ConnectionError, match="pool gone"):
+            await uow.close()
+
+        assert (get_active_session(), in_atomic_transaction()) == (None, False)
+
+    async def test_a_cancelled_close_still_exits_the_session_and_resets_the_tokens(self) -> None:
+        gate = asyncio.Event()
+        sm = _GatedSessionManager(make_session(), gate)
+        uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
+        observed: list[bool] = []
+
+        async def close() -> None:
+            await uow.begin()
+            try:
+                await uow.close()
+            finally:
+                observed.append(get_active_session() is None)
+
+        task = asyncio.create_task(close())
+        await sm.exiting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        gate.set()
+        await asyncio.sleep(0)
+
+        assert observed == [True]
+        assert sm.exits == 1
+
+
+class _GatedSessionManager(RecordingSessionManager):
+    """Session manager whose exit blocks on ``gate``; ``exiting`` is set when it starts."""
+
+    def __init__(self, session: MagicMock, gate: asyncio.Event) -> None:
+        super().__init__(session)
+        self._gate = gate
+        self.exiting = asyncio.Event()
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.exiting.set()
+        await self._gate.wait()
+        await super().__aexit__(*exc)
 
 
 # ---------------------------------------------------------------------------

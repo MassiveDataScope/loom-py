@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
 from pymongo import AsyncMongoClient
 
 import loom.core.repository.mongo.uow as uow_module
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow.coordinator import (
+    InvocationOutcome,
+    OrderedCommits,
+    Participant,
+    PhysicalStore,
+    RolledBack,
+)
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -320,3 +329,138 @@ class TestCallerScopedSessionProbe:
 
         async with factory.create():
             assert repository.has_caller_scoped_session() is False
+
+
+def _unit_of_work(client: FakeMongoClient) -> uow_module.MongoUnitOfWork:
+    return uow_module.MongoUnitOfWork(cast(AsyncMongoClient[Any], client))
+
+
+class TestPhased:
+    """The phase-by-phase surface the ordered-commits coordinator drives."""
+
+    async def test_owner_is_the_client(self) -> None:
+        client = FakeMongoClient()
+
+        assert _unit_of_work(client).owner is client
+
+    async def test_physical_names_the_seed_addresses_sorted(self) -> None:
+        physical = _unit_of_work(FakeMongoClient()).physical
+
+        assert physical == PhysicalStore(backend="mongo", target="mongo-a:27017,mongo-b:27018")
+
+    async def test_physical_of_a_real_unconnected_client_carries_no_credentials(self) -> None:
+        client: AsyncMongoClient[Any] = AsyncMongoClient(
+            "mongodb://user:secret@db:27017/?replicaSet=rs0", connect=False
+        )
+        try:
+            physical = uow_module.MongoUnitOfWork(client).physical
+        finally:
+            await client.close()
+
+        assert physical.target == "db:27017"
+
+    async def test_flush_before_begin_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match=r"flush\(\) called before begin"):
+            await _unit_of_work(FakeMongoClient()).flush()
+
+    async def test_flush_commits_nothing(self) -> None:
+        client = FakeMongoClient()
+        uow = _unit_of_work(client)
+        await uow.begin()
+
+        await uow.flush()
+
+        assert client.committed == 0
+        await uow.close()
+
+    async def test_close_ends_the_session(self) -> None:
+        client = FakeMongoClient()
+        uow = _unit_of_work(client)
+        await uow.begin()
+
+        await uow.close()
+
+        assert client.sessions[0].ended is True
+
+    async def test_close_resets_the_active_session(self) -> None:
+        uow = _unit_of_work(FakeMongoClient())
+        await uow.begin()
+
+        await uow.close()
+
+        assert active_session() is None
+
+    async def test_close_closes_the_atomic_transaction_signal(self) -> None:
+        uow = _unit_of_work(FakeMongoClient())
+        await uow.begin()
+
+        await uow.close()
+
+        assert in_atomic_transaction() is False
+
+    async def test_a_failure_to_end_the_session_is_logged_and_the_token_reset(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = FakeMongoClient()
+        client.end_error = ConnectionError("end lost")
+        uow = _unit_of_work(client)
+        await uow.begin()
+
+        with caplog.at_level(logging.ERROR, logger=uow_module.__name__):
+            await uow.close()
+
+        assert active_session() is None
+        assert "UoWCloseFailed" in caplog.text
+
+    async def test_rollback_before_a_commit_aborts(self) -> None:
+        client = FakeMongoClient()
+        uow = _unit_of_work(client)
+        await uow.begin()
+
+        await uow.rollback()
+
+        assert client.aborted == 1
+        await uow.close()
+
+    async def test_rollback_after_a_failed_commit_sends_no_abort(self) -> None:
+        client = FakeMongoClient()
+        client.commit_error = ConnectionError("commit lost")
+        uow = _unit_of_work(client)
+        await uow.begin()
+        with pytest.raises(ConnectionError):
+            await uow.commit()
+
+        await uow.rollback()
+
+        assert client.aborted == 0
+        await uow.close()
+
+    async def test_rollback_before_begin_is_refused(self) -> None:
+        with pytest.raises(RuntimeError, match=r"rollback\(\) called before begin"):
+            await _unit_of_work(FakeMongoClient()).rollback()
+
+    async def test_a_failed_commit_through_the_coordinator_is_rolled_back_without_an_abort(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """One store behaves as ``__aexit__`` does: no abort follows a failed commit."""
+        client = FakeMongoClient()
+        client.commit_error = ConnectionError("commit lost")
+        coordinator = OrderedCommits({DEFAULT_STORE: _transactional(client)})
+        scope = _Scope()
+        await coordinator.enlist(scope, DEFAULT_STORE)
+
+        with caplog.at_level(logging.ERROR):
+            outcome = await coordinator.finish(scope, None)
+
+        assert outcome.stores == (RolledBack(DEFAULT_STORE, client.commit_error),)
+        assert client.aborted == 0
+        assert client.sessions[0].ended is True
+        assert active_session() is None
+        assert "UoWRollbackFailed" not in caplog.text
+
+
+@dataclass
+class _Scope:
+    participants: dict[StoreKey, Participant] = field(default_factory=dict)
+    closed: bool = False
+    outcome: InvocationOutcome | None = None

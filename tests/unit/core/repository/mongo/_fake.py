@@ -277,6 +277,13 @@ class FakeSession:
             raise self._client.end_error
 
 
+class FakeTopology:
+    """The topology description of an unconnected client: its seeds, unknown."""
+
+    def server_descriptions(self) -> dict[tuple[str, int], None]:
+        return {("mongo-b", 27018): None, ("mongo-a", 27017): None}
+
+
 class FakeAdmin:
     """The ``admin`` database: answers ``ping`` unless the client is told to fail."""
 
@@ -326,6 +333,10 @@ class FakeMongoClient:
     @property
     def admin(self) -> FakeAdmin:
         return FakeAdmin(self)
+
+    @property
+    def topology_description(self) -> FakeTopology:
+        return FakeTopology()
 
     def __getitem__(self, name: str) -> FakeDatabase:
         return FakeDatabase(self, name)

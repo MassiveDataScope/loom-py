@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import anyio
 import pytest
+from sqlalchemy.engine import make_url
 
 from loom.core.persistence.stores import StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
@@ -184,11 +185,28 @@ class TestEnlist:
         assert participant.phased is phased
         assert participant.physical == physical
 
+    async def test_a_phased_participant_exposes_the_owner_of_its_unit_of_work(self) -> None:
+        store = PhasedStore(S0, Ledger())
 
-@pytest.mark.xfail(strict=True, reason="T047b / PR 2: loom's own units of work become phased")
+        participant = await _coordinator(store).enlist(Scope(), S0)
+
+        assert participant.owner is store.owner
+
+    async def test_a_single_phase_participant_has_no_owner(self) -> None:
+        participant = await _coordinator(ThirdPartyStore(S0, Ledger())).enlist(Scope(), S0)
+
+        assert participant.owner is None
+
+
+def _session_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.engine.url = make_url("sqlite+aiosqlite:///loom.db")
+    return manager
+
+
 @pytest.mark.parametrize(
     "uow",
-    [SQLAlchemyUnitOfWork(MagicMock()), MongoUnitOfWork(MagicMock())],
+    [SQLAlchemyUnitOfWork(_session_manager()), MongoUnitOfWork(MagicMock())],
     ids=["sqlalchemy", "mongo"],
 )
 def test_loom_transactional_units_of_work_are_phased(uow: UnitOfWork) -> None:

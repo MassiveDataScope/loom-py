@@ -148,7 +148,15 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
     phased: ClassVar[bool]
     """``True``: the coordinator drives this unit of work phase by phase."""
 
-    physical: PhysicalStore
+    @property
+    def owner(self) -> object:
+        """The session manager or client every session of this unit of work comes from."""
+        ...
+
+    @property
+    def physical(self) -> PhysicalStore:
+        """Where this unit of work's writes land."""
+        ...
 
     async def flush(self) -> None:
         """Send pending writes to the store without committing them."""
@@ -263,6 +271,8 @@ class Participant:
         transactional: Whether its unit of work can roll back.
         phased: Whether its unit of work declares the :class:`PhasedUnitOfWork`
             marker.
+        owner: The session manager or client its sessions come from, or
+            ``None`` for a unit of work driven in a single phase.
         first_write: Invocation-wide order of its first write, or ``None``.
         wrote: Whether a write went through it.
     """
@@ -273,11 +283,12 @@ class Participant:
         self.first_write: int | None = None
         self.wrote = False
         self._driver: _Driver
+        self.owner: object | None
         if _is_phased(uow):
-            self.phased, self.physical = True, uow.physical
+            self.phased, self.physical, self.owner = True, uow.physical, uow.owner
             self._driver = _PhasedDriver(key, uow)
         else:
-            self.phased, self.physical = False, UNKNOWN_PHYSICAL
+            self.phased, self.physical, self.owner = False, UNKNOWN_PHYSICAL, None
             self._driver = _SinglePhaseDriver(uow)
 
     def record_write(self, order: int) -> None:

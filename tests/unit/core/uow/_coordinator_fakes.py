@@ -129,6 +129,7 @@ class PhasedStore(_RecordingStore):
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
         self.physical = PhysicalStore(backend="fake", target=f"memory://{key}")
+        self.owner: object = object()
         self._token: Token[bool] | None = None
 
     async def begin(self) -> None:

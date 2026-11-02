@@ -9,7 +9,8 @@ opt-in (``stores.<name>.transactions: true``):
   reads, so a :class:`~loom.core.repository.mongo.repository.RepositoryMongo`
   built with ``session_provider=active_session`` joins the transaction of the
   use case it runs in. The token is reset on exit, as the SQLAlchemy unit of
-  work does.
+  work does. It declares the coordinator's ``phased`` marker: ``begin``,
+  ``flush``, ``commit``, ``rollback`` and ``close`` are separate calls.
 - :class:`NoOpMongoUnitOfWork` (default) opens nothing and touches no
   ``ContextVar``, mirroring
   :class:`~loom.core.repository.dynamodb.uow.DynamoUnitOfWork`: each driver
@@ -33,6 +34,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from loom.core.logger import get_logger
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.coordinator import PhysicalStore
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -98,12 +100,29 @@ class MongoUnitOfWork:
     """
 
     transactional: ClassVar[bool] = True
+    phased: ClassVar[bool] = True
 
     def __init__(self, client: AsyncMongoClient[Any]) -> None:
         self._client = client
         self._session: AsyncClientSession | None = None
         self._token: contextvars.Token[AsyncClientSession | None] | None = None
         self._transaction_token: contextvars.Token[bool] | None = None
+        self._commit_attempted = False
+
+    @property
+    def owner(self) -> AsyncMongoClient[Any]:
+        """The client every session of this unit of work is started on."""
+        return self._client
+
+    @property
+    def physical(self) -> PhysicalStore:
+        """The cluster this unit of work writes to, named by its seed addresses.
+
+        Read from the topology description, which needs no connection.
+        """
+        servers = self._client.topology_description.server_descriptions()
+        target = ",".join(sorted(f"{host}:{port}" for host, port in servers))
+        return PhysicalStore(backend="mongo", target=target)
 
     async def begin(self) -> None:
         """Start a session and a transaction, publishing the session to :func:`active_session`.
@@ -127,23 +146,52 @@ class MongoUnitOfWork:
         self._transaction_token = open_atomic_transaction()
         _log.debug("UoWBegin")
 
+    async def flush(self) -> None:
+        """Nothing to flush: every write already reached the server inside the transaction.
+
+        Raises:
+            RuntimeError: If ``begin`` has not been called.
+        """
+        self._require_session("flush")
+
     async def commit(self) -> None:
         """Commit the transaction.
 
         Raises:
             RuntimeError: If ``begin`` has not been called.
         """
-        await self._require_session("commit").commit_transaction()
+        session = self._require_session("commit")
+        self._commit_attempted = True
+        await session.commit_transaction()
         _log.debug("UoWCommit")
 
     async def rollback(self) -> None:
-        """Abort the transaction.
+        """Abort the transaction, unless a commit was already attempted.
+
+        After a commit, failed or not, pymongo has marked the transaction
+        committed and refuses an abort, so nothing is sent: the unit of work
+        does not abort after a failed commit, as :meth:`__aexit__` never did.
 
         Raises:
             RuntimeError: If ``begin`` has not been called.
         """
-        await self._require_session("rollback").abort_transaction()
+        session = self._require_session("rollback")
+        if self._commit_attempted:
+            return
+        await session.abort_transaction()
         _log.debug("UoWRollback")
+
+    async def close(self) -> None:
+        """End the session and reset the ContextVars :meth:`begin` published.
+
+        The session ends under ``asyncio.shield``, so a cancellation arriving
+        meanwhile lets it finish; the tokens are reset whatever happens. A
+        failure while ending is logged, not raised.
+        """
+        try:
+            await asyncio.shield(self._end_session())
+        finally:
+            self._reset_context()
 
     async def __aenter__(self) -> MongoUnitOfWork:
         """Begin the unit of work and return it."""
