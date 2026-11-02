@@ -50,12 +50,8 @@ from celery.signals import (  # type: ignore[import-untyped]
 )
 
 from loom.celery._discovery import (
-    _apply_job_config_if_present,
     _emit_worker_init_graph,
-    _merge_unique,
     _resolve_compilables_and_jobs,
-    _use_cases_from_interfaces,
-    _WorkerResolved,
 )
 from loom.celery.config import CeleryConfig, CeleryRuntimeConfig, create_celery_app
 from loom.celery.runner import (
@@ -76,6 +72,12 @@ from loom.core.async_bridge import build_backend_options
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigKey
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.worker import (
+    WorkerComponents,
+    apply_job_overrides,
+    merge_unique,
+    use_cases_from_interfaces,
+)
 from loom.core.engine.compilable import Compilable
 from loom.core.persistence import WORKER_PROFILE
 from loom.core.persistence.stores import NONE_BACKEND
@@ -366,16 +368,16 @@ class CeleryAdapter:
         ctx = source.config
         celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
         resolved = _resolve_compilables_and_jobs(ctx, self._jobs, self._use_cases)
-        compilables = _merge_unique(
-            resolved.compilables, _use_cases_from_interfaces(self._interfaces)
+        compilables = merge_unique(
+            resolved.compilables, use_cases_from_interfaces(self._interfaces)
         )
         for job_type in resolved.jobs:
-            _apply_job_config_if_present(ctx, job_type)
-        resolved = _WorkerResolved(
+            apply_job_overrides(ctx, job_type)
+        resolved = WorkerComponents(
             compilables=compilables,
             jobs=resolved.jobs,
             models=tuple(dict.fromkeys(resolved.models)),
-            callbacks=_merge_unique(resolved.callbacks, self._callbacks),
+            callbacks=merge_unique(resolved.callbacks, self._callbacks),
         )
         _emit_worker_init_graph(resolved)
         # Without a default store the worker pays for no persistence at all: it

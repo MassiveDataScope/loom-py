@@ -5,12 +5,14 @@ from loom.core.errors.errors import (
     Forbidden,
     InsufficientAuthentication,
     LoomError,
+    MalformedJobMessage,
     NotFound,
     RateLimited,
     RuleViolation,
     RuleViolations,
     SystemError,
     Unauthenticated,
+    UnknownJob,
 )
 
 __all__ = [
@@ -20,10 +22,12 @@ __all__ = [
     "Forbidden",
     "InsufficientAuthentication",
     "LoomError",
+    "MalformedJobMessage",
     "NotFound",
     "RateLimited",
     "RuleViolation",
     "RuleViolations",
     "SystemError",
     "Unauthenticated",
+    "UnknownJob",
 ]

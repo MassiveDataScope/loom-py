@@ -1,22 +1,10 @@
-"""Celery-layer constants: task names, queues, and worker manifest keys."""
+"""Celery-layer constants: callback task names and queues."""
 
 from __future__ import annotations
 
-from enum import StrEnum
+from loom.core.job.envelope import TASK_JOB_PREFIX as TASK_JOB_PREFIX
 
-TASK_JOB_PREFIX = "loom.job"
 TASK_CALLBACK_PREFIX = "loom.callback"
 TASK_CALLBACK_ERROR_PREFIX = "loom.callback_error"
 
 QUEUE_DEFAULT = "default"
-
-
-class WorkerManifestAttr(StrEnum):
-    """Attribute names expected on worker manifest modules."""
-
-    MANIFEST = "MANIFEST"
-    MODELS = "MODELS"
-    USE_CASES = "USE_CASES"
-    INTERFACES = "INTERFACES"
-    JOBS = "JOBS"
-    CALLBACKS = "CALLBACKS"

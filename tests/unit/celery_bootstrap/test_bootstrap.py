@@ -14,11 +14,11 @@ import pytest
 import loom.celery._discovery as discovery
 import loom.celery.adapter as adapter
 import loom.celery.bootstrap as boot
-from loom.celery._discovery import _apply_job_config_if_present
 from loom.celery.bootstrap import WorkerBootstrapResult, WorkerManifest
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
+from loom.core.discovery.worker import DuplicateJobName, apply_job_overrides
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.registry import UseCaseRegistry
@@ -72,17 +72,36 @@ def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
 
 
 # ---------------------------------------------------------------------------
-# _apply_job_config_if_present
+# Duplicate job names
 # ---------------------------------------------------------------------------
 
 
-class TestApplyJobConfigIfPresent:
+def test_celery_discovery_rejects_duplicate_job_qualnames() -> None:
+    def make_job() -> type[Job[None]]:
+        class Duplicate(Job[None]):
+            def execute(self) -> None:
+                return None
+
+        return Duplicate
+
+    ctx = ConfigContext.from_dict({"app": {"name": "duplicate-jobs"}})
+    jobs = [make_job(), make_job()]
+
+    with pytest.raises(DuplicateJobName):
+        discovery._resolve_compilables_and_jobs(ctx, jobs, [])
+
+
+# apply_job_overrides
+# ---------------------------------------------------------------------------
+
+
+class TestApplyJobOverrides:
     def test_applies_override_when_section_exists(self, monkeypatch: pytest.MonkeyPatch) -> None:
         raw = _make_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
         monkeypatch.setattr(_SyncJob, "__queue__", _SyncJob.__queue__, raising=False)
         monkeypatch.setattr(_SyncJob, "__retries__", _SyncJob.__retries__, raising=False)
 
-        _apply_job_config_if_present(raw, _SyncJob)
+        apply_job_overrides(raw, _SyncJob)
 
         assert _SyncJob.__queue__ == "override"
         assert _SyncJob.__retries__ == 5
@@ -90,12 +109,12 @@ class TestApplyJobConfigIfPresent:
     def test_does_not_raise_when_section_absent(self) -> None:
         raw = _make_config()
         # Must not raise even though jobs._SyncJob section is missing
-        _apply_job_config_if_present(raw, _SyncJob)
+        apply_job_overrides(raw, _SyncJob)
 
     def test_classvar_unchanged_when_section_absent(self) -> None:
         raw = _make_config()
         original = _SyncJob.__queue__
-        _apply_job_config_if_present(raw, _SyncJob)
+        apply_job_overrides(raw, _SyncJob)
         assert _SyncJob.__queue__ == original
 
 
@@ -407,7 +426,7 @@ class TestBootstrapWorkerTaskRegistration:
     def test_starts_without_jobs_or_discovery_with_a_warning(
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="loom.celery._discovery"):
+        with caplog.at_level(logging.WARNING, logger="loom.core.discovery.worker"):
             result = self._run(tmp_path, jobs=None)
 
         assert "no Job classes discovered" in caplog.text

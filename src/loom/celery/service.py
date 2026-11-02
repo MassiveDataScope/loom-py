@@ -32,11 +32,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from celery import Celery  # type: ignore[import-untyped]
 
-from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.identity import current_identity
 from loom.core.identity.wire import encode_identity
 from loom.core.job.context import add_pending_dispatch
+from loom.core.job.envelope import wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
@@ -358,7 +359,7 @@ class CeleryJobService:
 
         pending = _PendingCeleryDispatch(
             celery_app=self._app,
-            task_name=f"{TASK_JOB_PREFIX}.{job_type.__qualname__}",
+            task_name=wire_job_name(job_type.__qualname__),
             task_id=task_id,
             payload=payload or {},
             params=params,

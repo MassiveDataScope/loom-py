@@ -10,11 +10,10 @@ import pytest
 from loom.celery.config import (
     CeleryConfig,
     CeleryRuntimeConfig,
-    JobConfig,
-    apply_job_config,
     create_celery_app,
 )
 from loom.core.config.convert import convert_config
+from loom.core.job.config import JobConfig, apply_job_config
 from loom.core.job.job import Job
 from loom.core.model.redaction import Dsn
 
