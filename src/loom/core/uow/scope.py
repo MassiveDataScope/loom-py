@@ -259,6 +259,24 @@ def current_scope() -> InvocationScope | None:
     return _scope.get()
 
 
+def refuse_inside_open_scope(unit_of_work: object) -> None:
+    """Refuse to enter ``unit_of_work`` inside an open invocation scope.
+
+    A closed scope is not refused: a task that outlived its use case still
+    sees it, and may open a transaction of its own.
+
+    Args:
+        unit_of_work: The unit of work being entered.
+
+    Raises:
+        UnitOfWorkInsideScope: When the scope published in this context is
+            still open.
+    """
+    scope = _scope.get()
+    if scope is not None and not scope.closed:
+        raise UnitOfWorkInsideScope.entering(unit_of_work)
+
+
 @asynccontextmanager
 async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]:
     """Open an invocation scope owned by the current task and publish it.

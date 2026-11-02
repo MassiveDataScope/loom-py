@@ -35,7 +35,7 @@ from loom.core.logger import get_logger
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import PhysicalStore
-from loom.core.uow.scope import UnitOfWorkInsideScope, current_scope
+from loom.core.uow.scope import refuse_inside_open_scope
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -198,11 +198,10 @@ class MongoUnitOfWork:
         """Begin the unit of work and return it.
 
         Raises:
-            UnitOfWorkInsideScope: Inside an invocation scope, where this
-                transaction would commit on its own, outside the invocation.
+            UnitOfWorkInsideScope: Inside an open invocation scope, where
+                this transaction would commit on its own, outside the invocation.
         """
-        if current_scope() is not None:
-            raise UnitOfWorkInsideScope.entering(self)
+        refuse_inside_open_scope(self)
         await self.begin()
         return self
 

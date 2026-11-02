@@ -35,6 +35,7 @@ from loom.core.uow.scope import (
     current_scope,
     invocation,
     invocation_error,
+    refuse_inside_open_scope,
 )
 
 from ._coordinator_fakes import (
@@ -467,6 +468,35 @@ class TestInvocation:
         await asyncio.create_task(open_one())
 
         assert current_scope() is None
+
+
+class TestRefuseInsideOpenScope:
+    def test_outside_a_scope_nothing_is_refused(self) -> None:
+        assert _passes_the_guard() is True
+
+    async def test_inside_an_open_scope_the_unit_of_work_is_refused(self) -> None:
+        async with invocation(_coordinator(PhasedStore(S0, Ledger()))):
+            with pytest.raises(UnitOfWorkInsideScope, match="`async with object`"):
+                refuse_inside_open_scope(object())
+
+    async def test_a_closed_scope_a_task_still_sees_refuses_nothing(self) -> None:
+        go = asyncio.Event()
+        survivors: list[asyncio.Task[bool]] = []
+
+        async def late() -> bool:
+            await go.wait()
+            return _passes_the_guard()
+
+        async with invocation(_coordinator(PhasedStore(S0, Ledger()))):
+            survivors.append(asyncio.create_task(late()))
+        go.set()
+
+        assert await survivors[0] is True
+
+
+def _passes_the_guard() -> bool:
+    refuse_inside_open_scope(object())
+    return True
 
 
 def _outcome(*stores: Any) -> InvocationOutcome:

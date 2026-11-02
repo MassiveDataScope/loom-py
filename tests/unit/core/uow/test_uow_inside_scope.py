@@ -10,6 +10,7 @@ session opens. Outside a scope ``async with uow:`` works as it always did
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 
 import pytest
@@ -115,6 +116,39 @@ class TestOutsideAScope:
         await _enter(_mongo(client))
 
         assert client.committed == 1
+
+
+class TestAfterTheScopeClosed:
+    """A task that outlived its use case still sees the closed scope, and may open its own."""
+
+    async def test_a_sqlalchemy_unit_of_work_commits(self) -> None:
+        session = make_session()
+
+        await _enter_after_the_scope_closed(_sqlalchemy(RecordingSessionManager(session)))
+
+        session.commit.assert_awaited_once()
+
+    async def test_a_mongo_unit_of_work_commits(self) -> None:
+        client = FakeMongoClient()
+
+        await _enter_after_the_scope_closed(_mongo(client))
+
+        assert client.committed == 1
+
+
+async def _enter_after_the_scope_closed(uow: UnitOfWork) -> None:
+    """Enter ``uow`` from a task spawned inside a scope, once that scope has closed."""
+    go = asyncio.Event()
+    survivors: list[asyncio.Task[None]] = []
+
+    async def late() -> None:
+        await go.wait()
+        await _enter(uow)
+
+    async with invocation(_scope_coordinator()):
+        survivors.append(asyncio.create_task(late()))
+    go.set()
+    await survivors[0]
 
 
 def _store() -> PhasedStore:
