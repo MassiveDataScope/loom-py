@@ -42,6 +42,9 @@ class TestLoomError:
     def test_str_is_message(self) -> None:
         assert str(LoomError("readable message", code="x")) == "readable message"
 
+    def test_is_retryable_by_default(self) -> None:
+        assert LoomError("msg", code="x").retryable is True
+
 
 # ---------------------------------------------------------------------------
 # Hierarchy — one parametrized test replaces eight individual issubclass checks

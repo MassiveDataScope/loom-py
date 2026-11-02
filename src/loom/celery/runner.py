@@ -50,7 +50,6 @@ from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.tracing import reset_trace_id, set_trace_id
-from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -262,25 +261,16 @@ def _is_eager_request(task_self: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-_NOT_RETRYABLE = (StoresNotCommitted, ScopeOwnershipError, UnitOfWorkInsideScope)
-"""Invocation errors a retry would repeat or make worse."""
-
-
 def _is_retryable(exc: Exception) -> bool:
-    """Whether re-running the job could still fix ``exc``.
+    """Whether re-running the job could still fix ``exc``, as the error itself declares.
 
-    A post-commit failure of a committed transaction cannot: the write
-    already stands and a retry would apply it twice.  One raised without a
-    commit (a read-only job, or none owning a unit of work) is retryable.
-    Neither can :class:`~loom.core.uow.scope.StoresNotCommitted`: a store
-    may have committed, and a retry would apply it twice.  Nor can a
-    programming error a retry meets again:
-    :class:`~loom.core.uow.scope.ScopeOwnershipError` and
-    :class:`~loom.core.uow.scope.UnitOfWorkInsideScope`.
+    A :class:`~loom.core.errors.LoomError` says so through ``retryable``: a
+    post-commit failure of a committed transaction, or
+    :class:`~loom.core.uow.scope.StoresNotCommitted`, would apply a write
+    twice, and a programming error a retry meets again is not retryable
+    either. Any other exception is.
     """
-    if isinstance(exc, _NOT_RETRYABLE):
-        return False
-    return not (isinstance(exc, PostCommitError) and exc.committed)
+    return bool(getattr(exc, "retryable", True))
 
 
 def _log_post_commit_failure(exc: Exception, job: str) -> None:

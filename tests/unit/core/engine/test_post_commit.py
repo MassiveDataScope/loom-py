@@ -16,6 +16,15 @@ from loom.core.engine.post_commit import (
 from loom.core.errors import LoomError
 
 
+@pytest.mark.parametrize(("committed", "retryable"), [(True, False), (False, True)])
+def test_a_post_commit_error_is_retryable_only_without_a_commit(
+    committed: bool, retryable: bool
+) -> None:
+    error = PostCommitError(committed=committed, failures=(ConnectionError("broker down"),))
+
+    assert error.retryable is retryable
+
+
 async def test_drain_runs_actions_in_enqueue_order() -> None:
     calls: list[str] = []
     channel = PostCommitChannel()

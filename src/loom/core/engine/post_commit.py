@@ -45,6 +45,11 @@ class PostCommitError(LoomError):
             code=ErrorCode.POST_COMMIT_FAILURE,
         )
 
+    @property
+    def retryable(self) -> bool:  # type: ignore[override]
+        """Whether a retry is safe: not once the transaction committed, it would apply twice."""
+        return not self.committed
+
 
 class PostCommitChannel:
     """Ordered queue of actions to run after the owning transaction commits.

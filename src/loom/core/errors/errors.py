@@ -18,10 +18,16 @@ class LoomError(Exception):
         message: Human-readable description of the error.
         code: Machine-readable discriminator (e.g. ``"not_found"``).
 
+    Attributes:
+        retryable: Whether running the work again could still succeed; a
+            subclass a retry would repeat or make worse sets it ``False``.
+
     Example::
 
         raise NotFound("User", id=42)
     """
+
+    retryable: bool = True
 
     def __init__(self, message: str, *, code: str) -> None:
         self.message = message

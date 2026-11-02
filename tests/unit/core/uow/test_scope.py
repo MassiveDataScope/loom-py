@@ -16,7 +16,7 @@ import pytest
 from celery.backends.base import BaseBackend
 
 from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import ForeignSessionError
+from loom.core.errors.errors import ForeignSessionError, SystemError
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.coordinator import (
     Committed,
@@ -594,6 +594,18 @@ class TestInvocationError:
 
 
 class TestErrors:
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ScopeOwnershipError("closed"),
+            UnitOfWorkInsideScope.entering(object()),
+            StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
+        ],
+        ids=["ownership", "inside-scope", "stores"],
+    )
+    def test_each_error_is_not_retryable(self, error: SystemError) -> None:
+        assert error.retryable is False
+
     def test_stores_not_committed_names_every_store_and_how_it_ended(self) -> None:
         error = StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1"))))
 

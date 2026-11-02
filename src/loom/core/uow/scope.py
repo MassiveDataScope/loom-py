@@ -60,6 +60,9 @@ class ScopeOwnershipError(SystemError):
         message: Which of those happened.
     """
 
+    retryable = False
+    """A programming error: a retry meets it again."""
+
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.INVOCATION_SCOPE_FOREIGN_TASK)
 
@@ -73,6 +76,9 @@ class UnitOfWorkInsideScope(SystemError):
     Args:
         message: Names the unit of work.
     """
+
+    retryable = False
+    """A programming error: a retry meets it again."""
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.UOW_INSIDE_SCOPE)
@@ -109,6 +115,9 @@ class StoresNotCommitted(SystemError):
             a process boundary: the causes it holds may carry driver details
             and may not pickle, so only the message travels.
     """
+
+    retryable = False
+    """A store may have committed: a retry would apply its write twice."""
 
     def __init__(self, message: str, outcome: InvocationOutcome | None = None) -> None:
         self.outcome = outcome
