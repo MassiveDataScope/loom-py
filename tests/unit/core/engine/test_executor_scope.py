@@ -20,7 +20,7 @@ from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.coordinator import (
     Committed,
     InvocationOutcome,
@@ -66,7 +66,7 @@ class _Stores:
         return self.created[-1]
 
 
-def _executor(stores: _Stores, metrics: Metrics | None = None) -> RuntimeExecutor:
+def _executor(stores: UnitOfWorkFactory, metrics: Metrics | None = None) -> RuntimeExecutor:
     return RuntimeExecutor(UseCaseCompiler(), uow_factory=stores, metrics=metrics)
 
 
