@@ -369,8 +369,10 @@ class TestFramePush:
             async with scope.frame(Frame(S0)):
                 pass
 
+        pushing = asyncio.create_task(push())  # runs only once awaited below
+
         with pytest.raises(ScopeOwnershipError):
-            await asyncio.create_task(push())
+            await pushing
 
         assert (scope.frames, scope.participants) == ([], {})
 
@@ -413,11 +415,14 @@ class TestInvocation:
         scopes: list[InvocationScope] = []
         coordinator = _coordinator(PhasedStore(S0, Ledger()))
 
-        with pytest.raises(Boom):
+        async def enlist_then_fail() -> None:
             async with invocation(coordinator) as scope:
                 scopes.append(scope)
                 await scope.coordinator.enlist(scope, S0)
                 raise error
+
+        with pytest.raises(Boom):
+            await enlist_then_fail()
 
         assert scopes[0].outcome == InvocationOutcome((RolledBack(S0, error),))
 
