@@ -445,27 +445,29 @@ class TestHungRollback:
         coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
         await coordinator.enlist(scope, S0)
 
-        await coordinator.finish(scope, Boom("business"))
+        await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
 
         assert ledger.calls_of(S0) == ["begin", "rollback", "close"]
 
     async def test_the_store_is_reported_rolled_back(self) -> None:
-        coordinator, scope = _coordinator(_hung_rollback(Ledger())), Scope()
+        ledger = Ledger()
+        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
         await coordinator.enlist(scope, S0)
         error = Boom("business")
 
-        outcome = await coordinator.finish(scope, error)
+        outcome = await _finish_within_a_second(coordinator, scope, error, ledger)
 
         assert outcome.stores == (RolledBack(S0, error),)
 
     async def test_the_timeout_is_logged_as_a_failed_rollback(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        coordinator, scope = _coordinator(_hung_rollback(Ledger())), Scope()
+        ledger = Ledger()
+        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
         await coordinator.enlist(scope, S0)
 
         with caplog.at_level(logging.ERROR):
-            await coordinator.finish(scope, Boom("business"))
+            await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
 
         assert "UoWRollbackFailed" in caplog.text
 
@@ -485,6 +487,23 @@ class TestHungRollback:
         await asyncio.gather(task, return_exceptions=True)
 
         assert done == {task}
+
+
+async def _finish_within_a_second(
+    coordinator: OrderedCommits, scope: Scope, error: BaseException, ledger: Ledger
+) -> InvocationOutcome:
+    """Finish, failing rather than hanging the suite if the rollback is unbounded.
+
+    ``finish`` waits through cancellation, so the bound is a separate wait:
+    on expiry the gate opens to let the rollback end, then the test fails.
+    """
+    finishing = asyncio.ensure_future(coordinator.finish(scope, error))
+    done, _ = await asyncio.wait([finishing], timeout=1.0)
+    if not done:
+        ledger.gate.set()
+        await asyncio.gather(finishing, return_exceptions=True)
+        pytest.fail("the rollback was not bounded: finish waited for it past one second")
+    return finishing.result()
 
 
 def _hung_rollback(ledger: Ledger) -> PhasedStore:
