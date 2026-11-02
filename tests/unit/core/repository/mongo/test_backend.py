@@ -15,16 +15,22 @@ import pytest
 import loom.core.connections.mongo.client as mongo_island
 import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import PersistenceWiring, resolve_backend
 from loom.core.persistence.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
+from loom.core.persistence.stores import StoreKey
+from loom.core.repository.abc import Creatable
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
+from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
+from loom.core.uow.coordinator import OrderedCommits
+from loom.core.uow.scope import Frame, invocation
 from tests.helpers.persistence import build_backend
 
 from ._fake import FakeMongoClient
 from .conftest import Article
+from .test_repository import ArticleCreate
 
 _SRC = Path(__file__).resolve().parents[5] / "src"
 
@@ -258,7 +264,6 @@ def test_prepare_models_accepts_models_with_a_client_or_generated_key(
     wiring.prepare_models((Article,))
 
 
-@pytest.mark.asyncio
 async def test_readiness_is_true_when_ping_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     wiring = _wiring(monkeypatch, FakeMongoClient(), _SECTION)
 
@@ -266,7 +271,6 @@ async def test_readiness_is_true_when_ping_answers(monkeypatch: pytest.MonkeyPat
     assert await wiring.readiness() is True
 
 
-@pytest.mark.asyncio
 async def test_readiness_is_false_and_logged_when_ping_fails(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -282,7 +286,6 @@ async def test_readiness_is_false_and_logged_when_ping_fails(
     assert "ConnectionError" in caplog.text
 
 
-@pytest.mark.asyncio
 async def test_lifespan_closes_the_client_on_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     client = FakeMongoClient()
     wiring = _wiring(monkeypatch, client, _SECTION)
@@ -293,7 +296,6 @@ async def test_lifespan_closes_the_client_on_shutdown(monkeypatch: pytest.Monkey
     assert client.closed is True
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("section", "expected_sessions"),
     [
@@ -312,6 +314,60 @@ async def test_transactions_flag_selects_the_unit_of_work(
         pass
 
     assert len(client.sessions) == expected_sessions
+
+
+_AUDIT = StoreKey("audit")
+
+
+def _audit_store(
+    monkeypatch: pytest.MonkeyPatch, fake_client: FakeMongoClient
+) -> PersistenceWiring:
+    """Wire a transactional Mongo store under a key other than ``default``."""
+    monkeypatch.setattr(
+        backend_module, "build_async_mongo_client", lambda _cfg, **_extra: fake_client
+    )
+    section = {"backend": "mongo", **_SECTION, "transactions": True}
+    ctx = ConfigContext.from_dict(
+        {
+            "app": {"name": "demo"},
+            "persistence": {"cursors": {"signing": "ephemeral"}},
+            "stores": {"default": section, "audit": section},
+        }
+    )
+    return build_backend(MongoBackend(), ctx, (Article,), SERVER_PROFILE, store=_AUDIT)
+
+
+async def test_a_store_s_repositories_write_in_its_own_unit_of_work_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeMongoClient()
+    wiring = _audit_store(monkeypatch, client)
+    container = LoomContainer()
+    wiring.repo_registration_module(container)
+    assert wiring.uow_factory is not None
+    coordinator = OrderedCommits({_AUDIT: wiring.uow_factory})
+
+    async with invocation(coordinator) as scope, scope.frame(Frame(_AUDIT)):
+        await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
+        active = container.resolve(MongoSessions).active_session
+
+    assert client.collection("articles").last_session is client.sessions[0]
+    assert active is client.sessions[0]
+
+
+async def test_a_store_s_unit_of_work_entered_by_hand_serves_its_repositories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeMongoClient()
+    wiring = _audit_store(monkeypatch, client)
+    container = LoomContainer()
+    wiring.repo_registration_module(container)
+    assert wiring.uow_factory is not None
+
+    async with wiring.uow_factory.create():
+        await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
+
+    assert client.collection("articles").last_session is client.sessions[0]
 
 
 def test_missing_extra_names_it() -> None:
