@@ -11,6 +11,8 @@ session opens. Outside a scope ``async with uow:`` works as it always did
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
@@ -36,8 +38,43 @@ def _sqlalchemy(manager: RecordingSessionManager) -> SQLAlchemyUnitOfWork:
     return SQLAlchemyUnitOfWork(manager)  # type: ignore[arg-type]
 
 
-def _mongo(client: FakeMongoClient) -> MongoUnitOfWork:
-    return MongoUnitOfWork(cast(AsyncMongoClient[Any], client))
+@dataclass(frozen=True)
+class _Case:
+    """A transactional unit of work and probes of what it did to its backend.
+
+    Attributes:
+        uow: The unit of work, not yet entered.
+        name: Its class name, as the refusal names it.
+        sessions: How many sessions it went through.
+        commits: How many commits reached the backend.
+    """
+
+    uow: UnitOfWork
+    name: str
+    sessions: Callable[[], int]
+    commits: Callable[[], int]
+
+
+def _sqlalchemy_case() -> _Case:
+    session = make_session()
+    manager = RecordingSessionManager(session)
+    return _Case(
+        _sqlalchemy(manager),
+        "SQLAlchemyUnitOfWork",
+        lambda: manager.exits,
+        lambda: session.commit.await_count,
+    )
+
+
+def _mongo_case() -> _Case:
+    client = FakeMongoClient()
+    uow = MongoUnitOfWork(cast(AsyncMongoClient[Any], client))
+    return _Case(uow, "MongoUnitOfWork", lambda: len(client.sessions), lambda: client.committed)
+
+
+_CASES = pytest.mark.parametrize(
+    "make_case", [_sqlalchemy_case, _mongo_case], ids=["sqlalchemy", "mongo"]
+)
 
 
 def _scope_coordinator() -> OrderedCommits:
@@ -50,36 +87,27 @@ async def _enter(uow: UnitOfWork) -> None:
 
 
 class TestInsideAScope:
-    async def test_a_sqlalchemy_unit_of_work_is_refused(self) -> None:
-        uow = _sqlalchemy(RecordingSessionManager(make_session()))
+    @_CASES
+    async def test_a_transactional_unit_of_work_is_refused(
+        self, make_case: Callable[[], _Case]
+    ) -> None:
+        case = make_case()
 
         async with invocation(_scope_coordinator()):
-            with pytest.raises(UnitOfWorkInsideScope, match="SQLAlchemyUnitOfWork"):
-                await _enter(uow)
+            with pytest.raises(UnitOfWorkInsideScope, match=case.name):
+                await _enter(case.uow)
 
-    async def test_a_refused_sqlalchemy_unit_of_work_opens_no_session(self) -> None:
-        session = make_session()
-        manager = RecordingSessionManager(session)
-
-        async with invocation(_scope_coordinator()):
-            with pytest.raises(UnitOfWorkInsideScope):
-                await _enter(_sqlalchemy(manager))
-
-        assert (manager.exits, session.commit.await_count) == (0, 0)
-
-    async def test_a_mongo_unit_of_work_is_refused(self) -> None:
-        async with invocation(_scope_coordinator()):
-            with pytest.raises(UnitOfWorkInsideScope, match="MongoUnitOfWork"):
-                await _enter(_mongo(FakeMongoClient()))
-
-    async def test_a_refused_mongo_unit_of_work_starts_no_session(self) -> None:
-        client = FakeMongoClient()
+    @_CASES
+    async def test_a_refused_unit_of_work_opens_no_session_and_commits_nothing(
+        self, make_case: Callable[[], _Case]
+    ) -> None:
+        case = make_case()
 
         async with invocation(_scope_coordinator()):
             with pytest.raises(UnitOfWorkInsideScope):
-                await _enter(_mongo(client))
+                await _enter(case.uow)
 
-        assert (client.sessions, client.committed) == ([], 0)
+        assert (case.sessions(), case.commits()) == (0, 0)
 
     async def test_a_no_op_mongo_unit_of_work_opens_nothing_and_is_allowed(self) -> None:
         """It has no transaction to commit on its own; the coordinator enters it too."""
@@ -106,37 +134,29 @@ class TestInsideAScope:
 
 
 class TestOutsideAScope:
-    async def test_a_sqlalchemy_unit_of_work_still_commits(self) -> None:
-        session = make_session()
+    @_CASES
+    async def test_a_transactional_unit_of_work_still_commits(
+        self, make_case: Callable[[], _Case]
+    ) -> None:
+        case = make_case()
 
-        await _enter(_sqlalchemy(RecordingSessionManager(session)))
+        await _enter(case.uow)
 
-        session.commit.assert_awaited_once()
-
-    async def test_a_mongo_unit_of_work_still_commits(self) -> None:
-        client = FakeMongoClient()
-
-        await _enter(_mongo(client))
-
-        assert client.committed == 1
+        assert case.commits() == 1
 
 
 class TestAfterTheScopeClosed:
     """A task that outlived its use case still sees the closed scope, and may open its own."""
 
-    async def test_a_sqlalchemy_unit_of_work_commits(self) -> None:
-        session = make_session()
+    @_CASES
+    async def test_a_transactional_unit_of_work_commits(
+        self, make_case: Callable[[], _Case]
+    ) -> None:
+        case = make_case()
 
-        await _enter_after_the_scope_closed(_sqlalchemy(RecordingSessionManager(session)))
+        await _enter_after_the_scope_closed(case.uow)
 
-        session.commit.assert_awaited_once()
-
-    async def test_a_mongo_unit_of_work_commits(self) -> None:
-        client = FakeMongoClient()
-
-        await _enter_after_the_scope_closed(_mongo(client))
-
-        assert client.committed == 1
+        assert case.commits() == 1
 
 
 async def _enter_after_the_scope_closed(uow: UnitOfWork) -> None:
