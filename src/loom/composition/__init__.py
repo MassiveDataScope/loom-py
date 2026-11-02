@@ -12,6 +12,7 @@ from loom.composition.build import build_application, compose_application, creat
 from loom.composition.errors import (
     ApplicationAlreadyOpenError,
     CompositionErrorCode,
+    CompositionStateError,
     ReservedBindingError,
 )
 from loom.composition.host import ApplicationHost
@@ -27,6 +28,7 @@ __all__ = [
     "ApplicationHost",
     "CompositionErrorCode",
     "CompositionSource",
+    "CompositionStateError",
     "Recipe",
     "ReservedBindingError",
     "SqlWiring",

@@ -16,7 +16,14 @@ from prometheus_client import CollectorRegistry
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from loom.composition import AiWiring, Application, CompositionSource, Recipe
+from loom.composition import (
+    AiWiring,
+    Application,
+    CompositionErrorCode,
+    CompositionSource,
+    CompositionStateError,
+    Recipe,
+)
 from loom.core.config import (
     ConfigContext,
 )
@@ -544,13 +551,14 @@ class FastAPIAdapter:
                 endpoint is misdeclared; before any discovery.
             RestInterfaceConfigError: When a YAML interface or disabled route
                 is malformed.
-            RuntimeError: When discovery finds nothing to serve, a CRUD
-                route cannot be served by the backend, or this instance
-                already composed an application.
+            RuntimeError: When discovery finds nothing to serve, or a CRUD
+                route cannot be served by the backend.
+            CompositionStateError: When this instance already composed an
+                application.
         """
         if self._declared is not None:
-            raise RuntimeError(
-                "one adapter instance composes one application; create another adapter"
+            raise CompositionStateError(
+                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="FastAPIAdapter")
             )
         ctx = source.config
         rest_cfg = _section_rest_config(ctx)
@@ -598,11 +606,11 @@ class FastAPIAdapter:
         """Mount routes, authentication, health, SQL and agent endpoints on *application*.
 
         Raises:
-            RuntimeError: When :meth:`recipe` has not run on this instance.
+            CompositionStateError: When :meth:`recipe` has not run on this instance.
         """
         if self._declared is None:
-            raise RuntimeError(
-                "FastAPIAdapter.bind needs the recipe it declared; call recipe first"
+            raise CompositionStateError(
+                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="FastAPIAdapter")
             )
         declared = self._declared
         rest_cfg, auth = declared.rest, declared.auth

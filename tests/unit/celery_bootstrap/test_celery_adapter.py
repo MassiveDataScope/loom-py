@@ -11,7 +11,13 @@ from celery import Celery
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.celery.adapter import CeleryAdapter
 from loom.celery.constants import TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
-from loom.composition import AppConfig, Application, CompositionSource
+from loom.composition import (
+    AppConfig,
+    Application,
+    CompositionErrorCode,
+    CompositionSource,
+    CompositionStateError,
+)
 from loom.composition import compose_application as compose
 from loom.core.cache.gateway import CacheGateway
 from loom.core.checks import REST_CHECKS
@@ -133,8 +139,18 @@ class TestRecipe:
         adapter.recipe(_source(tmp_path, {}))
 
         source = _source(tmp_path, {})
-        with pytest.raises(RuntimeError, match="one adapter instance composes one application"):
+        with pytest.raises(
+            CompositionStateError, match="one adapter instance composes one application"
+        ) as raised:
             adapter.recipe(source)
+        assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
+
+    def test_bind_before_recipe_is_refused(self) -> None:
+        adapter = CeleryAdapter(jobs=[_PingJob])
+        application: Any = object()
+
+        with pytest.raises(CompositionStateError, match="CeleryAdapter.bind .* call recipe first"):
+            adapter.bind(application)
 
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])

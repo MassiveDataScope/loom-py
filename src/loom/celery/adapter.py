@@ -64,7 +64,14 @@ from loom.celery.runner import (
     _make_callback_task,
     _make_job_task,
 )
-from loom.composition import Application, ApplicationHost, CompositionSource, Recipe
+from loom.composition import (
+    Application,
+    ApplicationHost,
+    CompositionErrorCode,
+    CompositionSource,
+    CompositionStateError,
+    Recipe,
+)
 from loom.core.async_bridge import build_backend_options
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigKey
@@ -348,11 +355,13 @@ class CeleryAdapter:
             ConfigError: When ``celery`` or ``stores`` is misdeclared, or no
                 backend is registered under the name the worker resolves.
             RuntimeError: When no job is passed and no ``app.discovery`` is
-                configured, or this instance already composed an application.
+                configured.
+            CompositionStateError: When this instance already composed an
+                application.
         """
         if self._declared is not None:
-            raise RuntimeError(
-                "one adapter instance composes one application; create another adapter"
+            raise CompositionStateError(
+                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="CeleryAdapter")
             )
         ctx = source.config
         celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
@@ -398,10 +407,12 @@ class CeleryAdapter:
         """Register the tasks and connect the lifecycle signals.
 
         Raises:
-            RuntimeError: When :meth:`recipe` has not run on this instance.
+            CompositionStateError: When :meth:`recipe` has not run on this instance.
         """
         if self._declared is None:
-            raise RuntimeError("CeleryAdapter.bind needs the recipe it declared; call recipe first")
+            raise CompositionStateError(
+                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="CeleryAdapter")
+            )
         declared = self._declared
 
         async_runtime = _build_async_runtime(declared.celery.runtime)

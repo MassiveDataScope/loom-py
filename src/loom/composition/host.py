@@ -6,6 +6,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from loom.composition.errors import CompositionErrorCode, CompositionStateError
+
 if TYPE_CHECKING:
     from loom.composition.application import Application
 
@@ -52,14 +54,14 @@ class ApplicationHost:
         owner task before the cancellation propagates.
 
         Raises:
-            RuntimeError: When this host was already started, or when
-                :meth:`stop` was called before the application finished
+            CompositionStateError: When this host was already started, or
+                when :meth:`stop` was called before the application finished
                 opening; it is closed by then.
             Exception: The failure to open the application, as itself; nothing
                 is left open.
         """
         if self._started:
-            raise RuntimeError("ApplicationHost opens its application once; create another host")
+            raise CompositionStateError(CompositionErrorCode.HOST_ALREADY_STARTED.issue())
         self._started = True
         opened: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         owner = asyncio.create_task(self._own(opened))
@@ -166,5 +168,5 @@ def _failure_to_close(owner: asyncio.Task[None]) -> BaseException | None:
     return owner.exception()
 
 
-def _stopped_while_opening() -> RuntimeError:
-    return RuntimeError("ApplicationHost was stopped while opening; the application is closed")
+def _stopped_while_opening() -> CompositionStateError:
+    return CompositionStateError(CompositionErrorCode.HOST_STOPPED_WHILE_OPENING.issue())

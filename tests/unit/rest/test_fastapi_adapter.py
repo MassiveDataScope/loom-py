@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from loom.composition import CompositionErrorCode, CompositionStateError
 from loom.composition import create_app as compose
 from loom.rest.fastapi import create_app
 from loom.rest.fastapi.adapter import FastAPIAdapter
@@ -51,8 +52,11 @@ def test_the_lifespan_opens_the_application_once_and_closes_it(
 def test_bind_before_recipe_is_refused() -> None:
     adapter = FastAPIAdapter()
     application = object()
-    with pytest.raises(RuntimeError, match="call recipe first"):
+    with pytest.raises(
+        CompositionStateError, match="FastAPIAdapter.bind .* call recipe first"
+    ) as raised:
         adapter.bind(application)  # type: ignore[arg-type]
+    assert raised.value.issue.code is CompositionErrorCode.ADAPTER_RECIPE_MISSING
 
 
 def test_a_second_recipe_on_the_same_adapter_is_refused(fixture_project: ProjectFactory) -> None:
@@ -60,5 +64,8 @@ def test_a_second_recipe_on_the_same_adapter_is_refused(fixture_project: Project
     compose(fixture_project("first"), adapter=adapter, environment="test")
 
     second = fixture_project("second")
-    with pytest.raises(RuntimeError, match="one adapter instance composes one application"):
+    with pytest.raises(
+        CompositionStateError, match="one adapter instance composes one application"
+    ) as raised:
         compose(second, adapter=adapter, environment="test")
+    assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED

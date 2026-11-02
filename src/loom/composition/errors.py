@@ -9,6 +9,11 @@
     A caller's DI module bound a key the framework owns. The composition
     raises it right after the caller's modules run, before any repository or
     framework service is registered.
+
+``CompositionStateError``
+    An adapter or an :class:`~loom.composition.ApplicationHost` was used out
+    of its lifecycle: an adapter composing a second application or bound
+    before its recipe, a host started twice or stopped while opening.
 """
 
 from __future__ import annotations
@@ -38,6 +43,28 @@ class CompositionErrorCode(IssueCode):
         "APPLICATION_ALREADY_OPEN",
         Template("Application is already open; close it before opening it again", component=""),
     )
+    ADAPTER_ALREADY_COMPOSED = (
+        "ADAPTER_ALREADY_COMPOSED",
+        Template("one adapter instance composes one application; create another adapter"),
+    )
+    ADAPTER_RECIPE_MISSING = (
+        "ADAPTER_RECIPE_MISSING",
+        Template("{component}.bind needs the recipe it declared; call recipe first"),
+    )
+    HOST_ALREADY_STARTED = (
+        "HOST_ALREADY_STARTED",
+        Template(
+            "ApplicationHost opens its application once; create another host",
+            component="ApplicationHost",
+        ),
+    )
+    HOST_STOPPED_WHILE_OPENING = (
+        "HOST_STOPPED_WHILE_OPENING",
+        Template(
+            "ApplicationHost was stopped while opening; the application is closed",
+            component="ApplicationHost",
+        ),
+    )
 
 
 class ApplicationAlreadyOpenError(RuntimeError):
@@ -46,6 +73,28 @@ class ApplicationAlreadyOpenError(RuntimeError):
     def __init__(self) -> None:
         self.issue = CompositionErrorCode.APPLICATION_ALREADY_OPEN.issue()
         super().__init__(self.issue.message)
+
+
+class CompositionStateError(RuntimeError):
+    """Raised when an adapter or a host is used out of its lifecycle.
+
+    A :class:`RuntimeError`, so a caller catching the lifecycle misuse as
+    one keeps catching it.
+
+    Attributes:
+        issue: The typed issue: code, component (the adapter or the host) and
+            message.
+
+    Example::
+
+        raise CompositionStateError(
+            CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="CeleryAdapter")
+        )
+    """
+
+    def __init__(self, issue: CompileIssue[CompositionErrorCode]) -> None:
+        super().__init__(issue.message)
+        self.issue = issue
 
 
 class ReservedBindingError(BootstrapError):
@@ -78,4 +127,9 @@ class ReservedBindingError(BootstrapError):
         return cls(issue, key)
 
 
-__all__ = ["ApplicationAlreadyOpenError", "CompositionErrorCode", "ReservedBindingError"]
+__all__ = [
+    "ApplicationAlreadyOpenError",
+    "CompositionErrorCode",
+    "CompositionStateError",
+    "ReservedBindingError",
+]

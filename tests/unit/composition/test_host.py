@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import pytest
 import pytest_asyncio
 
-from loom.composition import ApplicationHost
+from loom.composition import ApplicationHost, CompositionErrorCode, CompositionStateError
 from loom.composition.resources import Resource, ResourceKind, closing
 from tests.helpers.composition import TaskAffine, application_of
 
@@ -132,8 +132,9 @@ class TestOpening:
         await host.start()
         await host.stop()
 
-        with pytest.raises(RuntimeError, match="once"):
+        with pytest.raises(CompositionStateError, match="once") as raised:
             await host.start()
+        assert raised.value.issue.code is CompositionErrorCode.HOST_ALREADY_STARTED
 
     async def test_a_cancelled_start_closes_what_opened(self) -> None:
         opened = asyncio.Event()
@@ -168,8 +169,9 @@ class TestOpening:
         assert not stopping.done()
         gate.release.set()
 
-        with pytest.raises(RuntimeError, match="stopped while opening"):
+        with pytest.raises(CompositionStateError, match="stopped while opening") as raised:
             await starting
+        assert raised.value.issue.code is CompositionErrorCode.HOST_STOPPED_WHILE_OPENING
         assert gate.closed
         assert not application.is_open
         await stopping
