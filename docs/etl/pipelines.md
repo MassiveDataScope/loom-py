@@ -185,10 +185,10 @@ observability:
     pushgateway_url: ${oc.env:PUSHGATEWAY_URL,http://127.0.0.1:9091}
   lineage:
     enabled: true
-    # Choose exactly one destination:
     root: /var/lib/loom/lake/_runs
-    # database: ops
 ```
+
+Choose exactly one destination. The alternative is `database: ops`.
 
 ### Engine connections
 
@@ -201,19 +201,25 @@ declaring a section enables its sources, omitting it disables them:
 storage:
   clickhouse:
     url: ${oc.env:CLICKHOUSE_URL}
-    read_timeout: 300            # seconds
+    read_timeout: 300
     pool:
       size: 4
   mongo:
     url: ${oc.env:MONGO_URL}
     database: app
-    server_selection_timeout: 5  # seconds
+    server_selection_timeout: 5
   dynamodb:
     region: eu-west-1
-    read_timeout: 5              # seconds
+    read_timeout: 5
     pool:
       size: 32
 ```
+
+| Key | Meaning |
+|---|---|
+| `clickhouse.read_timeout` | seconds |
+| `mongo.server_selection_timeout` | seconds |
+| `dynamodb.read_timeout` | seconds |
 
 Upgrade note: `endpoint_url` is now `url` and `max_pool_connections` is now
 `pool.size` (`storage.dynamodb`); `uri` is now `url`, `max_pool_size` is now
@@ -275,13 +281,13 @@ where the value comes from:
 ```yaml
 storage:
   engine: polars
-  # ...
 
 respondio:
-  api_token: ${oc.env:RESPONDIO_API_TOKEN}     # injected by the task definition
-  # api_token: ${secrets:/prod/respondio/token} # or AWS Secrets Manager
+  api_token: ${oc.env:RESPONDIO_API_TOKEN}
   page_size: 200
 ```
+
+`api_token: ${oc.env:RESPONDIO_API_TOKEN}` is injected by the task definition. The alternative is `api_token: ${secrets:/prod/respondio/token}` (AWS Secrets Manager).
 
 - **When it resolves.** `ETLRunner.run` compiles the pipeline and checks every
   `FromConfig` key before any step runs: a missing key, an interpolation that
@@ -620,16 +626,23 @@ A file may declare a top-level `includes` list. The entries are loaded first, in
 order, and the declaring file's own keys are merged on top. This works on any
 scheme, so a layout uploaded to object storage loads exactly as it does from disk:
 
+In `s3://my-bucket/config/etl.yaml`:
+
 ```yaml
-# s3://my-bucket/config/etl.yaml
 includes:
-  - common.yaml            # relative to s3://my-bucket/config/
-  - tables/*.yaml          # every YAML under s3://my-bucket/config/tables/
-  - /etc/loom/site.yaml    # absolute local path; schemes may be mixed
+  - common.yaml
+  - tables/*.yaml
+  - /etc/loom/site.yaml
 
 storage:
   engine: polars
 ```
+
+| Key | Meaning |
+|---|---|
+| `common.yaml` | relative to `s3://my-bucket/config/` |
+| `tables/*.yaml` | every YAML under `s3://my-bucket/config/tables/` |
+| `/etc/loom/site.yaml` | absolute local path; schemes may be mixed |
 
 Rules:
 

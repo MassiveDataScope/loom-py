@@ -315,8 +315,9 @@ class AddressRestInterface(RestInterface[Address]):
 
 The `create_app()` factory wires everything — DB, cache, DI, routes — from a YAML config:
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   name: my_store
   code_path: src
@@ -335,18 +336,18 @@ app:
 
 persistence:
   cursors:
-    signing: ephemeral   # development.yaml only; production.yaml configures keys
+    signing: ephemeral
 
 stores:
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 
-cache:                      # optional; wraps every repository marked @cached
+cache:
   default_ttl: 300
   aiocache_config:
     default:
-      cache: aiocache.SimpleMemoryCache       # memory -> Redis: aiocache.RedisCache
+      cache: aiocache.SimpleMemoryCache
       serializer:
         class: loom.core.cache.serializer.MsgspecSerializer
 
@@ -358,6 +359,12 @@ observability:
   prometheus:
     enabled: false
 ```
+
+| Key | Meaning |
+| --- | --- |
+| `signing` | `signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys |
+| `cache` | optional; wraps every repository marked `@cached` |
+| `aiocache_config.default.cache` | memory -> Redis: `aiocache.RedisCache` |
 
 ```python
 # main.py — 3 lines

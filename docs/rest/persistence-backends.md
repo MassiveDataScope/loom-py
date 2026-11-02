@@ -10,9 +10,11 @@ backend it was not asked for. Four ship with loom — `sqlalchemy`, `dynamodb`,
 ```yaml
 stores:
   default:
-    backend: ledger        # resolved by name; unknown → startup error listing the registered ones
+    backend: ledger
     url: https://ledger.internal
 ```
+
+`backend` is resolved by name; an unknown name is a startup error listing the registered ones.
 
 An application composes its `default` store: the API, the worker, the
 migrations and the row-level-security tooling read `stores.default`. A model
@@ -283,25 +285,33 @@ startup from the `persistence.cursors` section and registered in DI. The code
 default is `signed` in every environment; each opt-out is written in the file
 of the environment that needs it:
 
+In `production.yaml`:
+
 ```yaml
-# production.yaml
 persistence:
   cursors:
-    current_key_id: "2026-10"          # signs new tokens
-    keys:                              # every key that still verifies
+    current_key_id: "2026-10"
+    keys:
       "2026-10": {env: CURSOR_KEY_2026_10}
       "2026-07": {env: CURSOR_KEY_2026_07}
 ```
 
+| Key | Meaning |
+|---|---|
+| `current_key_id` | Signs new tokens. |
+| `keys` | Every key that still verifies. |
+
+In `development.yaml`:
+
 ```yaml
-# development.yaml
 persistence:
   cursors:
     signing: ephemeral
 ```
 
+In `test.yaml`:
+
 ```yaml
-# test.yaml
 persistence:
   cursors:
     signing: unsigned
@@ -400,16 +410,27 @@ stores:
   default:
     backend: sqlalchemy
     url: postgresql+asyncpg://app@db/app
-    connect_args:              # passed to the driver's connect() as written
-      timeout: 5               # asyncpg: seconds to establish a connection
-      command_timeout: 10      # asyncpg: seconds per statement
+    connect_args:
+      timeout: 5
+      command_timeout: 10
     pool:
-      size: 5                  # connections kept open, > 0
-      max_overflow: 5          # extra connections under load, >= 0
-      timeout: 10              # seconds a caller waits for a free connection, > 0
-      recycle: 1800            # seconds before a connection is replaced, > 0
-      pre_ping: true           # check a connection before handing it out
+      size: 5
+      max_overflow: 5
+      timeout: 10
+      recycle: 1800
+      pre_ping: true
 ```
+
+| Key | Meaning |
+|---|---|
+| `connect_args` | Passed to the driver's `connect()` as written. |
+| `connect_args.timeout` | asyncpg: seconds to establish a connection. |
+| `connect_args.command_timeout` | asyncpg: seconds per statement. |
+| `size` | Connections kept open, > 0. |
+| `max_overflow` | Extra connections under load, >= 0. |
+| `timeout` | Seconds a caller waits for a free connection, > 0. |
+| `recycle` | Seconds before a connection is replaced, > 0. |
+| `pre_ping` | Check a connection before handing it out. |
 
 Each key left out takes the default of the entry point, sized for how many
 operations one of its processes runs at once:
@@ -470,12 +491,20 @@ stores:
     region: eu-west-1
     table: app
     pool:
-      size: 32                 # HTTP connections and worker threads
-    connect_timeout: 2         # seconds
-    read_timeout: 5            # seconds
-    max_attempts: 3            # total, the first attempt included
-    retry_mode: standard       # standard | adaptive
+      size: 32
+    connect_timeout: 2
+    read_timeout: 5
+    max_attempts: 3
+    retry_mode: standard
 ```
+
+| Key | Meaning |
+|---|---|
+| `size` | HTTP connections and worker threads. |
+| `connect_timeout` | Seconds. |
+| `read_timeout` | Seconds. |
+| `max_attempts` | Total, the first attempt included. |
+| `retry_mode` | `standard` or `adaptive`. |
 
 Repository calls run on a thread pool as wide as `pool.size`, so
 that many calls proceed in parallel in one process; the trace id and other
@@ -519,16 +548,16 @@ stores:
     backend: mongo
     url: mongodb://localhost:27017/?replicaSet=rs0
     database: shop
-    transactions: false          # true needs a replica set
-    id: uuid4                    # or objectid
-    collections:                 # optional, keyed by model class name
+    transactions: false
+    id: uuid4
+    collections:
       Order: orders_v2
     pool:
       size: 8
       max_overflow: 0
       timeout: 2
       recycle: 300
-    server_selection_timeout: 5  # seconds; optional, driver default when absent
+    server_selection_timeout: 5
 ```
 
 | Key | Default | Meaning |
@@ -633,10 +662,12 @@ cases and the routes do not change:
 ```yaml
 stores:
   default:
-    backend: mongo            # was: sqlalchemy
+    backend: mongo
     url: mongodb://localhost:27017/?replicaSet=rs0
     database: shop
 ```
+
+Change `backend: sqlalchemy` to `backend: mongo`.
 
 Four limits decide what does not travel:
 

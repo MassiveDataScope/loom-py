@@ -63,8 +63,9 @@ never as an `ImportError` on the first request.
 
 ## The shape of a deployment
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 ai:
   engine: pydantic-ai
   specs: ["ai/agents/*/agent.yaml"]
@@ -133,7 +134,7 @@ ETL steps reach agents declaratively instead, through
 
 ```yaml
 ai:
-  max_agent_depth: 1   # default
+  max_agent_depth: 1
 ```
 
 `max_agent_depth` bounds the longest chain of nested agent runs one task may
@@ -175,8 +176,9 @@ agent. Its manifest module declares `AGENTS` and nothing else, discovery runs in
 AGENTS = ["agents/*.yaml"]          # globs resolve against app.code_path
 ```
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   name: incident-triage
   discovery:
@@ -195,12 +197,14 @@ ai:
       provider: bedrock
       model: <model id>
       region: eu-west-1
-      output_mode: native          # optional, see Model providers
+      output_mode: native
   endpoints:
     incident-triage:
       enabled: true
       auth: jwt
 ```
+
+`output_mode` is optional; see [Model providers](providers.md).
 
 ```bash
 pip install "loom-kernel[rest,ai-pydantic,ai-bedrock]"   # swap the provider extra for yours

@@ -276,45 +276,50 @@ executor drives commit and drains post-commit actions.
 
 ### `celery` section
 
+In `config/celery.yaml`:
+
 ```yaml
-# config/celery.yaml
 celery:
   broker_url: ${oc.env:CELERY_BROKER_URL,redis://redis:6379/1}
   result_backend: ${oc.env:CELERY_RESULT_BACKEND,redis://redis:6379/2}
 
-  # Worker pool
-  worker_concurrency: 4               # concurrent worker processes (default: 4)
-  worker_prefetch_multiplier: 1       # 1 = fair dispatch, avoids starvation (default: 1)
-  worker_max_tasks_per_child: 1000    # recycle worker after N tasks, prevents leaks (default: 1000)
+  worker_concurrency: 4
+  worker_prefetch_multiplier: 1
+  worker_max_tasks_per_child: 1000
 
-  # Serialization
-  task_serializer: json               # default: json
-  result_serializer: json             # default: json
-  accept_content: [json]              # default: [json]
+  task_serializer: json
+  result_serializer: json
+  accept_content: [json]
 
-  # Time
   timezone: UTC
   enable_utc: true
 
-  # Queues
-  # Declare explicit queues so the worker knows which to consume.
-  # If omitted, Celery creates queues on demand.
   queues: [default, notifications, analytics, erp]
 
-  # task_default_queue: queue used for tasks/callbacks without an explicit queue=.
-  # MUST be one of 'queues' — the framework raises ValueError at startup otherwise.
-  # Callbacks (on_success / on_failure) land here when no queue is set.
   task_default_queue: default
 
-  # For integration tests: run tasks synchronously in the calling process.
   task_always_eager: false
 
-  # Async bridge settings used by async jobs/callbacks.
   runtime:
-    backend: asyncio          # asyncio or trio
-    use_uvloop: true          # only applies to asyncio on supported platforms
+    backend: asyncio
+    use_uvloop: true
     shutdown_timeout_ms: 10000
 ```
+
+| Key | Meaning |
+| --- | --- |
+| `worker_concurrency` | concurrent worker processes (default: 4) |
+| `worker_prefetch_multiplier` | 1 = fair dispatch, avoids starvation (default: 1) |
+| `worker_max_tasks_per_child` | recycle worker after N tasks, prevents leaks (default: 1000) |
+| `task_serializer` | default: json |
+| `result_serializer` | default: json |
+| `accept_content` | default: [json] |
+| `queues` | Declare explicit queues so the worker knows which to consume. If omitted, Celery creates queues on demand. |
+| `task_default_queue` | queue used for tasks/callbacks without an explicit queue=. MUST be one of 'queues' — the framework raises ValueError at startup otherwise. Callbacks (on_success / on_failure) land here when no queue is set. |
+| `task_always_eager` | For integration tests: run tasks synchronously in the calling process. |
+| `runtime` | Async bridge settings used by async jobs/callbacks. |
+| `runtime.backend` | asyncio or trio |
+| `runtime.use_uvloop` | only applies to asyncio on supported platforms |
 
 (rest-per-job-overrides-from-yaml)=
 ### `jobs` section — per-job overrides
@@ -322,13 +327,14 @@ celery:
 Override any Job ClassVar from YAML without touching Python code. Only the fields
 you declare are applied; unset fields keep their ClassVar defaults:
 
+In `config/worker.yaml`:
+
 ```yaml
-# config/worker.yaml
 jobs:
   SendRestockEmailJob:
-    queue: notifications   # overrides __queue__ = "notifications"
-    retries: 2             # overrides __retries__ = 2
-    timeout: 30            # overrides __timeout__ = 30 (soft time limit)
+    queue: notifications
+    retries: 2
+    timeout: 30
 
   BuildProductSummaryJob:
     queue: analytics
@@ -337,7 +343,7 @@ jobs:
   SyncProductToErpJob:
     queue: erp
     retries: 3
-    countdown: 5           # delay 5 seconds before first attempt
+    countdown: 5
     priority: 5
 ```
 
@@ -359,13 +365,14 @@ jobs:
 Declare `app.discovery` in `worker.yaml` and let the framework discover jobs,
 use cases, and interfaces automatically. This is the most production-friendly option:
 
+In `config/worker.yaml`:
+
 ```yaml
-# config/worker.yaml
 includes:
-  - celery.yaml   # broker settings
+  - celery.yaml
 
 app:
-  name: billing-worker  # required: names the worker and its metrics
+  name: billing-worker
   discovery:
     mode: modules
     modules:
@@ -378,13 +385,19 @@ app:
 
 persistence:
   cursors:
-    signing: ephemeral   # development.yaml only; production.yaml configures keys
+    signing: ephemeral
 
 stores:
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
 ```
+
+| Key | Meaning |
+| --- | --- |
+| `celery.yaml` | broker settings |
+| `name` | required: names the worker and its metrics |
+| `signing` | `signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys |
 
 ```python
 # src/app/worker_main.py
@@ -416,13 +429,14 @@ CALLBACKS = [RestockEmailSuccessCallback, RestockEmailFailureCallback]
 USE_CASES = [DispatchRestockEmailUseCase, BuildProductSummaryUseCase]
 ```
 
+In `config/worker.yaml`:
+
 ```yaml
-# config/worker.yaml
 includes:
   - celery.yaml
 
 app:
-  name: billing-worker  # required: names the worker and its metrics
+  name: billing-worker
   discovery:
     mode: manifest
     manifest:
@@ -430,13 +444,17 @@ app:
 
 persistence:
   cursors:
-    signing: ephemeral   # development.yaml only; production.yaml configures keys
+    signing: ephemeral
 
 stores:
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
 ```
+
+`name` is required: it names the worker and its metrics.
+
+`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
 
 ### Option 3: Explicit jobs in code
 
@@ -496,8 +514,9 @@ discovered compilables — they never disable discovery.
 worker booted through the factory reads a secret with no code beyond the
 factory call:
 
+In `config/worker.yaml`:
+
 ```yaml
-# config/worker.yaml
 celery:
   broker_url: ${secrets:/prod/worker/broker-url}
   result_backend: ${ssm:/prod/worker/result-backend}
@@ -661,8 +680,9 @@ with `UnservedModelError`, not its first task.
 Set `task_always_eager: true` in the test config so tasks run synchronously in the
 same process without requiring a broker:
 
+In `config/test.yaml`:
+
 ```yaml
-# config/test.yaml
 celery:
   broker_url: "redis://localhost:6379/15"
   result_backend: "redis://localhost:6379/15"

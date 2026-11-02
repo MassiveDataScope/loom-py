@@ -171,8 +171,6 @@ services:
       retries: 20
       start_period: 3s
 
-  # A second, independent Postgres: two stores on separate servers (ADR 0008,
-  # T043) so roles, settings and pools are really apart and one can be stopped.
   postgres-b:
     image: postgres:17-alpine
     ports:

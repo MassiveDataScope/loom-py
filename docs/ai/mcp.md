@@ -43,26 +43,32 @@ from the agent, always.
 
 ## Configuring a server
 
-The artifact **names** a server; it never locates it:
+The artifact **names** a server; it never locates it.
+
+In `ai/agents/incident-triage/agent.yaml`:
 
 ```yaml
-# ai/agents/incident-triage/agent.yaml
 capabilities:
   - kind: mcp
     server: runbooks
-    include: ["search_*"]      # empty means all
-    exclude: ["execute_*"]     # applied after include
+    include: ["search_*"]
+    exclude: ["execute_*"]
 ```
 
+`include` empty means all. `exclude` is applied after `include`.
+
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 ai:
   mcp_servers:
     runbooks:
       url: https://runbooks.internal.example.com/mcp
-      headers_ref: ${secrets:/loom/runbooks/api-key}   # resolved, never literal
+      headers_ref: ${secrets:/loom/runbooks/api-key}
       timeout_ms: 20000
 ```
+
+`headers_ref` is resolved, never literal.
 
 That separation is what lets the same artifact run against a staging server and
 a production one with no edit.
@@ -131,8 +137,9 @@ the server as a **subprocess** and speaks to it over its standard input and
 output. Most published servers ship that way, so loom accepts it — in the
 deployment's configuration, never in the artifact:
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 ai:
   mcp_servers:
     runbooks:
@@ -205,7 +212,7 @@ client that will not open is treated:
 
 ```yaml
 ai:
-  remote_clients: optional     # required (default) | optional
+  remote_clients: optional
 ```
 
 | Value | A client that fails to *connect* |
@@ -334,8 +341,10 @@ ai:
   mcp_servers:
     knowledge:
       url: https://kb.internal.example.com/mcp
-      headers_ref: ${secrets:/loom/kb/api-key}     # stores e.g. X-API-Key=abc123
+      headers_ref: ${secrets:/loom/kb/api-key}
 ```
+
+`headers_ref` stores e.g. `X-API-Key=abc123`.
 
 Anything richer — several headers, a value carrying spaces, a credential that
 must be renewed — belongs in a strategy. A payload that is not one `Name=value`
@@ -352,19 +361,25 @@ ai:
     catalog:
       url: https://catalog.internal.example.com/mcp
       auth:
-        kind: bearer                               # Authorization: Bearer <token>
+        kind: bearer
         token_ref: ${secrets:/loom/catalog/token}
     directory:
       url: https://directory.internal.example.com/mcp
       auth:
-        kind: oauth                                # the client's own flow
+        kind: oauth
     orders:
       url: https://orders.internal.example.com/mcp
       auth:
-        kind: agent-session                        # a deployment's own
+        kind: agent-session
         session_url: https://orders.internal.example.com/auth/agent/session
         bootstrap_ref: ${secrets:/agents/prod/agent-sales}
 ```
+
+| Key | Meaning |
+|---|---|
+| `kind: bearer` | `Authorization: Bearer <token>` |
+| `kind: oauth` | the client's own flow |
+| `kind: agent-session` | a deployment's own |
 
 `kind` names an entry point in the group `loom.ai.remote_auth`; every other key in
 the block is passed to it as a **keyword argument**. Loom registers three, all

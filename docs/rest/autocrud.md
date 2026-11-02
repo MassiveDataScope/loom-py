@@ -198,8 +198,9 @@ routes — pass `()` for all five.
 
 Wire the interface to FastAPI via the YAML config:
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   name: my_store
   code_path: src
@@ -216,13 +217,15 @@ app:
 
 persistence:
   cursors:
-    signing: ephemeral   # development.yaml only; production.yaml configures keys
+    signing: ephemeral
 
 stores:
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL,sqlite+aiosqlite:///store.db}
 ```
+
+`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
 
 ```python
 # main.py

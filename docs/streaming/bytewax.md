@@ -115,8 +115,9 @@ loom's built-in AWS resolvers, `secrets` (Secrets Manager) and `ssm` (SSM
 Parameter Store), by default, so a flow booted through the factory reads a
 secret with no code beyond the factory call:
 
+In `config/streaming.yaml`:
+
 ```yaml
-# config/streaming.yaml
 kafka:
   consumer:
     brokers:

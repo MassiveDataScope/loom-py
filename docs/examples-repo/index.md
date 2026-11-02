@@ -562,8 +562,9 @@ class AddressRestInterface(RestInterface[Address]):
 
 ### Modules mode
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   name: dummy_store
   code_path: src
@@ -616,8 +617,9 @@ JOBS = [SendRestockEmailJob, BuildProductSummaryJob]
 INTERFACES = [ProductRestInterface, ...]
 ```
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   discovery:
     mode: manifest
