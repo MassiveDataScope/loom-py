@@ -347,6 +347,9 @@ class TestSystemErrorCode:
 
 
 class TestForeignSessionError:
+    def test_a_side_names_the_store_and_its_connection(self) -> None:
+        assert ForeignSessionError.side("b", "b.db") == "store 'b' (b.db)"
+
     def test_the_message_names_both_sides(self) -> None:
         error = ForeignSessionError.between("store 'b' (b.db)", "store 'a' (a.db)")
 

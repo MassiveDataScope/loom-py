@@ -186,17 +186,22 @@ class TestEnlist:
         assert participant.phased is phased
         assert participant.physical == physical
 
-    async def test_a_phased_participant_exposes_the_owner_of_its_unit_of_work(self) -> None:
+    async def test_a_phased_participant_accepts_the_owner_of_its_unit_of_work(self) -> None:
         store = PhasedStore(S0, Ledger())
 
         participant = await _coordinator(store).enlist(Scope(), S0)
 
-        assert participant.owner is store.owner
+        assert participant.accepts(store.owner) is True
 
-    async def test_a_single_phase_participant_has_no_owner(self) -> None:
+    async def test_a_phased_participant_refuses_another_owner(self) -> None:
+        participant = await _coordinator(PhasedStore(S0, Ledger())).enlist(Scope(), S0)
+
+        assert participant.accepts(object()) is False
+
+    async def test_a_single_phase_participant_accepts_any_owner(self) -> None:
         participant = await _coordinator(ThirdPartyStore(S0, Ledger())).enlist(Scope(), S0)
 
-        assert participant.owner is None
+        assert participant.accepts(object()) is True
 
 
 def _session_manager() -> MagicMock:

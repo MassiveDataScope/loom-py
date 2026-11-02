@@ -187,8 +187,13 @@ def _is_phased(uow: UnitOfWork) -> TypeGuard[PhasedUnitOfWork]:
 
 
 class _Driver(Protocol):
-    """The five phases, as one kind of unit of work runs them."""
+    """The five phases, as one kind of unit of work runs them, and what it declares."""
 
+    phased: ClassVar[bool]
+
+    @property
+    def physical(self) -> PhysicalStore: ...
+    def accepts(self, owner: object) -> bool: ...
     async def begin(self) -> None: ...
     async def flush(self) -> None: ...
     async def commit(self) -> None: ...
@@ -199,9 +204,19 @@ class _Driver(Protocol):
 class _PhasedDriver:
     """Drives a :class:`PhasedUnitOfWork` one phase per call."""
 
+    phased: ClassVar[bool] = True
+
     def __init__(self, key: StoreKey, uow: PhasedUnitOfWork) -> None:
         self._key = key
         self._uow = uow
+
+    @property
+    def physical(self) -> PhysicalStore:
+        return self._uow.physical
+
+    def accepts(self, owner: object) -> bool:
+        """Only a repository whose sessions come from the unit of work's own owner joins it."""
+        return owner is self._uow.owner
 
     async def begin(self) -> None:
         try:
@@ -253,9 +268,21 @@ class _SinglePhaseDriver:
     so it runs in the caller's task; the protocol has it shield its own I/O.
     """
 
+    phased: ClassVar[bool] = False
+
     def __init__(self, uow: UnitOfWork) -> None:
         self._uow = uow
         self._exited = False
+
+    @property
+    def physical(self) -> PhysicalStore:
+        """Unknown: the protocol declares none."""
+        return UNKNOWN_PHYSICAL
+
+    def accepts(self, owner: object) -> bool:
+        """Any repository of the store joins it: the unit of work declares no owner."""
+        del owner
+        return True
 
     async def begin(self) -> None:
         await self._uow.__aenter__()
@@ -289,12 +316,7 @@ class Participant:
 
     Attributes:
         key: Store the participant belongs to.
-        physical: Where its writes land.
         transactional: Whether its unit of work can roll back.
-        phased: Whether its unit of work declares the :class:`PhasedUnitOfWork`
-            marker.
-        owner: The session manager or client its sessions come from, or
-            ``None`` for a unit of work driven in a single phase.
         first_write: Invocation-wide order of its first write, or ``None``.
         wrote: Whether a write went through it.
     """
@@ -304,14 +326,31 @@ class Participant:
         self.transactional = type(uow).transactional
         self.first_write: int | None = None
         self.wrote = False
-        self._driver: _Driver
-        self.owner: object | None
-        if _is_phased(uow):
-            self.phased, self.physical, self.owner = True, uow.physical, uow.owner
-            self._driver = _PhasedDriver(key, uow)
-        else:
-            self.phased, self.physical, self.owner = False, UNKNOWN_PHYSICAL, None
-            self._driver = _SinglePhaseDriver(uow)
+        self._driver: _Driver = (
+            _PhasedDriver(key, uow) if _is_phased(uow) else _SinglePhaseDriver(uow)
+        )
+
+    @property
+    def phased(self) -> bool:
+        """Whether its unit of work declares the :class:`PhasedUnitOfWork` marker."""
+        return self._driver.phased
+
+    @property
+    def physical(self) -> PhysicalStore:
+        """Where its writes land, read when asked: only logging and errors need it."""
+        return self._driver.physical
+
+    def accepts(self, owner: object) -> bool:
+        """Whether a repository whose sessions come from ``owner`` may join this participant.
+
+        A phased participant accepts only its unit of work's own owner; a
+        single-phase one declares no owner and accepts any repository of its
+        store.
+
+        Args:
+            owner: The repository's session manager or client.
+        """
+        return self._driver.accepts(owner)
 
     def record_write(self, order: int) -> None:
         """Note a write; only the first one sets :attr:`first_write`.

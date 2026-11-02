@@ -93,7 +93,7 @@ def session_to_join(session_manager: SessionManager) -> AsyncSession | None:
 
 def _described(session_manager: SessionManager) -> str:
     """Name the store and connection of *session_manager* the way errors name them."""
-    return f"store {session_manager.store!r} ({session_manager.engine.url!r})"
+    return ForeignSessionError.side(session_manager.store, repr(session_manager.engine.url))
 
 
 def set_active_session(

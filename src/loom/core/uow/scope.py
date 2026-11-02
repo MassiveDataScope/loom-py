@@ -223,17 +223,15 @@ class InvocationScope:
                 sessions come from another owner.
         """
         participant = self.participants.get(key)
-        if participant is None and not write:
+        if participant is None:
+            if write:
+                self.require_owner()
             return None
         self.require_owner()
-        if participant is None:
-            return None
-        # A single-phase participant declares no owner: any repository of its
-        # store joins it, and its write is still recorded.
-        if participant.owner is not None and participant.owner is not owner:
+        if not participant.accepts(owner):
             raise ForeignSessionError.between(
-                f"store {key!r} (another {type(owner).__qualname__})",
-                f"store {key!r} ({participant.physical.target})",
+                ForeignSessionError.side(key, f"another {type(owner).__qualname__}"),
+                ForeignSessionError.side(key, participant.physical.target),
             )
         if write:
             participant.record_write(next(self._writes))

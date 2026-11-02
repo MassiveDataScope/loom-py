@@ -77,13 +77,23 @@ class ForeignSessionError(SystemError):
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.FOREIGN_SESSION)
 
+    @staticmethod
+    def side(store: str, connection: str) -> str:
+        """Name one side of the error: a store and its connection.
+
+        Args:
+            store: The store's name.
+            connection: The connection, without credentials, or what the side is.
+        """
+        return f"store {store!r} ({connection})"
+
     @classmethod
     def between(cls, own: str, active: str) -> ForeignSessionError:
         """The error for a caller on ``own`` meeting the active session of ``active``.
 
         Args:
-            own: The store and connection of the caller, as the message names them.
-            active: The store and connection that opened the active session.
+            own: The store and connection of the caller, as :meth:`side` names them.
+            active: The store and connection that opened the active session, likewise.
         """
         return cls(
             f"{own} cannot join the active session of {active}: "
