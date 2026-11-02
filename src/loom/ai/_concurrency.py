@@ -16,6 +16,8 @@ import logging
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+from loom.core._async import run_to_completion
+
 _logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
@@ -36,17 +38,8 @@ async def shield_and_drain(call: Coroutine[Any, Any, _T], *, label: str) -> _T:
             finished draining underneath it; the call itself still ran to
             completion.
     """
-    in_flight = asyncio.ensure_future(call)
     try:
-        return await asyncio.shield(in_flight)
+        return await run_to_completion(call)
     except asyncio.CancelledError:
-        _logger.debug("%r: draining a cancelled call", label)
-        await asyncio.wait([in_flight])
-        _discard_outcome(in_flight)
+        _logger.debug("%r: drained a cancelled call", label)
         raise
-
-
-def _discard_outcome(task: asyncio.Future[Any]) -> None:
-    """Consume a drained call's outcome so it is never reported as unretrieved."""
-    if not task.cancelled():
-        task.exception()

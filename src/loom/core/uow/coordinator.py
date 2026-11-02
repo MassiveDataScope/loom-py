@@ -34,11 +34,11 @@ invocation error: the caller reads :class:`InvocationOutcome` and decides.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from loom.core._async import run_to_completion
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
@@ -195,7 +195,7 @@ class _PhasedDriver:
         await self._uow.commit()
 
     async def rollback(self, cause: BaseException) -> None:
-        await _to_completion(self._uow.rollback())
+        await run_to_completion(self._uow.rollback())
 
     async def close(self) -> None:
         await self._uow.close()
@@ -232,26 +232,6 @@ class _SinglePhaseDriver:
 
     async def close(self) -> None:
         """Nothing left to close: ``__aexit__`` already did."""
-
-
-async def _to_completion(step: Awaitable[None]) -> None:
-    """Await ``step`` in a task of its own until it finishes, however often we are cancelled.
-
-    Raises:
-        asyncio.CancelledError: The first cancellation received, once
-            ``step`` has finished.
-    """
-    task = asyncio.ensure_future(step)
-    cancelled: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.wait([task])
-        except asyncio.CancelledError as exc:
-            cancelled = cancelled or exc
-    if cancelled is not None:
-        task.exception()  # retrieved, so it is never reported: the cancellation wins
-        raise cancelled
-    task.result()
 
 
 class Participant:
