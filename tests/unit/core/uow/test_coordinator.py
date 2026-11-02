@@ -20,6 +20,7 @@ from loom.core.persistence.stores import StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow import coordinator as coordinator_module
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     UNKNOWN_PHYSICAL,
@@ -430,6 +431,65 @@ class TestTeardownFailures:
         }
         assert _ends(ledger) == [S2, S1, S0]
         assert event in caplog.text
+
+
+class TestHungRollback:
+    """A rollback that never returns is bounded: it fails, and close still runs."""
+
+    @pytest.fixture(autouse=True)
+    def _tiny_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(coordinator_module, "_ROLLBACK_TIMEOUT_S", 0.01)
+
+    async def test_the_store_is_still_closed(self) -> None:
+        ledger = Ledger()
+        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        await coordinator.enlist(scope, S0)
+
+        await coordinator.finish(scope, Boom("business"))
+
+        assert ledger.calls_of(S0) == ["begin", "rollback", "close"]
+
+    async def test_the_store_is_reported_rolled_back(self) -> None:
+        coordinator, scope = _coordinator(_hung_rollback(Ledger())), Scope()
+        await coordinator.enlist(scope, S0)
+        error = Boom("business")
+
+        outcome = await coordinator.finish(scope, error)
+
+        assert outcome.stores == (RolledBack(S0, error),)
+
+    async def test_the_timeout_is_logged_as_a_failed_rollback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        coordinator, scope = _coordinator(_hung_rollback(Ledger())), Scope()
+        await coordinator.enlist(scope, S0)
+
+        with caplog.at_level(logging.ERROR):
+            await coordinator.finish(scope, Boom("business"))
+
+        assert "UoWRollbackFailed" in caplog.text
+
+    async def test_the_owning_task_can_still_be_cancelled(self) -> None:
+        ledger = Ledger()
+
+        async def _invocation() -> None:
+            coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+            await coordinator.enlist(scope, S0)
+            await coordinator.finish(scope, Boom("business"))
+
+        task = asyncio.create_task(_invocation())
+        await ledger.blocked.wait()
+        task.cancel()
+        done, _ = await asyncio.wait([task], timeout=1.0)
+        ledger.gate.set()  # Unbounded, the rollback would still be waiting here.
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert done == {task}
+
+
+def _hung_rollback(ledger: Ledger) -> PhasedStore:
+    """A store whose rollback waits at a gate the test never opens in time."""
+    return PhasedStore(S0, ledger, Fault("rollback", Effect.CANCEL))
 
 
 @dataclass

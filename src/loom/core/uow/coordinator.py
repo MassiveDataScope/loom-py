@@ -34,6 +34,7 @@ invocation error: the caller reads :class:`InvocationOutcome` and decides.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeGuard
@@ -44,6 +45,18 @@ from loom.core.persistence.stores import StoreKey
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 
 _log = get_logger(__name__).bind(component="uow")
+
+_ROLLBACK_TIMEOUT_S = 30.0
+"""How long a phased rollback may take before it counts as failed.
+
+A rollback runs to completion even when the owning task is cancelled, so a
+rollback stuck on a dead socket would leave that task uncancellable. Thirty
+seconds outlasts any rollback a live server answers, yet stays well under the
+minutes a TCP keepalive or driver socket timeout may take to give up. A
+rollback that times out is logged as ``UoWRollbackFailed``, like any other
+failed rollback, and ``close`` runs next; the server discards the
+transaction once the connection is gone.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +151,8 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
 
     - ``begin``, ``commit`` and ``rollback`` leave the session open.
     - ``rollback`` runs in a task of its own that is awaited to completion,
-      so it must not touch a ``ContextVar``.
+      however often the owning task is cancelled, but for at most
+      :data:`_ROLLBACK_TIMEOUT_S`; it must not touch a ``ContextVar``.
     - ``close`` releases the session, shields its own driver I/O and resets
       every ``ContextVar`` token ``begin`` published in a ``finally``, so a
       cancellation never leaves one set. It is also called when ``begin``
@@ -210,13 +224,21 @@ class _PhasedDriver:
         await self._uow.commit()
 
     async def rollback(self, cause: BaseException) -> None:
-        """Roll back to completion, even if cancelled meanwhile.
+        """Roll back to completion or to :data:`_ROLLBACK_TIMEOUT_S`, even if cancelled meanwhile.
 
-        ``cause`` is unused: a phased ``rollback`` takes no exception,
-        unlike the ``__aexit__`` a single-phase unit of work rolls back with.
+        ``close`` never runs while the rollback is in flight: a cancellation
+        waits for it, and the timeout bounds that wait, so a rollback hung on
+        a dead socket cannot leave the owning task uncancellable. ``cause`` is
+        unused: a phased ``rollback`` takes no exception, unlike the
+        ``__aexit__`` a single-phase unit of work rolls back with.
+
+        Raises:
+            TimeoutError: If the rollback outlasted :data:`_ROLLBACK_TIMEOUT_S`.
+            asyncio.CancelledError: If the task was cancelled meanwhile, once
+                the rollback has ended.
         """
         del cause
-        await run_to_completion(self._uow.rollback())
+        await run_to_completion(asyncio.wait_for(self._uow.rollback(), _ROLLBACK_TIMEOUT_S))
 
     async def close(self) -> None:
         await self._uow.close()
