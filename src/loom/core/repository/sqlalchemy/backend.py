@@ -169,6 +169,7 @@ class SQLAlchemyBackend:
                 build_sqlalchemy_repository_registration_module(
                     session_manager, models, cursor_codec=cursor_codec
                 ),
+                session_manager,
                 enabled=settings is not None,
             )
             prepare = functools.partial(
@@ -200,14 +201,17 @@ def _register_session_manager(session_manager: SessionManager, container: LoomCo
 
 
 def _with_elevation_sink(
-    module: Callable[[LoomContainer], None], *, enabled: bool
+    module: Callable[[LoomContainer], None],
+    session_manager: SessionManager,
+    *,
+    enabled: bool,
 ) -> Callable[[LoomContainer], None]:
     if not enabled:
         return module
 
     def register(container: LoomContainer) -> None:
         module(container)
-        container.register_instance(ElevationSink, SQLAlchemyElevationSink())
+        container.register_instance(ElevationSink, SQLAlchemyElevationSink(session_manager))
 
     return register
 

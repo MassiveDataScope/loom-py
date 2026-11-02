@@ -239,8 +239,15 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 
-    sink = SQLAlchemyElevationSink()
     config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
+    manager = SessionManager(
+        "sqlite+aiosqlite://",
+        pool_size=None,
+        max_overflow=None,
+        pool_timeout=None,
+        pool_recycle=None,
+    )
+    sink = SQLAlchemyElevationSink(manager)
 
     def register(container: LoomContainer) -> None:
         container.register_instance(ElevationSink, sink)

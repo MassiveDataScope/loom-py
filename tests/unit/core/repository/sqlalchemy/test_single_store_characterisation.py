@@ -33,10 +33,12 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import (
     ForeignSessionError,
     get_active_session,
+    transactional,
 )
 from loom.core.repository.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
@@ -411,6 +413,53 @@ async def test_a_repository_of_another_engine_refuses_the_active_session(
 
     assert raised.value.code == "foreign_session"
     assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
+
+
+class _NoteService:
+    """A service boundary over one store, opening its own transaction when none is active."""
+
+    def __init__(self, manager: SessionManager) -> None:
+        self.session_manager = manager
+        self._notes = _note_repo(manager)
+
+    @transactional
+    async def record(self, name: str) -> None:
+        await self._notes.create(_NoteCommand(name=name))
+
+
+async def test_a_transactional_service_of_another_store_refuses_the_active_session(
+    two_stores: tuple[SessionManager, SessionManager, Path, Path],
+) -> None:
+    first, second, first_path, second_path = two_stores
+    service = _NoteService(second)
+
+    async with SQLAlchemyUnitOfWork(first):
+        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+            await service.record("audit")
+
+    assert (_count_rows(first_path, _NOTE), _count_rows(second_path, _NOTE)) == (0, 0)
+
+
+async def test_an_elevation_sink_of_another_store_refuses_to_set_a_flag(
+    two_stores: tuple[SessionManager, SessionManager, Path, Path],
+) -> None:
+    first, second, _, _ = two_stores
+    sink = SQLAlchemyElevationSink(second)
+
+    async with SQLAlchemyUnitOfWork(first):
+        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+            await sink.set_flag("editor")
+
+
+async def test_an_elevation_sink_of_another_store_refuses_its_transaction(
+    two_stores: tuple[SessionManager, SessionManager, Path, Path],
+) -> None:
+    first, second, _, _ = two_stores
+    sink = SQLAlchemyElevationSink(second)
+
+    async with SQLAlchemyUnitOfWork(first):
+        with pytest.raises(ForeignSessionError, match="cannot join the active session"):
+            sink.in_transaction()
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=_FAULT_B)

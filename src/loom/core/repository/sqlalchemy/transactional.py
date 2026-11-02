@@ -205,9 +205,11 @@ def transactional(
 ) -> Callable[Concatenate[Any, P], Awaitable[T]]:
     """Create a single transaction boundary for service/orchestrator use cases.
 
-    When a session is already active (an outer ``@transactional`` call or a
-    unit of work driven by the executor) the method joins it and nothing
-    else happens: the owner of that session runs the post-commit hooks.
+    When a session of the owner's own ``session_manager`` is already active
+    (an outer ``@transactional`` call or a unit of work driven by the
+    executor) the method joins it and nothing else happens: the owner of that
+    session runs the post-commit hooks. A session another session manager
+    opened is never joined.
     When the decorator opens the session itself it commits, then runs
     ``on_transaction_committed(pending)`` on the owner and on its
     :class:`SupportsPostCommit` attributes through the post-commit channel
@@ -225,13 +227,16 @@ def transactional(
     Raises:
         TypeError: If applied to a repository method or the owner has no
             ``session_manager`` with a ``session()`` context manager.
+        ForeignSessionError: If the active session belongs to another
+            session manager.
         PostCommitError: If a hook failed after the commit.
     """
 
     @wraps(method)
     async def wrapper(self: Any, *args: Any, **kwargs: Any) -> T:
         _reject_repository_owner(self)
-        if get_active_session() is not None:
+        session_manager = _require_session_manager(self)
+        if session_to_join(session_manager) is not None:
             _log.debug(
                 "TransactionalSessionReused",
                 owner=self.__class__.__name__,
@@ -239,7 +244,6 @@ def transactional(
             )
             return await method(self, *args, **kwargs)
 
-        session_manager = _require_session_manager(self)
         channel = PostCommitChannel()
         channel_token = bind_channel(channel)
         try:
