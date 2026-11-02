@@ -23,10 +23,16 @@ class RecordedLoops:
 
 @pytest.fixture
 def event_loops(monkeypatch: pytest.MonkeyPatch) -> RecordedLoops:
-    """Record every loop created and made current while the test runs."""
+    """Record every loop created and made current while the test runs, starting from none.
+
+    Without a current loop, ``asyncio.get_event_loop`` raises or builds one
+    through the policy, unrecorded; code that falls back to
+    ``asyncio.new_event_loop`` then shows up here.
+    """
     recorded = RecordedLoops()
     new_event_loop = asyncio.new_event_loop
     set_event_loop = asyncio.set_event_loop
+    set_event_loop(None)
 
     def recording_new_event_loop() -> asyncio.AbstractEventLoop:
         loop = new_event_loop()

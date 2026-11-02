@@ -43,7 +43,8 @@ class WorkerManifest:
     A manifest module does not declare an instance of this type (a module-level
     ``MANIFEST`` is refused): it declares the module-level lists ``JOBS``,
     ``USE_CASES``, ``INTERFACES``, ``MODELS`` and ``CALLBACKS``, any of them
-    optional but at least one present. Discovery reads them when
+    optional but at least one present, and may declare ``AGENTS``, which a
+    worker reads only to refuse. Discovery reads them when
     ``app.discovery.mode == "manifest"`` is configured.
 
     Attributes:
