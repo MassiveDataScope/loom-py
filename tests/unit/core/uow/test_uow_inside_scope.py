@@ -19,8 +19,9 @@ from pymongo import AsyncMongoClient
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork
+from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork, active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import UnitOfWorkInsideScope, invocation
@@ -82,8 +83,10 @@ class TestInsideAScope:
 
     async def test_a_no_op_mongo_unit_of_work_opens_nothing_and_is_allowed(self) -> None:
         """It has no transaction to commit on its own; the coordinator enters it too."""
-        async with invocation(_scope_coordinator()):
-            await _enter(NoOpMongoUnitOfWork())
+        async with invocation(_scope_coordinator()), NoOpMongoUnitOfWork():
+            opened = (active_session(), in_atomic_transaction())
+
+        assert opened == (None, False)
 
     async def test_a_use_case_entering_one_by_hand_fails_with_it(self) -> None:
         manager = RecordingSessionManager(make_session())

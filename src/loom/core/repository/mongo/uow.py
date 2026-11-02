@@ -117,9 +117,11 @@ class MongoUnitOfWork:
 
     @property
     def physical(self) -> PhysicalStore:
-        """The cluster this unit of work writes to, named by its seed addresses.
+        """The cluster this unit of work writes to, named by the hosts the client knows now.
 
-        Read from the topology description, which needs no connection.
+        Read from the client's current topology description, which needs no
+        connection: the seed addresses until the client has discovered the
+        cluster, its discovered members after.
         """
         servers = self._client.topology_description.server_descriptions()
         target = ",".join(sorted(f"{host}:{port}" for host, port in servers))
@@ -143,6 +145,7 @@ class MongoUnitOfWork:
             await session.end_session()
             raise
         self._session = session
+        self._commit_attempted = False
         self._token = _active_session.set(session)
         self._transaction_token = open_atomic_transaction()
         _log.debug("UoWBegin")

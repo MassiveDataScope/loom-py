@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 from pymongo import AsyncMongoClient
+from pymongo.errors import OperationFailure
 
 import loom.core.repository.mongo.uow as uow_module
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
@@ -460,6 +461,21 @@ class TestPhased:
         assert client.aborted == 0
         await uow.close()
 
+    async def test_a_unit_of_work_begun_again_after_a_failed_commit_aborts(self) -> None:
+        client = FakeMongoClient()
+        client.commit_error = OperationFailure("write conflict", code=112)
+        uow = _unit_of_work(client)
+        await uow.begin()
+        with pytest.raises(OperationFailure):
+            await uow.commit()
+        await uow.close()
+        await uow.begin()
+
+        await uow.rollback()
+
+        assert client.aborted == 1
+        await uow.close()
+
     async def test_rollback_before_begin_is_refused(self) -> None:
         with pytest.raises(RuntimeError, match=r"rollback\(\) called before begin"):
             await _unit_of_work(FakeMongoClient()).rollback()
@@ -467,9 +483,13 @@ class TestPhased:
     async def test_a_failed_commit_through_the_coordinator_is_rolled_back_without_an_abort(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """One store behaves as ``__aexit__`` does: no abort follows a failed commit."""
+        """One store behaves as ``__aexit__`` does: no abort follows a failed commit.
+
+        A defined failure: an ``OperationFailure`` without the
+        ``UnknownTransactionCommitResult`` label, so the commit did not land.
+        """
         client = FakeMongoClient()
-        client.commit_error = ConnectionError("commit lost")
+        client.commit_error = OperationFailure("write conflict", code=112)
         coordinator = OrderedCommits({DEFAULT_STORE: _transactional(client)})
         scope = _Scope()
         await coordinator.enlist(scope, DEFAULT_STORE)
