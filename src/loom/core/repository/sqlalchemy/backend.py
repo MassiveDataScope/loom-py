@@ -134,37 +134,25 @@ class SQLAlchemyBackend:
             if db_cfg.schema.mode == EXTERNAL and postgres
             else None
         )
-        # metadata=None: the manager serves the shared metadata, where the
-        # caller's own compile_all() put its models.
-        metadata = (
-            None
-            if runtime.connection_only
-            else MetaData(
-                naming_convention=configured_naming_convention(
-                    db_cfg.schema.naming_convention, path=spec.path
-                )
-            )
-        )
-        # Before the engine: an invalid persistence.cursors fails with none built.
-        cursor_codec = None if runtime.connection_only else CursorCodec.from_context(ctx)
-        session_manager = build_session_manager(
-            db_cfg,
-            runtime.profile,
-            pool_metrics=runtime.pool_metrics,
-            database=spec.key,
-            session_settings=settings,
-            metadata=metadata,
-        )
-        if settings is not None:
-            install_pool_reset(session_manager.engine)
         module: Callable[[LoomContainer], None]
         prepare: Callable[[Sequence[type[BaseModel]]], None]
         check: Callable[[_Store], Awaitable[None]]
-        if cursor_codec is None:  # connection_only: no repository is served
+        if runtime.connection_only:  # no repository is served
+            # metadata=None: the manager serves the shared metadata, where the
+            # caller's own compile_all() put its models.
+            session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, None)
             module = functools.partial(_register_session_manager, session_manager)
             prepare = no_model_preparation
             check = _probe_connection
         else:
+            metadata = MetaData(
+                naming_convention=configured_naming_convention(
+                    db_cfg.schema.naming_convention, path=spec.path
+                )
+            )
+            # Before the engine: an invalid persistence.cursors fails with none built.
+            cursor_codec = CursorCodec.from_context(ctx)
+            session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, metadata)
             module = _with_elevation_sink(
                 build_sqlalchemy_repository_registration_module(
                     session_manager, models, cursor_codec=cursor_codec
@@ -188,6 +176,27 @@ class SQLAlchemyBackend:
             startup_checks=functools.partial(check, store),
             readiness=lambda: _readiness(session_manager),
         )
+
+
+def _open_session_manager(
+    db_cfg: DatabaseConfig,
+    runtime: BackendRuntime,
+    database: str,
+    settings: DeferredScopedSettings | None,
+    metadata: MetaData | None,
+) -> SessionManager:
+    """Build the store's session manager, resetting pooled connections when RLS settings apply."""
+    session_manager = build_session_manager(
+        db_cfg,
+        runtime.profile,
+        pool_metrics=runtime.pool_metrics,
+        database=database,
+        session_settings=settings,
+        metadata=metadata,
+    )
+    if settings is not None:
+        install_pool_reset(session_manager.engine)
+    return session_manager
 
 
 def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
