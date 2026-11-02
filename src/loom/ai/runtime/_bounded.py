@@ -181,4 +181,3 @@ def failure_error(
         "%s of agent %r failed (interaction %s)", what, run.plan.name, run.interaction_id
     )
     return AgentRunError(code, message, interaction_id=run.interaction_id)
-
