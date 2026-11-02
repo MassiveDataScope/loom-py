@@ -134,6 +134,17 @@ class TestEnlist:
         assert ledger.calls == [(S0, "begin"), (S0, "close")]
         assert in_atomic_transaction() is False
 
+    async def test_a_close_failing_after_a_failed_begin_is_logged_with_its_store(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        coordinator = _coordinator(_CloseFails(S0, Ledger(), Fault("begin", Effect.RAISE)))
+
+        with caplog.at_level(logging.ERROR), pytest.raises(Boom, match="begin failed"):
+            await coordinator.enlist(Scope(), S0)
+
+        assert "UoWCloseFailed" in caplog.text
+        assert "'store': 's0'" in caplog.text
+
     async def test_a_store_without_a_factory_is_a_key_error(self) -> None:
         coordinator, scope = OrderedCommits({}), Scope()
 

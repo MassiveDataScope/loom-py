@@ -177,7 +177,8 @@ class _Driver(Protocol):
 class _PhasedDriver:
     """Drives a :class:`PhasedUnitOfWork` one phase per call."""
 
-    def __init__(self, uow: PhasedUnitOfWork) -> None:
+    def __init__(self, key: StoreKey, uow: PhasedUnitOfWork) -> None:
+        self._key = key
         self._uow = uow
 
     async def begin(self) -> None:
@@ -192,7 +193,7 @@ class _PhasedDriver:
         try:
             await self._uow.close()
         except Exception:
-            _log.exception("UoWCloseFailed")
+            _log.exception("UoWCloseFailed", store=self._key)
 
     async def flush(self) -> None:
         await self._uow.flush()
@@ -274,7 +275,7 @@ class Participant:
         self._driver: _Driver
         if _is_phased(uow):
             self.phased, self.physical = True, uow.physical
-            self._driver = _PhasedDriver(uow)
+            self._driver = _PhasedDriver(key, uow)
         else:
             self.phased, self.physical = False, UNKNOWN_PHYSICAL
             self._driver = _SinglePhaseDriver(uow)
