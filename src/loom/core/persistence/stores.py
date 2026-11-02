@@ -124,13 +124,12 @@ class StoreSpec:
         if self.backend in CONNECTION_ONLY_BACKENDS:
             return NO_CAPABILITIES
         backend = resolve_backend(self.backend)
-        describe = getattr(backend, "capabilities", None)
-        if describe is None:
+        if not callable(getattr(backend, "capabilities", None)):
             raise ConfigError(
                 f"persistence backend {self.backend!r} ({type(backend).__qualname__}) serving "
                 f"{self.path} does not implement the required method 'capabilities'"
             )
-        return describe(self)
+        return backend.capabilities(self)
 
     @property
     def path(self) -> str:
