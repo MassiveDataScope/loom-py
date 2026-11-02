@@ -533,6 +533,33 @@ async def test_an_elevation_flag_is_set_on_its_own_store_s_session_only(
     assert residue == {DEFAULT_STORE: "", AUDIT: ""}
 
 
+async def _provider_flag_after_elevating(
+    stores: Mapping[StoreKey, Store], elevated: StoreKey
+) -> str:
+    """Elevate ``editor`` before *elevated*'s transaction begins; read its flag.
+
+    No transaction is open at ``elevate()``, so the sink sets nothing and the
+    flag can only come from the session-settings provider when it begins.
+    """
+    async with (
+        invocation(_both(stores)) as scope,
+        scope.frame(Frame(elevated)),
+        elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
+    ):
+        await elevate("editor", DECISION, at=Scope.of(U1))
+        return str((await _active(stores[elevated]).execute(EDITOR_FLAG)).scalar_one())
+
+
+@pytest.mark.parametrize("elevated", STORES)
+async def test_an_elevation_before_the_transaction_arrives_through_the_provider(
+    two_servers: TwoServers, elevated: StoreKey
+) -> None:
+    async with _started(two_servers.context()) as stores:
+        flag = await _as(U1, lambda: _provider_flag_after_elevating(stores, elevated))
+
+    assert flag == "on"
+
+
 async def _per_call_flag_after_elevating(
     stores: Mapping[StoreKey, Store], elevated: StoreKey
 ) -> str:

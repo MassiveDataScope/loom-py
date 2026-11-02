@@ -260,6 +260,13 @@ class _InvocationFailed(Exception):
     pass
 
 
+async def _write_outside_then_fail(stores: _Stores, audit: _AuditRows) -> None:
+    """Inside an invocation of the default store, write to audit by hand, then fail."""
+    async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+        await audit.insert_raw("outside")
+        raise _InvocationFailed
+
+
 class TestWithSessionScope:
     async def test_a_custom_write_to_a_store_not_enlisted_commits_per_call_today(
         self, stores: _Stores
@@ -273,8 +280,6 @@ class TestWithSessionScope:
         audit = _AuditRows(stores.audit, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
 
         with pytest.raises(_InvocationFailed):
-            async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-                await audit.insert_raw("outside")
-                raise _InvocationFailed
+            await _write_outside_then_fail(stores, audit)
 
         assert await audit.count() == 1

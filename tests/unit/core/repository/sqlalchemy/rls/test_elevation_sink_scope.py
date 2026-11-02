@@ -189,9 +189,18 @@ class TestASecondCancellationWhileClearing:
     async def test_the_execution_waits_for_the_clearing(self, manager: SessionManager) -> None:
         session = _RecordingSession(release=asyncio.Event())
 
-        unwinding, seen = await _cancelled_twice_while_clearing(manager, session)
+        unwinding, _ = await _cancelled_twice_while_clearing(manager, session)
 
-        assert (unwinding, seen) == (True, [ON])
+        assert unwinding is True
+
+    async def test_nothing_is_cleared_until_the_statement_is_released(
+        self, manager: SessionManager
+    ) -> None:
+        session = _RecordingSession(release=asyncio.Event())
+
+        _, seen = await _cancelled_twice_while_clearing(manager, session)
+
+        assert seen == [ON]
 
     async def test_the_flag_is_cleared_once_it_ends(self, manager: SessionManager) -> None:
         session = _RecordingSession(release=asyncio.Event())

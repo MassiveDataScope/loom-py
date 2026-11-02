@@ -106,11 +106,12 @@ async def test_each_store_reads_the_session_of_its_own_participant(stores: _Stor
     assert seen == expected
 
 
-async def test_each_participant_holds_a_session(stores: _Stores) -> None:
+@pytest.mark.parametrize("key", [DEFAULT_STORE, AUDIT])
+async def test_each_participant_holds_a_session(stores: _Stores, key: StoreKey) -> None:
     async with invocation(stores.coordinator()) as scope, scope.frame(BOTH):
-        default, audit = _handles(scope)
+        handle = scope.participants[key].handle
 
-    assert (default is not None, audit is not None) == (True, True)
+    assert handle is not None
 
 
 async def test_the_two_stores_never_share_a_session(stores: _Stores) -> None:
