@@ -16,9 +16,9 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
+from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
-from loom.core.uow.scope import current_scope
+from loom.core.uow.scope import ScopeOwnershipError, current_scope
 from tests.integration.support.scope_doubles import BusinessError, Run
 
 
@@ -40,8 +40,12 @@ def _executor(client: AsyncMongoClient[Any]) -> RuntimeExecutor:
     )
 
 
+def _sessions(collection: AsyncCollection[Any]) -> MongoSessions:
+    return MongoSessions(collection.database.client)
+
+
 async def _insert(collection: AsyncCollection[Any], row_id: int) -> None:
-    session = active_session()
+    session = _sessions(collection)(True)
     assert session is not None
     await collection.insert_one({"_id": row_id}, session=session)
 
@@ -134,9 +138,7 @@ async def test_a_hundred_invocations_end_every_session_and_reset_the_context(
         except BusinessError:
             pass
         finally:
-            clean.append(
-                current_scope() is None and active_session() is None and not in_atomic_transaction()
-            )
+            clean.append(current_scope() is None and not in_atomic_transaction())
 
     for index in range(100):
         task = asyncio.create_task(invoke(index))
@@ -147,3 +149,23 @@ async def test_a_hundred_invocations_end_every_session_and_reset_the_context(
 
     assert clean == [True] * 100
     assert await _committed_ids(created) == list(range(0, 100, 3))
+
+
+async def test_a_gather_of_reads_using_the_session_is_refused_and_persists_nothing(
+    mongo_client: AsyncMongoClient[Any], created: AsyncCollection[Any]
+) -> None:
+    sessions = _sessions(created)
+
+    async def read() -> Any:
+        return await created.find_one({}, session=sessions(False))
+
+    async def body() -> None:
+        await _insert(created, 1)
+        await asyncio.gather(read(), read())
+
+    use_case = Run(body)
+
+    with pytest.raises(ScopeOwnershipError):
+        await _executor(mongo_client).execute(use_case)
+
+    assert await _committed_ids(created) == []

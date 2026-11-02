@@ -2,8 +2,8 @@
 
 The signal answers exactly one question for a caller elsewhere in the stack
 (the cache bump deferral): is a transaction open that will commit later? The
-owned session opens it around the whole body and closes it once the session
-is torn down; a nested call that joins an existing session must not open a
+unit of work the decorator runs in opens it around the whole body and closes
+it once the session is torn down; a nested call that joins it must not open a
 second one.
 """
 
@@ -18,11 +18,7 @@ from loom.core.transaction import in_atomic_transaction
 
 from .conftest import MockSessionManager
 
-# ``loom.core.repository.sqlalchemy/__init__.py`` re-exports the ``transactional``
-# function under the same name as this submodule, which overwrites the
-# package's submodule attribute once imported. ``importlib`` reaches the
-# actual module object regardless of that shadowing.
-transactional_module = importlib.import_module("loom.core.repository.sqlalchemy.transactional")
+uow_module = importlib.import_module("loom.core.repository.sqlalchemy.uow")
 
 
 class _Owner:
@@ -52,7 +48,6 @@ class _OuterOwner:
         return await self.inner.execute()
 
 
-@pytest.mark.asyncio
 async def test_signal_is_closed_before_the_owned_session_opens(
     mock_session_manager: MockSessionManager,
 ) -> None:
@@ -62,7 +57,6 @@ async def test_signal_is_closed_before_the_owned_session_opens(
     assert in_atomic_transaction() is False
 
 
-@pytest.mark.asyncio
 async def test_signal_is_open_for_the_duration_of_the_owned_body(
     mock_session_manager: MockSessionManager,
 ) -> None:
@@ -74,7 +68,6 @@ async def test_signal_is_open_for_the_duration_of_the_owned_body(
     assert observed == [True]
 
 
-@pytest.mark.asyncio
 async def test_signal_closes_after_a_rollback(
     mock_session_manager: MockSessionManager,
 ) -> None:
@@ -93,21 +86,20 @@ async def test_signal_closes_after_a_rollback(
     assert in_atomic_transaction() is False
 
 
-@pytest.mark.asyncio
 async def test_nested_call_sees_the_signal_but_opens_no_second_one(
     mock_session_manager: MockSessionManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: list[bool] = []
     outer = _OuterOwner(mock_session_manager, observed)
-    real_open = transactional_module.open_atomic_transaction
+    real_open = uow_module.open_atomic_transaction
     calls: list[None] = []
 
     def _counting_open() -> object:
         calls.append(None)
         return real_open()
 
-    monkeypatch.setattr(transactional_module, "open_atomic_transaction", _counting_open)
+    monkeypatch.setattr(uow_module, "open_atomic_transaction", _counting_open)
 
     result = await outer.execute()
 

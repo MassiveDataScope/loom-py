@@ -9,18 +9,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import cast
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.scope import ScopeOwnershipError, current_scope
@@ -72,8 +73,9 @@ def _executor(manager: SessionManager) -> RuntimeExecutor:
 
 
 async def _insert(table: str, row_id: int) -> None:
-    session = get_active_session()
-    assert session is not None
+    scope = current_scope()
+    assert scope is not None
+    session = cast(AsyncSession, scope.participants[DEFAULT_STORE].handle)
     await session.execute(
         text(f"INSERT INTO {table} (id, payload) VALUES (:id, 'p')"), {"id": row_id}
     )
@@ -228,4 +230,4 @@ async def test_a_hundred_invocations_return_every_connection_and_reset_the_conte
 
 
 def _context_is_clean() -> bool:
-    return current_scope() is None and get_active_session() is None and not in_atomic_transaction()
+    return current_scope() is None and not in_atomic_transaction()

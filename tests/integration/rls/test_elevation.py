@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -24,7 +25,7 @@ from loom.core.repository.sqlalchemy.rls import (
 )
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import reset_active_session, set_active_session
+from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 
@@ -81,23 +82,21 @@ async def test_read_then_authorize_sets_the_flag_on_the_open_transaction_and_com
     decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
     identity = set_identity(Identity(subject=U1))
     try:
-        async with manager.session() as session:
-            active = set_active_session(session)
-            try:
-                async with elevation_scope(
-                    owns_transaction=True, sink=SQLAlchemyElevationSink(manager)
-                ):
-                    assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
-                    assert (await session.execute(text(FLAG))).scalar() == ""
+        async with SQLAlchemyUnitOfWork(manager):
+            session = manager.active_session
+            assert session is not None
+            async with elevation_scope(
+                owns_transaction=True, sink=SQLAlchemyElevationSink(manager)
+            ):
+                assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
+                assert (await session.execute(text(FLAG))).scalar() == ""
 
-                    await elevate("editor", decision, at=Scope.of(U1))
+                await elevate("editor", decision, at=Scope.of(U1))
 
-                    assert (await session.execute(text(FLAG))).scalar() == "on"
-                    update = text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'")
-                    assert (await session.execute(update)).rowcount == 1
-                    await session.commit()
-            finally:
-                reset_active_session(active)
+                assert (await session.execute(text(FLAG))).scalar() == "on"
+                update = text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'")
+                assert cast(CursorResult[Any], await session.execute(update)).rowcount == 1
+                await session.commit()
 
         async with manager.session() as session:
             assert (await session.execute(text(FLAG))).scalar() == ""

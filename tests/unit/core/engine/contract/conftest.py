@@ -21,9 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import StoreKey
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, _session_to_join
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 
@@ -77,6 +78,15 @@ class CountingSessionManager:
     def engine(self) -> Any:
         """The real manager's engine: the unit of work names its database from it."""
         return self.inner.engine
+
+    @property
+    def store(self) -> StoreKey:
+        return self.inner.store
+
+    @property
+    def active_session(self) -> Any:
+        """What :attr:`SessionManager.active_session` returns for this wrapper."""
+        return _session_to_join(self.as_session_manager(), write=False)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[_SessionProxy]:

@@ -12,8 +12,7 @@ from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.job.context import add_pending_dispatch
-from loom.core.repository.mongo.uow import active_session
-from loom.core.repository.sqlalchemy.transactional import _mutations, get_active_session
+from loom.core.repository.sqlalchemy.transactional import _mutations
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
@@ -202,14 +201,8 @@ class DispatchThenFail(UseCase[Any, str]):
 
 
 def context_is_clean() -> bool:
-    """Whether no invocation scope, channel, adapter session or mutation list stays bound."""
-    return (
-        current_scope() is None
-        and active_channel() is None
-        and get_active_session() is None
-        and active_session() is None
-        and _mutations.get() is None
-    )
+    """Whether no invocation scope, channel or mutation list stays bound."""
+    return current_scope() is None and active_channel() is None and _mutations.get() is None
 
 
 def start_hanging(executor: RuntimeExecutor) -> tuple[asyncio.Task[None], list[bool]]:

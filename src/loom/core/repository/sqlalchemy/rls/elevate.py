@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from sqlalchemy import text
 
@@ -13,35 +13,35 @@ from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, _session_to_join
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
-from loom.core.repository.sqlalchemy.transactional import session_to_join
-
-if TYPE_CHECKING:
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 _SET_SETTINGS: Final = text(SET_SETTINGS)
 
 
 class SQLAlchemyElevationSink:
-    """Sets and clears elevation flags on the transaction of its store's active session.
+    """Sets and clears elevation flags on the transaction of its store's participant.
 
-    The sink only ever touches a session its own session manager opened, so
-    an elevation flag can never be set on another store's session.
+    The sink only ever touches the session its own store's participant holds
+    in the current invocation, so an elevation flag can never be set on
+    another store's session. Without that participant it does nothing.
 
     Args:
         session_manager: The session manager of the store whose sessions it
             elevates.
 
     Raises:
-        ForeignSessionError: From any method, when the active session was
-            opened by another session manager.
+        ScopeOwnershipError: From any method, outside the task that owns the
+            invocation while the store is enlisted.
+        ForeignSessionError: From any method, when another session manager's
+            unit of work holds the store.
     """
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
 
     def in_transaction(self) -> bool:
-        session = session_to_join(self._session_manager)
+        session = _session_to_join(self._session_manager, write=False)
         return session is not None and session.in_transaction()
 
     async def set_flag(self, scope: str) -> None:
@@ -51,12 +51,12 @@ class SQLAlchemyElevationSink:
         await self._apply({elevation_setting(scope): "" for scope in sorted(scopes)})
 
     async def invalidate(self) -> None:
-        session = session_to_join(self._session_manager)
+        session = _session_to_join(self._session_manager, write=False)
         if session is not None:
             await session.invalidate()
 
     async def _apply(self, values: Mapping[str, str]) -> None:
-        session = session_to_join(self._session_manager)
+        session = _session_to_join(self._session_manager, write=False)
         parameters = settings_parameters(values)
         if session is None or parameters is None:
             return

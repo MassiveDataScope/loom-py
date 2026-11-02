@@ -26,7 +26,7 @@ from loom.core.repository.mongo.registry import (
     build_mongo_repository_registration_module,
 )
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import active_session
+from loom.core.repository.mongo.uow import MongoSessions
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -49,7 +49,7 @@ def _container(
         (Article, Note),
         collections=collections or {},
         id_policy=id_policy or Uuid4IdPolicy(),
-        session_provider=active_session,
+        session_provider=MongoSessions(cast(Any, client)),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
     module(container)
@@ -101,11 +101,12 @@ async def test_id_policy_is_applied_to_generated_keys() -> None:
 
 
 def test_builder_rejects_non_persistible_types() -> None:
+    client = FakeMongoClient()
     builder = MongoDefaultRepositoryBuilder(
-        database=_database(FakeMongoClient()),
+        database=_database(client),
         collections={},
         id_policy=Uuid4IdPolicy(),
-        session_provider=active_session,
+        session_provider=MongoSessions(cast(Any, client)),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
 

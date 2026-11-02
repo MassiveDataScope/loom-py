@@ -11,12 +11,12 @@ from sqlalchemy import text
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.use_case.use_case import UseCase
 
 from .._lifecycle_doubles import Boom, Log, Metrics, Ok, cancel_mid_flight, context_is_clean
 from .conftest import (
+    CountingSessionManager,
     LifecycleCase,
     cancel_twice_during_rollback,
     require_transactional,
@@ -144,10 +144,13 @@ class TestNoSessionLeak:
 
 
 class _SelectOne(UseCase[Any, int]):
-    """Runs one statement on the active session so a real connection is used."""
+    """Runs one statement on the store's active session so a real connection is used."""
+
+    def __init__(self, manager: CountingSessionManager) -> None:
+        self._manager = manager
 
     async def execute(self) -> int:
-        session = get_active_session()
+        session = self._manager.active_session
         assert session is not None
         return (await session.execute(text("SELECT 1"))).scalar_one()
 
@@ -158,7 +161,7 @@ async def test_sc002_sqlite_sessions_opened_equal_sessions_closed_after_a_thousa
         executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
 
         for _ in range(_EXECUTIONS):
-            assert await executor.execute(_SelectOne()) == 1
+            assert await executor.execute(_SelectOne(manager)) == 1
 
         assert manager.opened == manager.closed == _EXECUTIONS
-        assert get_active_session() is None
+        assert context_is_clean()

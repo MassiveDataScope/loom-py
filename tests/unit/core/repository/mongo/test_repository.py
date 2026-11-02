@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -459,7 +459,7 @@ class TestConflicts:
 
         collection = RecordingCollection()
         session = FakeMongoClient().start_session()
-        provider = cast(SessionProvider, lambda: session)
+        provider = cast(SessionProvider, lambda write: session)
         repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
         payload = [ArticleCreate(slug="a", title="A"), ArticleCreate(slug="a", title="A")]
 
@@ -774,7 +774,7 @@ class TestSessions:
         session = FakeMongoClient().start_session()
         # The repository only forwards the session to the driver; the fake
         # session stands in for pymongo's nominal AsyncClientSession.
-        provider = cast(SessionProvider, lambda: session)
+        provider = cast(SessionProvider, lambda write: session)
         repo = RepositoryMongo(
             Article, RecordingCollection(), session_provider=provider, cursor_codec=_CODEC
         )
@@ -782,6 +782,58 @@ class TestSessions:
         await repo.get_by_id("x")
 
         assert calls == [session]
+
+    @pytest.mark.parametrize(
+        ("operation", "write"),
+        [
+            ("get_by_id", False),
+            ("count", False),
+            ("list_paginated", False),
+            ("create", True),
+            ("create_many", True),
+            ("update", True),
+            ("delete", True),
+        ],
+    )
+    async def test_the_provider_is_told_whether_the_call_writes(
+        self, collection: FakeCollection, operation: str, write: bool
+    ) -> None:
+        intents: list[bool] = []
+
+        def provider(intent: bool) -> None:
+            intents.append(intent)
+
+        repo = RepositoryMongo(Article, collection, session_provider=provider, cursor_codec=_CODEC)
+        await _CALLS[operation](repo)
+
+        assert set(intents) == {write}
+
+    async def test_a_provider_without_arguments_still_works_with_a_deprecation_warning(
+        self, collection: FakeCollection
+    ) -> None:
+        calls: list[None] = []
+
+        def legacy() -> None:
+            calls.append(None)
+
+        with pytest.warns(DeprecationWarning, match="session_provider without arguments"):
+            repo = RepositoryMongo(
+                Article, collection, session_provider=legacy, cursor_codec=_CODEC
+            )
+        await repo.get_by_id("x")
+
+        assert calls == [None]
+
+
+_CALLS: dict[str, Callable[[RepositoryMongo[Article, str]], Awaitable[object]]] = {
+    "get_by_id": lambda repo: repo.get_by_id("a"),
+    "count": lambda repo: repo.count(),
+    "list_paginated": lambda repo: repo.list_paginated(PageParams(page=1, limit=5)),
+    "create": lambda repo: repo.create(ArticleCreate(slug="a", title="A")),
+    "create_many": lambda repo: repo.create_many([ArticleCreate(slug="a", title="A")]),
+    "update": lambda repo: repo.update("a", ArticleUpdate(title="B")),
+    "delete": lambda repo: repo.delete("a"),
+}
 
 
 class TestCacheHooks:

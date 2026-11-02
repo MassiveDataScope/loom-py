@@ -290,9 +290,12 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     @abstractmethod
     def _session_scope(
-        self, session: AsyncSession | None = None
+        self, session: AsyncSession | None = None, *, write: bool = False
     ) -> AbstractAsyncContextManager[AsyncSession]:
-        """Open the session the operation runs in, reusing *session* when given."""
+        """Open the session the operation runs in, reusing *session* when given.
+
+        ``write`` is the operation's intent, which the invocation scope checks.
+        """
 
 
 class SQLAlchemyCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT, IdT]):
@@ -302,7 +305,7 @@ class SQLAlchemyCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
     async def create(self, data: msgspec.Struct) -> OutputT:
         """Persist one entity and return its output struct."""
         serialized = self._serialize_input(data)
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=True) as scoped_session:
             sa_model = self._effective_sa_model
             obj = sa_model(**serialized)
             scoped_session.add(obj)
@@ -350,7 +353,7 @@ class SQLAlchemyBulkCreateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Ou
         if not rows:
             return ()
         partial = self._partial_keys(rows)
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=True) as scoped_session:
             if self._single_statement_applies(scoped_session, partial):
                 objs = await self._insert_returning(
                     scoped_session, self._normalize_rows(rows, partial)
@@ -672,7 +675,7 @@ class SQLAlchemyUpdateMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
         full_values = {**values, **(self._onupdate_columns or {})}
         identity = self._id_values(obj_id)
 
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=True) as scoped_session:
             sa_model = self._effective_sa_model
             if not full_values:
                 raw = await scoped_session.get(sa_model, identity)
@@ -707,7 +710,7 @@ class SQLAlchemyDeleteMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[Output
     async def delete(self, obj_id: IdT) -> bool:
         """Delete one entity by id; a composite key is a tuple as in :meth:`update`."""
         identity = self._id_values(obj_id)
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=True) as scoped_session:
             sa_model = self._effective_sa_model
             obj = await scoped_session.get(sa_model, identity)
             if obj is None:

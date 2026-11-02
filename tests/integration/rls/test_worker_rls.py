@@ -29,7 +29,7 @@ from loom.core.identity.wire import encode_identity
 from loom.core.job.job import Job
 from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
-from loom.core.repository.sqlalchemy.transactional import get_active_session
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
@@ -48,8 +48,11 @@ _isolated_signals = isolated_signals(worker_init, worker_shutdown)
 class ListNoteBodies(UseCase[notes.Note, list[str]]):
     """Read every note the caller's scope lets through."""
 
+    def __init__(self, session_manager: SessionManager) -> None:
+        self._session_manager = session_manager
+
     async def execute(self) -> list[str]:
-        session = get_active_session()
+        session = self._session_manager.active_session
         if session is None:
             raise RuntimeError("no unit-of-work session")
         rows = await session.execute(text("SELECT body FROM notes ORDER BY body"))

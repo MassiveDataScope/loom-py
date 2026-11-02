@@ -17,7 +17,6 @@ from sqlalchemy.engine import make_url
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 from ._lifecycle_doubles import Boom, Log, Ok, cancel_mid_flight, context_is_clean
@@ -131,7 +130,7 @@ class TestF01SessionClosed:
         await executor.execute(Ok(), params={"value": "y"})
 
         assert [cm.exits for cm in manager.cms] == [1, 1]
-        assert get_active_session() is None
+        assert context_is_clean()
 
 
 # ---------------------------------------------------------------------------

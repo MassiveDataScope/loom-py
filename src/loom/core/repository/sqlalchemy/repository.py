@@ -28,8 +28,7 @@ from loom.core.repository.sqlalchemy.mixins import (
     SQLAlchemyReadMixin,
     SQLAlchemyUpdateMixin,
 )
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session, session_to_join
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, _session_to_join
 
 R = TypeVar("R")
 
@@ -37,7 +36,13 @@ R = TypeVar("R")
 def with_session_scope(
     method: Callable[..., Awaitable[R]],
 ) -> Callable[..., Awaitable[R]]:
-    """Inject repository-managed session into custom repository methods."""
+    """Inject repository-managed session into custom repository methods.
+
+    The method joins its store's session when the store is enlisted in the
+    invocation, as raw SQL does, and runs in a session of its own otherwise.
+    It declares no write intent: a write through it is not recorded for the
+    commit order.
+    """
 
     @wraps(method)
     async def wrapper(
@@ -101,26 +106,27 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         self.log = get_logger(__name__).bind(repository=self.__class__.__name__)
 
     def has_caller_scoped_session(self) -> bool:
-        """Whether a read would run inside a session bound to the caller's context.
+        """Whether a read would run inside the session of its store's participant.
 
-        True inside a ``@transactional`` scope or a unit of work: the session
-        was opened by the caller, dies when the caller unwinds, and holds
-        writes only that caller can see.  False when the repository would open
-        and close a session of its own for the call.
+        True while the store is enlisted in the current invocation: the
+        session was opened by the caller, dies when the caller unwinds, and
+        holds writes only that caller can see.  False when the repository
+        would open and close a session of its own for the call.
 
         Implements
         :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`.
-        :func:`loom.core.transaction.in_atomic_transaction` is the neutral
-        marker this capability used to be a placeholder for, but it answers a
+        :func:`loom.core.transaction.in_atomic_transaction` answers a
         different question — whether *any* atomic transaction is open — not
-        whether *this session* is scoped to the caller, which is what keeps
-        the repository cache out of the caller's transaction.  Keep using this
-        method for that; it is not superseded.
+        whether *this* store's session is scoped to the caller, which is
+        what keeps the repository cache out of the caller's transaction.
 
         Returns:
-            ``True`` when a caller-scoped session is bound to the context.
+            ``True`` when the store's participant holds a session.
+
+        Raises:
+            ScopeOwnershipError: See :attr:`SessionManager.active_session`.
         """
-        return get_active_session() is not None
+        return _session_to_join(self.session_manager, write=False) is not None
 
     async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
         """Handle post-commit mutation events (cache invalidation hook)."""
@@ -128,14 +134,24 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
 
     @asynccontextmanager
     async def _session_scope(
-        self, session: AsyncSession | None = None
+        self, session: AsyncSession | None = None, *, write: bool = False
     ) -> AsyncIterator[AsyncSession]:
-        """Reuse active transaction session or create a scoped one."""
+        """Run in *session*, in the session of the store's participant, or in one of its own.
+
+        Args:
+            session: A session the caller already holds.
+            write: Whether the operation writes; a write is recorded on the
+                participant for the commit order.
+
+        Raises:
+            ScopeOwnershipError: See :attr:`SessionManager.active_session`.
+            ForeignSessionError: See :attr:`SessionManager.active_session`.
+        """
         if session is not None:
             yield session
             return
 
-        context_session = session_to_join(self.session_manager)
+        context_session = _session_to_join(self.session_manager, write=write)
         if context_session is not None:
             yield context_session
             return

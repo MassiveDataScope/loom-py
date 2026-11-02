@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.engine import make_url
+
+from loom.core.persistence.stores import DEFAULT_STORE
 
 from ..conftest import RecordingSessionManager
 
@@ -20,6 +23,8 @@ from ..conftest import RecordingSessionManager
 def make_session_manager(session: MagicMock) -> MagicMock:
     """Return a session manager double whose ``.session()`` yields ``session``."""
     sm = MagicMock()
+    sm.store = DEFAULT_STORE
+    sm.engine.url = make_url("sqlite+aiosqlite://")
 
     @asynccontextmanager
     async def _session_ctx() -> AsyncIterator[MagicMock]:

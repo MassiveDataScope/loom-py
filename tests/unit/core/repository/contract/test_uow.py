@@ -7,9 +7,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from loom.core.repository.abc import Creatable, Readable
-from loom.core.repository.mongo.uow import active_session
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow.scope import current_scope
 
 from .conftest import SEED, BackendCase, mongo_client_of, require
 
@@ -18,8 +17,8 @@ class _Abort(Exception):
     pass
 
 
-def _context_state() -> tuple[bool, object, object]:
-    return (in_atomic_transaction(), get_active_session(), active_session())
+def _context_state() -> tuple[bool, object]:
+    return (in_atomic_transaction(), current_scope())
 
 
 async def test_commit_makes_writes_visible(case: BackendCase, repository: Any) -> None:
@@ -70,12 +69,17 @@ async def test_reads_inside_the_unit_of_work_see_its_uncommitted_writes(
     require(case, Creatable, Readable)
 
     async with case.unit_of_work(repository):
-        session_before = get_active_session()
+        session_before = _active_session(repository)
         created = await repository.create(SEED[0])
         assert await repository.get_by_id(created.id) == created
         if case.name == "sqlalchemy":
             assert session_before is not None
-            assert get_active_session() is session_before
+            assert _active_session(repository) is session_before
+
+
+def _active_session(repository: Any) -> object:
+    session_manager = getattr(repository, "session_manager", None)
+    return None if session_manager is None else session_manager.active_session
 
 
 async def _fail_the_commit(case: BackendCase, repository: Any) -> Any:
@@ -96,7 +100,7 @@ async def test_a_failed_sqlalchemy_commit_persists_nothing_and_closes_the_unit_o
     with pytest.raises(IntegrityError):
         await _fail_the_commit(case, repository)
 
-    assert _context_state() == (False, None, None)
+    assert _context_state() == (False, None)
     assert await repository.get_by_id(SEED[0].id) is None
     assert await repository.get_by_id(SEED[1].id) == committed
 
@@ -111,7 +115,7 @@ async def test_a_failed_mongo_commit_leaves_its_write_visible(
         await _fail_the_commit(case, repository)
 
     client = mongo_client_of(repository)
-    assert _context_state() == (False, None, None)
+    assert _context_state() == (False, None)
     assert client.sessions
     assert all(session.ended for session in client.sessions)
     # characterisation: MongoUnitOfWork does not abort after a failed commit
@@ -127,7 +131,7 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
 ) -> None:
     require(case, Creatable, Readable)
     started = asyncio.Event()
-    recorded: list[tuple[bool, object, object]] = []
+    recorded: list[tuple[bool, object]] = []
     created: list[Any] = []
 
     async def _run() -> None:
@@ -146,7 +150,7 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert recorded == [(False, None, None)]
+    assert recorded == [(False, None)]
     visible = await repository.get_by_id(SEED[0].id)
     if case.transactions:
         assert visible is None
@@ -157,8 +161,8 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
 
 async def test_error_exit_resets_the_session_context(case: BackendCase, repository: Any) -> None:
     require(case, Creatable)
-    assert _context_state() == (False, None, None)
-    recorded: list[tuple[bool, object, object]] = []
+    assert _context_state() == (False, None)
+    recorded: list[tuple[bool, object]] = []
 
     try:
         async with case.unit_of_work(repository):
@@ -169,7 +173,7 @@ async def test_error_exit_resets_the_session_context(case: BackendCase, reposito
     else:
         raise AssertionError("unit of work suppressed _Abort")
 
-    assert recorded == [(False, None, None)]
+    assert recorded == [(False, None)]
 
 
 async def test_write_before_an_exception_stays_visible_without_transactions(

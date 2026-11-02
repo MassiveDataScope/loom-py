@@ -15,7 +15,7 @@ import loom.core.repository.mongo.uow as uow_module
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
+from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.coordinator import (
     InvocationOutcome,
@@ -24,6 +24,7 @@ from loom.core.uow.coordinator import (
     PhysicalStore,
     RolledBack,
 )
+from loom.core.uow.scope import current_scope
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -41,11 +42,15 @@ def _transactional(client: FakeMongoClient) -> MongoUnitOfWorkFactory:
     return MongoUnitOfWorkFactory.transactional(cast(AsyncMongoClient[Any], client))
 
 
+def _sessions(client: FakeMongoClient) -> MongoSessions:
+    return MongoSessions(cast(AsyncMongoClient[Any], client))
+
+
 def _repository(client: FakeMongoClient) -> RepositoryMongo[Article, str]:
     return RepositoryMongo(
         Article,
         client.collection("articles"),
-        session_provider=active_session,
+        session_provider=_sessions(client),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
@@ -56,7 +61,7 @@ class TestWithoutTransactions:
         factory = MongoUnitOfWorkFactory.without_transactions()
 
         async with factory.create():
-            assert active_session() is None
+            assert _sessions(client).active_session is None
 
         assert client.sessions == []
         assert client.committed == 0
@@ -95,12 +100,13 @@ class TestWithoutTransactions:
     async def test_leaves_the_active_session_untouched(self) -> None:
         """A no-op unit of work inside a transactional one does not hide its session."""
         client = FakeMongoClient()
+        sessions = _sessions(client)
 
         async with _transactional(client).create():
-            outer = active_session()
+            outer = sessions.active_session
             async with MongoUnitOfWorkFactory.without_transactions().create():
-                assert active_session() is outer
-            assert active_session() is outer
+                assert sessions.active_session is outer
+            assert sessions.active_session is outer
 
 
 class TestTransactional:
@@ -109,13 +115,13 @@ class TestTransactional:
 
         async with _transactional(client).create():
             session = client.sessions[0]
-            assert active_session() is cast(Any, session)
+            assert _sessions(client).active_session is cast(Any, session)
             assert session.in_transaction is True
 
         assert client.committed == 1
         assert client.aborted == 0
         assert session.ended is True
-        assert active_session() is None
+        assert current_scope() is None
 
     async def test_opens_the_atomic_transaction_signal_and_closes_it_after(self) -> None:
         """F03: a write here is not durable until commit, so the bump must defer."""
@@ -138,7 +144,7 @@ class TestTransactional:
         assert client.aborted == 1
         assert client.committed == 0
         assert client.sessions[0].ended is True
-        assert active_session() is None
+        assert current_scope() is None
 
     async def test_repository_call_inside_the_unit_of_work_uses_its_session(self) -> None:
         client = FakeMongoClient()
@@ -165,7 +171,7 @@ class TestTransactional:
         assert client.aborted == 1
         assert await repository.get_by_id("a") is None
 
-    async def test_contextvar_is_reset_even_when_abort_fails(
+    async def test_the_scope_is_unpublished_even_when_abort_fails(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         client = FakeMongoClient()
@@ -179,7 +185,7 @@ class TestTransactional:
             async with uow:
                 raise _WriteFailed()
 
-        assert active_session() is None
+        assert current_scope() is None
         assert client.sessions[0].ended is True
         assert "UoWRollbackFailed" in caplog.text
 
@@ -193,7 +199,7 @@ class TestTransactional:
                 raise AssertionError("body must not run")
 
         assert client.sessions[0].ended is True
-        assert active_session() is None
+        assert current_scope() is None
 
     async def test_end_session_failure_keeps_the_use_case_exception(
         self, caplog: pytest.LogCaptureFixture
@@ -209,7 +215,7 @@ class TestTransactional:
             async with uow:
                 raise _WriteFailed()
 
-        assert active_session() is None
+        assert current_scope() is None
         assert "UoWCloseFailed" in caplog.text
 
     async def test_commit_failure_ends_the_session_without_a_second_abort(
@@ -229,38 +235,41 @@ class TestTransactional:
 
         assert client.aborted == 0
         assert client.sessions[0].ended is True
-        assert active_session() is None
+        assert current_scope() is None
         assert "UoWRollbackFailed" not in caplog.text
         assert "InvalidOperation" not in caplog.text
 
-    async def test_second_cancellation_during_abort_still_aborts_and_ends(self) -> None:
-        """The abort and ``end_session`` are shielded; the token is reset at once."""
+    async def test_a_second_cancellation_waits_for_the_abort_then_ends_the_session(
+        self,
+    ) -> None:
+        """The coordinator runs the abort to completion; the scope is unpublished in the task."""
         client = FakeMongoClient()
         client.abort_gate = asyncio.Event()
         uow = _transactional(client).create()
-
+        entered = asyncio.Event()
         observed: list[bool] = []
 
         async def run() -> None:
             try:
                 async with uow:
+                    entered.set()
                     await asyncio.Event().wait()
             finally:
-                observed.append(active_session() is None)  # the task's own context
+                observed.append(current_scope() is None)  # the task's own context
 
         task = asyncio.create_task(run())
-        await asyncio.sleep(0)
+        await entered.wait()
         task.cancel()  # cuts the body: the abort starts and blocks on the gate
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
         task.cancel()  # arrives while the abort is in flight
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert observed == [True]
-        assert client.aborted == 0
+        await asyncio.sleep(0)
+        assert not task.done()
 
         client.abort_gate.set()
-        await asyncio.sleep(0.01)
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
+        assert observed == [True]
         assert client.aborted == 1
         assert client.sessions[0].ended is True
 
@@ -284,10 +293,11 @@ class TestTransactional:
         client = FakeMongoClient()
         factory = _transactional(client)
 
+        sessions = _sessions(client)
         async with factory.create():
-            first = active_session()
+            first = sessions.active_session
         async with factory.create():
-            second = active_session()
+            second = sessions.active_session
 
         assert first is not second
         assert len(client.sessions) == 2
@@ -385,13 +395,13 @@ class TestPhased:
 
         assert client.sessions[0].ended is True
 
-    async def test_close_resets_the_active_session(self) -> None:
+    async def test_close_releases_the_session(self) -> None:
         uow = _unit_of_work(FakeMongoClient())
         await uow.begin()
 
         await uow.close()
 
-        assert active_session() is None
+        assert uow.session is None
 
     async def test_close_closes_the_atomic_transaction_signal(self) -> None:
         uow = _unit_of_work(FakeMongoClient())
@@ -401,7 +411,7 @@ class TestPhased:
 
         assert in_atomic_transaction() is False
 
-    async def test_a_failure_to_end_the_session_is_logged_and_the_token_reset(
+    async def test_a_failure_to_end_the_session_is_logged_and_the_session_released(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         client = FakeMongoClient()
@@ -412,7 +422,7 @@ class TestPhased:
         with caplog.at_level(logging.ERROR, logger=uow_module.__name__):
             await uow.close()
 
-        assert active_session() is None
+        assert uow.session is None
         assert "UoWCloseFailed" in caplog.text
 
     async def test_a_cancelled_close_still_ends_the_session_and_resets_the_token(self) -> None:
@@ -426,7 +436,7 @@ class TestPhased:
             try:
                 await uow.close()
             finally:
-                observed.append(active_session() is None)
+                observed.append(uow.session is None)
 
         task = asyncio.create_task(close())
         while not client.sessions:
@@ -504,7 +514,6 @@ class TestPhased:
         assert outcome.stores == (RolledBack(DEFAULT_STORE, client.commit_error),)
         assert client.aborted == 0
         assert client.sessions[0].ended is True
-        assert active_session() is None
         assert "UoWRollbackFailed" not in caplog.text
 
 

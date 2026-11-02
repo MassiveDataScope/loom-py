@@ -15,7 +15,7 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.sqlalchemy.transactional import get_active_session
+from loom.core.uow.scope import current_scope
 
 from .conftest import OuterService, PostCommitService, ServiceWithMixedDependencies
 
@@ -29,11 +29,11 @@ class TestOwnedChannel:
         assert result == "ok"
         assert log == ["body", "commit", "session_closed", "owner", "dep_a", "dep_b"]
 
-    async def test_hooks_see_no_active_session(self, service: PostCommitService) -> None:
+    async def test_hooks_run_outside_the_invocation(self, service: PostCommitService) -> None:
         seen: list[Any] = []
 
         async def _hook(events: tuple[MutationEvent, ...]) -> None:
-            seen.append(get_active_session())
+            seen.append(current_scope())
 
         service.dependency_a.on_transaction_committed = _hook  # type: ignore[method-assign]
 

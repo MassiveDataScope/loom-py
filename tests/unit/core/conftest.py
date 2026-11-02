@@ -12,6 +12,7 @@ with nothing but the ``testing`` extra, and this conftest loads for it too.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,8 +25,9 @@ SessionManagerFactory = Callable[[type], Awaitable["SessionManager"]]
 
 
 def make_session() -> MagicMock:
-    """Return a session double whose ``commit``/``rollback``/``close`` are awaitable."""
+    """Return a session double whose ``flush``/``commit``/``rollback``/``close`` are awaitable."""
     session = MagicMock()
+    session.flush = AsyncMock()
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
     session.close = AsyncMock()
@@ -41,6 +43,11 @@ class RecordingSessionManager:
         log: Appended with ``"session_closed"`` on every exit, so a test can
             order the close against the post-commit hooks.
     """
+
+    store = "default"
+    engine = SimpleNamespace(
+        url=SimpleNamespace(drivername="sqlite+aiosqlite", host=None, port=None, database=None)
+    )
 
     def __init__(
         self,

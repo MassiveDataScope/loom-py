@@ -21,13 +21,14 @@ from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
     install_session_settings,
 )
 from loom.core.tracing import get_trace_id
+from loom.core.uow.scope import current_participant
 
 _log = get_logger(__name__).bind(module="session_manager")
 
@@ -118,7 +119,7 @@ class SessionManager:
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
-        self.store = store
+        self.store = StoreKey(store)
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -140,6 +141,9 @@ class SessionManager:
             session_settings=session_settings is not None,
         )
 
+    def __repr__(self) -> str:
+        return f"SessionManager(store={self.store!r}, url={self._engine.url!r})"
+
     @property
     def has_session_settings(self) -> bool:
         """Whether every transaction of this manager starts with the product's settings."""
@@ -155,6 +159,27 @@ class SessionManager:
         if self._session_settings is None:
             return {}
         return self._session_settings() or {}
+
+    @property
+    def active_session(self) -> AsyncSession | None:
+        """The session this store's unit of work holds in the current invocation, if any.
+
+        The one public way to read a store's session, for raw SQL that must
+        run in the invocation's transaction. Like ``request.user``, its value
+        depends on the context it is read from: ``None`` outside an
+        invocation, or when this store is not enlisted in it, where
+        :meth:`session` opens a session of its own. A repository of this
+        manager joins the same session.
+
+        Raises:
+            ScopeOwnershipError: Read from a task other than the one that owns
+                the invocation (a ``gather`` child, a task that outlives its
+                use case), from a thread, or once the invocation has ended,
+                while this store is enlisted.
+            ForeignSessionError: When this store is enlisted with another
+                session manager's unit of work.
+        """
+        return _session_to_join(self, write=False)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -185,6 +210,20 @@ class SessionManager:
     def session_factory(self) -> async_sessionmaker[AsyncSession]:
         """The configured async session factory bound to the engine."""
         return self._session_factory
+
+
+def _session_to_join(session_manager: SessionManager, *, write: bool) -> AsyncSession | None:
+    """Return the session of ``session_manager``'s store a caller joins, if it is enlisted.
+
+    The checkpoint :meth:`~loom.core.uow.scope.InvocationScope.participant_for`
+    decides; ``write`` is the caller's intent.
+
+    Raises:
+        ScopeOwnershipError: See :attr:`SessionManager.active_session`.
+        ForeignSessionError: See :attr:`SessionManager.active_session`.
+    """
+    participant = current_participant(session_manager.store, session_manager, write=write)
+    return None if participant is None else cast("AsyncSession | None", participant.handle)
 
 
 def build_session_manager(

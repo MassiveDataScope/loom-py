@@ -23,6 +23,8 @@ persistence registry turns an ``ImportError`` at entry-point load into a
 
 from __future__ import annotations
 
+import inspect
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Generic, Protocol, cast
@@ -74,7 +76,8 @@ from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCom
 from loom.core.repository.mongo.values import to_storage_datetime, to_storage_value
 
 Document = dict[str, Any]
-SessionProvider = Callable[[], AsyncClientSession | None]
+SessionProvider = Callable[[bool], AsyncClientSession | None]
+"""Returns the client session a driver call runs in, given whether the call writes."""
 
 _log = get_logger(__name__).bind(component="repository")
 
@@ -85,9 +88,28 @@ _DUPLICATE_KEY = 11000
 _NATIVE_TYPES = (datetime,)
 
 
-def _no_session() -> AsyncClientSession | None:
+def _no_session(write: bool) -> AsyncClientSession | None:
     """Default ``session_provider``: every driver call runs outside a session."""
+    del write
     return None
+
+
+def _with_write_intent(
+    provider: SessionProvider | Callable[[], AsyncClientSession | None],
+) -> SessionProvider:
+    """Return ``provider`` taking the write intent, adapting a zero-argument one with a warning."""
+    try:
+        inspect.signature(provider).bind(False)
+    except TypeError:
+        warnings.warn(
+            "a session_provider without arguments is deprecated: it receives whether the "
+            "call writes (Callable[[bool], AsyncClientSession | None])",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        legacy = cast(Callable[[], AsyncClientSession | None], provider)
+        return lambda write: legacy()
+    return cast(SessionProvider, provider)
 
 
 class MongoFindCursor(Protocol):
@@ -183,9 +205,10 @@ class RepositoryMongo(
             async shape) holding the documents.
         id_policy: Strategy minting and converting ids; defaults to
             :class:`~loom.core.repository.mongo.ids.Uuid4IdPolicy`.
-        session_provider: Returns the active client session, or ``None``;
-            every driver call runs in the session it returns. Defaults to
-            no session.
+        session_provider: Given whether the call writes, returns the client
+            session the driver call runs in, or ``None``. Defaults to no
+            session. A provider taking no argument still works, with a
+            ``DeprecationWarning``, for one version.
         cursor_codec: Codec that issues and verifies cursor tokens; the
             backend builds one from ``persistence.cursors`` and shares it.
             Mongo has no row-level-security scope, so cursors are bound to
@@ -211,7 +234,7 @@ class RepositoryMongo(
         model: type,
         collection: MongoCollection,
         id_policy: IdPolicy | None = None,
-        session_provider: SessionProvider = _no_session,
+        session_provider: SessionProvider | Callable[[], AsyncClientSession | None] = _no_session,
         *,
         cursor_codec: CursorCodec,
     ) -> None:
@@ -219,7 +242,7 @@ class RepositoryMongo(
         self._cursor_codec = cursor_codec
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
-        self._session = session_provider
+        self._session = _with_write_intent(session_provider)
         self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
@@ -246,26 +269,25 @@ class RepositoryMongo(
     def has_caller_scoped_session(self) -> bool:
         """Whether a read would run inside a session bound to the caller's context.
 
-        True while the ``session_provider`` yields a session, which
-        :class:`~loom.core.repository.mongo.uow.MongoUnitOfWork` publishes for
-        the duration of its transaction: it dies when that caller unwinds and
-        holds writes only that caller can see.  False with the default
-        provider, and with ``transactions: false``, where every driver call
-        autocommits on its own.
+        True while the ``session_provider`` yields a session for a read, as
+        the backend's provider does while a
+        :class:`~loom.core.repository.mongo.uow.MongoUnitOfWork` of the store
+        takes part in the invocation: the session dies when that caller
+        unwinds and holds writes only that caller can see.  False with the
+        default provider, and with ``transactions: false``, where every
+        driver call autocommits on its own.
 
         Implements
         :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`.
-        :func:`loom.core.transaction.in_atomic_transaction` is the neutral
-        marker this capability used to be a placeholder for, but it answers a
+        :func:`loom.core.transaction.in_atomic_transaction` answers a
         different question — whether *any* atomic transaction is open — not
-        whether *this session* is scoped to the caller, which is what keeps
-        the repository cache out of the caller's transaction.  Keep using this
-        method for that; it is not superseded.
+        whether *this* store's session is scoped to the caller, which is
+        what keeps the repository cache out of the caller's transaction.
 
         Returns:
             ``True`` when a caller-scoped session is bound to the context.
         """
-        return self._session() is not None
+        return self._session(False) is not None
 
     @property
     def model(self) -> type:
@@ -279,26 +301,26 @@ class RepositoryMongo(
 
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
         """Fetch one entity by primary key."""
-        document = await self._collection.find_one(self._key(obj_id), session=self._session())
+        document = await self._collection.find_one(self._key(obj_id), session=self._session(False))
         return None if document is None else self._to_output(document)
 
     async def get_by(self, field: str, value: Any, profile: str = "default") -> OutputT | None:
         """Fetch the first entity whose ``field`` equals ``value``."""
         document = await self._collection.find_one(
-            self._equals(field, value), session=self._session()
+            self._equals(field, value), session=self._session(False)
         )
         return None if document is None else self._to_output(document)
 
     async def exists_by(self, field: str, value: Any) -> bool:
         """Return whether any entity has ``field == value``."""
         document = await self._collection.find_one(
-            self._equals(field, value), session=self._session()
+            self._equals(field, value), session=self._session(False)
         )
         return document is not None
 
     async def count(self) -> int:
         """Return the number of documents in the collection."""
-        return await self._collection.count_documents({}, session=self._session())
+        return await self._collection.count_documents({}, session=self._session(False))
 
     async def create(self, data: msgspec.Struct) -> OutputT:
         """Insert one document and return its output struct.
@@ -308,7 +330,7 @@ class RepositoryMongo(
         """
         document = self._new_document(data)
         try:
-            await self._collection.insert_one(document, session=self._session())
+            await self._collection.insert_one(document, session=self._session(True))
         except DuplicateKeyError as exc:
             raise self._conflict(document[_ID]) from exc
         return self._to_output(document)
@@ -330,7 +352,7 @@ class RepositoryMongo(
         documents = [self._new_document(item) for item in data]
         if not documents:
             return ()
-        session = self._session()
+        session = self._session(True)
         try:
             await self._collection.insert_many(documents, ordered=True, session=session)
         except BulkWriteError as exc:
@@ -367,7 +389,7 @@ class RepositoryMongo(
         ``None`` when no document has that key.
         """
         key = self._key(obj_id)
-        session = self._session()
+        session = self._session(True)
         changes = {
             name: value
             for name, value in self._to_internal(data).items()
@@ -384,7 +406,7 @@ class RepositoryMongo(
 
     async def delete(self, obj_id: IdT) -> bool:
         """Delete the document keyed ``obj_id``, returning whether it existed."""
-        result = await self._collection.delete_one(self._key(obj_id), session=self._session())
+        result = await self._collection.delete_one(self._key(obj_id), session=self._session(True))
         return result.deleted_count > 0
 
     async def list_paginated(
@@ -424,7 +446,7 @@ class RepositoryMongo(
     async def _offset_page(
         self, mongo_filter: MongoFilter, sort: MongoSort, page_params: PageParams
     ) -> PageResult[OutputT]:
-        session = self._session()
+        session = self._session(False)
         documents = await (
             self._collection.find(mongo_filter, session=session)
             .sort(sort)
@@ -450,7 +472,7 @@ class RepositoryMongo(
             keyset = self._compiler.compile_cursor_filter(query.sort, cursor)
             mongo_filter = {"$and": [mongo_filter, keyset]} if mongo_filter else keyset
         documents = await (
-            self._collection.find(mongo_filter, session=self._session())
+            self._collection.find(mongo_filter, session=self._session(False))
             .sort(self._sort(query.sort))
             .limit(query.limit + 1)
             .to_list()
