@@ -12,10 +12,13 @@ from typing import Any, Protocol
 import pytest
 from fastapi.testclient import TestClient
 
+from loom.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler
 from loom.composition import create_app
-from loom.rest.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.unit.rest.aws_lambda._contract_app import http_api_event, write_contract_project
+from tests.helpers.composition import application_openings
+from tests.unit.aws_lambda.http._contract_app import http_api_event, write_contract_project
+
+__all__ = ["application_openings"]
 
 TRACE_ID = "contract-trace-0001"
 """Sent on every request, so bodies carrying a trace id compare exactly."""

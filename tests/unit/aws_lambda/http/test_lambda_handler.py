@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from loom.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler, LambdaUnservedConfigError
 from loom.composition import (
     Adapter,
     Application,
@@ -25,10 +26,9 @@ from loom.composition import (
 )
 from loom.core.config.errors import ConfigError
 from loom.core.persistence import LAMBDA_PROFILE
-from loom.rest.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler, LambdaUnservedConfigError
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.unit.rest.aws_lambda._contract_app import PUBLIC_PATH, bearer, seen_by
-from tests.unit.rest.aws_lambda.conftest import lambda_client
+from tests.unit.aws_lambda.http._contract_app import PUBLIC_PATH, bearer, seen_by
+from tests.unit.aws_lambda.http.conftest import lambda_client
 
 pytestmark = [
     pytest.mark.timeout(60),
@@ -282,7 +282,10 @@ def test_a_second_recipe_on_the_same_adapter_is_refused(contract_project: Projec
     assert raised.value.issue.code is CompositionErrorCode.ADAPTER_ALREADY_COMPOSED
 
 
-@pytest.mark.parametrize("module", ["loom.composition", "loom.core.persistence"])
+@pytest.mark.parametrize(
+    "module",
+    ["loom.composition", "loom.core.persistence", "loom.aws_lambda", "loom.aws_lambda.sqs"],
+)
 def test_importing_the_transport_neutral_parts_loads_no_http_framework(module: str) -> None:
     probe = (
         f"import sys, {module}; "

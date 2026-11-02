@@ -1,6 +1,7 @@
-"""FR-003 ratchet: outside ``_loom_type.py`` no module of ``loom.ai``, ``loom.core.cache`` or
-``loom.rest`` calls a msgspec or pydantic conversion primitive on a boundary value; every
-remaining call site is allow-listed with its measured count until its slice removes it.
+"""FR-003 ratchet: outside ``_loom_type.py`` no module of ``loom.ai``, ``loom.aws_lambda``,
+``loom.core.cache`` or ``loom.rest`` calls a msgspec or pydantic conversion primitive on a
+boundary value; every remaining call site is allow-listed with its measured count until its
+slice removes it.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "loom"
-_PACKAGES = ("ai", "core/cache", "core/command", "rest")
+_PACKAGES = ("ai", "aws_lambda", "core/cache", "core/command", "rest")
 _TARGETS = frozenset(
     {
         "msgspec.convert",
@@ -37,6 +38,8 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("ai/fastapi/response.py", "msgspec.json.Encoder"): 1,
     ("ai/remote_auth.py", "msgspec.convert"): 1,
     ("ai/runtime/_grants.py", "msgspec.json.encode"): 1,
+    # Path parameters validated as FastAPI validates them, so the 422 is identical.
+    ("aws_lambda/http.py", "pydantic.TypeAdapter"): 1,
     ("core/cache/calls.py", "msgspec.json.encode"): 1,
     ("core/cache/calls.py", "msgspec.to_builtins"): 1,
     ("core/cache/keys.py", "msgspec.json.encode"): 1,
@@ -45,8 +48,6 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("core/cache/result_codec.py", "msgspec.to_builtins"): 1,
     ("rest/_body.py", "msgspec.json.encode"): 1,
     ("rest/auth/middleware.py", "msgspec.json.encode"): 1,
-    # Path parameters validated as FastAPI validates them, so the 422 is identical.
-    ("rest/aws_lambda/adapter.py", "pydantic.TypeAdapter"): 1,
     ("rest/fastapi/response.py", "msgspec.json.encode"): 1,
     ("rest/fastapi/router_runtime.py", "msgspec.json.decode"): 1,
     ("rest/fastapi/sql.py", "msgspec.json.Decoder"): 1,

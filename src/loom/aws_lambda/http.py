@@ -1,4 +1,8 @@
-"""The Lambda HTTP adapter: the routes of the FastAPI adapter, served to API Gateway.
+"""Serve a loom application from AWS Lambda behind API Gateway.
+
+Install the ``lambda`` extra. The entry point changes one line::
+
+    handler = create_app("config.yaml", adapter=LambdaHTTPAdapter())
 
 The recipe is the FastAPI adapter's, so the configuration, the authentication,
 discovery and the CRUD gating have one source of truth. The transport is a bare
@@ -9,12 +13,14 @@ construction, without FastAPI's routing or its OpenAPI.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Mapping
 from typing import Any
 
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
+from mangum import Mangum
 from pydantic import TypeAdapter, ValidationError
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -22,15 +28,16 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
+from loom.aws_lambda._refusals import LambdaUnservedConfigError
 from loom.composition import (
     Application,
+    ApplicationHost,
     CompositionErrorCode,
     CompositionSource,
     CompositionStateError,
     Recipe,
 )
 from loom.core.config import ConfigContext, ConfigKey
-from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -38,7 +45,6 @@ from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.sql import SqlConfig
 from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import Authenticator
-from loom.rest.aws_lambda.handler import LambdaHTTPHandler
 from loom.rest.compiler import CompiledRoute, RestInterfaceCompiler
 from loom.rest.fastapi._auto_auth import _mount_authentication
 from loom.rest.fastapi._errors import register_error_handlers
@@ -59,21 +65,6 @@ from loom.rest.fastapi.sql import mounted_sql_endpoints
 
 _COMPONENT = "LambdaHTTPAdapter"
 _PATH_LOCATION = "path"
-
-
-class LambdaUnservedConfigError(ConfigError):
-    """Raised when the configuration declares something the Lambda adapter does not serve.
-
-    Raised by the recipe, before anything opens, so nothing the FastAPI
-    adapter would have served disappears silently.
-
-    Attributes:
-        key: The configuration key at fault.
-    """
-
-    def __init__(self, key: str, message: str) -> None:
-        super().__init__(f"{key}: {message}")
-        self.key = key
 
 
 class LambdaHTTPAdapter:
@@ -255,3 +246,56 @@ def _coerce_path_params(
     if errors:
         raise RequestValidationError(errors)
     return values
+
+
+class LambdaHTTPHandler:
+    """Serve a Starlette application to API Gateway events, keeping its application open.
+
+    Built during the execution environment's Init (a module-level
+    ``handler = create_app(...)``): it creates the event loop of the thread,
+    opens the application on it in an :class:`~loom.composition.ApplicationHost`
+    with its startup checks, and leaves it open across warm invocations. A
+    failure to open propagates, so the execution environment fails its Init.
+
+    Each call translates one event with Mangum, its ASGI lifespan off, on that
+    same loop: a request runs in a task of its own, with its own identity,
+    trace id and unit of work.
+
+    Args:
+        app: The application serving the requests.
+        application: The composed application the requests run against.
+    """
+
+    def __init__(self, app: Starlette, application: Application) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        host = ApplicationHost(application)
+        try:
+            loop.run_until_complete(host.start())
+        except BaseException:
+            asyncio.set_event_loop(None)
+            loop.close()
+            raise
+        self._loop = loop
+        self._host = host
+        self._mangum = Mangum(app, lifespan="off")
+
+    def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
+        """Answer one API Gateway HTTP API event."""
+        # Mangum runs on the thread's current loop: make sure it is the one
+        # the application was opened on.
+        asyncio.set_event_loop(self._loop)
+        return self._mangum(event, context)
+
+    def close(self) -> None:
+        """Close the application and its loop, from a shutdown hook or a test.
+
+        Raises:
+            Exception: The failure to close the application; the loop is
+                closed all the same.
+        """
+        try:
+            self._loop.run_until_complete(self._host.stop())
+        finally:
+            asyncio.set_event_loop(None)
+            self._loop.close()

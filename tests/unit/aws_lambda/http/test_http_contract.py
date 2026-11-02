@@ -12,8 +12,8 @@ import json
 
 import pytest
 
-from tests.unit.rest.aws_lambda._contract_app import MAX_BODY_BYTES, ORIGIN, PUBLIC_PATH, bearer
-from tests.unit.rest.aws_lambda.conftest import TRACE_ID, Client
+from tests.unit.aws_lambda.http._contract_app import MAX_BODY_BYTES, ORIGIN, PUBLIC_PATH, bearer
+from tests.unit.aws_lambda.http.conftest import TRACE_ID, Client
 
 pytestmark = pytest.mark.timeout(60)
 
