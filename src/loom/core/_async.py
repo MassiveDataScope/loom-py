@@ -9,7 +9,9 @@ from typing import Any, TypeVar
 _T = TypeVar("_T")
 
 
-async def run_to_completion(step: Coroutine[Any, Any, _T], *, timeout: float) -> _T:
+# S7483: an outer asyncio.timeout cannot bound this function, which absorbs the cancellation
+# it would deliver; the bound has to live inside.
+async def run_to_completion(step: Coroutine[Any, Any, _T], *, timeout: float) -> _T:  # NOSONAR
     """Run ``step`` in a task of its own until it finishes or ``timeout`` runs out.
 
     No cancellation ever abandons ``step``; only ``timeout`` bounds it, so a
