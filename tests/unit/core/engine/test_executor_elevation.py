@@ -6,9 +6,11 @@ from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scop
 from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.use_case import UseCase
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
+from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
@@ -70,3 +72,46 @@ async def test_without_a_sink_the_frame_still_exists_and_elevation_waits_for_the
 
     assert result == ["editor"]
     assert elevated_scopes() == frozenset()
+
+
+class _SeesElevation(PhasedStore):
+    """Records the elevated scopes visible when the coordinator flushes and commits.
+
+    The session-settings provider reads them in ``after_begin``, and a
+    transaction whose first SQL is the coordinator's flush begins there.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(DEFAULT_STORE, Ledger())
+        self.seen: dict[str, list[str]] = {}
+
+    async def flush(self) -> None:
+        self.seen["flush"] = sorted(elevated_scopes())
+        await super().flush()
+
+    async def commit(self) -> None:
+        self.seen["commit"] = sorted(elevated_scopes())
+        await super().commit()
+
+
+async def _elevate_then_finish() -> _SeesElevation:
+    store = _SeesElevation()
+    compiler = UseCaseCompiler()
+    compiler.compile(Elevating)
+    executor = RuntimeExecutor(compiler, uow_factory=Factory(store))
+
+    await executor.execute(Elevating(), params={"value": "x"})  # type: ignore[arg-type]
+
+    return store
+
+
+async def test_the_elevated_scopes_are_still_visible_when_the_coordinator_flushes() -> None:
+    store = await _elevate_then_finish()
+
+    assert store.seen["flush"] == ["editor"]
+
+
+async def test_the_elevated_scopes_are_still_visible_when_the_coordinator_commits() -> None:
+    store = await _elevate_then_finish()
+
+    assert store.seen["commit"] == ["editor"]

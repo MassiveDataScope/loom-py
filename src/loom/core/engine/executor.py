@@ -448,10 +448,16 @@ class RuntimeExecutor:
         channel = PostCommitChannel() if owned is not None or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
-            if owned is None:
-                result = await self._run_in_frame(joined, state, plan, compilable, inputs)
-            else:
-                result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
+            # The elevation frame wraps the coordinator's flush and commit too:
+            # the session-settings provider reads ``elevated_scopes()`` when a
+            # transaction begins, which may be at that flush.
+            async with elevation_scope(
+                owns_transaction=owned is not None, sink=self._elevation_sink
+            ):
+                if owned is None:
+                    result = await self._run_in_frame(joined, state, plan, compilable, inputs)
+                else:
+                    result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
             # accounted for and re-raised.  ``state.committed`` tells apart
@@ -500,9 +506,7 @@ class RuntimeExecutor:
         error: BaseException | None = None
         async with invocation(coordinator) as scope:
             try:
-                result = await self._run_in_frame(
-                    scope, state, plan, compilable, inputs, owns_transaction=True
-                )
+                result = await self._run_in_frame(scope, state, plan, compilable, inputs)
             except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
                 error = exc
             try:
@@ -527,15 +531,10 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
-        *,
-        owns_transaction: bool = False,
     ) -> Any:
         """Push this execution's frame on ``scope``, if any, and run the pipeline under it."""
         frame = nullcontext() if scope is None else scope.frame(_DEFAULT_FRAME)
-        async with (
-            frame,
-            elevation_scope(owns_transaction=owns_transaction, sink=self._elevation_sink),
-        ):
+        async with frame:
             return await self._run_pipeline(state, plan, compilable, inputs)
 
     @staticmethod
