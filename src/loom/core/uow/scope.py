@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,11 +38,13 @@ from typing import Any
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
 from loom.core.persistence.stores import StoreKey
+from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     Committed,
     Coordinator,
     InvocationOutcome,
     NonTransactional,
+    OrderedCommits,
     Participant,
     RolledBack,
     StoreOutcome,
@@ -192,19 +194,25 @@ class InvocationScope:
                 the scope is closed, when it has no owner task, or from a task
                 other than the owner.
         """
+        problem = self._ownership_problem()
+        if problem is not None:
+            raise ScopeOwnershipError(problem)
+
+    def owned_here(self) -> bool:
+        """Whether the caller may touch this scope's participants (:meth:`require_owner` passes)."""
+        return self._ownership_problem() is None
+
+    def _ownership_problem(self) -> str | None:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             # ``current_task()`` itself raises without a running loop.
-            raise ScopeOwnershipError(
-                "the invocation scope was used from a thread without its event loop"
-            ) from None
+            return "the invocation scope was used from a thread without its event loop"
         if self.closed:
-            raise ScopeOwnershipError("the invocation scope is already closed")
+            return "the invocation scope is already closed"
         if self.owner_task is None or asyncio.current_task() is not self.owner_task:
-            raise ScopeOwnershipError(
-                "the invocation scope was used from a task other than the one that owns it"
-            )
+            return "the invocation scope was used from a task other than the one that owns it"
+        return None
 
     def participant_for(self, key: StoreKey, owner: object, *, write: bool) -> Participant | None:
         """Return the participant of ``key`` a repository of ``owner`` joins, if any.
@@ -212,7 +220,9 @@ class InvocationScope:
         The single checkpoint every access to a participant goes through.
         Ownership is checked only when ``key`` is enlisted or a write is
         asked for; a read of a store that is not enlisted returns ``None``
-        from any task, and the repository reads with a session per call.
+        from any task, and the repository reads with a session per call. A
+        write must target a store of the innermost frame, when one is pushed:
+        a write anywhere else would commit on its own, outside the invocation.
 
         Args:
             key: Store the repository belongs to.
@@ -226,22 +236,32 @@ class InvocationScope:
             ScopeOwnershipError: When the caller may not touch the scope
                 (:meth:`require_owner`).
             ForeignSessionError: When the participant is phased and its
-                sessions come from another owner.
+                sessions come from another owner, or a write targets a store
+                outside the innermost frame (until ``Joined`` declares it).
         """
         participant = self.participants.get(key)
-        if participant is None:
-            if write:
-                self.require_owner()
+        if participant is None and not write:
             return None
         self.require_owner()
-        if not participant.accepts(owner):
+        if participant is not None and not participant.accepts(owner):
             raise ForeignSessionError.between(
-                ForeignSessionError.side(key, f"another {type(owner).__qualname__}"),
+                ForeignSessionError.side(key, repr(owner)),
                 ForeignSessionError.side(key, participant.physical.target),
             )
         if write:
+            self._require_in_frame(key, owner)
+        if write and participant is not None:
             participant.record_write(next(self._writes))
         return participant
+
+    def _require_in_frame(self, key: StoreKey, owner: object) -> None:
+        if self.frames and key not in self.frames[-1].stores:
+            raise ForeignSessionError.between(
+                ForeignSessionError.side(key, repr(owner)),
+                ForeignSessionError.side(
+                    self.frames[-1].primary, "the store this execution writes to"
+                ),
+            )
 
     @asynccontextmanager
     async def frame(self, frame: Frame) -> AsyncIterator[None]:
@@ -270,6 +290,36 @@ _scope: ContextVar[InvocationScope | None] = ContextVar("loom_invocation_scope",
 def current_scope() -> InvocationScope | None:
     """Return the invocation scope published in this context, closed or not, or ``None``."""
     return _scope.get()
+
+
+def current_participant(key: StoreKey, owner: object, *, write: bool) -> Participant | None:
+    """Return the participant of ``key`` in the scope published here, through its checkpoint.
+
+    Args:
+        key: Store the repository belongs to.
+        owner: The repository's session manager or client.
+        write: Whether the repository is about to write.
+
+    Returns:
+        The participant, or ``None`` without a scope or when ``key`` is not
+        enlisted: the repository then uses a session per call.
+
+    Raises:
+        ScopeOwnershipError: See :meth:`InvocationScope.participant_for`.
+        ForeignSessionError: See :meth:`InvocationScope.participant_for`.
+    """
+    scope = _scope.get()
+    return None if scope is None else scope.participant_for(key, owner, write=write)
+
+
+@contextmanager
+def unscoped() -> Iterator[None]:
+    """Publish no scope for the block: what runs in it uses a session per call."""
+    token = _scope.set(None)
+    try:
+        yield
+    finally:
+        _scope.reset(token)
 
 
 def refuse_inside_open_scope(unit_of_work: object) -> None:
@@ -318,6 +368,44 @@ async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]
         await _finish_if_open(scope, None)
     finally:
         _scope.reset(token)
+
+
+@asynccontextmanager
+async def single_store(key: StoreKey, unit_of_work: UnitOfWork) -> AsyncIterator[InvocationScope]:
+    """Run ``unit_of_work`` as the only participant of an invocation of its own.
+
+    What ``async with uow:`` and ``@transactional`` do outside a scope: the
+    repositories of ``key`` join the unit of work through the scope, and on
+    exit the coordinator commits it, or rolls it back if the block raised.
+
+    Args:
+        key: Store the unit of work belongs to.
+        unit_of_work: Not yet begun; it is begun on entry.
+
+    Yields:
+        The open scope.
+
+    Raises:
+        Exception: What the commit failed with, when the block did not raise.
+    """
+    coordinator = OrderedCommits({key: _Given(unit_of_work)})
+    async with invocation(coordinator) as scope:
+        async with scope.frame(Frame(key)):
+            yield scope
+        outcome = await coordinator.finish(scope, None)
+    failure = invocation_error(outcome, None)
+    if failure is not None:
+        raise failure
+
+
+@dataclass(frozen=True, slots=True)
+class _Given:
+    """A factory that hands out one unit of work already built."""
+
+    unit_of_work: UnitOfWork
+
+    def create(self) -> UnitOfWork:
+        return self.unit_of_work
 
 
 async def _finish_if_open(scope: InvocationScope, error: BaseException | None) -> None:

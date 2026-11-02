@@ -171,6 +171,11 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
         """Where this unit of work's writes land."""
         ...
 
+    @property
+    def session(self) -> object | None:
+        """The session its store's repositories join; ``None`` outside ``begin``..``close``."""
+        ...
+
     async def flush(self) -> None:
         """Send pending writes to the store without committing them."""
         ...
@@ -192,6 +197,8 @@ class _Driver(Protocol):
 
     @property
     def physical(self) -> PhysicalStore: ...
+    @property
+    def handle(self) -> object | None: ...
     def accepts(self, owner: object) -> bool: ...
     async def begin(self) -> None: ...
     async def flush(self) -> None: ...
@@ -212,6 +219,10 @@ class _PhasedDriver:
     @property
     def physical(self) -> PhysicalStore:
         return self._uow.physical
+
+    @property
+    def handle(self) -> object | None:
+        return self._uow.session
 
     def accepts(self, owner: object) -> bool:
         """Only a repository whose sessions come from the unit of work's own owner joins it."""
@@ -278,6 +289,11 @@ class _SinglePhaseDriver:
         """Unknown: the protocol declares none."""
         return UNKNOWN_PHYSICAL
 
+    @property
+    def handle(self) -> None:
+        """None: the protocol exposes no session, so repositories open their own."""
+        return None
+
     def accepts(self, owner: object) -> bool:
         """Any repository of the store joins it: the unit of work declares no owner."""
         del owner
@@ -338,6 +354,11 @@ class Participant:
     def physical(self) -> PhysicalStore:
         """Where its writes land, read when asked: only logging and errors need it."""
         return self._driver.physical
+
+    @property
+    def handle(self) -> object | None:
+        """The session its store's repositories join; ``None`` for a single-phase unit of work."""
+        return self._driver.handle
 
     def accepts(self, owner: object) -> bool:
         """Whether a repository whose sessions come from ``owner`` may join this participant.

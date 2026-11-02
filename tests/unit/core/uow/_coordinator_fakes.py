@@ -130,11 +130,13 @@ class PhasedStore(_RecordingStore):
         super().__init__(key, ledger, fault)
         self.physical = PhysicalStore(backend="fake", target=f"memory://{key}")
         self.owner: object = object()
+        self.session: object | None = None
         self._token: Token[bool] | None = None
 
     async def begin(self) -> None:
         if self.transactional:
             self._token = open_atomic_transaction()
+        self.session = object()
         await self._run("begin")
 
     async def flush(self) -> None:
@@ -151,6 +153,7 @@ class PhasedStore(_RecordingStore):
         try:
             await self._run("close")
         finally:
+            self.session = None
             if self._token is not None:
                 close_atomic_transaction(self._token)
                 self._token = None
