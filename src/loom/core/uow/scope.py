@@ -219,11 +219,13 @@ class InvocationScope:
         """Return the participant of ``key`` a repository of ``owner`` joins, if any.
 
         The single checkpoint every access to a participant goes through.
-        Ownership is checked only when ``key`` is enlisted or a write is
-        asked for; a read of a store that is not enlisted returns ``None``
-        from any task, and the repository reads with a session per call. A
-        write must target a store of the innermost frame, when one is pushed:
-        a write anywhere else would commit on its own, outside the invocation.
+        A read of a store whose participant holds no session (the store is
+        not enlisted, or its unit of work is single-phase, such as Mongo with
+        ``transactions: false``) returns ``None`` from any task, and the
+        repository reads with a session per call (D3). Anything else checks
+        ownership. A write must target a store of the innermost frame, when
+        one is pushed: a write to any other store is refused, because the
+        execution did not declare it.
 
         Args:
             key: Store the repository belongs to.
@@ -231,7 +233,8 @@ class InvocationScope:
             write: Whether the repository is about to write.
 
         Returns:
-            The participant of ``key``, or ``None`` when it is not enlisted.
+            The participant of ``key``, or ``None`` when it is not enlisted
+            or, for a read, holds no session.
 
         Raises:
             ScopeOwnershipError: When the caller may not touch the scope
@@ -241,7 +244,7 @@ class InvocationScope:
                 outside the innermost frame (until ``Joined`` declares it).
         """
         participant = self.participants.get(key)
-        if participant is None and not write:
+        if not write and (participant is None or not participant.phased):
             return None
         self.require_owner()
         if participant is not None and not participant.accepts(owner):
@@ -251,8 +254,8 @@ class InvocationScope:
             )
         if write:
             self._require_in_frame(key, owner)
-        if write and participant is not None:
-            participant.record_write(next(self._writes))
+            if participant is not None:
+                participant.record_write(next(self._writes))
         return participant
 
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:

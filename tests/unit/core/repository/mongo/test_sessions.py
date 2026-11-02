@@ -138,3 +138,29 @@ class TestRepositoryInAGather:
             await repository.get_by_id("a")
 
         assert fake.collection("articles").last_session is fake.sessions[0]
+
+
+class TestAStoreWithoutTransactions:
+    """``transactions: false``: the unit of work holds no session, so there is none to protect."""
+
+    @staticmethod
+    def _coordinator() -> OrderedCommits:
+        return OrderedCommits({DEFAULT_STORE: MongoUnitOfWorkFactory.without_transactions()})
+
+    async def test_a_gather_of_reads_runs_without_a_session(self) -> None:
+        fake = FakeMongoClient()
+        repository = _repository(fake)
+
+        async with invocation(self._coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            await asyncio.gather(repository.get_by_id("a"), repository.count())
+
+        assert fake.collection("articles").last_session is None
+
+    async def test_a_write_from_a_gather_child_is_refused(self) -> None:
+        fake = FakeMongoClient()
+        repository = _repository(fake)
+
+        async with invocation(self._coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            child = asyncio.gather(repository.delete("a"))
+            with pytest.raises(ScopeOwnershipError):
+                await child

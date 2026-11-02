@@ -3,7 +3,7 @@
 Ownership is the security boundary of ADR 0008: a participant is touched
 only from the task that owns the scope, never from a ``gather`` child, a
 thread or once the scope is closed, while a read of a store that is not
-enlisted works from anywhere.
+enlisted, or whose unit of work holds no session, works from anywhere.
 """
 
 from __future__ import annotations
@@ -245,10 +245,26 @@ class TestParticipantForFromTheOwner:
 class TestParticipantForASinglePhaseStore:
     """A single-phase participant has no owner: any repository of its store joins it."""
 
-    async def test_a_read_returns_its_participant(self) -> None:
+    async def test_a_read_returns_none_as_there_is_no_session_to_join(self) -> None:
         scope = await _with_autocommit()
 
-        assert scope.participant_for(S1, object(), write=False) is scope.participants[S1]
+        assert scope.participant_for(S1, object(), write=False) is None
+
+    async def test_a_read_from_a_gather_child_returns_none(self) -> None:
+        scope = await _with_autocommit()
+
+        assert await _in_child_task(scope, S1, write=False) == [None]
+
+    async def test_a_write_from_a_gather_child_is_refused(self) -> None:
+        scope = await _with_autocommit()
+
+        with pytest.raises(ScopeOwnershipError):
+            await _in_child_task(scope, S1, write=True)
+
+    async def test_a_write_returns_its_participant(self) -> None:
+        scope = await _with_autocommit()
+
+        assert scope.participant_for(S1, object(), write=True) is scope.participants[S1]
 
     async def test_a_write_is_recorded(self) -> None:
         scope = await _with_autocommit()
