@@ -87,7 +87,7 @@ def session_to_join(session_manager: SessionManager) -> AsyncSession | None:
     if bound is None:
         return None
     if bound.owner is not None and bound.owner is not session_manager:
-        raise ForeignSessionError(own=_described(session_manager), active=_described(bound.owner))
+        raise ForeignSessionError.between(_described(session_manager), _described(bound.owner))
     return bound.session
 
 

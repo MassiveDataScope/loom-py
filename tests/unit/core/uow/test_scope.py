@@ -655,8 +655,9 @@ class TestErrors:
             ScopeOwnershipError("closed"),
             UnitOfWorkInsideScope.entering(object()),
             StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
+            ForeignSessionError.between("store 's0' (b.db)", "store 's0' (a.db)"),
         ],
-        ids=["ownership", "inside-scope", "stores"],
+        ids=["ownership", "inside-scope", "stores", "foreign-session"],
     )
     def test_each_error_crosses_the_celery_json_result_backend(self, error: Exception) -> None:
         backend = BaseBackend(app=_celery_app(), serializer="json")

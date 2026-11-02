@@ -222,9 +222,9 @@ class InvocationScope:
         # A single-phase participant declares no owner: any repository of its
         # store joins it, and its write is still recorded.
         if participant.owner is not None and participant.owner is not owner:
-            raise ForeignSessionError(
-                own=f"store {key!r} (another {type(owner).__qualname__})",
-                active=f"store {key!r} ({participant.physical.target})",
+            raise ForeignSessionError.between(
+                f"store {key!r} (another {type(owner).__qualname__})",
+                f"store {key!r} ({participant.physical.target})",
             )
         if write:
             participant.record_write(next(self._writes))
