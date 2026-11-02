@@ -132,8 +132,15 @@ WORKER_PROFILE = RuntimeProfile(
 STREAMING_PROFILE = RuntimeProfile(name="streaming", pool=WORKER_PROFILE.pool)
 """A streaming worker writing batches; sized like a worker."""
 
+LAMBDA_PROFILE = RuntimeProfile(
+    name="lambda",
+    pool=PoolDefaults(size=1, max_overflow=0, timeout_s=10, recycle_s=300, pre_ping=True),
+)
+"""A Lambda execution environment: one invocation at a time, frozen between them."""
+
 
 __all__ = [
+    "LAMBDA_PROFILE",
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",

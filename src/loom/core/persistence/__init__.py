@@ -15,6 +15,7 @@ from loom.core.persistence.database import (
 )
 from loom.core.persistence.none import NoneBackend
 from loom.core.persistence.profile import (
+    LAMBDA_PROFILE,
     SERVER_PROFILE,
     STREAMING_PROFILE,
     WORKER_PROFILE,
@@ -27,6 +28,7 @@ from loom.core.persistence.registry import BACKEND_ENTRY_POINT_GROUP, resolve_ba
 
 __all__ = [
     "BACKEND_ENTRY_POINT_GROUP",
+    "LAMBDA_PROFILE",
     "SERVER_PROFILE",
     "STREAMING_PROFILE",
     "WORKER_PROFILE",
