@@ -284,6 +284,7 @@ dev = [
     "a2a-sdk>=1.1,<2",
     "pydantic-ai-harness[skills]>=0.28,<1",
     "typer>=0.12,<1",
+    "pytest-timeout>=2.3",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -440,6 +441,10 @@ pythonpath = [
 ]
 addopts = "-ra --log-disable=aiosqlite"
 asyncio_mode = "auto"
+# A hung test fails instead of hanging the suite. Generous enough for the
+# slowest legitimate test (Spark session start-up); a test that needs longer
+# says so with @pytest.mark.timeout(...).
+timeout = 300
 log_cli = true
 log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
