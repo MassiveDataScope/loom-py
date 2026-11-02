@@ -156,6 +156,17 @@ def _normalize_path_param_annotation(annotation: Any) -> Any:
     return str
 
 
+def path_param_annotation(name: str, execute_param_types: Mapping[str, Any]) -> Any:
+    """Return the type path parameter *name* validates as: its ``execute`` annotation, or ``str``.
+
+    Args:
+        name: Path parameter name.
+        execute_param_types: ``(name, annotation)`` of the use case's
+            ``execute`` parameters.
+    """
+    return _normalize_path_param_annotation(execute_param_types.get(name, str))
+
+
 _RESERVED_QUERY_KEYS = frozenset((*QUERY_SPEC_PARAMETER_NAMES, QueryParam.PROFILE))
 _FILTER_OP_VALUES = frozenset(item.value for item in FilterOp)
 
@@ -679,7 +690,7 @@ def _handler_signature(
         inspect.Parameter(
             name,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=_normalize_path_param_annotation(execute_param_types.get(name, str)),
+            annotation=path_param_annotation(name, execute_param_types),
         )
         for name in path_params
     )

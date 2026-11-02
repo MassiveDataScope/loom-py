@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -13,6 +14,7 @@ import msgspec
 import prometheus_client
 from fastapi import FastAPI
 from prometheus_client import CollectorRegistry
+from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
@@ -342,35 +344,42 @@ def _metrics_path(cfg: PrometheusObservabilityConfig) -> str:
     return cfg.config.path if cfg.config is not None else "/metrics"
 
 
-def _mount_optional_middlewares(
-    app: FastAPI,
-    rest_cfg: _RestConfig,
-    metrics_cfg: PrometheusObservabilityConfig,
-    registry: CollectorRegistry | None,
+def mount_request_stack(
+    app: Starlette,
+    declared: RestDeclaration,
+    *,
+    mount_metrics: Callable[[], None] | None = None,
 ) -> None:
-    """Mount the body cap, request tracing, CORS and metrics middlewares.
+    """Mount the request middlewares every HTTP transport serves, in their one order.
 
-    Order matters and is the reason this lives in one place.  Each call wraps
-    the previous one, so the body cap ends up outside authentication (an
-    oversized body is refused before any token is verified) while tracing wraps
-    the cap (its ``413`` still carries a trace id).  CORS goes outermost so a
-    preflight ``OPTIONS`` is answered without ever reaching the authentication
-    middleware, which would refuse it for carrying no credentials.
+    Each call wraps the previous one: from the outside in, CORS, metrics,
+    request tracing, the body cap and authentication. The body cap sits
+    outside authentication, so an oversized body is refused before any token
+    is verified; tracing wraps the cap, so its ``413`` and every ``401`` carry
+    a trace id; CORS goes outermost, so a preflight ``OPTIONS`` is answered
+    without reaching authentication, which would refuse it for carrying no
+    credentials.
 
     Args:
-        app: FastAPI application to mutate.
-        rest_cfg: Parsed ``app.rest`` section.
-        metrics_cfg: Metrics feature config.
-        registry: Optional Prometheus registry override.
+        app: Application to mutate.
+        declared: What the recipe resolved.
+        mount_metrics: Mounts the metrics middleware, for a transport serving
+            a scrape.
     """
+    _mount_authentication(app, declared.auth)
+    _mount_request_guards(app, declared.rest)
+    if mount_metrics is not None:
+        mount_metrics()
+    _mount_cors(app, declared.rest.cors)
+
+
+def _mount_request_guards(app: Starlette, rest_cfg: _RestConfig) -> None:
+    """Mount the body cap and, around it, request tracing."""
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=rest_cfg.max_body_bytes)
     app.add_middleware(TraceIdMiddleware)
-    if metrics_cfg.enabled:
-        _mount_metrics(app, metrics_cfg, registry)
-    _mount_cors(app, rest_cfg.cors)
 
 
-def _mount_cors(app: FastAPI, cors_cfg: CorsConfig | None) -> None:
+def _mount_cors(app: Starlette, cors_cfg: CorsConfig | None) -> None:
     """Mount the CORS middleware when ``app.rest.cors`` is configured.
 
     Absent section means no middleware at all: an application that never
@@ -510,14 +519,89 @@ def _warn_anonymous_schema(rest_cfg: _RestConfig, auth: _AuthWiring) -> None:
 
 
 @dataclasses.dataclass(frozen=True)
-class _Declared:
-    """What :meth:`FastAPIAdapter.recipe` resolved and :meth:`FastAPIAdapter.bind` mounts."""
+class RestDeclaration:
+    """What :func:`compose_rest` resolved and an HTTP adapter's ``bind`` mounts."""
 
     name: str
     rest: _RestConfig
     auth: _AuthWiring
     metrics_cfg: PrometheusObservabilityConfig
     routes: RouteSources
+
+
+def compose_rest(
+    source: CompositionSource,
+    *,
+    authenticator: Authenticator | None = None,
+    metrics_registry: CollectorRegistry | None = None,
+    serves_documentation: bool = True,
+) -> tuple[Recipe, RestDeclaration]:
+    """Validate ``app.rest``, discover, add the YAML routes and prune the CRUD ones.
+
+    The one composition of every HTTP adapter, so the configuration, the
+    authentication, discovery and the CRUD gating have one source of truth.
+
+    Args:
+        source: What the entry point composes from.
+        authenticator: Custom authentication mechanism; requires
+            ``app.rest.auth.custom: true``.
+        metrics_registry: Prometheus registry of the metrics; the global one
+            when ``None``.
+        serves_documentation: Whether the transport serves the docs, schema,
+            metrics and health paths. The default authentication exclusions
+            are those paths, so they are none when it does not; an explicit
+            ``exclude_paths`` is honoured as written either way.
+
+    Raises:
+        ConfigError: When ``app.rest``, the authentication or an SQL
+            endpoint is misdeclared; before any discovery.
+        RestInterfaceConfigError: When a YAML interface or disabled route
+            is malformed.
+        RuntimeError: When discovery finds nothing to serve, or a CRUD
+            route cannot be served by the backend.
+    """
+    ctx = source.config
+    rest_cfg = _section_rest_config(ctx)
+    metrics_cfg = source.observability_config.prometheus
+    auth = _resolve_authentication(
+        rest_cfg.auth,
+        authenticator,
+        _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
+    )
+    _check_sql_section(ctx, auth)
+
+    # Built ahead of discovery's pruning so their use cases join CRUD
+    # gating, model registration and compilation exactly like a
+    # Python-discovered interface's, in Python-then-config order.
+    config_interfaces = build_interfaces_from_config(rest_cfg.interfaces)
+    discovered = _discover_components(source)
+    python_interfaces = discovered.interfaces
+    discovered = _fold_config_interfaces(discovered, config_interfaces)
+    # Runs before the backend allocates resources: building it creates them.
+    _reject_autocrud_without_model(discovered)
+    backend = source.backend(default=SQLALCHEMY_BACKEND)
+    discovered = _gate_autocrud_capabilities(discovered, backend)
+
+    declared = RestDeclaration(
+        name=source.app.name,
+        rest=rest_cfg,
+        auth=auth,
+        metrics_cfg=metrics_cfg,
+        routes=RouteSources(
+            python=python_interfaces,
+            config=config_interfaces,
+            disabled=tuple((d.method, d.path) for d in rest_cfg.disable_routes),
+        ),
+    )
+    recipe = Recipe(
+        profile=SERVER_PROFILE,
+        discovered=discovered,
+        backend=backend,
+        agents=True,
+        metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),
+        pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, source.app.name),
+    )
+    return recipe, declared
 
 
 class FastAPIAdapter:
@@ -541,7 +625,7 @@ class FastAPIAdapter:
     ) -> None:
         self._metrics_registry = metrics_registry
         self._authenticator = authenticator
-        self._declared: _Declared | None = None
+        self._declared: RestDeclaration | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
         """Validate ``app.rest``, discover, add the YAML routes and prune the CRUD ones.
@@ -560,47 +644,12 @@ class FastAPIAdapter:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="FastAPIAdapter")
             )
-        ctx = source.config
-        rest_cfg = _section_rest_config(ctx)
-        metrics_cfg = source.observability_config.prometheus
-        auth = _resolve_authentication(
-            rest_cfg.auth,
-            self._authenticator,
-            _documentation_paths(rest_cfg, metrics_cfg),
+        recipe, self._declared = compose_rest(
+            source,
+            authenticator=self._authenticator,
+            metrics_registry=self._metrics_registry,
         )
-        _check_sql_section(ctx, auth)
-
-        # Built ahead of discovery's pruning so their use cases join CRUD
-        # gating, model registration and compilation exactly like a
-        # Python-discovered interface's, in Python-then-config order.
-        config_interfaces = build_interfaces_from_config(rest_cfg.interfaces)
-        discovered = _discover_components(source)
-        python_interfaces = discovered.interfaces
-        discovered = _fold_config_interfaces(discovered, config_interfaces)
-        # Runs before the backend allocates resources: building it creates them.
-        _reject_autocrud_without_model(discovered)
-        backend = source.backend(default=SQLALCHEMY_BACKEND)
-        discovered = _gate_autocrud_capabilities(discovered, backend)
-
-        self._declared = _Declared(
-            name=source.app.name,
-            rest=rest_cfg,
-            auth=auth,
-            metrics_cfg=metrics_cfg,
-            routes=RouteSources(
-                python=python_interfaces,
-                config=config_interfaces,
-                disabled=tuple((d.method, d.path) for d in rest_cfg.disable_routes),
-            ),
-        )
-        return Recipe(
-            profile=SERVER_PROFILE,
-            discovered=discovered,
-            backend=backend,
-            agents=True,
-            metrics=_build_metrics_adapter(metrics_cfg, self._metrics_registry),
-            pool_metrics=_build_pool_metrics(metrics_cfg, self._metrics_registry, source.app.name),
-        )
+        return recipe
 
     def bind(self, application: Application) -> FastAPI:
         """Mount routes, authentication, health, SQL and agent endpoints on *application*.
@@ -632,8 +681,7 @@ class FastAPIAdapter:
             lifespan=lifespan,
         )
         mount_health(app, application.readiness_probes())
-        _mount_authentication(app, auth)
-        _mount_optional_middlewares(app, rest_cfg, declared.metrics_cfg, self._metrics_registry)
+        mount_request_stack(app, declared, mount_metrics=self._metrics_mounter(app, declared))
         sql = application.sql
         if sql.config is not None:
             bind_sql_endpoints(
@@ -656,3 +704,11 @@ class FastAPIAdapter:
         verify_exclusion_paths(app, auth.exclude_paths)
         _warn_anonymous_schema(rest_cfg, auth)
         return app
+
+    def _metrics_mounter(
+        self, app: FastAPI, declared: RestDeclaration
+    ) -> Callable[[], None] | None:
+        """Mount the metrics middleware and scrape endpoint, when metrics are enabled."""
+        if not declared.metrics_cfg.enabled:
+            return None
+        return functools.partial(_mount_metrics, app, declared.metrics_cfg, self._metrics_registry)

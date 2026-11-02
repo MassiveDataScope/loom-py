@@ -12,3 +12,4 @@ class WorkerManifestAttr(StrEnum):
     INTERFACES = "INTERFACES"
     JOBS = "JOBS"
     CALLBACKS = "CALLBACKS"
+    AGENTS = "AGENTS"

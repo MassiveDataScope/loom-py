@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
 from omegaconf import OmegaConf
+from prometheus_client import CollectorRegistry
+from starlette.middleware.cors import CORSMiddleware
 
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
@@ -13,34 +16,55 @@ from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig, PrometheusObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.prometheus.middleware import PrometheusMiddleware
-from loom.rest.fastapi.adapter import _mount_optional_middlewares, _RestConfig
+from loom.rest._body import BodySizeLimitMiddleware
+from loom.rest.compiler import RouteSources
+from loom.rest.cors import CorsConfig
+from loom.rest.fastapi._auto_auth import _AuthWiring
+from loom.rest.fastapi.adapter import (
+    RestDeclaration,
+    _mount_metrics,
+    _RestConfig,
+    mount_request_stack,
+)
 from loom.rest.fastapi.auto import create_app
 from loom.rest.middleware import TraceIdMiddleware
 
 
-def test_mount_optional_middlewares_always_adds_trace_middleware() -> None:
-    app = FastAPI()
-
-    _mount_optional_middlewares(
-        app,
-        _RestConfig(),
-        ObservabilityConfig().prometheus,
-        None,
+def _declaration(cors: CorsConfig | None = None) -> RestDeclaration:
+    return RestDeclaration(
+        name="demo",
+        rest=_RestConfig(cors=cors),
+        auth=_AuthWiring(authenticator=None, exclude_paths=(), jwt_config=None),
+        metrics_cfg=PrometheusObservabilityConfig(enabled=True, config=None),
+        routes=RouteSources(),
     )
 
-    classes: list[Any] = [m.cls for m in app.user_middleware]
-    assert TraceIdMiddleware in classes
 
-
-def test_mount_optional_middlewares_adds_prometheus_when_enabled() -> None:
+def test_the_request_stack_always_mounts_the_trace_middleware() -> None:
     app = FastAPI()
 
-    cfg = PrometheusObservabilityConfig(enabled=True, config=None)
-    _mount_optional_middlewares(app, _RestConfig(), cfg, None)
+    mount_request_stack(app, _declaration())
 
-    classes: list[Any] = [m.cls for m in app.user_middleware]
-    assert TraceIdMiddleware in classes
-    assert PrometheusMiddleware in classes
+    assert TraceIdMiddleware in [m.cls for m in app.user_middleware]
+
+
+def test_the_request_stack_mounts_metrics_between_cors_and_tracing() -> None:
+    app = FastAPI()
+    declared = _declaration(CorsConfig(allow_origins=("https://app.example",)))
+
+    mount_request_stack(
+        app,
+        declared,
+        mount_metrics=partial(_mount_metrics, app, declared.metrics_cfg, CollectorRegistry()),
+    )
+
+    outer_to_inner: list[Any] = [m.cls for m in app.user_middleware]
+    assert outer_to_inner == [
+        CORSMiddleware,
+        PrometheusMiddleware,
+        TraceIdMiddleware,
+        BodySizeLimitMiddleware,
+    ]
 
 
 def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) -> None:

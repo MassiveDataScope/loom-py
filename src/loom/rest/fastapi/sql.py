@@ -341,6 +341,15 @@ def _mount_endpoint(
     )
 
 
+def mounted_sql_endpoints(config: SqlConfig) -> tuple[str, ...]:
+    """Name the connections that mount an endpoint: enabled, and with an explicit ``auth``."""
+    return tuple(
+        name
+        for name, connection in config.connections.items()
+        if connection.sql_endpoint.enabled and connection.sql_endpoint.auth is not None
+    )
+
+
 def bind_sql_endpoints(
     app: FastAPI,
     *,
@@ -378,15 +387,12 @@ def bind_sql_endpoints(
         observability_runtime if observability_runtime is not None else ObservabilityRuntime.noop()
     )
     mechanism = _roles_mechanism(authenticator)
-    for name, connection in config.connections.items():
-        endpoint = connection.sql_endpoint
-        if not endpoint.enabled or endpoint.auth is None:
-            continue
+    for name in mounted_sql_endpoints(config):
         _mount_endpoint(
             app,
             service=service,
             name=name,
-            connection=connection,
+            connection=config.connections[name],
             mechanism=mechanism,
             observability_runtime=runtime,
         )

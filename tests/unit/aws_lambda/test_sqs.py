@@ -7,10 +7,12 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import partial
+from types import ModuleType
+from typing import Any
 
 import pytest
 
-from loom.aws_lambda import LambdaSQSAdapter
+from loom.aws_lambda import LambdaSQSAdapter, LambdaUnservedConfigError
 from loom.aws_lambda.sqs import SQSHandler
 from loom.composition import (
     Application,
@@ -20,11 +22,14 @@ from loom.composition import (
 )
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import REST_CHECKS
+from loom.core.config import ConfigContext
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id
+from tests.helpers.composition import composition_source
+from tests.helpers.loops import RecordedLoops
 from tests.unit.aws_lambda._probe import Probe
 from tests.unit.aws_lambda._records import RecordFactory
 
@@ -336,14 +341,50 @@ def test_duplicate_qualname_is_configuration_error(source: CompositionSource) ->
         adapter.recipe(source)
 
 
-def test_failed_open_clears_event_loop(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+def test_failed_open_closes_its_loop(
+    built: tuple[LambdaSQSAdapter, Application, list[str]], event_loops: RecordedLoops
 ) -> None:
     adapter, application, _ = built
     _add_broken_resource(application)
     with pytest.raises(RuntimeError, match="open failed"):
         adapter.bind(application)
-    assert adapter._loop is None
+    assert event_loops.created[0].is_closed()
+
+
+def test_failed_open_unsets_its_loop(
+    built: tuple[LambdaSQSAdapter, Application, list[str]], event_loops: RecordedLoops
+) -> None:
+    adapter, application, _ = built
+    _add_broken_resource(application)
+    with pytest.raises(RuntimeError, match="open failed"):
+        adapter.bind(application)
+    assert event_loops.made_current[-1] is None
+
+
+@pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
+def test_closing_the_handler_closes_its_loop(
+    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    event_loops: RecordedLoops,
+    closes: int,
+) -> None:
+    adapter, application, _ = built
+    handler = adapter.bind(application)
+
+    for _ in range(closes):
+        handler.close()
+
+    assert event_loops.created[0].is_closed()
+
+
+def test_closing_the_handler_closes_the_application(
+    built: tuple[LambdaSQSAdapter, Application, list[str]],
+) -> None:
+    adapter, application, lifecycle = built
+    handler = adapter.bind(application)
+
+    handler.close()
+
+    assert lifecycle == ["open", "close"]
 
 
 def test_job_config_is_applied(source: CompositionSource) -> None:
@@ -515,31 +556,11 @@ def test_recipe_warns_for_ignored_discovered_components(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import ModuleType
-
-    from loom.core.config import ConfigContext
-    from tests.helpers.composition import composition_source
-
     manifest = ModuleType("tests.unit.aws_lambda._warning_manifest")
     manifest.MODELS = [type("DiscoveredModel", (), {})]  # type: ignore[attr-defined]
     manifest.CALLBACKS = [type("DiscoveredCallback", (), {})]  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
-    configured = composition_source(
-        ConfigContext.from_dict(
-            {
-                "app": {
-                    "name": "lambda-sqs",
-                    "discovery": {
-                        "mode": "manifest",
-                        "manifest": {"module": manifest.__name__},
-                    },
-                }
-            }
-        ),
-        app=source.app,
-        code_path=source.code_path,
-        config_root=source.config_root,
-    )
+    configured = _manifest_source(source, manifest.__name__)
     LambdaSQSAdapter(jobs=[probe[0]]).recipe(configured)
     assert any("ignores AutoCRUD" in message for message in caplog.messages)
     assert any("ignores discovered job callbacks" in message for message in caplog.messages)
@@ -556,3 +577,54 @@ def test_committed_failure_logs_final_outcome(
     assert "PostCommitError" in final_logs[0]
     assert "message_id': '42'" in final_logs[0]
     assert "committed': True" in final_logs[0]
+
+
+def _manifest_source(source: CompositionSource, module: str, **sections: Any) -> CompositionSource:
+    """*source*, discovering from the manifest *module*, with extra top-level *sections*."""
+    discovery = {"mode": "manifest", "manifest": {"module": module}}
+    return composition_source(
+        ConfigContext.from_dict(
+            {"app": {"name": "lambda-sqs", "discovery": discovery}, **sections}
+        ),
+        app=source.app,
+        code_path=source.code_path,
+        config_root=source.config_root,
+    )
+
+
+@pytest.mark.parametrize(
+    ("sections", "key"),
+    [
+        ({"ai": {"models": {}}}, "ai"),
+        ({"observability": {"prometheus": {"enabled": True}}}, "observability.prometheus.enabled"),
+    ],
+    ids=["ai-section", "metrics"],
+)
+def test_what_lambda_does_not_serve_is_refused_before_discovery(
+    source: CompositionSource, sections: dict[str, Any], key: str
+) -> None:
+    undiscoverable = _manifest_source(source, "tests.unit.aws_lambda._no_such_manifest", **sections)
+
+    adapter = LambdaSQSAdapter()
+
+    with pytest.raises(LambdaUnservedConfigError) as raised:
+        adapter.recipe(undiscoverable)
+    assert raised.value.key == key
+
+
+def test_manifest_agents_are_refused(
+    source: CompositionSource,
+    probe: tuple[type[Job[None]], Probe],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = ModuleType("tests.unit.aws_lambda._agents_manifest")
+    manifest.JOBS = [probe[0]]  # type: ignore[attr-defined]
+    manifest.AGENTS = ["agents/*.yaml"]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
+    configured = _manifest_source(source, manifest.__name__)
+
+    adapter = LambdaSQSAdapter()
+
+    with pytest.raises(LambdaUnservedConfigError) as raised:
+        adapter.recipe(configured)
+    assert raised.value.key == "manifest.AGENTS"

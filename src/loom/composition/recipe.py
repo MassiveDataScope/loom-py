@@ -54,9 +54,11 @@ class Adapter(Protocol[T_co]):
     :meth:`recipe` declares what to compose and opens nothing. :meth:`bind`
     mounts the transport on the composed application and returns what the
     entry point serves (an ASGI app, a Celery app, a handler); it opens no
-    resource either, since :meth:`Application.running` owns them. Serverless
-    adapters are the exception: Lambda opens the application once in ``bind``
-    during Init and keeps it open for warm invocations.
+    resource either, since :meth:`Application.running` owns them and the
+    platform's lifespan hook enters it. The exception is a platform with no
+    lifespan hook, such as a Lambda function's Init: there :meth:`bind` opens
+    the application through a :class:`~loom.composition.LoopHost` and returns
+    an object that owns closing it.
     """
 
     def recipe(self, source: CompositionSource) -> Recipe:
