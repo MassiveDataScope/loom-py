@@ -5,8 +5,10 @@ An adapter declares a :class:`Recipe`; :func:`create_app` composes the
 Nothing here imports an HTTP framework, the Celery worker or :mod:`loom.rest`.
 """
 
+from loom.composition._ai import AiWiring
+from loom.composition._sql import SqlWiring
 from loom.composition.application import Application
-from loom.composition.build import build_application, compose_application, create_app
+from loom.composition.build import build_application, compose_application, create_app, load_source
 from loom.composition.errors import (
     ApplicationAlreadyOpenError,
     CompositionErrorCode,
@@ -18,6 +20,7 @@ from loom.composition.source import AppConfig, CompositionSource
 
 __all__ = [
     "Adapter",
+    "AiWiring",
     "AppConfig",
     "Application",
     "ApplicationAlreadyOpenError",
@@ -26,7 +29,9 @@ __all__ = [
     "CompositionSource",
     "Recipe",
     "ReservedBindingError",
+    "SqlWiring",
     "build_application",
     "compose_application",
     "create_app",
+    "load_source",
 ]

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
-from loom.composition._ai import AiWiring
+from loom.composition import AiWiring
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.rest.fastapi._auto_auth import _AuthWiring, _require_jwt_audience
 

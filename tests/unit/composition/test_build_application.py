@@ -15,8 +15,8 @@ from loom.composition import (
     Recipe,
     build_application,
     create_app,
+    load_source,
 )
-from loom.composition.build import load_source
 from loom.composition.resources import ResourceKind
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError

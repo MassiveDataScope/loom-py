@@ -16,10 +16,7 @@ from prometheus_client import CollectorRegistry
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from loom.composition import Application, CompositionSource, Recipe
-from loom.composition._ai import (
-    AiWiring,
-)
+from loom.composition import AiWiring, Application, CompositionSource, Recipe
 from loom.core.config import (
     ConfigContext,
 )

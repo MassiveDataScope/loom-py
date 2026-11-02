@@ -44,8 +44,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery._discovery import WorkerManifest
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import compose_application
-from loom.composition.build import load_source
+from loom.composition import compose_application, load_source
 from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
