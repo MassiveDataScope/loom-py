@@ -376,10 +376,10 @@ def verify_agent_markers(
     every compiled agent plan already exists here, whether or not an ``ai:``
     section is present — an absent section means ``ai.plans`` is simply
     empty, so every declared agent is reported unknown the same way a typo
-    would be. The check itself is shared with the Celery worker bootstrap
+    would be. The check itself is shared with :func:`reject_ai_markers`
     (T402), which calls the same :func:`~loom.ai._startup.verify_agent_markers`
-    with an always-empty ``plans_by_name``, since a task worker never builds
-    an AI runtime at all.
+    with an always-empty ``plans_by_name`` for an entry point that never
+    builds an AI runtime at all.
 
     Args:
         use_cases: Every use case compiled for this deployment.
