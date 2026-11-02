@@ -148,8 +148,7 @@ class MongoUnitOfWork:
         self._transaction_token = open_atomic_transaction()
         _log.debug("UoWBegin")
 
-    # S7503: async because PhasedUnitOfWork.flush is awaited for every store.
-    async def flush(self) -> None:  # NOSONAR
+    async def flush(self) -> None:  # NOSONAR S7503 - the PhasedUnitOfWork protocol awaits it
         """Nothing to flush: every write already reached the server inside the transaction.
 
         Raises:
