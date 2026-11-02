@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI
+from starlette.applications import Starlette
 
 from loom.core.config.errors import ConfigError
 from loom.rest.auth import AuthenticationMiddleware, Authenticator, JwtAuthConfig, JwtAuthenticator
@@ -128,7 +128,7 @@ def _require_jwt_audience(subject: str, jwt_cfg: JwtAuthConfig) -> None:
     )
 
 
-def _mount_authentication(app: FastAPI, auth: _AuthWiring) -> None:
+def _mount_authentication(app: Starlette, auth: _AuthWiring) -> None:
     """Mount :class:`AuthenticationMiddleware` when a mechanism is configured.
 
     Mounted before the optional middlewares so ``TraceIdMiddleware`` wraps it

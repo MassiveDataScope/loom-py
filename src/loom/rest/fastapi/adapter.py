@@ -13,6 +13,7 @@ import msgspec
 import prometheus_client
 from fastapi import FastAPI
 from prometheus_client import CollectorRegistry
+from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
@@ -363,14 +364,19 @@ def _mount_optional_middlewares(
         metrics_cfg: Metrics feature config.
         registry: Optional Prometheus registry override.
     """
-    app.add_middleware(BodySizeLimitMiddleware, max_bytes=rest_cfg.max_body_bytes)
-    app.add_middleware(TraceIdMiddleware)
+    _mount_request_guards(app, rest_cfg)
     if metrics_cfg.enabled:
         _mount_metrics(app, metrics_cfg, registry)
     _mount_cors(app, rest_cfg.cors)
 
 
-def _mount_cors(app: FastAPI, cors_cfg: CorsConfig | None) -> None:
+def _mount_request_guards(app: Starlette, rest_cfg: _RestConfig) -> None:
+    """Mount the body cap and, around it, request tracing."""
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=rest_cfg.max_body_bytes)
+    app.add_middleware(TraceIdMiddleware)
+
+
+def _mount_cors(app: Starlette, cors_cfg: CorsConfig | None) -> None:
     """Mount the CORS middleware when ``app.rest.cors`` is configured.
 
     Absent section means no middleware at all: an application that never

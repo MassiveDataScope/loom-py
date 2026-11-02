@@ -20,8 +20,9 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -59,7 +60,7 @@ def malformed_body_error() -> HTTPException:
     return HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=malformed_body_detail())
 
 
-def register_error_handlers(app: FastAPI) -> None:
+def register_error_handlers(app: Starlette) -> None:
     """Normalise validation and HTTP errors to the framework error body.
 
     Args:
