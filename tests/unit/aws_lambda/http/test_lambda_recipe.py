@@ -45,6 +45,20 @@ _UNDISCOVERABLE_APP = {
     "name": "contract",
     "discovery": {"mode": "interfaces", "interfaces": {"modules": ["no_such_contract_module"]}},
 }
+_CONFIG_REFUSALS = [
+    pytest.param(
+        {"sql": {"connections": {"analytics": _SQL_CONNECTION}}},
+        "sql.connections.analytics.sql_endpoint",
+        id="sql-endpoint",
+    ),
+    pytest.param({"ai": {"models": {}}}, "ai", id="ai-section"),
+    pytest.param(
+        {"observability": {"prometheus": {"enabled": True}}},
+        "observability.prometheus.enabled",
+        id="metrics",
+    ),
+]
+"""What the configuration alone shows Lambda does not serve, and the key each is refused at."""
 
 ProjectFactory = Callable[..., str]
 
@@ -75,15 +89,9 @@ def test_the_recipe_asks_for_one_connection_and_no_pool_metrics_or_agents(
 @pytest.mark.parametrize(
     ("options", "key"),
     [
-        (
-            {"sql": {"connections": {"analytics": _SQL_CONNECTION}}},
-            "sql.connections.analytics.sql_endpoint",
-        ),
-        ({"ai": {"models": {}}}, "ai"),
-        ({"agents": ("agents/*.yaml",)}, "manifest.AGENTS"),
-        ({"observability": {"prometheus": {"enabled": True}}}, "observability.prometheus.enabled"),
+        *_CONFIG_REFUSALS,
+        pytest.param({"agents": ("agents/*.yaml",)}, "manifest.AGENTS", id="agents"),
     ],
-    ids=["sql-endpoint", "ai-section", "manifest-agents", "metrics"],
 )
 def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
     contract_project: ProjectFactory, options: dict[str, Any], key: str
@@ -95,18 +103,7 @@ def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
     assert raised.value.key == key
 
 
-@pytest.mark.parametrize(
-    ("options", "key"),
-    [
-        (
-            {"sql": {"connections": {"analytics": _SQL_CONNECTION}}},
-            "sql.connections.analytics.sql_endpoint",
-        ),
-        ({"ai": {"models": {}}}, "ai"),
-        ({"observability": {"prometheus": {"enabled": True}}}, "observability.prometheus.enabled"),
-    ],
-    ids=["sql-endpoint", "ai-section", "metrics"],
-)
+@pytest.mark.parametrize(("options", "key"), _CONFIG_REFUSALS)
 def test_a_configuration_refusal_comes_before_discovery(
     contract_project: ProjectFactory, options: dict[str, Any], key: str
 ) -> None:
