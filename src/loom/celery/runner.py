@@ -98,7 +98,8 @@ class _CeleryAsyncRuntime:
         failure = self._open_failure
         if failure is None:
             return
-        raise WorkerNotOpenError(failure) from failure  # NOSONAR S5707 - refuse() records an Exception
+        # S5707 false positive: refuse() only ever records an Exception.
+        raise WorkerNotOpenError(failure) from failure  # NOSONAR S5707
 
     def run(
         self,
