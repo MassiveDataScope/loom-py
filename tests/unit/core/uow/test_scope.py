@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import pickle
+from contextlib import nullcontext
 from typing import Any
 
 import pytest
@@ -58,6 +59,11 @@ def _coordinator(*stores: PhasedStore | ThirdPartyStore | AutocommitStore) -> Or
 
 def _stores(ledger: Ledger, *keys: StoreKey) -> dict[StoreKey, PhasedStore]:
     return {key: PhasedStore(key, ledger) for key in keys}
+
+
+def _scope_for(*stores: PhasedStore) -> InvocationScope:
+    """A scope owned by the current task over ``stores``, none enlisted yet."""
+    return InvocationScope(asyncio.current_task(), _coordinator(*stores))
 
 
 async def _enlisted(*keys: StoreKey) -> tuple[InvocationScope, dict[StoreKey, PhasedStore]]:
@@ -289,25 +295,15 @@ class TestFramePush:
         async with scope.frame(frame):
             assert scope.frames == [frame]
 
-    async def test_the_frame_is_popped_afterwards(self) -> None:
-        scope = InvocationScope(asyncio.current_task(), _coordinator(PhasedStore(S0, Ledger())))
-
-        async with scope.frame(Frame(S0)):
-            pass
-
-        assert scope.frames == []
-
     async def test_frames_stack_innermost_last(self) -> None:
-        stores = _stores(Ledger(), S0, S1)
-        scope = InvocationScope(asyncio.current_task(), _coordinator(*stores.values()))
+        scope = _scope_for(*_stores(Ledger(), S0, S1).values())
         outer, inner = Frame(S0), Frame(S1)
 
         async with scope.frame(outer), scope.frame(inner):
             assert scope.frames == [outer, inner]
 
     async def test_it_enlists_the_stores_of_the_frame_in_order(self) -> None:
-        stores = _stores(Ledger(), S0, S1, S2)
-        scope = InvocationScope(asyncio.current_task(), _coordinator(*stores.values()))
+        scope = _scope_for(*_stores(Ledger(), S0, S1, S2).values())
 
         async with scope.frame(Frame(S1, frozenset({S0}))):
             pass
@@ -316,32 +312,35 @@ class TestFramePush:
 
     async def test_a_store_already_enlisted_is_not_begun_again(self) -> None:
         ledger = Ledger()
-        stores = _stores(ledger, S0)
-        scope = InvocationScope(asyncio.current_task(), _coordinator(*stores.values()))
+        scope = _scope_for(PhasedStore(S0, ledger))
 
         async with scope.frame(Frame(S0)), scope.frame(Frame(S0)):
             pass
 
         assert ledger.calls_of(S0) == ["begin"]
 
-    async def test_the_frame_is_popped_when_the_execution_fails(self) -> None:
-        scope = InvocationScope(asyncio.current_task(), _coordinator(PhasedStore(S0, Ledger())))
+    @pytest.mark.parametrize(
+        ("fault", "fails", "enlisted"),
+        [
+            (None, False, [S0]),
+            (None, True, [S0]),
+            (Fault("begin", Effect.RAISE), False, []),
+        ],
+        ids=["clean", "execution-fails", "enlisting-fails"],
+    )
+    async def test_the_frame_is_popped_afterwards(
+        self, fault: Fault | None, fails: bool, enlisted: list[StoreKey]
+    ) -> None:
+        """A store whose enlistment failed is not registered either."""
+        scope = _scope_for(PhasedStore(S0, Ledger(), fault))
+        raised = pytest.raises(Boom) if fault is not None or fails else nullcontext()
 
-        with pytest.raises(Boom):
+        with raised:
             async with scope.frame(Frame(S0)):
-                raise Boom
+                if fails:
+                    raise Boom
 
-        assert scope.frames == []
-
-    async def test_the_frame_is_popped_when_enlisting_fails(self) -> None:
-        store = PhasedStore(S0, Ledger(), Fault("begin", Effect.RAISE))
-        scope = InvocationScope(asyncio.current_task(), _coordinator(store))
-
-        with pytest.raises(Boom):
-            async with scope.frame(Frame(S0)):
-                pass
-
-        assert (scope.frames, scope.participants) == ([], {})
+        assert (scope.frames, list(scope.participants)) == ([], enlisted)
 
     async def test_a_cancelled_enlistment_pops_the_frame_and_registers_nothing(self) -> None:
         ledger = Ledger()
@@ -364,7 +363,7 @@ class TestFramePush:
     async def test_a_frame_pushed_from_another_task_is_refused_before_anything_changes(
         self,
     ) -> None:
-        scope = InvocationScope(asyncio.current_task(), _coordinator(PhasedStore(S0, Ledger())))
+        scope = _scope_for(PhasedStore(S0, Ledger()))
 
         async def push() -> None:
             async with scope.frame(Frame(S0)):
