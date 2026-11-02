@@ -54,6 +54,8 @@ class WorkerManifest:
             are extracted and compiled automatically.
         models: Model classes available to the transport for optional generated use cases.
         callbacks: Job callback classes to register for execution.
+        agents: Agent artifact paths or globs the manifest declares, for an
+            entry point to refuse: a worker hosts no agent runtime.
 
     Example::
 
@@ -72,16 +74,21 @@ class WorkerManifest:
     interfaces: Sequence[type[Any]] = field(default_factory=list)
     models: Sequence[type[Any]] = field(default_factory=list)
     callbacks: Sequence[type[Any]] = field(default_factory=list)
+    agents: Sequence[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class WorkerComponents:
-    """Resolved worker graph after discovery/explicit merging."""
+    """Resolved worker graph after discovery/explicit merging.
+
+    ``agent_specs`` are the agents the manifest declares, which no worker hosts.
+    """
 
     compilables: tuple[type[Compilable], ...]
     jobs: tuple[type[Job[Any]], ...]
     models: tuple[type[BaseModel], ...]
     callbacks: tuple[type[Any], ...]
+    agent_specs: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +206,7 @@ def _read_manifest_lists(module: Any, module_path: str) -> WorkerManifest:
     interfaces = tuple(getattr(module, WorkerManifestAttr.INTERFACES, ()))
     jobs = tuple(getattr(module, WorkerManifestAttr.JOBS, ()))
     callbacks = tuple(getattr(module, WorkerManifestAttr.CALLBACKS, ()))
+    agents = tuple(getattr(module, WorkerManifestAttr.AGENTS, ()))
 
     if not (models or use_cases or interfaces or jobs or callbacks):
         expected = (
@@ -216,6 +224,7 @@ def _read_manifest_lists(module: Any, module_path: str) -> WorkerManifest:
         interfaces=interfaces,
         jobs=jobs,
         callbacks=callbacks,
+        agents=agents,
     )
 
 
@@ -288,6 +297,7 @@ def _resolved_from_manifest(
         jobs=tuple(manifest.jobs),
         models=tuple(manifest.models),
         callbacks=tuple(manifest.callbacks),
+        agent_specs=tuple(manifest.agents),
     )
 
 
@@ -383,6 +393,7 @@ def resolve_worker_components(
             jobs=jobs,
             models=discovered.models,
             callbacks=discovered.callbacks,
+            agent_specs=discovered.agent_specs,
         )
 
     try:

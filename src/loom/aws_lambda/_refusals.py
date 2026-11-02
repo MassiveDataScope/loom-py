@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from loom.core.config import ConfigKey
 from loom.core.config.errors import ConfigError
+
+if TYPE_CHECKING:
+    from loom.composition import CompositionSource
+
+MANIFEST_AGENTS_KEY = "manifest.AGENTS"
+"""The :attr:`LambdaUnservedConfigError.key` of the agents a manifest module declares."""
 
 
 class LambdaUnservedConfigError(ConfigError):
@@ -12,9 +21,49 @@ class LambdaUnservedConfigError(ConfigError):
 
     Attributes:
         key: Where the unserved declaration lives: a configuration key, or
-            ``manifest.AGENTS`` for the agents a manifest module declares.
+            :data:`MANIFEST_AGENTS_KEY` for the agents a manifest module declares.
     """
 
     def __init__(self, key: str, message: str) -> None:
         super().__init__(f"{key}: {message}")
         self.key = key
+
+
+def refuse_unserved_config(source: CompositionSource, adapter: str) -> None:
+    """Refuse, from the configuration alone, what no Lambda function serves.
+
+    Runs before discovery: a metrics scrape and an agent runtime.
+
+    Args:
+        source: What the entry point composes from.
+        adapter: The refusing adapter, named in the message.
+
+    Raises:
+        LambdaUnservedConfigError: When metrics are enabled or an ``ai``
+            section is declared.
+    """
+    if source.observability_config.prometheus.enabled:
+        raise LambdaUnservedConfigError(
+            "observability.prometheus.enabled",
+            "a Lambda function serves no metrics scrape. Disable it for this entry point.",
+        )
+    if source.config.has(ConfigKey.AI):
+        raise LambdaUnservedConfigError(
+            ConfigKey.AI,
+            f"{adapter} does not host agents. Serve them with FastAPIAdapter, "
+            "or drop the section from this entry point's configuration.",
+        )
+
+
+def refuse_manifest_agents(agent_specs: tuple[str, ...], adapter: str) -> None:
+    """Refuse the agents a manifest module declares, once discovery has read them.
+
+    Raises:
+        LambdaUnservedConfigError: When *agent_specs* is not empty.
+    """
+    if agent_specs:
+        raise LambdaUnservedConfigError(
+            MANIFEST_AGENTS_KEY,
+            f"the manifest declares agents, which {adapter} does not host. "
+            "Serve them with FastAPIAdapter.",
+        )

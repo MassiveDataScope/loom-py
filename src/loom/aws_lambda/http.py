@@ -25,7 +25,11 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from loom.aws_lambda._refusals import LambdaUnservedConfigError
+from loom.aws_lambda._refusals import (
+    LambdaUnservedConfigError,
+    refuse_manifest_agents,
+    refuse_unserved_config,
+)
 from loom.composition import (
     Application,
     CompositionErrorCode,
@@ -35,7 +39,6 @@ from loom.composition import (
     Recipe,
 )
 from loom.core.config import ConfigContext, ConfigKey
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.sql import SqlConfig
@@ -88,7 +91,8 @@ class LambdaHTTPAdapter:
 
         Raises:
             LambdaUnservedConfigError: When the configuration enables
-                metrics, declares agents or mounts an SQL endpoint.
+                metrics, declares agents or mounts an SQL endpoint; but for
+                the manifest's agents, before discovery.
             CompositionStateError: When this instance already composed an
                 application.
             ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
@@ -98,13 +102,12 @@ class LambdaHTTPAdapter:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=_COMPONENT)
             )
-        _refuse_metrics(source)
-        _refuse_ai_section(source.config)
+        refuse_unserved_config(source, _COMPONENT)
+        _refuse_sql_endpoints(source.config)
         recipe, declared = compose_rest(
             source, authenticator=self._authenticator, serves_documentation=False
         )
-        _refuse_sql_endpoints(source.config)
-        _refuse_manifest_agents(recipe.discovered)
+        refuse_manifest_agents(recipe.discovered.agent_specs, _COMPONENT)
         self._declared = declared
         return dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
 
@@ -121,32 +124,6 @@ class LambdaHTTPAdapter:
                 CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=_COMPONENT)
             )
         return LambdaHTTPHandler(_starlette_app(application, self._declared), application)
-
-
-def _refuse_metrics(source: CompositionSource) -> None:
-    if source.observability_config.prometheus.enabled:
-        raise LambdaUnservedConfigError(
-            "observability.prometheus.enabled",
-            "a Lambda function serves no metrics scrape. Disable it for this entry point.",
-        )
-
-
-def _refuse_ai_section(ctx: ConfigContext) -> None:
-    if ctx.has(ConfigKey.AI):
-        raise LambdaUnservedConfigError(
-            ConfigKey.AI,
-            "LambdaHTTPAdapter does not host agents. Serve them with FastAPIAdapter, "
-            "or drop the section from this entry point's configuration.",
-        )
-
-
-def _refuse_manifest_agents(discovered: DiscoveryResult) -> None:
-    if discovered.agent_specs:
-        raise LambdaUnservedConfigError(
-            "AGENTS",
-            "the manifest declares agents, which LambdaHTTPAdapter does not host. "
-            "Serve them with FastAPIAdapter.",
-        )
 
 
 def _refuse_sql_endpoints(ctx: ConfigContext) -> None:

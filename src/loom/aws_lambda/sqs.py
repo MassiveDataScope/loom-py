@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
+from loom.aws_lambda._refusals import refuse_manifest_agents, refuse_unserved_config
 from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
 from loom.core.checks import REST_CHECKS
 from loom.core.discovery.base import DiscoveryResult
@@ -82,12 +83,21 @@ class LambdaSQSAdapter:
 
         AutoCRUD use cases for discovered models are not compiled here.
         Discovered callbacks are not registered by this adapter.
+
+        Raises:
+            LambdaUnservedConfigError: When the configuration enables metrics
+                or declares agents, before discovery; or the manifest declares
+                agents.
+            CompositionStateError: When this instance already composed an
+                application.
         """
         if self._declared is not None:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=_COMPONENT)
             )
+        refuse_unserved_config(source, _COMPONENT)
         resolved = resolve_worker_components(source.config, self._jobs, self._use_cases)
+        refuse_manifest_agents(resolved.agent_specs, _COMPONENT)
         if resolved.models:
             _log.warning(
                 "Lambda ignores AutoCRUD use cases for discovered models",
