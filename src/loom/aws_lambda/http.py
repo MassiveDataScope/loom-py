@@ -18,12 +18,10 @@ import dataclasses
 from collections.abc import Mapping
 from typing import Any
 
-from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from mangum import Mangum
 from pydantic import TypeAdapter, ValidationError
 from starlette.applications import Starlette
-from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
@@ -39,27 +37,19 @@ from loom.composition import (
 )
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.sql import SqlConfig
-from loom.core.use_case.factory import UseCaseFactory
 from loom.rest.auth import Authenticator
-from loom.rest.compiler import CompiledRoute, RestInterfaceCompiler
-from loom.rest.fastapi._auto_auth import _mount_authentication
+from loom.rest.compiler import CompiledRoute
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
-from loom.rest.fastapi.adapter import (
-    FastAPIAdapter,
-    _Declared,
-    _mount_cors,
-    _mount_request_guards,
-)
-from loom.rest.fastapi.app import _resolve_executor
+from loom.rest.fastapi.adapter import RestDeclaration, compose_rest, mount_request_stack
+from loom.rest.fastapi.app import CompiledApi, compile_api
 from loom.rest.fastapi.router_runtime import (
     _build_route_runtime,
     _dispatch_route,
-    _normalize_path_param_annotation,
+    path_param_annotation,
 )
 from loom.rest.fastapi.sql import mounted_sql_endpoints
 
@@ -89,17 +79,18 @@ class LambdaHTTPAdapter:
 
     def __init__(self, *, authenticator: Authenticator | None = None) -> None:
         self._authenticator = authenticator
-        self._declared: _Declared | None = None
+        self._declared: RestDeclaration | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
-        """Compose as :meth:`FastAPIAdapter.recipe` does, with the Lambda pool profile.
+        """Compose as :class:`~loom.rest.fastapi.FastAPIAdapter` does, with the Lambda pool profile.
 
         Raises:
             LambdaUnservedConfigError: When the configuration enables
                 metrics, declares agents or mounts an SQL endpoint.
             CompositionStateError: When this instance already composed an
                 application.
-            ConfigError: For any reason :meth:`FastAPIAdapter.recipe` raises it.
+            ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
+                raises it.
         """
         if self._declared is not None:
             raise CompositionStateError(
@@ -107,11 +98,10 @@ class LambdaHTTPAdapter:
             )
         _refuse_metrics(source)
         _refuse_ai_section(source.config)
-        rest = FastAPIAdapter(authenticator=self._authenticator)
-        recipe = rest.recipe(source)
+        recipe, declared = compose_rest(source, authenticator=self._authenticator)
         _refuse_sql_endpoints(source.config)
         _refuse_manifest_agents(recipe.discovered)
-        self._declared = rest._declared
+        self._declared = declared
         return dataclasses.replace(recipe, profile=LAMBDA_PROFILE, agents=False, pool_metrics=None)
 
     def bind(self, application: Application) -> LambdaHTTPHandler:
@@ -166,86 +156,78 @@ def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
         )
 
 
-def _starlette_app(application: Application, declared: _Declared) -> Starlette:
+def _starlette_app(application: Application, declared: RestDeclaration) -> Starlette:
     """Build the Starlette application of *declared*, as FastAPI would serve it."""
-    kernel = application.kernel
-    compiled = RestInterfaceCompiler(kernel.compiler).compile_sources(declared.routes)
-    executor = _resolve_executor(kernel)
+    api = compile_api(application.kernel, declared.routes)
     app = Starlette(
-        routes=[
-            _route(route, kernel.factory, executor, application.observability) for route in compiled
-        ]
+        routes=[_route(compiled, api, application.observability) for compiled in api.routes]
     )
     register_error_handlers(app)
-    app.add_exception_handler(HTTPException, _routing_error)
-    _mount_authentication(app, declared.auth)
-    _mount_request_guards(app, declared.rest)
-    _mount_cors(app, declared.rest.cors)
+    mount_request_stack(app, declared)
     verify_exclusion_paths(app, declared.auth.exclude_paths)
     return app
 
 
-async def _routing_error(request: Request, exc: Exception) -> Response:
-    """Answer the routing 404 and 405 with FastAPI's own handler: same body, same Allow."""
-    if not isinstance(exc, HTTPException):  # pragma: no cover - registered per type
-        raise exc
-    return await http_exception_handler(request, exc)
-
-
-def _route(
-    compiled: CompiledRoute,
-    factory: UseCaseFactory,
-    executor: RuntimeExecutor,
-    observability: ObservabilityRuntime,
-) -> Route:
+def _route(compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime) -> Route:
     """One Starlette route running *compiled* through the router runtime.
 
     The path keeps bare ``{name}`` parameters: a Starlette convertor such as
     ``{id:int}`` would answer ``404`` where FastAPI answers ``422``.
     """
-    runtime = _build_route_runtime(compiled)
-    param_types = dict(compiled.execute_param_types)
-    coercers: dict[str, TypeAdapter[Any]] = {
-        name: TypeAdapter(_normalize_path_param_annotation(param_types.get(name, str)))
-        for name in runtime.path_params
-    }
-
-    async def endpoint(request: Request) -> Response:
-        path_kwargs = _coerce_path_params(request.path_params, coercers)
-        return await _dispatch_route(
-            request, path_kwargs, runtime, factory, executor, observability
-        )
-
     method = compiled.route.method.upper()
-    route = Route(compiled.full_path, endpoint, methods=[method])
+    endpoint = _RouteEndpoint(compiled, api, observability)
+    route = Route(compiled.full_path, endpoint.handle, methods=[method])
     # Starlette adds HEAD to a GET route; FastAPI does not, so neither its 405
     # nor its Allow header would match.
     route.methods = {method}
     return route
 
 
-def _coerce_path_params(
-    raw: Mapping[str, Any], coercers: Mapping[str, TypeAdapter[Any]]
-) -> dict[str, Any]:
-    """Validate the path parameters as FastAPI does, with the same error locations.
+class _RouteEndpoint:
+    """Validates the path parameters of one route as FastAPI does, then runs it."""
 
-    Raises:
-        RequestValidationError: Listing every parameter that fails, each at
-            ``("path", name)``.
-    """
-    values: dict[str, Any] = {}
-    errors: list[dict[str, Any]] = []
-    for name, coercer in coercers.items():
-        try:
-            values[name] = coercer.validate_python(raw[name], from_attributes=True)
-        except ValidationError as exc:
-            errors.extend(
-                {**error, "loc": (_PATH_LOCATION, name, *error["loc"])}
-                for error in exc.errors(include_url=False)
-            )
-    if errors:
-        raise RequestValidationError(errors)
-    return values
+    def __init__(
+        self, compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime
+    ) -> None:
+        self._runtime = _build_route_runtime(compiled)
+        self._api = api
+        self._observability = observability
+        param_types = dict(compiled.execute_param_types)
+        self._coercers: dict[str, TypeAdapter[Any]] = {
+            name: TypeAdapter(path_param_annotation(name, param_types))
+            for name in self._runtime.path_params
+        }
+
+    async def handle(self, request: Request) -> Response:
+        """Answer *request*.
+
+        Raises:
+            RequestValidationError: Listing every path parameter that fails,
+                each at ``("path", name)``.
+        """
+        return await _dispatch_route(
+            request,
+            self._path_kwargs(request.path_params),
+            self._runtime,
+            self._api.factory,
+            self._api.executor,
+            self._observability,
+        )
+
+    def _path_kwargs(self, raw: Mapping[str, Any]) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        errors: list[dict[str, Any]] = []
+        for name, coercer in self._coercers.items():
+            try:
+                values[name] = coercer.validate_python(raw[name])
+            except ValidationError as exc:
+                errors.extend(
+                    {**error, "loc": (_PATH_LOCATION, name, *error["loc"])}
+                    for error in exc.errors(include_url=False)
+                )
+        if errors:
+            raise RequestValidationError(errors)
+        return values
 
 
 class LambdaHTTPHandler:
