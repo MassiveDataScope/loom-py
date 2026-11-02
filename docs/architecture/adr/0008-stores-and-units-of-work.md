@@ -98,7 +98,9 @@ Callers ask the capability, never the backend's name.
   invocation, and a session another session manager or client opened. A
   store that is not enlisted reads with a session per call.
 - `SessionManager.active_session` is the only public way to read a store's
-  session. Mongo has the same property on `MongoSessions`, the object the
+  session. Repositories reach the same session through
+  `SessionManager.joined_session(write=...)`, which adds their write intent
+  for the checkpoint; it is not meant for raw SQL. Mongo has the same property on `MongoSessions`, the object the
   backend hands its repositories as `session_provider`. Both are resolved by
   dependency injection, so two stores of the same backend never return each
   other's session, and both keep their exact session type.

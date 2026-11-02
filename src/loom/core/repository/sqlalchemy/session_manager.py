@@ -167,11 +167,11 @@ class SessionManager:
         """The session this store's unit of work holds in the current invocation, if any.
 
         The one public way to read a store's session, for raw SQL that must
-        run in the invocation's transaction. Like ``request.user``, its value
-        depends on the context it is read from: ``None`` outside an
-        invocation, or when this store is not enlisted in it, where
-        :meth:`session` opens a session of its own. A repository of this
-        manager joins the same session.
+        run in the invocation's transaction; repositories reach the same
+        session through :meth:`joined_session`, with their write intent.
+        Like ``request.user``, its value depends on the context it is read
+        from: ``None`` outside an invocation, or when this store is not
+        enlisted in it, where :meth:`session` opens a session of its own.
 
         Raises:
             ScopeOwnershipError: Read from a task other than the one that owns
