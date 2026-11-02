@@ -250,9 +250,10 @@ async def test_a_gather_child_reading_the_enlisted_store_is_refused(
         await asyncio.gather(_visible_ids(manager, table))
 
     use_case = Run(outer)
+    executor = _executor(manager)
 
     with pytest.raises(ScopeOwnershipError):
-        await _executor(manager).execute(use_case)
+        await executor.execute(use_case)
 
     assert await _committed_ids(observer, table) == []
 

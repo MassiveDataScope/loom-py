@@ -164,8 +164,9 @@ async def test_a_gather_of_reads_using_the_session_is_refused_and_persists_nothi
         await asyncio.gather(read(), read())
 
     use_case = Run(body)
+    executor = _executor(mongo_client)
 
     with pytest.raises(ScopeOwnershipError):
-        await _executor(mongo_client).execute(use_case)
+        await executor.execute(use_case)
 
     assert await _committed_ids(created) == []
