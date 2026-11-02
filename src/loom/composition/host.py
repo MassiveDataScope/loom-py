@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Coroutine
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.composition.errors import CompositionErrorCode, CompositionStateError
 
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     from loom.composition.application import Application
 
 _logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 _FAILED_TO_CLOSE = "application failed to close"
 
@@ -151,6 +153,74 @@ class ApplicationHost:
         failure = self._take_close_failure()
         if failure is not None:
             _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
+
+
+class LoopHost:
+    """Keeps an application open on an event loop of its own, across synchronous calls.
+
+    For a transport with no lifespan hook, such as a Lambda function: it opens
+    the application once at Init and serves each warm invocation from a
+    synchronous call. Building the host creates the loop and makes it the
+    thread's current one; :meth:`start` opens the application on it in an
+    :class:`ApplicationHost`; every call then runs on that same loop, and
+    :meth:`close` closes the application and disposes of the loop.
+
+    Args:
+        application: The application to open.
+    """
+
+    def __init__(self, application: Application) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._host = ApplicationHost(application)
+        self._closed = False
+
+    def start(self) -> None:
+        """Open the application, with its startup checks, on the host's loop.
+
+        Raises:
+            Exception: The failure to open the application, as itself; the
+                loop is disposed of by then.
+        """
+        try:
+            self._loop.run_until_complete(self._host.start())
+        except BaseException:
+            self._dispose()
+            raise
+
+    def make_current(self) -> None:
+        """Make the host's loop the thread's current one, for code that runs on that loop."""
+        asyncio.set_event_loop(self._loop)
+
+    def run(self, coroutine: Coroutine[Any, Any, _T]) -> _T:
+        """Run *coroutine* to completion on the host's loop and return its result."""
+        self.make_current()
+        return self._loop.run_until_complete(coroutine)
+
+    def close(self) -> None:
+        """Close the application, then dispose of the loop; a second call does nothing.
+
+        Raises:
+            Exception: The failure to close the application; the loop is
+                disposed of all the same.
+        """
+        if self._closed:
+            return
+        try:
+            self._loop.run_until_complete(self._host.stop())
+        finally:
+            self._dispose()
+
+    def _dispose(self) -> None:
+        """Finish the loop's async generators and default executor, close it and unset it."""
+        self._closed = True
+        loop = self._loop
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(loop.shutdown_default_executor())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
 
 def _failure_to_close(owner: asyncio.Task[None]) -> BaseException | None:

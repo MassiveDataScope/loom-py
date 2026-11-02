@@ -69,3 +69,13 @@ def test_spark_extras_skip_pyspark_on_python_313(extra: str, packages: tuple[str
         assert package in _extra_requirements(extra, python="3.12")
         assert package not in _extra_requirements(extra, python="3.13")
         assert package not in _extra_requirements(extra, python="3.14")
+
+
+@pytest.mark.parametrize("package", ["fastapi", "pydantic", "prometheus-client", "mangum"])
+def test_lambda_extra_installs_the_rest_stack_and_mangum(package: str) -> None:
+    assert package in _extra_requirements("lambda")
+
+
+@pytest.mark.parametrize(("version", "accepted"), [("0.22", True), ("0.21", False)])
+def test_lambda_extra_needs_mangum_022_or_later(version: str, accepted: bool) -> None:
+    assert _extra_requirements("lambda")["mangum"].specifier.contains(version) is accepted

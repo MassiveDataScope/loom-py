@@ -28,6 +28,7 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 
 from fastapi import FastAPI
@@ -35,7 +36,8 @@ from fastapi import FastAPI
 from loom.core.bootstrap.bootstrap import BootstrapResult
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.rest.compiler import RestInterfaceCompiler, RouteSources
+from loom.core.use_case.factory import UseCaseFactory
+from loom.rest.compiler import CompiledRoute, RestInterfaceCompiler, RouteSources
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.router_runtime import bind_interfaces
 from loom.rest.model import RestApiDefaults
@@ -70,6 +72,42 @@ def _require_route_sources(routes: object) -> RouteSources:
             f"got {type(routes).__name__}. Pass RouteSources(python=[...])."
         )
     return routes
+
+
+@dataclass(frozen=True)
+class CompiledApi:
+    """The compiled routes of an application, and what runs their use cases.
+
+    Args:
+        routes: Fully resolved routes, in mounting order.
+        factory: Builds the use case of each request.
+        executor: Drives the use-case pipeline.
+    """
+
+    routes: tuple[CompiledRoute, ...]
+    factory: UseCaseFactory
+    executor: RuntimeExecutor
+
+
+def compile_api(
+    result: BootstrapResult,
+    routes: RouteSources,
+    *,
+    defaults: RestApiDefaults | None = None,
+) -> CompiledApi:
+    """Compile *routes* against *result*, as every HTTP transport serves them.
+
+    Raises:
+        TypeError: If *routes* is not a ``RouteSources``.
+        RuntimeError: If no ``RuntimeExecutor`` is registered.
+        InterfaceCompilationError: If any interface fails structural validation.
+    """
+    resolved_routes = _require_route_sources(routes)
+    executor = _resolve_executor(result)
+    compiled = RestInterfaceCompiler(result.compiler, defaults=defaults).compile_sources(
+        resolved_routes
+    )
+    return CompiledApi(routes=tuple(compiled), factory=result.factory, executor=executor)
 
 
 def create_fastapi_app(
@@ -145,7 +183,7 @@ def create_fastapi_app(
             version="2.0.0",
         )
     """
-    resolved_routes = _require_route_sources(routes)
+    api = compile_api(result, routes, defaults=defaults)
     runtime = observability_runtime or ObservabilityRuntime.noop()
     app = FastAPI(**fastapi_kwargs)
     register_error_handlers(app)
@@ -153,19 +191,11 @@ def create_fastapi_app(
     for mw_class in middleware:
         app.add_middleware(mw_class)
 
-    interface_compiler = RestInterfaceCompiler(
-        result.compiler,
-        defaults=defaults,
-    )
-    executor = _resolve_executor(result)
-
-    all_routes = interface_compiler.compile_sources(resolved_routes)
-
     component_registry = bind_interfaces(
         app,
-        all_routes,
-        result.factory,
-        executor,
+        api.routes,
+        api.factory,
+        api.executor,
         observability_runtime=runtime,
     )
     if component_registry:

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from fastapi import FastAPI
+from starlette.applications import Starlette
 from starlette.routing import Match
 
 from loom.core.config.errors import ConfigError
@@ -25,7 +25,7 @@ from loom.core.config.errors import ConfigError
 _PROBE_METHOD = "GET"
 
 
-def verify_exclusion_paths(app: FastAPI, exclude_paths: Sequence[str]) -> None:
+def verify_exclusion_paths(app: Starlette, exclude_paths: Sequence[str]) -> None:
     """Refuse to start when an excluded path reaches a templated route.
 
     An exclusion is safe only when every route it matches declares that exact
@@ -54,7 +54,7 @@ def verify_exclusion_paths(app: FastAPI, exclude_paths: Sequence[str]) -> None:
         )
 
 
-def _templated_matches(app: FastAPI, path: str) -> list[str]:
+def _templated_matches(app: Starlette, path: str) -> list[str]:
     """Return the path templates matching *path* that are not *path* itself."""
     scope = _probe_scope(path)
     matched: list[str] = []
