@@ -110,7 +110,7 @@ class InvocationOutcome:
     @property
     def succeeded(self) -> bool:
         """Whether every store committed or is non-transactional."""
-        return all(isinstance(store, Committed | NonTransactional) for store in self.stores)
+        return all(_is_success(store) for store in self.stores)
 
 
 class CommitUncertain(Exception):
@@ -201,6 +201,12 @@ class _PhasedDriver:
         await self._uow.commit()
 
     async def rollback(self, cause: BaseException) -> None:
+        """Roll back to completion, even if cancelled meanwhile.
+
+        ``cause`` is unused: a phased ``rollback`` takes no exception,
+        unlike the ``__aexit__`` a single-phase unit of work rolls back with.
+        """
+        del cause
         await run_to_completion(self._uow.rollback())
 
     async def close(self) -> None:
@@ -521,7 +527,7 @@ class _Settlement:
             if log_failure_as is not None:
                 _log.exception(log_failure_as, store=participant.key)
             return exc
-        except BaseException as exc:
+        except BaseException as exc:  # NOSONAR S5754 - re-raised by raise_interrupt()
             self._interrupt = self._interrupt or exc
             self._failure = self._failure or exc
             return exc
