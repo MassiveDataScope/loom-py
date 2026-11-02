@@ -12,7 +12,12 @@ from loom.core.persistence.database import (
     decode_database_config,
     load_database_config,
 )
-from loom.core.persistence.profile import SERVER_PROFILE, WORKER_PROFILE, PoolDefaults
+from loom.core.persistence.profile import (
+    LAMBDA_PROFILE,
+    SERVER_PROFILE,
+    WORKER_PROFILE,
+    PoolDefaults,
+)
 from loom.core.persistence.stores import DEFAULT_STORE
 
 _URL = "postgresql+asyncpg://app@db/app"
@@ -118,6 +123,12 @@ def test_declared_pool_keys_win_one_by_one_over_the_profile() -> None:
 
 def test_an_empty_pool_takes_every_value_from_the_profile() -> None:
     assert PoolConfig().resolve(WORKER_PROFILE) == WORKER_PROFILE.pool
+
+
+def test_the_lambda_profile_holds_one_connection_and_no_overflow() -> None:
+    resolved = PoolConfig().resolve(LAMBDA_PROFILE)
+
+    assert (resolved.size, resolved.max_overflow) == (1, 0)
 
 
 def test_a_fully_declared_pool_ignores_the_profile() -> None:
