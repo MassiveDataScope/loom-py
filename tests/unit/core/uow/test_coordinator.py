@@ -27,7 +27,7 @@ from loom.core.uow.coordinator import (
     InvocationOutcome,
     NonTransactional,
     OrderedCommits,
-    PhasedUnitOfWork,
+    Participant,
     PhysicalStore,
     RolledBack,
     StoreOutcome,
@@ -87,7 +87,12 @@ class _CloseFails(PhasedStore):
 
 class _FlushOnly(ThirdPartyStore):
     async def flush(self) -> None:
-        """A phase without the rest of the phased contract."""
+        """A phase method without the phased marker."""
+
+
+class _CloseOnly(ThirdPartyStore):
+    async def close(self) -> None:
+        """A phase method without the phased marker."""
 
 
 class TestEnlist:
@@ -135,11 +140,19 @@ class TestEnlist:
         with pytest.raises(KeyError):
             await coordinator.enlist(scope, S0)
 
-    async def test_a_partly_phased_unit_of_work_is_rejected(self) -> None:
-        coordinator, scope = _coordinator(_FlushOnly(S0, Ledger())), Scope()
+    @pytest.mark.parametrize("store_type", [_FlushOnly, _CloseOnly], ids=["flush", "close"])
+    async def test_a_unit_of_work_without_the_phased_marker_runs_in_a_single_phase(
+        self, store_type: type[ThirdPartyStore]
+    ) -> None:
+        ledger = Ledger()
+        coordinator, scope = _coordinator(store_type(S0, ledger)), Scope()
 
-        with pytest.raises(TypeError, match="defines flush, but a phased unit"):
-            await coordinator.enlist(scope, S0)
+        participant = await coordinator.enlist(scope, S0)
+        outcome = await coordinator.finish(scope, None)
+
+        assert participant.phased is False
+        assert outcome.stores == (Committed(S0),)
+        assert ledger.calls_of(S0) == ["begin", "exit-commit", "commit"]
 
     @pytest.mark.parametrize(
         ("store_type", "phased", "physical"),
@@ -166,7 +179,7 @@ class TestEnlist:
     ids=["sqlalchemy", "mongo"],
 )
 def test_loom_transactional_units_of_work_are_phased(uow: UnitOfWork) -> None:
-    assert isinstance(uow, PhasedUnitOfWork)
+    assert Participant(S0, uow).phased
 
 
 class TestCommitOrder:

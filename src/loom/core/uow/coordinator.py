@@ -17,8 +17,8 @@ ends every participant and records the :class:`InvocationOutcome`.
    published in ``begin`` are therefore reset in the reverse order they were
    set.
 
-A single-phase participant (a third-party unit of work with only the
-:class:`~loom.core.uow.abc.UnitOfWork` protocol) commits and closes in the
+A single-phase participant (any unit of work that does not declare the
+``phased`` marker of :class:`PhasedUnitOfWork`) commits and closes in the
 same ``__aexit__`` call, so it commits at its LIFO position in phase 3,
 after every phased participant. Its writes are never recorded by loom's
 repositories, so it would sit among "the rest" of the commit order anyway.
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, TypeGuard
 
 from loom.core._async import run_to_completion
 from loom.core.logger import get_logger
@@ -128,12 +128,13 @@ class CommitUncertain(Exception):
         self.cause = cause
 
 
-@runtime_checkable
 class PhasedUnitOfWork(UnitOfWork, Protocol):
     """A unit of work whose flush, commit, rollback and close are separate calls.
 
-    A unit of work opts in by defining all of ``flush``, ``close`` and
-    ``physical``; defining only some of them fails at enlistment.
+    A unit of work opts in explicitly with ``phased: ClassVar[bool] = True``
+    and then implements every member below. Without the marker it is driven
+    through its context manager in a single phase, whatever methods it
+    happens to define, so a third-party ``flush`` or ``close`` changes nothing.
 
     - ``begin``, ``commit`` and ``rollback`` leave the session open.
     - ``rollback`` runs in a task of its own that is awaited to completion,
@@ -143,6 +144,9 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
       cancellation never leaves one set. It is also called when ``begin``
       fails.
     """
+
+    phased: ClassVar[bool]
+    """``True``: the coordinator drives this unit of work phase by phase."""
 
     physical: PhysicalStore
 
@@ -155,7 +159,9 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
         ...
 
 
-_PHASED_MEMBERS = ("flush", "close", "physical")
+def _is_phased(uow: UnitOfWork) -> TypeGuard[PhasedUnitOfWork]:
+    """Whether ``uow`` opted into phased driving with the ``phased`` marker."""
+    return getattr(type(uow), "phased", False) is True
 
 
 class _Driver(Protocol):
@@ -248,13 +254,10 @@ class Participant:
         key: Store the participant belongs to.
         physical: Where its writes land.
         transactional: Whether its unit of work can roll back.
-        phased: Whether it is a :class:`PhasedUnitOfWork`.
+        phased: Whether its unit of work declares the :class:`PhasedUnitOfWork`
+            marker.
         first_write: Invocation-wide order of its first write, or ``None``.
         wrote: Whether a write went through it.
-
-    Raises:
-        TypeError: If ``uow`` defines some but not all of ``flush``,
-            ``close`` and ``physical``.
     """
 
     def __init__(self, key: StoreKey, uow: UnitOfWork) -> None:
@@ -263,11 +266,10 @@ class Participant:
         self.first_write: int | None = None
         self.wrote = False
         self._driver: _Driver
-        if isinstance(uow, PhasedUnitOfWork):
+        if _is_phased(uow):
             self.phased, self.physical = True, uow.physical
             self._driver = _PhasedDriver(uow)
         else:
-            _reject_partly_phased(uow)
             self.phased, self.physical = False, UNKNOWN_PHYSICAL
             self._driver = _SinglePhaseDriver(uow)
 
@@ -304,15 +306,6 @@ class Participant:
     async def close(self) -> None:
         """Release the unit of work."""
         await self._driver.close()
-
-
-def _reject_partly_phased(uow: UnitOfWork) -> None:
-    present = [name for name in _PHASED_MEMBERS if hasattr(uow, name)]
-    if present:
-        raise TypeError(
-            f"{type(uow).__qualname__} defines {', '.join(present)}, but a phased unit "
-            f"of work needs all of {', '.join(_PHASED_MEMBERS)}"
-        )
 
 
 class ParticipantScope(Protocol):
@@ -374,7 +367,6 @@ class OrderedCommits:
 
         Raises:
             KeyError: If no factory is registered for ``key``.
-            TypeError: If the unit of work is only partly phased.
         """
         existing = scope.participants.get(key)
         if existing is not None:

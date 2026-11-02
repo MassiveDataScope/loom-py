@@ -124,6 +124,8 @@ class _RecordingStore:
 class PhasedStore(_RecordingStore):
     """A loom-owned transactional unit of work with separate phases."""
 
+    phased: ClassVar[bool] = True
+
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
         self.physical = PhysicalStore(backend="fake", target=f"memory://{key}")
