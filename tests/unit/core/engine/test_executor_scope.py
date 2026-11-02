@@ -9,7 +9,7 @@ point and no leak across invocations.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -34,7 +34,6 @@ from loom.core.uow.scope import (
     StoresNotCommitted,
     current_scope,
 )
-from loom.core.use_case.use_case import UseCase
 
 from ..uow._coordinator_fakes import (
     Boom,
@@ -44,13 +43,9 @@ from ..uow._coordinator_fakes import (
     NonTransactionalStore,
     PhasedStore,
 )
-from ._lifecycle_doubles import Metrics, context_is_clean
+from ._lifecycle_doubles import Body, BusinessError, Metrics, Run, context_is_clean
 
 AUDIT = StoreKey("audit")
-
-
-class _BusinessError(Exception):
-    pass
 
 
 class _Stores:
@@ -69,19 +64,6 @@ class _Stores:
     @property
     def last(self) -> PhasedStore:
         return self.created[-1]
-
-
-Body = Callable[[], Awaitable[Any]]
-
-
-class _Run(UseCase[Any, Any]):
-    """Runs whatever body the test hands it."""
-
-    def __init__(self, body: Body) -> None:
-        self._body = body
-
-    async def execute(self) -> Any:
-        return await self._body()
 
 
 def _executor(stores: _Stores, metrics: Metrics | None = None) -> RuntimeExecutor:
@@ -123,48 +105,29 @@ class TestAtomicity:
         async def body() -> None:
             _write(stores, "row")
 
-        await _executor(stores).execute(_Run(body))
+        await _executor(stores).execute(Run(body))
 
         assert ledger.persisted[DEFAULT_STORE] == ["row"]
 
-    async def test_a_failure_after_writing_persists_nothing(self) -> None:
+    async def test_a_failure_after_writing_rolls_back_closes_and_persists_nothing(self) -> None:
         ledger = Ledger()
         stores = _Stores(ledger)
 
         async def body() -> None:
             _write(stores, "row")
-            raise _BusinessError
+            raise BusinessError
 
-        with pytest.raises(_BusinessError):
-            await _executor(stores).execute(_Run(body))
+        with pytest.raises(BusinessError):
+            await _executor(stores).execute(Run(body))
 
-        assert ledger.persisted[DEFAULT_STORE] == []
+        assert (ledger.calls_of(DEFAULT_STORE), ledger.persisted[DEFAULT_STORE]) == (
+            ["begin", "rollback", "close"],
+            [],
+        )
 
-    async def test_a_failure_after_writing_rolls_back_and_closes(self) -> None:
-        ledger = Ledger()
-        stores = _Stores(ledger)
-
-        async def body() -> None:
-            _write(stores, "row")
-            raise _BusinessError
-
-        with pytest.raises(_BusinessError):
-            await _executor(stores).execute(_Run(body))
-
-        assert ledger.calls_of(DEFAULT_STORE) == ["begin", "rollback", "close"]
-
-    async def test_a_nested_execution_opens_no_second_unit_of_work(self) -> None:
-        stores = _Stores(Ledger())
-        executor = _executor(stores)
-
-        async def outer() -> None:
-            await executor.execute(_Run(_done()))
-
-        await executor.execute(_Run(outer))
-
-        assert len(stores.created) == 1
-
-    async def test_a_nested_execution_does_not_commit(self) -> None:
+    async def test_a_nested_execution_opens_no_second_unit_of_work_and_does_not_commit(
+        self,
+    ) -> None:
         ledger = Ledger()
         stores = _Stores(ledger)
         executor = _executor(stores)
@@ -174,12 +137,12 @@ class TestAtomicity:
             _write(stores, "nested-row")
 
         async def outer() -> None:
-            await executor.execute(_Run(nested))
+            await executor.execute(Run(nested))
             calls_after_nested.append(ledger.calls_of(DEFAULT_STORE))
 
-        await executor.execute(_Run(outer))
+        await executor.execute(Run(outer))
 
-        assert calls_after_nested == [["begin"]]
+        assert (len(stores.created), calls_after_nested) == (1, [["begin"]])
 
     async def test_a_failure_after_a_nested_write_persists_nothing(self) -> None:
         ledger = Ledger()
@@ -190,11 +153,11 @@ class TestAtomicity:
             _write(stores, "nested-row")
 
         async def outer() -> None:
-            await executor.execute(_Run(nested))
-            raise _BusinessError
+            await executor.execute(Run(nested))
+            raise BusinessError
 
-        with pytest.raises(_BusinessError):
-            await executor.execute(_Run(outer))
+        with pytest.raises(BusinessError):
+            await executor.execute(Run(outer))
 
         assert ledger.persisted[DEFAULT_STORE] == []
 
@@ -208,9 +171,9 @@ class TestAtomicity:
 
         async def outer() -> None:
             seen.append((_scope(), len(_scope().frames)))
-            await executor.execute(_Run(nested))
+            await executor.execute(Run(nested))
 
-        await executor.execute(_Run(outer))
+        await executor.execute(Run(outer))
 
         assert [(scope is seen[0][0], depth) for scope, depth in seen] == [(True, 1), (True, 2)]
 
@@ -221,7 +184,7 @@ class TestAtomicity:
         async def body() -> None:
             seen.append(current_scope())
 
-        await _executor(stores).execute(_Run(body), read_only=True)
+        await _executor(stores).execute(Run(body), read_only=True)
 
         assert (seen, stores.created) == ([None], [])
 
@@ -234,9 +197,9 @@ class TestAtomicity:
             depths.append(len(_scope().frames))
 
         async def outer() -> None:
-            await executor.execute(_Run(nested), read_only=True)
+            await executor.execute(Run(nested), read_only=True)
 
-        await executor.execute(_Run(outer))
+        await executor.execute(Run(outer))
 
         assert depths == [1]
 
@@ -246,7 +209,7 @@ class TestAtomicity:
         async def body() -> None:
             seen.append(current_scope())
 
-        await RuntimeExecutor(UseCaseCompiler()).execute(_Run(body))
+        await RuntimeExecutor(UseCaseCompiler()).execute(Run(body))
 
         assert seen == [None]
 
@@ -257,10 +220,10 @@ class TestOwnership:
         executor = _executor(stores)
 
         async def outer() -> None:
-            await asyncio.gather(executor.execute(_Run(_done())))
+            await asyncio.gather(executor.execute(Run(_done())))
 
         with pytest.raises(ScopeOwnershipError, match="task other than the one that owns it"):
-            await executor.execute(_Run(outer))
+            await executor.execute(Run(outer))
 
     async def test_a_refused_gather_child_rolls_the_invocation_back(self) -> None:
         ledger = Ledger()
@@ -269,10 +232,10 @@ class TestOwnership:
 
         async def outer() -> None:
             _write(stores, "row")
-            await asyncio.gather(executor.execute(_Run(_done())))
+            await asyncio.gather(executor.execute(Run(_done())))
 
         with pytest.raises(ScopeOwnershipError):
-            await executor.execute(_Run(outer))
+            await executor.execute(Run(outer))
 
         assert ledger.persisted[DEFAULT_STORE] == []
 
@@ -287,9 +250,9 @@ class TestOwnership:
         executor = _executor(stores)
 
         async def outer() -> Any:
-            return await asyncio.gather(executor.execute(_Run(_done("read")), read_only=True))
+            return await asyncio.gather(executor.execute(Run(_done("read")), read_only=True))
 
-        assert await executor.execute(_Run(outer)) == ["read"]
+        assert await executor.execute(Run(outer)) == ["read"]
 
     async def test_a_gather_child_touching_the_participant_is_refused(self) -> None:
         stores = _Stores(Ledger())
@@ -301,7 +264,7 @@ class TestOwnership:
             await asyncio.gather(touch())
 
         with pytest.raises(ScopeOwnershipError):
-            await _executor(stores).execute(_Run(outer))
+            await _executor(stores).execute(Run(outer))
 
     async def test_a_thread_touching_the_participant_is_refused(self) -> None:
         stores = _Stores(Ledger())
@@ -313,7 +276,7 @@ class TestOwnership:
             )
 
         with pytest.raises(ScopeOwnershipError, match="thread"):
-            await _executor(stores).execute(_Run(outer))
+            await _executor(stores).execute(Run(outer))
 
     async def test_a_task_that_outlives_its_use_case_is_refused(self) -> None:
         stores = _Stores(Ledger())
@@ -323,12 +286,12 @@ class TestOwnership:
 
         async def late() -> Any:
             await go.wait()
-            return await executor.execute(_Run(_done()))
+            return await executor.execute(Run(_done()))
 
         async def outer() -> None:
             survivors.append(asyncio.create_task(late()))
 
-        await executor.execute(_Run(outer))
+        await executor.execute(Run(outer))
         go.set()
 
         with pytest.raises(ScopeOwnershipError, match="already closed"):
@@ -342,12 +305,12 @@ class TestOwnership:
 
         async def late() -> Any:
             await go.wait()
-            return await executor.execute(_Run(_done()))
+            return await executor.execute(Run(_done()))
 
         async def outer() -> None:
             survivors.append(asyncio.create_task(late()))
 
-        await executor.execute(_Run(outer))
+        await executor.execute(Run(outer))
         go.set()
         await asyncio.gather(*survivors, return_exceptions=True)
 
@@ -356,13 +319,13 @@ class TestOwnership:
 
 class TestOneStoreRaisesAsToday:
     async def test_the_business_error_propagates_as_the_same_object(self) -> None:
-        error = _BusinessError()
+        error = BusinessError()
 
         async def body() -> None:
             raise error
 
-        with pytest.raises(_BusinessError) as raised:
-            await _executor(_Stores(Ledger())).execute(_Run(body))
+        with pytest.raises(BusinessError) as raised:
+            await _executor(_Stores(Ledger())).execute(Run(body))
 
         assert raised.value is error
 
@@ -370,13 +333,13 @@ class TestOneStoreRaisesAsToday:
         stores = _Stores(Ledger(), Fault("commit", Effect.RAISE))
 
         with pytest.raises(Boom, match="commit failed on default"):
-            await _executor(stores).execute(_Run(_done()))
+            await _executor(stores).execute(Run(_done()))
 
     async def test_a_lost_commit_acknowledgement_propagates_its_cause(self) -> None:
         stores = _Stores(Ledger(), Fault("commit", Effect.UNCERTAIN))
 
         with pytest.raises(ConnectionError, match="lost commit ack"):
-            await _executor(stores).execute(_Run(_done()))
+            await _executor(stores).execute(Run(_done()))
 
     @pytest.mark.parametrize("phase", ["flush", "commit"])
     async def test_a_failure_ending_the_scope_is_reported_as_the_commit(self, phase: str) -> None:
@@ -384,7 +347,7 @@ class TestOneStoreRaisesAsToday:
         stores = _Stores(Ledger(), Fault(phase, Effect.RAISE))
 
         with pytest.raises(Boom):
-            await _executor(stores, metrics).execute(_Run(_done()))
+            await _executor(stores, metrics).execute(Run(_done()))
 
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "commit"
 
@@ -393,7 +356,7 @@ class TestOneStoreRaisesAsToday:
         stores = _Stores(Ledger(), Fault("begin", Effect.RAISE))
 
         with pytest.raises(Boom):
-            await _executor(stores, metrics).execute(_Run(_done()))
+            await _executor(stores, metrics).execute(Run(_done()))
 
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "begin"
 
@@ -401,23 +364,24 @@ class TestOneStoreRaisesAsToday:
         metrics = Metrics()
 
         async def body() -> None:
-            raise _BusinessError
+            raise BusinessError
 
-        with pytest.raises(_BusinessError):
-            await _executor(_Stores(Ledger()), metrics).execute(_Run(body))
+        with pytest.raises(BusinessError):
+            await _executor(_Stores(Ledger()), metrics).execute(Run(body))
 
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "business"
 
     async def test_a_clean_execution_times_the_commit(self) -> None:
         metrics = Metrics()
 
-        await _executor(_Stores(Ledger()), metrics).execute(_Run(_done()))
+        await _executor(_Stores(Ledger()), metrics).execute(Run(_done()))
 
         assert metrics.only(EventKind.EXEC_DONE).commit_ms is not None
 
 
 class TestStoresNotCommitted:
     async def test_a_store_that_committed_beside_one_that_failed_raises_it(self) -> None:
+        """Caused by the failed commit, naming both stores; the committed one keeps its write."""
         ledger = Ledger()
         stores = _Stores(ledger)
         audit = PhasedStore(AUDIT, ledger, Fault("commit", Effect.RAISE))
@@ -427,45 +391,20 @@ class TestStoresNotCommitted:
             _write(stores, "row")
 
         with pytest.raises(StoresNotCommitted) as raised:
-            await _executor(stores).execute(_Run(body))
+            await _executor(stores).execute(Run(body))
 
-        assert raised.value.outcome == InvocationOutcome(
-            (Committed(DEFAULT_STORE), RolledBack(AUDIT, _cause(raised.value)))
+        cause = _cause(raised.value)
+        assert (type(cause), raised.value.outcome, ledger.persisted[DEFAULT_STORE]) == (
+            Boom,
+            InvocationOutcome((Committed(DEFAULT_STORE), RolledBack(AUDIT, cause))),
+            ["row"],
         )
-
-    async def test_it_is_caused_by_the_failed_commit(self) -> None:
-        ledger = Ledger()
-        stores = _Stores(ledger)
-        audit = PhasedStore(AUDIT, ledger, Fault("commit", Effect.RAISE))
-
-        async def body() -> None:
-            await _second_store(audit)
-            _write(stores, "row")
-
-        with pytest.raises(StoresNotCommitted) as raised:
-            await _executor(stores).execute(_Run(body))
-
-        assert isinstance(raised.value.__cause__, Boom)
-
-    async def test_the_committed_store_keeps_its_write(self) -> None:
-        ledger = Ledger()
-        stores = _Stores(ledger)
-        audit = PhasedStore(AUDIT, ledger, Fault("commit", Effect.RAISE))
-
-        async def body() -> None:
-            await _second_store(audit)
-            _write(stores, "row")
-
-        with pytest.raises(StoresNotCommitted):
-            await _executor(stores).execute(_Run(body))
-
-        assert ledger.persisted[DEFAULT_STORE] == ["row"]
 
     async def test_a_business_error_after_a_non_transactional_write_raises_it(self) -> None:
         ledger = Ledger()
         stores = _Stores(ledger)
         audit = NonTransactionalStore(AUDIT, ledger)
-        error = _BusinessError()
+        error = BusinessError()
 
         async def body() -> None:
             await _second_store(audit)
@@ -474,7 +413,7 @@ class TestStoresNotCommitted:
             raise error
 
         with pytest.raises(StoresNotCommitted) as raised:
-            await _executor(stores).execute(_Run(body))
+            await _executor(stores).execute(Run(body))
 
         assert raised.value.__cause__ is error
 
@@ -487,7 +426,7 @@ class TestStoresNotCommitted:
             await _second_store(audit)
 
         with pytest.raises(StoresNotCommitted) as raised:
-            await _executor(stores).execute(_Run(body))
+            await _executor(stores).execute(Run(body))
 
         assert raised.value.outcome is not None
         assert any(isinstance(store, Uncertain) for store in raised.value.outcome.stores)
@@ -496,14 +435,14 @@ class TestStoresNotCommitted:
         ledger = Ledger()
         stores = _Stores(ledger)
         audit = PhasedStore(AUDIT, ledger)
-        error = _BusinessError()
+        error = BusinessError()
 
         async def body() -> None:
             await _second_store(audit)
             raise error
 
-        with pytest.raises(_BusinessError) as raised:
-            await _executor(stores).execute(_Run(body))
+        with pytest.raises(BusinessError) as raised:
+            await _executor(stores).execute(Run(body))
 
         assert raised.value is error
 
@@ -517,7 +456,7 @@ class TestStoresNotCommitted:
             _scope().participant_for(AUDIT, audit.owner, write=True)
             return "ok"
 
-        assert await _executor(stores).execute(_Run(body)) == "ok"
+        assert await _executor(stores).execute(Run(body)) == "ok"
 
     async def test_a_stores_not_committed_failure_discards_the_channel(self) -> None:
         ledger = Ledger()
@@ -532,7 +471,7 @@ class TestStoresNotCommitted:
             channel.enqueue(lambda: ran.append("action"))
 
         with pytest.raises(StoresNotCommitted):
-            await _executor(stores).execute(_Run(body))
+            await _executor(stores).execute(Run(body))
 
         assert ran == []
 
@@ -548,10 +487,10 @@ class TestChannel:
             channel = active_channel()
             assert channel is not None
             channel.enqueue(lambda: ran.append("action"))
-            raise _BusinessError
+            raise BusinessError
 
-        with pytest.raises(_BusinessError):
-            await _executor(_NonTransactionalStores()).execute(_Run(body))
+        with pytest.raises(BusinessError):
+            await _executor(_NonTransactionalStores()).execute(Run(body))
 
         assert ran == []
 
@@ -563,7 +502,7 @@ class TestChannel:
             assert channel is not None
             channel.enqueue(lambda: seen.append(current_scope()))
 
-        await _executor(_Stores(Ledger())).execute(_Run(body))
+        await _executor(_Stores(Ledger())).execute(Run(body))
 
         assert seen == [None]
 
@@ -595,29 +534,15 @@ _CANCEL_POINTS = [
 
 class TestCancellation:
     @pytest.mark.parametrize("fault", _CANCEL_POINTS, ids=_fault_id)
-    async def test_a_cancellation_propagates(self, fault: Fault) -> None:
+    async def test_a_cancellation_propagates_with_a_clean_context_and_one_close(
+        self, fault: Fault
+    ) -> None:
         run = _Cancelled.at(fault)
 
         with pytest.raises(asyncio.CancelledError):
             await run.cancel_when_blocked()
 
-    @pytest.mark.parametrize("fault", _CANCEL_POINTS, ids=_fault_id)
-    async def test_the_task_ends_with_a_clean_context(self, fault: Fault) -> None:
-        run = _Cancelled.at(fault)
-
-        with pytest.raises(asyncio.CancelledError):
-            await run.cancel_when_blocked()
-
-        assert run.observed == [True]
-
-    @pytest.mark.parametrize("fault", _CANCEL_POINTS, ids=_fault_id)
-    async def test_the_store_is_closed_once(self, fault: Fault) -> None:
-        run = _Cancelled.at(fault)
-
-        with pytest.raises(asyncio.CancelledError):
-            await run.cancel_when_blocked()
-
-        assert run.ledger.calls_of(DEFAULT_STORE).count("close") == 1
+        assert (run.observed, run.ledger.calls_of(DEFAULT_STORE).count("close")) == ([True], 1)
 
     async def test_a_cancelled_rollback_still_runs_to_completion(self) -> None:
         run = _Cancelled.at(Fault("rollback", Effect.CANCEL))
@@ -654,7 +579,7 @@ class TestCancellation:
             started.set()
             await asyncio.Event().wait()
 
-        task = asyncio.create_task(_executor(stores).execute(_Run(body)))
+        task = asyncio.create_task(_executor(stores).execute(Run(body)))
         await started.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -708,11 +633,11 @@ class _Cancelled:
             _write(stores, "row")
             also()
             if fault.phase == "rollback":
-                raise _BusinessError
+                raise BusinessError
 
         async def run() -> None:
             try:
-                await _executor(stores).execute(_Run(body))
+                await _executor(stores).execute(Run(body))
             finally:
                 observed.append(context_is_clean())
 
@@ -733,25 +658,17 @@ class _Cancelled:
 
 
 class TestNoLeaks:
-    async def test_a_hundred_mixed_invocations_leave_every_scope_closed(self) -> None:
-        scopes, _, _ = await _hundred_invocations()
+    async def test_a_hundred_mixed_invocations_leak_nothing(self) -> None:
+        """Every scope closed, every store begun closed, a clean context, only clean ones kept."""
+        scopes, ledger, clean = await _hundred_invocations()
 
-        assert all(scope.closed for scope in scopes)
-
-    async def test_a_hundred_mixed_invocations_close_every_store_they_began(self) -> None:
-        _, ledger, _ = await _hundred_invocations()
-
-        assert _count(ledger, "close") == _count(ledger, "begin") == 100
-
-    async def test_a_hundred_mixed_invocations_leave_the_context_clean(self) -> None:
-        _, _, clean = await _hundred_invocations()
-
-        assert clean == [True] * 100
-
-    async def test_a_hundred_mixed_invocations_persist_only_the_clean_ones(self) -> None:
-        _, ledger, _ = await _hundred_invocations()
-
-        assert len(ledger.persisted[DEFAULT_STORE]) == 34
+        assert (
+            all(scope.closed for scope in scopes),
+            _count(ledger, "begin"),
+            _count(ledger, "close"),
+            clean,
+            len(ledger.persisted[DEFAULT_STORE]),
+        ) == (True, 100, 100, [True] * 100, 34)
 
 
 def _count(ledger: Ledger, call: str) -> int:
@@ -771,13 +688,13 @@ async def _hundred_invocations() -> tuple[list[InvocationScope], Ledger, list[bo
             scopes.append(_scope())
             _write(stores, f"row-{index}")
             if index % 3 == 1:
-                raise _BusinessError
+                raise BusinessError
             if index % 3 == 2:
                 await asyncio.Event().wait()
 
         try:
-            await executor.execute(_Run(body))
-        except _BusinessError:
+            await executor.execute(Run(body))
+        except BusinessError:
             pass
         finally:
             clean.append(context_is_clean())

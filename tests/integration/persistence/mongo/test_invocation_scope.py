@@ -7,7 +7,6 @@ checks read without a session, so they see only what was committed.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -20,21 +19,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.scope import current_scope
-from loom.core.use_case.use_case import UseCase
-
-Body = Callable[[], Awaitable[Any]]
-
-
-class _BusinessError(Exception):
-    pass
-
-
-class _Run(UseCase[Any, Any]):
-    def __init__(self, body: Body) -> None:
-        self._body = body
-
-    async def execute(self) -> Any:
-        return await self._body()
+from tests.integration.support.scope_doubles import BusinessError, Run
 
 
 @pytest.fixture
@@ -71,7 +56,7 @@ async def test_a_clean_execution_commits_its_write(
     async def body() -> None:
         await _insert(created, 1)
 
-    await _executor(mongo_client).execute(_Run(body))
+    await _executor(mongo_client).execute(Run(body))
 
     assert await _committed_ids(created) == [1]
 
@@ -81,10 +66,10 @@ async def test_a_failure_after_writing_persists_nothing(
 ) -> None:
     async def body() -> None:
         await _insert(created, 1)
-        raise _BusinessError
+        raise BusinessError
 
-    with pytest.raises(_BusinessError):
-        await _executor(mongo_client).execute(_Run(body))
+    with pytest.raises(BusinessError):
+        await _executor(mongo_client).execute(Run(body))
 
     assert await _committed_ids(created) == []
 
@@ -99,10 +84,10 @@ async def test_a_nested_execution_does_not_commit(
         await _insert(created, 1)
 
     async def outer() -> None:
-        await executor.execute(_Run(nested))
+        await executor.execute(Run(nested))
         seen_after_nested.append(await _committed_ids(created))
 
-    await executor.execute(_Run(outer))
+    await executor.execute(Run(outer))
 
     assert seen_after_nested == [[]]
 
@@ -116,11 +101,11 @@ async def test_a_failure_after_a_nested_write_persists_nothing(
         await _insert(created, 1)
 
     async def outer() -> None:
-        await executor.execute(_Run(nested))
-        raise _BusinessError
+        await executor.execute(Run(nested))
+        raise BusinessError
 
-    with pytest.raises(_BusinessError):
-        await executor.execute(_Run(outer))
+    with pytest.raises(BusinessError):
+        await executor.execute(Run(outer))
 
     assert await _committed_ids(created) == []
 
@@ -135,13 +120,13 @@ async def test_a_hundred_invocations_end_every_session_and_reset_the_context(
         async def body() -> None:
             await _insert(created, index)
             if index % 3 == 1:
-                raise _BusinessError
+                raise BusinessError
             if index % 3 == 2:
                 await asyncio.Event().wait()
 
         try:
-            await executor.execute(_Run(body))
-        except _BusinessError:
+            await executor.execute(Run(body))
+        except BusinessError:
             pass
         finally:
             clean.append(

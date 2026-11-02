@@ -8,8 +8,7 @@ another client of the database sees.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from collections.abc import AsyncIterator
 from uuid import uuid4
 
 import pytest
@@ -25,21 +24,7 @@ from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.scope import ScopeOwnershipError, current_scope
-from loom.core.use_case.use_case import UseCase
-
-Body = Callable[[], Awaitable[Any]]
-
-
-class _BusinessError(Exception):
-    pass
-
-
-class _Run(UseCase[Any, Any]):
-    def __init__(self, body: Body) -> None:
-        self._body = body
-
-    async def execute(self) -> Any:
-        return await self._body()
+from tests.integration.support.scope_doubles import BusinessError, Run
 
 
 @pytest.fixture
@@ -106,7 +91,7 @@ async def test_a_clean_execution_commits_its_write(
     async def body() -> None:
         await _insert(table, 1)
 
-    await _executor(manager).execute(_Run(body))
+    await _executor(manager).execute(Run(body))
 
     assert await _committed_ids(observer, table) == [1]
 
@@ -116,10 +101,10 @@ async def test_a_failure_after_writing_persists_nothing(
 ) -> None:
     async def body() -> None:
         await _insert(table, 1)
-        raise _BusinessError
+        raise BusinessError
 
-    with pytest.raises(_BusinessError):
-        await _executor(manager).execute(_Run(body))
+    with pytest.raises(BusinessError):
+        await _executor(manager).execute(Run(body))
 
     assert await _committed_ids(observer, table) == []
 
@@ -134,10 +119,10 @@ async def test_a_nested_execution_does_not_commit(
         await _insert(table, 1)
 
     async def outer() -> None:
-        await executor.execute(_Run(nested))
+        await executor.execute(Run(nested))
         seen_after_nested.append(await _committed_ids(observer, table))
 
-    await executor.execute(_Run(outer))
+    await executor.execute(Run(outer))
 
     assert seen_after_nested == [[]]
 
@@ -151,11 +136,11 @@ async def test_a_failure_after_a_nested_write_persists_nothing(
         await _insert(table, 1)
 
     async def outer() -> None:
-        await executor.execute(_Run(nested))
-        raise _BusinessError
+        await executor.execute(Run(nested))
+        raise BusinessError
 
-    with pytest.raises(_BusinessError):
-        await executor.execute(_Run(outer))
+    with pytest.raises(BusinessError):
+        await executor.execute(Run(outer))
 
     assert await _committed_ids(observer, table) == []
 
@@ -173,9 +158,9 @@ async def test_a_failed_commit_raises_the_driver_error_and_persists_nothing(
         await _insert(table, 2)
         await _insert(table, 1)  # the deferred key fails only at COMMIT
 
-    await executor.execute(_Run(first))
+    await executor.execute(Run(first))
     with pytest.raises(IntegrityError):
-        await executor.execute(_Run(duplicate))
+        await executor.execute(Run(duplicate))
 
     assert await _committed_ids(observer, table) == [1]
 
@@ -190,10 +175,10 @@ async def test_a_gather_child_running_a_nested_execution_writes_nothing(
 
     async def outer() -> None:
         await _insert(table, 1)
-        await asyncio.gather(executor.execute(_Run(nested)))
+        await asyncio.gather(executor.execute(Run(nested)))
 
     with pytest.raises(ScopeOwnershipError):
-        await executor.execute(_Run(outer))
+        await executor.execute(Run(outer))
 
     assert await _committed_ids(observer, table) == []
 
@@ -208,13 +193,13 @@ async def test_a_hundred_invocations_return_every_connection_and_reset_the_conte
         async def body() -> None:
             await _insert(table, index)
             if index % 3 == 1:
-                raise _BusinessError
+                raise BusinessError
             if index % 3 == 2:
                 await asyncio.Event().wait()
 
         try:
-            await executor.execute(_Run(body))
-        except _BusinessError:
+            await executor.execute(Run(body))
+        except BusinessError:
             pass
         finally:
             clean.append(_context_is_clean())
