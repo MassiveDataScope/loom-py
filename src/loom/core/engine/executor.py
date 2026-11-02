@@ -35,6 +35,7 @@ from loom.core.uow.scope import (
     current_scope,
     invocation,
     invocation_error,
+    unscoped,
 )
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 
@@ -372,7 +373,10 @@ class RuntimeExecutor:
             load_overrides: Pre-loaded entities by type, bypassing repo
                 calls. Used by test harnesses.
             read_only: When ``True``, opens no invocation scope and joins
-                none, even if a ``uow_factory`` was provided.
+                none, even if a ``uow_factory`` was provided.  Its reads
+                join the stores the enclosing invocation enlisted only in
+                the task that owns it; anywhere else (a ``gather`` child)
+                they run with a session per call.
                 Automatically set to ``True`` by the HTTP layer for GET
                 routes.  Also honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
@@ -405,10 +409,12 @@ class RuntimeExecutor:
             load_overrides=load_overrides,
             identity=identity,
         )
-        read_only = read_only or plan.read_only
-        enclosing = None if read_only else current_scope()
-        owned = None if read_only or enclosing is not None else self._coordinator
-        return await self._run_lifecycle(plan, compilable, inputs, owned, enclosing)
+        scope = current_scope()
+        if read_only or plan.read_only:
+            with nullcontext() if scope is None or scope.owned_here() else unscoped():
+                return await self._run_lifecycle(plan, compilable, inputs, None, None)
+        owned = self._coordinator if scope is None else None
+        return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
