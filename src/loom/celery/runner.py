@@ -29,10 +29,8 @@ sync and async work alike.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 import time
-from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -44,16 +42,13 @@ from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import PostCommitError
-from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.identity.wire import decode_identity
+from loom.core.identity import Identity
+from loom.core.job.envelope import job_context as _job_context
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.tracing import reset_trace_id, set_trace_id
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
@@ -185,64 +180,6 @@ def _exhausted_event(
         status="exhausted",
         error=error,
     )
-
-
-# ---------------------------------------------------------------------------
-# Trace ID context guard
-# ---------------------------------------------------------------------------
-
-
-def _install_trace(trace_id: str | None) -> Token[str | None] | None:
-    """Install *trace_id* into the current context and return the token.
-
-    Returns ``None`` when *trace_id* is absent so the caller can skip the
-    matching :func:`reset_trace_id` call.
-    """
-    return set_trace_id(trace_id) if trace_id else None
-
-
-def _uninstall_trace(token: Token[str | None] | None) -> None:
-    """Restore the trace context to its prior value using *token*."""
-    if token is not None:
-        reset_trace_id(token)
-
-
-def _install_identity(identity: Identity | None) -> Token[Identity] | None:
-    """Publish the envelope's caller for the duration of the task.
-
-    Returns ``None`` when the envelope carried no identity, so the caller can
-    skip the matching :func:`reset_identity` call.
-    """
-    return set_identity(identity) if identity is not None else None
-
-
-def _uninstall_identity(token: Token[Identity] | None) -> None:
-    """Restore the identity context to its prior value using *token*."""
-    if token is not None:
-        reset_identity(token)
-
-
-@contextlib.contextmanager
-def _job_context(
-    trace_id: str | None, identity: dict[str, Any] | None
-) -> Iterator[Identity | None]:
-    """Install the trace and the envelope's identity for the duration of a task.
-
-    Args:
-        trace_id: Trace identifier carried by the envelope, if any.
-        identity: Wire-encoded caller carried by the envelope, if any.
-
-    Yields:
-        The decoded caller, or ``None`` when the envelope carried no identity.
-    """
-    trace_token = _install_trace(trace_id)
-    caller = decode_identity(identity)
-    identity_token = _install_identity(caller)
-    try:
-        yield caller
-    finally:
-        _uninstall_identity(identity_token)
-        _uninstall_trace(trace_token)
 
 
 def _is_eager_request(task_self: Any) -> bool:
@@ -458,25 +395,24 @@ def _make_callback_task(
         trace_id: str | None = None,
     ) -> None:
         async_runtime.ensure_open()
-        token = _install_trace(trace_id)
-        try:
-            with runtime.span(
+        with (
+            _job_context(trace_id, None),
+            runtime.span(
                 Scope.JOB,
                 callback_type.__qualname__,
                 trace_id=trace_id,
                 id=job_id,
                 callback="success",
-            ):
-                cb = factory.build(callback_type)
-                if _on_success_is_async:
-                    async_runtime.run(
-                        cb.on_success(job_id=job_id, result=result, **context),
-                        eager_fallback=bool(getattr(celery_app.conf, "task_always_eager", False)),
-                    )
-                else:
-                    cb.on_success(job_id=job_id, result=result, **context)
-        finally:
-            _uninstall_trace(token)
+            ),
+        ):
+            cb = factory.build(callback_type)
+            if _on_success_is_async:
+                async_runtime.run(
+                    cb.on_success(job_id=job_id, result=result, **context),
+                    eager_fallback=bool(getattr(celery_app.conf, "task_always_eager", False)),
+                )
+            else:
+                cb.on_success(job_id=job_id, result=result, **context)
 
     return _callback_task
 
@@ -539,30 +475,29 @@ def _make_callback_error_task(
         trace_id: str | None = None,
     ) -> None:
         async_runtime.ensure_open()
-        token = _install_trace(trace_id)
-        try:
-            with runtime.span(
+        with (
+            _job_context(trace_id, None),
+            runtime.span(
                 Scope.JOB,
                 callback_type.__qualname__,
                 trace_id=trace_id,
                 id=job_id,
                 callback="failure",
-            ):
-                exc_type, exc_msg = _resolve_error_info(job_id, celery_app)
-                cb = factory.build(callback_type)
-                if _on_failure_is_async:
-                    async_runtime.run(
-                        cb.on_failure(
-                            job_id=job_id,
-                            exc_type=exc_type,
-                            exc_msg=exc_msg,
-                            **context,
-                        ),
-                        eager_fallback=bool(getattr(celery_app.conf, "task_always_eager", False)),
-                    )
-                else:
-                    cb.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
-        finally:
-            _uninstall_trace(token)
+            ),
+        ):
+            exc_type, exc_msg = _resolve_error_info(job_id, celery_app)
+            cb = factory.build(callback_type)
+            if _on_failure_is_async:
+                async_runtime.run(
+                    cb.on_failure(
+                        job_id=job_id,
+                        exc_type=exc_type,
+                        exc_msg=exc_msg,
+                        **context,
+                    ),
+                    eager_fallback=bool(getattr(celery_app.conf, "task_always_eager", False)),
+                )
+            else:
+                cb.on_failure(job_id=job_id, exc_type=exc_type, exc_msg=exc_msg, **context)
 
     return _callback_error_task

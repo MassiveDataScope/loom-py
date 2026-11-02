@@ -18,16 +18,15 @@ from loom.celery.constants import (
 )
 from loom.celery.runner import (
     _emit,
-    _install_trace,
     _job_event,
     _make_callback_error_task,
     _make_callback_task,
     _make_job_task,
     _resolve_error_info,
-    _uninstall_trace,
 )
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import PostCommitError
+from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
 from loom.core.tracing import get_trace_id
@@ -148,17 +147,20 @@ def _mock_observability_runtime() -> tuple[
 
 
 class TestTraceLifecycle:
-    def test_install_returns_none_when_no_trace_id(self) -> None:
-        token = _install_trace(None)
-        assert token is None
+    def test_absent_trace_preserves_current_context(self) -> None:
+        before = get_trace_id()
+        with job_context(None, None):
+            assert get_trace_id() == before
 
-    def test_install_returns_token_when_trace_id_given(self) -> None:
-        token = _install_trace("abc123")
-        assert token is not None
-        _uninstall_trace(token)
+    def test_trace_is_visible_during_job_context(self) -> None:
+        with job_context("abc123", None):
+            assert get_trace_id() == "abc123"
 
-    def test_uninstall_none_token_is_safe(self) -> None:
-        _uninstall_trace(None)  # must not raise
+    def test_trace_is_restored_after_job_context(self) -> None:
+        before = get_trace_id()
+        with job_context("abc123", None):
+            pass
+        assert get_trace_id() == before
 
 
 # ---------------------------------------------------------------------------
