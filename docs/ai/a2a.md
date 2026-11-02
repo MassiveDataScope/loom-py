@@ -20,24 +20,30 @@ and tested; only the automatic wiring in `auto.py` is outstanding.
 
 ## Outbound — delegating to a remote agent
 
-The artifact **names** a remote agent; the deployment says where it is:
+The artifact **names** a remote agent; the deployment says where it is.
+
+In `ai/agents/incident-triage/agent.yaml`:
 
 ```yaml
-# ai/agents/incident-triage/agent.yaml
 capabilities:
   - kind: a2a
     agent: oncall
-    include: ["page_oncall"]      # empty means every skill it advertises
+    include: ["page_oncall"]
 ```
 
+`include` empty means every skill it advertises.
+
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 ai:
   a2a_agents:
     oncall:
       url: https://oncall.partner.example.com/a2a/rota
-      headers_ref: ${secrets:/loom/oncall/api-key}   # stores e.g. X-API-Key=abc123
+      headers_ref: ${secrets:/loom/oncall/api-key}
 ```
+
+`headers_ref` stores e.g. `X-API-Key=abc123`.
 
 At start-up the remote card is fetched and validated. An unreachable agent fails
 start-up with `A2A_AGENT_UNREACHABLE` — by name, not as a hung lifespan and not
@@ -68,19 +74,25 @@ ai:
   a2a_agents:
     oncall:
       url: https://oncall.partner.example.com/a2a/rota
-      headers_ref: ${secrets:/loom/oncall/api-key}   # one Name=value pair
+      headers_ref: ${secrets:/loom/oncall/api-key}
     market:
       url: https://market.partner.example.com/a2a
       auth:
-        kind: bearer                                 # Authorization: Bearer <token>
+        kind: bearer
         token_ref: ${secrets:/loom/market/token}
     orders:
       url: https://orders.internal.example.com/a2a
       auth:
-        kind: agent-session                          # a strategy you register
+        kind: agent-session
         session_url: https://orders.internal.example.com/auth/agent/session
         bootstrap_ref: ${secrets:/agents/prod/agent-sales}
 ```
+
+| Key | Meaning |
+|---|---|
+| `headers_ref` | one `Name=value` pair |
+| `kind: bearer` | `Authorization: Bearer <token>` |
+| `kind: agent-session` | a strategy you register |
 
 The credential is set on the HTTP client, not on one request, so **every** call
 carries it — including the card fetch, which is the *first* request of the
@@ -117,10 +129,10 @@ renewing strategy renews once rather than once per caller.
 ai:
   a2a:
     base_url: https://api.example.com
-    expose: [incident-triage]        # MUST be non-empty
+    expose: [incident-triage]
 ```
 
-`expose` empty means **none**, never all. An empty list fails start-up with
+`expose` must be non-empty. Empty means **none**, never all. An empty list fails start-up with
 `A2A_EXPOSE_EMPTY`, because "publish everything by default" is the wrong
 direction for a decision this consequential.
 

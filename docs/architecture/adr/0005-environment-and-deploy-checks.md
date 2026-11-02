@@ -251,8 +251,9 @@ Example on ECS (one container definition of the task definition):
 }
 ```
 
+In `config/base.yaml`:
+
 ```yaml
-# config/base.yaml
 database:
   url: ${oc.env:DATABASE_URL}
 ```

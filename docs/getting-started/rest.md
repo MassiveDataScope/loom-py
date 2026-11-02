@@ -40,8 +40,9 @@ class ProductInterface(RestInterface[Product]):
 
 Wire it up:
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   name: my_store
   code_path: src
@@ -58,7 +59,7 @@ app:
 
 persistence:
   cursors:
-    signing: ephemeral   # development.yaml only; production.yaml configures keys
+    signing: ephemeral
 
 stores:
   default:
@@ -71,6 +72,8 @@ observability:
   otel:
     enabled: false
 ```
+
+`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
 
 ```python
 # main.py
@@ -325,8 +328,9 @@ class AddressRestInterface(RestInterface[Address]):
 
 The `create_app()` factory wires everything — DB, cache, DI, routes — from a YAML config:
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   name: my_store
   code_path: src
@@ -345,7 +349,7 @@ app:
 
 persistence:
   cursors:
-    signing: ephemeral   # development.yaml only; production.yaml configures keys
+    signing: ephemeral
 
 stores:
   default:
@@ -362,6 +366,8 @@ observability:
     config:
       path: /metrics
 ```
+
+`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
 
 ```python
 # main.py — 3 lines
@@ -464,8 +470,9 @@ of every interface router and outside the OpenAPI schema:
 Manager) and `ssm` (SSM Parameter Store), by default. An app booted through the
 factory reads a secret with no code beyond the factory call:
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 stores:
   default:
     backend: sqlalchemy

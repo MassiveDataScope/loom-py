@@ -177,7 +177,7 @@ state, which is what every artifact means today.
 There is exactly **one mechanism**, spelled three ways:
 
 ```yaml
-deps_schema:                            # canonical: JSON Schema, directly
+deps_schema:
   type: object
   properties:
     marca: {type: string}
@@ -185,13 +185,19 @@ deps_schema:                            # canonical: JSON Schema, directly
   required: [marca]
 ```
 
-```yaml
-deps_type: myapp.agents:AppraisalDeps   # sugar over the schema above
-```
+`deps_schema` is canonical: JSON Schema, directly.
 
 ```yaml
-deps_type: dict                         # open: an explicit waiver of validation
+deps_type: myapp.agents:AppraisalDeps
 ```
+
+`deps_type: myapp.agents:AppraisalDeps` is sugar over the schema above.
+
+```yaml
+deps_type: dict
+```
+
+`deps_type: dict` is open: an explicit waiver of validation.
 
 `deps_type: <symbol>` resolves the reference at compile time and calls
 `msgspec.json.schema()` on it; from that point the artifact is
@@ -254,11 +260,10 @@ or an application service.
 
 ### `model_role`
 
-The artifact names a role; the deployment binds it:
+The artifact names a role; the deployment binds it. In `agent.yaml`, `model_role: reasoning` maps to `ai.models.reasoning: {provider: bedrock, model: ..., region: ...}` in `config/api.yaml`:
 
 ```yaml
-# agent.yaml               # config/api.yaml
-model_role: reasoning      # ai.models.reasoning: {provider: bedrock, model: ..., region: ...}
+model_role: reasoning
 ```
 
 A role an artifact declares but the deployment does not bind fails **start-up**
@@ -346,8 +351,10 @@ output:
   kind: type_ref
   ref: myapp.domain.triage:TriageReport
 on_output:
-  usecase: incidents.record_triage   # a use-case key of the registry; must not also be a grant
+  usecase: incidents.record_triage
 ```
+
+`usecase` is a use-case key of the registry; it must not also be a grant.
 
 For every run that **completes** with an output validated against the declared
 shape, the runtime executes that use case **exactly once**, as the caller,
@@ -576,10 +583,12 @@ Had `RecordTriage` raised, the app would instead get
 
 ```yaml
 on_output:
-  usecase: incidents.record_turn            # persists the answer and the turn's messages
+  usecase: incidents.record_turn
 conversation:
-  usecase: incidents.load_conversation      # returns the prior messages, or None
+  usecase: incidents.load_conversation
 ```
+
+The `on_output` use case persists the answer and the turn's messages. The `conversation` use case returns the prior messages, or `None`.
 
 For every run that carries a `conversation_id`, the runtime executes that use
 case **exactly once, before the engine starts**, as the caller, through the
@@ -872,10 +881,16 @@ bound to the caller's identity; no path reaches a shared default role.
 
 ```yaml
 - kind: mcp
-  server: runbooks           # named in ai.mcp_servers
-  include: ["search_*"]      # empty means all
-  exclude: ["execute_*"]     # applied after include
+  server: runbooks
+  include: ["search_*"]
+  exclude: ["execute_*"]
 ```
+
+| Key | Meaning |
+|---|---|
+| `server` | named in `ai.mcp_servers` |
+| `include` | empty means all |
+| `exclude` | applied after `include` |
 
 The artifact **names** the server; it never locates it. Where it lives, how to
 authenticate and how long to wait are deployment facts. A filter matching no
@@ -886,10 +901,12 @@ tool the server actually offers fails **start-up**, not the first request — se
 
 ```yaml
 - kind: skills
-  library: ./skills          # or a bare name resolved against ai.skills_root
+  library: ./skills
   include: []
   exclude: []
 ```
+
+`library` is `./skills`, or a bare name resolved against `ai.skills_root`.
 
 Requires the `ai-harness` extra. Two libraries granted to one agent that expose
 the same skill name fail compilation with `SKILLS_NAME_COLLISION`.
@@ -983,9 +1000,11 @@ shape gets a `TypeError` at start-up. `ToolsetFactory` is now the alias
 
 ```yaml
 - kind: a2a
-  agent: oncall              # named in ai.a2a_agents
+  agent: oncall
   include: ["page_oncall"]
 ```
+
+`agent` is named in `ai.a2a_agents`.
 
 The remote agent's skills become callable capabilities under exactly the same
 rules as every other kind. Its output is **untrusted input** — see
@@ -995,8 +1014,10 @@ rules as every other kind. Its output is **untrusted input** — see
 
 ```yaml
 - kind: native
-  tool: web_search           # web_search | web_fetch | code_execution
+  tool: web_search
 ```
+
+`tool` is `web_search`, `web_fetch` or `code_execution`.
 
 The tool runs in the **model provider's** infrastructure, not in this process:
 loom neither implements it nor sees its calls. A grant is checked at compile
@@ -1097,8 +1118,10 @@ policies:
   max_input_tokens_per_request: 12000
   max_tool_calls: 30
   max_requests: 50
-  on_unpriced_spend: serve  # serve (default) | refuse
+  on_unpriced_spend: serve
 ```
+
+`on_unpriced_spend` is `serve` (default) or `refuse`.
 
 Each of the five projects onto the engine's own `UsageLimits`
 (`cost_limit`, `total_tokens_limit`, `per_request_input_tokens_limit`,
@@ -1169,13 +1192,21 @@ ai:
     classifier: {provider: bedrock, model: eu.anthropic.claude-haiku-5-5, region: eu-west-1}
   prices:
     eu.anthropic.claude-haiku-5-5:
-      input: 0.11          # uncached input token
+      input: 0.11
       output: 0.55
-      cache_read: 0.011    # optional; billed as input when absent
-      cache_write: 0.1375  # optional; billed as input when absent
-      source: AWS Pricing API eu-west-1   # optional
-      as_of: 2026-10-09                   # optional
+      cache_read: 0.011
+      cache_write: 0.1375
+      source: AWS Pricing API eu-west-1
+      as_of: 2026-10-09
 ```
+
+| Key | Meaning |
+|---|---|
+| `input` | uncached input token |
+| `cache_read` | optional; billed as input when absent |
+| `cache_write` | optional; billed as input when absent |
+| `source` | optional |
+| `as_of` | optional |
 
 `source` and `as_of` are not read by loom; they record where the rates were
 taken from. A key of `ai.prices` that no binding of `ai.models` names is

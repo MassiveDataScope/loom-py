@@ -185,10 +185,10 @@ observability:
     pushgateway_url: ${oc.env:PUSHGATEWAY_URL,http://127.0.0.1:9091}
   lineage:
     enabled: true
-    # Choose exactly one destination:
     root: /var/lib/loom/lake/_runs
-    # database: ops
 ```
+
+Choose exactly one destination. The alternative is `database: ops`.
 
 Server-side encryption declared in `storage.temp.storage_options` is honoured by
 the Polars engine only; with `engine: spark` the checkpoint write goes through
@@ -732,13 +732,20 @@ local disk, includes and globs included, loads without it.
 A file may declare a top-level `includes` list. Entries load first, in order, and
 the declaring file's own keys merge on top. Includes work on any scheme:
 
+In `s3://my-bucket/config/etl.yaml`:
+
 ```yaml
-# s3://my-bucket/config/etl.yaml
 includes:
-  - common.yaml            # relative to the including file, on any scheme
-  - tables/*.yaml          # glob, matches merged in lexicographic order
-  - /etc/loom/site.yaml    # absolute local path; schemes may be mixed
+  - common.yaml
+  - tables/*.yaml
+  - /etc/loom/site.yaml
 ```
+
+| Key | Meaning |
+|---|---|
+| `common.yaml` | relative to the including file, on any scheme |
+| `tables/*.yaml` | glob, matches merged in lexicographic order |
+| `/etc/loom/site.yaml` | absolute local path; schemes may be mixed |
 
 - Relative entries resolve against the including file; entries with a scheme or an
   absolute path are used as is, so local and cloud files may include each other.
@@ -835,14 +842,16 @@ storage:
       path:
         uri: s3://lake/billing/ledger
         profile: large
-        target_file_size: 268435456   # own field wins over the profile's
+        target_file_size: 268435456
 
   files:
     billing.statement:
       path:
         uri: s3://exports/billing/statements/
-        profile: large                # file routes take storage_options only
+        profile: large
 ```
+
+`billing.ledger`'s `target_file_size` is its own field and wins over the profile's. File routes take `storage_options` only.
 
 How a profile is applied:
 
@@ -876,8 +885,9 @@ config/
     └── orders.yaml
 ```
 
+In `config/storage.yaml`:
+
 ```yaml
-# config/storage.yaml
 includes:
   - common.yaml
   - tables/*.yaml
@@ -887,8 +897,9 @@ observability:
     enabled: true
 ```
 
+In `config/common.yaml`:
+
 ```yaml
-# config/common.yaml
 storage:
   engine: polars
   profiles:
@@ -904,8 +915,9 @@ storage:
         AWS_REGION: ${oc.env:AWS_REGION}
 ```
 
+In `config/tables/orders.yaml`:
+
 ```yaml
-# config/tables/orders.yaml
 storage:
   tables:
     orders.header:
@@ -918,8 +930,9 @@ storage:
         profile: standard
 ```
 
+In `config/tables/billing.yaml`:
+
 ```yaml
-# config/tables/billing.yaml
 storage:
   tables:
     billing.invoice:
@@ -972,8 +985,9 @@ loom ships two, backed by AWS: `secrets` (Secrets Manager) and `ssm` (SSM
 Parameter Store). `ETLRunner.from_yaml` registers both by default, so a project
 booted through the factory reads a secret with no code beyond the factory call:
 
+In `config/etl.yaml`:
+
 ```yaml
-# config/etl.yaml
 storage:
   catalogs:
     main:
@@ -1145,12 +1159,13 @@ the YAML `etl_flow` already reads (`schedule`, `params`, `tags`, `environments`,
 `retry`, `notifications`, `correlation_field`, `trigger`) plus the keys that replace the
 Python module:
 
+In `config/etls/daily-orders.yaml`:
+
 ```yaml
-# config/etls/daily-orders.yaml
-etl: daily-orders                              # optional; defaults to the file stem
-pipeline: orders.pipelines.DailyOrdersPipeline  # dotted path to an ETLPipeline subclass
-params_type: orders.pipelines.DailyOrdersParams # optional, see below
-storage_config_path: /app/config.yaml          # optional; this is the default
+etl: daily-orders
+pipeline: orders.pipelines.DailyOrdersPipeline
+params_type: orders.pipelines.DailyOrdersParams
+storage_config_path: /app/config.yaml
 correlation_field: run_date
 schedule:
   cron: "0 6 * * *"
@@ -1186,8 +1201,9 @@ retry:
 The second shape is one file with an **`etls:` mapping** of name to the same
 body:
 
+In `config/etls/billing.yaml`:
+
 ```yaml
-# config/etls/billing.yaml
 etls:
   monthly-close:
     pipeline: billing.pipelines.MonthlyClosePipeline
@@ -1330,13 +1346,15 @@ variable that is unset disables it:
 notifications:
   - kind: slack
     webhook_url: ${oc.env:SLACK_WEBHOOK_URL,""}
-    channel: "#data-alerts"          # optional; the webhook's channel otherwise
+    channel: "#data-alerts"
     on_failure: true
     on_completion: true
   - kind: sns
     topic_arn: ${oc.env:ETL_FAILURES_TOPIC_ARN,""}
     on_failure: true
 ```
+
+`channel` is optional; the webhook's channel otherwise.
 
 `slack` posts to an incoming webhook. `sns` publishes to the topic through
 boto3 (`prefect` extra) in the topic's region, with the default credential

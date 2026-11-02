@@ -29,16 +29,19 @@ logfire.instrument_pydantic_ai()             # LLM calls and tool calls
 logfire.instrument_fastapi(app)              # HTTP handlers
 ```
 
+In `config/api.yaml`:
+
 ```yaml
-# config/api.yaml
 app:
   observability:
     otel:
       enabled: true
       config:
         service_name: incidents-api
-        endpoint: ""            # ← empty ON PURPOSE: share Logfire's provider
+        endpoint: ""
 ```
+
+`endpoint: ""` is empty on purpose: share Logfire's provider.
 
 `send_to_logfire=False` keeps the data out of Logfire's SaaS and leaves you with
 a plain, locally-configured OTel pipeline — point it wherever you already send

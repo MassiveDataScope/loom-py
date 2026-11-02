@@ -43,7 +43,7 @@ ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`) and ADR 0008
 ```yaml
 stores:
   events:
-    backend: clickhouse        # connection-only: no model, no unit of work
+    backend: clickhouse
     url: ${oc.env:CLICKHOUSE_URL}
 streaming:
   sinks:
@@ -51,6 +51,8 @@ streaming:
       store: events
       table: clicks
 ```
+
+`backend: clickhouse` is connection-only: no model, no unit of work.
 
 Upgrade note: `uri` is now `url`, `max_pool_size` is now `pool.size` and
 `server_selection_timeout_ms` is now `server_selection_timeout`, in seconds;

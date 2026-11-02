@@ -323,12 +323,14 @@ gets a startup warning: the schema lists every route, parameter and field. Set
 ```yaml
 app:
   rest:
-    max_body_bytes: 1048576        # 1 MiB, applied to every route
+    max_body_bytes: 1048576
     cors:
       allow_origins: ["https://app.example.com"]
       allow_credentials: true
       allow_methods: [GET, POST]
 ```
+
+`max_body_bytes` is 1 MiB, applied to every route.
 
 - **Body size.** Neither uvicorn nor Starlette caps a request body, so a chunked upload
   with no end takes the worker down. The cap is enforced by a middleware — it covers

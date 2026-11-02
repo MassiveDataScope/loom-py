@@ -8,11 +8,13 @@ does not change, and neither does its granted capabilities.
 ```yaml
 ai:
   models:
-    default:                       # the role an artifact gets when it declares none
+    default:
       provider: openai
       model: gpt-4o-mini
       credentials_ref: OPENAI_API_KEY
 ```
+
+`default` is the role an artifact gets when it declares none.
 
 A role an artifact declares but the deployment does not bind fails **start-up**
 with `MODEL_ROLE_UNBOUND`. It is never deferred to the first request.
@@ -49,23 +51,29 @@ has to speak. Point `endpoint` at anything that implements it:
 ```yaml
 ai:
   models:
-    default:                                          # OpenRouter
+    default:
       provider: gateway
       endpoint: https://openrouter.ai/api/v1
       model: anthropic/claude-sonnet-4
       credentials_ref: OPENROUTER_API_KEY
 
-    local:                                            # Ollama, on the same host
+    local:
       provider: gateway
       endpoint: http://localhost:11434/v1
       model: llama3.1:8b
 
-    self_hosted:                                      # vLLM, in-cluster
+    self_hosted:
       provider: gateway
       endpoint: https://vllm.internal.example.com/v1
       model: meta-llama/Llama-3.1-70B-Instruct
       credentials_ref: VLLM_API_KEY
 ```
+
+| Key | Meaning |
+|---|---|
+| `default` | OpenRouter |
+| `local` | Ollama, on the same host |
+| `self_hosted` | vLLM, in-cluster |
 
 OpenRouter, Ollama, vLLM, LiteLLM, Together, Groq, an in-house inference proxy —
 all the same entry, because all of them answer the same protocol. Adding a

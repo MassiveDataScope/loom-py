@@ -55,16 +55,16 @@ that miss together are served the same object.
 
 ```yaml
 cache:
-  default_ttl: 300          # seconds, single-entity reads
-  default_list_ttl: 120     # seconds, list and index reads
-  ttl_jitter: 0.1           # fraction of the TTL spread on every write, in [0, 1)
-  ttl:                      # per-entity overrides; append _list for the list side
+  default_ttl: 300
+  default_list_ttl: 120
+  ttl_jitter: 0.1
+  ttl:
     user: 600
     user_list: 300
-  max_size: 1000            # entry cap for every aiocache.SimpleMemoryCache alias
-  max_bytes: 33554432       # byte cap for the same aliases; either or both
-  aiocache_alias: data      # alias that stores entities (default: "default")
-  counter_alias: counters   # alias that stores the generation counters (default: same as aiocache_alias)
+  max_size: 1000
+  max_bytes: 33554432
+  aiocache_alias: data
+  counter_alias: counters
   aiocache_config:
     data:
       cache: aiocache.SimpleMemoryCache
@@ -72,7 +72,6 @@ cache:
         class: loom.core.cache.serializer.MsgspecSerializer
     counters:
       cache: aiocache.SimpleMemoryCache
-      # no serializer: counters are stored as raw integers
 ```
 
 | Key | Default | Meaning |
@@ -80,10 +79,10 @@ cache:
 | `enabled` | `true` | `false` runs every repository uncached (see below) |
 | `default_ttl` | `200` | TTL in seconds for single-entity reads |
 | `default_list_ttl` | `120` | TTL in seconds for list and index reads |
-| `ttl_jitter` | `0.1` | Random spread applied per write so a burst does not expire at once; `0` disables it |
+| `ttl_jitter` | `0.1` | Fraction of the TTL spread on every write, in [0, 1). Random spread applied per write so a burst does not expire at once; `0` disables it |
 | `ttl` | `{}` | Per-entity overrides; `user` for the entity read, `user_list` for the list side |
 | `max_size` | none | Entry cap for `aiocache.SimpleMemoryCache` aliases; ignored by Redis |
-| `max_bytes` | none | Byte cap on the stored payloads of the same aliases; ignored by Redis |
+| `max_bytes` | none | Byte cap on the stored payloads of the same aliases; either `max_size` or `max_bytes` or both; ignored by Redis |
 | `aiocache_alias` | `default` | Alias of the data backend |
 | `counter_alias` | none | Alias of the counter backend; falls back to `aiocache_alias` |
 | `aiocache_config` | `{}` | Alias map handed to `aiocache`, one entry per alias |
@@ -447,8 +446,9 @@ cache:
       endpoint: ${oc.env:REDIS_HOST,redis}
       port: 6379
       namespace: my_store_counters
-      # no serializer: atomic INCR
 ```
+
+No serializer: atomic `INCR`.
 
 Keep a separate counter alias for any multi-process deployment: with one alias
 the counters share the data serializer and lose the atomic increment.

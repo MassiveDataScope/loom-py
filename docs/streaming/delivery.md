@@ -11,10 +11,12 @@ Every Kafka consumer declares its delivery mode explicitly:
 kafka:
   consumer:
     brokers: ["broker:9092"]
-    group_id: orders-service        # stable per service — never per pod
+    group_id: orders-service
     topics: ["orders.in"]
-    delivery: at_least_once         # or at_most_once
+    delivery: at_least_once
 ```
+
+`group_id` is stable per service — never per pod.
 
 - **`at_least_once`** — offsets are committed to the consumer group only
   after every downstream branch confirmed the record: sink flush, DLQ
@@ -187,10 +189,12 @@ kafka:
     group_id: orders-service
     topics: ["orders.in"]
     delivery: at_least_once
-    batch_size: 500            # records per poll cycle
-    poll_backoff_ms: 50        # sleep after an empty poll
+    batch_size: 500
+    poll_backoff_ms: 50
     commit_keepalive_ms: 1800000
 ```
+
+`batch_size` is records per poll cycle, and `poll_backoff_ms` is the sleep after an empty poll.
 
 The consumer settings have no `poll_timeout_ms`; a config that sets it fails
 to decode. The standalone `KafkaConsumerClient.poll()` takes its wait as a

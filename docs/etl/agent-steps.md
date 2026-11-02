@@ -29,10 +29,11 @@ class SellerReply(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     confianza: Annotated[float, msgspec.Meta(ge=0, le=1)]
 ```
 
-The artifact, reviewed in pull requests like any other code:
+The artifact, reviewed in pull requests like any other code.
+
+In `src/pipelines/respondio/agents/seller_reply.agent.yaml`:
 
 ```yaml
-# src/pipelines/respondio/agents/seller_reply.agent.yaml
 spec_version: 1
 name: seller_reply
 description: Classifies the seller's answer to our appraisal.
@@ -50,11 +51,11 @@ The pipeline config, next to `storage:`. `specs` resolve against the
 directory holding the YAML and may not leave it (see below for a config kept
 in a subfolder):
 
+In `etl.yaml`, at the repository root:
+
 ```yaml
-# etl.yaml, at the repository root
 storage:
   engine: polars
-  # ...
 
 ai:
   engine: pydantic-ai
@@ -67,7 +68,7 @@ ai:
       region: eu-west-1
       output_mode: tool
       options: {max_tokens: 3000}
-  prices:                           # USD per million tokens
+  prices:
     eu.anthropic.claude-haiku-5-5:
       input: 0.11
       output: 0.55
@@ -77,6 +78,8 @@ ai:
       as_of: 2026-10-09
 ```
 
+`prices` are USD per million tokens.
+
 ### A config in a subfolder
 
 `specs` resolve against `ai.root`, a path relative to the directory holding
@@ -85,14 +88,16 @@ leave the directory it resolves against, so a config kept under
 `config/pipelines/` names the repository root with `ai.root` and its globs
 from there:
 
+In `config/pipelines/respondio.yaml`:
+
 ```yaml
-# config/pipelines/respondio.yaml
 ai:
   engine: pydantic-ai
-  root: ../..                       # the repository root
+  root: ../..
   specs: ["src/pipelines/respondio/agents/*.agent.yaml"]
-  # models, prices, ...
 ```
+
+`root: ../..` is the repository root. The rest of the block elides models, prices, ...
 
 `ai.root` is trusted config and may point anywhere; `..` in a `specs` glob is
 still refused (`AGENT_COMPILATION_FAILED` carrying `AGENT_SPECS_ESCAPE_ROOT`).

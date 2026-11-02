@@ -116,8 +116,9 @@ A factory takes one form or the other, never both.
 
 An example layout:
 
+In `config/base.yaml`:
+
 ```yaml
-# config/base.yaml
 app:
   name: my_store
   code_path: src
@@ -131,19 +132,23 @@ stores:
     url: ${oc.env:DATABASE_URL}
 ```
 
+In `config/development.yaml`:
+
 ```yaml
-# config/development.yaml
 stores:
   default:
     backend: sqlalchemy
     url: sqlite+aiosqlite:///store.db
 persistence:
   cursors:
-    signing: ephemeral   # a random key per process; see the persistence guide
+    signing: ephemeral
 ```
 
+`signing: ephemeral` is a random key per process; see the persistence guide.
+
+In `config/test.yaml`:
+
 ```yaml
-# config/test.yaml
 stores:
   default:
     backend: sqlalchemy
@@ -153,8 +158,9 @@ persistence:
     signing: unsigned
 ```
 
+In `config/production.yaml`:
+
 ```yaml
-# config/production.yaml
 app:
   rest:
     docs_url: null
@@ -222,13 +228,16 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   plus the keys your reviewed files
   list:
 
+  In `config/base.yaml`:
+
   ```yaml
-  # config/base.yaml
   config:
     overridable:
       - app.rest.version
-      - sql.connections.*.default_limit   # '*' stands for one level
+      - sql.connections.*.default_limit
   ```
+
+  `*` stands for one level.
 
   `config` is a reserved top-level section: loom reads it, so do not put
   your own keys under it.
@@ -326,8 +335,9 @@ injects them as variables, and the YAML references them with
 }
 ```
 
+In `config/base.yaml`:
+
 ```yaml
-# config/base.yaml
 stores:
   default:
     backend: sqlalchemy
@@ -338,8 +348,10 @@ persistence:
   cursors:
     current_key_id: "2026-10"
     keys:
-      "2026-10": {env: CURSOR_KEY_2026_10}   # the variable is named, never interpolated
+      "2026-10": {env: CURSOR_KEY_2026_10}
 ```
+
+The variable is named, never interpolated.
 
 On other platforms, the `${secrets:...}` and `${ssm:...}` resolvers read
 Secrets Manager and SSM at load time.
@@ -348,17 +360,21 @@ loom has no check for secrets written into the configuration. Scan the
 repository with [gitleaks](https://github.com/gitleaks/gitleaks), in
 pre-commit and in CI:
 
+In `.pre-commit-config.yaml`:
+
 ```yaml
-# .pre-commit-config.yaml
 repos:
   - repo: https://github.com/gitleaks/gitleaks
-    rev: vX.Y.Z   # pin the latest gitleaks release
+    rev: vX.Y.Z
     hooks:
       - id: gitleaks
 ```
 
+Pin the latest gitleaks release.
+
+In `.github/workflows/ci.yml` (a step):
+
 ```yaml
-# .github/workflows/ci.yml (a step)
 - uses: gitleaks/gitleaks-action@v2
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -424,12 +440,15 @@ without an `authenticator`, and `custom: true` beside `jwt`. `loom check
 List the id under `checks.silenced`, in the file of the environment that
 accepts it:
 
+In `config/production.yaml`:
+
 ```yaml
-# config/production.yaml
 checks:
   silenced:
-    - loom.rest.E001   # the gateway in front authenticates every request
+    - loom.rest.E001
 ```
+
+The gateway in front authenticates every request.
 
 A silenced check does not run, and every startup in a deployed environment
 logs a warning naming the silenced ids, so the exception stays visible.

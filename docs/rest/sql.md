@@ -55,28 +55,42 @@ sql:
   connections:
     analytics:
       backend: clickhouse
-      url: ${oc.env:CLICKHOUSE_ANALYTICS_URL}   # secret via env/SSM — never inline
-      # Ceiling for the CONNECTION, never a per-caller permission: the effective
-      # roles are these intersected with the caller's verified roles claim.
+      url: ${oc.env:CLICKHOUSE_ANALYTICS_URL}
       allowed_roles: [role_viz_reader, role_viz_sales]
-      default_role: role_viz_reader   # required if sql_endpoint.enabled and no allowlist
-      readonly: true                  # default: readonly=1 on every query
+      default_role: role_viz_reader
+      readonly: true
       default_limit: 1000
       max_limit: 10000
-      max_execution_time: 30          # seconds
+      max_execution_time: 30
       max_sql_bytes: 262144
-      connect_timeout: 10             # seconds
-      read_timeout: 60                # seconds to send a query or receive its response
-      executor_threads: null          # driver default when null
+      connect_timeout: 10
+      read_timeout: 60
+      executor_threads: null
       pool:
-        size: null                    # HTTP connections kept; driver default when null
-      settings: {}                    # extra ClickHouse settings — can never override policy
+        size: null
+      settings: {}
       sql_endpoint:
-        enabled: true                 # opt-in (default false)
-        auth: identity                # REQUIRED to mount: 'identity' or 'external'
-        path: /sql/analytics          # default: /sql/{connection}
+        enabled: true
+        auth: identity
+        path: /sql/analytics
         include_in_schema: false
 ```
+
+| Key | Meaning |
+|---|---|
+| `url` | Secret via env/SSM — never inline. |
+| `allowed_roles` | Ceiling for the connection, never a per-caller permission: the effective roles are these intersected with the caller's verified roles claim. |
+| `default_role` | Required if `sql_endpoint.enabled` and no allowlist. |
+| `readonly` | Default: `readonly=1` on every query. |
+| `max_execution_time` | Seconds. |
+| `connect_timeout` | Seconds. |
+| `read_timeout` | Seconds to send a query or receive its response. |
+| `executor_threads` | Driver default when null. |
+| `pool.size` | HTTP connections kept; driver default when null. |
+| `settings` | Extra ClickHouse settings — can never override policy. |
+| `sql_endpoint.enabled` | Opt-in (default false). |
+| `sql_endpoint.auth` | Required to mount: `identity` or `external`. |
+| `sql_endpoint.path` | Default: `/sql/{connection}`. |
 
 The claim carrying the caller's roles belongs to the authentication mechanism, not
 to the connection — it is declared once for the whole app and is **required**
@@ -88,8 +102,10 @@ app:
     auth:
       jwt:
         audience: loom-api
-        roles_claim: loom_sql_roles   # verified claim carrying the caller's roles
+        roles_claim: loom_sql_roles
 ```
+
+`roles_claim` is the verified claim carrying the caller's roles.
 
 Connections open inside the app lifespan and close on shutdown. A connection that
 fails its startup probe aborts the whole app start (explicit fail-fast).
@@ -429,18 +445,20 @@ app:
     auth:
       jwt:
         audience: loom-analytics
-        roles_claim: loom_sql_roles                   # what each caller may use
+        roles_claim: loom_sql_roles
 
 sql:
   connections:
     analytics:
       backend: clickhouse
       url: ${oc.env:CLICKHOUSE_ANALYTICS_URL}
-      allowed_roles: [role_api_viz, role_api_sales]   # ceiling of the connection
+      allowed_roles: [role_api_viz, role_api_sales]
       sql_endpoint:
         enabled: true
         auth: identity
 ```
+
+`roles_claim` is what each caller may use. `allowed_roles` is the ceiling of the connection.
 
 Without an identity provider that can issue the claim, the single-role shape stays
 valid and needs no binding: `allowed_roles: []` plus a fixed `default_role` runs every
@@ -493,17 +511,23 @@ app:
   rest:
     auth:
       jwt:
-        secret_path: ${oc.env:JWT_SECRET_PATH}   # HS256 — a path, not the value
-        # public_keys:                      # RS256/ES256/EdDSA — one PEM per key id
-        #   "2026-08": ${oc.env:JWT_PUBLIC_KEY_PEM}
-        algorithms: [HS256]                 # explicit allowlist; 'none' always rejected
-        audience: loom-api                  # REQUIRED by any sql_endpoint with auth: identity
-        issuer: null                        # validated only when set
+        secret_path: ${oc.env:JWT_SECRET_PATH}
+        algorithms: [HS256]
+        audience: loom-api
+        issuer: null
         leeway_seconds: 0
         exclude_paths: [/docs, /redoc, /openapi.json, /metrics, /health]
-        roles_claim: loom_sql_roles         # REQUIRED by any mounted sql_endpoint whose
-                                            # connection has a non-empty allowed_roles
+        roles_claim: loom_sql_roles
 ```
+
+| Key | Meaning |
+|---|---|
+| `secret_path` | HS256 — a path, not the value. |
+| `algorithms` | Explicit allowlist; `none` always rejected. |
+| `audience` | Required by any `sql_endpoint` with `auth: identity`. |
+| `issuer` | Validated only when set. |
+
+For RS256/ES256/EdDSA — one PEM per key id — the alternative is `public_keys: {"2026-08": ${oc.env:JWT_PUBLIC_KEY_PEM}}`.
 
 - **Stateless** — signature, `exp` and `sub` (both required) plus `nbf`, and `aud`/`iss`
   when configured, are verified per request. No Redis or server-side session store is
