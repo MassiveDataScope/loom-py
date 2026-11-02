@@ -6,6 +6,7 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 import pytest
 
@@ -141,8 +142,10 @@ print([name for name in ("fastapi", "starlette", "pydantic", "celery") if name i
 
 
 def test_keyboard_interrupt_propagates(handler: SQSHandler, record: RecordFactory) -> None:
+    event = {"Records": [record("1", "interrupt")]}
+
     with pytest.raises(KeyboardInterrupt):
-        handler({"Records": [record("1", "interrupt")]}, None)
+        handler(event, None)
 
 
 def test_bind_requires_recipe() -> None:
@@ -279,8 +282,10 @@ def test_outer_trace_survives_batch(
 
 
 def test_cancelled_error_propagates(handler: SQSHandler, record: RecordFactory) -> None:
+    event = {"Records": [record("1", "cancel")]}
+
     with pytest.raises(asyncio.CancelledError):
-        handler({"Records": [record("1", "cancel")]}, None)
+        handler(event, None)
 
 
 @pytest.mark.parametrize("action", ["recipe", "bind", "bind_after_close"])
@@ -294,12 +299,14 @@ def test_adapter_already_composed(
         adapter.bind(application)
     if action == "bind_after_close":
         adapter.close()
+    again = (
+        partial(adapter.recipe, source)
+        if action == "recipe"
+        else partial(adapter.bind, application)
+    )
     try:
         with pytest.raises(CompositionStateError) as caught:
-            if action == "recipe":
-                adapter.recipe(source)
-            else:
-                adapter.bind(application)
+            again()
         assert caught.value.issue.code == "ADAPTER_ALREADY_COMPOSED"
     finally:
         adapter.close()

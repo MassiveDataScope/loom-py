@@ -85,8 +85,10 @@ def test_celery_discovery_rejects_duplicate_job_qualnames() -> None:
         return Duplicate
 
     ctx = ConfigContext.from_dict({"app": {"name": "duplicate-jobs"}})
+    jobs = [make_job(), make_job()]
+
     with pytest.raises(DuplicateJobName):
-        discovery._resolve_compilables_and_jobs(ctx, [make_job(), make_job()], [])
+        discovery._resolve_compilables_and_jobs(ctx, jobs, [])
 
 
 # apply_job_overrides
