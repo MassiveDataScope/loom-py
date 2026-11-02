@@ -10,7 +10,7 @@ import pytest
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.context import _active_uow
+from loom.core.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
 # ---------------------------------------------------------------------------
@@ -21,6 +21,7 @@ from loom.core.use_case.use_case import UseCase
 def _make_uow_factory() -> tuple[MagicMock, MagicMock]:
     """Return (factory_mock, uow_mock) with async begin/commit/rollback."""
     uow = MagicMock(spec=UnitOfWork)
+    type(uow).transactional = True  # a class attribute, as the protocol declares it
     uow.begin = AsyncMock()
     uow.commit = AsyncMock()
     uow.rollback = AsyncMock()
@@ -137,45 +138,55 @@ async def test_uow_exited_with_the_error_on_failure() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _NestingUC(UseCase[Any, str]):
+    """Runs ``_SimpleUC`` through the same executor from inside its own execution."""
+
+    def __init__(self, executor: RuntimeExecutor) -> None:
+        self._executor = executor
+
+    async def execute(self, **kwargs: Any) -> str:
+        return await self._executor.execute(_SimpleUC())
+
+
 @pytest.mark.asyncio
 async def test_nested_execution_does_not_open_second_uow() -> None:
-    factory, uow = _make_uow_factory()
-    compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    factory, _ = _make_uow_factory()
+    executor = RuntimeExecutor(_compiler(_SimpleUC, _NestingUC), uow_factory=factory)
 
-    # Simulate nested: manually set the _active_uow ContextVar before calling
-    token = _active_uow.set(uow)
-    try:
-        await executor.execute(_SimpleUC())
-    finally:
-        _active_uow.reset(token)
+    await executor.execute(_NestingUC(executor))
 
-    # factory.create should NOT have been called — nested reuse
-    factory.create.assert_not_called()
+    factory.create.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_active_uow_reset_after_execution() -> None:
+async def test_nested_execution_does_not_commit() -> None:
     factory, uow = _make_uow_factory()
-    compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    executor = RuntimeExecutor(_compiler(_SimpleUC, _NestingUC), uow_factory=factory)
 
-    assert _active_uow.get() is None
+    await executor.execute(_NestingUC(executor))
+
+    uow.__aexit__.assert_awaited_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_no_scope_is_published_after_execution() -> None:
+    factory, _ = _make_uow_factory()
+    executor = RuntimeExecutor(_compiler(_SimpleUC), uow_factory=factory)
+
     await executor.execute(_SimpleUC())
-    assert _active_uow.get() is None
+
+    assert current_scope() is None
 
 
 @pytest.mark.asyncio
-async def test_active_uow_reset_after_failed_execution() -> None:
-    factory, uow = _make_uow_factory()
-    compiler = _compiler(_FailingUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+async def test_no_scope_is_published_after_failed_execution() -> None:
+    factory, _ = _make_uow_factory()
+    executor = RuntimeExecutor(_compiler(_FailingUC), uow_factory=factory)
 
-    assert _active_uow.get() is None
-    failing_uc = _FailingUC()
     with pytest.raises(RuntimeError):
-        await executor.execute(failing_uc)
-    assert _active_uow.get() is None
+        await executor.execute(_FailingUC())
+
+    assert current_scope() is None
 
 
 # ---------------------------------------------------------------------------

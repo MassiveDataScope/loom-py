@@ -73,6 +73,11 @@ class CountingSessionManager:
         self.commit_error: Exception | None = None
         self.rollback_gate: asyncio.Event | None = None
 
+    @property
+    def engine(self) -> Any:
+        """The real manager's engine: the unit of work names its database from it."""
+        return self.inner.engine
+
     @asynccontextmanager
     async def session(self) -> AsyncIterator[_SessionProxy]:
         if self.begin_error is not None:

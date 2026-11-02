@@ -1,15 +1,19 @@
 """Regression test for the external audit finding F01, over a session-manager oracle.
 
-The executor drives the SQLAlchemy unit of work through its context-manager
-protocol only, so the session context exits exactly once per execution and
-nothing stays bound to the context afterwards.  F02, F07 and the nesting
-rules moved to ``tests/unit/core/engine/contract``, which runs them against
-every real adapter; the map is at the bottom of this file.
+The executor's coordinator drives the SQLAlchemy unit of work phase by phase
+(begin, flush, commit or rollback, close), so the session context exits
+exactly once per execution and nothing stays bound to the context
+afterwards.  F02, F07 and the nesting rules moved to
+``tests/unit/core/engine/contract``, which runs them against every real
+adapter; the map is at the bottom of this file.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from sqlalchemy.engine import make_url
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -26,6 +30,9 @@ from ._lifecycle_doubles import Boom, Log, Ok, cancel_mid_flight, context_is_cle
 class _FakeSession:
     def __init__(self, log: Log) -> None:
         self._log = log
+
+    async def flush(self) -> None:
+        self._log("session.flush")
 
     async def commit(self) -> None:
         self._log("session.commit")
@@ -53,6 +60,7 @@ class _FakeSessionManager:
     def __init__(self, log: Log) -> None:
         self._log = log
         self.cms: list[_FakeSessionCM] = []
+        self.engine = SimpleNamespace(url=make_url("sqlite+aiosqlite://"))
 
     def session(self) -> _FakeSessionCM:
         cm = _FakeSessionCM(self._log)
@@ -83,7 +91,12 @@ class TestF01SessionClosed:
         await executor.execute(Ok(), params={"value": "x"})
 
         assert [cm.exits for cm in manager.cms] == [1]
-        assert log.entries == ["session_cm.enter", "session.commit", "session_cm.exit"]
+        assert log.entries == [
+            "session_cm.enter",
+            "session.flush",
+            "session.commit",
+            "session_cm.exit",
+        ]
         assert context_is_clean()
 
     async def test_rollback_path_exits_the_session_once_and_unbinds_everything(self) -> None:

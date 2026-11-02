@@ -1,7 +1,7 @@
 """A teardown failure after a commit must not discard the queued invalidations.
 
-``_run_in_unit_of_work`` resets the ``_active_uow`` contextvar token in its
-``finally``, after the commit has already returned.  If that reset raises —
+``invocation()`` resets the invocation scope's contextvar token in its
+``finally``, after every store has already committed.  If that reset raises —
 a token created in a different context, in principle — the exception used
 to propagate straight into ``_run_lifecycle``'s ``except BaseException``,
 which called ``channel.discard()`` unconditionally: a write that had just
@@ -18,7 +18,7 @@ from typing import Any, cast
 
 import pytest
 
-import loom.core.engine.executor as executor_module
+import loom.core.uow.scope as scope_module
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import PostCommitChannel, active_channel
@@ -27,17 +27,21 @@ from loom.core.use_case.use_case import UseCase
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 
-class _FakeActiveUow:
-    """Stands in for the ``_active_uow`` ContextVar, whose ``reset`` always fails.
+class _FailingResetScopeVar:
+    """Stands in for the invocation scope's ContextVar, whose first ``reset`` fails.
 
     A real ``contextvars.Token`` cannot be monkeypatched (it is a built-in
-    type), so the ContextVar-shaped object the executor talks to is replaced
-    instead; ``set``/``get`` still delegate to the real one so the rest of
-    the executor's bookkeeping (nested-execution detection) is unaffected.
+    type), so the ContextVar-shaped object ``invocation()`` talks to is
+    replaced instead; ``set``/``get`` still delegate to the real one so the
+    rest of the executor's bookkeeping (nested-execution detection) is
+    unaffected. The real token is reset before the failure is raised, and
+    only the outermost execution's reset fails: an execution the drain
+    starts then opens and closes its own scope normally.
     """
 
     def __init__(self, real: Any) -> None:
         self._real = real
+        self._failed = False
 
     def set(self, value: Any) -> Any:
         return self._real.set(value)
@@ -46,7 +50,10 @@ class _FakeActiveUow:
         return self._real.get()
 
     def reset(self, token: Any) -> None:
-        raise RuntimeError("token reset boom")
+        self._real.reset(token)
+        if not self._failed:
+            self._failed = True
+            raise RuntimeError("token reset boom")
 
 
 class _RecordingPriorityAction(UseCase[Any, str]):
@@ -68,7 +75,7 @@ async def test_a_teardown_failure_after_commit_still_drains_instead_of_discardin
     log = Log()
     factory = StubUnitOfWorkFactory(log)
     executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
-    monkeypatch.setattr(executor_module, "_active_uow", _FakeActiveUow(executor_module._active_uow))
+    monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
     action = _RecordingPriorityAction(log)
 
     with pytest.raises(RuntimeError, match="token reset boom"):
@@ -133,7 +140,7 @@ async def test_a_late_enqueue_from_a_nested_execution_during_the_teardown_drain_
     log = Log()
     factory = StubUnitOfWorkFactory(log)
     executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
-    monkeypatch.setattr(executor_module, "_active_uow", _FakeActiveUow(executor_module._active_uow))
+    monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
     action = _DispatchStartsNestedExecution(executor, log)
 
     with pytest.raises(RuntimeError, match="token reset boom"):
