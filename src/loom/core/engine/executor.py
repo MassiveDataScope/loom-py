@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -24,9 +25,17 @@ from loom.core.engine.post_commit import (
 from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
 from loom.core.identity import Identity
 from loom.core.logger import LoggerPort, get_logger
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.context import _active_uow
+from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
+from loom.core.uow.scope import (
+    Frame,
+    InvocationScope,
+    current_scope,
+    invocation,
+    invocation_error,
+)
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 
 if TYPE_CHECKING:
@@ -47,6 +56,8 @@ _ERROR_KIND_BUSINESS = "business"
 _ERROR_KIND_COMMIT = "commit"
 _ERROR_KIND_CANCELLED = "cancelled"
 _ERROR_KIND_POST_COMMIT = "post_commit"
+_DEFAULT_FRAME = Frame(DEFAULT_STORE)
+"""Every execution's frame until a use case names its primary store (T046)."""
 
 
 class ParameterBindingError(ValueError):
@@ -73,10 +84,11 @@ class _ExecutionState:
     """Identity, timings and current phase of one execution.
 
     ``phase`` names the lifecycle step in flight so a failure can be
-    reported with the ``error_kind`` of the step that raised. ``committed``
-    is set once the unit of work's own commit has returned without raising;
-    :meth:`RuntimeExecutor._run_lifecycle` reads it to decide whether a
-    later failure (e.g. resetting the ``_active_uow`` token) may still
+    reported with the ``error_kind`` of the step that raised; it is
+    ``commit`` from the flush on. ``committed`` is set once the coordinator
+    has ended the invocation scope this execution owns and every store
+    succeeded; :meth:`RuntimeExecutor._run_lifecycle` reads it to decide
+    whether a later failure (e.g. resetting the scope's token) may still
     discard the channel — a write already committed must never lose its
     queued invalidations to an unrelated teardown failure.
     """
@@ -111,15 +123,17 @@ class RuntimeExecutor:
     → apply computes → check rules → call execute.
 
     Owns the execution lifecycle around that pipeline.  When a
-    ``uow_factory`` is provided, each top-level execution opens a
-    :class:`~loom.core.uow.abc.UnitOfWork` through its context-manager
-    protocol and closes it the same way: commit on success, rollback on any
-    exception, cancellation included.  Nested calls detected via a
-    ``contextvars.ContextVar`` share the outer transaction and never open an
-    additional UoW.  Post-commit actions (job dispatches) are queued on a
+    ``uow_factory`` is provided, each top-level execution that is not
+    read-only opens an :class:`~loom.core.uow.scope.InvocationScope` and
+    ends it through its :class:`~loom.core.uow.coordinator.OrderedCommits`
+    coordinator: commit on success, rollback on any exception, cancellation
+    included.  A nested execution in the task that owns the scope pushes its
+    frame and never commits; one from another task, or into a closed scope,
+    raises :class:`~loom.core.uow.scope.ScopeOwnershipError`.  Post-commit
+    actions (job dispatches) are queued on a
     :class:`~loom.core.engine.post_commit.PostCommitChannel` owned by the
-    execution that owns the unit of work (or by the outermost execution when
-    there is none) and run once the unit of work has closed.
+    execution that owns the scope (or by the outermost execution when there
+    is none) and run once the scope has closed.
 
     No signature inspection occurs at runtime. All structural information
     comes from the cached ExecutionPlan produced by UseCaseCompiler.
@@ -135,8 +149,8 @@ class RuntimeExecutor:
         compiler: Compiler used to retrieve cached plans.
         uow_factory: Optional UoW factory.  When provided, each top-level
             :meth:`execute` call is wrapped in a single atomic transaction.
-            Nested executions within the same async context reuse the outer
-            UoW.
+            Nested executions in the same task join the outer invocation
+            scope and its unit of work.
         debug_execution: When ``True``, emits ``[STEP]`` logs for every
             pipeline stage. Defaults to ``False`` (summary logs only).
         logger: Optional logger. Defaults to the framework logger.
@@ -185,6 +199,9 @@ class RuntimeExecutor:
     ) -> None:
         self._compiler = compiler
         self._uow_factory = uow_factory
+        self._coordinator: Coordinator | None = (
+            None if uow_factory is None else OrderedCommits({DEFAULT_STORE: uow_factory})
+        )
         self._elevation_sink = elevation_sink
         self._debug = debug_execution
         self._logger = logger or get_logger(__name__)
@@ -336,12 +353,13 @@ class RuntimeExecutor:
         protocol — both :class:`~loom.core.use_case.use_case.UseCase` and
         :class:`~loom.core.job.job.Job` instances are valid inputs.
 
-        When a ``uow_factory`` was provided at construction and no UoW is
-        already active in the current async context, enters a fresh UoW,
-        runs the pipeline, and exits it: commit on success, rollback on any
-        exception, cancellation included.  Nested calls reuse the existing
-        UoW transparently.  Post-commit actions queued during the execution
-        run after the UoW has closed; when they fail the result is a
+        When a ``uow_factory`` was provided at construction and no
+        invocation scope is published in the current async context, opens
+        one, runs the pipeline in it and ends it: commit on success,
+        rollback on any exception, cancellation included.  A nested call in
+        the task that owns the scope joins it and never commits.
+        Post-commit actions queued during the execution run after the scope
+        has closed; when they fail the result is a
         :class:`~loom.core.engine.post_commit.PostCommitError` and the
         transaction stays committed.
 
@@ -353,8 +371,8 @@ class RuntimeExecutor:
                 ``LoadById()`` / ``Load()`` / ``Exists()`` steps.
             load_overrides: Pre-loaded entities by type, bypassing repo
                 calls. Used by test harnesses.
-            read_only: When ``True``, skips opening a ``UnitOfWork``
-                transaction even if a ``uow_factory`` was provided.
+            read_only: When ``True``, opens no invocation scope and joins
+                none, even if a ``uow_factory`` was provided.
                 Automatically set to ``True`` by the HTTP layer for GET
                 routes.  Also honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
@@ -373,6 +391,11 @@ class RuntimeExecutor:
                 was supplied.
             loom.core.engine.post_commit.PostCommitError: If a post-commit
                 action failed after the unit of work committed.
+            loom.core.uow.scope.ScopeOwnershipError: If a scope is published
+                in this context but this task does not own it, or it is
+                already closed.
+            loom.core.uow.scope.StoresNotCommitted: If two or more stores
+                of the invocation did not end the same way.
         """
         plan = self._plan_for(type(compilable))
         inputs = _ExecutionInputs(
@@ -382,14 +405,10 @@ class RuntimeExecutor:
             load_overrides=load_overrides,
             identity=identity,
         )
-        owned_factory = self._factory_to_own(read_only or plan.read_only)
-        return await self._run_lifecycle(plan, compilable, inputs, owned_factory)
-
-    def _factory_to_own(self, read_only: bool) -> UnitOfWorkFactory | None:
-        """Return the factory this execution opens a unit of work from, if any."""
-        if read_only or _active_uow.get() is not None:
-            return None
-        return self._uow_factory
+        read_only = read_only or plan.read_only
+        enclosing = None if read_only else current_scope()
+        owned = None if read_only or enclosing is not None else self._coordinator
+        return await self._run_lifecycle(plan, compilable, inputs, owned, enclosing)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -411,30 +430,42 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
-        owned_factory: UnitOfWorkFactory | None,
+        owned: Coordinator | None,
+        enclosing: InvocationScope | None,
     ) -> Any:
-        """Run one execution: start event, unit of work, one terminal event, drain."""
+        """Run one execution: start event, invocation scope, one terminal event, drain.
+
+        Args:
+            plan: The compiled plan of ``compilable``.
+            compilable: The instance to execute.
+            inputs: What the caller passed.
+            owned: The coordinator of the scope this execution opens, if it
+                opens one.
+            enclosing: The scope already published in this context, which this
+                execution joins, if any.
+        """
         state = self._begin_execution(plan.use_case_type.__qualname__)
-        channel = PostCommitChannel() if owned_factory or active_channel() is None else None
+        channel = PostCommitChannel() if owned is not None or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
+            # The elevation frame wraps the coordinator's flush and commit too:
+            # the session-settings provider reads ``elevated_scopes()`` when a
+            # transaction begins, which may be at that flush.
             async with elevation_scope(
-                owns_transaction=owned_factory is not None, sink=self._elevation_sink
+                owns_transaction=owned is not None, sink=self._elevation_sink
             ):
-                if owned_factory is None:
-                    result = await self._run_pipeline(state, plan, compilable, inputs)
+                if owned is None:
+                    result = await self._run_in_frame(enclosing, state, plan, compilable, inputs)
                 else:
-                    result = await self._run_in_unit_of_work(
-                        owned_factory, state, plan, compilable, inputs
-                    )
+                    result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
             # accounted for and re-raised.  ``state.committed`` tells apart
             # a genuine transaction failure (discard is correct: nothing
-            # durable happened) from an exception raised *after* the commit
-            # succeeded, e.g. resetting the ``_active_uow`` token — that
-            # channel's invalidations describe a durable write and must
-            # still run, not be thrown away with an unrelated teardown error.
+            # durable happened) from an exception raised *after* every store
+            # committed, e.g. resetting the scope's token — that channel's
+            # invalidations describe a durable write and must still run, not
+            # be thrown away with an unrelated teardown error.
             #
             # Unbound here, before either branch, not left to the trailing
             # ``finally``: a drain must never run with its own channel still
@@ -455,54 +486,68 @@ class RuntimeExecutor:
             self._unbind(channel_token)
         self._handle_success(state)
         if channel is not None:
-            await channel.drain(committed=owned_factory is not None)
+            await channel.drain(committed=owned is not None)
         return result
 
-    async def _run_in_unit_of_work(
+    async def _run_in_invocation(
         self,
-        factory: UnitOfWorkFactory,
+        coordinator: Coordinator,
         state: _ExecutionState,
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
     ) -> Any:
-        """Enter a fresh unit of work, run the pipeline inside it, exit it."""
-        uow = factory.create()
-        await uow.__aenter__()
-        token = _active_uow.set(uow)
-        try:
-            result = await self._run_pipeline_guarded(uow, state, plan, compilable, inputs)
-            await self._exit_committing(uow, state)
-            # The commit itself is done; only ``finally`` remains, which does
-            # not touch the write.  A failure past this point (resetting the
-            # contextvar token) must not read as "the transaction failed".
-            state.committed = True
-        finally:
-            _active_uow.reset(token)
+        """Open an invocation scope, run the execution in it, end it, raise what it ended with.
+
+        The scope is unpublished before this returns, so the drain that
+        follows (an inline job dispatch among its actions) opens its own.
+        """
+        result: Any = None
+        error: BaseException | None = None
+        async with invocation(coordinator) as scope:
+            try:
+                result = await self._run_in_frame(scope, state, plan, compilable, inputs)
+            except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
+                error = exc
+            try:
+                outcome = await self._finish(scope, error, state)
+            finally:
+                # Read from the scope: ``finish`` records the outcome before it
+                # raises an interruption caught while ending a store (a
+                # cancelled close).  Once every store committed, a failure past
+                # this point must not read as "the transaction failed".  The
+                # error still counts: a failed body over non-transactional
+                # stores alone ends in an outcome that succeeded.
+                state.committed = error is None and scope.committed
+        failure = invocation_error(outcome, error)
+        if failure is not None:
+            raise failure
         return result
 
-    async def _run_pipeline_guarded(
+    async def _run_in_frame(
         self,
-        uow: UnitOfWork,
+        scope: InvocationScope | None,
         state: _ExecutionState,
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
     ) -> Any:
-        """Run the pipeline; on any failure exit the unit of work with it."""
-        try:
+        """Push this execution's frame on ``scope``, if any, and run the pipeline under it."""
+        frame = nullcontext() if scope is None else scope.frame(_DEFAULT_FRAME)
+        async with frame:
             return await self._run_pipeline(state, plan, compilable, inputs)
-        except BaseException as exc:
-            # The adapter rolls back and closes; it shields its own driver I/O.
-            await uow.__aexit__(type(exc), exc, exc.__traceback__)
-            raise
 
     @staticmethod
-    async def _exit_committing(uow: UnitOfWork, state: _ExecutionState) -> None:
+    async def _finish(
+        scope: InvocationScope, error: BaseException | None, state: _ExecutionState
+    ) -> InvocationOutcome:
+        """End every participant of ``scope``; from the flush on, the phase is the commit."""
+        if error is not None:
+            return await scope.coordinator.finish(scope, error)
         state.phase = _ERROR_KIND_COMMIT
         started = time.perf_counter()
         try:
-            await uow.__aexit__(None, None, None)
+            return await scope.coordinator.finish(scope, None)
         finally:
             state.commit_ms = (time.perf_counter() - started) * 1000
 

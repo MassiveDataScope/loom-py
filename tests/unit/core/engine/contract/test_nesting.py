@@ -124,7 +124,7 @@ async def test_an_execution_started_from_a_post_commit_action_opens_its_own_life
     await executor.execute(_FromAction(), params={"value": "x"})
 
     assert len(case.factory.created) == 2
-    assert [probe.exits for probe in case.factory.created] == [[None], [None]]
+    assert [probe.ended for probe in case.factory.created] == [["commit"], ["commit"]]
     assert log.entries == [
         "event.EXEC_START",
         "uow.enter",

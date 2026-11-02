@@ -26,10 +26,13 @@ from loom.core.errors import (
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BoundaryValidationError
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc.query import CursorResult, PageResult
 from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
+from loom.core.uow.coordinator import Committed, InvocationOutcome
+from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 from loom.core.use_case import Created
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
@@ -219,6 +222,19 @@ class TestHttpErrorMapper:
             ErrorCode.SERVICE_UNAVAILABLE,
             None,
         )
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ScopeOwnershipError("closed"),
+            UnitOfWorkInsideScope.entering(object()),
+            StoresNotCommitted.of(InvocationOutcome((Committed(DEFAULT_STORE),))),
+        ],
+        ids=["foreign-task", "uow-inside-scope", "stores-not-committed"],
+    )
+    def test_an_invocation_scope_error_maps_to_500_with_its_code(self, error: LoomError) -> None:
+        exc = self._mapper().to_http(error)
+        assert (exc.status_code, _detail(exc)["code"]) == (500, error.code)
 
     def test_conflict_maps_to_409(self) -> None:
         exc = self._mapper().to_http(Conflict("duplicate"))

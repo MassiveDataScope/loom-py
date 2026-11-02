@@ -39,6 +39,8 @@ class PostCommitError(LoomError):
 
     def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
         self.committed = committed
+        # A retry once the transaction committed would apply it twice.
+        self.retryable = not committed
         self.failures = failures
         super().__init__(
             f"{len(failures)} post-commit action(s) failed (committed={committed})",

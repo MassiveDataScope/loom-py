@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar
 
 import pytest
@@ -14,7 +15,7 @@ from loom.core.job.context import add_pending_dispatch
 from loom.core.repository.mongo.uow import active_session
 from loom.core.repository.sqlalchemy.transactional import _mutations, get_active_session
 from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.context import get_active_uow
+from loom.core.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
 
@@ -62,7 +63,7 @@ class Broker:
 
     def dispatch(self, job_name: str) -> None:
         def send() -> None:
-            self._log(f"broker.send({job_name}) uow={get_active_uow() is not None}")
+            self._log(f"broker.send({job_name}) uow={current_scope() is not None}")
             if job_name in self.failing:
                 raise ConnectionError("broker down")
             self.sent.append(job_name)
@@ -149,6 +150,23 @@ class StubUnitOfWorkFactory:
         return uow
 
 
+Body = Callable[[], Awaitable[Any]]
+
+
+class BusinessError(Exception):
+    """A business failure a body raises."""
+
+
+class Run(UseCase[Any, Any]):
+    """Runs whatever body the test hands it."""
+
+    def __init__(self, body: Body) -> None:
+        self._body = body
+
+    async def execute(self) -> Any:
+        return await self._body()
+
+
 class Ok(UseCase[Any, str]):
     async def execute(self, value: str) -> str:
         return value
@@ -184,9 +202,9 @@ class DispatchThenFail(UseCase[Any, str]):
 
 
 def context_is_clean() -> bool:
-    """Whether no unit of work, channel, adapter session or mutation list stays bound."""
+    """Whether no invocation scope, channel, adapter session or mutation list stays bound."""
     return (
-        get_active_uow() is None
+        current_scope() is None
         and active_channel() is None
         and get_active_session() is None
         and active_session() is None

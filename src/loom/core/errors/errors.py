@@ -18,10 +18,16 @@ class LoomError(Exception):
         message: Human-readable description of the error.
         code: Machine-readable discriminator (e.g. ``"not_found"``).
 
+    Attributes:
+        retryable: Whether running the work again could still succeed; a
+            subclass a retry would repeat or make worse sets it ``False``.
+
     Example::
 
         raise NotFound("User", id=42)
     """
+
+    retryable: bool = True
 
     def __init__(self, message: str, *, code: str) -> None:
         self.message = message
@@ -46,10 +52,53 @@ class SystemError(LoomError):
 
     Args:
         message: Description of the system failure.
+        code: The subclass's own code; ``system_error`` by default.
+    """
+
+    def __init__(self, message: str, *, code: ErrorCode = ErrorCode.SYSTEM_ERROR) -> None:
+        super().__init__(message, code=code)
+
+
+class ForeignSessionError(SystemError):
+    """A caller met a session that another session manager or client opened.
+
+    Each store, and each application, has its own session manager or client.
+    A repository, a ``@transactional`` service and the elevation sink refuse
+    to join a session their own manager did not open rather than write, or
+    set elevation flags, through another engine with another store's
+    row-level security settings. The invocation scope refuses a participant
+    whose owner is not the caller's in the same way. Build it with
+    :meth:`between`.
+
+    Args:
+        message: Names the caller's side and the active session's side.
     """
 
     def __init__(self, message: str) -> None:
-        super().__init__(message, code=ErrorCode.SYSTEM_ERROR)
+        super().__init__(message, code=ErrorCode.FOREIGN_SESSION)
+
+    @staticmethod
+    def side(store: str, connection: str) -> str:
+        """Name one side of the error: a store and its connection.
+
+        Args:
+            store: The store's name.
+            connection: The connection, without credentials, or what the side is.
+        """
+        return f"store {store!r} ({connection})"
+
+    @classmethod
+    def between(cls, own: str, active: str) -> ForeignSessionError:
+        """The error for a caller on ``own`` meeting the active session of ``active``.
+
+        Args:
+            own: The store and connection of the caller, as :meth:`side` names them.
+            active: The store and connection that opened the active session, likewise.
+        """
+        return cls(
+            f"{own} cannot join the active session of {active}: "
+            "one unit of work serves one session manager"
+        )
 
 
 class NotFound(DomainError):

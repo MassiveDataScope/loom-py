@@ -18,8 +18,7 @@ from typing import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
-from loom.core.errors import LoomError
-from loom.core.errors.codes import ErrorCode
+from loom.core.errors.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
@@ -45,30 +44,6 @@ class _Bound:
 
     session: AsyncSession
     owner: SessionManager | None
-
-
-class ForeignSessionError(LoomError):
-    """A repository, ``@transactional`` service or elevation sink met another manager's session.
-
-    Each store, and each application, has its own session manager. Until the
-    invocation scope of ADR 0008 opens one unit of work per store, a
-    repository, a ``@transactional`` service and the elevation sink refuse to
-    join a session their session manager did not open rather than write, or
-    set elevation flags, through another engine with another store's
-    row-level security settings.
-
-    Args:
-        own: The session manager of the repository, service or sink.
-        active: The session manager that opened the active session.
-    """
-
-    def __init__(self, *, own: SessionManager, active: SessionManager) -> None:
-        super().__init__(
-            f"a repository of store {own.store!r} ({own.engine.url!r}) cannot join the active "
-            f"session of store {active.store!r} ({active.engine.url!r}): one unit of work "
-            "serves one session manager",
-            code=ErrorCode.FOREIGN_SESSION,
-        )
 
 
 _active_session: contextvars.ContextVar[_Bound | None] = contextvars.ContextVar(
@@ -112,8 +87,13 @@ def session_to_join(session_manager: SessionManager) -> AsyncSession | None:
     if bound is None:
         return None
     if bound.owner is not None and bound.owner is not session_manager:
-        raise ForeignSessionError(own=session_manager, active=bound.owner)
+        raise ForeignSessionError.between(_described(session_manager), _described(bound.owner))
     return bound.session
+
+
+def _described(session_manager: SessionManager) -> str:
+    """Name the store and connection of *session_manager* the way errors name them."""
+    return ForeignSessionError.side(session_manager.store, repr(session_manager.engine.url))
 
 
 def set_active_session(

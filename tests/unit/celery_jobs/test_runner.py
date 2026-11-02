@@ -31,6 +31,7 @@ from loom.core.engine.post_commit import PostCommitError
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
 from loom.core.tracing import get_trace_id
+from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 from tests.helpers.spans import build_recorder, hex_trace
 
 _WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
@@ -385,6 +386,30 @@ class TestMakeJobTaskRetry:
             task_fn(mock_self, payload={"value": 1})
 
         mock_self.retry.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            StoresNotCommitted("audit=Committed, default=RolledBack"),
+            ScopeOwnershipError("the invocation scope is already closed"),
+            UnitOfWorkInsideScope.entering(object()),
+        ],
+        ids=["stores-not-committed", "scope-ownership", "uow-inside-scope"],
+    )
+    def test_a_non_retryable_invocation_error_is_not_retried(self, error: Exception) -> None:
+        """A store already committed, or the job has a programming error: a retry cannot help."""
+        mock_self = _mock_self(retries=0, max_retries=2)
+        task_fn = _make_job_task(
+            _mock_celery_app(),
+            _SyncJob,
+            _mock_factory(MagicMock()),
+            MagicMock(),
+            _mock_runtime(error=error),
+        )
+        with pytest.raises(type(error)):
+            task_fn(mock_self, payload={"value": 1})
+
+        mock_self.retry.assert_not_called()
 
     def test_retry_countdown_uses_exponential_backoff(self) -> None:
         instance = MagicMock()

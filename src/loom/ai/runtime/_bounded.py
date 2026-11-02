@@ -60,8 +60,9 @@ async def bounded(coro: Coroutine[Any, Any, object], run: RunContext, *, what: s
     by the consumer's cancellation, so a started use case finishes or fails
     cleanly even when the consumer leaves; its outcome is retrieved on every
     exit path, so nothing ends "never retrieved".  Transaction safety is not
-    the shield's job: the executor exits the unit of work with the exception
-    on any ``BaseException`` and the adapter rolls back.
+    the shield's job: on any ``BaseException`` the executor ends its
+    invocation scope with the exception, and the coordinator rolls back every
+    store that did not commit.
 
     Args:
         coro: The use-case invocation to run.

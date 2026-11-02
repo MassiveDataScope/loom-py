@@ -255,10 +255,13 @@ class FakeSession:
         }
 
     async def commit_transaction(self) -> None:
-        if self._client.commit_error is not None:
-            raise self._client.commit_error
-        self._client.committed += 1
-        self.in_transaction = False
+        """Commit; like pymongo, the transaction is over whether the commit raised or not."""
+        try:
+            if self._client.commit_error is not None:
+                raise self._client.commit_error
+            self._client.committed += 1
+        finally:
+            self.in_transaction = False
 
     async def abort_transaction(self) -> None:
         """Abort, restoring every collection to its state at ``start_transaction``."""
@@ -272,9 +275,18 @@ class FakeSession:
         self.in_transaction = False
 
     async def end_session(self) -> None:
+        if self._client.end_gate is not None:
+            await self._client.end_gate.wait()
         self.ended = True
         if self._client.end_error is not None:
             raise self._client.end_error
+
+
+class FakeTopology:
+    """The topology description of an unconnected client: its seeds, unknown."""
+
+    def server_descriptions(self) -> dict[tuple[str, int], None]:
+        return {("mongo-b", 27018): None, ("mongo-a", 27017): None}
 
 
 class FakeAdmin:
@@ -322,10 +334,15 @@ class FakeMongoClient:
         self.abort_gate: asyncio.Event | None = None
         self.commit_error: Exception | None = None
         self.end_error: Exception | None = None
+        self.end_gate: asyncio.Event | None = None
 
     @property
     def admin(self) -> FakeAdmin:
         return FakeAdmin(self)
+
+    @property
+    def topology_description(self) -> FakeTopology:
+        return FakeTopology()
 
     def __getitem__(self, name: str) -> FakeDatabase:
         return FakeDatabase(self, name)

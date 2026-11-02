@@ -129,6 +129,7 @@ class PhasedStore(_RecordingStore):
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
         self.physical = PhysicalStore(backend="fake", target=f"memory://{key}")
+        self.owner: object = object()
         self._token: Token[bool] | None = None
 
     async def begin(self) -> None:
@@ -168,7 +169,7 @@ class NonTransactionalStore(PhasedStore):
 
 
 class ThirdPartyStore(_RecordingStore):
-    """A unit of work that only implements the protocol; it opens the atomic signal."""
+    """A protocol-only unit of work; a transactional one opens the atomic signal."""
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
@@ -176,7 +177,8 @@ class ThirdPartyStore(_RecordingStore):
 
     async def begin(self) -> None:
         await self._run("begin")
-        self._token = open_atomic_transaction()
+        if self.transactional:
+            self._token = open_atomic_transaction()
 
     async def commit(self) -> None:
         await self._run("commit", self._persist)
@@ -206,6 +208,16 @@ class ThirdPartyStore(_RecordingStore):
             if self._token is not None:
                 close_atomic_transaction(self._token)
                 self._token = None
+
+
+class AutocommitStore(ThirdPartyStore):
+    """A third-party unit of work whose writes autocommit, like ``NoOpMongoUnitOfWork``.
+
+    It declares no ``phased`` marker, so the coordinator drives it in a single
+    phase and its participant has no owner; it opens no atomic signal.
+    """
+
+    transactional: ClassVar[bool] = False
 
 
 StoreFactory = Callable[[StoreKey, Ledger, Fault | None], _RecordingStore]

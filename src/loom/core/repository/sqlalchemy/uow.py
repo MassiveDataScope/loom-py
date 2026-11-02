@@ -13,9 +13,11 @@ When :meth:`SQLAlchemyUnitOfWork.begin` is called it:
      skip opening a redundant nested transaction.
 
 On :meth:`commit` the session is flushed and committed.  On :meth:`rollback`
-all pending changes are discarded.  Closing the session and restoring the
-ContextVar is the job of :meth:`SQLAlchemyUnitOfWork.__aexit__`, which the
-executor drives; the explicit methods leave the session open.
+all pending changes are discarded.  The explicit methods leave the session
+open: closing it and restoring the ContextVars is the job of
+:meth:`SQLAlchemyUnitOfWork.close`, which the ordered-commits coordinator
+calls phase by phase, or of :meth:`SQLAlchemyUnitOfWork.__aexit__` for a unit
+of work entered by hand.
 
 Usage::
 
@@ -29,6 +31,7 @@ import asyncio
 import contextvars
 from typing import Any, ClassVar
 
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.logger import get_logger
@@ -41,6 +44,8 @@ from loom.core.repository.sqlalchemy.transactional import (
 )
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.coordinator import PhysicalStore
+from loom.core.uow.scope import refuse_inside_open_scope
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -67,6 +72,7 @@ class SQLAlchemyUnitOfWork:
     """
 
     transactional: ClassVar[bool] = True
+    phased: ClassVar[bool] = True
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
@@ -101,6 +107,18 @@ class SQLAlchemyUnitOfWork:
             raise
         _log.debug("UoWBegin")
 
+    @property
+    def owner(self) -> SessionManager:
+        """The session manager every session of this unit of work comes from."""
+        return self._session_manager
+
+    @property
+    def physical(self) -> PhysicalStore:
+        """The database this unit of work writes to, named by its URL without credentials."""
+        url = self._session_manager.engine.url
+        bare = URL.create(url.drivername, host=url.host, port=url.port, database=url.database)
+        return PhysicalStore(backend="sqlalchemy", target=bare.render_as_string())
+
     def _bind(self, session: AsyncSession) -> None:
         """Publish ``session`` and a fresh mutation list to the current context."""
         self._session = session
@@ -108,10 +126,20 @@ class SQLAlchemyUnitOfWork:
         _, self._mutations_token = set_active_mutations()
         self._transaction_token = open_atomic_transaction()
 
+    async def flush(self) -> None:
+        """Send pending changes to the database without committing them.
+
+        Raises:
+            RuntimeError: If :meth:`begin` has not been called.
+        """
+        if self._session is None:
+            raise RuntimeError("SQLAlchemyUnitOfWork.flush() called before begin()")
+        await self._session.flush()
+
     async def commit(self) -> None:
         """Flush and commit all pending changes to the database.
 
-        The session stays open; closing it is the job of :meth:`__aexit__`.
+        The session stays open; closing it is the job of :meth:`close`.
 
         Raises:
             RuntimeError: If :meth:`begin` has not been called.
@@ -124,7 +152,7 @@ class SQLAlchemyUnitOfWork:
     async def rollback(self) -> None:
         """Discard all pending changes.
 
-        The session stays open; closing it is the job of :meth:`__aexit__`.
+        The session stays open; closing it is the job of :meth:`close`.
 
         Raises:
             RuntimeError: If :meth:`begin` has not been called.
@@ -134,12 +162,29 @@ class SQLAlchemyUnitOfWork:
         await self._session.rollback()
         _log.debug("UoWRollback")
 
+    async def close(self) -> None:
+        """Close the session and reset the ContextVars :meth:`begin` published.
+
+        The session closes under ``asyncio.shield``, so a cancellation arriving
+        meanwhile lets it finish; the tokens are reset whatever happens.
+        Closing a unit of work that holds no session only resets the tokens.
+        """
+        try:
+            await asyncio.shield(self._exit_session())
+        finally:
+            self._reset_context()
+
     async def __aenter__(self) -> SQLAlchemyUnitOfWork:
         """Begin the unit of work.
 
         Returns:
             This instance.
+
+        Raises:
+            UnitOfWorkInsideScope: Inside an open invocation scope, where
+                this transaction would commit on its own, outside the invocation.
         """
+        refuse_inside_open_scope(self)
         await self.begin()
         return self
 

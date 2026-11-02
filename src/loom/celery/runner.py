@@ -262,13 +262,15 @@ def _is_eager_request(task_self: Any) -> bool:
 
 
 def _is_retryable(exc: Exception) -> bool:
-    """Whether re-running the job could still fix ``exc``.
+    """Whether re-running the job could still fix ``exc``, as the error itself declares.
 
-    A post-commit failure of a committed transaction cannot: the write
-    already stands and a retry would apply it twice.  One raised without a
-    commit (a read-only job, or none owning a unit of work) is retryable.
+    A :class:`~loom.core.errors.LoomError` says so through ``retryable``: a
+    post-commit failure of a committed transaction, or
+    :class:`~loom.core.uow.scope.StoresNotCommitted`, would apply a write
+    twice, and a programming error a retry meets again is not retryable
+    either. Any other exception is.
     """
-    return not (isinstance(exc, PostCommitError) and exc.committed)
+    return bool(getattr(exc, "retryable", True))
 
 
 def _log_post_commit_failure(exc: Exception, job: str) -> None:

@@ -14,11 +14,13 @@ from unittest.mock import MagicMock
 
 import anyio
 import pytest
+from sqlalchemy.engine import make_url
 
 from loom.core.persistence.stores import StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow import coordinator as coordinator_module
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     UNKNOWN_PHYSICAL,
@@ -184,11 +186,33 @@ class TestEnlist:
         assert participant.phased is phased
         assert participant.physical == physical
 
+    async def test_a_phased_participant_accepts_the_owner_of_its_unit_of_work(self) -> None:
+        store = PhasedStore(S0, Ledger())
 
-@pytest.mark.xfail(strict=True, reason="T047b / PR 2: loom's own units of work become phased")
+        participant = await _coordinator(store).enlist(Scope(), S0)
+
+        assert participant.accepts(store.owner) is True
+
+    async def test_a_phased_participant_refuses_another_owner(self) -> None:
+        participant = await _coordinator(PhasedStore(S0, Ledger())).enlist(Scope(), S0)
+
+        assert participant.accepts(object()) is False
+
+    async def test_a_single_phase_participant_accepts_any_owner(self) -> None:
+        participant = await _coordinator(ThirdPartyStore(S0, Ledger())).enlist(Scope(), S0)
+
+        assert participant.accepts(object()) is True
+
+
+def _session_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.engine.url = make_url("sqlite+aiosqlite:///loom.db")
+    return manager
+
+
 @pytest.mark.parametrize(
     "uow",
-    [SQLAlchemyUnitOfWork(MagicMock()), MongoUnitOfWork(MagicMock())],
+    [SQLAlchemyUnitOfWork(_session_manager()), MongoUnitOfWork(MagicMock())],
     ids=["sqlalchemy", "mongo"],
 )
 def test_loom_transactional_units_of_work_are_phased(uow: UnitOfWork) -> None:
@@ -412,6 +436,84 @@ class TestTeardownFailures:
         }
         assert _ends(ledger) == [S2, S1, S0]
         assert event in caplog.text
+
+
+class TestHungRollback:
+    """A rollback that never returns is bounded: it fails, and close still runs."""
+
+    @pytest.fixture(autouse=True)
+    def _tiny_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(coordinator_module, "_ROLLBACK_TIMEOUT_S", 0.01)
+
+    async def test_the_store_is_still_closed(self) -> None:
+        ledger = Ledger()
+        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        await coordinator.enlist(scope, S0)
+
+        await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
+
+        assert ledger.calls_of(S0) == ["begin", "rollback", "close"]
+
+    async def test_the_store_is_reported_rolled_back(self) -> None:
+        ledger = Ledger()
+        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        await coordinator.enlist(scope, S0)
+        error = Boom("business")
+
+        outcome = await _finish_within_a_second(coordinator, scope, error, ledger)
+
+        assert outcome.stores == (RolledBack(S0, error),)
+
+    async def test_the_timeout_is_logged_as_a_failed_rollback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ledger = Ledger()
+        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        await coordinator.enlist(scope, S0)
+
+        with caplog.at_level(logging.ERROR):
+            await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
+
+        assert "UoWRollbackFailed" in caplog.text
+
+    async def test_the_owning_task_can_still_be_cancelled(self) -> None:
+        ledger = Ledger()
+
+        async def _invocation() -> None:
+            coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+            await coordinator.enlist(scope, S0)
+            await coordinator.finish(scope, Boom("business"))
+
+        task = asyncio.create_task(_invocation())
+        await ledger.blocked.wait()
+        task.cancel()
+        done, _ = await asyncio.wait([task], timeout=1.0)
+        ledger.gate.set()  # Unbounded, the rollback would still be waiting here.
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert done == {task}
+
+
+async def _finish_within_a_second(
+    coordinator: OrderedCommits, scope: Scope, error: BaseException, ledger: Ledger
+) -> InvocationOutcome:
+    """Finish, failing rather than hanging the suite if the rollback is unbounded.
+
+    ``finish`` waits through cancellation, so the bound is a separate wait:
+    on expiry the gate opens to let the rollback end, then the test fails.
+    """
+    finishing = asyncio.ensure_future(coordinator.finish(scope, error))
+    done, _ = await asyncio.wait([finishing], timeout=1.0)
+    if not done:
+        ledger.gate.set()
+        await asyncio.gather(finishing, return_exceptions=True)
+        pytest.fail("the rollback was not bounded: finish waited for it past one second")
+    return finishing.result()
+
+
+def _hung_rollback(ledger: Ledger) -> PhasedStore:
+    """A store whose rollback waits at a gate the test never opens in time."""
+    return PhasedStore(S0, ledger, Fault("rollback", Effect.CANCEL))
 
 
 @dataclass
