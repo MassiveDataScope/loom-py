@@ -37,12 +37,21 @@ from loom.core.uow.scope import (
     invocation_error,
 )
 
-from ._coordinator_fakes import Boom, Effect, Factory, Fault, Ledger, PhasedStore, ThirdPartyStore
+from ._coordinator_fakes import (
+    AutocommitStore,
+    Boom,
+    Effect,
+    Factory,
+    Fault,
+    Ledger,
+    PhasedStore,
+    ThirdPartyStore,
+)
 
 S0, S1, S2 = StoreKey("s0"), StoreKey("s1"), StoreKey("s2")
 
 
-def _coordinator(*stores: PhasedStore | ThirdPartyStore) -> OrderedCommits:
+def _coordinator(*stores: PhasedStore | ThirdPartyStore | AutocommitStore) -> OrderedCommits:
     return OrderedCommits({store.key: Factory(store) for store in stores})
 
 
@@ -153,6 +162,49 @@ class TestParticipantForFromTheOwner:
             scope.participant_for(S0, object(), write=True)
 
         assert scope.participants[S0].wrote is False
+
+
+class TestParticipantForASinglePhaseStore:
+    """A single-phase participant has no owner: any repository of its store joins it."""
+
+    async def test_a_read_returns_its_participant(self) -> None:
+        scope = await _with_autocommit()
+
+        assert scope.participant_for(S1, object(), write=False) is scope.participants[S1]
+
+    async def test_a_write_is_recorded(self) -> None:
+        scope = await _with_autocommit()
+
+        scope.participant_for(S1, object(), write=True)
+
+        assert scope.participants[S1].wrote is True
+
+    async def test_its_write_is_reported_as_non_transactional(self) -> None:
+        scope = await _with_autocommit()
+        scope.participant_for(S1, object(), write=True)
+
+        outcome = await scope.coordinator.finish(scope, Boom("business"))
+
+        assert NonTransactional(S1, wrote=True) in outcome.stores
+
+    async def test_a_failure_after_its_write_raises_stores_not_committed(self) -> None:
+        scope = await _with_autocommit()
+        scope.participant_for(S1, object(), write=True)
+        error = Boom("business")
+
+        outcome = await scope.coordinator.finish(scope, error)
+
+        assert isinstance(invocation_error(outcome, error), StoresNotCommitted)
+
+
+async def _with_autocommit() -> InvocationScope:
+    """A scope with a phased store ``S0`` and a single-phase autocommit store ``S1``."""
+    ledger = Ledger()
+    coordinator = _coordinator(PhasedStore(S0, ledger), AutocommitStore(S1, ledger))
+    scope = InvocationScope(asyncio.current_task(), coordinator)
+    for key in (S0, S1):
+        await coordinator.enlist(scope, key)
+    return scope
 
 
 class TestOwnership:

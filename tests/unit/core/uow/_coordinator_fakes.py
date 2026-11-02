@@ -209,6 +209,45 @@ class ThirdPartyStore(_RecordingStore):
                 self._token = None
 
 
+class AutocommitStore(_RecordingStore):
+    """A third-party unit of work whose writes autocommit, like ``NoOpMongoUnitOfWork``.
+
+    It declares no ``phased`` marker, so the coordinator drives it in a single
+    phase and its participant has no owner; it opens no atomic signal.
+    """
+
+    transactional: ClassVar[bool] = False
+
+    def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
+        super().__init__(key, ledger, fault)
+
+    async def begin(self) -> None:
+        await self._run("begin")
+
+    async def commit(self) -> None:
+        await self._run("commit")
+
+    async def rollback(self) -> None:
+        await self._run("rollback")
+
+    async def __aenter__(self) -> AutocommitStore:
+        await self.begin()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        if exc_type is None:
+            self._record("exit-commit")
+            await self.commit()
+        else:
+            self._record("exit-rollback")
+            await self.rollback()
+
+
 StoreFactory = Callable[[StoreKey, Ledger, Fault | None], _RecordingStore]
 
 

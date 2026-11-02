@@ -210,8 +210,8 @@ class InvocationScope:
         Raises:
             ScopeOwnershipError: When the caller may not touch the scope
                 (:meth:`require_owner`).
-            ForeignSessionError: When the participant's sessions come from
-                another owner.
+            ForeignSessionError: When the participant is phased and its
+                sessions come from another owner.
         """
         participant = self.participants.get(key)
         if participant is None and not write:
@@ -219,7 +219,9 @@ class InvocationScope:
         self.require_owner()
         if participant is None:
             return None
-        if participant.owner is not owner:
+        # A single-phase participant declares no owner: any repository of its
+        # store joins it, and its write is still recorded.
+        if participant.owner is not None and participant.owner is not owner:
             raise ForeignSessionError(
                 own=f"store {key!r} (another {type(owner).__qualname__})",
                 active=f"store {key!r} ({participant.physical.target})",
