@@ -18,13 +18,16 @@ the router runtime and the SQL endpoint.
 from __future__ import annotations
 
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ExceptionHandler
 
 from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
@@ -63,11 +66,19 @@ def malformed_body_error() -> HTTPException:
 def register_error_handlers(app: Starlette) -> None:
     """Normalise validation and HTTP errors to the framework error body.
 
+    Starlette's own ``HTTPException`` (the routing ``404`` and ``405``) answers
+    with FastAPI's default handler, ``Allow`` header included, on a bare
+    Starlette application too.
+
     Args:
         app: Application whose exception handlers are being configured.
     """
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(HTTPException, _handle_http_exception)
+    # Registered per type: Starlette calls it with that type only.
+    app.add_exception_handler(
+        StarletteHTTPException, cast(ExceptionHandler, http_exception_handler)
+    )
 
 
 async def _handle_validation_error(request: Request, exc: Exception) -> Response:
