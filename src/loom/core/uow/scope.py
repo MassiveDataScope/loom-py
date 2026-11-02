@@ -31,10 +31,11 @@ import asyncio
 import inspect
 import itertools
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from types import TracebackType
+from typing import Any, Self, cast
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
@@ -332,6 +333,29 @@ def current_participant(key: StoreKey, owner: object, *, write: bool) -> Partici
     return None if scope is None else scope.participant_for(key, owner, write=write)
 
 
+def current_handle(key: StoreKey, owner: object, *, write: bool) -> object | None:
+    """Return the session the participant of ``key`` holds, through the checkpoint.
+
+    What a backend's repositories join; each backend narrows it to its own
+    session type once.
+
+    Args:
+        key: Store the repository belongs to.
+        owner: The repository's session manager or client.
+        write: Whether the repository is about to write.
+
+    Returns:
+        The session, or ``None`` when :func:`current_participant` returns
+        none or the participant holds no session.
+
+    Raises:
+        ScopeOwnershipError: See :meth:`InvocationScope.participant_for`.
+        ForeignSessionError: See :meth:`InvocationScope.participant_for`.
+    """
+    participant = current_participant(key, owner, write=write)
+    return None if participant is None else participant.handle
+
+
 @contextmanager
 def unscoped() -> Iterator[None]:
     """Publish no scope for the block: what runs in it uses a session per call."""
@@ -416,6 +440,50 @@ async def single_store(key: StoreKey, unit_of_work: UnitOfWork) -> AsyncIterator
     failure = invocation_error(outcome, None)
     if failure is not None:
         raise failure
+
+
+class EntersAlone:
+    """Mixin: ``async with uow:`` runs the unit of work as the only participant of an invocation.
+
+    What :func:`single_store` does, for a phased unit of work entered by
+    hand. The class sets ``_store``, the key of its store, in ``__init__``.
+    """
+
+    _store: StoreKey
+    _alone: AbstractAsyncContextManager[InvocationScope] | None = None
+
+    async def __aenter__(self) -> Self:
+        """Begin the unit of work as the only participant of an invocation of its own.
+
+        Returns:
+            This instance.
+
+        Raises:
+            UnitOfWorkInsideScope: Inside an open invocation scope, where
+                this transaction would commit on its own, outside the invocation.
+        """
+        refuse_inside_open_scope(self)
+        alone = single_store(self._store, cast("UnitOfWork", self))
+        await alone.__aenter__()
+        self._alone = alone
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """End the invocation ``__aenter__`` opened: commit on clean exit, roll back otherwise.
+
+        The coordinator rolls back a failed commit, and the unit of work
+        always closes; see :mod:`loom.core.uow.coordinator` for how
+        cancellation is handled.
+        """
+        alone, self._alone = self._alone, None
+        if alone is not None:
+            traceback = exc_tb if isinstance(exc_tb, TracebackType) else None
+            await alone.__aexit__(exc_type, exc_val, traceback)
 
 
 @dataclass(frozen=True, slots=True)

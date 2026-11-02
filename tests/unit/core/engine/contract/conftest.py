@@ -24,9 +24,10 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import StoreKey
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, _session_to_join
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.uow.scope import current_handle
 
 from ...repository.mongo._fake import FakeMongoClient
 from .._lifecycle_doubles import Broker, Log, Metrics, start_hanging
@@ -86,7 +87,7 @@ class CountingSessionManager:
     @property
     def active_session(self) -> Any:
         """What :attr:`SessionManager.active_session` returns for this wrapper."""
-        return _session_to_join(self.as_session_manager(), write=False)
+        return current_handle(self.store, self.as_session_manager(), write=False)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[_SessionProxy]:

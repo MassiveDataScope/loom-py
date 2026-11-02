@@ -35,6 +35,7 @@ from loom.core.uow.scope import (
     ScopeOwnershipError,
     StoresNotCommitted,
     UnitOfWorkInsideScope,
+    current_handle,
     current_participant,
     current_scope,
     invocation,
@@ -435,6 +436,30 @@ class TestOwnedHere:
         scope.closed = True
 
         assert scope.owned_here() is False
+
+
+class TestCurrentHandle:
+    def test_without_a_scope_there_is_none(self) -> None:
+        assert current_handle(S0, object(), write=False) is None
+
+    async def test_it_is_the_session_of_the_published_scope_s_participant(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            enlisted = await scope.coordinator.enlist(scope, S0)
+            found = current_handle(S0, stores[S0].owner, write=False)
+            held = enlisted.handle
+
+        assert found is held
+
+    async def test_a_participant_s_session_is_not_none(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            await scope.coordinator.enlist(scope, S0)
+            found = current_handle(S0, stores[S0].owner, write=False)
+
+        assert found is not None
 
 
 class TestCurrentParticipant:

@@ -28,7 +28,7 @@ from loom.core.repository.sqlalchemy.session_settings import (
     install_session_settings,
 )
 from loom.core.tracing import get_trace_id
-from loom.core.uow.scope import current_participant
+from loom.core.uow.scope import current_handle
 
 _log = get_logger(__name__).bind(module="session_manager")
 
@@ -50,7 +50,7 @@ class SessionManager:
         inject_trace_id: bool = True,
         session_settings: SessionSettings | None = None,
         metadata: MetaData | None = None,
-        store: str = DEFAULT_STORE,
+        store: StoreKey = DEFAULT_STORE,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -119,7 +119,7 @@ class SessionManager:
         self._engine = create_async_engine(url, **engine_config)
         self._session_settings = session_settings
         self._metadata = metadata if metadata is not None else get_metadata()
-        self.store = StoreKey(store)
+        self.store = store
         factory_kwargs: dict[str, Any] = {}
         if session_settings is not None:
             session_class = type("SettingsSession", (Session,), {})
@@ -181,7 +181,25 @@ class SessionManager:
             ForeignSessionError: When this store is enlisted with another
                 session manager's unit of work.
         """
-        return _session_to_join(self, write=False)
+        return self.joined_session(write=False)
+
+    def joined_session(self, *, write: bool) -> AsyncSession | None:
+        """The session a repository of this manager joins for one operation, if any.
+
+        :attr:`active_session` with the operation's write intent, which the
+        invocation scope records for the commit order and checks; for
+        repositories. Raw SQL reads :attr:`active_session`.
+
+        Args:
+            write: Whether the operation writes.
+
+        Raises:
+            ScopeOwnershipError: See :attr:`active_session`; a write is also
+                refused outside the owning task when the store is not enlisted.
+            ForeignSessionError: See :attr:`active_session`, or when a write
+                targets a store the running execution did not declare.
+        """
+        return cast("AsyncSession | None", current_handle(self.store, self, write=write))
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -221,26 +239,12 @@ def bare_url(url: URL) -> str:
     ).render_as_string()
 
 
-def _session_to_join(session_manager: SessionManager, *, write: bool) -> AsyncSession | None:
-    """Return the session of ``session_manager``'s store a caller joins, if it is enlisted.
-
-    The checkpoint :meth:`~loom.core.uow.scope.InvocationScope.participant_for`
-    decides; ``write`` is the caller's intent.
-
-    Raises:
-        ScopeOwnershipError: See :attr:`SessionManager.active_session`.
-        ForeignSessionError: See :attr:`SessionManager.active_session`.
-    """
-    participant = current_participant(session_manager.store, session_manager, write=write)
-    return None if participant is None else cast("AsyncSession | None", participant.handle)
-
-
 def build_session_manager(
     config: DatabaseConfig,
     profile: RuntimeProfile,
     *,
     pool_metrics: PoolMetricsSink | None = None,
-    database: str = "default",
+    database: StoreKey = DEFAULT_STORE,
     **manager_kwargs: Any,
 ) -> SessionManager:
     """Build the session manager of a relational store section for one entry point.

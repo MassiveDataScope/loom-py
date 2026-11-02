@@ -28,7 +28,7 @@ from loom.core.repository.sqlalchemy.mixins import (
     SQLAlchemyReadMixin,
     SQLAlchemyUpdateMixin,
 )
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, _session_to_join
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 R = TypeVar("R")
 
@@ -130,7 +130,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         Raises:
             ScopeOwnershipError: See :attr:`SessionManager.active_session`.
         """
-        return _session_to_join(self.session_manager, write=False) is not None
+        return self.session_manager.active_session is not None
 
     async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
         """Handle post-commit mutation events (cache invalidation hook)."""
@@ -155,7 +155,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             yield session
             return
 
-        context_session = _session_to_join(self.session_manager, write=write)
+        context_session = self.session_manager.joined_session(write=write)
         if context_session is not None:
             yield context_session
             return

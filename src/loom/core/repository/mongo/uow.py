@@ -12,10 +12,8 @@ opt-in (``stores.<name>.transactions: true``):
   the use case it runs in. It declares the coordinator's ``phased`` marker:
   ``begin``, ``flush``, ``commit``, ``rollback`` and ``close`` are separate
   calls.
-- :class:`NoOpMongoUnitOfWork` (default) opens nothing and touches no
-  ``ContextVar``, mirroring
-  :class:`~loom.core.repository.dynamodb.uow.DynamoUnitOfWork`: each driver
-  call is autocommitted and the repository receives no session.
+- :class:`NoOpMongoUnitOfWork` (default) opens nothing: each driver call is
+  autocommitted and the repository receives no session.
 
 ``pymongo`` is imported at module level: this module is only reached through
 the Mongo backend, and the persistence registry turns an ``ImportError`` at
@@ -27,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from typing import Any, ClassVar, cast
 
 from pymongo import AsyncMongoClient
@@ -38,12 +35,7 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import PhysicalStore
-from loom.core.uow.scope import (
-    InvocationScope,
-    current_participant,
-    refuse_inside_open_scope,
-    single_store,
-)
+from loom.core.uow.scope import EntersAlone, current_handle
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -90,9 +82,8 @@ class MongoSessions:
                 refused outside the owning task when the store is not enlisted.
             ForeignSessionError: See :attr:`active_session`.
         """
-        participant = current_participant(self._store, self._client, write=write)
-        return (
-            None if participant is None else cast("AsyncClientSession | None", participant.handle)
+        return cast(
+            "AsyncClientSession | None", current_handle(self._store, self._client, write=write)
         )
 
 
@@ -129,7 +120,7 @@ class NoOpMongoUnitOfWork:
             await self.rollback()
 
 
-class MongoUnitOfWork:
+class MongoUnitOfWork(EntersAlone):
     """Unit of work for ``transactions: true``: one client session and one transaction.
 
     Args:
@@ -151,7 +142,6 @@ class MongoUnitOfWork:
         self._store = store
         self._session: AsyncClientSession | None = None
         self._transaction_token: contextvars.Token[bool] | None = None
-        self._invocation: AbstractAsyncContextManager[InvocationScope] | None = None
 
     @property
     def owner(self) -> AsyncMongoClient[Any]:
@@ -242,34 +232,6 @@ class MongoUnitOfWork:
             await asyncio.shield(self._end_session())
         finally:
             self._reset_context()
-
-    async def __aenter__(self) -> MongoUnitOfWork:
-        """Begin the unit of work as the only participant of an invocation of its own.
-
-        Raises:
-            UnitOfWorkInsideScope: Inside an open invocation scope, where
-                this transaction would commit on its own, outside the invocation.
-        """
-        refuse_inside_open_scope(self)
-        invocation = single_store(self._store, self)
-        await invocation.__aenter__()
-        self._invocation = invocation
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: Any,
-    ) -> None:
-        """End the invocation ``__aenter__`` opened: commit on clean exit, abort otherwise.
-
-        A failed commit is not aborted (see :meth:`rollback`), and the
-        session always ends.
-        """
-        invocation, self._invocation = self._invocation, None
-        if invocation is not None:
-            await invocation.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _end_session(self) -> None:
         """End the session; the unit of work holds none afterwards.

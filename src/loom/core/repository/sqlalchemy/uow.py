@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from contextlib import AbstractAsyncContextManager
 from typing import Any, ClassVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,12 +40,12 @@ from loom.core.repository.sqlalchemy.transactional import (
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import PhysicalStore
-from loom.core.uow.scope import InvocationScope, refuse_inside_open_scope, single_store
+from loom.core.uow.scope import EntersAlone
 
 _log = get_logger(__name__).bind(component="uow")
 
 
-class SQLAlchemyUnitOfWork:
+class SQLAlchemyUnitOfWork(EntersAlone):
     """Async SQLAlchemy Unit of Work backed by ``SessionManager``.
 
     Manages a single ``AsyncSession`` lifetime: opens it in :meth:`begin`,
@@ -71,11 +70,11 @@ class SQLAlchemyUnitOfWork:
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
+        self._store = session_manager.store
         self._session: AsyncSession | None = None
         self._mutations_token: contextvars.Token[Any] | None = None
         self._transaction_token: contextvars.Token[bool] | None = None
         self._session_cm: Any = None  # context manager from session_manager.session()
-        self._invocation: AbstractAsyncContextManager[InvocationScope] | None = None
 
     async def begin(self) -> None:
         """Open a new ``AsyncSession`` and publish a fresh mutation list and the atomic signal.
@@ -169,43 +168,6 @@ class SQLAlchemyUnitOfWork:
             await asyncio.shield(self._exit_session())
         finally:
             self._reset_context()
-
-    async def __aenter__(self) -> SQLAlchemyUnitOfWork:
-        """Begin the unit of work as the only participant of an invocation of its own.
-
-        Returns:
-            This instance.
-
-        Raises:
-            UnitOfWorkInsideScope: Inside an open invocation scope, where
-                this transaction would commit on its own, outside the invocation.
-        """
-        refuse_inside_open_scope(self)
-        invocation = single_store(self._session_manager.store, self)
-        await invocation.__aenter__()
-        self._invocation = invocation
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: Any,
-    ) -> None:
-        """End the invocation :meth:`__aenter__` opened: commit on clean exit, roll back otherwise.
-
-        The coordinator rolls back a failed commit, and the session always
-        closes; see :mod:`loom.core.uow.coordinator` for how cancellation is
-        handled.
-
-        Args:
-            exc_type: Exception type, or ``None`` on clean exit.
-            exc_val: Exception instance, or ``None``.
-            exc_tb: Traceback, or ``None``.
-        """
-        invocation, self._invocation = self._invocation, None
-        if invocation is not None:
-            await invocation.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _exit_session(self) -> None:
         """Exit the session context manager; the session is gone afterwards."""
