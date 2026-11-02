@@ -12,13 +12,16 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors.errors import ForeignSessionError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec, PageParams
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
@@ -300,3 +303,35 @@ class TestRepositoryWriteIntent:
             wrote = scope.participants[DEFAULT_STORE].wrote
 
         assert wrote is writes
+
+
+class _AuditRows(RepositorySQLAlchemy[_Row, int]):
+    @with_session_scope
+    async def insert_raw(self, session: AsyncSession, name: str) -> None:
+        await session.execute(
+            text("INSERT INTO store_session_rows (name) VALUES (:name)"), {"name": name}
+        )
+
+
+class _InvocationFailed(Exception):
+    pass
+
+
+class TestWithSessionScope:
+    async def test_a_custom_write_to_a_store_not_enlisted_commits_per_call_today(
+        self, stores: _Stores
+    ) -> None:
+        """Pins today's behaviour: T079 (PR 6) refuses this write instead."""
+        compile_all(_Row)
+        compiled = get_compiled(_Row)
+        assert compiled is not None
+        async with stores.audit.engine.begin() as connection:
+            await connection.run_sync(compiled.metadata.create_all)
+        audit = _AuditRows(stores.audit, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+
+        with pytest.raises(_InvocationFailed):
+            async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+                await audit.insert_raw("outside")
+                raise _InvocationFailed
+
+        assert await audit.count() == 1

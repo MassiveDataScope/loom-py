@@ -40,8 +40,12 @@ def with_session_scope(
 
     The method joins its store's session when the store is enlisted in the
     invocation, as raw SQL does, and runs in a session of its own otherwise.
-    It declares no write intent: a write through it is not recorded for the
-    commit order.
+    It declares no write intent, so the scope treats it as a read: a write
+    through it is not recorded for the commit order, and when its store is
+    not enlisted it is not refused either. Inside an invocation, a custom
+    write to a store that is not enlisted therefore commits per call, on its
+    own, outside the invocation's unit of work, and survives a rollback of
+    the invocation (T079 makes this an error, PR 6).
     """
 
     @wraps(method)
