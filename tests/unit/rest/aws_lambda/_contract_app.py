@@ -134,12 +134,17 @@ def _discovery(directory: Path, module: str, agents: tuple[str, ...]) -> dict[st
 
 
 def write_contract_project(
-    directory: Path, *, agents: tuple[str, ...] = (), **sections: Any
+    directory: Path,
+    *,
+    agents: tuple[str, ...] = (),
+    exclude_paths: tuple[str, ...] = (PUBLIC_PATH,),
+    **sections: Any,
 ) -> str:
     """Write the contract module and its YAML config into *directory*; return the config path.
 
     Args:
         directory: Where the project lives.
+        exclude_paths: Paths served without a token.
         agents: Agent artifacts a manifest declares; without them, the
             interfaces are discovered from the module.
         **sections: Extra top-level configuration sections.
@@ -164,7 +169,7 @@ def write_contract_project(
                         "algorithms": ["HS256"],
                         "audience": AUDIENCE,
                         "roles_claim": "roles",
-                        "exclude_paths": [PUBLIC_PATH],
+                        "exclude_paths": list(exclude_paths),
                     }
                 },
                 "cors": {

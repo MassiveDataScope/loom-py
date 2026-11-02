@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from loom.composition import (
+    Adapter,
     Application,
     CompositionErrorCode,
     CompositionStateError,
@@ -22,8 +23,10 @@ from loom.composition import (
     create_app,
     load_source,
 )
+from loom.core.config.errors import ConfigError
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.rest.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler, LambdaUnservedConfigError
+from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.unit.rest.aws_lambda._contract_app import PUBLIC_PATH, bearer, seen_by
 from tests.unit.rest.aws_lambda.conftest import lambda_client
 
@@ -249,6 +252,16 @@ def test_enabled_metrics_are_refused_at_recipe_time(contract_project: ProjectFac
     with pytest.raises(LambdaUnservedConfigError, match="serves no metrics scrape") as raised:
         build_application(config, adapter=LambdaHTTPAdapter(), environment="test")
     assert raised.value.key == "observability.prometheus.enabled"
+
+
+@pytest.mark.parametrize("adapter", [FastAPIAdapter, LambdaHTTPAdapter])
+def test_an_exclusion_reaching_a_templated_route_aborts_startup(
+    contract_project: ProjectFactory, adapter: Callable[[], Adapter[object]]
+) -> None:
+    config = contract_project(exclude_paths=("/items/everything",))
+
+    with pytest.raises(ConfigError, match=r"served by the route '/items/\{item_id\}'"):
+        create_app(config, adapter=adapter(), environment="test")
 
 
 def test_bind_before_recipe_is_refused() -> None:
