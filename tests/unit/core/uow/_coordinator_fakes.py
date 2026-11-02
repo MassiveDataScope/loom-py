@@ -169,7 +169,7 @@ class NonTransactionalStore(PhasedStore):
 
 
 class ThirdPartyStore(_RecordingStore):
-    """A unit of work that only implements the protocol; it opens the atomic signal."""
+    """A protocol-only unit of work; a transactional one opens the atomic signal."""
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
@@ -177,7 +177,8 @@ class ThirdPartyStore(_RecordingStore):
 
     async def begin(self) -> None:
         await self._run("begin")
-        self._token = open_atomic_transaction()
+        if self.transactional:
+            self._token = open_atomic_transaction()
 
     async def commit(self) -> None:
         await self._run("commit", self._persist)
@@ -209,7 +210,7 @@ class ThirdPartyStore(_RecordingStore):
                 self._token = None
 
 
-class AutocommitStore(_RecordingStore):
+class AutocommitStore(ThirdPartyStore):
     """A third-party unit of work whose writes autocommit, like ``NoOpMongoUnitOfWork``.
 
     It declares no ``phased`` marker, so the coordinator drives it in a single
@@ -217,35 +218,6 @@ class AutocommitStore(_RecordingStore):
     """
 
     transactional: ClassVar[bool] = False
-
-    def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
-        super().__init__(key, ledger, fault)
-
-    async def begin(self) -> None:
-        await self._run("begin")
-
-    async def commit(self) -> None:
-        await self._run("commit")
-
-    async def rollback(self) -> None:
-        await self._run("rollback")
-
-    async def __aenter__(self) -> AutocommitStore:
-        await self.begin()
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        if exc_type is None:
-            self._record("exit-commit")
-            await self.commit()
-        else:
-            self._record("exit-rollback")
-            await self.rollback()
 
 
 StoreFactory = Callable[[StoreKey, Ledger, Fault | None], _RecordingStore]
