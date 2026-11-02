@@ -34,7 +34,6 @@ invocation error: the caller reads :class:`InvocationOutcome` and decides.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeGuard
@@ -253,7 +252,7 @@ class _PhasedDriver:
                 the rollback has ended.
         """
         del cause
-        await run_to_completion(asyncio.wait_for(self._uow.rollback(), _ROLLBACK_TIMEOUT_S))
+        await run_to_completion(self._uow.rollback(), timeout=_ROLLBACK_TIMEOUT_S)
 
     async def close(self) -> None:
         await self._uow.close()
