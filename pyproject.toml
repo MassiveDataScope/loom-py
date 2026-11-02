@@ -441,9 +441,6 @@ pythonpath = [
 ]
 addopts = "-ra --log-disable=aiosqlite"
 asyncio_mode = "auto"
-# A hung test fails instead of hanging the suite. Generous enough for the
-# slowest legitimate test (Spark session start-up); a test that needs longer
-# says so with @pytest.mark.timeout(...).
 timeout = 300
 log_cli = true
 log_cli_level = "DEBUG"
