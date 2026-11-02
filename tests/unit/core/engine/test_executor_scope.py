@@ -276,7 +276,13 @@ class TestOwnership:
 
         assert ledger.persisted[DEFAULT_STORE] == []
 
-    async def test_a_gather_child_running_a_read_only_execution_reads_per_call(self) -> None:
+    async def test_a_gather_child_running_a_read_only_execution_is_not_refused(self) -> None:
+        """A read-only execution joins no scope, so no ownership check refuses it.
+
+        This does not show that the child reads per call: until repositories
+        go through the scope (PR 3), a real SQLAlchemy repository in the child
+        still joins the session it inherits from the parent's context.
+        """
         stores = _Stores(Ledger())
         executor = _executor(stores)
 

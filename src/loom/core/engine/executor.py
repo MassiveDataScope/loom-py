@@ -149,8 +149,8 @@ class RuntimeExecutor:
         compiler: Compiler used to retrieve cached plans.
         uow_factory: Optional UoW factory.  When provided, each top-level
             :meth:`execute` call is wrapped in a single atomic transaction.
-            Nested executions within the same async context reuse the outer
-            UoW.
+            Nested executions in the same task join the outer invocation
+            scope and its unit of work.
         debug_execution: When ``True``, emits ``[STEP]`` logs for every
             pipeline stage. Defaults to ``False`` (summary logs only).
         logger: Optional logger. Defaults to the framework logger.
@@ -406,9 +406,9 @@ class RuntimeExecutor:
             identity=identity,
         )
         read_only = read_only or plan.read_only
-        joined = None if read_only else current_scope()
-        owned = None if read_only or joined is not None else self._coordinator
-        return await self._run_lifecycle(plan, compilable, inputs, owned, joined)
+        enclosing = None if read_only else current_scope()
+        owned = None if read_only or enclosing is not None else self._coordinator
+        return await self._run_lifecycle(plan, compilable, inputs, owned, enclosing)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -431,7 +431,7 @@ class RuntimeExecutor:
         compilable: Compilable,
         inputs: _ExecutionInputs,
         owned: Coordinator | None,
-        joined: InvocationScope | None,
+        enclosing: InvocationScope | None,
     ) -> Any:
         """Run one execution: start event, invocation scope, one terminal event, drain.
 
@@ -441,7 +441,7 @@ class RuntimeExecutor:
             inputs: What the caller passed.
             owned: The coordinator of the scope this execution opens, if it
                 opens one.
-            joined: The scope already published in this context, which this
+            enclosing: The scope already published in this context, which this
                 execution joins, if any.
         """
         state = self._begin_execution(plan.use_case_type.__qualname__)
@@ -455,7 +455,7 @@ class RuntimeExecutor:
                 owns_transaction=owned is not None, sink=self._elevation_sink
             ):
                 if owned is None:
-                    result = await self._run_in_frame(joined, state, plan, compilable, inputs)
+                    result = await self._run_in_frame(enclosing, state, plan, compilable, inputs)
                 else:
                     result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
