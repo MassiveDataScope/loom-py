@@ -199,42 +199,74 @@ class NoSessionProbe:
 
 
 # ---------------------------------------------------------------------------
-# Lifecycle probe: counts the context-manager protocol and any direct call
+# Lifecycle probe: records how the executor drives each unit of work
 # ---------------------------------------------------------------------------
+
+_PHASES = frozenset({"begin", "flush", "commit", "rollback", "close"})
+_CONTEXT_MANAGER = frozenset({"enter", "exit"})
 
 
 class LifecycleProbe:
-    """Wraps a real unit of work and records how the executor drives it.
+    """Wraps a real unit of work and records how the executor's coordinator drives it.
 
-    The adapter's own ``__aexit__`` calls ``commit``/``rollback`` on the
-    wrapped instance, so ``direct_calls`` only records calls the executor
-    made outside the context-manager protocol.  ``transactional`` is the
-    wrapped adapter's value, forwarded by :func:`probe_class_for`.
+    ``transactional`` and ``phased`` are the wrapped adapter's values,
+    forwarded by :func:`probe_class_for`, so the coordinator drives the probe
+    exactly as it drives the adapter: phase by phase when the adapter is
+    phased (ADR 0008, which supersedes FR-001 "the executor never calls
+    ``begin``" for those), through ``__aenter__``/``__aexit__`` otherwise.
+    ``calls`` records every call the coordinator made; ``ended`` records
+    whether it committed or rolled back, whichever protocol it used.
     """
 
     transactional: ClassVar[bool]
+    phased: ClassVar[bool]
 
     def __init__(self, inner: UnitOfWork, log: Log) -> None:
         self.inner = inner
         self._log = log
-        self.entered = 0
-        self.exits: list[type[BaseException] | None] = []
-        self.direct_calls: list[str] = []
+        self.calls: list[str] = []
+        self.ended: list[str] = []
+
+    @property
+    def _phased_inner(self) -> Any:
+        return self.inner
+
+    @property
+    def owner(self) -> object:
+        return self._phased_inner.owner
+
+    @property
+    def physical(self) -> Any:
+        return self._phased_inner.physical
 
     async def begin(self) -> None:
-        self.direct_calls.append("begin")
+        self.calls.append("begin")
+        self._log("uow.enter")
         await self.inner.begin()
 
+    async def flush(self) -> None:
+        self.calls.append("flush")
+        await self._phased_inner.flush()
+
     async def commit(self) -> None:
-        self.direct_calls.append("commit")
+        self.calls.append("commit")
+        self.ended.append("commit")
         await self.inner.commit()
 
     async def rollback(self) -> None:
-        self.direct_calls.append("rollback")
+        self.calls.append("rollback")
+        self.ended.append("rollback")
         await self.inner.rollback()
 
+    async def close(self) -> None:
+        self.calls.append("close")
+        try:
+            await self._phased_inner.close()
+        finally:
+            self._log("uow.exit")
+
     async def __aenter__(self) -> LifecycleProbe:
-        self.entered += 1
+        self.calls.append("enter")
         self._log("uow.enter")
         await self.inner.__aenter__()
         return self
@@ -245,18 +277,27 @@ class LifecycleProbe:
         exc_val: BaseException | None,
         exc_tb: object,
     ) -> None:
+        self.calls.append("exit")
+        self.ended.append("commit" if exc_type is None else "rollback")
         try:
             await self.inner.__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            self.exits.append(exc_type)
             self._log("uow.exit")
+
+    @property
+    def off_protocol_calls(self) -> list[str]:
+        """Calls outside the one protocol this adapter is driven through."""
+        allowed = _PHASES if self.phased else _CONTEXT_MANAGER
+        return [call for call in self.calls if call not in allowed]
 
 
 def probe_class_for(adapter: type[UnitOfWork]) -> type[LifecycleProbe]:
-    """Return a probe class declaring the same ``transactional`` as ``adapter``."""
-    return type(
-        f"{adapter.__name__}Probe", (LifecycleProbe,), {"transactional": adapter.transactional}
-    )
+    """Return a probe class declaring the same ``transactional`` and ``phased`` as ``adapter``."""
+    markers = {
+        "transactional": adapter.transactional,
+        "phased": getattr(adapter, "phased", False) is True,
+    }
+    return type(f"{adapter.__name__}Probe", (LifecycleProbe,), markers)
 
 
 class RecordingFactory:
@@ -277,15 +318,19 @@ class RecordingFactory:
 
     @property
     def entered(self) -> int:
-        return sum(probe.entered for probe in self.created)
+        """Units of work begun, through ``begin`` or ``__aenter__``."""
+        return sum(
+            probe.calls.count("begin") + probe.calls.count("enter") for probe in self.created
+        )
 
     @property
     def exited(self) -> int:
-        return sum(len(probe.exits) for probe in self.created)
+        """Units of work released, through ``close`` or ``__aexit__``."""
+        return sum(probe.calls.count("close") + probe.calls.count("exit") for probe in self.created)
 
     @property
-    def direct_calls(self) -> list[str]:
-        return [call for probe in self.created for call in probe.direct_calls]
+    def off_protocol_calls(self) -> list[str]:
+        return [call for probe in self.created for call in probe.off_protocol_calls]
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +346,7 @@ class LifecycleCase:
         name: Adapter name, used in test ids and skip reasons.
         factory: Recording factory the executor is built with.
         transactional: The ``transactional`` ClassVar of a created unit of work.
+        phased: Whether the coordinator drives it phase by phase.
         probe: Observation of the adapter's session.
         failures: Failure injection; ``None`` when the adapter has no driver seam.
         sessions_expected: Driver sessions one execution opens on this adapter.
@@ -311,6 +357,7 @@ class LifecycleCase:
     name: str
     factory: RecordingFactory
     transactional: bool
+    phased: bool
     probe: SessionProbe
     failures: FailureSeams | None
     sessions_expected: int
@@ -328,6 +375,7 @@ def _transactional_case(
         name=name,
         factory=RecordingFactory(factory, log),
         transactional=type(factory.create()).transactional,
+        phased=True,
         probe=seams,
         failures=seams,
         sessions_expected=1,
@@ -340,6 +388,7 @@ def _no_op_case(name: str, factory: UnitOfWorkFactory, log: Log) -> LifecycleCas
         name=name,
         factory=RecordingFactory(factory, log),
         transactional=type(factory.create()).transactional,
+        phased=False,
         probe=NoSessionProbe(),
         failures=None,
         sessions_expected=0,
@@ -390,16 +439,29 @@ def require_transactional(case: LifecycleCase) -> FailureSeams:
     return case.failures
 
 
-async def cancel_twice_during_close(executor: RuntimeExecutor) -> None:
-    """Cancel a hanging execution, then again while its rollback is in flight."""
+async def cancel_twice_during_rollback(
+    executor: RuntimeExecutor, gate: asyncio.Event
+) -> list[bool]:
+    """Cancel a hanging execution, then again while its gated rollback is in flight.
+
+    The coordinator runs a rollback to completion however often the task is
+    cancelled, so the task ends only once ``gate`` opens; this checks that it
+    is still waiting first, then opens the gate.
+
+    Returns:
+        Whether the task's own context was clean when it ended.
+    """
     task, observed = start_hanging(executor)
     await asyncio.sleep(0.01)
     task.cancel()  # cuts the body: the rollback starts and blocks on the gate
     await asyncio.sleep(0)
     task.cancel()  # arrives while the rollback is in flight
+    await asyncio.sleep(0.01)
+    assert not task.done()
+    gate.set()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert observed == [True]
+    return observed
 
 
 # ---------------------------------------------------------------------------

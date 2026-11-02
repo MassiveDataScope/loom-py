@@ -272,6 +272,8 @@ class FakeSession:
         self.in_transaction = False
 
     async def end_session(self) -> None:
+        if self._client.end_gate is not None:
+            await self._client.end_gate.wait()
         self.ended = True
         if self._client.end_error is not None:
             raise self._client.end_error
@@ -329,6 +331,7 @@ class FakeMongoClient:
         self.abort_gate: asyncio.Event | None = None
         self.commit_error: Exception | None = None
         self.end_error: Exception | None = None
+        self.end_gate: asyncio.Event | None = None
 
     @property
     def admin(self) -> FakeAdmin:

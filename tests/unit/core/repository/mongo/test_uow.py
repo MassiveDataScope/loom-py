@@ -412,6 +412,31 @@ class TestPhased:
         assert active_session() is None
         assert "UoWCloseFailed" in caplog.text
 
+    async def test_a_cancelled_close_still_ends_the_session_and_resets_the_token(self) -> None:
+        client = FakeMongoClient()
+        client.end_gate = asyncio.Event()
+        uow = _unit_of_work(client)
+        observed: list[bool] = []
+
+        async def close() -> None:
+            await uow.begin()
+            try:
+                await uow.close()
+            finally:
+                observed.append(active_session() is None)
+
+        task = asyncio.create_task(close())
+        while not client.sessions:
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        client.end_gate.set()
+        await asyncio.sleep(0)
+
+        assert (observed, client.sessions[0].ended) == ([True], True)
+
     async def test_rollback_before_a_commit_aborts(self) -> None:
         client = FakeMongoClient()
         uow = _unit_of_work(client)

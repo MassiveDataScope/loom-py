@@ -47,7 +47,7 @@ async def test_broker_failure_is_a_post_commit_error_after_a_committed_transacti
 
     assert info.value.committed is True
     assert [type(failure) for failure in info.value.failures] == [ConnectionError]
-    assert case.factory.created[0].exits == [None]
+    assert case.factory.created[0].ended == ["commit"]
     assert case.probe.rollbacks() == 0
     assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_DONE]
     assert log.index("event.EXEC_DONE") < log.index("broker.send(job-B) uow=False")
@@ -97,5 +97,5 @@ async def test_failed_execution_discards_and_the_next_one_sends_nothing_stale(
 
     assert broker.sent == []
     assert not any(entry.startswith("broker.send") for entry in log.entries)
-    assert case.factory.created[0].exits == [RuntimeError]
+    assert case.factory.created[0].ended == ["rollback"]
     assert context_is_clean()

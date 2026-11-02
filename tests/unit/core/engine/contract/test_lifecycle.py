@@ -18,7 +18,7 @@ from loom.core.use_case.use_case import UseCase
 from .._lifecycle_doubles import Boom, Log, Metrics, Ok, cancel_mid_flight, context_is_clean
 from .conftest import (
     LifecycleCase,
-    cancel_twice_during_close,
+    cancel_twice_during_rollback,
     require_transactional,
     sqlite_session_manager,
 )
@@ -26,7 +26,9 @@ from .conftest import (
 _EXECUTIONS = 1000
 
 
-class TestContextManagerProtocolOnly:
+class TestOneProtocolPerAdapter:
+    """A phased adapter is driven phase by phase, any other through its context manager."""
+
     async def test_success_enters_and_exits_once_through_the_protocol(
         self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
     ) -> None:
@@ -34,8 +36,8 @@ class TestContextManagerProtocolOnly:
 
         assert result == "x"
         assert case.factory.entered == case.factory.exited == 1
-        assert case.factory.direct_calls == []
-        assert case.factory.created[0].exits == [None]
+        assert case.factory.off_protocol_calls == []
+        assert case.factory.created[0].ended == ["commit"]
         assert case.probe.sessions_opened() == case.probe.sessions_closed()
         assert case.probe.sessions_opened() == case.sessions_expected
         assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_DONE]
@@ -54,8 +56,8 @@ class TestContextManagerProtocolOnly:
             await executor.execute(action, params={"value": "x"})
 
         assert case.factory.entered == case.factory.exited == 1
-        assert case.factory.direct_calls == []
-        assert case.factory.created[0].exits == [RuntimeError]
+        assert case.factory.off_protocol_calls == []
+        assert case.factory.created[0].ended == ["rollback"]
         assert case.probe.sessions_opened() == case.probe.sessions_closed()
         assert case.probe.sessions_opened() == case.sessions_expected
         assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]
@@ -68,8 +70,8 @@ class TestContextManagerProtocolOnly:
         await cancel_mid_flight(executor)
 
         assert case.factory.entered == case.factory.exited == 1
-        assert case.factory.direct_calls == []
-        assert case.factory.created[0].exits == [asyncio.CancelledError]
+        assert case.factory.off_protocol_calls == []
+        assert case.factory.created[0].ended == ["rollback"]
         assert case.probe.sessions_opened() == case.probe.sessions_closed()
         assert case.probe.sessions_opened() == case.sessions_expected
         assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]
@@ -108,24 +110,22 @@ class TestTerminalEventReflectsTheTransaction:
         assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "begin"
         assert case.factory.entered == 1
-        assert case.factory.exited == 0
+        # The coordinator closes a phased unit of work whose begin failed.
+        assert case.factory.exited == (1 if case.phased else 0)
         # A failed begin opens nothing (SQLAlchemy) or ends what it opened (Mongo).
         assert case.probe.sessions_opened() == case.probe.sessions_closed()
         assert context_is_clean()
 
-    async def test_second_cancellation_during_the_rollback_still_completes_the_close(
+    async def test_second_cancellation_during_the_rollback_waits_for_it_then_closes(
         self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics
     ) -> None:
         gate = asyncio.Event()
         require_transactional(case).gate_rollback(gate)
 
-        await cancel_twice_during_close(executor)
+        observed = await cancel_twice_during_rollback(executor, gate)
 
+        assert observed == [True]
         assert metrics.only(EventKind.EXEC_ERROR).error_kind == "cancelled"
-        assert case.probe.rollbacks() == 0
-        gate.set()
-        await asyncio.sleep(0.01)
-
         assert case.probe.rollbacks() == 1
         assert case.probe.sessions_opened() == case.probe.sessions_closed() == 1
         assert case.factory.exited == 1

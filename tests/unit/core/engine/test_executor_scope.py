@@ -582,7 +582,9 @@ _CANCEL_POINTS = [
     Fault("commit", Effect.CANCEL),
     Fault("commit", Effect.CANCEL_LATE),
     Fault("close", Effect.CANCEL),
+    Fault("rollback", Effect.CANCEL),
 ]
+"""Every point a cancellation can hit; a rollback fault makes the body fail first."""
 
 
 class TestCancellation:
@@ -611,7 +613,15 @@ class TestCancellation:
 
         assert run.ledger.calls_of(DEFAULT_STORE).count("close") == 1
 
-    @pytest.mark.parametrize("fault", _CANCEL_POINTS[:3], ids=_fault_id)
+    async def test_a_cancelled_rollback_still_runs_to_completion(self) -> None:
+        run = _Cancelled.at(Fault("rollback", Effect.CANCEL))
+
+        with pytest.raises(asyncio.CancelledError):
+            await run.cancel_when_blocked()
+
+        assert run.ledger.calls_of(DEFAULT_STORE) == ["begin", "rollback", "unblocked", "close"]
+
+    @pytest.mark.parametrize("fault", [*_CANCEL_POINTS[:3], _CANCEL_POINTS[-1]], ids=_fault_id)
     async def test_nothing_is_persisted_before_the_commit_lands(self, fault: Fault) -> None:
         run = _Cancelled.at(fault)
 
@@ -667,6 +677,8 @@ class _Cancelled:
 
         async def body() -> None:
             _write(stores, "row")
+            if fault.phase == "rollback":
+                raise _BusinessError
 
         async def run() -> None:
             try:
@@ -677,14 +689,17 @@ class _Cancelled:
         return cls(asyncio.create_task(run()), ledger, observed)
 
     async def cancel_when_blocked(self) -> None:
-        """Cancel once the store blocks, then let the blocked step finish."""
+        """Cancel once the store blocks, then let the blocked step finish.
+
+        The gate opens before the task is awaited: a rollback runs to
+        completion however often the task is cancelled, so the task waits
+        for it.
+        """
         await self.ledger.blocked.wait()
         self.task.cancel()
-        try:
-            await self.task
-        finally:
-            self.ledger.gate.set()
-            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.ledger.gate.set()
+        await self.task
 
 
 class TestNoLeaks:
