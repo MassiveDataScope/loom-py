@@ -1,12 +1,8 @@
-"""Celery and Job configuration types.
+"""Celery configuration types.
 
 ``CeleryConfig`` holds broker/worker settings extracted from the OmegaConf
-object passed to ``bootstrap_worker()``.  ``JobConfig`` carries per-job
-routing overrides that supersede the ClassVar defaults declared on each
-:class:`~loom.core.job.job.Job` subclass.
-
-Both types use ``msgspec.Struct`` for consistency with the rest of the
-framework — they are validated at bootstrap time through the config section.
+object passed to ``bootstrap_worker()``. Per-job overrides are declared
+in :mod:`loom.core.job.config`.
 
 Typical YAML layout::
 
@@ -18,14 +14,6 @@ Typical YAML layout::
       runtime:
         backend: "asyncio"
         use_uvloop: true
-
-    jobs:
-      RecalcPricesJob:
-        queue: "prices.heavy"
-        retries: 5
-        timeout: 600
-      SendWelcomeEmailJob:
-        retries: 3
 """
 
 from __future__ import annotations
@@ -36,8 +24,6 @@ import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 from kombu import Queue  # type: ignore[import-untyped]
 
-from loom.core.job.config import JobConfig as JobConfig
-from loom.core.job.config import apply_job_config as apply_job_config
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import PositiveInt

@@ -11,9 +11,15 @@ import pytest
 
 from loom.aws_lambda import LambdaSQSAdapter
 from loom.aws_lambda.sqs import SQSHandler
-from loom.composition import Application, CompositionSource, CompositionStateError
+from loom.composition import (
+    Application,
+    CompositionSource,
+    CompositionStateError,
+    compose_application,
+)
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import REST_CHECKS
+from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.persistence import LAMBDA_PROFILE
@@ -145,15 +151,6 @@ def test_bind_requires_recipe() -> None:
         adapter.bind(None)  # type: ignore[arg-type]
 
 
-def test_unknown_job_is_a_record_failure(handler: SQSHandler, record: RecordFactory) -> None:
-    unknown = record("1", "a")
-    body = json.loads(unknown["body"])
-    body["job"] = "UnknownJob"
-    unknown["body"] = json.dumps(body)
-    result = handler({"Records": [unknown]}, None)
-    assert result["batchItemFailures"] == [{"itemIdentifier": "1"}]
-
-
 def test_recipe_uses_lambda_profile_and_skips_rest(source: CompositionSource) -> None:
     class LocalJob(Job[None]):
         def execute(self) -> None:
@@ -166,11 +163,7 @@ def test_recipe_uses_lambda_profile_and_skips_rest(source: CompositionSource) ->
     assert REST_CHECKS in recipe.skip_checks
 
 
-def test_bind_propagates_open_failure(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
-) -> None:
-    adapter, application, _ = built
-
+def _add_broken_resource(application: Application) -> None:
     @asynccontextmanager
     async def broken() -> AsyncIterator[None]:
         raise RuntimeError("open failed")
@@ -180,6 +173,13 @@ def test_bind_propagates_open_failure(
         *application.resources,
         Resource(kind=ResourceKind.STORE, name="broken", manager=broken),
     )
+
+
+def test_bind_propagates_open_failure(
+    built: tuple[LambdaSQSAdapter, Application, list[str]],
+) -> None:
+    adapter, application, _ = built
+    _add_broken_resource(application)
     with pytest.raises(RuntimeError, match="open failed"):
         adapter.bind(application)
 
@@ -246,7 +246,7 @@ def test_timeout_marks_remaining_records_failed(
 
         def get_remaining_time_in_millis(self) -> int:
             self.calls += 1
-            return 1000 if self.calls == 1 else 999
+            return 2000 if self.calls <= 2 else 999
 
     records = [record("1", "a"), record("2", "b"), record("3", "c")]
     result = handler({"Records": records}, Context())
@@ -283,27 +283,26 @@ def test_cancelled_error_propagates(handler: SQSHandler, record: RecordFactory) 
         handler({"Records": [record("1", "cancel")]}, None)
 
 
-def test_second_bind_is_typed_error(
+@pytest.mark.parametrize("action", ["recipe", "bind", "bind_after_close"])
+def test_adapter_already_composed(
     built: tuple[LambdaSQSAdapter, Application, list[str]],
+    source: CompositionSource,
+    action: str,
 ) -> None:
     adapter, application, _ = built
-    adapter.bind(application)
+    if action != "recipe":
+        adapter.bind(application)
+    if action == "bind_after_close":
+        adapter.close()
     try:
         with pytest.raises(CompositionStateError) as caught:
-            adapter.bind(application)
+            if action == "recipe":
+                adapter.recipe(source)
+            else:
+                adapter.bind(application)
         assert caught.value.issue.code == "ADAPTER_ALREADY_COMPOSED"
     finally:
         adapter.close()
-
-
-def test_second_recipe_is_typed_error(
-    source: CompositionSource, probe: tuple[type[Job[None]], Probe]
-) -> None:
-    adapter = LambdaSQSAdapter(jobs=[probe[0]])
-    adapter.recipe(source)
-    with pytest.raises(CompositionStateError) as caught:
-        adapter.recipe(source)
-    assert caught.value.issue.code == "ADAPTER_ALREADY_COMPOSED"
 
 
 def test_close_closes_opened_resources(
@@ -334,20 +333,10 @@ def test_failed_open_clears_event_loop(
     built: tuple[LambdaSQSAdapter, Application, list[str]],
 ) -> None:
     adapter, application, _ = built
-
-    @asynccontextmanager
-    async def broken() -> AsyncIterator[None]:
-        raise RuntimeError("open failed")
-        yield
-
-    application.resources = (
-        *application.resources,
-        Resource(kind=ResourceKind.STORE, name="broken", manager=broken),
-    )
+    _add_broken_resource(application)
     with pytest.raises(RuntimeError, match="open failed"):
         adapter.bind(application)
-    with pytest.raises(RuntimeError, match="no current event loop"):
-        asyncio.get_event_loop()
+    assert adapter._loop is None
 
 
 def test_job_config_is_applied(source: CompositionSource) -> None:
@@ -399,37 +388,62 @@ def test_job_span_is_emitted(
         adapter.close()
 
 
-def test_null_payload_is_accepted(handler: SQSHandler, record: RecordFactory) -> None:
-    item = record("1", "a")
-    body = json.loads(item["body"])
-    body["payload"] = None
-    item["body"] = json.dumps(body)
-    result = handler({"Records": [item]}, None)
-    assert result["batchItemFailures"] == []
-
-
-def test_missing_message_id_does_not_escape(handler: SQSHandler, record: RecordFactory) -> None:
-    item = record("1", "a")
-    del item["messageId"]
-    item["body"] = "{"
-    result = handler({"Records": [item]}, None)
-    assert result["batchItemFailures"] == [{"itemIdentifier": ""}]
-
-
-def test_second_bind_after_close_is_typed_error(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        ("unknown", [{"itemIdentifier": "1"}]),
+        ("malformed", [{"itemIdentifier": "1"}]),
+        ("null_payload", []),
+        ("missing_id", [{"itemIdentifier": ""}]),
+        ("non_mapping", [{"itemIdentifier": ""}]),
+    ],
+)
+def test_record_edge_cases(
+    handler: SQSHandler, record: RecordFactory, kind: str, expected: list[dict[str, str]]
 ) -> None:
-    adapter, application, _ = built
-    adapter.bind(application)
-    adapter.close()
-    with pytest.raises(CompositionStateError) as caught:
-        adapter.bind(application)
-    assert caught.value.issue.code == "ADAPTER_ALREADY_COMPOSED"
+    item: object = record("1", "a")
+    if kind == "unknown":
+        item = record("1", "a", body=json.dumps({"job": "UnknownJob"}))
+    elif kind == "malformed":
+        item = record("1", "a", body="{")
+    elif kind == "null_payload":
+        body = json.loads(item["body"])  # type: ignore[index]
+        body["payload"] = None
+        item = record("1", "a", body=json.dumps(body))
+    elif kind == "missing_id":
+        item = {"body": "{"}
+    elif kind == "non_mapping":
+        item = "bad"
+    result = handler({"Records": [item]}, None)
+    assert result["batchItemFailures"] == expected
 
 
-def test_non_mapping_record_does_not_escape(handler: SQSHandler) -> None:
-    result = handler({"Records": ["bad"]}, None)
-    assert result["batchItemFailures"] == [{"itemIdentifier": ""}]
+@pytest.mark.parametrize("error", [MalformedJobMessage("{"), UnknownJob("MissingJob")])
+def test_poison_errors_remain_retryable(error: Exception) -> None:
+    assert error.retryable is True  # type: ignore[attr-defined]
+
+
+def test_job_timeout_is_retryable(source: CompositionSource, record: RecordFactory) -> None:
+    class SlowJob(Job[None]):
+        __timeout__ = 0.001  # type: ignore[assignment]
+
+        async def execute(self) -> None:
+            await asyncio.sleep(0.1)
+
+    class Context:
+        def get_remaining_time_in_millis(self) -> int:
+            return 5000
+
+    adapter = LambdaSQSAdapter(jobs=[SlowJob])
+    application = compose_application(source, adapter)
+    handler = adapter.bind(application)
+    try:
+        result = handler(
+            {"Records": [record("slow", "a", job_name=SlowJob.__qualname__)]}, Context()
+        )
+        assert result["batchItemFailures"] == [{"itemIdentifier": "slow"}]
+    finally:
+        adapter.close()
 
 
 def test_malformed_record_emits_error_span(

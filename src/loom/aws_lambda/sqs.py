@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
 from loom.composition import CompositionErrorCode, CompositionStateError, Recipe
 from loom.composition.host import ApplicationHost
 from loom.core.checks import REST_CHECKS
-from loom.core.config.errors import ConfigError
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.discovery.worker import (
+    DuplicateJobName as DuplicateJobName,
+)
 from loom.core.discovery.worker import (
     apply_job_overrides,
     resolve_worker_components,
 )
-from loom.core.engine.post_commit import PostCommitError
 from loom.core.errors import MalformedJobMessage, UnknownJob
-from loom.core.job.envelope import TASK_JOB_PREFIX, decode_job_envelope, job_context
-from loom.core.job.outcome import is_retryable
+from loom.core.job.envelope import decode_job_envelope
+from loom.core.job.outcome import failure_log_fields, is_retryable
+from loom.core.job.run import run_job
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
@@ -36,10 +37,6 @@ _log = get_logger(__name__)
 SQSHandler = Callable[[dict[str, Any], Any], dict[str, list[dict[str, str]]]]
 TIMEOUT_SAFETY_MARGIN_MS = 1000
 """Stop starting records when fewer than one second remains in the invocation."""
-
-
-class DuplicateJobName(ConfigError):
-    """Two declared jobs have the same wire qualname."""
 
 
 class LambdaSQSAdapter:
@@ -88,12 +85,7 @@ class LambdaSQSAdapter:
             _log.warning(
                 "Lambda ignores discovered job callbacks", callbacks=len(resolved.callbacks)
             )
-        declared: dict[str, type[Job[Any]]] = {}
-        for job_type in resolved.jobs:
-            name = job_type.__qualname__
-            if name in declared:
-                raise DuplicateJobName(f"Duplicate job qualname {name!r}")
-            declared[name] = job_type
+        declared = {job_type.__qualname__: job_type for job_type in resolved.jobs}
         for job_type in resolved.jobs:
             apply_job_overrides(source.config, job_type)
         self._declared = declared
@@ -129,8 +121,7 @@ class LambdaSQSAdapter:
         try:
             loop.run_until_complete(host.start())
         except BaseException:
-            loop.close()
-            asyncio.set_event_loop(None)
+            _dispose_loop(loop)
             raise
         self._loop = loop
         self._host = host
@@ -142,54 +133,67 @@ class LambdaSQSAdapter:
         else:
             _log.warning("Lambda dispatched jobs publish to the Celery broker")
 
-        async def run_record(record: Mapping[str, Any]) -> None:
-            try:
-                envelope = decode_job_envelope(record["body"])
-            except (KeyError, TypeError, ValueError) as exc:
+        async def run_record(record: Any, context: Any) -> None:
+            if not isinstance(record, Mapping) or "body" not in record:
                 with application.observability.span(
                     Scope.JOB,
                     "<malformed>",
                     id=_message_id(record) or None,
                 ):
-                    raise MalformedJobMessage(str(exc)) from exc
-            job_name = envelope.job.removeprefix(f"{TASK_JOB_PREFIX}.")
-            with (
-                job_context(envelope.trace_id, envelope.identity) as caller,
-                application.observability.span(
+                    raise MalformedJobMessage("SQS record has no body")
+            try:
+                envelope = decode_job_envelope(record["body"])
+            except MalformedJobMessage:
+                with application.observability.span(
+                    Scope.JOB, "<malformed>", id=_message_id(record) or None
+                ):
+                    raise
+            job_name = envelope.job_name
+            try:
+                try:
+                    job_type = jobs[job_name]
+                except KeyError as exc:
+                    raise UnknownJob(job_name) from exc
+                timeout = _record_timeout(job_type, context)
+                await asyncio.wait_for(
+                    run_job(
+                        envelope,
+                        job_type,
+                        factory=application.kernel.factory,
+                        executor=application.kernel.executor,
+                        observability=application.observability,
+                        message_id=_message_id(record),
+                    ),
+                    timeout=timeout,
+                )
+            except UnknownJob:
+                with application.observability.span(
                     Scope.JOB,
                     job_name,
                     trace_id=envelope.trace_id,
                     id=_message_id(record),
                     payload_size=len(envelope.payload or {}),
-                ),
-            ):
-                try:
-                    job_type = jobs[job_name]
-                except KeyError as exc:
-                    raise UnknownJob(job_name) from exc
-                instance = application.kernel.factory.build(job_type)
-                await application.kernel.executor.execute(
-                    instance,
-                    params=envelope.params,
-                    payload=envelope.payload or {},
-                    identity=caller,
-                )
+                ):
+                    raise
+            except Exception as exc:
+                exc.job_name = job_name  # type: ignore[attr-defined]
+                raise
 
         def handler(event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
             records: list[Any] = event["Records"]
-            fifo = any(_is_fifo(record) for record in records)
+            fifo = bool(records) and _is_fifo(records[0])
             failures: list[dict[str, str]] = []
             for index, record in enumerate(records):
                 if _out_of_time(context):
-                    return {"batchItemFailures": failures + _failed(records[index:])}
+                    return _batch_with_remaining(failures, records[index:])
                 try:
-                    loop.run_until_complete(run_record(record))
+                    loop.run_until_complete(run_record(record, context))
                 except Exception as exc:
                     _log_failure(record, exc)
                     if not is_retryable(exc):
                         continue
                     if fifo:
-                        return {"batchItemFailures": failures + _failed(records[index:])}
+                        return _batch_with_remaining(failures, records[index:])
                     failures.extend(_failed([record]))
             return {"batchItemFailures": failures}
 
@@ -205,8 +209,33 @@ class LambdaSQSAdapter:
         try:
             loop.run_until_complete(host.stop())
         finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+            _dispose_loop(loop)
+
+
+def _dispose_loop(loop: asyncio.AbstractEventLoop) -> None:
+    loop.close()
+    asyncio.set_event_loop(None)
+
+
+def _batch_with_remaining(
+    failures: list[dict[str, str]], records: Sequence[Any]
+) -> dict[str, list[dict[str, str]]]:
+    return {"batchItemFailures": failures + _failed(records)}
+
+
+def _record_timeout(job_type: type[Job[Any]], context: Any) -> float | None:
+    limits: list[float] = []
+    remaining = getattr(context, "get_remaining_time_in_millis", None)
+    if callable(remaining):
+        limits.append(
+            max(
+                0.0,
+                (cast(Callable[[], int], remaining)() - TIMEOUT_SAFETY_MARGIN_MS) / 1000,
+            )
+        )
+    if job_type.__timeout__ is not None:
+        limits.append(float(job_type.__timeout__))
+    return min(limits) if limits else None
 
 
 def _message_id(record: Any) -> str:
@@ -226,18 +255,11 @@ def _out_of_time(context: Any) -> bool:
     return callable(remaining) and cast(Callable[[], int], remaining)() < TIMEOUT_SAFETY_MARGIN_MS
 
 
-def _job_name(record: Any) -> str:
-    with suppress(KeyError, TypeError, ValueError):
-        return decode_job_envelope(record["body"]).job
-    return "<malformed>"
-
-
 def _log_failure(record: Any, exc: Exception) -> None:
-    committed = {"committed": exc.committed} if isinstance(exc, PostCommitError) else {}
     _log.exception(
         "SQS job failed" if is_retryable(exc) else "SQS job failed finally",
-        job=_job_name(record),
+        job=getattr(exc, "job_name", getattr(exc, "name", "<malformed>")),
         message_id=_message_id(record),
         error_class=type(exc).__name__,
-        **committed,
+        **failure_log_fields(exc),
     )

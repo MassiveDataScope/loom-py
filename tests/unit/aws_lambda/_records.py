@@ -17,10 +17,13 @@ def make_record(
     trace_id: str | None = None,
     fifo: bool = False,
     job_name: str = "ProbeJob",
+    body: str | None = None,
 ) -> dict[str, Any]:
     return {
         "messageId": message_id,
-        "body": json.dumps(
+        "body": body
+        if body is not None
+        else json.dumps(
             {
                 "job": job_name,
                 "payload": {},

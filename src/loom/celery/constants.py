@@ -1,8 +1,7 @@
-"""Celery-layer constants: task names, queues, and worker manifest keys."""
+"""Celery-layer constants: callback task names and queues."""
 
 from __future__ import annotations
 
-from loom.core.discovery.worker_manifest import WorkerManifestAttr as WorkerManifestAttr
 from loom.core.job.envelope import TASK_JOB_PREFIX as TASK_JOB_PREFIX
 
 TASK_CALLBACK_PREFIX = "loom.callback"

@@ -6,6 +6,7 @@ import importlib
 import inspect
 import logging
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Final, TypeVar
 
@@ -101,11 +102,9 @@ def apply_job_overrides(
         ctx: Resolved configuration context.
         job_type: Concrete ``Job`` subclass to configure.
     """
-    try:
+    with suppress(ConfigError):
         cfg = ctx.section(f"{ConfigKey.JOBS}.{job_type.__name__}", JobConfig)
         apply_job_config(job_type, cfg)
-    except ConfigError:
-        pass  # no override for this job — use ClassVar defaults
 
 
 def use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Compilable], ...]:
@@ -266,6 +265,19 @@ def _build_worker_compilables(
 # ---------------------------------------------------------------------------
 
 
+class DuplicateJobName(ConfigError):
+    """Two declared jobs have the same wire qualname."""
+
+
+def _check_duplicate_job_names(jobs: Sequence[type[Job[Any]]]) -> None:
+    seen: set[str] = set()
+    for job_type in jobs:
+        name = job_type.__qualname__
+        if name in seen:
+            raise DuplicateJobName(f"Duplicate job qualname {name!r}")
+        seen.add(name)
+
+
 def _resolved_from_manifest(
     manifest: WorkerManifest,
     autocrud_use_cases: AutoCRUDUseCases | None = None,
@@ -361,6 +373,7 @@ def resolve_worker_components(
     """Resolve worker components from explicit args and/or discovery config."""
     if explicit_jobs or explicit_use_cases:
         jobs = tuple(explicit_jobs)
+        _check_duplicate_job_names(jobs)
         compilables = merge_unique(explicit_use_cases, jobs)
         discovered = _try_discover_components(ctx, autocrud_use_cases)
         declared = set(compilables)
@@ -379,6 +392,7 @@ def resolve_worker_components(
             "No jobs provided and no app.discovery configured for worker bootstrap."
         ) from exc
     discovered = _discover_compilables_from_config(discovery_cfg, autocrud_use_cases)
+    _check_duplicate_job_names(discovered.jobs)
     if not discovered.jobs:
         _logger.warning(
             "no Job classes discovered: the worker starts with no jobs registered. "

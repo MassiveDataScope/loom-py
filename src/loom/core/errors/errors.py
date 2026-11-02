@@ -60,14 +60,20 @@ class SystemError(LoomError):
 
 
 class MalformedJobMessage(SystemError):
-    """A job message does not satisfy the public envelope contract."""
+    """A job message violates the envelope contract.
+
+    Retryable on purpose: the queue's DLQ keeps the message as evidence; configure a DLQ.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.MALFORMED_JOB_MESSAGE)
 
 
 class UnknownJob(SystemError):
-    """A message names a job absent from this application's registry."""
+    """A message names a job absent from this application's registry.
+
+    Retryable on purpose: the queue's DLQ keeps the message as evidence; configure a DLQ.
+    """
 
     def __init__(self, name: str) -> None:
         self.name = name

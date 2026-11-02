@@ -8,12 +8,18 @@ from typing import Any
 
 import msgspec
 
+from loom.core.errors import MalformedJobMessage
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import decode_identity
 from loom.core.tracing import reset_trace_id, set_trace_id
 
 TASK_JOB_PREFIX = "loom.job"
 """Public prefix for fully qualified job names on the wire."""
+
+
+def wire_job_name(qualname: str) -> str:
+    """Return the transport name for a job qualname."""
+    return f"{TASK_JOB_PREFIX}.{qualname}"
 
 
 class JobEnvelope(msgspec.Struct, frozen=True, kw_only=True):
@@ -29,10 +35,18 @@ class JobEnvelope(msgspec.Struct, frozen=True, kw_only=True):
     trace_id: str | None = None
     identity: dict[str, Any] | None = None
 
+    @property
+    def job_name(self) -> str:
+        """Return the unprefixed job qualname."""
+        return self.job.removeprefix(f"{TASK_JOB_PREFIX}.")
+
 
 def decode_job_envelope(body: str) -> JobEnvelope:
     """Decode a job message with msgspec validation."""
-    return msgspec.json.decode(body, type=JobEnvelope)
+    try:
+        return msgspec.json.decode(body, type=JobEnvelope)
+    except (msgspec.DecodeError, msgspec.ValidationError, TypeError) as exc:
+        raise MalformedJobMessage(str(exc)) from exc
 
 
 @contextmanager

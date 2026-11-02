@@ -37,14 +37,13 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from celery import Celery  # type: ignore[import-untyped]
 from celery.result import AsyncResult  # type: ignore[import-untyped]
 
-from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
+from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX
 from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
 from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.post_commit import PostCommitError
-from loom.core.identity import Identity
-from loom.core.job.envelope import job_context as _job_context
-from loom.core.job.outcome import is_retryable as _is_retryable
+from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
+from loom.core.job.outcome import failure_log_fields, is_retryable
+from loom.core.job.run import run_job
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -201,10 +200,9 @@ def _is_eager_request(task_self: Any) -> bool:
 
 def _log_post_commit_failure(exc: Exception, job: str) -> None:
     """Record which post-commit actions failed and whether anything committed."""
-    if isinstance(exc, PostCommitError):
-        _log.error(
-            "JobPostCommitFailed", job=job, committed=exc.committed, failures=len(exc.failures)
-        )
+    fields = failure_log_fields(exc)
+    if fields:
+        _log.error("JobPostCommitFailed", job=job, **fields)
 
 
 def _make_job_task(
@@ -261,32 +259,37 @@ def _make_job_task(
         task_self: Any,
         payload: dict[str, Any] | None,
         params: dict[str, Any] | None,
-        caller: Identity | None,
+        identity: dict[str, Any] | None,
         trace_id: str | None,
     ) -> Any:
         """Build the job instance and run it under the job span."""
         # Inside the task's retry handling: a retry may land on a healthy process.
         async_runtime.ensure_open()
-        with runtime.span(
-            Scope.JOB,
-            name,
-            trace_id=trace_id,
-            id=getattr(getattr(task_self, "request", None), "id", None),
-            payload_size=len(payload or {}),
-        ):
-            instance = factory.build(job_type)
-            return async_runtime.run(
-                executor.execute(instance, params=params, payload=payload or {}, identity=caller),
-                timeout=run_timeout,
-                eager_fallback=_is_eager_request(task_self),
-            )
+        return async_runtime.run(
+            run_job(
+                JobEnvelope(
+                    job=name,
+                    payload=payload,
+                    params=params,
+                    trace_id=trace_id,
+                    identity=identity,
+                ),
+                job_type,
+                factory=factory,
+                executor=executor,
+                observability=runtime,
+                message_id=getattr(getattr(task_self, "request", None), "id", None),
+            ),
+            timeout=run_timeout,
+            eager_fallback=_is_eager_request(task_self),
+        )
 
     def _handle_job_failure(
         *, task_self: Any, exc: Exception, trace_id: str | None, started: float
     ) -> NoReturn:
         """Retry the task when the failure allows it, otherwise let it die."""
         _log_post_commit_failure(exc, name)
-        if _is_retryable(exc) and task_self.request.retries < task_self.max_retries:
+        if is_retryable(exc) and task_self.request.retries < task_self.max_retries:
             countdown = backoff**task_self.request.retries
             _emit(
                 metrics,
@@ -297,7 +300,7 @@ def _make_job_task(
         raise exc
 
     @celery_app.task(  # type: ignore[untyped-decorator]
-        name=f"{TASK_JOB_PREFIX}.{job_type.__qualname__}",
+        name=wire_job_name(job_type.__qualname__),
         shared=False,
         bind=True,
         acks_late=True,
@@ -313,7 +316,7 @@ def _make_job_task(
         trace_id: str | None = None,
         identity: dict[str, Any] | None = None,
     ) -> Any:
-        with _job_context(trace_id, identity) as caller:
+        with job_context(trace_id, identity):
             _emit(metrics, _job_event(EventKind.JOB_STARTED, name, trace_id))
             t0 = time.monotonic()
             try:
@@ -321,7 +324,7 @@ def _make_job_task(
                     task_self=self,
                     payload=payload,
                     params=params,
-                    caller=caller,
+                    identity=identity,
                     trace_id=trace_id,
                 )
             except Exception as exc:
@@ -385,7 +388,7 @@ def _make_callback_task(
     ) -> None:
         async_runtime.ensure_open()
         with (
-            _job_context(trace_id, None),
+            job_context(trace_id, None),
             runtime.span(
                 Scope.JOB,
                 callback_type.__qualname__,
@@ -465,7 +468,7 @@ def _make_callback_error_task(
     ) -> None:
         async_runtime.ensure_open()
         with (
-            _job_context(trace_id, None),
+            job_context(trace_id, None),
             runtime.span(
                 Scope.JOB,
                 callback_type.__qualname__,

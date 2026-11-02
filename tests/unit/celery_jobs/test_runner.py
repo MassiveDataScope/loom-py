@@ -126,6 +126,13 @@ def _mock_runtime(return_value: object = None, error: Exception | None = None) -
     return runtime
 
 
+def _executing_runtime() -> MagicMock:
+    runtime = MagicMock()
+    runtime.run = MagicMock(side_effect=lambda coro, **_: asyncio.run(coro))
+    runtime.ensure_open = MagicMock()
+    return runtime
+
+
 def _mock_observability_runtime() -> tuple[
     MagicMock, list[tuple[tuple[object, ...], dict[str, object]]]
 ]:
@@ -272,13 +279,13 @@ class TestMakeJobTaskExecution:
     def test_job_task_emits_observability_span(self) -> None:
         instance = _SyncJob()
         factory = _mock_factory(instance)
-        runtime = _mock_runtime(return_value=10)
+        runtime = _executing_runtime()
         observability_runtime, span_calls = _mock_observability_runtime()
         task_fn = _make_job_task(
             _mock_celery_app(),
             _SyncJob,
             factory,
-            MagicMock(),
+            MagicMock(execute=AsyncMock(return_value=10)),
             runtime,
             observability_runtime=observability_runtime,
         )
@@ -508,8 +515,8 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _mock_factory(_SyncJob()),
-            MagicMock(),
-            _mock_runtime(return_value=0),
+            MagicMock(execute=AsyncMock(return_value=0)),
+            _executing_runtime(),
             None,
             recorder.runtime,
         )
@@ -529,8 +536,8 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _mock_factory(_SyncJob()),
-            MagicMock(),
-            _mock_runtime(return_value=0),
+            MagicMock(execute=AsyncMock(return_value=0)),
+            _executing_runtime(),
             None,
             recorder.runtime,
         )
@@ -553,8 +560,8 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _factory_recording_trace(_SyncJob(), seen),
-            MagicMock(),
-            _mock_runtime(return_value=0),
+            MagicMock(execute=AsyncMock(return_value=0)),
+            _executing_runtime(),
             metrics,
         )
 
@@ -601,8 +608,8 @@ class TestMakeJobTaskRetry:
             _mock_celery_app(),
             _SyncJob,
             _factory_recording_trace(_SyncJob(), seen),
-            MagicMock(),
-            _mock_runtime(return_value=0),
+            MagicMock(execute=AsyncMock(return_value=0)),
+            _executing_runtime(),
             metrics,
         )
 
