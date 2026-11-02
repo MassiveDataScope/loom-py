@@ -515,10 +515,10 @@ class RuntimeExecutor:
                 # Read from the scope: ``finish`` records the outcome before it
                 # raises an interruption caught while ending a store (a
                 # cancelled close).  Once every store committed, a failure past
-                # this point must not read as "the transaction failed".
-                state.committed = (
-                    error is None and scope.outcome is not None and scope.outcome.succeeded
-                )
+                # this point must not read as "the transaction failed".  The
+                # error still counts: a failed body over non-transactional
+                # stores alone ends in an outcome that succeeded.
+                state.committed = error is None and scope.committed
         failure = invocation_error(outcome, error)
         if failure is not None:
             raise failure

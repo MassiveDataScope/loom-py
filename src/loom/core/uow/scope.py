@@ -178,6 +178,11 @@ class InvocationScope:
     outcome: InvocationOutcome | None = None
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
 
+    @property
+    def committed(self) -> bool:
+        """Whether the coordinator recorded an outcome in which every store succeeded."""
+        return self.outcome is not None and self.outcome.succeeded
+
     def require_owner(self) -> None:
         """Check that the caller may touch this scope's participants.
 
