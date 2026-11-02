@@ -28,12 +28,13 @@ Example::
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
@@ -284,18 +285,18 @@ class InvocationScope:
             self.frames.pop()
 
 
-@runtime_checkable
-class _Targeted(Protocol):
-    """An owner that names its connection without credentials, as errors may print it."""
-
-    @property
-    def target(self) -> str: ...
-
-
 def _described(owner: object) -> str:
-    """Name ``owner`` for an error: its credential-free target, else only its type."""
-    if isinstance(owner, _Targeted):
-        return owner.target
+    """Name ``owner`` for an error: its credential-free ``target``, else only its type.
+
+    ``target`` counts only as a ``str`` property declared on the owner's
+    class, looked up without calling ``__getattr__``: a pymongo client answers
+    any attribute name with a database whose repr prints the client's options,
+    passwords included.
+    """
+    if isinstance(inspect.getattr_static(type(owner), "target", None), property):
+        target = getattr(owner, "target")  # noqa: B009 - the property is not typed on object
+        if isinstance(target, str):
+            return target
     return f"another {type(owner).__qualname__}"
 
 

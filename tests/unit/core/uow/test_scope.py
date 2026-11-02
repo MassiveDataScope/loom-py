@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from celery.backends.base import BaseBackend
+from pymongo import AsyncMongoClient
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
@@ -89,8 +90,17 @@ async def _lookup(scope: InvocationScope, key: StoreKey, owner: object, write: b
 
 
 class _TargetedOwner:
-    def __init__(self, target: str) -> None:
-        self.target = target
+    def __init__(self, target: object) -> None:
+        self._target = target
+
+    @property
+    def target(self) -> object:
+        return self._target
+
+
+class _TargetAttribute:
+    def __init__(self) -> None:
+        self.target = "client(password='secret')"
 
 
 class _ReprLeaks:
@@ -182,6 +192,37 @@ class TestParticipantForFromTheOwner:
 
         with pytest.raises(ForeignSessionError, match=r"store 's0' \(postgresql://db-b:5432/app\)"):
             scope.participant_for(S0, owner, write=False)
+
+    @pytest.mark.parametrize(
+        "owner",
+        [
+            pytest.param(_TargetedOwner(b"secret"), id="target-not-a-str"),
+            pytest.param(_TargetAttribute(), id="target-not-a-property"),
+        ],
+    )
+    async def test_the_refusal_ignores_a_target_that_is_not_a_str_property(
+        self, owner: object
+    ) -> None:
+        scope, _ = await _enlisted(S0)
+
+        with pytest.raises(ForeignSessionError) as raised:
+            scope.participant_for(S0, owner, write=False)
+
+        assert "secret" not in str(raised.value)
+
+    async def test_the_refusal_never_prints_a_mongo_client_s_options(self) -> None:
+        scope, _ = await _enlisted(S0)
+        client: AsyncMongoClient[Any] = AsyncMongoClient(
+            "mongodb://loom:hunter2@db.internal/?tlsCertificateKeyFilePassword=keypass",
+            connect=False,
+        )
+        try:
+            with pytest.raises(ForeignSessionError) as raised:
+                scope.participant_for(S0, client, write=False)
+        finally:
+            await client.close()
+
+        assert "keypass" not in str(raised.value)
 
     async def test_the_refusal_names_an_owner_without_a_target_by_its_type_only(self) -> None:
         scope, _ = await _enlisted(S0)
