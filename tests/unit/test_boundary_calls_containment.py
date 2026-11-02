@@ -45,6 +45,8 @@ _ALLOWED: dict[tuple[str, str], int] = {
     ("core/cache/result_codec.py", "msgspec.to_builtins"): 1,
     ("rest/_body.py", "msgspec.json.encode"): 1,
     ("rest/auth/middleware.py", "msgspec.json.encode"): 1,
+    # Path parameters validated as FastAPI validates them, so the 422 is identical.
+    ("rest/aws_lambda/adapter.py", "pydantic.TypeAdapter"): 1,
     ("rest/fastapi/response.py", "msgspec.json.encode"): 1,
     ("rest/fastapi/router_runtime.py", "msgspec.json.decode"): 1,
     ("rest/fastapi/sql.py", "msgspec.json.Decoder"): 1,
