@@ -172,7 +172,7 @@ cli = [
     "typer>=0.12,<1",
 ]
 # AWS Lambda behind API Gateway: the REST stack without a server, and the
-# translator from API Gateway events to ASGI.
+# translator from API Gateway events to ASGI. The SQS adapter needs no extra.
 lambda = [
     "fastapi>=0.115,<1.0",
     "pydantic>=2.0,<3.0",
@@ -258,7 +258,6 @@ dev = [
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
-    "pytest-timeout>=2.3",
     "pyjwt[crypto]>=2.12.0",
     "redis>=5.0.0",
     "ruff>=0.9.0,<1.0",
@@ -293,6 +292,9 @@ dev = [
     "a2a-sdk>=1.1,<2",
     "pydantic-ai-harness[skills]>=0.28,<1",
     "typer>=0.12,<1",
+    "pytest-timeout>=2.3",
+    # The Lambda HTTP adapter's tests run in the fast lane, without extras.
+    "mangum>=0.22,<1.0",
 ]
 
 [tool.hatch.build.targets.wheel]

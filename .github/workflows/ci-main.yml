@@ -202,7 +202,7 @@ jobs:
           uv export --frozen --only-group dev --no-emit-project \
             -o "$MANIFEST_DIR/hashed-dev.txt"
 
-          for extra in rest sqlalchemy config cache pyspark prometheus celery streaming; do
+          for extra in rest sqlalchemy config cache pyspark prometheus celery streaming lambda; do
             uv export --frozen --no-default-groups --no-dev --extra "$extra" \
               --no-hashes --no-emit-project \
               -o "$MANIFEST_DIR/requirements-extra-${extra}.txt"
@@ -220,7 +220,7 @@ jobs:
             --file="$MANIFEST_DIR/requirements-dev.txt" --package-manager=pip \
             --project-name="loom-py/dev" --target-reference="${GITHUB_REF_NAME:-master}"
 
-          for extra in rest sqlalchemy config cache pyspark prometheus celery streaming; do
+          for extra in rest sqlalchemy config cache pyspark prometheus celery streaming lambda; do
             python -m pip install --require-hashes -r "$MANIFEST_DIR/hashed-extra-${extra}.txt"
             snyk monitor --skip-unresolved \
               --file="$MANIFEST_DIR/requirements-extra-${extra}.txt" \
