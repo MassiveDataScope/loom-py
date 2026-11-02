@@ -2235,6 +2235,12 @@ etl-spark = [
 jwt = [
     { name = "pyjwt", extra = ["crypto"] },
 ]
+lambda = [
+    { name = "fastapi" },
+    { name = "mangum" },
+    { name = "prometheus-client" },
+    { name = "pydantic" },
+]
 logfire = [
     { name = "logfire" },
     { name = "opentelemetry-api" },
@@ -2361,6 +2367,7 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'etl-polars'", specifier = ">=1.6.2,<2.0" },
     { name = "docker", marker = "extra == 'prefect'", specifier = ">=7.0" },
     { name = "fasta2a", marker = "extra == 'ai-a2a'", specifier = ">=0.6,<1" },
+    { name = "fastapi", marker = "extra == 'lambda'", specifier = ">=0.115,<1.0" },
     { name = "fastapi", marker = "extra == 'rest'", specifier = ">=0.115,<1.0" },
     { name = "findspark", marker = "extra == 'etl-spark'", specifier = ">=2.0,<3.0" },
     { name = "fsspec", marker = "extra == 'config'", specifier = ">=2024.2.0" },
@@ -2372,6 +2379,7 @@ requires-dist = [
     { name = "httptools", marker = "extra == 'rest'", specifier = ">=0.6,<1.0" },
     { name = "kombu", marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.0,<5" },
+    { name = "mangum", marker = "extra == 'lambda'", specifier = ">=0.22,<1.0" },
     { name = "msgspec", specifier = ">=0.18,<1.0" },
     { name = "omegaconf", specifier = ">=2.3,<3.0" },
     { name = "omegaconf", marker = "extra == 'cache'", specifier = ">=2.3,<3.0" },
@@ -2400,9 +2408,11 @@ requires-dist = [
     { name = "polars", marker = "extra == 'etl-polars'", specifier = ">=1.24,<2.0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.0,<4.0" },
     { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "prometheus-client", marker = "extra == 'lambda'", specifier = ">=0.20" },
     { name = "prometheus-client", marker = "extra == 'prometheus'", specifier = ">=0.20" },
     { name = "prometheus-client", marker = "extra == 'rest'", specifier = ">=0.20" },
     { name = "pyarrow", marker = "extra == 'etl-polars'", specifier = ">=14.0" },
+    { name = "pydantic", marker = "extra == 'lambda'", specifier = ">=2.0,<3.0" },
     { name = "pydantic", marker = "extra == 'rest'", specifier = ">=2.0,<3.0" },
     { name = "pydantic-ai-harness", extras = ["skills"], marker = "extra == 'ai-harness'", specifier = ">=0.28,<1" },
     { name = "pydantic-ai-slim", marker = "extra == 'ai-pydantic'", specifier = ">=2.45,<3" },
@@ -2427,7 +2437,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'rest'", specifier = ">=0.21,<1.0" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'streaming'", specifier = ">=0.21,<1.0" },
 ]
-provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "dynamodb", "etl-otel", "etl-polars", "etl-spark", "jwt", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "streaming", "testing"]
+provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "dynamodb", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "streaming", "testing"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2544,6 +2554,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/05/7f/0b891a82379ffd96d2d8cc6d435fb1055cdaed52829287f81d2a43fd71cb/mako-1.4.2.tar.gz", hash = "sha256:7227a060ee3af55a493af61d73d6beef13044b81dba9586736c13945f09464ce", size = 412231, upload-time = "2026-09-22T20:40:55.06Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/bb/0e4c30a18858adebc75496ea8a8c3fb65cbf4b36ea1c5028ed8a0a5fa196/mako-1.4.2-py3-none-any.whl", hash = "sha256:e70a2a4308952b33a21208bfd6725da79fae5a8c224578f8cfdeb60e5ace03df", size = 80163, upload-time = "2026-09-22T20:40:56.423Z" },
+]
+
+[[package]]
+name = "mangum"
+version = "0.22.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/82/c8/1579c705908d02a4526a748e8d0f0419151d4498c59033840f5df3a14822/mangum-0.22.0.tar.gz", hash = "sha256:701936891aaed8ed66479b871c2bda87ba288fd01c7d5dd6ba6c8e9ba1c239d1", size = 118290, upload-time = "2026-08-22T12:54:48.396Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/a2/21ee5d457ae79a2587ff0d4652990670b7cac84ba0eaab6e6865a3bd2515/mangum-0.22.0-py3-none-any.whl", hash = "sha256:a0595e3cc7a8091b22d8b3997bab5b2ad6aae7a5e40865e19c2015f5c959a93b", size = 17143, upload-time = "2026-08-22T12:54:46.924Z" },
 ]
 
 [[package]]

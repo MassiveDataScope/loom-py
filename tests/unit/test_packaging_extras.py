@@ -69,3 +69,11 @@ def test_spark_extras_skip_pyspark_on_python_313(extra: str, packages: tuple[str
         assert package in _extra_requirements(extra, python="3.12")
         assert package not in _extra_requirements(extra, python="3.13")
         assert package not in _extra_requirements(extra, python="3.14")
+
+
+def test_lambda_extra_installs_the_rest_stack_and_mangum() -> None:
+    requirements = _extra_requirements("lambda")
+
+    assert {"fastapi", "pydantic", "prometheus-client", "mangum"} <= requirements.keys()
+    assert requirements["mangum"].specifier.contains("0.22")
+    assert not requirements["mangum"].specifier.contains("0.21")

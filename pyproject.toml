@@ -171,6 +171,14 @@ cli = [
     "pyyaml>=6",
     "typer>=0.12,<1",
 ]
+# AWS Lambda behind API Gateway: the REST stack without a server, and the
+# translator from API Gateway events to ASGI.
+lambda = [
+    "fastapi>=0.115,<1.0",
+    "pydantic>=2.0,<3.0",
+    "prometheus-client>=0.20",
+    "mangum>=0.22,<1.0",
+]
 
 [project.entry-points."loom.ai.engines"]
 pydantic-ai = "loom.ai.engines.pydantic_ai.provider:PydanticAIEngineProvider"
@@ -250,6 +258,7 @@ dev = [
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-timeout>=2.3",
     "pyjwt[crypto]>=2.12.0",
     "redis>=5.0.0",
     "ruff>=0.9.0,<1.0",
