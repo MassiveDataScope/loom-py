@@ -524,8 +524,10 @@ stores:
     collections:                 # optional, keyed by model class name
       Order: orders_v2
     pool:
-      size: 50                   # optional; driver default when absent
-      timeout: 2                 # seconds waiting for a free connection; optional
+      size: 8
+      max_overflow: 0
+      timeout: 2
+      recycle: 300
     server_selection_timeout: 5  # seconds; optional, driver default when absent
 ```
 
@@ -538,7 +540,9 @@ stores:
 | `collections` | `{}` | Collection name per model **class name**; absent models use `__tablename__`. |
 | `username`, `password` | unset | Credentials; win over those of the `url`. |
 | `connect_timeout`, `read_timeout`, `server_selection_timeout` | unset | Seconds; forwarded to the driver only when set. |
-| `pool.size`, `pool.timeout` | unset | Connections kept, and seconds a caller waits for one; forwarded only when set. |
+| `pool.size`, `pool.max_overflow`, `pool.timeout`, `pool.recycle` | entry-point profile | Each declared key overrides the profile. PyMongo receives `maxPoolSize = size + max_overflow`, `waitQueueTimeoutMS = timeout × 1000`, and `maxIdleTimeMS = recycle × 1000`; `minPoolSize` is always 0. `pool.pre_ping` has no pymongo equivalent and is ignored. |
+
+`maxIdleTimeMS` limits idle time, not total connection lifetime.
 
 The section rejects unknown keys, so a misspelt option is a `ConfigError`
 at startup rather than a silently ignored setting, and startup logs

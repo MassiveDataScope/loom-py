@@ -17,7 +17,7 @@ import loom.core.repository.mongo.backend as backend_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import PersistenceWiring, resolve_backend
-from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.persistence.profile import SERVER_PROFILE, WORKER_PROFILE, RuntimeProfile
 from loom.core.repository.mongo.backend import MongoBackend
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
@@ -117,30 +117,101 @@ def test_wiring_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     assert wiring.readiness is not None
 
 
-def test_client_seam_forwards_only_the_options_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[str, dict[str, Any]]] = []
+@pytest.fixture
+def client_options(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
 
-    def _record(*, host: str, **options: Any) -> FakeMongoClient:
-        seen.append((host, options))
+    def _record(**options: Any) -> FakeMongoClient:
+        seen.append(options)
         return FakeMongoClient()
 
     monkeypatch.setattr(mongo_island, "AsyncMongoClient", _record)
+    return seen
 
-    build_backend(MongoBackend(), _ctx(_SECTION), (), SERVER_PROFILE)
+
+@pytest.mark.parametrize(
+    ("profile", "max_size", "wait_ms"),
+    [
+        (SERVER_PROFILE, 10, 10000),
+        (WORKER_PROFILE, 2, 30000),
+    ],
+)
+def test_client_uses_profile_pool(
+    client_options: list[dict[str, Any]],
+    profile: RuntimeProfile,
+    max_size: int,
+    wait_ms: int,
+) -> None:
+    build_backend(MongoBackend(), _ctx(_SECTION), (), profile)
+
+    assert client_options[0]["maxPoolSize"] == max_size
+    assert client_options[0]["waitQueueTimeoutMS"] == wait_ms
+    assert client_options[0]["minPoolSize"] == 0
+    assert client_options[0]["maxIdleTimeMS"] == 1800000
+
+
+def test_explicit_pool_values_win_key_by_key(client_options: list[dict[str, Any]]) -> None:
     build_backend(
         MongoBackend(),
-        _ctx({**_SECTION, "pool": {"size": 8}, "server_selection_timeout": 2}),
+        _ctx({**_SECTION, "pool": {"size": 8, "timeout": 2, "recycle": 60}}),
         (),
         SERVER_PROFILE,
     )
 
-    assert seen == [
-        ("mongodb://localhost:27017", {"tz_aware": True}),
-        (
-            "mongodb://localhost:27017",
-            {"tz_aware": True, "maxPoolSize": 8, "serverSelectionTimeoutMS": 2000},
-        ),
-    ]
+    assert client_options[0]["maxPoolSize"] == 13
+    assert client_options[0]["waitQueueTimeoutMS"] == 2000
+    assert client_options[0]["maxIdleTimeMS"] == 60000
+    assert client_options[0]["minPoolSize"] == 0
+
+
+def test_store_without_pool_section_gets_profile(client_options: list[dict[str, Any]]) -> None:
+    build_backend(MongoBackend(), _ctx(_SECTION), (), WORKER_PROFILE)
+
+    assert client_options[0]["maxPoolSize"] == 2
+
+
+def test_explicit_overflow_wins_over_profile(client_options: list[dict[str, Any]]) -> None:
+    build_backend(
+        MongoBackend(),
+        _ctx({**_SECTION, "pool": {"max_overflow": 1}}),
+        (),
+        SERVER_PROFILE,
+    )
+
+    assert client_options[0]["maxPoolSize"] == 6
+
+
+def test_client_forwards_explicit_server_selection_timeout(
+    client_options: list[dict[str, Any]],
+) -> None:
+    build_backend(
+        MongoBackend(),
+        _ctx({**_SECTION, "server_selection_timeout": 2}),
+        (),
+        SERVER_PROFILE,
+    )
+
+    assert client_options[0]["serverSelectionTimeoutMS"] == 2000
+
+
+def test_client_forwards_uri_and_aware_datetime_option(
+    client_options: list[dict[str, Any]],
+) -> None:
+    build_backend(MongoBackend(), _ctx(_SECTION), (), SERVER_PROFILE)
+
+    assert client_options[0]["host"] == "mongodb://localhost:27017"
+    assert client_options[0]["tz_aware"] is True
+
+
+def test_pre_ping_is_accepted_without_a_driver_option(client_options: list[dict[str, Any]]) -> None:
+    build_backend(
+        MongoBackend(),
+        _ctx({**_SECTION, "pool": {"pre_ping": False}}),
+        (),
+        SERVER_PROFILE,
+    )
+
+    assert "pre_ping" not in client_options[0]
 
 
 def test_unknown_section_key_is_a_config_error(monkeypatch: pytest.MonkeyPatch) -> None:

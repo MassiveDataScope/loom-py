@@ -13,14 +13,17 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Literal
 
+import msgspec
 from pymongo import AsyncMongoClient
 
 from loom.core.config import ConfigContext
-from loom.core.connections.mongo import MongoConnection
+from loom.core.connections.mongo import MongoConnection, MongoPool
 from loom.core.connections.mongo.client import build_async_mongo_client
 from loom.core.model import BaseModel
+from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.abc import PersistenceWiring
-from loom.core.persistence.profile import BackendRuntime
+from loom.core.persistence.database import PoolConfig
+from loom.core.persistence.profile import BackendRuntime, PoolDefaults, RuntimeProfile
 from loom.core.persistence.stores import StoreCapabilities, StoreSpec
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
@@ -38,6 +41,24 @@ _logger = logging.getLogger(__name__)
 _ID_POLICIES: dict[str, type[IdPolicy]] = {"uuid4": Uuid4IdPolicy, "objectid": ObjectIdPolicy}
 
 
+class MongoRepositoryPool(MongoPool, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """Store pool overrides, resolved key by key against the runtime profile."""
+
+    max_overflow: NonNegativeInt | None = None
+    recycle: PositiveInt | None = None
+    pre_ping: bool | None = None
+
+    def resolve(self, profile: RuntimeProfile) -> PoolDefaults:
+        """Use the same store-over-profile precedence as SQLAlchemy."""
+        return PoolConfig(
+            size=self.size,
+            max_overflow=self.max_overflow,
+            timeout=self.timeout,
+            recycle=self.recycle,
+            pre_ping=self.pre_ping,
+        ).resolve(profile)
+
+
 class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
     """A ``mongo`` store section: the Mongo connection plus how the repository uses it.
 
@@ -53,6 +74,7 @@ class MongoRepositoryConfig(MongoConnection, frozen=True, kw_only=True):
     transactions: bool = False
     collections: dict[str, str] = {}
     id: Literal["uuid4", "objectid"] = "uuid4"
+    pool: MongoRepositoryPool = msgspec.field(default_factory=MongoRepositoryPool)
 
 
 class MongoBackend:
@@ -61,7 +83,8 @@ class MongoBackend:
     Reads the section of the store it serves and ``persistence.cursors``,
     opens one async client shared by the unit of work and every repository,
     binds each model to a collection of the configured database and closes
-    the client at shutdown.
+    the client at shutdown. Pool keys resolve against the entry-point profile;
+    ``pre_ping`` is ignored because pymongo has no equivalent.
     """
 
     name: ClassVar[str] = "mongo"
@@ -85,8 +108,7 @@ class MongoBackend:
         Args:
             ctx: Configuration context holding the ``persistence.cursors`` section.
             models: Models whose repositories the DI module registers.
-            runtime: The catalog and the store it serves (``runtime.store``);
-                the Mongo client takes none of the entry-point defaults yet.
+            runtime: The catalog, store and entry-point pool defaults.
 
         Returns:
             The Mongo wiring.
@@ -99,8 +121,19 @@ class MongoBackend:
         spec = runtime.catalog.served_by(self.name, runtime.store)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
         cursor_codec = CursorCodec.from_context(ctx)
+        pool = mongo_cfg.pool.resolve(runtime.profile)
+        client_cfg = msgspec.structs.replace(
+            mongo_cfg,
+            pool=MongoRepositoryPool(size=pool.size + pool.max_overflow, timeout=pool.timeout_s),
+        )
         # tz_aware: datetimes read back as aware UTC, the form the repository writes.
-        client = build_async_mongo_client(mongo_cfg, tz_aware=True)
+        # PyMongo has no equivalent of pre_ping or max connection lifetime.
+        client = build_async_mongo_client(
+            client_cfg,
+            tz_aware=True,
+            minPoolSize=0,
+            maxIdleTimeMS=pool.recycle_s * 1000,
+        )
         return PersistenceWiring(
             uow_factory=_unit_of_work_factory(client, mongo_cfg),
             repo_registration_module=build_mongo_repository_registration_module(
