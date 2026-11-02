@@ -13,7 +13,7 @@ import asyncio
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -23,7 +23,9 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import QueuePool
 
-from loom.core.authz.elevation import elevated_scopes
+from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
+from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
@@ -34,8 +36,8 @@ from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import (
-    SQLAlchemyElevationSink,
     create_schema,
+    elevate,
     register_scope_source,
 )
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
@@ -72,14 +74,27 @@ OWNER = text("SELECT coalesce(current_setting('loom.scope.owner', true), '')")
 BODIES = text("SELECT body FROM notes ORDER BY body")
 BACKEND_PID = text("SELECT pg_backend_pid()")
 EDITOR_FLAG = text("SELECT coalesce(current_setting('loom.scope.editor.any', true), '')")
+PROBE = text("SELECT coalesce(current_setting('loom.probe', true), '')")
+MANAGE = Permission("members.manage")
+DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+
+
+@dataclass
+class _Product:
+    catalog: RoleCatalog = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
+    delegate: Permission = MANAGE
+    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
 
 
 @pytest.fixture(autouse=True)
 def _editor_source() -> Iterator[None]:
     clear_scope_sources()
+    clear_authz_product()
     register_scope_source("editor", lambda: "ana")
+    register_authz_product(_Product())
     yield
     clear_scope_sources()
+    clear_authz_product()
 
 
 @dataclass(frozen=True)
@@ -164,12 +179,20 @@ class Store:
     wiring: PersistenceWiring
     manager: SessionManager
     notes: RepositorySQLAlchemy
+    wired_sink: ElevationSink | None
 
     def unit_of_work(self) -> UnitOfWork:
         factory = self.wiring.uow_factory
         if factory is None:
             raise RuntimeError(f"store {self.key!r} serves no unit of work")
         return factory.create()
+
+    @property
+    def sink(self) -> ElevationSink:
+        """The elevation sink the backend registered for this store."""
+        if self.wired_sink is None:
+            raise RuntimeError(f"store {self.key!r} registers no elevation sink")
+        return self.wired_sink
 
     def checked_out(self) -> int:
         pool = self.manager.engine.sync_engine.pool
@@ -187,7 +210,15 @@ def _build(ctx: ConfigContext, key: StoreKey) -> Store:
     repository = RepositorySQLAlchemy(
         manager, notes.Note, cursor_codec=container.resolve(CursorCodec)
     )
-    return Store(key=key, wiring=wiring, manager=manager, notes=repository)
+    return Store(
+        key=key,
+        wiring=wiring,
+        manager=manager,
+        notes=repository,
+        wired_sink=(
+            container.resolve(ElevationSink) if container.is_registered(ElevationSink) else None
+        ),
+    )
 
 
 @asynccontextmanager
@@ -471,16 +502,23 @@ def _both(stores: Mapping[StoreKey, Store]) -> OrderedCommits:
 
 
 async def _flags_after_elevating(stores: Mapping[StoreKey, Store], elevated: StoreKey) -> Any:
-    """Elevate ``editor`` through *elevated*'s sink with both stores enlisted; read both flags."""
+    """Elevate ``editor`` with *elevated*'s wired sink once both stores' transactions began.
+
+    Both transactions are open before ``elevate()``, so the flag can reach
+    them only through the sink, never through the session-settings provider.
+    """
     async with (
         invocation(_both(stores)) as scope,
         scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
     ):
-        await SQLAlchemyElevationSink(stores[elevated].manager).set_flag("editor")
-        return {
-            key: (await _active(store).execute(EDITOR_FLAG)).scalar_one()
-            for key, store in stores.items()
-        }
+        for store in stores.values():
+            await _active(store).execute(OWNER)
+        async with elevation_scope(owns_transaction=True, sink=stores[elevated].sink):
+            await elevate("editor", DECISION, at=Scope.of(U1))
+            return {
+                key: (await _active(store).execute(EDITOR_FLAG)).scalar_one()
+                for key, store in stores.items()
+            }
 
 
 @pytest.mark.parametrize("elevated", STORES)
@@ -493,3 +531,89 @@ async def test_an_elevation_flag_is_set_on_its_own_store_s_session_only(
 
     assert flags == {elevated: "on", OTHER[elevated]: ""}
     assert residue == {DEFAULT_STORE: "", AUDIT: ""}
+
+
+async def _per_call_flag_after_elevating(
+    stores: Mapping[StoreKey, Store], elevated: StoreKey
+) -> str:
+    """Elevate ``editor`` in *elevated*'s execution; read the other store's per-call flag."""
+    async with (
+        invocation(_both(stores)) as scope,
+        scope.frame(Frame(elevated)),
+        elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
+    ):
+        await _active(stores[elevated]).execute(OWNER)
+        await elevate("editor", DECISION, at=Scope.of(U1))
+        async with stores[OTHER[elevated]].manager.session() as per_call:
+            return str((await per_call.execute(EDITOR_FLAG)).scalar_one())
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="D2 / PR 5: the elevated scope set is not per store, so the other store's "
+    "session-settings provider applies a same-named elevable scope too (F2)",
+)
+@pytest.mark.parametrize("elevated", STORES)
+async def test_an_elevation_in_one_store_never_reaches_a_per_call_session_of_the_other(
+    two_servers: TwoServers, elevated: StoreKey
+) -> None:
+    async with _started(two_servers.context()) as stores:
+        flag = await _as(U1, lambda: _per_call_flag_after_elevating(stores, elevated))
+
+    assert flag == ""
+
+
+async def _session_setting_left_behind(store: Store) -> tuple[int, str]:
+    """Leave a session-level setting on the unit of work's connection; its pid and the value."""
+    await store.manager.engine.dispose()
+    async with store.unit_of_work():
+        session = _active(store)
+        await session.execute(text("SET loom.probe = 'left'"))
+        pid = (await session.execute(BACKEND_PID)).scalar_one()
+        value = (await session.execute(PROBE)).scalar_one()
+    return pid, value
+
+
+async def _back_from_the_pool(store: Store) -> tuple[int, str]:
+    """The pid and the probe setting of the connection the pool hands out next."""
+    async with store.manager.engine.connect() as raw:
+        pid = (await raw.execute(BACKEND_PID)).scalar_one()
+        return pid, str((await raw.execute(PROBE)).scalar_one())
+
+
+@pytest.fixture
+async def pool_round_trip(two_servers: TwoServers) -> dict[StoreKey, tuple[tuple[int, str], ...]]:
+    """Per store: the unit of work's (pid, probe), then the next pooled connection's."""
+    async with _started(two_servers.context()) as stores:
+        trips: dict[StoreKey, tuple[tuple[int, str], ...]] = {}
+        for key, store in stores.items():
+            left = await _as(U1, lambda store=store: _session_setting_left_behind(store))
+            trips[key] = (left, await _back_from_the_pool(store))
+    return trips
+
+
+@pytest.mark.parametrize("key", STORES)
+def test_the_pool_hands_the_same_connection_back(
+    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+) -> None:
+    (left_pid, _), (back_pid, _) = pool_round_trip[key]
+
+    assert back_pid == left_pid
+
+
+@pytest.mark.parametrize("key", STORES)
+def test_the_setting_was_set_on_that_connection(
+    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+) -> None:
+    (_, left), _ = pool_round_trip[key]
+
+    assert left == "left"
+
+
+@pytest.mark.parametrize("key", STORES)
+def test_a_session_level_setting_is_reset_when_the_connection_returns(
+    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+) -> None:
+    _, (_, back) = pool_round_trip[key]
+
+    assert back == ""
