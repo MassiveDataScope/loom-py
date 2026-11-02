@@ -77,7 +77,7 @@ class LambdaUnservedConfigError(ConfigError):
 
 
 class LambdaHTTPAdapter:
-    """Serve a composed application to API Gateway (HTTP API or REST API) from AWS Lambda.
+    """Serve a composed application to API Gateway HTTP API (payload 2.0) from AWS Lambda.
 
     Swapping ``FastAPIAdapter()`` for ``LambdaHTTPAdapter()`` in
     ``create_app`` is the whole change: the same configuration and code serve

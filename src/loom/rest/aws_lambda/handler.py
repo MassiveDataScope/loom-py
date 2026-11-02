@@ -46,7 +46,7 @@ class LambdaHTTPHandler:
         self._mangum = Mangum(app, lifespan="off")
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
-        """Answer one API Gateway or ALB event."""
+        """Answer one API Gateway HTTP API event."""
         # Mangum runs on the thread's current loop: make sure it is the one
         # the application was opened on.
         asyncio.set_event_loop(self._loop)

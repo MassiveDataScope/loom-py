@@ -51,6 +51,21 @@ def test_a_body_that_is_not_json_answers_400(served: Client) -> None:
     )
 
 
+def test_a_query_parameter_the_route_refuses_answers_400(served: Client) -> None:
+    reply = served("GET", "/items/7?profile=full", headers=_ALICE)
+
+    assert (reply.status, reply.json()) == (
+        400,
+        {
+            "detail": {
+                "code": "bad_request",
+                "message": "Query parameter 'profile' is not allowed for this route.",
+                "trace_id": TRACE_ID,
+            }
+        },
+    )
+
+
 def test_a_request_without_a_token_answers_401_with_a_challenge(served: Client) -> None:
     reply = served("GET", "/items/7")
 
@@ -250,6 +265,7 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
     ("method", "path", "headers", "body"),
     [
         ("GET", "/items/7", _ALICE, b""),
+        ("GET", "/items/7?profile=full", _ALICE, b""),
         ("GET", "/items/seven", _ALICE, b""),
         ("GET", "/items/404", _ALICE, b""),
         ("POST", "/items/7", _ALICE, b""),
@@ -263,6 +279,7 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
     ],
     ids=[
         "200",
+        "400-query",
         "422-path",
         "404-loom",
         "405",

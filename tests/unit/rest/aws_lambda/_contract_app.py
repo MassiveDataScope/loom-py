@@ -203,18 +203,19 @@ def bearer(subject: str, *roles: str) -> dict[str, str]:
 
 
 def http_api_event(
-    method: str, path: str, headers: Mapping[str, str], body: bytes = b""
+    method: str, target: str, headers: Mapping[str, str], body: bytes = b""
 ) -> dict[str, Any]:
-    """An API Gateway HTTP API (payload 2.0) event, as Lambda receives it.
+    """An API Gateway HTTP API (payload 2.0) event for *target*, a path and query string.
 
     API Gateway forwards the ``content-length`` of a request with a body.
     """
     length = {"content-length": str(len(body))} if body else {}
+    path, _, query = target.partition("?")
     return {
         "version": "2.0",
         "routeKey": "$default",
         "rawPath": path,
-        "rawQueryString": "",
+        "rawQueryString": query,
         "headers": {"host": "api.example", **length, **headers},
         "requestContext": {
             "accountId": "123456789012",
