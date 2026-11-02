@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from typing import Final
 
 from sqlalchemy import text
@@ -13,7 +13,7 @@ from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTable
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
-from loom.core.repository.sqlalchemy.session_manager import SessionManager, _session_to_join
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
 
 _SET_SETTINGS: Final = text(SET_SETTINGS)
@@ -25,6 +25,10 @@ class SQLAlchemyElevationSink:
     The sink only ever touches the session its own store's participant holds
     in the current invocation, so an elevation flag can never be set on
     another store's session. Without that participant it does nothing.
+
+    Every method reads that session when it is called, through
+    :attr:`SessionManager.active_session`, and returns the statement left to
+    await, which may then run in any task.
 
     Args:
         session_manager: The session manager of the store whose sessions it
@@ -41,26 +45,30 @@ class SQLAlchemyElevationSink:
         self._session_manager = session_manager
 
     def in_transaction(self) -> bool:
-        session = _session_to_join(self._session_manager, write=False)
+        session = self._session_manager.active_session
         return session is not None and session.in_transaction()
 
-    async def set_flag(self, scope: str) -> None:
-        await self._apply({elevation_setting(scope): "on"})
+    def set_flag(self, scope: str) -> Awaitable[object]:
+        return self._apply({elevation_setting(scope): "on"})
 
-    async def clear_flags(self, scopes: frozenset[str]) -> None:
-        await self._apply({elevation_setting(scope): "" for scope in sorted(scopes)})
+    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
+        return self._apply({elevation_setting(scope): "" for scope in sorted(scopes)})
 
-    async def invalidate(self) -> None:
-        session = _session_to_join(self._session_manager, write=False)
-        if session is not None:
-            await session.invalidate()
+    def invalidate(self) -> Awaitable[object]:
+        session = self._session_manager.active_session
+        return _nothing() if session is None else session.invalidate()
 
-    async def _apply(self, values: Mapping[str, str]) -> None:
-        session = _session_to_join(self._session_manager, write=False)
+    def _apply(self, values: Mapping[str, str]) -> Awaitable[object]:
+        # Read now, in the calling task: the frame may await the statement in another.
+        session = self._session_manager.active_session
         parameters = settings_parameters(values)
         if session is None or parameters is None:
-            return
-        await session.execute(_SET_SETTINGS, parameters)
+            return _nothing()
+        return session.execute(_SET_SETTINGS, parameters)
+
+
+async def _nothing() -> None:
+    """The driver call left when there is no transaction to touch."""
 
 
 async def elevate(

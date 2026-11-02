@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -24,17 +24,27 @@ from loom.core.authz._scope import Scope
 
 _logger = logging.getLogger(__name__)
 
+_CLEAR_TIMEOUT_S = 30.0
+"""How long clearing the flags, then invalidating the session, may take, cancelled or not."""
+
 
 class ElevationSink(Protocol):
-    """How the frame reaches the transaction that is open right now."""
+    """How the frame reaches the transaction that is open right now.
+
+    Each method finds that transaction when it is called, in the calling
+    task, and returns only the driver call left to await. The frame may await
+    that call in a task of its own, so a cancellation cannot cut it short;
+    finding the transaction there would fail the owner-task check of the
+    invocation scope.
+    """
 
     def in_transaction(self) -> bool: ...
 
-    async def set_flag(self, scope: str) -> None: ...
+    def set_flag(self, scope: str) -> Awaitable[object]: ...
 
-    async def clear_flags(self, scopes: frozenset[str]) -> None: ...
+    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]: ...
 
-    async def invalidate(self) -> None: ...
+    def invalidate(self) -> Awaitable[object]: ...
 
 
 @dataclass(slots=True)
@@ -135,6 +145,15 @@ def _check(
 
 
 async def _clear_added(frame: _Frame) -> None:
+    """Clear the flags ``frame`` added to the open transaction, or invalidate its session.
+
+    A cancellation arriving meanwhile waits for both and is re-raised after:
+    the outer execution keeps the transaction, so it must never get it back
+    with a flag still on.
+
+    Raises:
+        asyncio.CancelledError: The first cancellation received meanwhile.
+    """
     if frame.owns_transaction or frame.sink is None:
         return
     inherited = frame.parent.scopes if frame.parent is not None else set()
@@ -143,20 +162,56 @@ async def _clear_added(frame: _Frame) -> None:
     # elevated nothing closes without touching the session.
     if not added or not frame.sink.in_transaction():
         return
-    try:
-        await asyncio.shield(frame.sink.clear_flags(added))
-    except Exception:
-        _logger.exception(
-            "elevation flags could not be cleared for %s; invalidating the session", sorted(added)
+    sink = frame.sink
+    failure, cancelled = await _settle(lambda: sink.clear_flags(added))
+    if failure is not None:
+        _logger.error(
+            "elevation flags could not be cleared for %s; invalidating the session",
+            sorted(added),
+            exc_info=failure,
         )
-        await _invalidate(frame.sink)
+        failure, cancelled_again = await _settle(sink.invalidate)
+        cancelled = cancelled or cancelled_again
+        if failure is not None:
+            _logger.error(
+                "the session could not be invalidated after a failed clearing", exc_info=failure
+            )
+    if cancelled is not None:
+        raise cancelled
 
 
-async def _invalidate(sink: ElevationSink) -> None:
+async def _settle(
+    call: Callable[[], Awaitable[object]],
+) -> tuple[Exception | None, asyncio.CancelledError | None]:
+    """Run ``call`` to completion or to :data:`_CLEAR_TIMEOUT_S`, whatever cancels the caller.
+
+    ``call`` itself runs here, in the caller's task, where the sink finds the
+    session; only the driver call it returns is awaited in a task of its own.
+
+    Returns:
+        What ``call`` failed with, if anything, and the first cancellation
+        the caller received while waiting.
+    """
     try:
-        await sink.invalidate()
-    except Exception:
-        _logger.exception("the session could not be invalidated after a failed clearing")
+        step = call()
+    except Exception as exc:
+        return exc, None
+    pending = asyncio.ensure_future(_failure_of(step))
+    cancelled: asyncio.CancelledError | None = None
+    while not pending.done():
+        try:
+            await asyncio.wait([pending])
+        except asyncio.CancelledError as exc:  # NOSONAR S7497 - re-raised by the caller
+            cancelled = cancelled or exc
+    return pending.result(), cancelled
+
+
+async def _failure_of(step: Awaitable[object]) -> Exception | None:
+    try:
+        await asyncio.wait_for(step, _CLEAR_TIMEOUT_S)
+    except Exception as exc:
+        return exc
+    return None
 
 
 def _open_frame() -> _Frame | None:
