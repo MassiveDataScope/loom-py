@@ -5,8 +5,10 @@ The worker runs the same recipe as every other entry point
 any persistence backend, row-level security bound in
 ``prepare_models``, the cache gateways closed on the way out, and
 ``JobService`` and ``SqlQueryService`` in its container.  What stays specific
-to the worker is its discovery, its pool profile, the agent markers it
-refuses, and when the Celery signals check, open and close the application:
+to the worker is its discovery, its pool profile, and when the Celery
+signals check, open and close the application.  Its recipe declares
+``agents=False``, so the composition root refuses any ``Agent()`` or
+``Mcp()`` marker at start-up:
 
 * prefork: ``worker_init`` checks once in the parent and opens nothing;
   ``worker_process_init`` opens each child with ``check=False``;
@@ -64,7 +66,6 @@ from loom.celery.runner import (
 )
 from loom.composition import Application, ApplicationHost, CompositionSource, Recipe
 from loom.core.async_bridge import build_backend_options
-from loom.core.bootstrap import KernelRuntime
 from loom.core.checks import REST_CHECKS
 from loom.core.config import ConfigKey
 from loom.core.discovery.base import DiscoveryResult
@@ -72,8 +73,6 @@ from loom.core.engine.compilable import Compilable
 from loom.core.persistence import WORKER_PROFILE
 from loom.core.persistence.stores import NONE_BACKEND
 from loom.core.runner import shutdown_runner
-from loom.core.use_case.agent_markers import declaring_agent_bindings
-from loom.core.use_case.mcp_markers import declaring_mcp_bindings
 
 if TYPE_CHECKING:
     from loom.core.engine.metrics import MetricsAdapter
@@ -90,48 +89,6 @@ _SIGNAL_UIDS = {
     worker_process_shutdown: "loom.celery.worker.process_shutdown",
     worker_shutdown: "loom.celery.worker.shutdown",
 }
-
-
-# ---------------------------------------------------------------------------
-# Agent() and Mcp() marker refusal
-# ---------------------------------------------------------------------------
-
-
-def _reject_ai_markers(compilables: Sequence[type[Compilable]], kernel: KernelRuntime) -> None:
-    """Abort worker start-up when a compiled use case declares ``Agent()`` or ``Mcp()``.
-
-    A task worker never builds an AI runtime (its recipe declares
-    ``agents=False``), so a use case declaring either marker would compile here
-    and only fail once a task actually invoked it. Refusing at start-up
-    instead reuses the checks the API runs, :func:`loom.ai._startup.verify_agent_markers`
-    then :func:`loom.ai._startup.verify_mcp_markers`, called with nothing
-    configured, which reports every declared name as unknown.
-
-    Args:
-        compilables: Every use case and job compiled for this worker.
-        kernel: The kernel runtime, whose compiler already holds each of
-            their plans and whose registry names them in the error.
-
-    Raises:
-        AgentCompilationError: Naming each declaring use case and its marked
-            parameter, when at least one declares a marker.
-    """
-    agents = declaring_agent_bindings(compilables, kernel.compiler)
-    mcp = declaring_mcp_bindings(compilables, kernel.compiler)
-    if not agents and not mcp:
-        # Nothing declares a marker: importing 'loom.ai' here, only to find
-        # nothing to check, would pull the AI pillar into every worker
-        # process regardless of whether any job or use case ever reaches it.
-        return
-
-    # Local import: the AI pillar is optional and this branch only runs once
-    # a declaring use case is already known to exist.
-    from loom.ai._startup import verify_agent_markers, verify_mcp_markers
-
-    if agents:
-        verify_agent_markers(agents, kernel.registry, {})
-    if mcp:
-        verify_mcp_markers(mcp, kernel.registry, {})
 
 
 # ---------------------------------------------------------------------------
@@ -438,17 +395,14 @@ class CeleryAdapter:
         )
 
     def bind(self, application: Application) -> Celery:
-        """Refuse agent markers, register the tasks and connect the lifecycle signals.
+        """Register the tasks and connect the lifecycle signals.
 
         Raises:
             RuntimeError: When :meth:`recipe` has not run on this instance.
-            AgentCompilationError: When a compiled use case declares an
-                ``Agent()`` or ``Mcp()`` marker.
         """
         if self._declared is None:
             raise RuntimeError("CeleryAdapter.bind needs the recipe it declared; call recipe first")
         declared = self._declared
-        _reject_ai_markers(application.discovered.use_cases, application.kernel)
 
         async_runtime = _build_async_runtime(declared.celery.runtime)
         celery_app = create_celery_app(declared.celery)

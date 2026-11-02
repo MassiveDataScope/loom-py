@@ -28,7 +28,8 @@ class Recipe:
         skip_checks: Deploy-check areas this entry point does not serve,
             such as :data:`~loom.core.checks.REST_CHECKS` for a worker.
         agents: Whether this entry point hosts the agent runtime; without it
-            an ``ai`` section is ignored.
+            an ``ai`` section is ignored and any compiled use case declaring
+            an ``Agent()`` or ``Mcp()`` marker is refused at start-up.
         metrics: Use-case metrics, or ``None``.
         pool_metrics: Connection-pool metrics, only for an entry point that
             serves a scrape.

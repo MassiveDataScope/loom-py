@@ -408,6 +408,49 @@ def verify_agent_markers(
     verify_agent_markers(declaring, registry, plans_by_name)
 
 
+def reject_ai_markers(
+    use_cases: Sequence[type[Compilable]],
+    compiler: UseCaseCompiler,
+    registry: UseCaseRegistry,
+) -> None:
+    """Abort start-up when an entry point without agents compiles an ``Agent()`` or ``Mcp()``.
+
+    An entry point whose recipe declares ``agents=False`` (a task worker, for
+    instance) never builds an AI runtime, so a use case declaring either
+    marker would compile and only fail once something actually invoked it.
+    Refusing at start-up instead reuses the checks an agent-hosting entry
+    point runs, :func:`loom.ai._startup.verify_agent_markers` then
+    :func:`loom.ai._startup.verify_mcp_markers`, called with nothing
+    configured, which reports every declared name as unknown.
+
+    Args:
+        use_cases: Every use case compiled for this deployment.
+        compiler: Compiler holding the cached plan of each of them.
+        registry: Resolves a use case's registered key for the error message.
+
+    Raises:
+        AgentCompilationError: Naming each declaring use case and its marked
+            parameter, when at least one declares a marker.
+    """
+    agents = declaring_agent_bindings(use_cases, compiler)
+    mcp = declaring_mcp_bindings(use_cases, compiler)
+    if not agents and not mcp:
+        # Nothing declares a marker: importing 'loom.ai' here, only to find
+        # nothing to check, would pull the AI pillar into every process of
+        # an entry point that never hosts agents.
+        return
+
+    # Local import: same containment rule as 'resolve_ai'; this branch only
+    # runs once a declaring use case is already known to exist.
+    from loom.ai._startup import verify_agent_markers as _verify_agent_markers
+    from loom.ai._startup import verify_mcp_markers as _verify_mcp_markers
+
+    if agents:
+        _verify_agent_markers(agents, registry, {})
+    if mcp:
+        _verify_mcp_markers(mcp, registry, {})
+
+
 def reject_manifest_agents_without_ai_section(
     ctx: ConfigContext,
     manifest_agent_specs: tuple[str, ...],

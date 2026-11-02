@@ -1,31 +1,34 @@
-"""Worker start-up refusal of the ``Agent()`` marker (spec 014, T402).
+"""Start-up refusal of the ``Agent()`` marker without agents (spec 014, T402).
 
-A Celery task worker never builds an AI runtime — no ``AgentRuntime`` is
-constructed anywhere under ``loom.celery`` — so a use case declaring
-``Agent()`` must be refused at ``bootstrap_worker()`` time, not on its first
-task execution. ``_reject_ai_markers`` reuses the check
-``loom.rest.fastapi.auto`` runs, wired here with no compiled agent plans at
-all.
+An entry point whose recipe declares ``agents=False`` (a Celery task worker,
+for instance) never builds an AI runtime, so a use case declaring
+``Agent()`` must be refused when the application is composed, not on its
+first execution. ``reject_ai_markers`` reuses the check an agent-hosting
+entry point runs, wired here with no compiled agent plans at all.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
 
 from loom.ai.abc import AgentHandle
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.celery.adapter import _reject_ai_markers
+from loom.composition import Application, CompositionSource, Recipe, build_application
+from loom.composition._ai import reject_ai_markers
 from loom.core.bootstrap import KernelRuntime
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.use_case import Agent
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.composition import ProjectFactory
 
 
 class NotifyIncidentUseCase(UseCase[object, object]):
@@ -68,7 +71,7 @@ class TestNoUseCaseDeclaresTheMarker:
     def test_no_marker_does_not_raise(self) -> None:
         kernel = _kernel_runtime(SendReceiptUseCase)
 
-        _reject_ai_markers((SendReceiptUseCase,), kernel)  # no raise
+        reject_ai_markers((SendReceiptUseCase,), kernel.compiler, kernel.registry)  # no raise
 
 
 class TestOneUseCaseDeclaresTheMarker:
@@ -76,7 +79,7 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(NotifyIncidentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_ai_markers((NotifyIncidentUseCase,), kernel)
+            reject_ai_markers((NotifyIncidentUseCase,), kernel.compiler, kernel.registry)
 
         message = str(excinfo.value)
         codes = {issue.code for issue in excinfo.value.issues}
@@ -89,6 +92,34 @@ class TestOneUseCaseDeclaresTheMarker:
         kernel = _kernel_runtime(NotifyIncidentUseCase)
 
         with pytest.raises(AgentCompilationError) as excinfo:
-            _reject_ai_markers((NotifyIncidentUseCase,), kernel)
+            reject_ai_markers((NotifyIncidentUseCase,), kernel.compiler, kernel.registry)
 
         assert "none" in str(excinfo.value)
+
+
+class _WithoutAgents:
+    """An entry point hosting no agents, compiling a use case that declares one."""
+
+    def recipe(self, source: CompositionSource) -> Recipe:
+        discovered = source.discover()
+        return Recipe(
+            profile=SERVER_PROFILE,
+            discovered=dataclasses.replace(
+                discovered, use_cases=(*discovered.use_cases, NotifyIncidentUseCase)
+            ),
+            backend=source.backend(default="sqlalchemy"),
+            agents=False,
+        )
+
+    def bind(self, application: Application) -> Application:
+        return application
+
+
+class TestEveryEntryPointWithoutAgents:
+    def test_composition_refuses_the_marker_for_any_adapter(
+        self, fixture_project: ProjectFactory
+    ) -> None:
+        config = fixture_project()
+
+        with pytest.raises(AgentCompilationError, match="NotifyIncidentUseCase"):
+            build_application(config, adapter=_WithoutAgents(), environment="test")
