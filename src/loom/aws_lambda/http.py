@@ -13,7 +13,6 @@ construction, without FastAPI's routing or its OpenAPI.
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 from collections.abc import Mapping
 from typing import Any
@@ -29,10 +28,10 @@ from starlette.routing import Route
 from loom.aws_lambda._refusals import LambdaUnservedConfigError
 from loom.composition import (
     Application,
-    ApplicationHost,
     CompositionErrorCode,
     CompositionSource,
     CompositionStateError,
+    LoopHost,
     Recipe,
 )
 from loom.core.config import ConfigContext, ConfigKey
@@ -239,10 +238,10 @@ class LambdaHTTPHandler:
     """Serve a Starlette application to API Gateway events, keeping its application open.
 
     Built during the execution environment's Init (a module-level
-    ``handler = create_app(...)``): it creates the event loop of the thread,
-    opens the application on it in an :class:`~loom.composition.ApplicationHost`
-    with its startup checks, and leaves it open across warm invocations. A
-    failure to open propagates, so the execution environment fails its Init.
+    ``handler = create_app(...)``): it opens the application, with its startup
+    checks, on a :class:`~loom.composition.LoopHost` and leaves it open across
+    warm invocations. A failure to open propagates, so the execution
+    environment fails its Init.
 
     Each call translates one event with Mangum, its ASGI lifespan off, on that
     same loop: a request runs in a task of its own, with its own identity,
@@ -254,35 +253,23 @@ class LambdaHTTPHandler:
     """
 
     def __init__(self, app: Starlette, application: Application) -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        host = ApplicationHost(application)
-        try:
-            loop.run_until_complete(host.start())
-        except BaseException:
-            asyncio.set_event_loop(None)
-            loop.close()
-            raise
-        self._loop = loop
-        self._host = host
+        host = LoopHost(application)
+        # Built on the host's loop: without a current loop Mangum makes one of its own.
         self._mangum = Mangum(app, lifespan="off")
+        host.start()
+        self._host = host
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
         """Answer one API Gateway HTTP API event."""
-        # Mangum runs on the thread's current loop: make sure it is the one
-        # the application was opened on.
-        asyncio.set_event_loop(self._loop)
+        # Mangum runs on the thread's current loop.
+        self._host.make_current()
         return self._mangum(event, context)
 
     def close(self) -> None:
-        """Close the application and its loop, from a shutdown hook or a test.
+        """Close the application and its loop, from a shutdown hook or a test; idempotent.
 
         Raises:
             Exception: The failure to close the application; the loop is
                 closed all the same.
         """
-        try:
-            self._loop.run_until_complete(self._host.stop())
-        finally:
-            asyncio.set_event_loop(None)
-            self._loop.close()
+        self._host.close()

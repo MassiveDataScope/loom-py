@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
-from loom.composition import CompositionErrorCode, CompositionStateError, Recipe
-from loom.composition.host import ApplicationHost
+from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
 from loom.core.checks import REST_CHECKS
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import (
@@ -35,11 +34,23 @@ if TYPE_CHECKING:
     from loom.core.job.job import Job
 
 _log = get_logger(__name__)
-SQSHandler = Callable[[dict[str, Any], Any], dict[str, list[dict[str, str]]]]
+_COMPONENT = "LambdaSQSAdapter"
 MALFORMED_JOB = "<malformed>"
 """Job label of a record whose body could not be decoded."""
 TIMEOUT_SAFETY_MARGIN_MS = 1000
 """Stop starting records when fewer than one second remains in the invocation."""
+
+
+class SQSHandler(Protocol):
+    """The Lambda function handler of an SQS event source, owning its open application."""
+
+    def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
+        """Run one SQS batch and report the records to retry."""
+        ...
+
+    def close(self) -> None:
+        """Close the application and its loop; a second call does nothing."""
+        ...
 
 
 class LambdaSQSAdapter:
@@ -64,9 +75,7 @@ class LambdaSQSAdapter:
         self._use_cases = tuple(use_cases)
         self._metrics = metrics
         self._declared: dict[str, type[Job[Any]]] | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._host: ApplicationHost | None = None
-        self._bound = False
+        self._handler: _SQSBatch | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
         """Discover jobs and declared use cases for Lambda.
@@ -76,7 +85,7 @@ class LambdaSQSAdapter:
         """
         if self._declared is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="LambdaSQSAdapter")
+                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=_COMPONENT)
             )
         resolved = resolve_worker_components(source.config, self._jobs, self._use_cases)
         if resolved.models:
@@ -107,48 +116,37 @@ class LambdaSQSAdapter:
         )
 
     def bind(self, application: Application) -> SQSHandler:
-        """Open once at Lambda Init and return the warm invocation handler."""
+        """Open once at Lambda Init and return the warm invocation handler.
+
+        Raises:
+            CompositionStateError: When :meth:`recipe` has not run on this
+                instance, or it is already bound.
+            Exception: The failure to open the application, as itself.
+        """
         if self._declared is None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component="LambdaSQSAdapter")
+                CompositionErrorCode.ADAPTER_RECIPE_MISSING.issue(component=_COMPONENT)
             )
-        if self._bound:
+        if self._handler is not None:
             raise CompositionStateError(
-                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component="LambdaSQSAdapter")
+                CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=_COMPONENT)
             )
-        jobs = self._declared
         service = application.kernel.container.resolve(JobService)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        host = ApplicationHost(application)
-        try:
-            loop.run_until_complete(host.start())
-        except BaseException:
-            _dispose_loop(loop)
-            raise
-        self._loop = loop
-        self._host = host
-        self._bound = True
+        host = LoopHost(application)
+        host.start()
+        self._handler = _SQSBatch(application, self._declared, host)
         if isinstance(service, InlineJobService):
             _log.info(
                 "Lambda dispatched jobs run inline in this invocation without a queue or retries"
             )
         else:
             _log.warning("Lambda dispatched jobs publish to the Celery broker")
-
-        return _SQSBatch(application, jobs, loop)
+        return self._handler
 
     def close(self) -> None:
-        """Close the host on its loop when the environment is retired."""
-        loop, host = self._loop, self._host
-        if loop is None or host is None:
-            return
-        self._loop = None
-        self._host = None
-        try:
-            loop.run_until_complete(host.stop())
-        finally:
-            _dispose_loop(loop)
+        """Close the bound handler, as :meth:`SQSHandler.close` does."""
+        if self._handler is not None:
+            self._handler.close()
 
 
 class _SQSBatch:
@@ -158,11 +156,11 @@ class _SQSBatch:
         self,
         application: Application,
         jobs: Mapping[str, type[Job[Any]]],
-        loop: asyncio.AbstractEventLoop,
+        host: LoopHost,
     ) -> None:
         self._application = application
         self._jobs = jobs
-        self._loop = loop
+        self._host = host
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
         records: list[Any] = event["Records"]
@@ -172,7 +170,7 @@ class _SQSBatch:
             if _out_of_time(context):
                 return _batch_with_remaining(failures, records[index:])
             try:
-                self._loop.run_until_complete(self._run(record, context))
+                self._host.run(self._run(record, context))
             except Exception as exc:
                 _log_failure(record, exc)
                 if not is_retryable(exc):
@@ -181,6 +179,10 @@ class _SQSBatch:
                     return _batch_with_remaining(failures, records[index:])
                 failures.extend(_failed([record]))
         return {"batchItemFailures": failures}
+
+    def close(self) -> None:
+        """Close the application and its loop; a second call does nothing."""
+        self._host.close()
 
     async def _run(self, record: Any, context: Any) -> None:
         envelope = self._decode(record)
@@ -223,11 +225,6 @@ class _SQSBatch:
             Scope.JOB, name, id=_message_id(record) or None, **meta
         ):
             raise error
-
-
-def _dispose_loop(loop: asyncio.AbstractEventLoop) -> None:
-    loop.close()
-    asyncio.set_event_loop(None)
 
 
 def _batch_with_remaining(

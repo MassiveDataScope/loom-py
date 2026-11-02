@@ -19,8 +19,11 @@ from loom.core.job.job import Job
 from loom.core.tracing import get_trace_id
 from loom.core.uow.scope import StoresNotCommitted
 from tests.helpers.composition import composition_source
+from tests.helpers.loops import event_loops
 from tests.unit.aws_lambda._probe import Probe
 from tests.unit.aws_lambda._records import RecordFactory, make_record
+
+__all__ = ["event_loops"]
 
 
 @pytest.fixture

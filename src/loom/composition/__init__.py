@@ -15,7 +15,7 @@ from loom.composition.errors import (
     CompositionStateError,
     ReservedBindingError,
 )
-from loom.composition.host import ApplicationHost
+from loom.composition.host import ApplicationHost, LoopHost
 from loom.composition.recipe import Adapter, Recipe
 from loom.composition.source import AppConfig, CompositionSource
 
@@ -29,6 +29,7 @@ __all__ = [
     "CompositionErrorCode",
     "CompositionSource",
     "CompositionStateError",
+    "LoopHost",
     "Recipe",
     "ReservedBindingError",
     "SqlWiring",

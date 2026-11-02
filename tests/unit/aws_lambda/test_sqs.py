@@ -25,6 +25,7 @@ from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id
+from tests.helpers.loops import RecordedLoops
 from tests.unit.aws_lambda._probe import Probe
 from tests.unit.aws_lambda._records import RecordFactory
 
@@ -336,14 +337,50 @@ def test_duplicate_qualname_is_configuration_error(source: CompositionSource) ->
         adapter.recipe(source)
 
 
-def test_failed_open_clears_event_loop(
-    built: tuple[LambdaSQSAdapter, Application, list[str]],
+def test_failed_open_closes_its_loop(
+    built: tuple[LambdaSQSAdapter, Application, list[str]], event_loops: RecordedLoops
 ) -> None:
     adapter, application, _ = built
     _add_broken_resource(application)
     with pytest.raises(RuntimeError, match="open failed"):
         adapter.bind(application)
-    assert adapter._loop is None
+    assert event_loops.created[0].is_closed()
+
+
+def test_failed_open_unsets_its_loop(
+    built: tuple[LambdaSQSAdapter, Application, list[str]], event_loops: RecordedLoops
+) -> None:
+    adapter, application, _ = built
+    _add_broken_resource(application)
+    with pytest.raises(RuntimeError, match="open failed"):
+        adapter.bind(application)
+    assert event_loops.made_current[-1] is None
+
+
+@pytest.mark.parametrize("closes", [1, 2], ids=["once", "twice"])
+def test_closing_the_handler_closes_its_loop(
+    built: tuple[LambdaSQSAdapter, Application, list[str]],
+    event_loops: RecordedLoops,
+    closes: int,
+) -> None:
+    adapter, application, _ = built
+    handler = adapter.bind(application)
+
+    for _ in range(closes):
+        handler.close()
+
+    assert event_loops.created[0].is_closed()
+
+
+def test_closing_the_handler_closes_the_application(
+    built: tuple[LambdaSQSAdapter, Application, list[str]],
+) -> None:
+    adapter, application, lifecycle = built
+    handler = adapter.bind(application)
+
+    handler.close()
+
+    assert lifecycle == ["open", "close"]
 
 
 def test_job_config_is_applied(source: CompositionSource) -> None:
