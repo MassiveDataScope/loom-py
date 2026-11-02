@@ -88,6 +88,16 @@ async def _lookup(scope: InvocationScope, key: StoreKey, owner: object, write: b
     return scope.participant_for(key, owner, write=write)
 
 
+class _TargetedOwner:
+    def __init__(self, target: str) -> None:
+        self.target = target
+
+
+class _ReprLeaks:
+    def __repr__(self) -> str:
+        return "client(password='secret')"
+
+
 class TestFrame:
     def test_stores_are_the_primary_then_the_joined_by_name(self) -> None:
         assert Frame(S1, frozenset({S2, S0})).stores == (S1, S0, S2)
@@ -165,6 +175,22 @@ class TestParticipantForFromTheOwner:
 
         with pytest.raises(ForeignSessionError, match=r"store 's0' \(memory://s0\)"):
             scope.participant_for(S0, object(), write=write)
+
+    async def test_the_refusal_names_another_owner_by_its_target(self) -> None:
+        scope, _ = await _enlisted(S0)
+        owner = _TargetedOwner("postgresql://db-b:5432/app")
+
+        with pytest.raises(ForeignSessionError, match=r"store 's0' \(postgresql://db-b:5432/app\)"):
+            scope.participant_for(S0, owner, write=False)
+
+    async def test_the_refusal_names_an_owner_without_a_target_by_its_type_only(self) -> None:
+        scope, _ = await _enlisted(S0)
+        owner = _ReprLeaks()
+
+        with pytest.raises(ForeignSessionError, match="another _ReprLeaks") as raised:
+            scope.participant_for(S0, owner, write=False)
+
+        assert "secret" not in str(raised.value)
 
     async def test_a_refused_write_marks_nothing(self) -> None:
         scope, _ = await _enlisted(S0)

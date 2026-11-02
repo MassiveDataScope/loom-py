@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 from sqlalchemy import MetaData, event
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -141,8 +141,10 @@ class SessionManager:
             session_settings=session_settings is not None,
         )
 
-    def __repr__(self) -> str:
-        return f"SessionManager(store={self.store!r}, url={self._engine.url!r})"
+    @property
+    def target(self) -> str:
+        """The database this manager connects to, without credentials or query options."""
+        return bare_url(self._engine.url)
 
     @property
     def has_session_settings(self) -> bool:
@@ -210,6 +212,13 @@ class SessionManager:
     def session_factory(self) -> async_sessionmaker[AsyncSession]:
         """The configured async session factory bound to the engine."""
         return self._session_factory
+
+
+def bare_url(url: URL) -> str:
+    """Render ``url`` as driver, host, port and database only: no credentials, no query."""
+    return URL.create(
+        url.drivername, host=url.host, port=url.port, database=url.database
+    ).render_as_string()
 
 
 def _session_to_join(session_manager: SessionManager, *, write: bool) -> AsyncSession | None:

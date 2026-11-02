@@ -30,11 +30,10 @@ import contextvars
 from contextlib import AbstractAsyncContextManager
 from typing import Any, ClassVar
 
-from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.logger import get_logger
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
 from loom.core.repository.sqlalchemy.transactional import (
     reset_active_mutations,
     set_active_mutations,
@@ -113,9 +112,9 @@ class SQLAlchemyUnitOfWork:
     @property
     def physical(self) -> PhysicalStore:
         """The database this unit of work writes to, named by its URL without credentials."""
-        url = self._session_manager.engine.url
-        bare = URL.create(url.drivername, host=url.host, port=url.port, database=url.database)
-        return PhysicalStore(backend="sqlalchemy", target=bare.render_as_string())
+        return PhysicalStore(
+            backend="sqlalchemy", target=bare_url(self._session_manager.engine.url)
+        )
 
     def _bind(self, session: AsyncSession) -> None:
         """Hold ``session`` and publish a fresh mutation list to the current context."""

@@ -33,7 +33,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
@@ -245,7 +245,7 @@ class InvocationScope:
         self.require_owner()
         if participant is not None and not participant.accepts(owner):
             raise ForeignSessionError.between(
-                ForeignSessionError.side(key, repr(owner)),
+                ForeignSessionError.side(key, _described(owner)),
                 ForeignSessionError.side(key, participant.physical.target),
             )
         if write:
@@ -257,7 +257,7 @@ class InvocationScope:
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:
         if self.frames and key not in self.frames[-1].stores:
             raise ForeignSessionError.between(
-                ForeignSessionError.side(key, repr(owner)),
+                ForeignSessionError.side(key, _described(owner)),
                 ForeignSessionError.side(
                     self.frames[-1].primary, "the store this execution writes to"
                 ),
@@ -282,6 +282,21 @@ class InvocationScope:
             yield
         finally:
             self.frames.pop()
+
+
+@runtime_checkable
+class _Targeted(Protocol):
+    """An owner that names its connection without credentials, as errors may print it."""
+
+    @property
+    def target(self) -> str: ...
+
+
+def _described(owner: object) -> str:
+    """Name ``owner`` for an error: its credential-free target, else only its type."""
+    if isinstance(owner, _Targeted):
+        return owner.target
+    return f"another {type(owner).__qualname__}"
 
 
 _scope: ContextVar[InvocationScope | None] = ContextVar("loom_invocation_scope", default=None)
