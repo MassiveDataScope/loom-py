@@ -73,64 +73,7 @@ def _handle(scope: InvocationScope, key: StoreKey) -> object:
     return scope.participants[key].handle
 
 
-class TestActiveSession:
-    async def test_outside_an_invocation_there_is_none(self, stores: _Stores) -> None:
-        assert stores.default.active_session is None
-
-    async def test_each_store_reads_the_session_of_its_own_participant(
-        self, stores: _Stores
-    ) -> None:
-        async with (
-            invocation(stores.coordinator()) as scope,
-            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
-        ):
-            seen = (stores.default.active_session, stores.audit.active_session)
-            expected = (_handle(scope, DEFAULT_STORE), _handle(scope, AUDIT))
-
-        assert seen == expected
-
-    async def test_the_two_stores_never_share_a_session(self, stores: _Stores) -> None:
-        async with (
-            invocation(stores.coordinator()) as scope,
-            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
-        ):
-            default, audit = stores.default.active_session, stores.audit.active_session
-
-        assert default is not audit
-
-    async def test_a_store_that_is_not_enlisted_has_none(self, stores: _Stores) -> None:
-        async with (
-            invocation(stores.coordinator()) as scope,
-            scope.frame(Frame(DEFAULT_STORE)),
-        ):
-            audit = stores.audit.active_session
-
-        assert audit is None
-
-    async def test_a_gather_child_reading_it_is_refused(self, stores: _Stores) -> None:
-        async def read() -> object:
-            return stores.default.active_session
-
-        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-            child = asyncio.gather(read())
-            with pytest.raises(ScopeOwnershipError):
-                await child
-
-    async def test_another_manager_of_an_enlisted_store_is_refused(self, stores: _Stores) -> None:
-        other = _manager(DEFAULT_STORE)
-        try:
-            async with (
-                invocation(stores.coordinator()) as scope,
-                scope.frame(Frame(DEFAULT_STORE)),
-            ):
-                with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-                    _ = other.active_session
-        finally:
-            await other.dispose()
-
-    def test_it_cannot_be_assigned(self, stores: _Stores) -> None:
-        with pytest.raises(AttributeError):
-            stores.default.active_session = None  # type: ignore[misc]
+# active_session itself, for both backends: ../test_active_session_per_store.py
 
 
 class _AuditService:

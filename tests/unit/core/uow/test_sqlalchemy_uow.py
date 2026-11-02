@@ -147,18 +147,21 @@ async def test_the_context_manager_makes_its_session_the_participant_of_its_stor
         assert _participant_session(sm) is session
 
 
-@pytest.mark.parametrize("error", [None, ValueError("test error")])
-async def test_the_context_manager_unpublishes_its_scope_on_exit(
-    error: Exception | None,
-) -> None:
+async def test_the_context_manager_unpublishes_its_scope_on_a_clean_exit() -> None:
     uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
 
-    try:
-        async with uow:
-            if error is not None:
-                raise error
-    except ValueError:
+    async with uow:
         pass
+
+    assert current_scope() is None
+
+
+async def test_the_context_manager_unpublishes_its_scope_when_the_block_raises() -> None:
+    uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
+
+    with pytest.raises(ValueError, match="test error"):
+        async with uow:
+            raise ValueError("test error")
 
     assert current_scope() is None
 

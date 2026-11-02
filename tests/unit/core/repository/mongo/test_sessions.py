@@ -8,7 +8,6 @@ from typing import Any, cast
 import pytest
 from pymongo import AsyncMongoClient
 
-from loom.core.errors.errors import ForeignSessionError
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
@@ -46,47 +45,7 @@ class _Stores:
         )
 
 
-class TestActiveSession:
-    def test_outside_an_invocation_there_is_none(self) -> None:
-        assert _Stores().default_sessions.active_session is None
-
-    async def test_each_store_reads_the_session_of_its_own_client(self) -> None:
-        stores = _Stores()
-
-        async with (
-            invocation(stores.coordinator()) as scope,
-            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
-        ):
-            seen = (stores.default_sessions.active_session, stores.audit_sessions.active_session)
-
-        assert seen == (stores.default.sessions[0], stores.audit.sessions[0])
-
-    async def test_a_store_that_is_not_enlisted_has_none(self) -> None:
-        stores = _Stores()
-
-        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-            audit = stores.audit_sessions.active_session
-
-        assert audit is None
-
-    async def test_a_gather_child_reading_it_is_refused(self) -> None:
-        stores = _Stores()
-
-        async def read() -> object:
-            return stores.default_sessions.active_session
-
-        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-            child = asyncio.gather(read())
-            with pytest.raises(ScopeOwnershipError):
-                await child
-
-    async def test_another_client_of_an_enlisted_store_is_refused(self) -> None:
-        stores = _Stores()
-        other = MongoSessions(_client(FakeMongoClient()), DEFAULT_STORE)
-
-        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-            with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-                _ = other.active_session
+# active_session itself, for both backends: ../test_active_session_per_store.py
 
 
 class TestWriteIntent:
