@@ -108,7 +108,6 @@ class MongoUnitOfWork:
         self._session: AsyncClientSession | None = None
         self._token: contextvars.Token[AsyncClientSession | None] | None = None
         self._transaction_token: contextvars.Token[bool] | None = None
-        self._commit_attempted = False
 
     @property
     def owner(self) -> AsyncMongoClient[Any]:
@@ -145,7 +144,6 @@ class MongoUnitOfWork:
             await session.end_session()
             raise
         self._session = session
-        self._commit_attempted = False
         self._token = _active_session.set(session)
         self._transaction_token = open_atomic_transaction()
         _log.debug("UoWBegin")
@@ -165,22 +163,22 @@ class MongoUnitOfWork:
             RuntimeError: If ``begin`` has not been called.
         """
         session = self._require_session("commit")
-        self._commit_attempted = True
         await session.commit_transaction()
         _log.debug("UoWCommit")
 
     async def rollback(self) -> None:
-        """Abort the transaction, unless a commit was already attempted.
+        """Abort the transaction, unless the session no longer holds one.
 
         After a commit, failed or not, pymongo has marked the transaction
-        committed and refuses an abort, so nothing is sent: the unit of work
-        does not abort after a failed commit, as :meth:`__aexit__` never did.
+        committed (``in_transaction`` is ``False``) and refuses an abort, so
+        nothing is sent: the unit of work does not abort after a failed
+        commit, as :meth:`__aexit__` never did.
 
         Raises:
             RuntimeError: If ``begin`` has not been called.
         """
         session = self._require_session("rollback")
-        if self._commit_attempted:
+        if not session.in_transaction:
             return
         await session.abort_transaction()
         _log.debug("UoWRollback")

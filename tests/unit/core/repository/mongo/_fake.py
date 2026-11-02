@@ -255,10 +255,13 @@ class FakeSession:
         }
 
     async def commit_transaction(self) -> None:
-        if self._client.commit_error is not None:
-            raise self._client.commit_error
-        self._client.committed += 1
-        self.in_transaction = False
+        """Commit; like pymongo, the transaction is over whether the commit raised or not."""
+        try:
+            if self._client.commit_error is not None:
+                raise self._client.commit_error
+            self._client.committed += 1
+        finally:
+            self.in_transaction = False
 
     async def abort_transaction(self) -> None:
         """Abort, restoring every collection to its state at ``start_transaction``."""
