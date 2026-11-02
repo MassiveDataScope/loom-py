@@ -15,20 +15,25 @@ from prefect.types import DateTime as PrefectDateTime
 from loom.prefect._placeholders import resolve_placeholder
 
 
+def _utc_today() -> date:
+    # The tokens count in UTC; date.today() is local and differs around midnight.
+    return datetime.now(UTC).date()
+
+
 def test_today_returns_today_utc_date() -> None:
-    assert resolve_placeholder("${today}") == date.today()
+    assert resolve_placeholder("${today}") == _utc_today()
 
 
 def test_yesterday_returns_today_minus_one_day() -> None:
-    assert resolve_placeholder("${yesterday}") == date.today() - timedelta(days=1)
+    assert resolve_placeholder("${yesterday}") == _utc_today() - timedelta(days=1)
 
 
 def test_today_plus_offset() -> None:
-    assert resolve_placeholder("${today+3d}") == date.today() + timedelta(days=3)
+    assert resolve_placeholder("${today+3d}") == _utc_today() + timedelta(days=3)
 
 
 def test_today_minus_offset() -> None:
-    assert resolve_placeholder("${today-7d}") == date.today() - timedelta(days=7)
+    assert resolve_placeholder("${today-7d}") == _utc_today() - timedelta(days=7)
 
 
 def test_now_returns_utc_datetime_close_to_now() -> None:
