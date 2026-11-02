@@ -26,6 +26,9 @@ class FakeSink:
     cleared: list[frozenset[str]] = field(default_factory=list)
     fail_on_set: bool = False
     fail_on_clear: bool = False
+    refuse_clear: bool = False
+    """``clear_flags`` raises when called, as a sink refused by the scope checkpoint does."""
+    fail_on_invalidate: bool = False
     invalidated: int = 0
 
     def in_transaction(self) -> bool:
@@ -38,6 +41,8 @@ class FakeSink:
         return _done()
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
+        if self.refuse_clear:
+            raise RuntimeError("refused before any statement")
         if self.fail_on_clear:
             return _refused()
         self.cleared.append(scopes)
@@ -45,4 +50,4 @@ class FakeSink:
 
     def invalidate(self) -> Awaitable[object]:
         self.invalidated += 1
-        return _done()
+        return _refused() if self.fail_on_invalidate else _done()

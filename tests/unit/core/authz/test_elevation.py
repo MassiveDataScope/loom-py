@@ -164,6 +164,28 @@ async def test_a_failed_clear_invalidates_the_session() -> None:
     assert sink.invalidated == 1
 
 
+async def test_a_clear_refused_before_any_statement_invalidates_the_session() -> None:
+    sink = FakeSink(open=True, refuse_clear=True)
+    outer = elevation_scope(owns_transaction=True, sink=sink)
+    inner = elevation_scope(owns_transaction=False, sink=sink)
+    async with outer, inner:
+        await _elevate()
+
+    assert sink.invalidated == 1
+
+
+async def test_a_failed_invalidation_is_logged_and_the_frame_still_closes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
+    outer = elevation_scope(owns_transaction=True, sink=sink)
+    inner = elevation_scope(owns_transaction=False, sink=sink)
+    async with outer, inner:
+        await _elevate()
+
+    assert "could not be invalidated" in caplog.text
+
+
 async def test_elevate_outside_an_execution_is_a_runtime_error_even_without_a_product() -> None:
     from loom.core.authz.product import clear_authz_product
     from loom.core.repository.sqlalchemy.rls import elevate
