@@ -120,6 +120,7 @@ class TestEveryEntryPointWithoutAgents:
         self, fixture_project: ProjectFactory
     ) -> None:
         config = fixture_project()
+        adapter = _WithoutAgents()
 
         with pytest.raises(AgentCompilationError, match="NotifyIncidentUseCase"):
-            build_application(config, adapter=_WithoutAgents(), environment="test")
+            build_application(config, adapter=adapter, environment="test")
