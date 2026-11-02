@@ -128,13 +128,10 @@ def _reject_ai_markers(compilables: Sequence[type[Compilable]], kernel: KernelRu
     # a declaring use case is already known to exist.
     from loom.ai._startup import verify_agent_markers, verify_mcp_markers
 
-    checks: tuple[tuple[Sequence[object], Callable[..., None]], ...] = (
-        (agents, verify_agent_markers),
-        (mcp, verify_mcp_markers),
-    )
-    for declaring, verify in checks:
-        if declaring:
-            verify(declaring, kernel.registry, {})
+    if agents:
+        verify_agent_markers(agents, kernel.registry, {})
+    if mcp:
+        verify_mcp_markers(mcp, kernel.registry, {})
 
 
 # ---------------------------------------------------------------------------
