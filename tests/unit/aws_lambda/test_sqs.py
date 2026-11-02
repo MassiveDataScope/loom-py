@@ -605,8 +605,10 @@ def test_what_lambda_does_not_serve_is_refused_before_discovery(
 ) -> None:
     undiscoverable = _manifest_source(source, "tests.unit.aws_lambda._no_such_manifest", **sections)
 
+    adapter = LambdaSQSAdapter()
+
     with pytest.raises(LambdaUnservedConfigError) as raised:
-        LambdaSQSAdapter().recipe(undiscoverable)
+        adapter.recipe(undiscoverable)
     assert raised.value.key == key
 
 
@@ -621,6 +623,8 @@ def test_manifest_agents_are_refused(
     monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
     configured = _manifest_source(source, manifest.__name__)
 
+    adapter = LambdaSQSAdapter()
+
     with pytest.raises(LambdaUnservedConfigError) as raised:
-        LambdaSQSAdapter().recipe(configured)
+        adapter.recipe(configured)
     assert raised.value.key == "manifest.AGENTS"

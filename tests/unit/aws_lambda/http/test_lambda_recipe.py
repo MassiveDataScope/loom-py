@@ -98,8 +98,10 @@ def test_what_lambda_does_not_serve_is_refused_at_recipe_time(
 ) -> None:
     config = contract_project(**options)
 
+    adapter = LambdaHTTPAdapter()
+
     with pytest.raises(LambdaUnservedConfigError) as raised:
-        build_application(config, adapter=LambdaHTTPAdapter(), environment=_TEST)
+        build_application(config, adapter=adapter, environment=_TEST)
     assert raised.value.key == key
 
 
@@ -109,8 +111,10 @@ def test_a_configuration_refusal_comes_before_discovery(
 ) -> None:
     config = contract_project(app=_UNDISCOVERABLE_APP, **options)
 
+    adapter = LambdaHTTPAdapter()
+
     with pytest.raises(LambdaUnservedConfigError) as raised:
-        build_application(config, adapter=LambdaHTTPAdapter(), environment=_TEST)
+        build_application(config, adapter=adapter, environment=_TEST)
     assert raised.value.key == key
 
 
@@ -130,9 +134,10 @@ def test_an_exclusion_reaching_a_templated_route_aborts_startup(
     contract_project: ProjectFactory, adapter: Callable[[], Adapter[object]]
 ) -> None:
     config = contract_project(exclude_paths=("/items/everything",))
+    composed = adapter()
 
     with pytest.raises(ConfigError, match=r"served by the route '/items/\{item_id\}'"):
-        create_app(config, adapter=adapter(), environment=_TEST)
+        create_app(config, adapter=composed, environment=_TEST)
 
 
 def test_a_route_at_a_default_exclusion_requires_a_token_on_lambda(
@@ -147,16 +152,18 @@ def test_a_route_at_a_default_exclusion_requires_a_token_on_lambda(
 
 def test_fastapi_refuses_a_route_at_its_health_path(contract_project: ProjectFactory) -> None:
     config = contract_project(exclude_paths=None, health_route=True)
+    adapter = FastAPIAdapter()
 
     with pytest.raises(InterfaceCompilationError, match="reserved for the readiness route"):
-        create_app(config, adapter=FastAPIAdapter(), environment=_TEST)
+        create_app(config, adapter=adapter, environment=_TEST)
 
 
 def test_bind_before_recipe_is_refused() -> None:
     application: Any = object()
+    adapter = LambdaHTTPAdapter()
 
     with pytest.raises(CompositionStateError, match="LambdaHTTPAdapter.bind") as raised:
-        LambdaHTTPAdapter().bind(application)
+        adapter.bind(application)
     assert raised.value.issue.code is CompositionErrorCode.ADAPTER_RECIPE_MISSING
 
 
