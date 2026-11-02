@@ -37,5 +37,7 @@ def test_a_section_that_is_not_a_mapping_fails_naming_its_path() -> None:
 
 
 def test_an_unknown_mode_runs_no_engine() -> None:
+    config = DiscoveryConfig(mode="scan")
+
     with pytest.raises(ValueError, match="Unsupported discovery mode: 'scan'"):
-        discover(DiscoveryConfig(mode="scan"))
+        discover(config)
