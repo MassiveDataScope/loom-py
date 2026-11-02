@@ -138,9 +138,10 @@ class TestEnlist:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         coordinator = _coordinator(_CloseFails(S0, Ledger(), Fault("begin", Effect.RAISE)))
+        scope = Scope()
 
         with caplog.at_level(logging.ERROR), pytest.raises(Boom, match="begin failed"):
-            await coordinator.enlist(Scope(), S0)
+            await coordinator.enlist(scope, S0)
 
         assert "UoWCloseFailed" in caplog.text
         assert "'store': 's0'" in caplog.text

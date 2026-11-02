@@ -20,8 +20,10 @@ async def test_raises_what_the_step_raised() -> None:
     async def step() -> None:
         raise ValueError("boom")
 
+    call = step()
+
     with pytest.raises(ValueError, match="boom"):
-        await run_to_completion(step())
+        await run_to_completion(call)
 
 
 async def test_waits_through_repeated_cancellations_and_raises_the_first() -> None:
