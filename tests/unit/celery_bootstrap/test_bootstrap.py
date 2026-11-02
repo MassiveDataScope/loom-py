@@ -57,6 +57,7 @@ class _ObservedCallback:
 def _make_config(extra: dict[str, Any] | None = None) -> ConfigContext:
     """Build a minimal configuration for bootstrap_worker tests."""
     base = {
+        "app": {"name": "worker"},
         "celery": {
             "broker_url": "memory://",
             "result_backend": "cache+memory://",
@@ -143,6 +144,7 @@ class TestBootstrapWorkerTaskRegistration:
         }
         if extra_cfg:
             cfg.update(extra_cfg)
+        cfg["app"] = {"name": "worker", **cfg.get("app", {})}
 
         config_path = tmp_path / "worker.yaml"
         config_path.write_text(yaml.dump(cfg))
@@ -172,6 +174,7 @@ class TestBootstrapWorkerTaskRegistration:
             "shutdown_timeout_ms": 77,
         }
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "celery": {
                 "broker_url": "memory://",
                 "result_backend": "cache+memory://",
@@ -230,11 +233,12 @@ class TestBootstrapWorkerTaskRegistration:
         import yaml
 
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "celery": {
                 "broker_url": "memory://",
                 "result_backend": "cache+memory://",
                 "task_always_eager": True,
-            }
+            },
         }
         config_path = tmp_path / "worker_no_db.yaml"
         config_path.write_text(yaml.dump(cfg))
@@ -400,6 +404,11 @@ class TestBootstrapWorkerTaskRegistration:
         mapped_names = {model.__name__ for model in result.container._repo_bindings}
         assert "_DiscoveredModel" in mapped_names
 
-    def test_raises_when_no_jobs_and_no_discovery(self, tmp_path: Any) -> None:
-        with pytest.raises(RuntimeError):
-            self._run(tmp_path, jobs=None)
+    def test_starts_without_jobs_or_discovery_with_a_warning(
+        self, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="loom.celery._discovery"):
+            result = self._run(tmp_path, jobs=None)
+
+        assert "no Job classes discovered" in caplog.text
+        assert f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}" not in result.celery_app.tasks

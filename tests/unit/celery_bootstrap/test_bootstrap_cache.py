@@ -59,7 +59,10 @@ def _bootstrap(tmp_path: Path, cache: dict[str, Any] | None) -> Any:
             }
         },
         "persistence": {"cursors": {"signing": "ephemeral"}},
-        "app": {"discovery": {"mode": "modules", "modules": {"include": [__name__]}}},
+        "app": {
+            "name": "worker",
+            "discovery": {"mode": "modules", "modules": {"include": [__name__]}},
+        },
     }
     if cache is not None:
         cfg["cache"] = cache

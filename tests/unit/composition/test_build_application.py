@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, assert_type
 
+import pytest
+
 from loom.composition import (
     Application,
     CompositionSource,
@@ -14,9 +16,10 @@ from loom.composition import (
     build_application,
     create_app,
 )
+from loom.composition.build import load_source
 from loom.composition.resources import ResourceKind
 from loom.core.command import Command
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
 from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.profile import (
@@ -42,6 +45,25 @@ class _Bare:
 
     def bind(self, application: Application) -> Application:
         return application
+
+
+def test_load_source_requires_app_name_with_or_without_app_section(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    options = {
+        "config_dir": None,
+        "environment": "test",
+        "code_path": None,
+        "resolvers": (),
+        "caller": "create_app",
+    }
+
+    config.write_text("celery: {}\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="app.name is required"):
+        load_source(str(config), **options)
+
+    config.write_text("app:\n  code_path: .\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="app.name is required"):
+        load_source(str(config), **options)
 
 
 class _CreateRecord(Command, frozen=True):

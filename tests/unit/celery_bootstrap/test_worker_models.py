@@ -87,6 +87,7 @@ def _reset_registry() -> Iterator[None]:
 
 def _config(tmp_path: Path, *, discover: bool) -> str:
     document: dict[str, Any] = {
+        "app": {"name": "worker"},
         "celery": {
             "broker_url": "memory://",
             "result_backend": "cache+memory://",
@@ -101,7 +102,7 @@ def _config(tmp_path: Path, *, discover: bool) -> str:
         "persistence": {"cursors": {"signing": "ephemeral"}},
     }
     if discover:
-        document["app"] = {"discovery": {"mode": "modules", "modules": {"include": [__name__]}}}
+        document["app"]["discovery"] = {"mode": "modules", "modules": {"include": [__name__]}}
     path = tmp_path / "worker.yaml"
     path.write_text(yaml.safe_dump(document))
     return str(path)

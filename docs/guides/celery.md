@@ -342,6 +342,7 @@ includes:
   - celery.yaml   # broker settings
 
 app:
+  name: billing-worker  # required: names the worker and its metrics
   discovery:
     mode: modules
     modules:
@@ -398,6 +399,7 @@ includes:
   - celery.yaml
 
 app:
+  name: billing-worker  # required: names the worker and its metrics
   discovery:
     mode: manifest
     manifest:

@@ -33,6 +33,7 @@ class _SyncJob(Job[int]):
 
 
 def _write(path: Path, document: dict[str, object]) -> str:
+    document.setdefault("app", {"name": "worker"})
     path.write_text(yaml.safe_dump(document), encoding="utf-8")
     return str(path)
 

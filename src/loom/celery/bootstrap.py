@@ -44,7 +44,7 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery._discovery import WorkerManifest
 from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, compose_application
+from loom.composition import compose_application
 from loom.composition.build import load_source
 from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
@@ -55,15 +55,6 @@ if TYPE_CHECKING:
     from loom.core.engine.compilable import Compilable
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.job.job import Job
-
-_WORKER_NAME = "worker"
-
-
-class _WorkerAppConfig(AppConfig, kw_only=True):
-    """``app`` as a worker reads it: optional, and so is its name."""
-
-    name: str = _WORKER_NAME
-
 
 # ---------------------------------------------------------------------------
 # Result
@@ -193,7 +184,6 @@ def bootstrap_worker(
         code_path=None,
         resolvers=resolvers,
         caller="bootstrap_worker",
-        default_app=_WorkerAppConfig(),
     )
     adapter = CeleryAdapter(
         jobs=jobs,

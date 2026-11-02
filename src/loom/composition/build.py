@@ -24,7 +24,7 @@ from loom.composition.source import AppConfig, CompositionSource
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import CacheGateways, cache_module_for
 from loom.core.checks import enforce_deploy_checks
-from loom.core.config import ConfigKey, ConfigResolver, with_default_resolvers
+from loom.core.config import ConfigError, ConfigKey, ConfigResolver, with_default_resolvers
 from loom.core.config.overrides import load_application_config
 from loom.core.di.scope import Scope
 from loom.core.engine.compilable import Compilable
@@ -146,7 +146,6 @@ def load_source(
     code_path: str | None,
     resolvers: Sequence[ConfigResolver],
     caller: str,
-    default_app: AppConfig | None = None,
 ) -> CompositionSource:
     """Load the configuration, environment and code an application composes from.
 
@@ -157,8 +156,6 @@ def load_source(
         code_path: See :func:`create_app`.
         resolvers: See :func:`create_app`.
         caller: Entry point named when the paths are invalid.
-        default_app: Taken when ``app`` is absent; ``None`` makes ``app`` required.
-            Its type decodes a present section.
 
     Returns:
         The loaded source.
@@ -177,11 +174,12 @@ def load_source(
     observability = ObservabilityRuntime.from_config(
         observability_config, environment=resolved_environment
     )
-    app_cfg = (
-        ctx.section(ConfigKey.APP, AppConfig)
-        if default_app is None
-        else ctx.section_optional(ConfigKey.APP, type(default_app)) or default_app
-    )
+    if not ctx.has(f"{ConfigKey.APP}.name"):
+        raise ConfigError(
+            f"{ConfigKey.APP}.name is required: name the application once in the YAML; "
+            "it labels the API, the worker and their metrics"
+        )
+    app_cfg = ctx.section(ConfigKey.APP, AppConfig)
     config_root = Path(paths[0]).resolve().parent
     return CompositionSource(
         config=ctx,

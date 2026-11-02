@@ -24,6 +24,8 @@ class _SyncJob(Job[int]):
 def _write_worker_yaml(tmp_path: Path, broker_url: str) -> str:
     path = tmp_path / "worker.yaml"
     path.write_text(
+        "app:\n"
+        "  name: worker\n"
         "celery:\n"
         f"  broker_url: {broker_url}\n"
         "  result_backend: cache+memory://\n"

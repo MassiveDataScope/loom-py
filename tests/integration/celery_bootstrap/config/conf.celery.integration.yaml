@@ -1,3 +1,6 @@
+app:
+  name: worker
+
 celery:
   broker_url: memory://
   result_backend: cache+memory://

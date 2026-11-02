@@ -59,6 +59,7 @@ def _run_in_clean_interpreter(script: str, *args: str) -> subprocess.CompletedPr
 def _write_worker_config(tmp_path: Path, extra: dict[str, Any] | None = None) -> Path:
     """Write a worker YAML config with an in-memory broker and no database section."""
     cfg: dict[str, Any] = {
+        "app": {"name": "worker"},
         "celery": {
             "broker_url": "memory://",
             "result_backend": "cache+memory://",

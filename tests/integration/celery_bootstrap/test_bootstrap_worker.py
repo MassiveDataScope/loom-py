@@ -82,6 +82,7 @@ class _LookUpKnowledgeUseCase(UseCase[object, object]):
 def worker_config(tmp_path: Path) -> str:
     """Write a minimal worker YAML with task_always_eager enabled."""
     cfg: dict[str, Any] = {
+        "app": {"name": "worker"},
         "celery": {
             "broker_url": "memory://",
             "result_backend": "cache+memory://",
@@ -144,6 +145,7 @@ class TestBootstrapWorkerResult:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "observability": {"log": {"enabled": False}},
             "celery": {
                 "broker_url": "memory://",
@@ -193,6 +195,7 @@ class TestBootstrapWorkerResult:
         self, tmp_path: Path
     ) -> None:
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "celery": {"broker_url": "memory://", "result_backend": "cache+memory://"},
             "stores": {
                 "default": {
@@ -255,6 +258,7 @@ class TestBootstrapWorkerJobConfigOverride:
             return _runner._make_job_task(celery_app, job_type, *args, **kwargs)
 
         cfg: dict[str, Any] = {
+            "app": {"name": "worker"},
             "celery": {
                 "broker_url": "memory://",
                 "result_backend": "cache+memory://",
