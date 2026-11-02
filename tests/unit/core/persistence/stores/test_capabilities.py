@@ -9,7 +9,7 @@ import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
 from loom.core.checks import run_deploy_checks
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
     StoreCapabilities,
@@ -149,7 +149,9 @@ def test_plugin_capabilities_are_asked_lazily_once_per_store(
     assert _CustomBackend.calls == 2
 
 
-def test_legacy_plugin_gets_conservative_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_plugin_without_capabilities_fails_naming_backend_and_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         entrypoints_module,
         "entry_points",
@@ -158,7 +160,9 @@ def test_legacy_plugin_gets_conservative_capabilities(monkeypatch: pytest.Monkey
     spec = load_catalog(
         ConfigContext.from_dict({"stores": {"default": {"backend": "legacy"}}})
     ).specs[DEFAULT_STORE]
-    assert spec.capabilities == _MODELS_ONLY
+
+    with pytest.raises(ConfigError, match=r"'legacy'.*required method 'capabilities'"):
+        _ = spec.capabilities
 
 
 @pytest.mark.parametrize(("backend", "expected"), [("dynamodb", False), ("mongo", True)])

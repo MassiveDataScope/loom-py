@@ -33,7 +33,11 @@ from loom.core.config import (
 from loom.core.config.loader import convert_section
 from loom.core.connections import ConnectionSettings
 from loom.core.model import BaseModel
-from loom.core.persistence.registry import BACKEND_ENTRY_POINT_GROUP, unknown_backend_message
+from loom.core.persistence.registry import (
+    BACKEND_ENTRY_POINT_GROUP,
+    resolve_backend,
+    unknown_backend_message,
+)
 from loom.core.plugins.entrypoints import registered_names
 
 T = TypeVar("T")
@@ -111,16 +115,22 @@ class StoreSpec:
     def capabilities(self) -> StoreCapabilities:
         """What the store supports, asked of its backend on first read and kept.
 
-        A connection-only store has fixed capabilities. A third-party backend
-        without a ``capabilities`` method gets the conservative
-        :data:`MODELS_ONLY`.
+        A connection-only store has fixed capabilities; every other store asks
+        its backend's required ``capabilities`` method.
+
+        Raises:
+            ConfigError: When the backend does not implement ``capabilities``.
         """
         if self.backend in CONNECTION_ONLY_BACKENDS:
             return NO_CAPABILITIES
-        from loom.core.persistence.registry import resolve_backend  # registry imports this module
-
-        describe = getattr(resolve_backend(self.backend), "capabilities", None)
-        return MODELS_ONLY if describe is None else describe(self)
+        backend = resolve_backend(self.backend)
+        describe = getattr(backend, "capabilities", None)
+        if describe is None:
+            raise ConfigError(
+                f"persistence backend {self.backend!r} ({type(backend).__qualname__}) serving "
+                f"{self.path} does not implement the required method 'capabilities'"
+            )
+        return describe(self)
 
     @property
     def path(self) -> str:

@@ -91,10 +91,10 @@ class PersistenceBackend(Protocol):
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         """Describe the configured store without building its resources.
 
-        Optional at runtime: a backend written before this method gets
-        :data:`~loom.core.persistence.stores.MODELS_ONLY`. Read only the
-        settings a capability depends on; the catalog asks this before any
-        connection's secrets need to resolve.
+        Required: the catalog fails with a ``ConfigError`` naming a backend
+        that does not implement it. Read only the settings a capability
+        depends on; the catalog asks this before any connection's secrets
+        need to resolve.
         """
         ...
 
