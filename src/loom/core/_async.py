@@ -12,6 +12,9 @@ _T = TypeVar("_T")
 async def run_to_completion(step: Coroutine[Any, Any, _T]) -> _T:
     """Run ``step`` in a task of its own until it finishes, however often we are cancelled.
 
+    No cancellation ever abandons ``step``: use it for steps that must finish
+    (rollback, close), never for external calls that may hang.
+
     Args:
         step: The coroutine that must not be cut short.
 

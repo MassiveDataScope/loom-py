@@ -42,6 +42,29 @@ class TestShieldAndDrainDrenaAlCancelar:
         with pytest.raises(asyncio.CancelledError):
             await task
 
+    async def test_una_segunda_cancelacion_abandona_una_llamada_colgada(self) -> None:
+        """An external call may hang: a second cancellation must escape the
+        drain while the call is still running, so the caller can give up."""
+        hung = asyncio.Event()
+
+        async def _hangs() -> None:
+            await hung.wait()
+
+        task = asyncio.create_task(shield_and_drain(_hangs(), label="crm"))
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await asyncio.wait([task], timeout=1)
+            escaped_while_hung = task.done()
+        finally:
+            hung.set()
+            await asyncio.sleep(0)
+
+        assert escaped_while_hung
+        assert task.cancelled()
+
     async def test_el_label_llega_al_log_del_drenado(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
