@@ -183,8 +183,10 @@ async def test_no_scope_is_published_after_failed_execution() -> None:
     factory, _ = _make_uow_factory()
     executor = RuntimeExecutor(_compiler(_FailingUC), uow_factory=factory)
 
+    use_case = _FailingUC()
+
     with pytest.raises(RuntimeError):
-        await executor.execute(_FailingUC())
+        await executor.execute(use_case)
 
     assert current_scope() is None
 

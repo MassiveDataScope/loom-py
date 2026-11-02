@@ -361,8 +361,10 @@ class TestPhased:
         assert physical.target == "db:27017"
 
     async def test_flush_before_begin_is_refused(self) -> None:
+        uow = _unit_of_work(FakeMongoClient())
+
         with pytest.raises(RuntimeError, match=r"flush\(\) called before begin"):
-            await _unit_of_work(FakeMongoClient()).flush()
+            await uow.flush()
 
     async def test_flush_commits_nothing(self) -> None:
         client = FakeMongoClient()
@@ -477,8 +479,10 @@ class TestPhased:
         await uow.close()
 
     async def test_rollback_before_begin_is_refused(self) -> None:
+        uow = _unit_of_work(FakeMongoClient())
+
         with pytest.raises(RuntimeError, match=r"rollback\(\) called before begin"):
-            await _unit_of_work(FakeMongoClient()).rollback()
+            await uow.rollback()
 
     async def test_a_failed_commit_through_the_coordinator_is_rolled_back_without_an_abort(
         self, caplog: pytest.LogCaptureFixture

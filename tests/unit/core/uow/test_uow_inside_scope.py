@@ -120,15 +120,19 @@ class TestInsideAScope:
         manager = RecordingSessionManager(make_session())
         executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=Factory(_store()))
 
+        use_case = _EntersByHand(_sqlalchemy(manager))
+
         with pytest.raises(UnitOfWorkInsideScope):
-            await executor.execute(_EntersByHand(_sqlalchemy(manager)))
+            await executor.execute(use_case)
 
     async def test_a_use_case_entering_one_by_hand_commits_nothing_on_its_own(self) -> None:
         session = make_session()
         executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=Factory(_store()))
 
+        use_case = _EntersByHand(_sqlalchemy(RecordingSessionManager(session)))
+
         with pytest.raises(UnitOfWorkInsideScope):
-            await executor.execute(_EntersByHand(_sqlalchemy(RecordingSessionManager(session))))
+            await executor.execute(use_case)
 
         session.commit.assert_not_awaited()
 

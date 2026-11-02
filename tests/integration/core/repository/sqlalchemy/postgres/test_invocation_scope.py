@@ -103,8 +103,11 @@ async def test_a_failure_after_writing_persists_nothing(
         await _insert(table, 1)
         raise BusinessError
 
+    executor = _executor(manager)
+    use_case = Run(body)
+
     with pytest.raises(BusinessError):
-        await _executor(manager).execute(Run(body))
+        await executor.execute(use_case)
 
     assert await _committed_ids(observer, table) == []
 
@@ -139,8 +142,10 @@ async def test_a_failure_after_a_nested_write_persists_nothing(
         await executor.execute(Run(nested))
         raise BusinessError
 
+    use_case = Run(outer)
+
     with pytest.raises(BusinessError):
-        await executor.execute(Run(outer))
+        await executor.execute(use_case)
 
     assert await _committed_ids(observer, table) == []
 
@@ -159,8 +164,10 @@ async def test_a_failed_commit_raises_the_driver_error_and_persists_nothing(
         await _insert(table, 1)  # the deferred key fails only at COMMIT
 
     await executor.execute(Run(first))
+    use_case = Run(duplicate)
+
     with pytest.raises(IntegrityError):
-        await executor.execute(Run(duplicate))
+        await executor.execute(use_case)
 
     assert await _committed_ids(observer, table) == [1]
 
@@ -177,8 +184,10 @@ async def test_a_gather_child_running_a_nested_execution_writes_nothing(
         await _insert(table, 1)
         await asyncio.gather(executor.execute(Run(nested)))
 
+    use_case = Run(outer)
+
     with pytest.raises(ScopeOwnershipError):
-        await executor.execute(Run(outer))
+        await executor.execute(use_case)
 
     assert await _committed_ids(observer, table) == []
 

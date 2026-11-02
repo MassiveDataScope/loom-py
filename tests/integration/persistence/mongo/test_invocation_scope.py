@@ -68,8 +68,11 @@ async def test_a_failure_after_writing_persists_nothing(
         await _insert(created, 1)
         raise BusinessError
 
+    executor = _executor(mongo_client)
+    use_case = Run(body)
+
     with pytest.raises(BusinessError):
-        await _executor(mongo_client).execute(Run(body))
+        await executor.execute(use_case)
 
     assert await _committed_ids(created) == []
 
@@ -104,8 +107,10 @@ async def test_a_failure_after_a_nested_write_persists_nothing(
         await executor.execute(Run(nested))
         raise BusinessError
 
+    use_case = Run(outer)
+
     with pytest.raises(BusinessError):
-        await executor.execute(Run(outer))
+        await executor.execute(use_case)
 
     assert await _committed_ids(created) == []
 

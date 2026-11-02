@@ -394,8 +394,10 @@ class TestInvocation:
         assert current_scope() is None
 
     async def test_the_scope_is_unpublished_after_a_failure(self) -> None:
+        coordinator = _coordinator()
+
         with pytest.raises(Boom):
-            async with invocation(_coordinator()):
+            async with invocation(coordinator):
                 raise Boom
 
         assert current_scope() is None
@@ -409,8 +411,10 @@ class TestInvocation:
     async def test_a_failure_rolls_back_what_the_caller_did_not_finish(self) -> None:
         error = Boom()
         scopes: list[InvocationScope] = []
+        coordinator = _coordinator(PhasedStore(S0, Ledger()))
+
         with pytest.raises(Boom):
-            async with invocation(_coordinator(PhasedStore(S0, Ledger()))) as scope:
+            async with invocation(coordinator) as scope:
                 scopes.append(scope)
                 await scope.coordinator.enlist(scope, S0)
                 raise error
@@ -420,8 +424,10 @@ class TestInvocation:
     async def test_the_failure_itself_propagates(self) -> None:
         error = Boom()
 
+        coordinator = _coordinator()
+
         with pytest.raises(Boom) as raised:
-            async with invocation(_coordinator()):
+            async with invocation(coordinator):
                 raise error
 
         assert raised.value is error
