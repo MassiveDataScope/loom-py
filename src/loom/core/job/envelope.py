@@ -12,12 +12,19 @@ from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import decode_identity
 from loom.core.tracing import reset_trace_id, set_trace_id
 
+TASK_JOB_PREFIX = "loom.job"
+"""Public prefix for fully qualified job names on the wire."""
+
 
 class JobEnvelope(msgspec.Struct, frozen=True, kw_only=True):
-    """Job name, arguments, trace and caller carried by a queue message."""
+    """Public JSON wire contract: ``job``, ``payload``, ``params``, ``trace_id``, ``identity``.
+
+    ``job`` accepts a bare job qualname or ``loom.job.<qualname>``.
+    ``payload`` may be null; consumers treat it as an empty mapping.
+    """
 
     job: str
-    payload: dict[str, Any] = msgspec.field(default_factory=dict)
+    payload: dict[str, Any] | None = msgspec.field(default_factory=dict)
     params: dict[str, Any] | None = None
     trace_id: str | None = None
     identity: dict[str, Any] | None = None

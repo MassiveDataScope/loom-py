@@ -53,6 +53,8 @@ class ErrorCode(StrEnum):
     INVOCATION_SCOPE_FOREIGN_TASK = "invocation_scope_foreign_task"
     STORES_NOT_COMMITTED = "stores_not_committed"
     UOW_INSIDE_SCOPE = "uow_inside_scope"
+    MALFORMED_JOB_MESSAGE = "malformed_job_message"
+    UNKNOWN_JOB = "unknown_job"
 
 
 class Template(NamedTuple):

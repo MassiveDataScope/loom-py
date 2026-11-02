@@ -6,28 +6,26 @@ from collections.abc import Sequence
 from typing import Any
 
 from loom.core.config import ConfigContext
+from loom.core.discovery.worker import WorkerComponents as _WorkerResolved
+from loom.core.discovery.worker import WorkerManifest as WorkerManifest
+from loom.core.discovery.worker import apply_job_overrides as _apply_job_config_if_present
+from loom.core.discovery.worker import merge_unique as _merge_unique
+from loom.core.discovery.worker import resolve_worker_components
+from loom.core.discovery.worker import use_cases_from_interfaces as _use_cases_from_interfaces
 from loom.core.engine.compilable import Compilable
-from loom.core.job.discovery import (
-    WorkerManifest as WorkerManifest,
-)
-from loom.core.job.discovery import (
-    _apply_job_config_if_present as _apply_job_config_if_present,
-)
-from loom.core.job.discovery import (
-    _emit_worker_init_graph as _emit_worker_init_graph,
-)
-from loom.core.job.discovery import (
-    _merge_unique as _merge_unique,
-)
-from loom.core.job.discovery import _resolve_compilables_and_jobs as _resolve_shared
-from loom.core.job.discovery import (
-    _use_cases_from_interfaces as _use_cases_from_interfaces,
-)
-from loom.core.job.discovery import (
-    _WorkerResolved,
-)
 from loom.core.job.job import Job
+from loom.core.logger import get_logger
 from loom.rest.autocrud import build_auto_routes
+
+__all__ = [
+    "WorkerManifest",
+    "_WorkerResolved",
+    "_apply_job_config_if_present",
+    "_merge_unique",
+    "_use_cases_from_interfaces",
+    "_resolve_compilables_and_jobs",
+    "_emit_worker_init_graph",
+]
 
 
 def _autocrud_use_cases_from_models(
@@ -45,4 +43,17 @@ def _resolve_compilables_and_jobs(
     explicit_use_cases: Sequence[type[Compilable]],
 ) -> _WorkerResolved:
     """Resolve worker components, including REST generated use cases."""
-    return _resolve_shared(ctx, explicit_jobs, explicit_use_cases, _autocrud_use_cases_from_models)
+    return resolve_worker_components(
+        ctx, explicit_jobs, explicit_use_cases, _autocrud_use_cases_from_models
+    )
+
+
+def _emit_worker_init_graph(components: _WorkerResolved) -> None:
+    """Emit the Celery worker graph at startup."""
+    get_logger("loom.celery.bootstrap").info(
+        "[BOOT] Worker init graph",
+        jobs=len(components.jobs),
+        use_cases=len(components.compilables) - len(components.jobs),
+        callbacks=len(components.callbacks),
+        models=len(components.models),
+    )

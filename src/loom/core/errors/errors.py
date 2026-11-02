@@ -59,6 +59,21 @@ class SystemError(LoomError):
         super().__init__(message, code=code)
 
 
+class MalformedJobMessage(SystemError):
+    """A job message does not satisfy the public envelope contract."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=ErrorCode.MALFORMED_JOB_MESSAGE)
+
+
+class UnknownJob(SystemError):
+    """A message names a job absent from this application's registry."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"Unknown job {name!r}", code=ErrorCode.UNKNOWN_JOB)
+
+
 class ForeignSessionError(SystemError):
     """A caller met a session that another session manager or client opened.
 

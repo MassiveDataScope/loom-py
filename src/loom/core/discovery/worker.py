@@ -13,13 +13,16 @@ from loom.core.config import ConfigContext, ConfigKey
 from loom.core.config.errors import ConfigError
 from loom.core.discovery._utils import collect_from_modules, import_modules
 from loom.core.discovery.config import DiscoveryConfig, decode_discovery
+from loom.core.discovery.worker_manifest import WorkerManifestAttr
 from loom.core.engine.compilable import Compilable
 from loom.core.job.config import JobConfig, apply_job_config
 from loom.core.job.job import Job
-from loom.core.job.manifest import WorkerManifestAttr
 from loom.core.model import BaseModel
 
-_logger = logging.getLogger("loom.celery._discovery")
+_logger = logging.getLogger(__name__)
+
+AutoCRUDUseCases = Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]]
+"""Optional compiler for model-generated use cases."""
 
 _T = TypeVar("_T")
 
@@ -39,17 +42,17 @@ class WorkerManifest:
     A manifest module does not declare an instance of this type (a module-level
     ``MANIFEST`` is refused): it declares the module-level lists ``JOBS``,
     ``USE_CASES``, ``INTERFACES``, ``MODELS`` and ``CALLBACKS``, any of them
-    optional but at least one present. :func:`bootstrap_worker` reads them when
-    ``app.discovery.mode == "manifest"`` is configured in YAML.
+    optional but at least one present. Discovery reads them when
+    ``app.discovery.mode == "manifest"`` is configured.
 
     Attributes:
-        jobs: Job subclasses to register as Celery tasks.
+        jobs: Job subclasses to register for execution.
         use_cases: UseCase subclasses to compile in the worker so that
             callbacks can invoke them via ``ApplicationInvoker``.
         interfaces: ``RestInterface`` subclasses whose route use-cases
             are extracted and compiled automatically.
-        models: Model classes for which AutoCRUD use cases are compiled.
-        callbacks: Job callback classes to register as Celery tasks.
+        models: Model classes available to the transport for optional generated use cases.
+        callbacks: Job callback classes to register for execution.
 
     Example::
 
@@ -71,7 +74,7 @@ class WorkerManifest:
 
 
 @dataclass(frozen=True)
-class _WorkerResolved:
+class WorkerComponents:
     """Resolved worker graph after discovery/explicit merging."""
 
     compilables: tuple[type[Compilable], ...]
@@ -85,7 +88,7 @@ class _WorkerResolved:
 # ---------------------------------------------------------------------------
 
 
-def _apply_job_config_if_present(
+def apply_job_overrides(
     ctx: ConfigContext,
     job_type: type[Job[Any]],
 ) -> None:
@@ -105,7 +108,7 @@ def _apply_job_config_if_present(
         pass  # no override for this job — use ClassVar defaults
 
 
-def _use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Compilable], ...]:
+def use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Compilable], ...]:
     """Extract UseCase classes declared on RestInterface routes.
 
     Each ``RestInterface.routes`` entry carries a ``use_case`` class.
@@ -132,7 +135,7 @@ def _use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Co
 # ---------------------------------------------------------------------------
 
 
-def _merge_unique(first: Sequence[_T], second: Sequence[_T]) -> tuple[_T, ...]:
+def merge_unique(first: Sequence[_T], second: Sequence[_T]) -> tuple[_T, ...]:
     """Merge two sequences preserving declaration order and uniqueness."""
     seen: set[Any] = set()
     result: list[_T] = []
@@ -238,7 +241,7 @@ def _read_worker_manifest(module_path: str) -> WorkerManifest:
 
 def _build_worker_compilables(
     manifest: WorkerManifest,
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
 ) -> tuple[type[Compilable], ...]:
     """Build the full compilables set from a :class:`WorkerManifest`.
 
@@ -251,11 +254,11 @@ def _build_worker_compilables(
     Returns:
         Deduplicated tuple of all compilable types (use cases + jobs).
     """
-    use_cases = _merge_unique(
-        _merge_unique(manifest.use_cases, _use_cases_from_interfaces(manifest.interfaces)),
+    use_cases = merge_unique(
+        merge_unique(manifest.use_cases, use_cases_from_interfaces(manifest.interfaces)),
         autocrud_use_cases(manifest.models) if autocrud_use_cases else (),
     )
-    return _merge_unique(use_cases, manifest.jobs)
+    return merge_unique(use_cases, manifest.jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +268,10 @@ def _build_worker_compilables(
 
 def _resolved_from_manifest(
     manifest: WorkerManifest,
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
-) -> _WorkerResolved:
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
+) -> WorkerComponents:
     """Build a normalized worker graph from a fully populated WorkerManifest."""
-    return _WorkerResolved(
+    return WorkerComponents(
         compilables=_build_worker_compilables(manifest, autocrud_use_cases),
         jobs=tuple(manifest.jobs),
         models=tuple(manifest.models),
@@ -278,8 +281,8 @@ def _resolved_from_manifest(
 
 def _discover_from_modules(
     discovery_cfg: DiscoveryConfig,
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
-) -> _WorkerResolved:
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
+) -> WorkerComponents:
     """Discover worker components from module include paths."""
     modules = import_modules(discovery_cfg.modules.include)
     models, use_cases, interfaces, discovered_jobs = collect_from_modules(modules)
@@ -298,8 +301,8 @@ def _discover_from_modules(
 
 def _discover_from_manifest(
     discovery_cfg: DiscoveryConfig,
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
-) -> _WorkerResolved:
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
+) -> WorkerComponents:
     """Discover worker components from a manifest module."""
     return _resolved_from_manifest(
         _read_worker_manifest(discovery_cfg.manifest.module), autocrud_use_cases
@@ -330,8 +333,8 @@ def _worker_discovery(ctx: ConfigContext) -> DiscoveryConfig:
 
 def _discover_compilables_from_config(
     discovery_cfg: DiscoveryConfig,
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
-) -> _WorkerResolved:
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
+) -> WorkerComponents:
     if discovery_cfg.mode == "modules":
         return _discover_from_modules(discovery_cfg, autocrud_use_cases)
     # _worker_discovery admits no mode but modules and manifest.
@@ -340,29 +343,29 @@ def _discover_compilables_from_config(
 
 def _try_discover_components(
     ctx: ConfigContext,
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
-) -> _WorkerResolved:
-    """Best-effort discovery; returns empty _WorkerResolved if config is absent."""
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
+) -> WorkerComponents:
+    """Best-effort discovery; returns empty WorkerComponents if config is absent."""
     try:
         return _discover_compilables_from_config(_worker_discovery(ctx), autocrud_use_cases)
     except (ConfigError, RuntimeError, ValueError, TypeError):
-        return _WorkerResolved(compilables=(), jobs=(), models=(), callbacks=())
+        return WorkerComponents(compilables=(), jobs=(), models=(), callbacks=())
 
 
-def _resolve_compilables_and_jobs(
+def resolve_worker_components(
     ctx: ConfigContext,
     explicit_jobs: Sequence[type[Job[Any]]],
     explicit_use_cases: Sequence[type[Compilable]],
-    autocrud_use_cases: Callable[[Sequence[type[Any]]], tuple[type[Compilable], ...]] | None = None,
-) -> _WorkerResolved:
+    autocrud_use_cases: AutoCRUDUseCases | None = None,
+) -> WorkerComponents:
     """Resolve worker components from explicit args and/or discovery config."""
     if explicit_jobs or explicit_use_cases:
         jobs = tuple(explicit_jobs)
-        compilables = _merge_unique(explicit_use_cases, jobs)
+        compilables = merge_unique(explicit_use_cases, jobs)
         discovered = _try_discover_components(ctx, autocrud_use_cases)
         declared = set(compilables)
         extra = tuple(c for c in discovered.compilables if c not in declared)
-        return _WorkerResolved(
+        return WorkerComponents(
             compilables=(*compilables, *extra),
             jobs=jobs,
             models=discovered.models,
@@ -378,21 +381,7 @@ def _resolve_compilables_and_jobs(
     discovered = _discover_compilables_from_config(discovery_cfg, autocrud_use_cases)
     if not discovered.jobs:
         _logger.warning(
-            "no Job classes discovered: the worker starts with no task registered. "
+            "no Job classes discovered: the worker starts with no jobs registered. "
             "Add JOBS to manifest or include job modules in app.discovery."
         )
     return discovered
-
-
-def _emit_worker_init_graph(components: _WorkerResolved) -> None:
-    """Emit a concise worker graph summary (Celery-style init visibility)."""
-    from loom.core.logger import get_logger
-
-    logger = get_logger("loom.celery.bootstrap")
-    logger.info(
-        "[BOOT] Worker init graph",
-        jobs=len(components.jobs),
-        use_cases=len(components.compilables) - len(components.jobs),
-        callbacks=len(components.callbacks),
-        models=len(components.models),
-    )

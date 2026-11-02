@@ -407,7 +407,7 @@ class TestBootstrapWorkerTaskRegistration:
     def test_starts_without_jobs_or_discovery_with_a_warning(
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="loom.celery._discovery"):
+        with caplog.at_level(logging.WARNING, logger="loom.core.discovery.worker"):
             result = self._run(tmp_path, jobs=None)
 
         assert "no Job classes discovered" in caplog.text

@@ -44,6 +44,7 @@ from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import PostCommitError
 from loom.core.identity import Identity
 from loom.core.job.envelope import job_context as _job_context
+from loom.core.job.outcome import is_retryable as _is_retryable
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -196,18 +197,6 @@ def _is_eager_request(task_self: Any) -> bool:
 # ---------------------------------------------------------------------------
 # Job runner factory
 # ---------------------------------------------------------------------------
-
-
-def _is_retryable(exc: Exception) -> bool:
-    """Whether re-running the job could still fix ``exc``, as the error itself declares.
-
-    A :class:`~loom.core.errors.LoomError` says so through ``retryable``: a
-    post-commit failure of a committed transaction, or
-    :class:`~loom.core.uow.scope.StoresNotCommitted`, would apply a write
-    twice, and a programming error a retry meets again is not retryable
-    either. Any other exception is.
-    """
-    return bool(getattr(exc, "retryable", True))
 
 
 def _log_post_commit_failure(exc: Exception, job: str) -> None:
