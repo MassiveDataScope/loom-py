@@ -379,7 +379,10 @@ class TestWritesStayInTheInnermostFrame:
         stores = _stores(Ledger(), S0, S1)
 
         async with invocation(_coordinator(*stores.values())) as scope, scope.frame(Frame(S0)):
-            with pytest.raises(ForeignSessionError, match="'s1'.*active session of store 's0'"):
+            with pytest.raises(
+                ForeignSessionError,
+                match=r"a write to store 's1' .* is refused: .* declares only store 's0'$",
+            ):
                 scope.participant_for(S1, stores[S1].owner, write=True)
 
     async def test_an_enlisted_store_of_an_outer_frame_refuses_the_write_and_records_nothing(

@@ -171,7 +171,7 @@ def handle_integrity_errors(
 
         @handle_integrity_errors
         async def create(self, data: Struct) -> Output:
-            async with self._session_scope() as session:
+            async with self._session_scope(write=True) as session:
                 ...
     """
 

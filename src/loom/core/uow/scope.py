@@ -259,13 +259,14 @@ class InvocationScope:
         return participant
 
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:
-        if self.frames and key not in self.frames[-1].stores:
-            raise ForeignSessionError.between(
-                ForeignSessionError.side(key, _described(owner)),
-                ForeignSessionError.side(
-                    self.frames[-1].primary, "the store this execution writes to"
-                ),
-            )
+        if not self.frames or key in self.frames[-1].stores:
+            return
+        # Its own error type (UndeclaredStoreWrite) arrives with Joined (PR 6).
+        declared = ", ".join(repr(store) for store in self.frames[-1].stores)
+        raise ForeignSessionError(
+            f"a write to {ForeignSessionError.side(key, _described(owner))} is refused: "
+            f"the execution running now declares only store {declared}"
+        )
 
     @asynccontextmanager
     async def frame(self, frame: Frame) -> AsyncIterator[None]:

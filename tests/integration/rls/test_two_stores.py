@@ -455,7 +455,8 @@ async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
     before = await two_servers.row_counts()
     async with _started(two_servers.context()) as stores:
         with pytest.raises(
-            ForeignSessionError, match=rf"store '{inner}' .* active session of store '{outer}'"
+            ForeignSessionError,
+            match=rf"a write to store '{inner}' .* declares only store '{outer}'$",
         ):
             await _as(U1, lambda: _write_both(stores[outer], stores[inner]))
 
