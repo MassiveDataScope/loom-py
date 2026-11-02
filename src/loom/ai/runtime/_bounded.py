@@ -14,6 +14,7 @@ from typing import Any, Final
 
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
+from loom.core._async import discard_outcome
 from loom.core.errors import Forbidden, Unauthenticated
 from loom.core.identity import Identity
 from loom.core.sql.abc import RoleNotAllowedError, RolesNotBoundError
@@ -116,7 +117,7 @@ async def _settle(task: asyncio.Future[object], bound: float, run: RunContext, w
         task.cancel()
         # The task runs detached from here on: retrieve a late outcome so an
         # exception raised after this point is never "never retrieved".
-        task.add_done_callback(_retrieve_outcome)
+        task.add_done_callback(discard_outcome)
         _logger.warning(
             "%s of agent %r still running at its bound after the consumer "
             "left; cancelled (interaction %s)",
@@ -180,9 +181,3 @@ def failure_error(
         "%s of agent %r failed (interaction %s)", what, run.plan.name, run.interaction_id
     )
     return AgentRunError(code, message, interaction_id=run.interaction_id)
-
-
-def _retrieve_outcome(task: asyncio.Future[object]) -> None:
-    """Mark a detached task's outcome as retrieved once it finally ends."""
-    if not task.cancelled():
-        task.exception()
