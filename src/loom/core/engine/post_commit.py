@@ -39,16 +39,13 @@ class PostCommitError(LoomError):
 
     def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
         self.committed = committed
+        # A retry once the transaction committed would apply it twice.
+        self.retryable = not committed
         self.failures = failures
         super().__init__(
             f"{len(failures)} post-commit action(s) failed (committed={committed})",
             code=ErrorCode.POST_COMMIT_FAILURE,
         )
-
-    @property
-    def retryable(self) -> bool:  # type: ignore[override]
-        """Whether a retry is safe: not once the transaction committed, it would apply twice."""
-        return not self.committed
 
 
 class PostCommitChannel:
