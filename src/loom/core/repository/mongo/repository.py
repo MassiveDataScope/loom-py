@@ -23,8 +23,6 @@ persistence registry turns an ``ImportError`` at entry-point load into a
 
 from __future__ import annotations
 
-import inspect
-import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Generic, Protocol, cast
@@ -92,24 +90,6 @@ def _no_session(write: bool) -> AsyncClientSession | None:
     """Default ``session_provider``: every driver call runs outside a session."""
     del write
     return None
-
-
-def _with_write_intent(
-    provider: SessionProvider | Callable[[], AsyncClientSession | None],
-) -> SessionProvider:
-    """Return ``provider`` taking the write intent, adapting a zero-argument one with a warning."""
-    try:
-        inspect.signature(provider).bind(False)
-    except TypeError:
-        warnings.warn(
-            "a session_provider without arguments is deprecated: it receives whether the "
-            "call writes (Callable[[bool], AsyncClientSession | None])",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        legacy = cast(Callable[[], AsyncClientSession | None], provider)
-        return lambda write: legacy()
-    return cast(SessionProvider, provider)
 
 
 class MongoFindCursor(Protocol):
@@ -207,8 +187,7 @@ class RepositoryMongo(
             :class:`~loom.core.repository.mongo.ids.Uuid4IdPolicy`.
         session_provider: Given whether the call writes, returns the client
             session the driver call runs in, or ``None``. Defaults to no
-            session. A provider taking no argument still works, with a
-            ``DeprecationWarning``, for one version.
+            session.
         cursor_codec: Codec that issues and verifies cursor tokens; the
             backend builds one from ``persistence.cursors`` and shares it.
             Mongo has no row-level-security scope, so cursors are bound to
@@ -234,7 +213,7 @@ class RepositoryMongo(
         model: type,
         collection: MongoCollection,
         id_policy: IdPolicy | None = None,
-        session_provider: SessionProvider | Callable[[], AsyncClientSession | None] = _no_session,
+        session_provider: SessionProvider = _no_session,
         *,
         cursor_codec: CursorCodec,
     ) -> None:
@@ -242,7 +221,7 @@ class RepositoryMongo(
         self._cursor_codec = cursor_codec
         self._collection = collection
         self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
-        self._session = _with_write_intent(session_provider)
+        self._session = session_provider
         self._id_attr = _single_id_attribute(model)
         column_fields = get_column_fields(model)
         self._column_fields = frozenset(column_fields)
@@ -287,7 +266,15 @@ class RepositoryMongo(
         Returns:
             ``True`` when a caller-scoped session is bound to the context.
         """
-        return self._session(False) is not None
+        return self._read_session() is not None
+
+    def _read_session(self) -> AsyncClientSession | None:
+        """The session a read joins, or ``None`` to read outside one."""
+        return self._session(False)
+
+    def _write_session(self) -> AsyncClientSession | None:
+        """The session a write joins, or ``None`` to autocommit; the write is recorded."""
+        return self._session(True)
 
     @property
     def model(self) -> type:
@@ -301,26 +288,26 @@ class RepositoryMongo(
 
     async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
         """Fetch one entity by primary key."""
-        document = await self._collection.find_one(self._key(obj_id), session=self._session(False))
+        document = await self._collection.find_one(self._key(obj_id), session=self._read_session())
         return None if document is None else self._to_output(document)
 
     async def get_by(self, field: str, value: Any, profile: str = "default") -> OutputT | None:
         """Fetch the first entity whose ``field`` equals ``value``."""
         document = await self._collection.find_one(
-            self._equals(field, value), session=self._session(False)
+            self._equals(field, value), session=self._read_session()
         )
         return None if document is None else self._to_output(document)
 
     async def exists_by(self, field: str, value: Any) -> bool:
         """Return whether any entity has ``field == value``."""
         document = await self._collection.find_one(
-            self._equals(field, value), session=self._session(False)
+            self._equals(field, value), session=self._read_session()
         )
         return document is not None
 
     async def count(self) -> int:
         """Return the number of documents in the collection."""
-        return await self._collection.count_documents({}, session=self._session(False))
+        return await self._collection.count_documents({}, session=self._read_session())
 
     async def create(self, data: msgspec.Struct) -> OutputT:
         """Insert one document and return its output struct.
@@ -330,7 +317,7 @@ class RepositoryMongo(
         """
         document = self._new_document(data)
         try:
-            await self._collection.insert_one(document, session=self._session(True))
+            await self._collection.insert_one(document, session=self._write_session())
         except DuplicateKeyError as exc:
             raise self._conflict(document[_ID]) from exc
         return self._to_output(document)
@@ -352,7 +339,7 @@ class RepositoryMongo(
         documents = [self._new_document(item) for item in data]
         if not documents:
             return ()
-        session = self._session(True)
+        session = self._write_session()
         try:
             await self._collection.insert_many(documents, ordered=True, session=session)
         except BulkWriteError as exc:
@@ -389,7 +376,7 @@ class RepositoryMongo(
         ``None`` when no document has that key.
         """
         key = self._key(obj_id)
-        session = self._session(True)
+        session = self._write_session()
         changes = {
             name: value
             for name, value in self._to_internal(data).items()
@@ -406,7 +393,7 @@ class RepositoryMongo(
 
     async def delete(self, obj_id: IdT) -> bool:
         """Delete the document keyed ``obj_id``, returning whether it existed."""
-        result = await self._collection.delete_one(self._key(obj_id), session=self._session(True))
+        result = await self._collection.delete_one(self._key(obj_id), session=self._write_session())
         return result.deleted_count > 0
 
     async def list_paginated(
@@ -446,7 +433,7 @@ class RepositoryMongo(
     async def _offset_page(
         self, mongo_filter: MongoFilter, sort: MongoSort, page_params: PageParams
     ) -> PageResult[OutputT]:
-        session = self._session(False)
+        session = self._read_session()
         documents = await (
             self._collection.find(mongo_filter, session=session)
             .sort(sort)
@@ -472,7 +459,7 @@ class RepositoryMongo(
             keyset = self._compiler.compile_cursor_filter(query.sort, cursor)
             mongo_filter = {"$and": [mongo_filter, keyset]} if mongo_filter else keyset
         documents = await (
-            self._collection.find(mongo_filter, session=self._session(False))
+            self._collection.find(mongo_filter, session=self._read_session())
             .sort(self._sort(query.sort))
             .limit(query.limit + 1)
             .to_list()

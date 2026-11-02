@@ -808,22 +808,6 @@ class TestSessions:
 
         assert set(intents) == {write}
 
-    async def test_a_provider_without_arguments_still_works_with_a_deprecation_warning(
-        self, collection: FakeCollection
-    ) -> None:
-        calls: list[None] = []
-
-        def legacy() -> None:
-            calls.append(None)
-
-        with pytest.warns(DeprecationWarning, match="session_provider without arguments"):
-            repo = RepositoryMongo(
-                Article, collection, session_provider=legacy, cursor_codec=_CODEC
-            )
-        await repo.get_by_id("x")
-
-        assert calls == [None]
-
 
 _CALLS: dict[str, Callable[[RepositoryMongo[Article, str]], Awaitable[object]]] = {
     "get_by_id": lambda repo: repo.get_by_id("a"),
