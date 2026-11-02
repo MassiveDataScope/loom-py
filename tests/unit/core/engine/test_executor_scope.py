@@ -659,6 +659,24 @@ class TestCancellation:
             [],
         )
 
+    async def test_a_cancelled_close_after_the_commit_still_runs_the_priority_actions(
+        self,
+    ) -> None:
+        """Every store committed: the post-commit channel describes a durable write."""
+        ran: list[str] = []
+
+        def enqueue() -> None:
+            channel = active_channel()
+            assert channel is not None
+            channel.enqueue_priority(lambda: ran.append("bump"))
+
+        run = _Cancelled.at(Fault("close", Effect.CANCEL), enqueue)
+
+        with pytest.raises(asyncio.CancelledError):
+            await run.cancel_when_blocked()
+
+        assert ran == ["bump"]
+
 
 @dataclass
 class _Cancelled:
@@ -669,14 +687,20 @@ class _Cancelled:
     observed: list[bool]
 
     @classmethod
-    def at(cls, fault: Fault) -> _Cancelled:
-        """Start the execution; its task records whether its own context ended clean."""
+    def at(cls, fault: Fault, also: Callable[[], None] = lambda: None) -> _Cancelled:
+        """Start the execution; its task records whether its own context ended clean.
+
+        Args:
+            fault: Where the store blocks.
+            also: Run by the body after it writes, before anything fails.
+        """
         ledger = Ledger()
         stores = _Stores(ledger, fault)
         observed: list[bool] = []
 
         async def body() -> None:
             _write(stores, "row")
+            also()
             if fault.phase == "rollback":
                 raise _BusinessError
 

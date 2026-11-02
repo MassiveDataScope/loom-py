@@ -505,10 +505,16 @@ class RuntimeExecutor:
                 )
             except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
                 error = exc
-            outcome = await self._finish(scope, error, state)
-            # Every store has ended; only the scope's own teardown remains.  A
-            # failure past this point must not read as "the transaction failed".
-            state.committed = error is None and outcome.succeeded
+            try:
+                outcome = await self._finish(scope, error, state)
+            finally:
+                # Read from the scope: ``finish`` records the outcome before it
+                # raises an interruption caught while ending a store (a
+                # cancelled close).  Once every store committed, a failure past
+                # this point must not read as "the transaction failed".
+                state.committed = (
+                    error is None and scope.outcome is not None and scope.outcome.succeeded
+                )
         failure = invocation_error(outcome, error)
         if failure is not None:
             raise failure
