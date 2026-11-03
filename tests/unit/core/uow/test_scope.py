@@ -32,6 +32,8 @@ from loom.core.uow.coordinator import (
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
+    NestedElevation,
+    NestedIdentityMismatch,
     ScopeOwnershipError,
     StoresNotCommitted,
     UnitOfWorkInsideScope,
@@ -967,8 +969,17 @@ class TestErrors:
             UnitOfWorkInsideScope.entering(object()),
             StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
             ForeignSessionError.between("store 's0' (b.db)", "store 's0' (a.db)"),
+            NestedIdentityMismatch.joining("Child", "Parent"),
+            NestedElevation.opening("Child", "Parent", frozenset({"editor"})),
         ],
-        ids=["ownership", "inside-scope", "stores", "foreign-session"],
+        ids=[
+            "ownership",
+            "inside-scope",
+            "stores",
+            "foreign-session",
+            "nested-identity",
+            "nested-elevation",
+        ],
     )
     def test_each_error_crosses_the_celery_json_result_backend(self, error: Exception) -> None:
         backend = BaseBackend(app=_celery_app(), serializer="json")

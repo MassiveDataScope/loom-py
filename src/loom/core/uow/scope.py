@@ -101,6 +101,68 @@ class UnitOfWorkInsideScope(SystemError):
         )
 
 
+class NestedIdentityMismatch(SystemError):
+    """A nested execution joined its parent's unit of work as another identity.
+
+    The shared transaction filters rows as one identity, so it cannot serve
+    the child's as well; when it has not begun yet, the child's identity would
+    be the one it begins with, for the parent too. Build it with :meth:`joining`.
+
+    Args:
+        message: Names both use cases.
+    """
+
+    retryable = False
+    """A programming error: a retry meets it again."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=ErrorCode.NESTED_IDENTITY_MISMATCH)
+
+    @classmethod
+    def joining(cls, child: str, parent: str) -> NestedIdentityMismatch:
+        """The error for ``child`` joining the unit of work of ``parent`` as another identity.
+
+        Args:
+            child: The nested use case.
+            parent: The use case whose unit of work it joins.
+        """
+        return cls(
+            f"{child} would join the unit of work of {parent} as another identity; "
+            "invoke it with the same identity, or dispatch a job that runs as the other one"
+        )
+
+
+class NestedElevation(SystemError):
+    """A nested execution was started after its parent elevated a scope.
+
+    The elevation flag is set on the shared transaction, and an elevation is
+    never inherited. Build it with :meth:`opening`.
+
+    Args:
+        message: Names both use cases and the elevated scopes.
+    """
+
+    retryable = False
+    """A programming error: a retry meets it again."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=ErrorCode.NESTED_ELEVATION)
+
+    @classmethod
+    def opening(cls, child: str, parent: str, scopes: frozenset[str]) -> NestedElevation:
+        """The error for starting ``child`` while ``parent`` holds ``scopes`` elevated.
+
+        Args:
+            child: The nested use case.
+            parent: The use case that elevated.
+            scopes: The scopes it elevated.
+        """
+        return cls(
+            f"{child} cannot run inside {parent}, which elevated {', '.join(sorted(scopes))}; "
+            "elevate inside the nested use case instead, or dispatch a job"
+        )
+
+
 class StoresNotCommitted(SystemError):
     """The stores of one invocation did not all end the same way.
 

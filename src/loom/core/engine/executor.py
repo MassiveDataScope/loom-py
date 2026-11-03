@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import Awaitable, Callable
-from contextlib import nullcontext
-from contextvars import Token
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
-from loom.core.authz.elevation import ElevationSink, elevation_scope
+from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
@@ -23,7 +23,7 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
-from loom.core.identity import Identity
+from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
@@ -32,6 +32,8 @@ from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCom
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
+    NestedElevation,
+    NestedIdentityMismatch,
     current_scope,
     invocation,
     invocation_error,
@@ -59,6 +61,10 @@ _ERROR_KIND_CANCELLED = "cancelled"
 _ERROR_KIND_POST_COMMIT = "post_commit"
 _DEFAULT_FRAME = Frame(DEFAULT_STORE)
 """Every execution's frame until a use case names its primary store (T046)."""
+_NO_PARENT = "the enclosing invocation"
+
+_running: ContextVar[str | None] = ContextVar("loom_running_use_case", default=None)
+"""The use case executing in this context; names the parent in a refused nesting."""
 
 
 class ParameterBindingError(ValueError):
@@ -135,6 +141,13 @@ class RuntimeExecutor:
     :class:`~loom.core.engine.post_commit.PostCommitChannel` owned by the
     execution that owns the scope (or by the outermost execution when there
     is none) and run once the scope has closed.
+
+    An execution given an ``identity`` installs it as the ambient
+    :func:`~loom.core.identity.current_identity` until it ends, drain
+    included, so row-level security and the jobs it dispatches see the
+    identity ``Caller()`` receives.  A nested execution that joins the
+    parent's unit of work must run as the identity already active, and none
+    may start while its parent holds an elevation.
 
     No signature inspection occurs at runtime. All structural information
     comes from the cached ExecutionPlan produced by UseCaseCompiler.
@@ -400,6 +413,11 @@ class RuntimeExecutor:
                 already closed.
             loom.core.uow.scope.StoresNotCommitted: If two or more stores
                 of the invocation did not end the same way.
+            loom.core.uow.scope.NestedIdentityMismatch: If this execution
+                joins the unit of work of the one running in this task with
+                an ``identity`` other than the active one.
+            loom.core.uow.scope.NestedElevation: If the execution running
+                in this context has elevated a scope.
         """
         plan = self._plan_for(type(compilable))
         inputs = _ExecutionInputs(
@@ -410,11 +428,15 @@ class RuntimeExecutor:
             identity=identity,
         )
         scope = current_scope()
-        if read_only or plan.read_only:
-            with nullcontext() if scope is None or scope.owned_here() else unscoped():
-                return await self._run_lifecycle(plan, compilable, inputs, None, None)
-        owned = self._coordinator if scope is None else None
-        return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
+        joins = scope is not None and scope.owned_here()
+        name = plan.use_case_type.__qualname__
+        _refuse_nesting(name, identity, joins=joins)
+        with _running_as(name, identity):
+            if read_only or plan.read_only:
+                with nullcontext() if scope is None or joins else unscoped():
+                    return await self._run_lifecycle(plan, compilable, inputs, None, None)
+            owned = self._coordinator if scope is None else None
+            return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -1104,3 +1126,31 @@ class RuntimeExecutor:
     def _log_step(self, label: str) -> None:
         if self._debug:
             self._logger.info(f"[STEP] {label}")
+
+
+def _refuse_nesting(use_case: str, identity: Identity | None, *, joins: bool) -> None:
+    """Refuse to start ``use_case`` inside an elevated execution, or join it as another identity.
+
+    Raises:
+        NestedElevation: When the execution running in this context elevated a scope.
+        NestedIdentityMismatch: When ``joins`` and ``identity`` is not the active one.
+    """
+    parent = _running.get() or _NO_PARENT
+    scopes = elevated_scopes()
+    if scopes:
+        raise NestedElevation.opening(use_case, parent, scopes)
+    if joins and identity is not None and identity != current_identity():
+        raise NestedIdentityMismatch.joining(use_case, parent)
+
+
+@contextmanager
+def _running_as(use_case: str, identity: Identity | None) -> Iterator[None]:
+    """Mark ``use_case`` as running and install ``identity``, when given, as the ambient one."""
+    running = _running.set(use_case)
+    bound = None if identity is None else set_identity(identity)
+    try:
+        yield
+    finally:
+        if bound is not None:
+            reset_identity(bound)
+        _running.reset(running)
