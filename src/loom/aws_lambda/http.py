@@ -30,7 +30,7 @@ from loom.aws_lambda._refusals import (
     refuse_manifest_agents,
     refuse_unserved_config,
 )
-from loom.aws_lambda.functions import http_function
+from loom.aws_lambda.functions import entry_function, http_function
 from loom.composition import (
     Application,
     CompositionErrorCode,
@@ -82,7 +82,9 @@ class LambdaHTTPAdapter:
         authenticator: Custom authentication mechanism; requires
             ``custom: true`` in the authentication in effect.
         function: The function of ``lambda.functions`` to serve: its
-            interfaces only, with its ``auth`` when it declares one.
+            interfaces only, with its ``auth`` when it declares one. The one
+            ``app.entry`` names when omitted, so ``LOOM__APP__ENTRY`` still
+            selects the function of an adapter built in code.
     """
 
     def __init__(
@@ -110,13 +112,17 @@ class LambdaHTTPAdapter:
             )
         refuse_unserved_config(source, _COMPONENT)
         _refuse_sql_endpoints(source.config)
-        served = None if self._function is None else http_function(source.config, self._function)
+        served = (
+            entry_function(source.config, source.app.entry)
+            if self._function is None
+            else http_function(source.config, self._function)
+        )
         recipe, declared = compose_rest(
             source,
             authenticator=self._authenticator,
             serves_documentation=False,
-            auth_section=None if served is None else served.auth_section,
-            select_interfaces=None if served is None else served.select,
+            auth_section=served.auth_section,
+            select_interfaces=served.select,
         )
         refuse_manifest_agents(recipe.discovered.agent_specs, _COMPONENT)
         self._declared = declared

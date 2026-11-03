@@ -19,7 +19,6 @@ import msgspec
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
 
 if TYPE_CHECKING:
-    from loom.composition import Adapter
     from loom.rest.fastapi.adapter import InterfaceSelector
     from loom.rest.model import RestInterface
 
@@ -43,10 +42,10 @@ class _LambdaConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fi
 
 @dataclasses.dataclass(frozen=True)
 class HttpFunction:
-    """What an HTTP function changes in the REST composition."""
+    """What an HTTP function changes in the REST composition; nothing by default."""
 
-    auth_section: str | None
-    select: InterfaceSelector
+    auth_section: str | None = None
+    select: InterfaceSelector | None = None
 
 
 def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
@@ -54,7 +53,7 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
 
     Raises:
         ConfigError: When a function declares both or neither of ``http`` and
-            ``sqs: true``, ``auth`` without ``http``, or an interface another
+            ``sqs: true``, ``auth`` on an sqs function, or an interface another
             function already serves.
     """
     config = ctx.section_optional(ConfigKey.LAMBDA, _LambdaConfig)
@@ -74,21 +73,14 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
     return functions
 
 
-def function_adapter(ctx: ConfigContext, name: str) -> Adapter[object]:
-    """The adapter of the function *name*.
+def declared_function(ctx: ConfigContext, name: str) -> LambdaFunction:
+    """The function *name* of ``lambda.functions``.
 
     Raises:
         ConfigError: When no function is called *name*, or ``lambda.functions``
             is misdeclared.
     """
-    function = _function(declared_functions(ctx), name)
-    if function.sqs:
-        from loom.aws_lambda.sqs import LambdaSQSAdapter
-
-        return LambdaSQSAdapter()
-    from loom.aws_lambda.http import LambdaHTTPAdapter
-
-    return LambdaHTTPAdapter(function=name)
+    return _function(declared_functions(ctx), name)
 
 
 def http_function(ctx: ConfigContext, name: str) -> HttpFunction:
@@ -108,14 +100,23 @@ def http_function(ctx: ConfigContext, name: str) -> HttpFunction:
     )
 
 
+def entry_function(ctx: ConfigContext, entry: str | None) -> HttpFunction:
+    """The HTTP function ``app.entry`` names, or nothing when it names none.
+
+    Raises:
+        ConfigError: When *entry* names an sqs function, or
+            ``lambda.functions`` is misdeclared.
+    """
+    if entry is None or entry not in declared_functions(ctx):
+        return HttpFunction()
+    return http_function(ctx, entry)
+
+
 def _function(functions: Mapping[str, LambdaFunction], name: str) -> LambdaFunction:
     function = functions.get(name)
     if function is None:
         declared = ", ".join(functions) or "none"
-        raise ConfigError(
-            f"app.entry {name!r} is neither fastapi, lambda_http, lambda_sqs "
-            f"nor a function of {_SECTION} (declared: {declared})"
-        )
+        raise ConfigError(f"{_SECTION} declares no function {name!r} (declared: {declared})")
     return function
 
 

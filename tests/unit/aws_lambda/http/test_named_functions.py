@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from loom.composition import create_app
 from loom.core.config import ConfigError
 from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
+from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
 from tests.unit.aws_lambda.http._clients import lambda_client
 from tests.unit.aws_lambda.http._contract_app import bearer
@@ -109,31 +109,91 @@ def test_the_entry_variable_selects_the_function_in_production(
     assert call("GET", "/ops/admin", headers=bearer("alice", "admin")).status == 200
 
 
-def test_a_function_auth_replaces_the_application_auth(
-    project: Callable[..., str], serve: Callable[..., Any]
-) -> None:
-    path = project("public_api", {"public_api": {"http": ["ItemInterface"], "auth": {}}})
+class _HeaderAuthenticator:
+    """Authenticates exactly the requests carrying ``x-test: ok``."""
 
-    assert lambda_client(serve(path))("GET", "/items/12").status == 200
-
-
-class _AlwaysAuthenticates:
     name = "test"
     provides_roles = True
 
-    async def authenticate(self, credentials: RequestCredentials) -> Identity:
-        assert credentials.headers.get("authorization") is None
+    async def authenticate(self, credentials: RequestCredentials) -> Identity | None:
+        if credentials.headers.get("x-test") != "ok":
+            return None
         return Identity(subject="tester", mechanism=self.name)
 
 
-def test_a_function_auth_can_hand_authentication_to_code(
+_OK = {"x-test": "ok"}
+
+
+@pytest.mark.parametrize(
+    ("auth", "in_code", "headers", "status"),
+    [
+        pytest.param(None, False, {}, 401, id="application-jwt-applies"),
+        pytest.param({}, False, {}, 200, id="function-without-authentication"),
+        pytest.param({"custom": True}, True, _OK, 200, id="code-authenticates"),
+        pytest.param({"custom": True}, True, {}, 401, id="code-refuses"),
+    ],
+)
+def test_a_function_auth_replaces_the_application_auth(
+    project: Callable[..., str],
+    serve: Callable[..., Any],
+    auth: dict[str, Any] | None,
+    in_code: bool,
+    headers: dict[str, str],
+    status: int,
+) -> None:
+    function: dict[str, Any] = {"http": ["ItemInterface"]}
+    if auth is not None:
+        function["auth"] = auth
+    path = project("public_api", {"public_api": function})
+    authenticator = _HeaderAuthenticator() if in_code else None
+    adapter = LambdaHTTPAdapter(function="public_api", authenticator=authenticator)
+
+    reply = lambda_client(serve(path, adapter=adapter))("GET", "/items/12", headers=headers)
+
+    assert reply.status == status
+
+
+def test_the_entry_selects_the_function_of_an_adapter_built_in_code(
+    project: Callable[..., str], serve: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    functions = {
+        "public_api": {"http": ["ItemInterface"], "auth": {"custom": True}},
+        "admin_api": {"http": ["OpsInterface"]},
+    }
+    path = project("admin_api", functions)
+    monkeypatch.setenv("LOOM__APP__ENTRY", "public_api")
+    adapter = LambdaHTTPAdapter(authenticator=_HeaderAuthenticator())
+
+    call = lambda_client(serve(path, adapter=adapter))
+
+    assert call("GET", "/items/12", headers=_OK).status == 200
+    assert call("GET", "/ops/admin", headers=_OK).status == 404
+
+
+def _disable(method: str, route: str) -> Edit:
+    def edit(config: dict[str, Any], _root: Path) -> None:
+        config["app"]["rest"]["disable_routes"] = [{"method": method, "path": route}]
+
+    return edit
+
+
+def test_a_route_disabled_in_another_function_still_composes(
     project: Callable[..., str], serve: Callable[..., Any]
 ) -> None:
-    function = {"http": ["ItemInterface"], "auth": {"custom": True}}
-    path = project("public_api", {"public_api": function})
-    adapter = LambdaHTTPAdapter(function="public_api", authenticator=_AlwaysAuthenticates())
+    path = project("public_api", _PUBLIC_AND_ADMIN, _disable("GET", "/ops/explode"))
 
-    assert lambda_client(serve(path, adapter=adapter))("GET", "/items/12").status == 200
+    call = lambda_client(serve(path))
+
+    assert call("GET", "/items/12", headers=bearer("alice")).status == 200
+
+
+def test_a_disabled_route_no_function_declares_is_refused(
+    project: Callable[..., str], serve: Callable[..., Any]
+) -> None:
+    path = project("public_api", _PUBLIC_AND_ADMIN, _disable("GET", "/ops/nowhere"))
+
+    with pytest.raises(InterfaceCompilationError, match="matches no route"):
+        serve(path)
 
 
 def test_an_explicit_adapter_wins_over_the_entry(
@@ -145,27 +205,28 @@ def test_an_explicit_adapter_wins_over_the_entry(
 
 
 @pytest.mark.parametrize(
-    ("entry", "built"),
-    [("fastapi", FastAPI), ("lambda_http", LambdaHTTPHandler)],
+    ("entry", "built"), [("fastapi", FastAPI), ("lambda_http", LambdaHTTPHandler)]
 )
-def test_a_built_in_entry_selects_its_adapter(
+def test_a_built_in_http_entry_selects_its_adapter(
     project: Callable[..., str], serve: Callable[..., Any], entry: str, built: type
 ) -> None:
     assert isinstance(serve(project(entry, {})), built)
 
 
-def test_an_sqs_function_serves_the_jobs(
-    project: Callable[..., str], serve: Callable[..., Any]
-) -> None:
-    def manifest_discovery(config: dict[str, Any], root: Path) -> None:
-        root.joinpath("lambda_manifest.py").write_text(
-            f"from {_module_of(config)} import Item, ItemInterface\n"
-            "MODELS = [Item]\nINTERFACES = [ItemInterface]\nJOBS = []\n",
-            encoding="utf-8",
-        )
-        config["app"]["discovery"] = {"mode": "manifest", "manifest": {"module": "lambda_manifest"}}
+def _manifest_discovery(config: dict[str, Any], root: Path) -> None:
+    root.joinpath("lambda_manifest.py").write_text(
+        f"from {_module_of(config)} import Item, ItemInterface\n"
+        "MODELS = [Item]\nINTERFACES = [ItemInterface]\nJOBS = []\n",
+        encoding="utf-8",
+    )
+    config["app"]["discovery"] = {"mode": "manifest", "manifest": {"module": "lambda_manifest"}}
 
-    handler = serve(project("worker", {"worker": {"sqs": True}}, manifest_discovery))
+
+@pytest.mark.parametrize("entry", ["worker", "lambda_sqs"])
+def test_an_sqs_entry_serves_the_jobs(
+    project: Callable[..., str], serve: Callable[..., Any], entry: str
+) -> None:
+    handler = serve(project(entry, {"worker": {"sqs": True}}, _manifest_discovery))
 
     assert handler({"Records": []}, None) == {"batchItemFailures": []}
 
@@ -179,49 +240,87 @@ def test_an_interface_no_function_serves_is_warned_about(
         serve(path)
 
 
-def test_without_functions_nothing_is_warned_about(
-    project: Callable[..., str], serve: Callable[..., Any]
-) -> None:
-    path = project("lambda_http", {})
+def _second_item_interface(config: dict[str, Any], root: Path) -> None:
+    root.joinpath("other_contract.py").write_text(
+        "from loom.rest.model import RestInterface\n"
+        "class ItemInterface(RestInterface[object]):\n"
+        "    prefix = '/other'\n"
+        "    routes = ()\n",
+        encoding="utf-8",
+    )
+    config["app"]["discovery"]["interfaces"]["modules"].append("other_contract")
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("error", message="No function of lambda.functions")
-        serve(path)
+
+_ITEM_ONLY = {"public_api": {"http": ["ItemInterface"]}}
 
 
 @pytest.mark.parametrize(
-    ("entry", "functions", "message"),
+    ("entry", "functions", "edits", "function", "message"),
     [
         pytest.param(
             "public_api",
             {"public_api": {"http": ["MissingInterface"]}},
+            (),
+            None,
             "'MissingInterface': no discovered RestInterface",
             id="unknown-interface",
         ),
         pytest.param(
             "public_api",
+            _ITEM_ONLY,
+            (_second_item_interface,),
+            None,
+            "'ItemInterface', which is ambiguous",
+            id="ambiguous-interface",
+        ),
+        pytest.param(
+            "public_api",
             {"public_api": {"http": ["ItemInterface"]}, "other": {"http": ["ItemInterface"]}},
+            (),
+            None,
             r"'ItemInterface' is served by both lambda\.functions\.(other|public_api) and",
             id="interface-in-two-functions",
         ),
         pytest.param(
             "public_api",
             {"public_api": {"http": ["ItemInterface"], "sqs": True}},
+            (),
+            None,
             "exactly one of",
             id="http-and-sqs",
         ),
-        pytest.param("public_api", {"public_api": {}}, "exactly one of", id="neither"),
+        pytest.param("public_api", {"public_api": {}}, (), None, "exactly one of", id="neither"),
         pytest.param(
             "worker",
             {"worker": {"sqs": True, "auth": {}}},
+            (),
+            None,
             "applies to an http function only",
             id="auth-on-sqs",
         ),
         pytest.param(
             "missing",
-            {"public_api": {"http": ["ItemInterface"]}},
-            r"'missing' is neither .* \(declared: public_api\)",
-            id="undeclared-function",
+            _ITEM_ONLY,
+            (),
+            None,
+            r"declares no function 'missing' \(declared: public_api\)",
+            id="undeclared-entry",
+        ),
+        pytest.param(
+            "lambda_http",
+            {"worker": {"sqs": True}},
+            (),
+            "worker",
+            "is an sqs function, not an http one",
+            id="http-adapter-on-sqs-function",
+        ),
+        pytest.param(
+            "lambda_http",
+            _ITEM_ONLY,
+            (),
+            "typo",
+            r"declares no function 'typo'",
+            id="http-adapter-on-undeclared-function",
         ),
     ],
 )
@@ -230,31 +329,15 @@ def test_a_misdeclared_function_fails_at_startup(
     serve: Callable[..., Any],
     entry: str,
     functions: dict[str, Any],
+    edits: tuple[Edit, ...],
+    function: str | None,
     message: str,
 ) -> None:
-    path = project(entry, functions)
+    path = project(entry, functions, *edits)
+    options = {} if function is None else {"adapter": LambdaHTTPAdapter(function=function)}
 
     with pytest.raises(ConfigError, match=message):
-        serve(path)
-
-
-def test_an_interface_name_two_modules_share_is_refused(
-    project: Callable[..., str], serve: Callable[..., Any]
-) -> None:
-    def second_item_interface(config: dict[str, Any], root: Path) -> None:
-        root.joinpath("other_contract.py").write_text(
-            "from loom.rest.model import RestInterface\n"
-            "class ItemInterface(RestInterface[object]):\n"
-            "    prefix = '/other'\n"
-            "    routes = ()\n",
-            encoding="utf-8",
-        )
-        config["app"]["discovery"]["interfaces"]["modules"].append("other_contract")
-
-    path = project("public_api", {"public_api": {"http": ["ItemInterface"]}}, second_item_interface)
-
-    with pytest.raises(ConfigError, match="'ItemInterface', which is ambiguous"):
-        serve(path)
+        serve(path, **options)
 
 
 def test_without_an_entry_create_app_needs_an_adapter(

@@ -23,11 +23,20 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # The core composes nothing: the composition root and the transports sit outside it.
     "loom.core": (("loom.composition", "loom.rest", "loom.celery", "loom.ai"), ()),
     # The composition root reaches no transport. The Celery job service and its
-    # config are the outbound adapter of the JobService port, not the worker.
+    # config are the outbound adapter of the JobService port, not the worker;
+    # the adapters are the ones create_app imports, lazily, for app.entry.
     "loom.composition": (
-        ("fastapi", "starlette", "celery", "loom.rest", "loom.celery"),
-        ("loom.celery.service", "loom.celery.config"),
+        ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.aws_lambda"),
+        (
+            "loom.celery.service",
+            "loom.celery.config",
+            "loom.rest.fastapi.adapter",
+            "loom.aws_lambda.http",
+            "loom.aws_lambda.sqs",
+            "loom.aws_lambda.functions",
+        ),
     ),
+    "loom.rest": (("loom.aws_lambda",), ()),
 }
 
 

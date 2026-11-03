@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar, overload
+from typing import TYPE_CHECKING, Final, TypeVar, overload
 
 from loom.composition._ai import (
     AiWiring,
@@ -66,6 +66,7 @@ def create_app(
 @overload
 def create_app(
     *config_paths: str,
+    adapter: None = None,
     config_dir: str | None = None,
     environment: Environment | str | None = None,
     code_path: str | None = None,
@@ -122,25 +123,45 @@ def create_app(
     return resolved.bind(application)
 
 
+def _fastapi() -> Adapter[object]:
+    from loom.rest.fastapi.adapter import FastAPIAdapter
+
+    return FastAPIAdapter()
+
+
+def _lambda_http() -> Adapter[object]:
+    from loom.aws_lambda.http import LambdaHTTPAdapter
+
+    return LambdaHTTPAdapter()
+
+
+def _lambda_sqs() -> Adapter[object]:
+    from loom.aws_lambda.sqs import LambdaSQSAdapter
+
+    return LambdaSQSAdapter()
+
+
+_BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Adapter[object]]]] = {
+    "fastapi": _fastapi,
+    "lambda_http": _lambda_http,
+    "lambda_sqs": _lambda_sqs,
+}
+
+
 def _adapter_from_entry(source: CompositionSource) -> Adapter[object]:
     entry = source.app.entry
     if entry is None:
         raise ConfigError("create_app needs adapter= or app.entry")
-    if entry == "fastapi":
-        from loom.rest.fastapi.adapter import FastAPIAdapter
+    builtin = _BUILTIN_ENTRIES.get(entry)
+    if builtin is not None:
+        return builtin()
+    from loom.aws_lambda.functions import declared_function
 
-        return FastAPIAdapter()
-    if entry == "lambda_http":
-        from loom.aws_lambda.http import LambdaHTTPAdapter
+    if declared_function(source.config, entry).sqs:
+        return _lambda_sqs()
+    from loom.aws_lambda.http import LambdaHTTPAdapter
 
-        return LambdaHTTPAdapter()
-    if entry == "lambda_sqs":
-        from loom.aws_lambda.sqs import LambdaSQSAdapter
-
-        return LambdaSQSAdapter()
-    from loom.aws_lambda.functions import function_adapter
-
-    return function_adapter(source.config, entry)
+    return LambdaHTTPAdapter(function=entry)
 
 
 def build_application(

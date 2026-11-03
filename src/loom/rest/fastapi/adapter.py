@@ -602,9 +602,11 @@ def compose_rest(
     config_interfaces = build_interfaces_from_config(rest_cfg.interfaces)
     discovered = _discover_components(source)
     python_interfaces = discovered.interfaces
+    unserved: tuple[type[RestInterface[Any]], ...] = ()
     if select_interfaces is not None:
         named = _interfaces_by_name(python_interfaces, rest_cfg.interfaces, config_interfaces)
         served = frozenset(select_interfaces(named))
+        unserved = tuple(i for i in python_interfaces if i not in served)
         python_interfaces = tuple(i for i in python_interfaces if i in served)
         config_interfaces = tuple(i for i in config_interfaces if i in served)
         discovered = discovered.with_changes(interfaces=python_interfaces)
@@ -623,6 +625,7 @@ def compose_rest(
             python=python_interfaces,
             config=config_interfaces,
             disabled=tuple((d.method, d.path) for d in rest_cfg.disable_routes),
+            unserved=unserved,
         ),
     )
     recipe = Recipe(
