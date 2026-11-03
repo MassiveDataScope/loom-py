@@ -2,7 +2,9 @@
 
 An adapter declares a :class:`Recipe`; :func:`create_app` composes the
 :class:`Application` it asks for and lets the adapter mount its transport.
-Nothing here imports an HTTP framework, the Celery worker or :mod:`loom.rest`.
+Nothing here imports an HTTP framework, the Celery worker or :mod:`loom.rest`,
+but for one sanctioned reach-out: :func:`create_app` without an adapter imports
+the one ``app.entry`` names, lazily, when it runs.
 """
 
 from loom.composition._ai import AiWiring

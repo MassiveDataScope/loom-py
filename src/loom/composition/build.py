@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Final, TypeVar, overload
 
 from loom.composition._ai import (
     AiWiring,
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+@overload
 def create_app(
     *config_paths: str,
     adapter: Adapter[T],
@@ -59,12 +60,37 @@ def create_app(
     code_path: str | None = None,
     resolvers: Sequence[ConfigResolver] = (),
     modules: Sequence[Callable[[LoomContainer], None]] = (),
-) -> T:
+) -> T: ...
+
+
+@overload
+def create_app(
+    *config_paths: str,
+    adapter: None = None,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
+    code_path: str | None = None,
+    resolvers: Sequence[ConfigResolver] = (),
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
+) -> object: ...
+
+
+def create_app(
+    *config_paths: str,
+    adapter: Adapter[object] | None = None,
+    config_dir: str | None = None,
+    environment: Environment | str | None = None,
+    code_path: str | None = None,
+    resolvers: Sequence[ConfigResolver] = (),
+    modules: Sequence[Callable[[LoomContainer], None]] = (),
+) -> object:
     """Compose an application from configuration and mount *adapter*'s transport on it.
 
     Args:
         *config_paths: YAML files merged left to right; exclusive with *config_dir*.
-        adapter: The transport, and how it wants the application composed.
+        adapter: The transport, and how it wants the application composed;
+            ``app.entry`` picks it when omitted: ``fastapi``, ``lambda_http``,
+            ``lambda_sqs`` or a function of ``lambda.functions``.
         config_dir: Directory with ``base.yaml`` and the per-environment overlays.
         environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Overrides ``app.code_path``, relative to the first config file.
@@ -84,16 +110,58 @@ def create_app(
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
     """
-    application = build_application(
+    source = load_source(
         *config_paths,
-        adapter=adapter,
         config_dir=config_dir,
         environment=environment,
         code_path=code_path,
         resolvers=resolvers,
-        modules=modules,
+        caller="create_app",
     )
-    return adapter.bind(application)
+    resolved = adapter if adapter is not None else _adapter_from_entry(source)
+    application = compose_application(source, resolved, modules=modules)
+    return resolved.bind(application)
+
+
+def _fastapi() -> Adapter[object]:
+    from loom.rest.fastapi.adapter import FastAPIAdapter
+
+    return FastAPIAdapter()
+
+
+def _lambda_http() -> Adapter[object]:
+    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter
+
+    return LambdaHTTPAdapter()
+
+
+def _lambda_sqs() -> Adapter[object]:
+    from loom.serverless.aws.lambda_.sqs import LambdaSQSAdapter
+
+    return LambdaSQSAdapter()
+
+
+_BUILTIN_ENTRIES: Final[Mapping[str, Callable[[], Adapter[object]]]] = {
+    "fastapi": _fastapi,
+    "lambda_http": _lambda_http,
+    "lambda_sqs": _lambda_sqs,
+}
+
+
+def _adapter_from_entry(source: CompositionSource) -> Adapter[object]:
+    entry = source.app.entry
+    if entry is None:
+        raise ConfigError("create_app needs adapter= or app.entry")
+    builtin = _BUILTIN_ENTRIES.get(entry)
+    if builtin is not None:
+        return builtin()
+    from loom.serverless.aws.lambda_.functions import declared_function
+
+    if declared_function(source.config, entry).sqs:
+        return _lambda_sqs()
+    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter
+
+    return LambdaHTTPAdapter(function=entry)
 
 
 def build_application(
@@ -230,9 +298,7 @@ def compose_application(
 
     discovered = recipe.discovered
     catalog = source.catalog
-    # One store until ADR 0008's invocation scope exists: the unit of work,
-    # the session manager and the elevation sink are still one per
-    # application, so another store's models would share them.
+    # One store until US7 PR 11: the elevation sink is still one per application.
     require_single_store(discovered.models)
     runtime = BackendRuntime(
         recipe.profile,
@@ -264,10 +330,8 @@ def compose_application(
     # container, and an unregistered runtime makes every Scope.TOOL span a
     # silent no-op in production while passing every test that injects one.
     kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
-    # The catalog the backend was built from, not another load of ``stores``.
     kernel.container.register(StoreCatalog, lambda: catalog, scope=Scope.APPLICATION)
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
-    # Last: every service a use case may inject is registered by now.
     kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))
 
     return Application(

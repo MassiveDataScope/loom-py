@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from loom.aws_lambda import LambdaSQSAdapter
-from loom.aws_lambda.sqs import SQSHandler
 from loom.composition import AppConfig, Application, CompositionSource, compose_application
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext
@@ -18,10 +16,12 @@ from loom.core.identity import current_identity
 from loom.core.job.job import Job
 from loom.core.tracing import get_trace_id
 from loom.core.uow.scope import StoresNotCommitted
+from loom.serverless.aws.lambda_ import LambdaSQSAdapter
+from loom.serverless.aws.lambda_.sqs import SQSHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import event_loops
-from tests.unit.aws_lambda._probe import Probe
-from tests.unit.aws_lambda._records import RecordFactory, make_record
+from tests.unit.serverless.aws.lambda_._probe import Probe
+from tests.unit.serverless.aws.lambda_._records import RecordFactory, make_record
 
 __all__ = ["event_loops"]
 

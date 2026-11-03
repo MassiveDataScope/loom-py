@@ -27,6 +27,7 @@ class AppConfig(msgspec.Struct, kw_only=True):
     """The keys of ``app`` every entry point reads; a transport reads its own."""
 
     name: str
+    entry: str | None = None
     code_path: str = DEFAULT_CODE_PATH
     discovery: DiscoveryConfig = msgspec.field(default_factory=DiscoveryConfig)
 

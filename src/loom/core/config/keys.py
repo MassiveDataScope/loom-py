@@ -32,3 +32,4 @@ class ConfigKey(StrEnum):
     STREAMING_SINKS = "streaming.sinks"
     OBSERVABILITY = "observability"
     JOBS = "jobs"
+    LAMBDA = "lambda"

@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Collection, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -518,6 +518,26 @@ def _warn_anonymous_schema(rest_cfg: _RestConfig, auth: _AuthWiring) -> None:
     )
 
 
+InterfaceSelector = Callable[
+    [Mapping[str, tuple[type[RestInterface[Any]], ...]]], Collection[type[RestInterface[Any]]]
+]
+"""Picks the interfaces to serve from every interface by name: a Python one by
+its class name, a YAML one by its ``app.rest.interfaces`` key."""
+
+
+def _interfaces_by_name(
+    python: tuple[type[RestInterface[Any]], ...],
+    yaml_keys: Collection[str],
+    config: tuple[type[RestInterface[Any]], ...],
+) -> dict[str, tuple[type[RestInterface[Any]], ...]]:
+    named: dict[str, list[type[RestInterface[Any]]]] = {}
+    for interface in python:
+        named.setdefault(interface.__name__, []).append(interface)
+    for key, interface in zip(yaml_keys, config, strict=True):
+        named.setdefault(key, []).append(interface)
+    return {name: tuple(found) for name, found in named.items()}
+
+
 @dataclasses.dataclass(frozen=True)
 class RestDeclaration:
     """What :func:`compose_rest` resolved and an HTTP adapter's ``bind`` mounts."""
@@ -535,6 +555,8 @@ def compose_rest(
     authenticator: Authenticator | None = None,
     metrics_registry: CollectorRegistry | None = None,
     serves_documentation: bool = True,
+    auth_section: str | None = None,
+    select_interfaces: InterfaceSelector | None = None,
 ) -> tuple[Recipe, RestDeclaration]:
     """Validate ``app.rest``, discover, add the YAML routes and prune the CRUD ones.
 
@@ -551,6 +573,9 @@ def compose_rest(
             metrics and health paths. The default authentication exclusions
             are those paths, so they are none when it does not; an explicit
             ``exclude_paths`` is honoured as written either way.
+        auth_section: Dot-path of a section with the ``app.rest.auth``
+            schema that replaces it.
+        select_interfaces: Narrows the served interfaces; every one when ``None``.
 
     Raises:
         ConfigError: When ``app.rest``, the authentication or an SQL
@@ -563,8 +588,9 @@ def compose_rest(
     ctx = source.config
     rest_cfg = _section_rest_config(ctx)
     metrics_cfg = source.observability_config.prometheus
+    auth_cfg = rest_cfg.auth if auth_section is None else ctx.section(auth_section, _RestAuthConfig)
     auth = _resolve_authentication(
-        rest_cfg.auth,
+        auth_cfg,
         authenticator,
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
@@ -576,6 +602,14 @@ def compose_rest(
     config_interfaces = build_interfaces_from_config(rest_cfg.interfaces)
     discovered = _discover_components(source)
     python_interfaces = discovered.interfaces
+    unserved: tuple[type[RestInterface[Any]], ...] = ()
+    if select_interfaces is not None:
+        named = _interfaces_by_name(python_interfaces, rest_cfg.interfaces, config_interfaces)
+        served = frozenset(select_interfaces(named))
+        unserved = tuple(i for i in python_interfaces if i not in served)
+        python_interfaces = tuple(i for i in python_interfaces if i in served)
+        config_interfaces = tuple(i for i in config_interfaces if i in served)
+        discovered = discovered.with_changes(interfaces=python_interfaces)
     discovered = _fold_config_interfaces(discovered, config_interfaces)
     # Runs before the backend allocates resources: building it creates them.
     _reject_autocrud_without_model(discovered)
@@ -591,6 +625,7 @@ def compose_rest(
             python=python_interfaces,
             config=config_interfaces,
             disabled=tuple((d.method, d.path) for d in rest_cfg.disable_routes),
+            unserved=unserved,
         ),
     )
     recipe = Recipe(

@@ -25,11 +25,6 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from loom.aws_lambda._refusals import (
-    LambdaUnservedConfigError,
-    refuse_manifest_agents,
-    refuse_unserved_config,
-)
 from loom.composition import (
     Application,
     CompositionErrorCode,
@@ -54,6 +49,12 @@ from loom.rest.fastapi.router_runtime import (
     path_param_annotation,
 )
 from loom.rest.fastapi.sql import mounted_sql_endpoints
+from loom.serverless.aws.lambda_._refusals import (
+    LambdaUnservedConfigError,
+    refuse_manifest_agents,
+    refuse_unserved_config,
+)
+from loom.serverless.aws.lambda_.functions import entry_function, http_function
 
 _COMPONENT = "LambdaHTTPAdapter"
 _PATH_LOCATION = "path"
@@ -79,11 +80,18 @@ class LambdaHTTPAdapter:
 
     Args:
         authenticator: Custom authentication mechanism; requires
-            ``app.rest.auth.custom: true``.
+            ``custom: true`` in the authentication in effect.
+        function: The function of ``lambda.functions`` to serve: its
+            interfaces only, with its ``auth`` when it declares one. The one
+            ``app.entry`` names when omitted, so ``LOOM__APP__ENTRY`` still
+            selects the function of an adapter built in code.
     """
 
-    def __init__(self, *, authenticator: Authenticator | None = None) -> None:
+    def __init__(
+        self, *, authenticator: Authenticator | None = None, function: str | None = None
+    ) -> None:
         self._authenticator = authenticator
+        self._function = function
         self._declared: RestDeclaration | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
@@ -104,8 +112,17 @@ class LambdaHTTPAdapter:
             )
         refuse_unserved_config(source, _COMPONENT)
         _refuse_sql_endpoints(source.config)
+        served = (
+            entry_function(source.config, source.app.entry)
+            if self._function is None
+            else http_function(source.config, self._function)
+        )
         recipe, declared = compose_rest(
-            source, authenticator=self._authenticator, serves_documentation=False
+            source,
+            authenticator=self._authenticator,
+            serves_documentation=False,
+            auth_section=served.auth_section,
+            select_interfaces=served.select,
         )
         refuse_manifest_agents(recipe.discovered.agent_specs, _COMPONENT)
         self._declared = declared
@@ -238,7 +255,6 @@ class LambdaHTTPHandler:
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
         """Answer one API Gateway HTTP API event."""
-        # Mangum runs on the thread's current loop.
         self._host.make_current()
         return self._mangum(event, context)
 

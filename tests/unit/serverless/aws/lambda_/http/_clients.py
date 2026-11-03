@@ -11,8 +11,8 @@ from typing import Any, NamedTuple, Protocol
 
 from fastapi.testclient import TestClient
 
-from loom.aws_lambda import LambdaHTTPHandler
-from tests.unit.aws_lambda.http._contract_app import http_api_event
+from loom.serverless.aws.lambda_ import LambdaHTTPHandler
+from tests.unit.serverless.aws.lambda_.http._contract_app import http_api_event
 
 TRACE_ID = "contract-trace-0001"
 """Sent on every request, so bodies carrying a trace id compare exactly."""

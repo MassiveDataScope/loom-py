@@ -204,11 +204,15 @@ class RouteSources:
             declared by *python* — see
             :meth:`RestInterfaceCompiler.compile_sources` for why this never
             targets *config*.
+        unserved: Python interfaces this transport does not serve (another
+            Lambda function does). Compiled only so a *disabled* entry naming
+            one of their routes is still recognised; none of them mounts.
     """
 
     python: Sequence[type[RestInterface[Any]]] = ()
     config: Sequence[type[RestInterface[Any]]] = ()
     disabled: Sequence[tuple[str, str]] = ()
+    unserved: Sequence[type[RestInterface[Any]]] = ()
 
     def __post_init__(self) -> None:
         # A frozen dataclass only stops rebinding the field itself; a caller
@@ -219,6 +223,7 @@ class RouteSources:
         object.__setattr__(self, "python", tuple(self.python))
         object.__setattr__(self, "config", tuple(self.config))
         object.__setattr__(self, "disabled", tuple(self.disabled))
+        object.__setattr__(self, "unserved", tuple(self.unserved))
 
 
 class InterfaceCompilationError(Exception):
@@ -682,7 +687,12 @@ class RestInterfaceCompiler:
         """
         seen: dict[tuple[str, str], _SeenRoute] = {}
 
-        python_routes = _apply_disablement(self._compile_many(sources.python), sources.disabled)
+        unserved = self._compile_many(sources.unserved)
+        dropped = {id(route) for route in unserved}
+        kept = _apply_disablement(
+            [*self._compile_many(sources.python), *unserved], sources.disabled
+        )
+        python_routes = [route for route in kept if id(route) not in dropped]
         self._track_routes(python_routes, _RouteOrigin.PYTHON, seen)
 
         config_routes = self._compile_many(sources.config)
