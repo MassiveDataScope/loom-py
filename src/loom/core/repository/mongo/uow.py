@@ -4,17 +4,16 @@ MongoDB transactions need a replica set and a client session, so they are
 opt-in (``stores.<name>.transactions: true``):
 
 - :class:`MongoUnitOfWork` starts a client session and a transaction in
-  ``begin``, commits or aborts it, and ends the session afterwards. The
-  session is published through a ``ContextVar`` that :func:`active_session`
-  reads, so a :class:`~loom.core.repository.mongo.repository.RepositoryMongo`
-  built with ``session_provider=active_session`` joins the transaction of the
-  use case it runs in. The token is reset on exit, as the SQLAlchemy unit of
-  work does. It declares the coordinator's ``phased`` marker: ``begin``,
-  ``flush``, ``commit``, ``rollback`` and ``close`` are separate calls.
-- :class:`NoOpMongoUnitOfWork` (default) opens nothing and touches no
-  ``ContextVar``, mirroring
-  :class:`~loom.core.repository.dynamodb.uow.DynamoUnitOfWork`: each driver
-  call is autocommitted and the repository receives no session.
+  ``begin``, commits or aborts it, and ends the session afterwards. It is a
+  participant of the invocation scope (:mod:`loom.core.uow.scope`), and
+  :class:`MongoSessions` finds its session there: a
+  :class:`~loom.core.repository.mongo.repository.RepositoryMongo` built with
+  ``session_provider=MongoSessions(client, store)`` joins the transaction of
+  the use case it runs in. It declares the coordinator's ``phased`` marker:
+  ``begin``, ``flush``, ``commit``, ``rollback`` and ``close`` are separate
+  calls.
+- :class:`NoOpMongoUnitOfWork` (default) opens nothing: each driver call is
+  autocommitted and the repository receives no session.
 
 ``pymongo`` is imported at module level: this module is only reached through
 the Mongo backend, and the persistence registry turns an ``ImportError`` at
@@ -26,38 +25,72 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
 
 from loom.core.logger import get_logger
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import PhysicalStore
-from loom.core.uow.scope import refuse_inside_open_scope
+from loom.core.uow.scope import EntersAlone, current_handle
 
 _log = get_logger(__name__).bind(component="uow")
 
-_active_session: contextvars.ContextVar[AsyncClientSession | None] = contextvars.ContextVar(
-    "loom_mongo_active_session", default=None
-)
 
+class MongoSessions:
+    """The client sessions of one Mongo store, as the current invocation holds them.
 
-def active_session() -> AsyncClientSession | None:
-    """Return the client session of the enclosing unit of work, or ``None``.
+    The backend passes it as the ``session_provider`` of every repository of
+    the store, and :attr:`active_session` is the one public way to read the
+    store's session. Both go through the invocation scope's checkpoint.
 
-    Pass it as ``session_provider`` to
-    :class:`~loom.core.repository.mongo.repository.RepositoryMongo`.
+    Args:
+        client: The store's client, the one its unit of work starts sessions on.
+        store: Key of the store.
     """
-    return _active_session.get()
+
+    def __init__(self, client: AsyncMongoClient[Any], store: StoreKey = DEFAULT_STORE) -> None:
+        self._client = client
+        self._store = store
+
+    @property
+    def active_session(self) -> AsyncClientSession | None:
+        """The session this store's unit of work holds in the current invocation, if any.
+
+        Like ``request.user``, its value depends on the context it is read
+        from: ``None`` outside an invocation, when this store is not enlisted
+        in it, or with ``transactions: false``.
+
+        Raises:
+            ScopeOwnershipError: Read from a task other than the one that owns
+                the invocation (a ``gather`` child, a task that outlives its
+                use case), from a thread, or once the invocation has ended,
+                while this store is enlisted.
+            ForeignSessionError: When this store is enlisted with another
+                client's unit of work.
+        """
+        return self(False)
+
+    def __call__(self, write: bool) -> AsyncClientSession | None:
+        """Return the session a driver call joins, given whether it writes.
+
+        Raises:
+            ScopeOwnershipError: See :attr:`active_session`; a write is also
+                refused outside the owning task when the store is not enlisted.
+            ForeignSessionError: See :attr:`active_session`.
+        """
+        return cast(
+            "AsyncClientSession | None", current_handle(self._store, self._client, write=write)
+        )
 
 
 class NoOpMongoUnitOfWork:
     """Unit of work for ``transactions: false``: no session, every write autocommits.
 
-    Leaves :func:`active_session` untouched, so one nested inside a
-    :class:`MongoUnitOfWork` neither hides nor releases that session.
+    Holds no session, so the store's repositories always run without one.
     """
 
     transactional: ClassVar[bool] = False
@@ -87,11 +120,12 @@ class NoOpMongoUnitOfWork:
             await self.rollback()
 
 
-class MongoUnitOfWork:
+class MongoUnitOfWork(EntersAlone):
     """Unit of work for ``transactions: true``: one client session and one transaction.
 
     Args:
         client: Client the session is started on; needs a replica set.
+        store: Key of the store the unit of work belongs to.
 
     Example::
 
@@ -103,16 +137,21 @@ class MongoUnitOfWork:
     transactional: ClassVar[bool] = True
     phased: ClassVar[bool] = True
 
-    def __init__(self, client: AsyncMongoClient[Any]) -> None:
+    def __init__(self, client: AsyncMongoClient[Any], store: StoreKey = DEFAULT_STORE) -> None:
         self._client = client
+        self._store = store
         self._session: AsyncClientSession | None = None
-        self._token: contextvars.Token[AsyncClientSession | None] | None = None
         self._transaction_token: contextvars.Token[bool] | None = None
 
     @property
     def owner(self) -> AsyncMongoClient[Any]:
         """The client every session of this unit of work is started on."""
         return self._client
+
+    @property
+    def session(self) -> AsyncClientSession | None:
+        """The open session, between ``begin`` and ``close``."""
+        return self._session
 
     @property
     def physical(self) -> PhysicalStore:
@@ -127,7 +166,7 @@ class MongoUnitOfWork:
         return PhysicalStore(backend="mongo", target=target)
 
     async def begin(self) -> None:
-        """Start a session and a transaction, publishing the session to :func:`active_session`.
+        """Start a session and a transaction, and publish the atomic signal.
 
         The session is ended when ``start_transaction`` fails, so nothing
         leaks on a server that cannot open one.
@@ -135,7 +174,7 @@ class MongoUnitOfWork:
         Raises:
             RuntimeError: If called twice without a ``commit`` or ``rollback``.
         """
-        if self._token is not None:
+        if self._session is not None:
             raise RuntimeError("MongoUnitOfWork.begin() called twice without commit/rollback")
         session = self._client.start_session()
         try:
@@ -144,7 +183,6 @@ class MongoUnitOfWork:
             await session.end_session()
             raise
         self._session = session
-        self._token = _active_session.set(session)
         self._transaction_token = open_atomic_transaction()
         _log.debug("UoWBegin")
 
@@ -195,53 +233,6 @@ class MongoUnitOfWork:
         finally:
             self._reset_context()
 
-    async def __aenter__(self) -> MongoUnitOfWork:
-        """Begin the unit of work and return it.
-
-        Raises:
-            UnitOfWorkInsideScope: Inside an open invocation scope, where
-                this transaction would commit on its own, outside the invocation.
-        """
-        refuse_inside_open_scope(self)
-        await self.begin()
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        """Commit on clean exit, abort on exception, always end the session.
-
-        A failed ``commit`` ends the session without a second abort: pymongo
-        marks the transaction committed-or-aborted itself.  The driver I/O of
-        abort and ``end_session`` runs under ``asyncio.shield`` so a
-        cancellation arriving meanwhile lets it finish; the ``ContextVar``
-        token is reset here, in the caller's context.
-        """
-        try:
-            if exc_type is None:
-                await self._commit_then_close()
-            else:
-                await asyncio.shield(self._abort_then_close())
-        finally:
-            self._reset_context()
-
-    async def _commit_then_close(self) -> None:
-        try:
-            await self.commit()
-        finally:
-            await asyncio.shield(self._end_session())
-
-    async def _abort_then_close(self) -> None:
-        try:
-            await self.rollback()
-        except Exception:
-            _log.exception("UoWRollbackFailed")
-        finally:
-            await self._end_session()
-
     async def _end_session(self) -> None:
         """End the session; the unit of work holds none afterwards.
 
@@ -262,9 +253,6 @@ class MongoUnitOfWork:
         if self._transaction_token is not None:
             close_atomic_transaction(self._transaction_token)
             self._transaction_token = None
-        if self._token is not None:
-            _active_session.reset(self._token)
-            self._token = None
 
     def _require_session(self, operation: str) -> AsyncClientSession:
         if self._session is None:
@@ -292,13 +280,16 @@ class MongoUnitOfWorkFactory:
         return cls(NoOpMongoUnitOfWork)
 
     @classmethod
-    def transactional(cls, client: AsyncMongoClient[Any]) -> MongoUnitOfWorkFactory:
+    def transactional(
+        cls, client: AsyncMongoClient[Any], store: StoreKey = DEFAULT_STORE
+    ) -> MongoUnitOfWorkFactory:
         """Return a factory whose units of work run one transaction on ``client``.
 
         Args:
             client: Client sessions are started on; needs a replica set.
+            store: Key of the store the units of work belong to.
         """
-        return cls(lambda: MongoUnitOfWork(client))
+        return cls(lambda: MongoUnitOfWork(client, store))
 
     def create(self) -> UnitOfWork:
         """Return a fresh, not-yet-begun :class:`UnitOfWork`."""
@@ -306,8 +297,8 @@ class MongoUnitOfWorkFactory:
 
 
 __all__ = [
+    "MongoSessions",
     "MongoUnitOfWork",
     "MongoUnitOfWorkFactory",
     "NoOpMongoUnitOfWork",
-    "active_session",
 ]

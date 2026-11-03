@@ -9,7 +9,7 @@ importable without the driver.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Literal
 
@@ -19,12 +19,13 @@ from pymongo import AsyncMongoClient
 from loom.core.config import ConfigContext
 from loom.core.connections.mongo import MongoConnection, MongoPool
 from loom.core.connections.mongo.client import build_async_mongo_client
+from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.database import PoolConfig
 from loom.core.persistence.profile import BackendRuntime, PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import StoreCapabilities, StoreSpec
+from loom.core.persistence.stores import StoreCapabilities, StoreKey, StoreSpec
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -34,7 +35,7 @@ from loom.core.repository.mongo.ids import (
 )
 from loom.core.repository.mongo.registry import build_mongo_repository_registration_module
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory, active_session
+from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 
 _logger = logging.getLogger(__name__)
 
@@ -134,15 +135,19 @@ class MongoBackend:
             minPoolSize=0,
             maxIdleTimeMS=pool.recycle_s * 1000,
         )
+        sessions = MongoSessions(client, spec.key)
         return PersistenceWiring(
-            uow_factory=_unit_of_work_factory(client, mongo_cfg),
-            repo_registration_module=build_mongo_repository_registration_module(
-                client[mongo_cfg.database],
-                models,
-                collections=mongo_cfg.collections,
-                id_policy=_ID_POLICIES[mongo_cfg.id](),
-                session_provider=active_session,
-                cursor_codec=cursor_codec,
+            uow_factory=_unit_of_work_factory(client, spec.key, mongo_cfg),
+            repo_registration_module=_with_sessions(
+                build_mongo_repository_registration_module(
+                    client[mongo_cfg.database],
+                    models,
+                    collections=mongo_cfg.collections,
+                    id_policy=_ID_POLICIES[mongo_cfg.id](),
+                    session_provider=sessions,
+                    cursor_codec=cursor_codec,
+                ),
+                sessions,
             ),
             lifespan_init=lambda: _lifespan(client),
             prepare_models=_prepare_models,
@@ -151,12 +156,24 @@ class MongoBackend:
 
 
 def _unit_of_work_factory(
-    client: AsyncMongoClient[Any], mongo_cfg: MongoRepositoryConfig
+    client: AsyncMongoClient[Any], store: StoreKey, mongo_cfg: MongoRepositoryConfig
 ) -> MongoUnitOfWorkFactory:
     _logger.info("mongo unit of work: transactions=%s", mongo_cfg.transactions)
     if mongo_cfg.transactions:
-        return MongoUnitOfWorkFactory.transactional(client)
+        return MongoUnitOfWorkFactory.transactional(client, store)
     return MongoUnitOfWorkFactory.without_transactions()
+
+
+def _with_sessions(
+    module: Callable[[LoomContainer], None], sessions: MongoSessions
+) -> Callable[[LoomContainer], None]:
+    """Register the store's :class:`MongoSessions` next to its repositories."""
+
+    def register(container: LoomContainer) -> None:
+        module(container)
+        container.register_instance(MongoSessions, sessions)
+
+    return register
 
 
 def _prepare_models(models: Sequence[type[BaseModel]]) -> None:

@@ -90,6 +90,31 @@ Callers ask the capability, never the backend's name.
   cannot be `Joined`: composition fails at startup. Its writes go through the
   existing post-commit channel or stay in a use case whose primary store it is.
 
+### Reading a store's session
+
+- Repositories, `@transactional`, the elevation sink and the Mongo
+  `session_provider` find their store's session through one checkpoint of
+  the invocation scope. It refuses a task other than the one that owns the
+  invocation, and a session another session manager or client opened. A
+  store that is not enlisted reads with a session per call.
+- `SessionManager.active_session` is the only public way to read a store's
+  session. Repositories reach the same session through
+  `SessionManager.joined_session(write=...)`, which adds their write intent
+  for the checkpoint; it is not meant for raw SQL. Mongo has the same property on `MongoSessions`, the object the
+  backend hands its repositories as `session_provider`. Both are resolved by
+  dependency injection, so two stores of the same backend never return each
+  other's session, and both keep their exact session type.
+- The property returns `None` outside an invocation or when the store is not
+  enlisted. Its value depends on the context it is read from, like
+  `request.user`, and it raises `ScopeOwnershipError` from a `gather` child,
+  a thread or a task that outlives its use case.
+- No facade reads the session of every backend: it would return `object` and
+  lose the typing. `in_atomic_transaction()` stays, because it answers
+  another question for third parties and the ETL.
+- Raw SQL that must run in the invocation's transaction injects the store's
+  `SessionManager` and uses its `active_session`. `session_manager.session()`
+  opens a session outside the invocation, which commits on its own.
+
 ### One coordinator
 
 - The executor does not commit. It hands the scope to a single coordinator,

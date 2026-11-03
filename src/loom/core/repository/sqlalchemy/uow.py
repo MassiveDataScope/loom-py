@@ -3,21 +3,19 @@
 Wraps a :class:`~loom.core.repository.sqlalchemy.session_manager.SessionManager`
 to provide a single, atomic transaction scope per UseCase execution.
 
-When :meth:`SQLAlchemyUnitOfWork.begin` is called it:
+:meth:`SQLAlchemyUnitOfWork.begin` opens an ``AsyncSession`` from the
+``SessionManager``. The unit of work is a participant of an invocation scope
+(:mod:`loom.core.uow.scope`): repositories, ``@transactional`` and
+:attr:`~loom.core.repository.sqlalchemy.session_manager.SessionManager.active_session`
+find its :attr:`~SQLAlchemyUnitOfWork.session` through the scope, never
+through a context variable of their own.
 
-1. Opens an ``AsyncSession`` from the ``SessionManager``.
-2. Sets the ``_active_session`` ContextVar so that:
-   - :class:`~loom.core.repository.sqlalchemy.repository.RepositorySQLAlchemy`
-     ``_session_scope`` automatically joins the transaction.
-   - Existing ``@transactional`` decorators detect the active session and
-     skip opening a redundant nested transaction.
-
-On :meth:`commit` the session is flushed and committed.  On :meth:`rollback`
-all pending changes are discarded.  The explicit methods leave the session
-open: closing it and restoring the ContextVars is the job of
+On :meth:`commit` the session is committed.  On :meth:`rollback` all pending
+changes are discarded.  The explicit methods leave the session open: closing
+it and restoring the ContextVars is the job of
 :meth:`SQLAlchemyUnitOfWork.close`, which the ordered-commits coordinator
-calls phase by phase, or of :meth:`SQLAlchemyUnitOfWork.__aexit__` for a unit
-of work entered by hand.
+calls phase by phase. A unit of work entered by hand (``async with uow:``)
+runs as the only participant of an invocation of its own.
 
 Usage::
 
@@ -31,32 +29,28 @@ import asyncio
 import contextvars
 from typing import Any, ClassVar
 
-from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.logger import get_logger
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
 from loom.core.repository.sqlalchemy.transactional import (
     reset_active_mutations,
-    reset_active_session,
     set_active_mutations,
-    set_active_session,
 )
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import PhysicalStore
-from loom.core.uow.scope import refuse_inside_open_scope
+from loom.core.uow.scope import EntersAlone
 
 _log = get_logger(__name__).bind(component="uow")
 
 
-class SQLAlchemyUnitOfWork:
+class SQLAlchemyUnitOfWork(EntersAlone):
     """Async SQLAlchemy Unit of Work backed by ``SessionManager``.
 
     Manages a single ``AsyncSession`` lifetime: opens it in :meth:`begin`,
-    commits or rolls back on exit, and exposes the session through the
-    ``_active_session`` ContextVar so repositories and ``@transactional``
-    decorators automatically participate in the same transaction without
+    commits or rolls back, and exposes it as :attr:`session`, which the
+    repositories of its store join through the invocation scope without
     needing an explicit session argument.
 
     Args:
@@ -76,17 +70,14 @@ class SQLAlchemyUnitOfWork:
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
+        self._store = session_manager.store
         self._session: AsyncSession | None = None
-        self._session_token: contextvars.Token[Any] | None = None
         self._mutations_token: contextvars.Token[Any] | None = None
         self._transaction_token: contextvars.Token[bool] | None = None
         self._session_cm: Any = None  # context manager from session_manager.session()
 
     async def begin(self) -> None:
-        """Open a new ``AsyncSession`` and bind it to the current context.
-
-        Sets the ``_active_session`` ContextVar so repositories and
-        ``@transactional`` decorators can discover and reuse the session.
+        """Open a new ``AsyncSession`` and publish a fresh mutation list and the atomic signal.
 
         Raises:
             RuntimeError: If :meth:`begin` has already been called without
@@ -113,16 +104,20 @@ class SQLAlchemyUnitOfWork:
         return self._session_manager
 
     @property
+    def session(self) -> AsyncSession | None:
+        """The open session, between :meth:`begin` and :meth:`close`."""
+        return self._session
+
+    @property
     def physical(self) -> PhysicalStore:
         """The database this unit of work writes to, named by its URL without credentials."""
-        url = self._session_manager.engine.url
-        bare = URL.create(url.drivername, host=url.host, port=url.port, database=url.database)
-        return PhysicalStore(backend="sqlalchemy", target=bare.render_as_string())
+        return PhysicalStore(
+            backend="sqlalchemy", target=bare_url(self._session_manager.engine.url)
+        )
 
     def _bind(self, session: AsyncSession) -> None:
-        """Publish ``session`` and a fresh mutation list to the current context."""
+        """Hold ``session`` and publish a fresh mutation list to the current context."""
         self._session = session
-        self._session_token = set_active_session(session, owner=self._session_manager)
         _, self._mutations_token = set_active_mutations()
         self._transaction_token = open_atomic_transaction()
 
@@ -174,69 +169,6 @@ class SQLAlchemyUnitOfWork:
         finally:
             self._reset_context()
 
-    async def __aenter__(self) -> SQLAlchemyUnitOfWork:
-        """Begin the unit of work.
-
-        Returns:
-            This instance.
-
-        Raises:
-            UnitOfWorkInsideScope: Inside an open invocation scope, where
-                this transaction would commit on its own, outside the invocation.
-        """
-        refuse_inside_open_scope(self)
-        await self.begin()
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        """Commit on clean exit, roll back otherwise, always close the session.
-
-        A failing ``commit`` is rolled back before the session closes.  The
-        driver I/O of rollback and close runs under ``asyncio.shield`` so a
-        cancellation arriving meanwhile lets it finish; the ``ContextVar``
-        tokens are reset here, in the caller's context.
-
-        Args:
-            exc_type: Exception type, or ``None`` on clean exit.
-            exc_val: Exception instance, or ``None``.
-            exc_tb: Traceback, or ``None``.
-        """
-        try:
-            if exc_type is None:
-                await self._commit_then_close()
-            else:
-                await asyncio.shield(self._rollback_then_close())
-        finally:
-            self._reset_context()
-
-    async def _commit_then_close(self) -> None:
-        try:
-            await self.commit()
-        except BaseException:
-            await asyncio.shield(self._rollback_then_close())
-            raise
-        await asyncio.shield(self._exit_session_logging_failure())
-
-    async def _rollback_then_close(self) -> None:
-        try:
-            await self.rollback()
-        except Exception:
-            _log.exception("UoWRollbackFailed")
-        finally:
-            await self._exit_session_logging_failure()
-
-    async def _exit_session_logging_failure(self) -> None:
-        """Close on the failure path: a close error must not replace the business one."""
-        try:
-            await self._exit_session()
-        except Exception:
-            _log.exception("UoWCloseFailed")
-
     async def _exit_session(self) -> None:
         """Exit the session context manager; the session is gone afterwards."""
         session_cm, self._session_cm, self._session = self._session_cm, None, None
@@ -249,9 +181,6 @@ class SQLAlchemyUnitOfWork:
         if self._transaction_token is not None:
             close_atomic_transaction(self._transaction_token)
             self._transaction_token = None
-        if self._session_token is not None:
-            reset_active_session(self._session_token)
-            self._session_token = None
         if self._mutations_token is not None:
             reset_active_mutations(self._mutations_token)
             self._mutations_token = None

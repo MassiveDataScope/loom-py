@@ -12,7 +12,8 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import PostCommitError, active_channel
 from loom.core.job.context import add_pending_dispatch
 from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.sqlalchemy.transactional import get_active_session, transactional
+from loom.core.repository.sqlalchemy.transactional import transactional
+from loom.core.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
 from .._lifecycle_doubles import Broker, Dispatching, Log, Metrics, Ok, context_is_clean
@@ -170,7 +171,7 @@ async def test_cancellation_inside_an_owned_transactional_body_discards_its_chan
             try:
                 await service.hang()
             finally:
-                observed.append(active_channel() is None and get_active_session() is None)
+                observed.append(active_channel() is None and current_scope() is None)
 
         task = asyncio.create_task(run())
         await asyncio.sleep(0.01)

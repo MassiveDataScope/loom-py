@@ -30,7 +30,7 @@ from pymongo.errors import PyMongoError
 
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoUnitOfWork, active_session
+from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
 from loom.core.repository.registration import capabilities_of
 from tests.unit.core.repository.contract import conftest as contract
 from tests.unit.core.repository.contract.conftest import BackendCase, Order
@@ -105,7 +105,7 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
         yield RepositoryMongo(
             Order,
             collection,
-            session_provider=active_session,
+            session_provider=MongoSessions(mongo_client),
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
 

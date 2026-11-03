@@ -14,13 +14,12 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.scope import ScopeOwnershipError, current_scope
@@ -71,12 +70,26 @@ def _executor(manager: SessionManager) -> RuntimeExecutor:
     return RuntimeExecutor(UseCaseCompiler(), uow_factory=SQLAlchemyUnitOfWorkFactory(manager))
 
 
-async def _insert(table: str, row_id: int) -> None:
-    session = get_active_session()
+async def _insert(manager: SessionManager, table: str, row_id: int) -> None:
+    session = manager.active_session
     assert session is not None
     await session.execute(
         text(f"INSERT INTO {table} (id, payload) VALUES (:id, 'p')"), {"id": row_id}
     )
+
+
+async def _visible_ids(manager: SessionManager, table: str) -> list[int]:
+    """Read as a repository does: in the store's participant session, or in one of its own."""
+    session = manager.active_session
+    if session is not None:
+        return await _ids(session, table)
+    async with manager.session() as own:
+        return await _ids(own, table)
+
+
+async def _ids(session: AsyncSession, table: str) -> list[int]:
+    rows = await session.execute(text(f"SELECT id FROM {table} ORDER BY id"))
+    return [row[0] for row in rows]
 
 
 async def _committed_ids(observer: AsyncEngine, table: str) -> list[int]:
@@ -89,7 +102,7 @@ async def test_a_clean_execution_commits_its_write(
     manager: SessionManager, table: str, observer: AsyncEngine
 ) -> None:
     async def body() -> None:
-        await _insert(table, 1)
+        await _insert(manager, table, 1)
 
     await _executor(manager).execute(Run(body))
 
@@ -100,7 +113,7 @@ async def test_a_failure_after_writing_persists_nothing(
     manager: SessionManager, table: str, observer: AsyncEngine
 ) -> None:
     async def body() -> None:
-        await _insert(table, 1)
+        await _insert(manager, table, 1)
         raise BusinessError
 
     executor = _executor(manager)
@@ -119,7 +132,7 @@ async def test_a_nested_execution_does_not_commit(
     seen_after_nested: list[list[int]] = []
 
     async def nested() -> None:
-        await _insert(table, 1)
+        await _insert(manager, table, 1)
 
     async def outer() -> None:
         await executor.execute(Run(nested))
@@ -136,7 +149,7 @@ async def test_a_failure_after_a_nested_write_persists_nothing(
     executor = _executor(manager)
 
     async def nested() -> None:
-        await _insert(table, 1)
+        await _insert(manager, table, 1)
 
     async def outer() -> None:
         await executor.execute(Run(nested))
@@ -157,11 +170,11 @@ async def test_a_failed_commit_raises_the_driver_error_and_persists_nothing(
     executor = _executor(manager)
 
     async def first() -> None:
-        await _insert(table, 1)
+        await _insert(manager, table, 1)
 
     async def duplicate() -> None:
-        await _insert(table, 2)
-        await _insert(table, 1)  # the deferred key fails only at COMMIT
+        await _insert(manager, table, 2)
+        await _insert(manager, table, 1)  # the deferred key fails only at COMMIT
 
     await executor.execute(Run(first))
     use_case = Run(duplicate)
@@ -178,13 +191,66 @@ async def test_a_gather_child_running_a_nested_execution_writes_nothing(
     executor = _executor(manager)
 
     async def nested() -> None:
-        await _insert(table, 2)
+        await _insert(manager, table, 2)
 
     async def outer() -> None:
-        await _insert(table, 1)
+        await _insert(manager, table, 1)
         await asyncio.gather(executor.execute(Run(nested)))
 
     use_case = Run(outer)
+
+    with pytest.raises(ScopeOwnershipError):
+        await executor.execute(use_case)
+
+    assert await _committed_ids(observer, table) == []
+
+
+async def test_a_gather_child_running_a_read_only_execution_reads_per_call(
+    manager: SessionManager, table: str
+) -> None:
+    """T073: the child joins no session of the parent, so it never sees the uncommitted row."""
+    executor = _executor(manager)
+    seen: list[list[int]] = []
+
+    async def read() -> None:
+        seen.append(await _visible_ids(manager, table))
+
+    async def outer() -> None:
+        await _insert(manager, table, 1)
+        await asyncio.gather(executor.execute(Run(read), read_only=True))
+
+    await executor.execute(Run(outer))
+
+    assert seen == [[]]
+
+
+async def test_a_read_only_execution_in_the_owner_task_sees_the_uncommitted_write(
+    manager: SessionManager, table: str
+) -> None:
+    executor = _executor(manager)
+    seen: list[list[int]] = []
+
+    async def read() -> None:
+        seen.append(await _visible_ids(manager, table))
+
+    async def outer() -> None:
+        await _insert(manager, table, 1)
+        await executor.execute(Run(read), read_only=True)
+
+    await executor.execute(Run(outer))
+
+    assert seen == [[1]]
+
+
+async def test_a_gather_child_reading_the_enlisted_store_is_refused(
+    manager: SessionManager, table: str, observer: AsyncEngine
+) -> None:
+    async def outer() -> None:
+        await _insert(manager, table, 1)
+        await asyncio.gather(_visible_ids(manager, table))
+
+    use_case = Run(outer)
+    executor = _executor(manager)
 
     with pytest.raises(ScopeOwnershipError):
         await executor.execute(use_case)
@@ -200,7 +266,7 @@ async def test_a_hundred_invocations_return_every_connection_and_reset_the_conte
 
     async def invoke(index: int) -> None:
         async def body() -> None:
-            await _insert(table, index)
+            await _insert(manager, table, index)
             if index % 3 == 1:
                 raise BusinessError
             if index % 3 == 2:
@@ -228,4 +294,4 @@ async def test_a_hundred_invocations_return_every_connection_and_reset_the_conte
 
 
 def _context_is_clean() -> bool:
-    return current_scope() is None and get_active_session() is None and not in_atomic_transaction()
+    return current_scope() is None and not in_atomic_transaction()

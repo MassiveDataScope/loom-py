@@ -37,15 +37,12 @@ from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import (
-    ForeignSessionError,
-    get_active_session,
-    transactional,
-)
+from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, transactional
 from loom.core.repository.sqlalchemy.uow import (
     SQLAlchemyUnitOfWork,
     SQLAlchemyUnitOfWorkFactory,
 )
+from loom.core.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
 from tests.helpers.composition import ProjectFactory, fixture_project
@@ -307,7 +304,7 @@ async def test_a_read_outside_any_unit_of_work_sees_committed_rows(
 
     async with application.running():
         created_id = await application.kernel.app.invoke(use_case, payload={"name": "kept"})
-        assert get_active_session() is None
+        assert current_scope() is None
         repository = application.kernel.container.resolve_repo(model)
         found = await repository.get_by_id(created_id)
         page = await repository.list_paginated(PageParams(page=1, limit=10))
@@ -502,13 +499,13 @@ async def test_a_write_outside_the_active_session_does_not_commit_on_its_own(
     primary = _note_repo(first)
     other = _note_repo(second)
 
+    async def write_other() -> None:
+        await other.create(_NoteCommand(name="other"))
+
     async def write_then_fail() -> None:
         async with SQLAlchemyUnitOfWork(first):
             await primary.create(_NoteCommand(name="primary"))
-            await asyncio.create_task(
-                other.create(_NoteCommand(name="other")),
-                context=contextvars.Context(),
-            )
+            await asyncio.create_task(write_other(), context=contextvars.Context())
             raise RuntimeError(_OUTER_FAILED)
 
     with pytest.raises(RuntimeError, match=_OUTER_FAILED):

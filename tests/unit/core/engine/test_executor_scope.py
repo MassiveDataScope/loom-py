@@ -29,6 +29,7 @@ from loom.core.uow.coordinator import (
     Uncertain,
 )
 from loom.core.uow.scope import (
+    Frame,
     InvocationScope,
     ScopeOwnershipError,
     StoresNotCommitted,
@@ -88,6 +89,14 @@ async def _second_store(store: PhasedStore) -> None:
     participant = Participant(store.key, cast(UnitOfWork, store))
     await participant.begin()
     scope.participants[store.key] = participant
+
+
+async def _write_joined(store: PhasedStore, row: str) -> None:
+    """Write through ``store`` as a ``Joined`` repository will (T046): a frame declares it."""
+    scope = _scope()
+    async with scope.frame(Frame(DEFAULT_STORE, frozenset({store.key}))):
+        scope.participant_for(store.key, store.owner, write=True)
+        store.write(row)
 
 
 def _done(value: Any = "ok") -> Body:
@@ -249,12 +258,7 @@ class TestOwnership:
         assert ledger.persisted[DEFAULT_STORE] == []
 
     async def test_a_gather_child_running_a_read_only_execution_is_not_refused(self) -> None:
-        """A read-only execution joins no scope, so no ownership check refuses it.
-
-        This does not show that the child reads per call: until repositories
-        go through the scope (PR 3), a real SQLAlchemy repository in the child
-        still joins the session it inherits from the parent's context.
-        """
+        """A read-only execution joins no scope, so no ownership check refuses it."""
         stores = _Stores(Ledger())
         executor = _executor(stores)
 
@@ -262,6 +266,38 @@ class TestOwnership:
             return await asyncio.gather(executor.execute(Run(_done("read")), read_only=True))
 
         assert await executor.execute(Run(outer)) == ["read"]
+
+    async def test_a_gather_child_running_a_read_only_execution_sees_no_scope(self) -> None:
+        """Its repositories read per call instead of meeting a scope they may not touch."""
+        stores = _Stores(Ledger())
+        executor = _executor(stores)
+        seen: list[InvocationScope | None] = []
+
+        async def read() -> None:
+            seen.append(current_scope())
+
+        async def outer() -> None:
+            await asyncio.gather(executor.execute(Run(read), read_only=True))
+
+        await executor.execute(Run(outer))
+
+        assert seen == [None]
+
+    async def test_a_read_only_execution_in_the_owner_task_still_sees_the_scope(self) -> None:
+        """Its reads join the invocation's sessions and see its uncommitted writes."""
+        stores = _Stores(Ledger())
+        executor = _executor(stores)
+        seen: list[bool] = []
+
+        async def read() -> None:
+            seen.append(current_scope() is not None)
+
+        async def outer() -> None:
+            await executor.execute(Run(read), read_only=True)
+
+        await executor.execute(Run(outer))
+
+        assert seen == [True]
 
     async def test_a_gather_child_touching_the_participant_is_refused(self) -> None:
         stores = _Stores(Ledger())
@@ -444,8 +480,7 @@ class TestStoresNotCommitted:
 
         async def body() -> None:
             await _second_store(audit)
-            _scope().participant_for(AUDIT, audit.owner, write=True)
-            audit.write("audit-row")
+            await _write_joined(audit, "audit-row")
             raise error
 
         executor = _executor(stores)
@@ -498,7 +533,7 @@ class TestStoresNotCommitted:
 
         async def body() -> str:
             await _second_store(audit)
-            _scope().participant_for(AUDIT, audit.owner, write=True)
+            await _write_joined(audit, "audit-row")
             return "ok"
 
         assert await _executor(stores).execute(Run(body)) == "ok"

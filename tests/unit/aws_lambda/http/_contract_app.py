@@ -31,7 +31,6 @@ from loom.core.command import Command
 from loom.core.errors import NotFound
 from loom.core.identity import current_identity
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -79,7 +78,7 @@ class AdminLevel(UseCase[Item, int]):
 
 class WhoAmI(UseCase[Item, dict[str, Any]]):
     async def execute(self) -> dict[str, Any]:
-        SEEN.append((asyncio.get_running_loop(), get_active_session()))
+        SEEN.append((asyncio.get_running_loop(), self.main_repo.session_manager.active_session))
         return {"subject": current_identity().subject}
 
 

@@ -33,6 +33,7 @@ from loom.core.persistence.profile import BackendRuntime
 from loom.core.persistence.stores import (
     SQLALCHEMY_BACKEND,
     StoreCapabilities,
+    StoreKey,
     StoreSpec,
 )
 from loom.core.repository.abc import CursorCodec
@@ -181,7 +182,7 @@ class SQLAlchemyBackend:
 def _open_session_manager(
     db_cfg: DatabaseConfig,
     runtime: BackendRuntime,
-    database: str,
+    database: StoreKey,
     settings: DeferredScopedSettings | None,
     metadata: MetaData | None,
 ) -> SessionManager:

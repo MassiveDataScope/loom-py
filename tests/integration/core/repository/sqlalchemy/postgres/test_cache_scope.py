@@ -26,10 +26,7 @@ from loom.core.repository import PageParams, Repository
 from loom.core.repository.abc import CursorCodec, PaginationMode, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import (
-    reset_active_session,
-    set_active_session,
-)
+from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 
 pytestmark = pytest.mark.integration
 
@@ -312,15 +309,13 @@ async def test_reads_inside_a_caller_transaction_store_nothing(
     page = PageParams(page=1, limit=10)
     settings = _settings.set(_tenant("a"))
     try:
-        async with repository.session_manager.session() as session, session.begin():
+        async with SQLAlchemyUnitOfWork(repository.session_manager):
+            session = repository.session_manager.active_session
+            assert session is not None
             await session.execute(text("SELECT 1"))
-            active = set_active_session(session)
-            try:
-                _settings.set(_tenant("b"))
-                page_in_transaction = await cached.list_paginated(page)
-                bodies_in_transaction = await cached.bodies()
-            finally:
-                reset_active_session(active)
+            _settings.set(_tenant("b"))
+            page_in_transaction = await cached.list_paginated(page)
+            bodies_in_transaction = await cached.bodies()
     finally:
         _settings.reset(settings)
 

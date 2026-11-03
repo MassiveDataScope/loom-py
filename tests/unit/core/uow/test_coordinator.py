@@ -203,6 +203,20 @@ class TestEnlist:
 
         assert participant.accepts(object()) is True
 
+    async def test_a_phased_participant_hands_out_the_session_of_its_unit_of_work(
+        self,
+    ) -> None:
+        store = PhasedStore(S0, Ledger())
+
+        participant = await _coordinator(store).enlist(Scope(), S0)
+
+        assert participant.handle is store.session
+
+    async def test_a_single_phase_participant_hands_out_no_session(self) -> None:
+        participant = await _coordinator(ThirdPartyStore(S0, Ledger())).enlist(Scope(), S0)
+
+        assert participant.handle is None
+
 
 def _session_manager() -> MagicMock:
     manager = MagicMock()

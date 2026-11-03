@@ -29,11 +29,10 @@ from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterS
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWork
 from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork, active_session
+from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork, NoOpMongoUnitOfWork
 from loom.core.repository.registration import capabilities_of
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 
@@ -253,7 +252,7 @@ async def _mongo_transactional_repository() -> AsyncIterator[RepositoryMongo[Ord
     repository = RepositoryMongo(
         Order,
         collection,
-        session_provider=active_session,
+        session_provider=MongoSessions(cast(Any, client)),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
     _MONGO_CLIENTS[repository] = client
@@ -262,7 +261,7 @@ async def _mongo_transactional_repository() -> AsyncIterator[RepositoryMongo[Ord
 
 async def _fail_sqlalchemy_commit(repository: Any) -> None:
     """Leave a duplicate primary key pending so ``commit`` flushes it and fails."""
-    session = get_active_session()
+    session = repository.session_manager.active_session
     assert session is not None
     session.add(repository.create_object(SEED[1]))
 

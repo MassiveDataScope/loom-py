@@ -3,7 +3,7 @@
 Ownership is the security boundary of ADR 0008: a participant is touched
 only from the task that owns the scope, never from a ``gather`` child, a
 thread or once the scope is closed, while a read of a store that is not
-enlisted works from anywhere.
+enlisted, or whose unit of work holds no session, works from anywhere.
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ from typing import Any
 
 import pytest
 from celery.backends.base import BaseBackend
+from pymongo import AsyncMongoClient
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
 from loom.core.persistence.stores import StoreKey
+from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     Committed,
     InvocationOutcome,
@@ -33,10 +35,14 @@ from loom.core.uow.scope import (
     ScopeOwnershipError,
     StoresNotCommitted,
     UnitOfWorkInsideScope,
+    current_handle,
+    current_participant,
     current_scope,
     invocation,
     invocation_error,
     refuse_inside_open_scope,
+    single_store,
+    unscoped,
 )
 
 from ._coordinator_fakes import (
@@ -82,6 +88,25 @@ async def _in_child_task(scope: InvocationScope, key: StoreKey, *, write: bool) 
 
 async def _lookup(scope: InvocationScope, key: StoreKey, owner: object, write: bool) -> Any:
     return scope.participant_for(key, owner, write=write)
+
+
+class _TargetedOwner:
+    def __init__(self, target: object) -> None:
+        self._target = target
+
+    @property
+    def target(self) -> object:
+        return self._target
+
+
+class _TargetAttribute:
+    def __init__(self) -> None:
+        self.target = "client(password='secret')"
+
+
+class _ReprLeaks:
+    def __repr__(self) -> str:
+        return "client(password='secret')"
 
 
 class TestFrame:
@@ -162,6 +187,53 @@ class TestParticipantForFromTheOwner:
         with pytest.raises(ForeignSessionError, match=r"store 's0' \(memory://s0\)"):
             scope.participant_for(S0, object(), write=write)
 
+    async def test_the_refusal_names_another_owner_by_its_target(self) -> None:
+        scope, _ = await _enlisted(S0)
+        owner = _TargetedOwner("postgresql://db-b:5432/app")
+
+        with pytest.raises(ForeignSessionError, match=r"store 's0' \(postgresql://db-b:5432/app\)"):
+            scope.participant_for(S0, owner, write=False)
+
+    @pytest.mark.parametrize(
+        "owner",
+        [
+            pytest.param(_TargetedOwner(b"secret"), id="target-not-a-str"),
+            pytest.param(_TargetAttribute(), id="target-not-a-property"),
+        ],
+    )
+    async def test_the_refusal_ignores_a_target_that_is_not_a_str_property(
+        self, owner: object
+    ) -> None:
+        scope, _ = await _enlisted(S0)
+
+        with pytest.raises(ForeignSessionError) as raised:
+            scope.participant_for(S0, owner, write=False)
+
+        assert "secret" not in str(raised.value)
+
+    async def test_the_refusal_never_prints_a_mongo_client_s_options(self) -> None:
+        scope, _ = await _enlisted(S0)
+        client: AsyncMongoClient[Any] = AsyncMongoClient(
+            "mongodb://loom:hunter2@db.internal/?tlsCertificateKeyFilePassword=keypass",
+            connect=False,
+        )
+        try:
+            with pytest.raises(ForeignSessionError) as raised:
+                scope.participant_for(S0, client, write=False)
+        finally:
+            await client.close()
+
+        assert "keypass" not in str(raised.value)
+
+    async def test_the_refusal_names_an_owner_without_a_target_by_its_type_only(self) -> None:
+        scope, _ = await _enlisted(S0)
+        owner = _ReprLeaks()
+
+        with pytest.raises(ForeignSessionError, match="another _ReprLeaks") as raised:
+            scope.participant_for(S0, owner, write=False)
+
+        assert "secret" not in str(raised.value)
+
     async def test_a_refused_write_marks_nothing(self) -> None:
         scope, _ = await _enlisted(S0)
 
@@ -174,10 +246,26 @@ class TestParticipantForFromTheOwner:
 class TestParticipantForASinglePhaseStore:
     """A single-phase participant has no owner: any repository of its store joins it."""
 
-    async def test_a_read_returns_its_participant(self) -> None:
+    async def test_a_read_returns_none_as_there_is_no_session_to_join(self) -> None:
         scope = await _with_autocommit()
 
-        assert scope.participant_for(S1, object(), write=False) is scope.participants[S1]
+        assert scope.participant_for(S1, object(), write=False) is None
+
+    async def test_a_read_from_a_gather_child_returns_none(self) -> None:
+        scope = await _with_autocommit()
+
+        assert await _in_child_task(scope, S1, write=False) == [None]
+
+    async def test_a_write_from_a_gather_child_is_refused(self) -> None:
+        scope = await _with_autocommit()
+
+        with pytest.raises(ScopeOwnershipError):
+            await _in_child_task(scope, S1, write=True)
+
+    async def test_a_write_returns_its_participant(self) -> None:
+        scope = await _with_autocommit()
+
+        assert scope.participant_for(S1, object(), write=True) is scope.participants[S1]
 
     async def test_a_write_is_recorded(self) -> None:
         scope = await _with_autocommit()
@@ -285,6 +373,191 @@ class TestOwnership:
             scope.participant_for(S0, object(), write=False)
 
         assert raised.value.code == ErrorCode.INVOCATION_SCOPE_FOREIGN_TASK
+
+
+class TestWritesStayInTheInnermostFrame:
+    async def test_a_write_to_a_store_outside_it_is_refused(self) -> None:
+        stores = _stores(Ledger(), S0, S1)
+
+        async with invocation(_coordinator(*stores.values())) as scope, scope.frame(Frame(S0)):
+            with pytest.raises(
+                ForeignSessionError,
+                match=r"a write to store 's1' .* is refused: .* declares only store 's0'$",
+            ):
+                scope.participant_for(S1, stores[S1].owner, write=True)
+
+    async def test_an_enlisted_store_of_an_outer_frame_refuses_the_write_and_records_nothing(
+        self,
+    ) -> None:
+        stores = _stores(Ledger(), S0, S1)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            async with scope.frame(Frame(S1)), scope.frame(Frame(S0)):
+                with pytest.raises(ForeignSessionError):
+                    scope.participant_for(S1, stores[S1].owner, write=True)
+            wrote = scope.participants[S1].wrote
+
+        assert wrote is False
+
+    async def test_a_read_of_an_enlisted_store_of_an_outer_frame_joins_it(self) -> None:
+        stores = _stores(Ledger(), S0, S1)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            async with scope.frame(Frame(S1)), scope.frame(Frame(S0)):
+                found = scope.participant_for(S1, stores[S1].owner, write=False)
+            enlisted = scope.participants[S1]
+
+        assert found is enlisted
+
+    async def test_a_write_to_a_store_of_it_is_recorded(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async with invocation(_coordinator(*stores.values())) as scope, scope.frame(Frame(S0)):
+            participant = scope.participant_for(S0, stores[S0].owner, write=True)
+
+        assert participant is not None
+        assert participant.wrote is True
+
+
+class TestOwnedHere:
+    async def test_the_owner_task_owns_the_scope(self) -> None:
+        assert _scope_for().owned_here() is True
+
+    async def test_a_gather_child_does_not(self) -> None:
+        scope = _scope_for()
+
+        async def owned() -> bool:
+            return scope.owned_here()
+
+        assert await asyncio.gather(owned()) == [False]
+
+    async def test_a_closed_scope_is_owned_by_no_one(self) -> None:
+        scope = _scope_for()
+        scope.closed = True
+
+        assert scope.owned_here() is False
+
+
+class TestCurrentHandle:
+    def test_without_a_scope_there_is_none(self) -> None:
+        assert current_handle(S0, object(), write=False) is None
+
+    async def test_it_is_the_session_of_the_published_scope_s_participant(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            enlisted = await scope.coordinator.enlist(scope, S0)
+            found = current_handle(S0, stores[S0].owner, write=False)
+            held = enlisted.handle
+
+        assert found is held
+
+    async def test_a_participant_s_session_is_not_none(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            await scope.coordinator.enlist(scope, S0)
+            found = current_handle(S0, stores[S0].owner, write=False)
+
+        assert found is not None
+
+
+class TestCurrentParticipant:
+    def test_without_a_scope_there_is_none(self) -> None:
+        assert current_participant(S0, object(), write=True) is None
+
+    async def test_it_is_the_participant_of_the_published_scope(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            enlisted = await scope.coordinator.enlist(scope, S0)
+            found = current_participant(S0, stores[S0].owner, write=True)
+
+        assert found is enlisted
+        assert enlisted.wrote is True
+
+    async def test_it_goes_through_the_ownership_checkpoint(self) -> None:
+        stores = _stores(Ledger(), S0)
+
+        async def lookup() -> object:
+            return current_participant(S0, stores[S0].owner, write=False)
+
+        async with invocation(_coordinator(*stores.values())) as scope:
+            await scope.coordinator.enlist(scope, S0)
+            child = asyncio.gather(lookup())
+            with pytest.raises(ScopeOwnershipError):
+                await child
+
+
+class TestUnscoped:
+    async def test_no_scope_is_published_inside(self) -> None:
+        async with invocation(_coordinator()):
+            with unscoped():
+                inside = current_scope()
+
+        assert inside is None
+
+    async def test_the_scope_is_published_again_afterwards(self) -> None:
+        async with invocation(_coordinator()) as scope:
+            with unscoped():
+                pass
+            after = current_scope()
+
+        assert after is scope
+
+
+def _unit_of_work(store: PhasedStore) -> UnitOfWork:
+    assert isinstance(store, UnitOfWork)
+    return store
+
+
+class TestSingleStore:
+    async def test_a_clean_block_commits_the_unit_of_work(self) -> None:
+        ledger = Ledger()
+        store = PhasedStore(S0, ledger)
+
+        async with single_store(S0, _unit_of_work(store)):
+            store.write("row")
+
+        assert ledger.persisted[S0] == ["row"]
+
+    async def test_the_unit_of_work_is_the_participant_of_its_store(self) -> None:
+        store = PhasedStore(S0, Ledger())
+
+        async with single_store(S0, _unit_of_work(store)) as scope:
+            handle = scope.participants[S0].handle
+
+        assert handle is not None
+
+    async def test_a_failing_block_rolls_back_and_propagates(self) -> None:
+        ledger = Ledger()
+        store = PhasedStore(S0, ledger)
+
+        async def fail() -> None:
+            async with single_store(S0, _unit_of_work(store)):
+                store.write("row")
+                raise Boom("body")
+
+        with pytest.raises(Boom, match="body"):
+            await fail()
+
+        assert ledger.calls_of(S0) == ["begin", "rollback", "close"]
+
+    async def test_a_failed_commit_raises_its_cause(self) -> None:
+        store = PhasedStore(S0, Ledger(), Fault("commit", Effect.RAISE))
+
+        async def commit() -> None:
+            async with single_store(S0, _unit_of_work(store)):
+                pass
+
+        with pytest.raises(Boom, match="commit failed"):
+            await commit()
+
+    async def test_the_scope_is_unpublished_afterwards(self) -> None:
+        async with single_store(S0, _unit_of_work(PhasedStore(S0, Ledger()))):
+            pass
+
+        assert current_scope() is None
 
 
 class TestFramePush:

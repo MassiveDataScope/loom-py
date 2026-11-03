@@ -27,7 +27,6 @@ from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.model.types import Integer
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import get_active_session
 
 
 class _Beat(BaseModel):
@@ -43,8 +42,11 @@ _CONNECTIONS = (
 
 
 class _PingJob(Job[dict[str, Any]]):
+    def __init__(self, session_manager: SessionManager) -> None:
+        self._session_manager = session_manager
+
     async def execute(self) -> dict[str, Any]:
-        session = get_active_session()
+        session = self._session_manager.active_session
         if session is None:
             raise RuntimeError("prefork child has no unit-of-work session")
         one = int((await session.execute(text("SELECT 1"))).scalar_one())

@@ -11,11 +11,11 @@ and the ``_mutations`` ``ContextVar`` in
 ``@transactional`` decorator's own hooks receive. Both would need to change
 in lockstep with a scope object here; a bare boolean does not.
 
-The boolean is set by the three places that own a transaction that will
-later commit: :class:`~loom.core.repository.sqlalchemy.uow.SQLAlchemyUnitOfWork`,
-:class:`~loom.core.repository.mongo.uow.MongoUnitOfWork`, and the owned
-session opened by
-:func:`~loom.core.repository.sqlalchemy.transactional.transactional`. A
+The boolean is set by the two units of work that own a transaction that will
+later commit: :class:`~loom.core.repository.sqlalchemy.uow.SQLAlchemyUnitOfWork`
+(which an outermost
+:func:`~loom.core.repository.sqlalchemy.transactional.transactional` also
+runs in) and :class:`~loom.core.repository.mongo.uow.MongoUnitOfWork`. A
 backend without a transaction (a no-op unit of work, DynamoDB's autocommit)
 never sets it, so a caller elsewhere in the stack still sees ``False`` and
 keeps its current, already-correct behaviour.
@@ -25,15 +25,15 @@ Every opener resets this token before its other resets, in the same
 signal is still closed. This does not eliminate the hazard of a reset
 raising — some other token in that block still leaks when that happens —
 it only chooses, deliberately, which one leaks: a stuck ``True`` here
-defers every later bump in that context, the most consequential of the
-three to leave open.
+defers every later bump in that context, the most consequential token to
+leave open.
 
 Public backend-author contract
 -------------------------------
 A third-party unit of work that owns a transaction another mechanism will
 later commit **must** call :func:`open_atomic_transaction` in its ``begin``
 (or equivalent) and :func:`close_atomic_transaction` in its teardown,
-symmetric with the three openers above. Skipping this is silent: nothing
+symmetric with the openers above. Skipping this is silent: nothing
 raises, but every write inside that transaction has its cache invalidation
 race the commit again (the bug this module exists to close). This is a
 deliberate public surface, not an oversight of a missing ``__all__`` — a

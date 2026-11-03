@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 from sqlalchemy import MetaData, event
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.default import DefaultDialect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -21,13 +21,14 @@ from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
-from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
     install_session_settings,
 )
 from loom.core.tracing import get_trace_id
+from loom.core.uow.scope import current_handle
 
 _log = get_logger(__name__).bind(module="session_manager")
 
@@ -49,7 +50,7 @@ class SessionManager:
         inject_trace_id: bool = True,
         session_settings: SessionSettings | None = None,
         metadata: MetaData | None = None,
-        store: str = DEFAULT_STORE,
+        store: StoreKey = DEFAULT_STORE,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -141,6 +142,11 @@ class SessionManager:
         )
 
     @property
+    def target(self) -> str:
+        """The database this manager connects to, without credentials or query options."""
+        return bare_url(self._engine.url)
+
+    @property
     def has_session_settings(self) -> bool:
         """Whether every transaction of this manager starts with the product's settings."""
         return self._session_settings is not None
@@ -155,6 +161,45 @@ class SessionManager:
         if self._session_settings is None:
             return {}
         return self._session_settings() or {}
+
+    @property
+    def active_session(self) -> AsyncSession | None:
+        """The session this store's unit of work holds in the current invocation, if any.
+
+        The one public way to read a store's session, for raw SQL that must
+        run in the invocation's transaction; repositories reach the same
+        session through :meth:`joined_session`, with their write intent.
+        Like ``request.user``, its value depends on the context it is read
+        from: ``None`` outside an invocation, or when this store is not
+        enlisted in it, where :meth:`session` opens a session of its own.
+
+        Raises:
+            ScopeOwnershipError: Read from a task other than the one that owns
+                the invocation (a ``gather`` child, a task that outlives its
+                use case), from a thread, or once the invocation has ended,
+                while this store is enlisted.
+            ForeignSessionError: When this store is enlisted with another
+                session manager's unit of work.
+        """
+        return self.joined_session(write=False)
+
+    def joined_session(self, *, write: bool) -> AsyncSession | None:
+        """The session a repository of this manager joins for one operation, if any.
+
+        :attr:`active_session` with the operation's write intent, which the
+        invocation scope records for the commit order and checks; for
+        repositories. Raw SQL reads :attr:`active_session`.
+
+        Args:
+            write: Whether the operation writes.
+
+        Raises:
+            ScopeOwnershipError: See :attr:`active_session`; a write is also
+                refused outside the owning task when the store is not enlisted.
+            ForeignSessionError: See :attr:`active_session`, or when a write
+                targets a store the running execution did not declare.
+        """
+        return cast("AsyncSession | None", current_handle(self.store, self, write=write))
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -187,12 +232,19 @@ class SessionManager:
         return self._session_factory
 
 
+def bare_url(url: URL) -> str:
+    """Render ``url`` as driver, host, port and database only: no credentials, no query."""
+    return URL.create(
+        url.drivername, host=url.host, port=url.port, database=url.database
+    ).render_as_string()
+
+
 def build_session_manager(
     config: DatabaseConfig,
     profile: RuntimeProfile,
     *,
     pool_metrics: PoolMetricsSink | None = None,
-    database: str = "default",
+    database: StoreKey = DEFAULT_STORE,
     **manager_kwargs: Any,
 ) -> SessionManager:
     """Build the session manager of a relational store section for one entry point.

@@ -13,7 +13,7 @@ import asyncio
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -23,7 +23,9 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import QueuePool
 
-from loom.core.authz.elevation import elevated_scopes
+from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
+from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
@@ -33,12 +35,18 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
+from loom.core.repository.sqlalchemy.rls import (
+    create_schema,
+    elevate,
+    register_scope_source,
+)
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, get_active_session
+from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.coordinator import OrderedCommits
+from loom.core.uow.scope import Frame, current_scope, invocation
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
@@ -65,14 +73,28 @@ SEEDS: Mapping[StoreKey, Mapping[str, tuple[str, ...]]] = {
 OWNER = text("SELECT coalesce(current_setting('loom.scope.owner', true), '')")
 BODIES = text("SELECT body FROM notes ORDER BY body")
 BACKEND_PID = text("SELECT pg_backend_pid()")
+EDITOR_FLAG = text("SELECT coalesce(current_setting('loom.scope.editor.any', true), '')")
+PROBE = text("SELECT coalesce(current_setting('loom.probe', true), '')")
+MANAGE = Permission("members.manage")
+DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+
+
+@dataclass
+class _Product:
+    catalog: RoleCatalog = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
+    delegate: Permission = MANAGE
+    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
 
 
 @pytest.fixture(autouse=True)
 def _editor_source() -> Iterator[None]:
     clear_scope_sources()
+    clear_authz_product()
     register_scope_source("editor", lambda: "ana")
+    register_authz_product(_Product())
     yield
     clear_scope_sources()
+    clear_authz_product()
 
 
 @dataclass(frozen=True)
@@ -157,12 +179,20 @@ class Store:
     wiring: PersistenceWiring
     manager: SessionManager
     notes: RepositorySQLAlchemy
+    wired_sink: ElevationSink | None
 
     def unit_of_work(self) -> UnitOfWork:
         factory = self.wiring.uow_factory
         if factory is None:
             raise RuntimeError(f"store {self.key!r} serves no unit of work")
         return factory.create()
+
+    @property
+    def sink(self) -> ElevationSink:
+        """The elevation sink the backend registered for this store."""
+        if self.wired_sink is None:
+            raise RuntimeError(f"store {self.key!r} registers no elevation sink")
+        return self.wired_sink
 
     def checked_out(self) -> int:
         pool = self.manager.engine.sync_engine.pool
@@ -180,7 +210,15 @@ def _build(ctx: ConfigContext, key: StoreKey) -> Store:
     repository = RepositorySQLAlchemy(
         manager, notes.Note, cursor_codec=container.resolve(CursorCodec)
     )
-    return Store(key=key, wiring=wiring, manager=manager, notes=repository)
+    return Store(
+        key=key,
+        wiring=wiring,
+        manager=manager,
+        notes=repository,
+        wired_sink=(
+            container.resolve(ElevationSink) if container.is_registered(ElevationSink) else None
+        ),
+    )
 
 
 @asynccontextmanager
@@ -215,8 +253,8 @@ async def _as(subject: str | None, call: Callable[[], Awaitable[T]]) -> T:
         reset_identity(token)
 
 
-def _active() -> AsyncSession:
-    session = get_active_session()
+def _active(store: Store) -> AsyncSession:
+    session = store.manager.active_session
     if session is None:
         raise RuntimeError("no unit-of-work session")
     return session
@@ -229,13 +267,13 @@ async def _bodies(session: AsyncSession) -> tuple[str, ...]:
 async def _visible(store: Store) -> tuple[int, tuple[str, ...]]:
     """The rows the caller sees in one unit of work: the repository's count, the session's rows."""
     async with store.unit_of_work():
-        return await store.notes.count(), await _bodies(_active())
+        return await store.notes.count(), await _bodies(_active(store))
 
 
 async def _seen_across(opened: Store, other: Store) -> tuple[str, str]:
     """The scope setting of *opened*'s unit of work, and of *other*'s connection meanwhile."""
     async with opened.unit_of_work():
-        own = (await _active().execute(OWNER)).scalar_one()
+        own = (await _active(opened).execute(OWNER)).scalar_one()
         async with other.manager.engine.connect() as raw:
             there = (await raw.execute(OWNER)).scalar_one()
     return own, there
@@ -243,15 +281,15 @@ async def _seen_across(opened: Store, other: Store) -> tuple[str, str]:
 
 async def _failing(store: Store) -> None:
     async with store.unit_of_work():
-        await _active().execute(OWNER)
-        await _active().execute(text("SELECT 1 / 0"))
+        await _active(store).execute(OWNER)
+        await _active(store).execute(text("SELECT 1 / 0"))
 
 
 async def _cancelled(store: Store) -> bool:
     """Cancel a unit of work in the current task, so its context variables are this task's."""
     try:
         async with asyncio.timeout(0.05), store.unit_of_work():
-            await _active().execute(OWNER)
+            await _active(store).execute(OWNER)
             await asyncio.sleep(10)
     except TimeoutError:
         return True
@@ -388,7 +426,7 @@ async def test_settings_pools_and_context_never_cross_the_two_servers(
         }
         checked_out = {key: store.checked_out() for key, store in stores.items()}
         residue = {key: await _residue(store) for key, store in stores.items()}
-        context = (get_active_session(), in_atomic_transaction(), current_identity())
+        context = (current_scope(), in_atomic_transaction(), current_identity())
 
     assert names[DEFAULT_STORE] != names[AUDIT]
     assert foreign == {DEFAULT_STORE: 0, AUDIT: 0}
@@ -448,9 +486,161 @@ async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
     before = await two_servers.row_counts()
     async with _started(two_servers.context()) as stores:
         with pytest.raises(
-            ForeignSessionError, match=rf"store '{inner}' .* active session of store '{outer}'"
+            ForeignSessionError,
+            match=rf"a write to store '{inner}' .* declares only store '{outer}'$",
         ):
             await _as(U1, lambda: _write_both(stores[outer], stores[inner]))
 
     assert await two_servers.row_counts() == before
     assert before == {key: sum(map(len, SEEDS[key].values())) for key in STORES}
+
+
+def _both(stores: Mapping[StoreKey, Store]) -> OrderedCommits:
+    """One coordinator over both stores, as the composition will build it (PR 11)."""
+    factories = {key: store.wiring.uow_factory for key, store in stores.items()}
+    return OrderedCommits({key: f for key, f in factories.items() if f is not None})
+
+
+async def _flags_after_elevating(stores: Mapping[StoreKey, Store], elevated: StoreKey) -> Any:
+    """Elevate ``editor`` with *elevated*'s wired sink once both stores' transactions began.
+
+    Both transactions are open before ``elevate()``, so the flag can reach
+    them only through the sink, never through the session-settings provider.
+    """
+    async with (
+        invocation(_both(stores)) as scope,
+        scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
+    ):
+        for store in stores.values():
+            await _active(store).execute(OWNER)
+        async with elevation_scope(owns_transaction=True, sink=stores[elevated].sink):
+            await elevate("editor", DECISION, at=Scope.of(U1))
+            return {
+                key: (await _active(store).execute(EDITOR_FLAG)).scalar_one()
+                for key, store in stores.items()
+            }
+
+
+@pytest.mark.parametrize("elevated", STORES)
+async def test_an_elevation_flag_is_set_on_its_own_store_s_session_only(
+    two_servers: TwoServers, elevated: StoreKey
+) -> None:
+    async with _started(two_servers.context()) as stores:
+        flags = await _as(U1, lambda: _flags_after_elevating(stores, elevated))
+        residue = {key: await _residue(store) for key, store in stores.items()}
+
+    assert flags == {elevated: "on", OTHER[elevated]: ""}
+    assert residue == {DEFAULT_STORE: "", AUDIT: ""}
+
+
+async def _provider_flag_after_elevating(
+    stores: Mapping[StoreKey, Store], elevated: StoreKey
+) -> str:
+    """Elevate ``editor`` before *elevated*'s transaction begins; read its flag.
+
+    No transaction is open at ``elevate()``, so the sink sets nothing and the
+    flag can only come from the session-settings provider when it begins.
+    """
+    async with (
+        invocation(_both(stores)) as scope,
+        scope.frame(Frame(elevated)),
+        elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
+    ):
+        await elevate("editor", DECISION, at=Scope.of(U1))
+        return str((await _active(stores[elevated]).execute(EDITOR_FLAG)).scalar_one())
+
+
+@pytest.mark.parametrize("elevated", STORES)
+async def test_an_elevation_before_the_transaction_arrives_through_the_provider(
+    two_servers: TwoServers, elevated: StoreKey
+) -> None:
+    async with _started(two_servers.context()) as stores:
+        flag = await _as(U1, lambda: _provider_flag_after_elevating(stores, elevated))
+
+    assert flag == "on"
+
+
+async def _per_call_flag_after_elevating(
+    stores: Mapping[StoreKey, Store], elevated: StoreKey
+) -> str:
+    """Elevate ``editor`` in *elevated*'s execution; read the other store's per-call flag."""
+    async with (
+        invocation(_both(stores)) as scope,
+        scope.frame(Frame(elevated)),
+        elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
+    ):
+        await _active(stores[elevated]).execute(OWNER)
+        await elevate("editor", DECISION, at=Scope.of(U1))
+        async with stores[OTHER[elevated]].manager.session() as per_call:
+            return str((await per_call.execute(EDITOR_FLAG)).scalar_one())
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="D2 / PR 5: the elevated scope set is not per store, so the other store's "
+    "session-settings provider applies a same-named elevable scope too (F2)",
+)
+@pytest.mark.parametrize("elevated", STORES)
+async def test_an_elevation_in_one_store_never_reaches_a_per_call_session_of_the_other(
+    two_servers: TwoServers, elevated: StoreKey
+) -> None:
+    async with _started(two_servers.context()) as stores:
+        flag = await _as(U1, lambda: _per_call_flag_after_elevating(stores, elevated))
+
+    assert flag == ""
+
+
+async def _session_setting_left_behind(store: Store) -> tuple[int, str]:
+    """Leave a session-level setting on the unit of work's connection; its pid and the value."""
+    await store.manager.engine.dispose()
+    async with store.unit_of_work():
+        session = _active(store)
+        await session.execute(text("SET loom.probe = 'left'"))
+        pid = (await session.execute(BACKEND_PID)).scalar_one()
+        value = (await session.execute(PROBE)).scalar_one()
+    return pid, value
+
+
+async def _back_from_the_pool(store: Store) -> tuple[int, str]:
+    """The pid and the probe setting of the connection the pool hands out next."""
+    async with store.manager.engine.connect() as raw:
+        pid = (await raw.execute(BACKEND_PID)).scalar_one()
+        return pid, str((await raw.execute(PROBE)).scalar_one())
+
+
+@pytest.fixture
+async def pool_round_trip(two_servers: TwoServers) -> dict[StoreKey, tuple[tuple[int, str], ...]]:
+    """Per store: the unit of work's (pid, probe), then the next pooled connection's."""
+    async with _started(two_servers.context()) as stores:
+        trips: dict[StoreKey, tuple[tuple[int, str], ...]] = {}
+        for key, store in stores.items():
+            left = await _as(U1, lambda store=store: _session_setting_left_behind(store))
+            trips[key] = (left, await _back_from_the_pool(store))
+    return trips
+
+
+@pytest.mark.parametrize("key", STORES)
+def test_the_pool_hands_the_same_connection_back(
+    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+) -> None:
+    (left_pid, _), (back_pid, _) = pool_round_trip[key]
+
+    assert back_pid == left_pid
+
+
+@pytest.mark.parametrize("key", STORES)
+def test_the_setting_was_set_on_that_connection(
+    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+) -> None:
+    (_, left), _ = pool_round_trip[key]
+
+    assert left == "left"
+
+
+@pytest.mark.parametrize("key", STORES)
+def test_a_session_level_setting_is_reset_when_the_connection_returns(
+    pool_round_trip: dict[StoreKey, tuple[tuple[int, str], ...]], key: StoreKey
+) -> None:
+    _, (_, back) = pool_round_trip[key]
+
+    assert back == ""
