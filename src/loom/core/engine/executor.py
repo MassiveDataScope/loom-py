@@ -451,11 +451,7 @@ class RuntimeExecutor:
                 execution joins, if any.
         """
         state = self._begin_execution(plan.use_case_type.__qualname__)
-        channel = (
-            PostCommitChannel(requeue_on_cancel=False)
-            if owned is not None or active_channel() is None
-            else None
-        )
+        channel = PostCommitChannel() if owned is not None or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
             # The elevation frame wraps the coordinator's flush and commit too:

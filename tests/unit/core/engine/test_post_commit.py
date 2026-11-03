@@ -207,9 +207,12 @@ class TestEnqueuePriority:
         assert calls == []
 
 
-async def test_cancellation_propagates_and_keeps_the_rest_queued() -> None:
+@pytest.mark.parametrize(("requeue", "after"), [(True, ["after"]), (False, [])])
+async def test_cancellation_propagates_and_requeues_only_for_a_later_drain(
+    requeue: bool, after: list[str]
+) -> None:
     calls: list[str] = []
-    channel = PostCommitChannel()
+    channel = PostCommitChannel(requeue_on_cancel=requeue)
 
     def _cancel() -> None:
         raise asyncio.CancelledError()
@@ -222,4 +225,4 @@ async def test_cancellation_propagates_and_keeps_the_rest_queued() -> None:
     assert calls == []
 
     await channel.drain(committed=True)
-    assert calls == ["after"]
+    assert calls == after
