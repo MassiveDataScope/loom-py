@@ -133,18 +133,22 @@ class ElevateThenNest(UseCase[notes.Note, Seen]):
         return cast(Seen, await self._app.invoke(ProbeRls))
 
 
-class NestAsZoe(UseCase[notes.Note, str]):
-    """Invoke :class:`ProbeRlsAsCaller` as ``ZOE``; report the owner setting afterwards."""
+class NestAsZoe(UseCase[notes.Note, tuple[NestedIdentityMismatch | None, str]]):
+    """Invoke :class:`ProbeRlsAsCaller` as ``ZOE``; report the refusal and the owner afterwards."""
 
     def __init__(self, session_manager: SessionManager, app: ApplicationInvoker) -> None:
         self._session_manager = session_manager
         self._app = cast(AppInvoker, app)
 
-    async def execute(self, open_first: bool) -> str:
+    async def execute(self, open_first: bool) -> tuple[NestedIdentityMismatch | None, str]:
         await _open_if(self._session_manager, open_first)
-        with pytest.raises(NestedIdentityMismatch):
-            await self._app.for_identity(ZOE).invoke(ProbeRlsAsCaller)
-        return (await _observe(self._session_manager, None)).owner_setting
+        as_zoe = self._app.for_identity(ZOE)
+        refused: NestedIdentityMismatch | None = None
+        try:
+            await as_zoe.invoke(ProbeRlsAsCaller)
+        except NestedIdentityMismatch as exc:
+            refused = exc
+        return refused, (await _observe(self._session_manager, None)).owner_setting
 
 
 class NestAsSelf(UseCase[notes.Note, Seen]):
@@ -345,8 +349,9 @@ async def test_h1_a_nested_execution_after_an_elevation_is_refused(
 async def test_h1_the_next_execution_after_a_refused_nesting_is_not_elevated(
     app: AppInvoker,
 ) -> None:
+    params = {"open_first": True}
     with pytest.raises(NestedElevation):
-        await app.invoke(ElevateThenNest, params={"open_first": True})
+        await app.invoke(ElevateThenNest, params=params)
 
     seen: Seen = await app.invoke(ProbeRls)
 
@@ -391,8 +396,12 @@ async def test_h2_rls_follows_the_identity_the_executor_received(app: AppInvoker
 async def test_h2_joining_the_parents_unit_of_work_as_another_identity_is_refused(
     app: AppInvoker, open_first: bool
 ) -> None:
-    owner = await app.for_identity(ANA).invoke(NestAsZoe, params={"open_first": open_first})
+    refused, owner = await app.for_identity(ANA).invoke(
+        NestAsZoe, params={"open_first": open_first}
+    )
 
+    assert isinstance(refused, NestedIdentityMismatch)
+    assert "ProbeRlsAsCaller would join the unit of work of NestAsZoe" in refused.message
     assert owner == U1
 
 
@@ -417,14 +426,19 @@ async def test_h2_a_nested_unit_of_work_of_its_own_follows_the_childs_identity(
 
 
 @pytest.mark.parametrize("ambient", [U1], indirect=True)
-@pytest.mark.parametrize("cancel", [False, True], ids=["exception", "cancellation"])
+@pytest.mark.parametrize(
+    ("cancel", "raised"),
+    [(False, RuntimeError), (True, asyncio.CancelledError)],
+    ids=["exception", "cancellation"],
+)
 @pytest.mark.usefixtures("ambient")
 async def test_h2_the_ambient_identity_is_restored_after_a_failed_execution(
-    app: AppInvoker, cancel: bool
+    app: AppInvoker, cancel: bool, raised: type[BaseException]
 ) -> None:
     as_zoe = app.for_identity(ZOE)
-    with pytest.raises((RuntimeError, asyncio.CancelledError)):
-        await as_zoe.invoke(Fail, params={"cancel": cancel})
+    params = {"cancel": cancel}
+    with pytest.raises(raised):
+        await as_zoe.invoke(Fail, params=params)
 
     seen: Seen = await app.invoke(ProbeRls)
 

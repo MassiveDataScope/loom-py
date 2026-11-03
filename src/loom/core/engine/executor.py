@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable, Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -63,8 +63,16 @@ _DEFAULT_FRAME = Frame(DEFAULT_STORE)
 """Every execution's frame until a use case names its primary store (T046)."""
 _NO_PARENT = "the enclosing invocation"
 
-_running: ContextVar[str | None] = ContextVar("loom_running_use_case", default=None)
-"""The use case executing in this context; names the parent in a refused nesting."""
+
+@dataclass(frozen=True, slots=True)
+class _Running:
+    """The execution running in this context and the identity it started as."""
+
+    use_case: str
+    identity: Identity
+
+
+_running: ContextVar[_Running | None] = ContextVar("loom_running_use_case", default=None)
 
 
 class ParameterBindingError(ValueError):
@@ -146,7 +154,7 @@ class RuntimeExecutor:
     :func:`~loom.core.identity.current_identity` until it ends, drain
     included, so row-level security and the jobs it dispatches see the
     identity ``Caller()`` receives.  A nested execution that joins the
-    parent's unit of work must run as the identity already active, and none
+    parent's unit of work must run as the identity the parent started as, and none
     may start while its parent holds an elevation.
 
     No signature inspection occurs at runtime. All structural information
@@ -414,8 +422,8 @@ class RuntimeExecutor:
             loom.core.uow.scope.StoresNotCommitted: If two or more stores
                 of the invocation did not end the same way.
             loom.core.uow.scope.NestedIdentityMismatch: If this execution
-                joins the unit of work of the one running in this task with
-                an ``identity`` other than the active one.
+                joins the unit of work of the one running in this task as
+                an identity other than the one that execution started as.
             loom.core.uow.scope.NestedElevation: If the execution running
                 in this context has elevated a scope.
         """
@@ -430,10 +438,16 @@ class RuntimeExecutor:
         scope = current_scope()
         joins = scope is not None and scope.owned_here()
         name = plan.use_case_type.__qualname__
-        _refuse_nesting(name, identity, joins=joins)
+        try:
+            _refuse_nesting(name, identity, joins=joins)
+        except (NestedElevation, NestedIdentityMismatch) as exc:
+            self._logger.error(
+                f"{_LOG_FAIL} {name}", usecase=name, status=_STATUS_FAILURE, error=str(exc)
+            )
+            raise
         with _running_as(name, identity):
             if read_only or plan.read_only:
-                with nullcontext() if scope is None or joins else unscoped():
+                with _reads_in(scope, joins=joins):
                     return await self._run_lifecycle(plan, compilable, inputs, None, None)
             owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
@@ -1128,25 +1142,40 @@ class RuntimeExecutor:
             self._logger.info(f"[STEP] {label}")
 
 
+def _effective(identity: Identity | None) -> Identity:
+    return identity if identity is not None else current_identity()
+
+
+def _reads_in(scope: InvocationScope | None, *, joins: bool) -> AbstractContextManager[None]:
+    """Keep ``scope`` for a read-only execution that joins it; otherwise read with no scope."""
+    return nullcontext() if scope is None or joins else unscoped()
+
+
 def _refuse_nesting(use_case: str, identity: Identity | None, *, joins: bool) -> None:
     """Refuse to start ``use_case`` inside an elevated execution, or join it as another identity.
 
+    A joining execution is compared with the identity its parent started as,
+    not with the ambient one, which anything may have changed since.
+
     Raises:
         NestedElevation: When the execution running in this context elevated a scope.
-        NestedIdentityMismatch: When ``joins`` and ``identity`` is not the active one.
+        NestedIdentityMismatch: When ``joins`` and the effective identity is
+            not the one the parent started as (the ambient one, with no parent).
     """
-    parent = _running.get() or _NO_PARENT
+    parent = _running.get()
+    parent_name = _NO_PARENT if parent is None else parent.use_case
     scopes = elevated_scopes()
     if scopes:
-        raise NestedElevation.opening(use_case, parent, scopes)
-    if joins and identity is not None and identity != current_identity():
-        raise NestedIdentityMismatch.joining(use_case, parent)
+        raise NestedElevation.opening(use_case, parent_name, scopes)
+    active = current_identity() if parent is None else parent.identity
+    if joins and _effective(identity) != active:
+        raise NestedIdentityMismatch.joining(use_case, parent_name)
 
 
 @contextmanager
 def _running_as(use_case: str, identity: Identity | None) -> Iterator[None]:
-    """Mark ``use_case`` as running and install ``identity``, when given, as the ambient one."""
-    running = _running.set(use_case)
+    """Record ``use_case`` and its effective identity; install ``identity``, when given."""
+    running = _running.set(_Running(use_case, _effective(identity)))
     bound = None if identity is None else set_identity(identity)
     try:
         yield

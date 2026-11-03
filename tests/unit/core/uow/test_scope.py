@@ -901,8 +901,10 @@ class TestErrors:
             ScopeOwnershipError("closed"),
             UnitOfWorkInsideScope.entering(object()),
             StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
+            NestedIdentityMismatch.joining("Child", "Parent"),
+            NestedElevation.opening("Child", "Parent", frozenset({"editor"})),
         ],
-        ids=["ownership", "inside-scope", "stores"],
+        ids=["ownership", "inside-scope", "stores", "nested-identity", "nested-elevation"],
     )
     def test_each_error_is_not_retryable(self, error: SystemError) -> None:
         assert error.retryable is False
@@ -954,8 +956,10 @@ class TestErrors:
             ScopeOwnershipError("closed"),
             UnitOfWorkInsideScope.entering(object()),
             StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
+            NestedIdentityMismatch.joining("Child", "Parent"),
+            NestedElevation.opening("Child", "Parent", frozenset({"editor"})),
         ],
-        ids=["ownership", "inside-scope", "stores"],
+        ids=["ownership", "inside-scope", "stores", "nested-identity", "nested-elevation"],
     )
     def test_each_error_pickles_to_its_type_and_message(self, error: Exception) -> None:
         restored = pickle.loads(pickle.dumps(error))
@@ -987,6 +991,36 @@ class TestErrors:
         restored = backend.exception_to_python(backend.prepare_exception(error))
 
         assert (type(restored), str(restored)) == (type(error), str(error))
+
+    @pytest.mark.parametrize(
+        ("error", "code"),
+        [
+            (NestedIdentityMismatch.joining("Child", "Parent"), ErrorCode.NESTED_IDENTITY_MISMATCH),
+            (
+                NestedElevation.opening("Child", "Parent", frozenset({"editor"})),
+                ErrorCode.NESTED_ELEVATION,
+            ),
+        ],
+        ids=["nested-identity", "nested-elevation"],
+    )
+    def test_each_nesting_error_has_its_code(self, error: SystemError, code: ErrorCode) -> None:
+        assert error.code == code
+
+    def test_nested_identity_mismatch_names_both_use_cases_and_what_to_do(self) -> None:
+        error = NestedIdentityMismatch.joining("Child", "Parent")
+
+        assert str(error) == (
+            "Child would join the unit of work of Parent as another identity; "
+            "invoke it with the same identity, or dispatch a job that runs as the other one"
+        )
+
+    def test_nested_elevation_names_both_use_cases_the_scopes_and_what_to_do(self) -> None:
+        error = NestedElevation.opening("Child", "Parent", frozenset({"b", "a"}))
+
+        assert str(error) == (
+            "Child cannot run inside Parent, which elevated a, b; "
+            "elevate inside the nested use case instead, or dispatch a job"
+        )
 
     def test_uow_inside_scope_names_the_unit_of_work(self) -> None:
         error = UnitOfWorkInsideScope.entering(PhasedStore(S0, Ledger()))
