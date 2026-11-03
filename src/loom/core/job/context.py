@@ -29,7 +29,7 @@ _fallback: ContextVar[PostCommitChannel | None] = ContextVar(
 def _fallback_channel() -> PostCommitChannel:
     channel = _fallback.get()
     if channel is None:
-        channel = PostCommitChannel()
+        channel = PostCommitChannel(requeue_on_cancel=True)
         _fallback.set(channel)
     return channel
 
@@ -37,7 +37,6 @@ def _fallback_channel() -> PostCommitChannel:
 def add_pending_dispatch(fn: Callable[[], Any]) -> None:
     """Register a dispatch callable to run after the current UoW commits.
 
-    In Celery mode ``fn`` is a plain sync callable (``send_task`` is sync).
     In inline mode ``fn`` is an async coroutine method.
     :func:`flush_pending_dispatches` handles both transparently.
 
@@ -45,9 +44,17 @@ def add_pending_dispatch(fn: Callable[[], Any]) -> None:
         fn: Zero-argument callable.  May return ``None`` (sync) or a
             coroutine (async).
     """
+    _target_channel().enqueue(fn)
+
+
+def add_pending_publish(fn: Callable[[], Any]) -> None:
+    """Register a broker send to run, shielded, after the current UoW commits."""
+    _target_channel().enqueue_publish(fn)
+
+
+def _target_channel() -> PostCommitChannel:
     bound = active_channel()
-    channel = _fallback_channel() if bound is None else bound
-    channel.enqueue(fn)
+    return _fallback_channel() if bound is None else bound
 
 
 async def flush_pending_dispatches() -> None:

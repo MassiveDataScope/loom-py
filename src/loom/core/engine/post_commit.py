@@ -17,6 +17,7 @@ from contextvars import ContextVar, Token
 
 from loom.core.errors import LoomError
 from loom.core.errors.codes import ErrorCode
+from loom.core.logger import get_logger
 
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
@@ -24,17 +25,19 @@ PostCommitAction = Callable[[], Awaitable[None] | None]
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
 )
+_shielded_tasks: set[asyncio.Task[None]] = set()
+_logger = get_logger(__name__)
 
 
 class PostCommitError(LoomError):
     """Raised when one or more post-commit actions failed after a commit.
 
     Every action runs even when an earlier one fails; the error carries all
-    failures in enqueue order.
+    failures in priority, publish, then plain order.
 
     Args:
         committed: Whether the transaction had committed when the actions ran.
-        failures: Exceptions raised by the failed actions, in enqueue order.
+        failures: Exceptions in priority, publish, then plain order.
     """
 
     def __init__(self, *, committed: bool, failures: tuple[Exception, ...]) -> None:
@@ -51,32 +54,27 @@ class PostCommitError(LoomError):
 class PostCommitChannel:
     """Ordered queue of actions to run after the owning transaction commits.
 
-    Two priorities, each FIFO among itself: :meth:`enqueue_priority` runs an
-    action ahead of every plain :meth:`enqueue` action, regardless of the
-    order the two calls were made in. Two actions of the same priority keep
-    the order they were queued in. This only orders actions queued on *this*
-    channel: a caller with more than one path to the same kind of action —
-    :class:`~loom.core.cache.repository.CachedRepository` queues its own
-    write's bump through :meth:`enqueue_priority` but the ``@transactional``
-    hook walk queues the mixins' tagged bump through plain :meth:`enqueue` —
-    decides per call site which lane it belongs in; the channel does not
-    infer that from what the action does.
+    Three FIFO lanes run in priority, publish, then plain order, regardless
+    of enqueue order. The caller picks the lane per call site; the channel
+    does not infer it from what the action does.
 
     Example::
 
         channel = PostCommitChannel()
-        channel.enqueue(lambda: broker.send(message))
+        channel.enqueue_publish(lambda: broker.send(message))
         await channel.drain(committed=True)
     """
 
-    __slots__ = ("_actions", "_priority_actions")
+    __slots__ = ("_actions", "_priority_actions", "_publish_actions", "_requeue_on_cancel")
 
-    def __init__(self) -> None:
+    def __init__(self, *, requeue_on_cancel: bool = False) -> None:
         self._priority_actions: list[PostCommitAction] = []
+        self._publish_actions: list[PostCommitAction] = []
         self._actions: list[PostCommitAction] = []
+        self._requeue_on_cancel = requeue_on_cancel
 
     def enqueue(self, action: PostCommitAction) -> None:
-        """Append an action; it runs after every :meth:`enqueue_priority` action.
+        """Append an action after priority and publish actions.
 
         Args:
             action: Sync callable returning ``None`` or an awaitable, or an
@@ -85,7 +83,7 @@ class PostCommitChannel:
         self._actions.append(action)
 
     def enqueue_priority(self, action: PostCommitAction) -> None:
-        """Queue an action ahead of every plain :meth:`enqueue` action.
+        """Queue an action ahead of publish and plain actions.
 
         Use this for an action other queued actions may depend on having
         already run — a cache invalidation ahead of the job dispatches that
@@ -98,41 +96,31 @@ class PostCommitChannel:
         """
         self._priority_actions.append(action)
 
+    def enqueue_publish(self, action: PostCommitAction) -> None:
+        """Queue a cheap broker send, after priority actions and before plain ones.
+
+        Args:
+            action: Sync callable returning ``None`` or an awaitable, or an
+                async callable.
+        """
+        self._publish_actions.append(action)
+
     def discard(self) -> None:
         """Drop every queued action without running it."""
         self._priority_actions.clear()
+        self._publish_actions.clear()
         self._actions.clear()
 
     async def drain(self, *, committed: bool) -> None:
-        """Run every queued action: the priority lane shielded, then the plain lane.
+        """Run every queued action; a failing one does not stop the others.
 
-        The owner unbinds the channel before draining, so an execution
-        started from an action opens its own lifecycle. A failing action
-        does not stop the others, in either lane; their failures collect
-        into one :class:`PostCommitError`.
-
-        The two lanes carry different durability stories, so they are run
-        differently:
-
-        * A priority action (:meth:`enqueue_priority`) describes a write
-          that has *already committed* — that is the whole point of
-          deferring it here rather than running it inline. It runs under
-          ``asyncio.shield``: a cancellation reaching this call cannot
-          interrupt it, so it always completes even if the caller gives up
-          on waiting. It is expected to be cheap (a handful of cache
-          ``incr`` calls), which is what makes the shield safe to take
-          unconditionally.
-        * A plain action (:meth:`enqueue`) — a job dispatch — has its own
-          durability story and no such requirement, so it stays exactly as
-          interruptible as before the priority lane existed: a cancellation
-          arriving while the plain lane runs stops the drain at once, and
-          the plain actions not yet run stay queued so a later drain can run
-          them. In inline job mode a dispatched job's body is awaited here
-          as a full nested use-case execution
-          (:class:`~loom.core.job.service._PendingDispatch.run`), with no
-          framework-imposed timeout — shielding it, as the priority lane
-          is shielded, would make it uncancellable for as long as it ran;
-          this is why the two lanes are not shielded alike.
+        * Priority and publish actions run in one shielded task: they report a
+          write that has already committed (a cache bump, a broker send), are
+          cheap, and must not be skipped by a cancellation.
+        * Plain actions run cancellably: in inline mode one awaits a whole
+          nested job execution, which a shield would make uncancellable. What an
+          interruption leaves is re-queued when a later drain will run it
+          (``requeue_on_cancel=True``), or dropped with a warning.
 
         Args:
             committed: Whether a transaction of this owner's had committed
@@ -140,35 +128,86 @@ class PostCommitChannel:
                 of work, so a caller may safely retry the whole operation.
 
         Raises:
-            PostCommitError: If any action raised; carries every failure.
+            PostCommitError: If any action raised; carries every failure, in
+                priority, publish, then plain order.
         """
-        priority_pending = collections.deque(self._priority_actions)
-        self._priority_actions = []
-        failures: list[Exception] = []
-        await asyncio.shield(_run_all(priority_pending, failures))
-
-        pending = collections.deque(self._actions)
-        self._actions = []
+        shielded_failures: list[_Failure] = []
+        plain_failures: list[_Failure] = []
+        shielded_pending = collections.deque([*self._priority_actions, *self._publish_actions])
+        self._priority_actions, self._publish_actions = [], []
+        shielded = asyncio.create_task(_run_all(shielded_pending, shielded_failures))
+        _shielded_tasks.add(shielded)
+        shielded.add_done_callback(_shielded_tasks.discard)
+        pending: collections.deque[PostCommitAction] = collections.deque()
         try:
-            await _run_all(pending, failures)
+            await asyncio.shield(shielded)
+            pending.extend(self._actions)
+            self._actions = []
+            await _run_all(pending, plain_failures)
         except BaseException:
-            # The priority lane cannot appear here: it already ran to
-            # completion, shielded, above. Only the plain lane's remainder
-            # needs to survive a cancellation for a later drain to run it.
-            self._actions = [*pending, *self._actions]
+            shielded.add_done_callback(
+                lambda done: _log_unreported(done, shielded_pending, shielded_failures)
+            )
+            _log_failures(plain_failures)
+            self._settle_interrupted(pending)
             raise
+        failures = [error for _, error in (*shielded_failures, *plain_failures)]
         if failures:
             raise PostCommitError(committed=committed, failures=tuple(failures))
 
+    def _settle_interrupted(self, pending: collections.deque[PostCommitAction]) -> None:
+        remaining = [*pending, *self._actions]
+        if self._requeue_on_cancel:
+            self._actions = remaining
+            return
+        self._actions = []
+        if remaining:
+            _logger.warning(_PLAIN_DROPPED, count=len(remaining))
 
-async def _run_all(pending: collections.deque[PostCommitAction], failures: list[Exception]) -> None:
+
+_Failure = tuple[PostCommitAction, Exception]
+_PLAIN_DROPPED = "PostCommitPlainActionsDropped"
+_SHIELDED_UNSENT = "PostCommitShieldedActionNeverRan"
+_UNREPORTED_FAILURE = "PostCommitActionFailedAfterInterruption"
+
+
+def _log_unreported(
+    shielded: asyncio.Task[None],
+    unsent: collections.deque[PostCommitAction],
+    failures: list[_Failure],
+) -> None:
+    """Log what the shielded lanes could no longer report to a caller.
+
+    The failures it collected, and, when the task itself died (the loop closing
+    cancels it), every action it never ran.
+    """
+    _log_failures(failures)
+    if shielded.cancelled() or shielded.exception() is not None:
+        for action in unsent:
+            _logger.error(_SHIELDED_UNSENT, **_describe(action))
+
+
+def _log_failures(failures: list[_Failure]) -> None:
+    for action, error in failures:
+        _logger.error(_UNREPORTED_FAILURE, **_describe(action), error=repr(error))
+
+
+def _describe(action: PostCommitAction) -> dict[str, object]:
+    """A broker send's job name and task id, never its repr: that would log the payload."""
+    return {
+        "job_name": getattr(action, "task_name", None),
+        "task_id": getattr(action, "task_id", None),
+    }
+
+
+async def _run_all(pending: collections.deque[PostCommitAction], failures: list[_Failure]) -> None:
     """Pop and run ``pending`` in order; an interrupted action is not retried."""
     while pending:
         action = pending.popleft()
         try:
             await _run_one(action)
         except Exception as exc:  # collected and re-raised together by drain
-            failures.append(exc)
+            failures.append((action, exc))
 
 
 async def _run_one(action: PostCommitAction) -> None:
