@@ -9,7 +9,7 @@ from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
-from loom.core.authz.elevation import ElevationSink, elevation_scope
+from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind, RuntimeEvent
@@ -23,7 +23,7 @@ from loom.core.engine.post_commit import (
     reset_channel,
 )
 from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
-from loom.core.identity import Identity
+from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
@@ -32,6 +32,8 @@ from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCom
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
+    NestedElevation,
+    NestedIdentityMismatch,
     current_scope,
     invocation,
     invocation_error,
@@ -135,6 +137,13 @@ class RuntimeExecutor:
     :class:`~loom.core.engine.post_commit.PostCommitChannel` owned by the
     execution that owns the scope (or by the outermost execution when there
     is none) and run once the scope has closed.
+
+    An execution given an ``identity`` installs it as the ambient
+    :func:`~loom.core.identity.current_identity` until it ends, drain
+    included, so row-level security and the jobs it dispatches see the
+    identity ``Caller()`` receives.  A nested execution that joins the
+    invocation scope must run as the identity the scope was opened with, and
+    none may start while its parent holds an elevation.
 
     No signature inspection occurs at runtime. All structural information
     comes from the cached ExecutionPlan produced by UseCaseCompiler.
@@ -400,6 +409,11 @@ class RuntimeExecutor:
                 already closed.
             loom.core.uow.scope.StoresNotCommitted: If two or more stores
                 of the invocation did not end the same way.
+            loom.core.uow.scope.NestedIdentityMismatch: If this execution
+                joins the invocation scope of this task as an identity other
+                than the one the scope was opened with.
+            loom.core.uow.scope.NestedElevation: If the execution running
+                in this context has elevated a scope.
         """
         plan = self._plan_for(type(compilable))
         inputs = _ExecutionInputs(
@@ -410,11 +424,16 @@ class RuntimeExecutor:
             identity=identity,
         )
         scope = current_scope()
-        if read_only or plan.read_only:
-            with nullcontext() if scope is None or scope.owned_here() else unscoped():
-                return await self._run_lifecycle(plan, compilable, inputs, None, None)
-        owned = self._coordinator if scope is None else None
-        return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
+        token = None if identity is None else set_identity(identity)
+        try:
+            if read_only or plan.read_only:
+                with nullcontext() if scope is None or scope.owned_here() else unscoped():
+                    return await self._run_lifecycle(plan, compilable, inputs, None, None)
+            owned = self._coordinator if scope is None else None
+            return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
+        finally:
+            if token is not None:
+                reset_identity(token)
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -454,6 +473,7 @@ class RuntimeExecutor:
         channel = PostCommitChannel() if owned is not None or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
+            _refuse_nesting(state.use_case_name)
             # The elevation frame wraps the coordinator's flush and commit too:
             # the session-settings provider reads ``elevated_scopes()`` when a
             # transaction begins, which may be at that flush.
@@ -1104,3 +1124,16 @@ class RuntimeExecutor:
     def _log_step(self, label: str) -> None:
         if self._debug:
             self._logger.info(f"[STEP] {label}")
+
+
+def _refuse_nesting(use_case: str) -> None:
+    """Refuse ``use_case`` inside an elevated execution, or joining this task's scope as another.
+
+    Its identity is compared with the scope's identity, never the ambient one a parent set.
+    """
+    scopes = elevated_scopes()
+    if scopes:
+        raise NestedElevation.opening(use_case, scopes)
+    scope = current_scope()
+    if scope is not None and scope.owned_here() and current_identity() != scope.identity:
+        raise NestedIdentityMismatch.joining(use_case)

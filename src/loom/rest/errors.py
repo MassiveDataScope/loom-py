@@ -112,6 +112,8 @@ class HttpErrorMapper:
         ErrorCode.INVOCATION_SCOPE_FOREIGN_TASK: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.STORES_NOT_COMMITTED: HTTPStatus.INTERNAL_SERVER_ERROR,
         ErrorCode.UOW_INSIDE_SCOPE: HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.NESTED_IDENTITY_MISMATCH: HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.NESTED_ELEVATION: HTTPStatus.INTERNAL_SERVER_ERROR,
     }
 
     def to_http(self, error: LoomError) -> HTTPException:

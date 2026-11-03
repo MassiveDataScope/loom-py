@@ -6,7 +6,9 @@ request down to the layer that takes an authorization decision.
 
 Rules:
     - Only the transport layer (HTTP middleware, Celery worker, test harness)
-      calls :func:`set_identity` / :func:`reset_identity`.
+      and the :class:`~loom.core.engine.executor.RuntimeExecutor` call
+      :func:`set_identity` / :func:`reset_identity`; the executor installs
+      the identity it was given for the length of one execution.
     - Any layer may call :func:`current_identity` without introducing upward
       coupling.
     - The token returned by :func:`set_identity` **must** be passed to

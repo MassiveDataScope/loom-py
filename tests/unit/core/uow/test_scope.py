@@ -32,6 +32,8 @@ from loom.core.uow.coordinator import (
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
+    NestedElevation,
+    NestedIdentityMismatch,
     ScopeOwnershipError,
     StoresNotCommitted,
     UnitOfWorkInsideScope,
@@ -892,16 +894,19 @@ class TestInvocationError:
         assert invocation_error(outcome, cancelled) is cancelled
 
 
+_ERRORS = [
+    pytest.param(ScopeOwnershipError("closed"), id="ownership"),
+    pytest.param(UnitOfWorkInsideScope.entering(object()), id="inside-scope"),
+    pytest.param(
+        StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))), id="stores"
+    ),
+    pytest.param(NestedIdentityMismatch.joining("Child"), id="nested-identity"),
+    pytest.param(NestedElevation.opening("Child", frozenset({"editor"})), id="nested-elevation"),
+]
+
+
 class TestErrors:
-    @pytest.mark.parametrize(
-        "error",
-        [
-            ScopeOwnershipError("closed"),
-            UnitOfWorkInsideScope.entering(object()),
-            StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
-        ],
-        ids=["ownership", "inside-scope", "stores"],
-    )
+    @pytest.mark.parametrize("error", _ERRORS)
     def test_each_error_is_not_retryable(self, error: SystemError) -> None:
         assert error.retryable is False
 
@@ -946,15 +951,7 @@ class TestErrors:
 
         assert pickle.loads(pickle.dumps(error)).message == error.message
 
-    @pytest.mark.parametrize(
-        "error",
-        [
-            ScopeOwnershipError("closed"),
-            UnitOfWorkInsideScope.entering(object()),
-            StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
-        ],
-        ids=["ownership", "inside-scope", "stores"],
-    )
+    @pytest.mark.parametrize("error", _ERRORS)
     def test_each_error_pickles_to_its_type_and_message(self, error: Exception) -> None:
         restored = pickle.loads(pickle.dumps(error))
 
@@ -963,12 +960,12 @@ class TestErrors:
     @pytest.mark.parametrize(
         "error",
         [
-            ScopeOwnershipError("closed"),
-            UnitOfWorkInsideScope.entering(object()),
-            StoresNotCommitted.of(_outcome(Committed(S0), RolledBack(S1, Boom("pw=1")))),
-            ForeignSessionError.between("store 's0' (b.db)", "store 's0' (a.db)"),
+            *_ERRORS,
+            pytest.param(
+                ForeignSessionError.between("store 's0' (b.db)", "store 's0' (a.db)"),
+                id="foreign-session",
+            ),
         ],
-        ids=["ownership", "inside-scope", "stores", "foreign-session"],
     )
     def test_each_error_crosses_the_celery_json_result_backend(self, error: Exception) -> None:
         backend = BaseBackend(app=_celery_app(), serializer="json")
@@ -976,6 +973,30 @@ class TestErrors:
         restored = backend.exception_to_python(backend.prepare_exception(error))
 
         assert (type(restored), str(restored)) == (type(error), str(error))
+
+    @pytest.mark.parametrize(
+        ("error", "code", "message"),
+        [
+            pytest.param(
+                NestedIdentityMismatch.joining("Child"),
+                ErrorCode.NESTED_IDENTITY_MISMATCH,
+                "Child would join the open unit of work as another identity; "
+                "invoke it with the same identity, or dispatch a job that runs as the other one",
+                id="nested-identity",
+            ),
+            pytest.param(
+                NestedElevation.opening("Child", frozenset({"b", "a"})),
+                ErrorCode.NESTED_ELEVATION,
+                "Child cannot run inside an execution that elevated a, b; "
+                "elevate inside Child instead, or dispatch a job",
+                id="nested-elevation",
+            ),
+        ],
+    )
+    def test_each_nesting_error_has_its_code_and_message(
+        self, error: SystemError, code: ErrorCode, message: str
+    ) -> None:
+        assert (error.code, str(error)) == (code, message)
 
     def test_uow_inside_scope_names_the_unit_of_work(self) -> None:
         error = UnitOfWorkInsideScope.entering(PhasedStore(S0, Ledger()))

@@ -86,16 +86,29 @@ async def test_a_grant_that_does_not_cover_the_boundary_cannot_elevate() -> None
             await _elevate(narrow, at=BOUNDARY)
 
 
-async def test_a_nested_frame_inherits_but_never_mutates_its_parent() -> None:
+async def _elevate_second() -> None:
+    await elevate_scope("second", _allowed(), at=BOUNDARY, permission=WRITE, catalog=CATALOG)
+
+
+async def test_a_nested_frame_inherits_nothing_and_sees_only_what_it_elevated() -> None:
+    sink = FakeSink(open=True)
+    seen: list[frozenset[str]] = []
+    async with elevation_scope(owns_transaction=True, sink=sink):
+        await _elevate()
+        async with elevation_scope(owns_transaction=False, sink=sink):
+            seen.append(elevated_scopes())
+            await _elevate_second()
+            seen.append(elevated_scopes())
+
+    assert seen == [frozenset(), frozenset({"second"})]
+
+
+async def test_a_nested_frame_never_mutates_its_parent_and_clears_what_it_added() -> None:
     sink = FakeSink(open=True)
     async with elevation_scope(owns_transaction=True, sink=sink):
         await _elevate()
         async with elevation_scope(owns_transaction=False, sink=sink):
-            assert elevated_scopes() == frozenset({"editor"})
-            await elevate_scope(
-                "second", _allowed(), at=BOUNDARY, permission=WRITE, catalog=CATALOG
-            )
-            assert elevated_scopes() == frozenset({"editor", "second"})
+            await _elevate_second()
         assert elevated_scopes() == frozenset({"editor"})
     assert sink.cleared == [frozenset({"second"})]
 

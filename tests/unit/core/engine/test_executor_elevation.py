@@ -24,16 +24,6 @@ class Elevating(UseCase[Any, list[str]]):
         return sorted(elevated_scopes())
 
 
-class Nested(UseCase[Any, list[str]]):
-    def __init__(self, executor: RuntimeExecutor) -> None:
-        self._executor = executor
-
-    async def execute(self, value: str) -> list[str]:
-        await elevate_scope("editor", DECISION, at=BOUNDARY, permission=WRITE, catalog=CATALOG)
-        inner: list[str] = await self._executor.execute(Elevating(), params={"value": value})  # type: ignore[arg-type]
-        return inner + sorted(elevated_scopes())
-
-
 def _executor(sink: FakeSink, *types: type) -> RuntimeExecutor:
     compiler = UseCaseCompiler()
     for use_case in types:
@@ -49,17 +39,6 @@ async def test_an_execution_runs_inside_a_frame_that_closes_with_it() -> None:
 
     assert result == ["editor"]
     assert sink.set == ["editor"]
-    assert elevated_scopes() == frozenset()
-
-
-async def test_a_nested_execution_inherits_the_frame_and_the_outer_keeps_its_state() -> None:
-    sink = FakeSink(open=True)
-    executor = _executor(sink, Elevating, Nested)
-
-    result = await executor.execute(Nested(executor), params={"value": "x"})  # type: ignore[arg-type]
-
-    assert result == ["editor", "editor"]
-    assert sink.cleared == []
     assert elevated_scopes() == frozenset()
 
 

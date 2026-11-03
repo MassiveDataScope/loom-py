@@ -39,6 +39,7 @@ from typing import Any, Self, cast
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
+from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
@@ -98,6 +99,57 @@ class UnitOfWorkInsideScope(SystemError):
             f"`async with {type(unit_of_work).__qualname__}` inside an invocation scope would "
             "commit on its own; the executor already runs the use case in its store's "
             "unit of work"
+        )
+
+
+class NestedIdentityMismatch(SystemError):
+    """A nested execution joined its parent's unit of work as another identity.
+
+    The shared transaction filters rows as one identity, so it cannot serve
+    the child's as well; when it has not begun yet, the child's identity would
+    be the one it begins with, for the parent too. Build it with :meth:`joining`.
+
+    Args:
+        message: Names the nested use case.
+    """
+
+    retryable = False
+    """A programming error: a retry meets it again."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=ErrorCode.NESTED_IDENTITY_MISMATCH)
+
+    @classmethod
+    def joining(cls, use_case: str) -> NestedIdentityMismatch:
+        """The error for ``use_case`` joining the open invocation as another identity."""
+        return cls(
+            f"{use_case} would join the open unit of work as another identity; "
+            "invoke it with the same identity, or dispatch a job that runs as the other one"
+        )
+
+
+class NestedElevation(SystemError):
+    """A nested execution was started after its parent elevated a scope.
+
+    The elevation flag is set on the shared transaction, and an elevation is
+    never inherited. Build it with :meth:`opening`.
+
+    Args:
+        message: Names the nested use case and the elevated scopes.
+    """
+
+    retryable = False
+    """A programming error: a retry meets it again."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=ErrorCode.NESTED_ELEVATION)
+
+    @classmethod
+    def opening(cls, use_case: str, scopes: frozenset[str]) -> NestedElevation:
+        """The error for starting ``use_case`` inside an execution holding ``scopes`` elevated."""
+        return cls(
+            f"{use_case} cannot run inside an execution that elevated "
+            f"{', '.join(sorted(scopes))}; elevate inside {use_case} instead, or dispatch a job"
         )
 
 
@@ -173,6 +225,8 @@ class InvocationScope:
         participants: Participants by store, in enlistment order.
         frames: One frame per execution running in the scope, innermost last.
         outcome: Set by the coordinator when it ends the participants.
+        identity: The ambient identity when the scope opened; an execution
+            joining it must run as this identity.
     """
 
     owner_task: asyncio.Task[Any] | None
@@ -181,6 +235,7 @@ class InvocationScope:
     participants: dict[StoreKey, Participant] = field(default_factory=dict)
     frames: list[Frame] = field(default_factory=list)
     outcome: InvocationOutcome | None = None
+    identity: Identity = ANONYMOUS
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
 
     @property
@@ -386,7 +441,7 @@ def refuse_inside_open_scope(unit_of_work: object) -> None:
 
 @asynccontextmanager
 async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]:
-    """Open an invocation scope owned by the current task and publish it.
+    """Open an invocation scope owned by the current task, as its ambient identity, and publish it.
 
     On exit the coordinator ends the participants the caller has not ended,
     with the exception that left the block if any, and the scope is
@@ -401,7 +456,9 @@ async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]
     Raises:
         asyncio.CancelledError: If ending the participants was interrupted.
     """
-    scope = InvocationScope(owner_task=asyncio.current_task(), coordinator=coordinator)
+    scope = InvocationScope(
+        owner_task=asyncio.current_task(), coordinator=coordinator, identity=current_identity()
+    )
     token = _scope.set(scope)
     try:
         try:

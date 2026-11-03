@@ -4,8 +4,10 @@ A frame lives exactly as long as one use-case execution. ``elevate_scope``
 records a scope in the open frame after checking the decision that justifies
 it, and asks the sink to flag the open transaction when there is one; the
 session-settings provider reads ``elevated_scopes`` for every later
-transaction. Tasks spawned inside the execution share the frame object and
-lose the elevation when it closes. Nothing here knows a database.
+transaction. A nested frame starts with no scopes: an elevation is never
+inherited, and the executor refuses to start a nested execution while its
+parent holds one. Tasks spawned inside the execution share the frame object
+and lose the elevation when it closes. Nothing here knows a database.
 """
 
 from __future__ import annotations
@@ -74,14 +76,13 @@ def elevated_scopes() -> frozenset[str]:
 async def elevation_scope(
     *, owns_transaction: bool, sink: ElevationSink | None = None
 ) -> AsyncIterator[None]:
-    """Open a frame for one execution; nested frames inherit and never mutate their parent."""
+    """Open a frame for one execution; a nested frame starts empty and never mutates its parent."""
     parent = _open_frame()
     inherited = parent.sink if parent is not None else None
     frame = _Frame(
         owns_transaction=owns_transaction,
         sink=sink or inherited,
         parent=parent,
-        scopes=set(parent.scopes) if parent else set(),
     )
     token = _elevation.set(frame)
     try:
@@ -156,8 +157,8 @@ async def _clear_added(frame: _Frame) -> None:
     """
     if frame.owns_transaction or frame.sink is None:
         return
-    inherited = frame.parent.scopes if frame.parent is not None else set()
-    added = frozenset(frame.scopes - inherited)
+    held_by_parent = frame.parent.scopes if frame.parent is not None else set()
+    added = frozenset(frame.scopes - held_by_parent)
     # The sink is asked only when there is something to clear: a frame that
     # elevated nothing closes without touching the session.
     if not added or not frame.sink.in_transaction():

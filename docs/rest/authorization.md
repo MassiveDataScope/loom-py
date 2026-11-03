@@ -366,9 +366,11 @@ lives:
   {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink`; the standard
   SQLAlchemy backend registers it in the container in `external` mode on Postgres, and a
   kernel built by hand registers an `ElevationSink` through one of its `modules`;
-- a nested execution inherits its parent's elevations, never changes them, and clears
-  on exit only what it added; when that clearing fails, the session is invalidated, so
-  no flag outlives the execution that set it;
+- an elevation is never inherited: invoking another use case after `elevate` in the same
+  execution raises {class}`~loom.core.uow.scope.NestedElevation`; elevate inside the
+  nested use case instead, or dispatch a job, which runs after the execution ends;
+- a nested execution that elevates clears on exit what it added; when that clearing
+  fails, the session is invalidated, so no flag outlives the execution that set it;
 - a task spawned during the execution shares the frame and loses the elevation when the
   execution ends;
 - post-commit actions and the next execution on the same pooled connection are not

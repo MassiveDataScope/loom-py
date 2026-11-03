@@ -215,6 +215,11 @@ class InlineJobService:
     execution without one).  Outside an execution the fallback channel
     holds it until :func:`~loom.core.job.context.flush_pending_dispatches`.
 
+    A job runs as :func:`~loom.core.identity.current_identity` at the time of
+    the call, which inside an execution is the identity that execution was
+    given. With no transport and no execution to set one, that is
+    :data:`~loom.core.identity.identity.ANONYMOUS`.
+
     Args:
         factory: Used to build Job and callback instances from the container.
         executor: Used to drive the compiled ExecutionPlan.
