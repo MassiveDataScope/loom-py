@@ -12,7 +12,7 @@ import asyncio
 import os
 import secrets
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -24,7 +24,11 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.authz import Permission, Role, RoleCatalog
+from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.locator import Application, load_application
+from loom.core.repository.sqlalchemy.rls import register_scope_source
+from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
 URI_ENV_VAR_B = "LOOM_PG_IT_URI_B"
@@ -280,3 +284,46 @@ def application_for(
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(config))
     return load_application(str(path))
+
+
+U1 = "11111111-1111-1111-1111-111111111111"
+U2 = "22222222-2222-2222-2222-222222222222"
+MANAGE = Permission("members.manage")
+CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
+FLAG = "SELECT coalesce(current_setting('loom.scope.editor.any', true), '')"
+
+
+@dataclass
+class NotesProduct:
+    """The authorization product of the ``notes`` schema: ``editor`` elevates with ``MANAGE``."""
+
+    catalog: RoleCatalog = CATALOG
+    delegate: Permission = MANAGE
+    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
+
+
+@pytest.fixture
+def notes_wiring() -> Iterator[None]:
+    """Register the ``editor`` scope source and :class:`NotesProduct` for one test."""
+    clear_scope_sources()
+    clear_authz_product()
+    register_scope_source("editor", lambda: "ana")
+    register_authz_product(NotesProduct())
+    yield
+    clear_scope_sources()
+    clear_authz_product()
+
+
+async def seed_notes(bypass_url: str) -> None:
+    """Insert ana's and bob's notes for ``U1`` and zoe's for ``U2``."""
+    engine = create_async_engine(bypass_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO notes (owner_id, editor, body) VALUES "
+                    f"('{U1}', 'ana', 'a'), ('{U1}', 'bob', 'b'), ('{U2}', 'zoe', 'z')"
+                )
+            )
+    finally:
+        await engine.dispose()

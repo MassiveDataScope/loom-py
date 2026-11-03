@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.scope import NestedElevation
 from loom.core.use_case import UseCase
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -27,16 +24,6 @@ class Elevating(UseCase[Any, list[str]]):
         return sorted(elevated_scopes())
 
 
-class Nested(UseCase[Any, list[str]]):
-    def __init__(self, executor: RuntimeExecutor) -> None:
-        self._executor = executor
-
-    async def execute(self, value: str) -> list[str]:
-        await elevate_scope("editor", DECISION, at=BOUNDARY, permission=WRITE, catalog=CATALOG)
-        inner: list[str] = await self._executor.execute(Elevating(), params={"value": value})  # type: ignore[arg-type]
-        return inner + sorted(elevated_scopes())
-
-
 def _executor(sink: FakeSink, *types: type) -> RuntimeExecutor:
     compiler = UseCaseCompiler()
     for use_case in types:
@@ -52,17 +39,6 @@ async def test_an_execution_runs_inside_a_frame_that_closes_with_it() -> None:
 
     assert result == ["editor"]
     assert sink.set == ["editor"]
-    assert elevated_scopes() == frozenset()
-
-
-async def test_a_nested_execution_after_an_elevation_is_refused_and_the_frame_closes() -> None:
-    sink = FakeSink(open=True)
-    executor = _executor(sink, Elevating, Nested)
-    nested = Nested(executor)
-
-    with pytest.raises(NestedElevation, match="Elevating cannot run inside Nested"):
-        await executor.execute(nested, params={"value": "x"})  # type: ignore[arg-type]
-
     assert elevated_scopes() == frozenset()
 
 

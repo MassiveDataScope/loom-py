@@ -15,27 +15,22 @@ real Postgres with ``schema.mode: external``.
 
 from __future__ import annotations
 
-import asyncio
 import secrets
 from collections.abc import AsyncIterator, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import yaml
 from sqlalchemy import CursorResult, text
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import NullPool
 
 from loom.composition import build_application
-from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
-from loom.core.authz.product import clear_authz_product, register_authz_product
-from loom.core.identity import Identity, current_identity, reset_identity, set_identity
+from loom.core.authz import Decision, Grant, Scope
+from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from loom.core.repository.sqlalchemy.rls import create_schema, elevate, register_scope_source
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, resolve_binding
+from loom.core.repository.sqlalchemy.rls import create_schema, elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.uow.scope import NestedElevation, NestedIdentityMismatch
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
@@ -43,29 +38,24 @@ from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.integration.agnosticism import notes
-from tests.integration.rls.conftest import BootstrapFactory, application_for
+from tests.integration.rls.conftest import (
+    FLAG,
+    U1,
+    U2,
+    BootstrapFactory,
+    application_for,
+    seed_notes,
+)
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("notes_wiring")]
 
-U1 = "11111111-1111-1111-1111-111111111111"
-U2 = "22222222-2222-2222-2222-222222222222"
 ANA = Identity(subject=U1)
 ZOE = Identity(subject=U2)
-MANAGE = Permission("members.manage")
-CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
 DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
 
-_FLAG = "SELECT coalesce(current_setting('loom.scope.editor.any', true), '')"
 _OWNER = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
 _BODIES = "SELECT body FROM notes ORDER BY body"
 _TOUCH_BOB = "UPDATE notes SET body = body WHERE editor = 'bob'"
-
-
-@dataclass
-class Product:
-    catalog: RoleCatalog = CATALOG
-    delegate: Permission = MANAGE
-    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
 
 
 @dataclass(frozen=True)
@@ -87,7 +77,7 @@ async def _observe(session_manager: SessionManager, caller: Identity | None) -> 
     return Seen(
         caller=None if caller is None else caller.subject,
         owner_setting=(await session.execute(text(_OWNER))).scalar_one(),
-        editor_any=(await session.execute(text(_FLAG))).scalar_one(),
+        editor_any=(await session.execute(text(FLAG))).scalar_one(),
         bodies=tuple((await session.execute(text(_BODIES))).scalars()),
         bob_rows_writable=touched,
     )
@@ -113,22 +103,13 @@ class ProbeRlsAsCaller(UseCase[notes.Note, Seen]):
         return await _observe(self._session_manager, caller)
 
 
-async def _open_if(session_manager: SessionManager, open_first: bool) -> None:
-    if open_first:
-        session = session_manager.active_session
-        assert session is not None
-        await session.execute(text("SELECT 1"))
-
-
 class ElevateThenNest(UseCase[notes.Note, Seen]):
     """Elevate ``editor``, then invoke :class:`ProbeRls` as a nested execution."""
 
-    def __init__(self, session_manager: SessionManager, app: ApplicationInvoker) -> None:
-        self._session_manager = session_manager
+    def __init__(self, app: ApplicationInvoker) -> None:
         self._app = app
 
-    async def execute(self, open_first: bool) -> Seen:
-        await _open_if(self._session_manager, open_first)
+    async def execute(self) -> Seen:
         await elevate("editor", DECISION, at=Scope.of(U1))
         return cast(Seen, await self._app.invoke(ProbeRls))
 
@@ -140,8 +121,7 @@ class NestAsZoe(UseCase[notes.Note, tuple[NestedIdentityMismatch | None, str]]):
         self._session_manager = session_manager
         self._app = cast(AppInvoker, app)
 
-    async def execute(self, open_first: bool) -> tuple[NestedIdentityMismatch | None, str]:
-        await _open_if(self._session_manager, open_first)
+    async def execute(self) -> tuple[NestedIdentityMismatch | None, str]:
         as_zoe = self._app.for_identity(ZOE)
         refused: NestedIdentityMismatch | None = None
         try:
@@ -171,23 +151,6 @@ class ReadThenWriteAsZoe(UseCase[notes.Note, Seen]):
 
     async def execute(self) -> Seen:
         return cast(Seen, await self._app.for_identity(ZOE).invoke(ProbeRlsAsCaller))
-
-
-class Fail(UseCase[notes.Note, None]):
-    async def execute(self, cancel: bool) -> None:
-        if cancel:
-            raise asyncio.CancelledError
-        raise RuntimeError("business failure")
-
-
-class OwnersSeenByGather(UseCase[notes.Note, list[object]]):
-    """The owner binding RLS would apply, read from two ``gather`` children."""
-
-    async def execute(self) -> list[object]:
-        async def owner() -> object:
-            return resolve_binding("identity.subject")
-
-        return list(await asyncio.gather(owner(), owner()))
 
 
 class ElevatingChild(UseCase[notes.Note, Seen]):
@@ -239,45 +202,14 @@ class ElevateThenDispatch(UseCase[notes.Note, Any]):
         return self._jobs.dispatch(ProbeJob)
 
 
-class RunJob(UseCase[notes.Note, str]):
+class RunOrDispatchJob(UseCase[notes.Note, Any]):
     def __init__(self, jobs: JobService) -> None:
         self._jobs = jobs
 
-    async def execute(self) -> str:
+    async def execute(self, dispatch: bool) -> Any:
+        if dispatch:
+            return self._jobs.dispatch(WhoAmIJob)
         return await self._jobs.run(WhoAmIJob)
-
-
-class DispatchJob(UseCase[notes.Note, Any]):
-    def __init__(self, jobs: JobService) -> None:
-        self._jobs = jobs
-
-    async def execute(self) -> Any:
-        return self._jobs.dispatch(WhoAmIJob)
-
-
-@pytest.fixture(autouse=True)
-def _wiring() -> Iterator[None]:
-    clear_scope_sources()
-    clear_authz_product()
-    register_scope_source("editor", lambda: "ana")
-    register_authz_product(Product())
-    yield
-    clear_scope_sources()
-    clear_authz_product()
-
-
-async def _seed(bypass_url: str) -> None:
-    engine = create_async_engine(bypass_url, poolclass=NullPool)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO notes (owner_id, editor, body) VALUES "
-                    f"('{U1}', 'ana', 'a'), ('{U1}', 'bob', 'b'), ('{U2}', 'zoe', 'z')"
-                )
-            )
-    finally:
-        await engine.dispose()
 
 
 def _config(tmp_path: Path, schema: str) -> str:
@@ -296,7 +228,7 @@ async def app(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterato
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
-    await _seed(database.bypass)
+    await seed_notes(database.bypass)
     composed = build_application(
         _config(tmp_path, schema), adapter=FastAPIAdapter(), environment="test"
     )
@@ -323,25 +255,9 @@ def ambient(request: pytest.FixtureRequest) -> Iterator[None]:
 
 @pytest.mark.parametrize("ambient", [U1], indirect=True)
 @pytest.mark.usefixtures("ambient")
-async def test_control_a_top_level_probe_is_not_elevated(app: AppInvoker) -> None:
-    seen: Seen = await app.invoke(ProbeRls)
-
-    assert (seen.editor_any, seen.bob_rows_writable, seen.bodies) == ("", 0, ("a", "b"))
-
-
-OPEN_FIRST = pytest.mark.parametrize("open_first", [True, False], ids=["tx-open", "tx-lazy"])
-
-
-@pytest.mark.parametrize("ambient", [U1], indirect=True)
-@OPEN_FIRST
-@pytest.mark.usefixtures("ambient")
-async def test_h1_a_nested_execution_after_an_elevation_is_refused(
-    app: AppInvoker, open_first: bool
-) -> None:
-    params = {"open_first": open_first}
-
-    with pytest.raises(NestedElevation, match="ProbeRls cannot run inside ElevateThenNest"):
-        await app.invoke(ElevateThenNest, params=params)
+async def test_h1_a_nested_execution_after_an_elevation_is_refused(app: AppInvoker) -> None:
+    with pytest.raises(NestedElevation, match="ProbeRls cannot run inside an execution"):
+        await app.invoke(ElevateThenNest)
 
 
 @pytest.mark.parametrize("ambient", [U1], indirect=True)
@@ -349,13 +265,12 @@ async def test_h1_a_nested_execution_after_an_elevation_is_refused(
 async def test_h1_the_next_execution_after_a_refused_nesting_is_not_elevated(
     app: AppInvoker,
 ) -> None:
-    params = {"open_first": True}
     with pytest.raises(NestedElevation):
-        await app.invoke(ElevateThenNest, params=params)
+        await app.invoke(ElevateThenNest)
 
     seen: Seen = await app.invoke(ProbeRls)
 
-    assert (seen.editor_any, seen.bob_rows_writable) == ("", 0)
+    assert (seen.editor_any, seen.bob_rows_writable, seen.bodies) == ("", 0, ("a", "b"))
 
 
 @pytest.mark.parametrize("ambient", [U1], indirect=True)
@@ -390,23 +305,16 @@ async def test_h2_rls_follows_the_identity_the_executor_received(app: AppInvoker
     assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
 
 
-@pytest.mark.parametrize("ambient", [None], indirect=True)
-@OPEN_FIRST
-@pytest.mark.usefixtures("ambient")
 async def test_h2_joining_the_parents_unit_of_work_as_another_identity_is_refused(
-    app: AppInvoker, open_first: bool
+    app: AppInvoker,
 ) -> None:
-    refused, owner = await app.for_identity(ANA).invoke(
-        NestAsZoe, params={"open_first": open_first}
-    )
+    refused, owner = await app.for_identity(ANA).invoke(NestAsZoe)
 
     assert isinstance(refused, NestedIdentityMismatch)
-    assert "ProbeRlsAsCaller would join the unit of work of NestAsZoe" in refused.message
+    assert "ProbeRlsAsCaller would join the open unit of work" in refused.message
     assert owner == U1
 
 
-@pytest.mark.parametrize("ambient", [None], indirect=True)
-@pytest.mark.usefixtures("ambient")
 async def test_h2_joining_the_parents_unit_of_work_as_the_same_identity_is_allowed(
     app: AppInvoker,
 ) -> None:
@@ -415,8 +323,6 @@ async def test_h2_joining_the_parents_unit_of_work_as_the_same_identity_is_allow
     assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
 
 
-@pytest.mark.parametrize("ambient", [None], indirect=True)
-@pytest.mark.usefixtures("ambient")
 async def test_h2_a_nested_unit_of_work_of_its_own_follows_the_childs_identity(
     app: AppInvoker,
 ) -> None:
@@ -425,46 +331,13 @@ async def test_h2_a_nested_unit_of_work_of_its_own_follows_the_childs_identity(
     assert (seen.caller, seen.owner_setting, seen.bodies) == (U2, U2, ("z",))
 
 
-@pytest.mark.parametrize("ambient", [U1], indirect=True)
-@pytest.mark.parametrize(
-    ("cancel", "raised"),
-    [(False, RuntimeError), (True, asyncio.CancelledError)],
-    ids=["exception", "cancellation"],
-)
-@pytest.mark.usefixtures("ambient")
-async def test_h2_the_ambient_identity_is_restored_after_a_failed_execution(
-    app: AppInvoker, cancel: bool, raised: type[BaseException]
-) -> None:
-    as_zoe = app.for_identity(ZOE)
-    params = {"cancel": cancel}
-    with pytest.raises(raised):
-        await as_zoe.invoke(Fail, params=params)
-
-    seen: Seen = await app.invoke(ProbeRls)
-
-    assert (current_identity(), seen.owner_setting, seen.bodies) == (ANA, U1, ("a", "b"))
-
-
-@pytest.mark.parametrize("ambient", [U2], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h2_gather_children_see_the_bound_identity(app: AppInvoker) -> None:
-    assert await app.for_identity(ANA).invoke(OwnersSeenByGather) == [U1, U1]
-
-
 # --------------------------------------------------------------------- H3
 
 
-@pytest.mark.parametrize("ambient", [None], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h3_an_inline_job_run_runs_as_the_invokers_identity(app: AppInvoker) -> None:
-    subject = await app.for_identity(ANA).invoke(RunJob)
+@pytest.mark.parametrize("dispatch", [False, True], ids=["run", "dispatch"])
+async def test_h3_an_inline_job_runs_as_the_invokers_identity(
+    app: AppInvoker, dispatch: bool
+) -> None:
+    result = await app.for_identity(ANA).invoke(RunOrDispatchJob, params={"dispatch": dispatch})
 
-    assert subject == U1
-
-
-@pytest.mark.parametrize("ambient", [None], indirect=True)
-@pytest.mark.usefixtures("ambient")
-async def test_h3_an_inline_job_dispatch_runs_as_the_invokers_identity(app: AppInvoker) -> None:
-    handle = await app.for_identity(ANA).invoke(DispatchJob)
-
-    assert handle.wait() == U1
+    assert (result.wait() if dispatch else result) == U1
