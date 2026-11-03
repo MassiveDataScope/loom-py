@@ -25,12 +25,6 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from loom.aws_lambda._refusals import (
-    LambdaUnservedConfigError,
-    refuse_manifest_agents,
-    refuse_unserved_config,
-)
-from loom.aws_lambda.functions import entry_function, http_function
 from loom.composition import (
     Application,
     CompositionErrorCode,
@@ -55,6 +49,12 @@ from loom.rest.fastapi.router_runtime import (
     path_param_annotation,
 )
 from loom.rest.fastapi.sql import mounted_sql_endpoints
+from loom.serverless.aws.lambda_._refusals import (
+    LambdaUnservedConfigError,
+    refuse_manifest_agents,
+    refuse_unserved_config,
+)
+from loom.serverless.aws.lambda_.functions import entry_function, http_function
 
 _COMPONENT = "LambdaHTTPAdapter"
 _PATH_LOCATION = "path"
@@ -255,7 +255,6 @@ class LambdaHTTPHandler:
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
         """Answer one API Gateway HTTP API event."""
-        # Mangum runs on the thread's current loop.
         self._host.make_current()
         return self._mangum(event, context)
 

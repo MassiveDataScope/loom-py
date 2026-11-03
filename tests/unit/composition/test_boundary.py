@@ -18,7 +18,7 @@ _FORBIDDEN = (
     "celery",
     "loom.rest",
     "loom.celery",
-    "loom.aws_lambda",
+    "loom.serverless",
 )
 
 _SCRIPT = f"""

@@ -10,15 +10,15 @@ import pytest
 import yaml
 from fastapi import FastAPI
 
-from loom.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler
 from loom.composition import create_app
 from loom.core.config import ConfigError
 from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
-from tests.unit.aws_lambda.http._clients import lambda_client
-from tests.unit.aws_lambda.http._contract_app import bearer
+from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
+from tests.unit.serverless.aws.lambda_.http._clients import lambda_client
+from tests.unit.serverless.aws.lambda_.http._contract_app import bearer
 
 pytestmark = pytest.mark.filterwarnings("ignore:No function of lambda.functions serves")
 

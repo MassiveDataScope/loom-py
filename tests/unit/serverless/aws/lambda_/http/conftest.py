@@ -8,17 +8,17 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from loom.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler
 from loom.composition import create_app
 from loom.rest.fastapi import FastAPIAdapter
+from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
 from tests.helpers.composition import application_openings
-from tests.unit.aws_lambda.http._clients import (
+from tests.unit.serverless.aws.lambda_.http._clients import (
     Client,
     LambdaProject,
     fastapi_client,
     lambda_client,
 )
-from tests.unit.aws_lambda.http._contract_app import write_contract_project
+from tests.unit.serverless.aws.lambda_.http._contract_app import write_contract_project
 
 __all__ = ["application_openings"]
 

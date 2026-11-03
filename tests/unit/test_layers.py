@@ -21,22 +21,23 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 # layer → (packages it must not import at run time, modules allowed inside them).
 _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # The core composes nothing: the composition root and the transports sit outside it.
-    "loom.core": (("loom.composition", "loom.rest", "loom.celery", "loom.ai"), ()),
-    # The composition root reaches no transport. The Celery job service and its
-    # config are the outbound adapter of the JobService port, not the worker;
-    # the adapters are the ones create_app imports, lazily, for app.entry.
+    "loom.core": (
+        ("loom.composition", "loom.rest", "loom.celery", "loom.ai", "loom.serverless"),
+        (),
+    ),
+    # No transport but the JobService adapter and the ones app.entry selects, lazily.
     "loom.composition": (
-        ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.aws_lambda"),
+        ("fastapi", "starlette", "celery", "loom.rest", "loom.celery", "loom.serverless"),
         (
             "loom.celery.service",
             "loom.celery.config",
             "loom.rest.fastapi.adapter",
-            "loom.aws_lambda.http",
-            "loom.aws_lambda.sqs",
-            "loom.aws_lambda.functions",
+            "loom.serverless.aws.lambda_.http",
+            "loom.serverless.aws.lambda_.sqs",
+            "loom.serverless.aws.lambda_.functions",
         ),
     ),
-    "loom.rest": (("loom.aws_lambda",), ()),
+    "loom.rest": (("loom.serverless",), ()),
 }
 
 

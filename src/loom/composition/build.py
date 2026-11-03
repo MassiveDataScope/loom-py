@@ -130,13 +130,13 @@ def _fastapi() -> Adapter[object]:
 
 
 def _lambda_http() -> Adapter[object]:
-    from loom.aws_lambda.http import LambdaHTTPAdapter
+    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter
 
     return LambdaHTTPAdapter()
 
 
 def _lambda_sqs() -> Adapter[object]:
-    from loom.aws_lambda.sqs import LambdaSQSAdapter
+    from loom.serverless.aws.lambda_.sqs import LambdaSQSAdapter
 
     return LambdaSQSAdapter()
 
@@ -155,11 +155,11 @@ def _adapter_from_entry(source: CompositionSource) -> Adapter[object]:
     builtin = _BUILTIN_ENTRIES.get(entry)
     if builtin is not None:
         return builtin()
-    from loom.aws_lambda.functions import declared_function
+    from loom.serverless.aws.lambda_.functions import declared_function
 
     if declared_function(source.config, entry).sqs:
         return _lambda_sqs()
-    from loom.aws_lambda.http import LambdaHTTPAdapter
+    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter
 
     return LambdaHTTPAdapter(function=entry)
 
@@ -298,9 +298,7 @@ def compose_application(
 
     discovered = recipe.discovered
     catalog = source.catalog
-    # One store until ADR 0008's invocation scope exists: the unit of work,
-    # the session manager and the elevation sink are still one per
-    # application, so another store's models would share them.
+    # One store until US7 PR 11: the elevation sink is still one per application.
     require_single_store(discovered.models)
     runtime = BackendRuntime(
         recipe.profile,
@@ -332,10 +330,8 @@ def compose_application(
     # container, and an unregistered runtime makes every Scope.TOOL span a
     # silent no-op in production while passing every test that injects one.
     kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
-    # The catalog the backend was built from, not another load of ``stores``.
     kernel.container.register(StoreCatalog, lambda: catalog, scope=Scope.APPLICATION)
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
-    # Last: every service a use case may inject is registered by now.
     kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))
 
     return Application(

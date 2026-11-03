@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 
-from loom.aws_lambda import LambdaHTTPAdapter, LambdaHTTPHandler
 from loom.composition import Application, build_application
+from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
 from tests.helpers.loops import RecordedLoops
-from tests.unit.aws_lambda.http._clients import LambdaProject, Reply, lambda_client
-from tests.unit.aws_lambda.http._contract_app import PUBLIC_PATH, bearer, seen_by
+from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
+from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by
 
 pytestmark = [
     pytest.mark.timeout(60),

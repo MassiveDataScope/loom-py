@@ -13,15 +13,15 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from loom.aws_lambda._refusals import LambdaUnservedConfigError
-    from loom.aws_lambda.http import LambdaHTTPAdapter, LambdaHTTPHandler
-    from loom.aws_lambda.sqs import LambdaSQSAdapter
+    from loom.serverless.aws.lambda_._refusals import LambdaUnservedConfigError
+    from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter, LambdaHTTPHandler
+    from loom.serverless.aws.lambda_.sqs import LambdaSQSAdapter
 
 _EXPORTS = {
-    "LambdaHTTPAdapter": "loom.aws_lambda.http",
-    "LambdaHTTPHandler": "loom.aws_lambda.http",
-    "LambdaSQSAdapter": "loom.aws_lambda.sqs",
-    "LambdaUnservedConfigError": "loom.aws_lambda._refusals",
+    "LambdaHTTPAdapter": "loom.serverless.aws.lambda_.http",
+    "LambdaHTTPHandler": "loom.serverless.aws.lambda_.http",
+    "LambdaSQSAdapter": "loom.serverless.aws.lambda_.sqs",
+    "LambdaUnservedConfigError": "loom.serverless.aws.lambda_._refusals",
 }
 
 __all__ = [

@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from loom.aws_lambda import LambdaHTTPAdapter, LambdaUnservedConfigError
 from loom.composition import (
     Adapter,
     CompositionErrorCode,
@@ -25,7 +24,8 @@ from loom.core.config.errors import ConfigError
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import FastAPIAdapter
-from tests.unit.aws_lambda.http._clients import LambdaProject, lambda_client
+from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaUnservedConfigError
+from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, lambda_client
 
 pytestmark = [
     pytest.mark.timeout(60),
@@ -179,7 +179,12 @@ def test_a_second_recipe_on_the_same_adapter_is_refused(contract_project: Projec
 
 @pytest.mark.parametrize(
     "module",
-    ["loom.composition", "loom.core.persistence", "loom.aws_lambda", "loom.aws_lambda.sqs"],
+    [
+        "loom.composition",
+        "loom.core.persistence",
+        "loom.serverless.aws.lambda_",
+        "loom.serverless.aws.lambda_.sqs",
+    ],
 )
 def test_importing_the_transport_neutral_parts_loads_no_http_framework(module: str) -> None:
     probe = (
