@@ -3,7 +3,7 @@
 Dispatches Jobs to the broker post-commit by enqueuing a sync callable on
 the post-commit channel of the current execution
 (:mod:`loom.core.engine.post_commit`, through
-:func:`~loom.core.job.context.add_pending_dispatch`).  No broker call is
+:func:`~loom.core.job.context.add_pending_publish`).  No broker call is
 made inside :meth:`~CeleryJobService.dispatch`; the actual ``send_task``
 runs when the executor drains the channel after the Unit of Work has
 closed, or at the end of an execution without one.
@@ -36,7 +36,7 @@ from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREF
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.identity import current_identity
 from loom.core.identity.wire import encode_identity
-from loom.core.job.context import add_pending_dispatch
+from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
@@ -205,7 +205,7 @@ class CeleryJobService:
 
     All dispatch calls are deferred until the current Unit of Work has
     committed and closed.  Tasks are enqueued on the execution's post-commit
-    channel via :func:`~loom.core.job.context.add_pending_dispatch`; the
+    channel via :func:`~loom.core.job.context.add_pending_publish`; the
     :class:`~loom.core.engine.executor.RuntimeExecutor` drains the channel
     after the close (or at the end of an execution without a Unit of Work)
     and discards it when the execution fails.
@@ -374,7 +374,7 @@ class CeleryJobService:
             link_error=link_error,
             observability_runtime=self._observability_runtime,
         )
-        add_pending_dispatch(pending)
+        add_pending_publish(pending)
         self._emit(
             RuntimeEvent(
                 kind=EventKind.JOB_DISPATCHED,

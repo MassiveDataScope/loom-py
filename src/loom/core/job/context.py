@@ -37,7 +37,6 @@ def _fallback_channel() -> PostCommitChannel:
 def add_pending_dispatch(fn: Callable[[], Any]) -> None:
     """Register a dispatch callable to run after the current UoW commits.
 
-    In Celery mode ``fn`` is a plain sync callable (``send_task`` is sync).
     In inline mode ``fn`` is an async coroutine method.
     :func:`flush_pending_dispatches` handles both transparently.
 
@@ -48,6 +47,13 @@ def add_pending_dispatch(fn: Callable[[], Any]) -> None:
     bound = active_channel()
     channel = _fallback_channel() if bound is None else bound
     channel.enqueue(fn)
+
+
+def add_pending_publish(fn: Callable[[], Any]) -> None:
+    """Register a cheap broker send to run after priority actions commit."""
+    bound = active_channel()
+    channel = _fallback_channel() if bound is None else bound
+    channel.enqueue_publish(fn)
 
 
 async def flush_pending_dispatches() -> None:
