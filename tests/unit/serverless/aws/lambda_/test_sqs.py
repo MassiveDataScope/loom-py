@@ -12,8 +12,6 @@ from typing import Any
 
 import pytest
 
-from loom.aws_lambda import LambdaSQSAdapter, LambdaUnservedConfigError
-from loom.aws_lambda.sqs import SQSHandler
 from loom.composition import (
     Application,
     CompositionSource,
@@ -28,10 +26,12 @@ from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id
+from loom.serverless.aws.lambda_ import LambdaSQSAdapter, LambdaUnservedConfigError
+from loom.serverless.aws.lambda_.sqs import SQSHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import RecordedLoops
-from tests.unit.aws_lambda._probe import Probe
-from tests.unit.aws_lambda._records import RecordFactory
+from tests.unit.serverless.aws.lambda_._probe import Probe
+from tests.unit.serverless.aws.lambda_._records import RecordFactory
 
 
 @pytest.mark.parametrize(
@@ -118,7 +118,7 @@ def test_recipe_does_not_load_http_or_celery_libraries() -> None:
     code = """
 import sys
 from pathlib import Path
-from loom.aws_lambda import LambdaSQSAdapter
+from loom.serverless.aws.lambda_ import LambdaSQSAdapter
 from loom.composition import AppConfig, CompositionSource
 from loom.core.config import ConfigContext
 from loom.core.environment import Environment
@@ -327,7 +327,7 @@ def test_close_closes_opened_resources(
 
 
 def test_duplicate_qualname_is_configuration_error(source: CompositionSource) -> None:
-    from loom.aws_lambda.sqs import DuplicateJobName
+    from loom.serverless.aws.lambda_.sqs import DuplicateJobName
 
     def make_job() -> type[Job[None]]:
         class Duplicate(Job[None]):
@@ -556,7 +556,7 @@ def test_recipe_warns_for_ignored_discovered_components(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manifest = ModuleType("tests.unit.aws_lambda._warning_manifest")
+    manifest = ModuleType("tests.unit.serverless.aws.lambda_._warning_manifest")
     manifest.MODELS = [type("DiscoveredModel", (), {})]  # type: ignore[attr-defined]
     manifest.CALLBACKS = [type("DiscoveredCallback", (), {})]  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, manifest.__name__, manifest)
@@ -603,7 +603,9 @@ def _manifest_source(source: CompositionSource, module: str, **sections: Any) ->
 def test_what_lambda_does_not_serve_is_refused_before_discovery(
     source: CompositionSource, sections: dict[str, Any], key: str
 ) -> None:
-    undiscoverable = _manifest_source(source, "tests.unit.aws_lambda._no_such_manifest", **sections)
+    undiscoverable = _manifest_source(
+        source, "tests.unit.serverless.aws.lambda_._no_such_manifest", **sections
+    )
 
     adapter = LambdaSQSAdapter()
 
@@ -617,7 +619,7 @@ def test_manifest_agents_are_refused(
     probe: tuple[type[Job[None]], Probe],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manifest = ModuleType("tests.unit.aws_lambda._agents_manifest")
+    manifest = ModuleType("tests.unit.serverless.aws.lambda_._agents_manifest")
     manifest.JOBS = [probe[0]]  # type: ignore[attr-defined]
     manifest.AGENTS = ["agents/*.yaml"]  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, manifest.__name__, manifest)

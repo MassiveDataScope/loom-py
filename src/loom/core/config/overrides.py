@@ -92,6 +92,7 @@ the environment any other way. ``persistence.cursors`` decides whether, and with
 which key, cursor tokens are signed, which no per-deploy variable may change."""
 
 OVERRIDABLE: Final = (
+    "app.entry",
     "observability.log.config.level",
     "observability.log.config.named_levels.*",
     "celery.worker_concurrency",

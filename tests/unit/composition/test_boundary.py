@@ -11,7 +11,15 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parents[3] / "src"
 
 # Not even the Celery job service: it is loaded only when ``celery`` is configured.
-_FORBIDDEN = ("fastapi", "starlette", "celery", "loom.rest", "loom.celery")
+_FORBIDDEN = (
+    "fastapi",
+    "starlette",
+    "mangum",
+    "celery",
+    "loom.rest",
+    "loom.celery",
+    "loom.serverless",
+)
 
 _SCRIPT = f"""
 import json

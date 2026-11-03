@@ -16,6 +16,42 @@ from loom.rest.fastapi.adapter import FastAPIAdapter
 app = create_app("config/api.yaml", adapter=FastAPIAdapter())
 ```
 
+When `app.entry` is set, `create_app("config/api.yaml")` selects the adapter
+from the loaded configuration. Accepted built-in entries are `fastapi`,
+`lambda_http`, and `lambda_sqs`. An explicit `adapter=` takes precedence.
+Without either `app.entry` or `adapter=`, startup raises `ConfigError`.
+
+Several Lambda functions can share one YAML file. Name each function under
+`lambda.functions`, then set `app.entry` to the function to serve:
+
+```yaml
+app:
+  name: catalog
+  entry: public_api
+lambda:
+  functions:
+    public_api:
+      http: [CatalogInterface, SearchInterface]
+    admin_api:
+      http: [AdminInterface]
+      auth:
+        jwt:
+          secret_path: /secrets/admin.key
+          algorithms: [HS256]
+          audience: admin
+    worker:
+      sqs: true
+```
+
+An HTTP function serves only the interfaces it lists, a Python `RestInterface`
+by its class name and a YAML one by its `app.rest.interfaces` key; other routes
+return 404. Function `auth` uses the `app.rest.auth` schema and replaces that
+section for the function; an authenticator passed in code needs `custom: true`
+there, as it does in `app.rest.auth`. In staging and production,
+`LOOM__APP__ENTRY=admin_api` can select a function without changing the YAML.
+An interface can belong to only one function. Startup refuses unknown or
+ambiguous names and warns about discovered interfaces assigned to none.
+
 The design and its sources are recorded in ADR 0007
 (`docs/architecture/adr/0007-composition-root.md`).
 
@@ -23,7 +59,7 @@ The design and its sources are recorded in ADR 0007
 
 | Function | Returns | Use it for |
 |---|---|---|
-| `create_app(*config_paths, adapter=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process |
+| `create_app(*config_paths, adapter=..., ...)` | what the adapter's `bind` returns: a `FastAPI` app, a `Celery` app, a handler | starting a process; `adapter=` may be omitted when `app.entry` is set |
 | `build_application(*config_paths, adapter=..., ...)` | the composed, closed `Application`; no transport mounted | tests, scripts, a host that drives the application itself |
 | `compose_application(source, adapter, modules=...)` | the composed, closed `Application` | a host that already holds a loaded `CompositionSource` |
 

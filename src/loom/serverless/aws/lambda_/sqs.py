@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
-from loom.aws_lambda._refusals import refuse_manifest_agents, refuse_unserved_config
 from loom.composition import CompositionErrorCode, CompositionStateError, LoopHost, Recipe
 from loom.core.checks import REST_CHECKS
 from loom.core.discovery.base import DiscoveryResult
@@ -27,6 +26,7 @@ from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.persistence.stores import NONE_BACKEND
+from loom.serverless.aws.lambda_._refusals import refuse_manifest_agents, refuse_unserved_config
 
 if TYPE_CHECKING:
     from loom.composition import Application, CompositionSource
