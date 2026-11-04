@@ -224,7 +224,8 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   counts and timeouts, SQL and store pool sizes, driver and DynamoDB
   timeouts; the full list and
   the reason for each are in ADR 0005, whose `database.*` and
-  `persistence.dynamodb.*` entries are now `stores.*.<key>` for every store),
+  `persistence.dynamodb.*` entries are now `stores.*.<key>` for every store;
+  `app.job_service` never takes a `module:Class` reference there),
   plus the keys your reviewed files
   list:
 

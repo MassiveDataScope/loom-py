@@ -6,8 +6,11 @@ import types
 import pytest
 
 from loom.core.discovery.manifest import ManifestDiscoveryEngine
+from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.repository.sqlalchemy import RepositorySQLAlchemy
+
+_MANIFEST = "tests.unit.core.discovery._manifest"
 
 
 class _ManifestProduct(BaseModel):
@@ -21,90 +24,77 @@ class _ManifestProductRepository(RepositorySQLAlchemy[_ManifestProduct, int]):
     pass
 
 
-def test_manifest_discovery_accepts_repositories_list() -> None:
-    module_name = "tests.unit.core.discovery._manifest_with_repositories"
-    module = types.ModuleType(module_name)
-    module.REPOSITORIES = [_ManifestProductRepository]
-    sys.modules[module_name] = module
+class _ManifestJob(Job[None]):
+    def execute(self) -> None:
+        return None
 
-    try:
-        result = ManifestDiscoveryEngine(module_name).discover()
-    finally:
-        sys.modules.pop(module_name, None)
+
+@pytest.fixture
+def manifest(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """An empty manifest module, importable by name for the test only."""
+    module = types.ModuleType(_MANIFEST)
+    monkeypatch.setitem(sys.modules, _MANIFEST, module)
+    return module
+
+
+def test_manifest_discovery_accepts_repositories_list(manifest: types.ModuleType) -> None:
+    manifest.REPOSITORIES = [_ManifestProductRepository]  # type: ignore[attr-defined]
+
+    result = ManifestDiscoveryEngine(_MANIFEST).discover()
 
     assert result.models == ()
     assert result.use_cases == ()
     assert result.interfaces == ()
 
 
-def test_manifest_discovery_rejects_invalid_repository_type() -> None:
-    module_name = "tests.unit.core.discovery._manifest_with_invalid_repository"
-    module = types.ModuleType(module_name)
-    module.REPOSITORIES = [object]
-    sys.modules[module_name] = module
+def test_manifest_discovery_rejects_invalid_repository_type(manifest: types.ModuleType) -> None:
+    manifest.REPOSITORIES = [object]  # type: ignore[attr-defined]
+    engine = ManifestDiscoveryEngine(_MANIFEST)
 
-    try:
-        engine = ManifestDiscoveryEngine(module_name)
-        with pytest.raises(TypeError, match="must implement the Repository protocol"):
-            engine.discover()
-    finally:
-        sys.modules.pop(module_name, None)
+    with pytest.raises(TypeError, match="must implement the Repository protocol"):
+        engine.discover()
 
 
-def test_manifest_discovery_accepts_agents_only_manifest() -> None:
+def test_manifest_discovery_accepts_agents_only_manifest(manifest: types.ModuleType) -> None:
     """A manifest that exposes only agent artifacts is a complete manifest."""
-    module_name = "tests.unit.core.discovery._manifest_with_agents"
-    module = types.ModuleType(module_name)
-    module.AGENTS = ["ai/agents/*/agent.yaml"]
-    sys.modules[module_name] = module
+    manifest.AGENTS = ["ai/agents/*/agent.yaml"]  # type: ignore[attr-defined]
 
-    try:
-        result = ManifestDiscoveryEngine(module_name).discover()
-    finally:
-        sys.modules.pop(module_name, None)
+    result = ManifestDiscoveryEngine(_MANIFEST).discover()
 
     assert result.agent_specs == ("ai/agents/*/agent.yaml",)
 
 
-def test_manifest_discovery_rejects_empty_manifest_naming_agents() -> None:
-    """The 'no components' message lists AGENTS among the expected attributes."""
-    module_name = "tests.unit.core.discovery._manifest_empty"
-    module = types.ModuleType(module_name)
-    sys.modules[module_name] = module
+def test_manifest_discovery_carries_the_jobs(manifest: types.ModuleType) -> None:
+    """A manifest that exposes only jobs is complete; the composition applies their config."""
+    manifest.JOBS = [_ManifestJob]  # type: ignore[attr-defined]
 
-    try:
-        engine = ManifestDiscoveryEngine(module_name)
-        with pytest.raises(ValueError, match="AGENTS"):
-            engine.discover()
-    finally:
-        sys.modules.pop(module_name, None)
+    result = ManifestDiscoveryEngine(_MANIFEST).discover()
+
+    assert result.jobs == (_ManifestJob,)
 
 
-def test_manifest_discovery_rejects_non_string_agent_spec() -> None:
-    """An agent entry is a path or a glob, never a type."""
-    module_name = "tests.unit.core.discovery._manifest_with_invalid_agent"
-    module = types.ModuleType(module_name)
-    module.AGENTS = [object]
-    sys.modules[module_name] = module
+@pytest.mark.parametrize("attribute", ["AGENTS", "JOBS"])
+def test_manifest_discovery_rejects_empty_manifest_naming_every_attribute(
+    manifest: types.ModuleType, attribute: str
+) -> None:
+    """The 'no components' message lists AGENTS and JOBS among the expected attributes."""
+    _ = manifest
+    engine = ManifestDiscoveryEngine(_MANIFEST)
 
-    try:
-        engine = ManifestDiscoveryEngine(module_name)
-        with pytest.raises(TypeError):
-            engine.discover()
-    finally:
-        sys.modules.pop(module_name, None)
+    with pytest.raises(ValueError, match=attribute):
+        engine.discover()
 
 
-def test_manifest_discovery_rejects_empty_agent_spec_string() -> None:
-    """An empty string matches every artifact or none: it is never a grant."""
-    module_name = "tests.unit.core.discovery._manifest_with_empty_agent"
-    module = types.ModuleType(module_name)
-    module.AGENTS = [""]
-    sys.modules[module_name] = module
+@pytest.mark.parametrize(
+    "spec",
+    [object, ""],
+    ids=["a type, never a path or glob", "an empty string, which is never a grant"],
+)
+def test_manifest_discovery_rejects_an_invalid_agent_spec(
+    manifest: types.ModuleType, spec: object
+) -> None:
+    manifest.AGENTS = [spec]  # type: ignore[attr-defined]
+    engine = ManifestDiscoveryEngine(_MANIFEST)
 
-    try:
-        engine = ManifestDiscoveryEngine(module_name)
-        with pytest.raises(TypeError):
-            engine.discover()
-    finally:
-        sys.modules.pop(module_name, None)
+    with pytest.raises(TypeError):
+        engine.discover()

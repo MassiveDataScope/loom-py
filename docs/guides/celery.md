@@ -249,6 +249,13 @@ recover entity IDs and other parameters the callback needs.
 
 ---
 
+## Pick the job backend
+
+`app.job_service` names the backend of every queue `celery.queues` does not
+list, and of Celery's default queue; see [Pick the job backend](../rest/celery.md#pick-the-job-backend).
+
+---
+
 ## YAML configuration reference
 
 ### `celery` section
@@ -302,7 +309,8 @@ celery:
 ### `jobs` section — per-job overrides
 
 Override any Job ClassVar from YAML without touching Python code. Only the fields
-you declare are applied; unset fields keep their ClassVar defaults:
+you declare are applied; unset fields keep their ClassVar defaults. Every process
+that discovers the job applies them, the API included:
 
 In `config/worker.yaml`:
 

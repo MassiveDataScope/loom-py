@@ -10,6 +10,9 @@
     raises it right after the caller's modules run, before any repository or
     framework service is registered.
 
+``JobBackendError``
+    A job backend ``app.job_service`` or ``celery.queues`` needs cannot be built.
+
 ``CompositionStateError``
     An adapter or an :class:`~loom.composition.ApplicationHost` was used out
     of its lifecycle: an adapter composing a second application or bound
@@ -22,6 +25,7 @@ from collections.abc import Callable
 from enum import unique
 
 from loom.core.bootstrap import BootstrapError
+from loom.core.config.errors import ConfigError
 from loom.core.di.container import BindingKey
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
@@ -127,9 +131,14 @@ class ReservedBindingError(BootstrapError):
         return cls(issue, key)
 
 
+class JobBackendError(ConfigError):
+    """Raised at start-up when a job backend the configuration needs cannot be built."""
+
+
 __all__ = [
     "ApplicationAlreadyOpenError",
     "CompositionErrorCode",
     "CompositionStateError",
+    "JobBackendError",
     "ReservedBindingError",
 ]

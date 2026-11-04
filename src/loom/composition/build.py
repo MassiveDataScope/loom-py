@@ -28,6 +28,7 @@ from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey, ConfigResolver, with_default_resolvers
 from loom.core.config.overrides import load_application_config
 from loom.core.di.scope import Scope
+from loom.core.discovery.worker import apply_job_overrides
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExistsStep, LoadStep
 from loom.core.environment import Environment, resolve_environment, select_config_paths
@@ -285,7 +286,7 @@ def compose_application(
 
     Raises:
         ConfigError: When a model declares a store other than the default, or
-            the store section is invalid.
+            the store section is invalid, or a job backend cannot be built.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
@@ -297,6 +298,8 @@ def compose_application(
     enforce_deploy_checks(ctx, source.environment, skip=recipe.skip_checks)
 
     discovered = recipe.discovered
+    for job_type in discovered.jobs:
+        apply_job_overrides(ctx, job_type)
     catalog = source.catalog
     # One store until US7 PR 11: the elevation sink is still one per application.
     require_single_store(discovered.models)
@@ -323,7 +326,9 @@ def compose_application(
         metrics=recipe.metrics,
         environment=source.environment,
     )
-    job_resource = configure_job_service(ctx, kernel, observability)
+    job_resources = configure_job_service(
+        ctx, kernel, observability, backend=source.app.job_service
+    )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
     # Registered, not merely passed: capability spans resolve it from the
@@ -349,7 +354,7 @@ def compose_application(
             stores=(_store_resource(DEFAULT_STORE, wiring, label=recipe.backend.name),),
             sql=sql,
             ai=ai,
-            job_resource=job_resource,
+            job_resources=job_resources,
         ),
     )
 
@@ -411,12 +416,10 @@ def _resources(
     stores: Sequence[Resource],
     sql: SqlWiring,
     ai: AiWiring,
-    job_resource: Resource | None,
+    job_resources: Sequence[Resource],
 ) -> tuple[Resource, ...]:
     """Everything the application owns; :class:`Application` orders it by kind."""
-    resources: list[Resource] = []
-    if job_resource is not None:
-        resources.append(job_resource)
+    resources: list[Resource] = list(job_resources)
     if kernel.container.is_registered(CacheGateways):
         gateways = kernel.container.resolve(CacheGateways).distinct()
         for name, gateway in zip(("data", "counters"), gateways, strict=False):

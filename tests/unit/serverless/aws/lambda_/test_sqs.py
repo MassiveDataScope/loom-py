@@ -24,14 +24,21 @@ from loom.core.config import ConfigContext
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
+from loom.core.job.service import JobService
+from loom.core.observability.event import EventKind, LifecycleEvent, Scope
+from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
-from loom.core.tracing import get_trace_id
+from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter, LambdaUnservedConfigError
-from loom.serverless.aws.lambda_.sqs import SQSHandler
+from loom.serverless.aws.lambda_.sqs import DuplicateJobName, SQSHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
 from tests.unit.serverless.aws.lambda_._records import RecordFactory
+
+
+class _OtherJobService:
+    """A job service the log must name: neither inline nor Celery."""
 
 
 @pytest.mark.parametrize(
@@ -274,8 +281,6 @@ def test_outer_trace_survives_batch(
     record: RecordFactory,
     seen: list[tuple[str, str | None, str | None]],
 ) -> None:
-    from loom.core.tracing import reset_trace_id, set_trace_id
-
     token = set_trace_id("outer")
     try:
         records = [record("1", "a", trace_id="inner"), record("2", "b")]
@@ -327,8 +332,6 @@ def test_close_closes_opened_resources(
 
 
 def test_duplicate_qualname_is_configuration_error(source: CompositionSource) -> None:
-    from loom.serverless.aws.lambda_.sqs import DuplicateJobName
-
     def make_job() -> type[Job[None]]:
         class Duplicate(Job[None]):
             def execute(self) -> None:
@@ -387,10 +390,7 @@ def test_closing_the_handler_closes_the_application(
     assert lifecycle == ["open", "close"]
 
 
-def test_job_config_is_applied(source: CompositionSource) -> None:
-    from loom.core.config import ConfigContext
-    from tests.helpers.composition import composition_source
-
+def test_the_composition_applies_the_job_config(source: CompositionSource) -> None:
     class ConfiguredJob(Job[None]):
         def execute(self) -> None:
             return None
@@ -403,16 +403,15 @@ def test_job_config_is_applied(source: CompositionSource) -> None:
         code_path=source.code_path,
         config_root=source.config_root,
     )
-    LambdaSQSAdapter(jobs=[ConfiguredJob]).recipe(configured)
+
+    compose_application(configured, LambdaSQSAdapter(jobs=[ConfiguredJob]))
+
     assert ConfiguredJob.__retries__ == 7
 
 
 def test_job_span_is_emitted(
     built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
-    from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-    from loom.core.observability.runtime import ObservabilityRuntime
-
     class Observer:
         def __init__(self) -> None:
             self.events: list[LifecycleEvent] = []
@@ -497,9 +496,6 @@ def test_job_timeout_is_retryable(source: CompositionSource, record: RecordFacto
 def test_malformed_record_emits_error_span(
     built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
-    from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-    from loom.core.observability.runtime import ObservabilityRuntime
-
     class Observer:
         def __init__(self) -> None:
             self.events: list[LifecycleEvent] = []
@@ -539,13 +535,15 @@ def test_bind_warns_for_non_inline_service(
     built: tuple[LambdaSQSAdapter, Application, list[str]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from loom.core.job.service import JobService
-
     adapter, application, _ = built
-    application.kernel.container.register(JobService, lambda: object())
+    application.kernel.container.register(JobService, _OtherJobService)
     adapter.bind(application)
     try:
-        assert any("publish to the Celery broker" in message for message in caplog.messages)
+        assert any(
+            "through the configured job service" in record.getMessage()
+            and "_OtherJobService" in record.getMessage()
+            for record in caplog.records
+        )
     finally:
         adapter.close()
 

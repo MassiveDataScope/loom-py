@@ -2,6 +2,14 @@
 
 ## ✨ Features
 
+### jobs
+
+- **jobs:** `app.job_service` (`inline`, `celery` or `module:Class` built with
+  a `JobBackendContext`) names the job backend; queues listed in
+  `celery.queues`, but Celery's default queue, go to Celery through the new
+  `JobRouter`. Use cases keep
+  injecting `JobService`.
+
 ### etl
 
 - **etl:** `IntoTable(...).upsert(..., delete_flag=...)` deletes matched rows
@@ -58,6 +66,17 @@
   that mutate state need a function-scoped runner on their own `tmp_path`.
 
 ## ⚠ Behaviour changes
+
+### jobs
+
+- **jobs:** the composition applies `jobs.<Job>.*` once for every entry point,
+  so the API process now honours them too; before, only the Celery and Lambda
+  SQS workers did.
+- **jobs:** without `app.job_service` the job service is still chosen from the
+  `celery` section, now with a `DeprecationWarning` when Celery is installed or
+  configured. Set `app.job_service` to keep the choice explicit.
+- **jobs:** the Lambda SQS adapter logs the type of its job service instead
+  of assuming Celery for anything that is not inline.
 
 ### etl
 

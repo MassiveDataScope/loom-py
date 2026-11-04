@@ -5,102 +5,189 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import warnings
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final, cast
 
+from loom.composition.errors import JobBackendError
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
+from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.symbols import import_symbol
 
 if TYPE_CHECKING:
+    from loom.celery.config import CeleryConfig
+    from loom.core.engine.executor import RuntimeExecutor
+    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.use_case.factory import UseCaseFactory
+
+
+@dataclass(frozen=True, kw_only=True)
+class JobBackendContext:
+    """What a job backend is built with; a ``module:Class`` backend receives it."""
+
+    config: ConfigContext
+    factory: UseCaseFactory
+    executor: RuntimeExecutor
+    metrics: MetricsAdapter | None
+    observability: ObservabilityRuntime | None
+
+
+_Built = tuple[JobService, tuple[Resource, ...]]
+
+
+def _celery_config(ctx: ConfigContext) -> CeleryConfig:
+    try:
+        from loom.celery.config import CeleryConfig
+    except ImportError as exc:
+        raise JobBackendError(
+            "jobs are routed to celery, but the loom[celery] extra is not installed"
+        ) from exc
+    return ctx.section(ConfigKey.CELERY, CeleryConfig)
+
+
+def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Built:
+    from loom.celery.config import create_celery_app
     from loom.celery.service import CeleryJobService
 
+    try:
+        app = create_celery_app(celery_cfg)
+    except ValueError as exc:
+        raise JobBackendError(f"the celery section is invalid: {exc}") from exc
+    service = CeleryJobService(
+        app,
+        metrics=context.metrics,
+        factory=context.factory,
+        executor=context.executor,
+        observability_runtime=context.observability,
+    )
+    closer = Resource(
+        kind=ResourceKind.CELERY,
+        name="jobs",
+        manager=closing(lambda: asyncio.to_thread(service.close)),
+    )
+    return service, (closer,)
 
-def _build_celery_service(
-    ctx: ConfigContext,
-    result: KernelRuntime,
-    observability_runtime: ObservabilityRuntime | None,
-) -> CeleryJobService | None:
-    """Return a ``CeleryJobService`` if the celery extra is installed and configured.
 
-    Returns ``None`` when the ``loom[celery]`` extra is absent or the
-    ``celery`` section is, so the caller can fall back to
-    :class:`~loom.core.job.service.InlineJobService`. A section that fails
-    validation raises.
+def _inline(context: JobBackendContext) -> _Built:
+    return InlineJobService(context.factory, context.executor), ()
 
-    Args:
-        ctx: Resolved configuration context.
-        result: Kernel runtime carrying container, factory and executor.
-        observability_runtime: Observability runtime the producer traces
-            with, or ``None``.
 
-    Returns:
-        ``CeleryJobService`` instance, or ``None``.
-    """
-    if not ctx.has(ConfigKey.CELERY):
-        # Checked before any import: an application without a celery section
-        # must not pay for loading Celery. find_spec locates without importing.
-        if importlib.util.find_spec("celery") is not None:
+def _celery(context: JobBackendContext) -> _Built:
+    return _celery_backend(context, _celery_config(context.config))
+
+
+_BUILTIN_JOB_BACKENDS: Final[Mapping[str, Callable[[JobBackendContext], _Built]]] = {
+    "inline": _inline,
+    "celery": _celery,
+}
+"""Each built-in backend by name; its section is the one named alike."""
+
+
+def _backend(name: str, context: JobBackendContext) -> _Built:
+    builtin = _BUILTIN_JOB_BACKENDS.get(name)
+    if builtin is not None:
+        return builtin(context)
+    if ":" not in name:
+        raise JobBackendError(
+            f"app.job_service {name!r} names no job backend: use "
+            f"{', '.join(_BUILTIN_JOB_BACKENDS)} or a module:Class reference"
+        )
+    backend_type = cast(Callable[[JobBackendContext], JobService], import_symbol(name))
+    return backend_type(context), ()
+
+
+def _routed(context: JobBackendContext, default: str) -> _Built:
+    """The *default* backend; ``celery.queues`` but Celery's default queue go to Celery."""
+    service, resources = _backend(default, context)
+    # Celery is imported only when it declares queues.
+    if default == "celery" or not context.config.has("celery.queues"):
+        return service, resources
+    celery_cfg = _celery_config(context.config)
+    # Celery's own default queue stays with the default backend: it is every job's queue.
+    queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
+    if not queues:
+        return service, resources
+    celery, closers = _celery_backend(context, celery_cfg)
+    return JobRouter(dict.fromkeys(queues, celery), default=service), (
+        *resources,
+        *closers,
+    )
+
+
+def _implicit(context: JobBackendContext) -> _Built:
+    """Today's rule without ``app.job_service``: Celery when configured and installed."""
+    ctx = context.config
+    configured = ctx.has(ConfigKey.CELERY)
+    # find_spec locates without importing: without a celery section the
+    # application must not pay for loading Celery.
+    installed = configured or importlib.util.find_spec("celery") is not None
+    if installed:
+        warnings.warn(
+            "app.job_service is not set: the job service follows the celery section. "
+            "Set app.job_service to inline or celery; the implicit choice is deprecated.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    if not configured:
+        if installed:
             warnings.warn(
                 "Celery config section is missing — falling back to InlineJobService. "
                 "Add a 'celery' section to your config to suppress this.",
                 stacklevel=3,
             )
-        return None
+        return _inline(context)
     try:
-        from loom.celery.config import CeleryConfig, create_celery_app
-        from loom.celery.service import CeleryJobService
-
-    except ImportError:
-        return None
-    celery_cfg = ctx.section(ConfigKey.CELERY, CeleryConfig)
-    return CeleryJobService(
-        create_celery_app(celery_cfg),
-        metrics=result.metrics,
-        factory=result.factory,
-        executor=result.executor,
-        observability_runtime=observability_runtime,
-    )
+        celery_cfg = _celery_config(ctx)
+    except JobBackendError:
+        return _inline(context)
+    return _celery_backend(context, celery_cfg)
 
 
 def configure_job_service(
     ctx: ConfigContext,
     result: KernelRuntime,
     observability_runtime: ObservabilityRuntime | None,
-) -> Resource | None:
-    """Register a ``JobService`` implementation in the container.
+    *,
+    backend: str | None = None,
+) -> tuple[Resource, ...]:
+    """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
-    Registers :class:`~loom.celery.service.CeleryJobService` when a
-    ``celery`` config section is present and the ``loom[celery]`` extra is
-    installed.  Falls back to
-    :class:`~loom.core.job.service.InlineJobService` otherwise — enabling
-    local development and tests without a broker.
-
-    The registration uses ``APPLICATION`` scope so the service is created
-    once and shared across all requests. A ``JobService`` a caller's DI
-    module already registered is kept.
+    With *backend* (``app.job_service``) set, that backend serves every queue
+    but those ``celery.queues`` declares, which a
+    :class:`~loom.core.job.router.JobRouter` sends to Celery.
+    Without it, :class:`~loom.celery.service.CeleryJobService` is registered
+    when a ``celery`` section is present and the ``loom[celery]`` extra is
+    installed, :class:`~loom.core.job.service.InlineJobService` otherwise. A
+    ``JobService`` a caller's DI module already registered is kept.
 
     Args:
         ctx: Resolved configuration context.
         result: Kernel runtime carrying container, factory and executor.
-        observability_runtime: Observability runtime the Celery producer
-            traces with, or ``None``.
+        observability_runtime: Observability runtime the backends trace
+            with, or ``None``.
+        backend: ``app.job_service``: a built-in name or ``module:Class``.
 
     Returns:
-        The Celery producer's resource to close, or ``None`` when no Celery
-        service was built.
+        One resource per built backend that owns something to close.
+
+    Raises:
+        JobBackendError: When *backend* names no backend, or Celery is
+            needed without the extra installed.
     """
     if result.container.is_registered(JobService):
-        return None
-    celery_service = _build_celery_service(ctx, result, observability_runtime)
-    svc = celery_service or InlineJobService(result.factory, result.executor)
-    result.container.register(JobService, lambda: svc, scope=Scope.APPLICATION)
-    if celery_service is None:
-        return None
-    return Resource(
-        kind=ResourceKind.CELERY,
-        name="jobs",
-        manager=closing(lambda: asyncio.to_thread(celery_service.close)),
+        return ()
+    context = JobBackendContext(
+        config=ctx,
+        factory=result.factory,
+        executor=result.executor,
+        metrics=result.metrics,
+        observability=observability_runtime,
     )
+    service, resources = _implicit(context) if backend is None else _routed(context, backend)
+    result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)
+    return resources

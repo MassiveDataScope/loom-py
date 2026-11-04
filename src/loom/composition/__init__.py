@@ -8,6 +8,7 @@ the one ``app.entry`` names, lazily, when it runs.
 """
 
 from loom.composition._ai import AiWiring
+from loom.composition._jobs import JobBackendContext
 from loom.composition._sql import SqlWiring
 from loom.composition.application import Application
 from loom.composition.build import build_application, compose_application, create_app, load_source
@@ -15,6 +16,7 @@ from loom.composition.errors import (
     ApplicationAlreadyOpenError,
     CompositionErrorCode,
     CompositionStateError,
+    JobBackendError,
     ReservedBindingError,
 )
 from loom.composition.host import ApplicationHost, LoopHost
@@ -31,6 +33,8 @@ __all__ = [
     "CompositionErrorCode",
     "CompositionSource",
     "CompositionStateError",
+    "JobBackendContext",
+    "JobBackendError",
     "LoopHost",
     "Recipe",
     "ReservedBindingError",

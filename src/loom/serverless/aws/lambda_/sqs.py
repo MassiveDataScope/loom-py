@@ -13,10 +13,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import (
     DuplicateJobName as DuplicateJobName,
 )
-from loom.core.discovery.worker import (
-    apply_job_overrides,
-    resolve_worker_components,
-)
+from loom.core.discovery.worker import resolve_worker_components
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.outcome import failure_log_fields, is_retryable
@@ -108,8 +105,6 @@ class LambdaSQSAdapter:
                 "Lambda ignores discovered job callbacks", callbacks=len(resolved.callbacks)
             )
         declared = {job_type.__qualname__: job_type for job_type in resolved.jobs}
-        for job_type in resolved.jobs:
-            apply_job_overrides(source.config, job_type)
         self._declared = declared
         return Recipe(
             profile=LAMBDA_PROFILE,
@@ -117,6 +112,7 @@ class LambdaSQSAdapter:
                 models=tuple(dict.fromkeys(resolved.models)),
                 use_cases=cast(Any, resolved.compilables),
                 interfaces=(),
+                jobs=resolved.jobs,
             ),
             backend=source.backend(default=NONE_BACKEND),
             skip_checks=frozenset({REST_CHECKS}),
@@ -150,7 +146,10 @@ class LambdaSQSAdapter:
                 "Lambda dispatched jobs run inline in this invocation without a queue or retries"
             )
         else:
-            _log.warning("Lambda dispatched jobs publish to the Celery broker")
+            _log.warning(
+                "Lambda dispatched jobs leave this invocation through the configured job service",
+                job_service=type(service).__qualname__,
+            )
         return self._handler
 
     def close(self) -> None:

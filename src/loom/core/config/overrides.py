@@ -24,9 +24,11 @@ In production and staging an override may set only an allowlisted key: the
 operational keys loom lists in :data:`OVERRIDABLE` (log levels, worker and
 pool sizes, driver timeouts), plus the keys the reviewed files list under
 ``config.overridable``. Every other key is a startup error naming the
-variable. An entry is a dotted key; ``*`` stands for one level but never the
-first, and an entry inside ``checks`` or ``config`` is refused: both are read
-as written, so the files could not route them to the environment otherwise.
+variable. There ``app.job_service`` refuses a ``module:Class`` reference,
+which would import code chosen by the environment. An entry is a dotted
+key; ``*`` stands for one level but never the first, and an entry inside
+``checks`` or ``config`` is refused: both are read as written, so the files
+could not route them to the environment otherwise.
 The entries are checked at every load, in any environment and with or
 without a variable. In
 development and test any leaf may be overridden. ``config`` itself can never
@@ -93,6 +95,7 @@ which key, cursor tokens are signed, which no per-deploy variable may change."""
 
 OVERRIDABLE: Final = (
     "app.entry",
+    "app.job_service",
     "observability.log.config.level",
     "observability.log.config.named_levels.*",
     "celery.worker_concurrency",
@@ -183,7 +186,10 @@ def _apply_overrides(
             _require_allowlisted(name, key, (*OVERRIDABLE, *declared), environment)
     merged: Any = config
     for name, key in sorted(keys.items(), key=lambda item: item[1]):
-        merged = _merged(merged, name, key, _parsed(name, key, variables[name]))
+        layer = _parsed(name, key, variables[name])
+        if environment.is_deployed:
+            _require_no_import(name, key, layer, environment)
+        merged = _merged(merged, name, key, layer)
     _logger.warning(
         "configuration keys overridden by %s variables: %s",
         OVERRIDE_PREFIX,
@@ -212,6 +218,18 @@ def _parsed(name: str, key: str, value: str) -> Any:
     if _holds_mapping(leaf):
         raise ConfigError(f"{name} is or holds a mapping; an override sets one leaf value")
     return layer
+
+
+def _require_no_import(name: str, key: str, layer: Any, environment: Environment) -> None:
+    from omegaconf import OmegaConf
+
+    # The parsed value: a YAML escape such as "\x3a" hides the colon from the raw text.
+    parsed = _strings(OmegaConf.to_container(layer, resolve=False))
+    if key.casefold() == "app.job_service" and any(":" in text for text in parsed):
+        raise ConfigError(
+            f"{name} sets {key!r} to a module:Class reference, which is refused in "
+            f"{str(environment)!r}: set it in the reviewed configuration files"
+        )
 
 
 def _holds_mapping(node: Any) -> bool:
