@@ -1,11 +1,10 @@
-"""Post-commit actions belong to the store that owns them (ADR 0008, T049, D4).
+"""Post-commit actions run by the outcome of the stores they depend on (ADR 0008, T049, D4).
 
-Once the invocation ended, each store's actions run by that store's outcome:
-a store that committed, or wrote without a transaction, runs every lane; an
-``Uncertain`` one only its priority lane; a rolled-back one none. The
-executor owns an invocation of two SQLite stores, plus a store without
-transactions, the way the composition will once several stores compose
-(PR 11). A store's commit fails where a test injects it.
+A job dispatch depends on every store of the execution that queued it, a
+cache invalidation on its repository's store. The executor owns an
+invocation of two SQLite stores and a store without transactions, the way the
+composition will once several stores compose (PR 11); a store's commit fails
+where a test sets ``FAILURES``.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -24,28 +22,35 @@ from loom.core.cache.dependency import GenerationalDependencyResolver
 from loom.core.cache.repository import CachedRepository
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import store_channel
-from loom.core.job.context import add_pending_dispatch, add_pending_publish
+from loom.core.job.context import (
+    add_pending_dispatch,
+    add_pending_publish,
+    clear_pending_dispatches,
+)
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import CommitUncertain, OrderedCommits
 from loom.core.uow.scope import StoresNotCommitted, current_scope
 from loom.core.use_case import Joined, UseCase
+from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
 from tests.unit.core.cache._doubles import CountingCacheBackend
 
 pytestmark = pytest.mark.timeout(30)
 
-AUDIT = StoreKey("audit")
-EVENTS = StoreKey("events")
+AUDIT, EVENTS = StoreKey("audit"), StoreKey("events")
+_NEVER_RAN = "PostCommitShieldedActionNeverRan"
+Step = Callable[[], Awaitable[object]]
 
-Step = Callable[[], Awaitable[None]]
+FAILURES: dict[StoreKey, BaseException] = {}
+"""The commit error of each store a test sets; the ``stores`` fixture clears it."""
 
 
 class _Order(BaseModel):
@@ -55,12 +60,12 @@ class _Order(BaseModel):
     ref: str = ColumnField(length=16)
 
 
-class _AuditEntry(BaseModel):
-    __tablename__ = "owned_audit_entries"
+class _Entry(BaseModel):
+    __tablename__ = "owned_entries"
     __store__ = "audit"
 
     id: int = ColumnField(primary_key=True, autoincrement=True)
-    note: str = ColumnField(length=16)
+    ref: str = ColumnField(length=16)
 
 
 class _Event(BaseModel):
@@ -70,31 +75,21 @@ class _Event(BaseModel):
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-class _NewOrder(Command, frozen=True):
+class _New(Command, frozen=True):
     ref: str
 
 
-class _NewEntry(Command, frozen=True):
-    note: str
+class _Refused(Exception):
+    pass
 
 
-class _CommitRefused(Exception):
-    """A commit the store answered with a defined failure."""
-
-
-class _UseCaseFailed(Exception):
+class _Failed(Exception):
     pass
 
 
 class _CommitFails(SQLAlchemyUnitOfWork):
-    """A SQLite unit of work whose commit raises ``error`` instead of committing."""
-
-    def __init__(self, manager: SessionManager, error: BaseException) -> None:
-        super().__init__(manager)
-        self._error = error
-
     async def commit(self) -> None:
-        raise self._error
+        raise FAILURES[self.owner.store]
 
 
 class _Autocommit:
@@ -102,132 +97,57 @@ class _Autocommit:
 
     transactional: ClassVar[bool] = False
 
-    async def begin(self) -> None:
-        return None
-
-    async def commit(self) -> None:
-        return None
-
-    async def rollback(self) -> None:
-        return None
+    async def begin(self) -> None: ...
+    async def commit(self) -> None: ...
+    async def rollback(self) -> None: ...
 
     async def __aenter__(self) -> _Autocommit:
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        return None
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: object) -> None: ...
 
 
-@dataclass
-class _Factory:
-    """Builds a store's unit of work; its commit raises ``failures[store]`` when set."""
-
-    manager: SessionManager
-    failures: dict[StoreKey, BaseException]
+class _Sql:
+    def __init__(self, manager: SessionManager) -> None:
+        self.manager = manager
 
     def create(self) -> UnitOfWork:
-        error = self.failures.get(self.manager.store)
-        if error is None:
-            return SQLAlchemyUnitOfWork(self.manager)
-        return _CommitFails(self.manager, error)
+        failing = self.manager.store in FAILURES
+        return (_CommitFails if failing else SQLAlchemyUnitOfWork)(self.manager)
 
 
-class _AutocommitFactory:
+class _NoTransactions:
     def create(self) -> UnitOfWork:
         return _Autocommit()
 
 
-@dataclass
-class _Ran:
-    """Labels of the actions that ran, in order; :meth:`seen` waits for one."""
-
-    labels: list[str] = field(default_factory=list)
-    _waiting: dict[str, asyncio.Event] = field(default_factory=dict)
-
-    def action(self, label: str) -> Callable[[], None]:
-        def run() -> None:
-            self.labels.append(label)
-            self.seen(label).set()
-
-        return run
-
-    def seen(self, label: str) -> asyncio.Event:
-        return self._waiting.setdefault(label, asyncio.Event())
-
-    def queue(self, store: str) -> None:
-        """Queue one action per lane for the running execution's store."""
-        channel = store_channel()
-        assert channel is not None
-        channel.enqueue_priority(self.action(f"{store}.priority"))
-        add_pending_publish(self.action(f"{store}.publish"))
-        add_pending_dispatch(self.action(f"{store}.plain"))
-
-
-def _all_lanes(*stores: str) -> list[str]:
-    """Every lane of ``stores``: priority lanes first, then publish, then plain."""
-    return [f"{store}.{lane}" for lane in ("priority", "publish", "plain") for store in stores]
-
-
-class _Invocation(UseCase[_Order, None]):
-    """Primary store ``default``: writes an order, then runs ``steps``."""
-
-    def __init__(self, orders: RepoFor[_Order], steps: tuple[Step, ...]) -> None:
-        self.orders = orders
-        self.steps = steps
+class _Steps:
+    steps: tuple[Step, ...]
 
     async def execute(self) -> None:
-        await self.orders.create(_NewOrder(ref="o1"))
         for step in self.steps:
             await step()
 
 
-class _QueueOnAudit(UseCase[_AuditEntry, None]):
-    """Primary store ``audit``: writes an entry and queues audit's actions."""
+class _OnDefault(_Steps, UseCase[_Order, None]):
+    def __init__(self, *steps: Step) -> None:
+        self.steps = steps
 
-    def __init__(self, entries: RepoFor[_AuditEntry], ran: _Ran) -> None:
+
+class _OnAudit(_Steps, UseCase[_Entry, None]):
+    def __init__(self, *steps: Step) -> None:
+        self.steps = steps
+
+
+class _OnEvents(_Steps, UseCase[_Event, None]):
+    def __init__(self, *steps: Step) -> None:
+        self.steps = steps
+
+
+class _JoinsAudit(_Steps, UseCase[_Order, None]):
+    def __init__(self, entries: Joined[RepoFor[_Entry]], *steps: Step) -> None:
         self.entries = entries
-        self.ran = ran
-
-    async def execute(self) -> None:
-        await self.entries.create(_NewEntry(note="nested"))
-        self.ran.queue("audit")
-
-
-class _QueueOnEvents(UseCase[_Event, None]):
-    """Primary store ``events``, which has no transactions: queues its actions."""
-
-    def __init__(self, ran: _Ran) -> None:
-        self.ran = ran
-
-    async def execute(self) -> None:
-        self.ran.queue("events")
-
-
-class _DispatchReadOnly(UseCase[_Order, None]):
-    """Run read-only: its frame names no store, so its dispatch is the enclosing store's."""
-
-    def __init__(self, ran: _Ran) -> None:
-        self.ran = ran
-
-    async def execute(self) -> None:
-        add_pending_dispatch(self.ran.action("read-only.plain"))
-
-
-class _AuditFirst(UseCase[_Order, None]):
-    """Primary store ``default``; writes to the joined audit store first."""
-
-    def __init__(self, orders: RepoFor[_Order], entries: Joined[RepoFor[_AuditEntry]]) -> None:
-        self.orders = orders
-        self.entries = entries
-
-    async def execute(self) -> None:
-        await self.entries.create(_NewEntry(note="joined"))
-        await self.orders.create(_NewOrder(ref="o1"))
+        self.steps = steps
 
 
 def _manager(store: StoreKey) -> SessionManager:
@@ -241,311 +161,358 @@ def _manager(store: StoreKey) -> SessionManager:
     )
 
 
-@dataclass
 class _Stores:
-    """Two SQLite stores, a store without transactions, and an executor owning all three."""
+    """Two SQLite stores, a store without transactions, an executor owning all three."""
 
-    default: SessionManager
-    audit: SessionManager
-    orders: RepositorySQLAlchemy[_Order, int]
-    entries: RepositorySQLAlchemy[_AuditEntry, int]
-    ran: _Ran = field(default_factory=_Ran)
-    failures: dict[StoreKey, BaseException] = field(default_factory=dict)
-    executor: RuntimeExecutor = field(default_factory=lambda: RuntimeExecutor(UseCaseCompiler()))
-
-    def __post_init__(self) -> None:
-        # Until the composition builds it (PR 11), one coordinator per store set.
+    def __init__(self, default: SessionManager, audit: SessionManager) -> None:
+        codec = CursorCodec(signing="ephemeral")
+        self.default, self.audit = default, audit
+        self.orders = RepositorySQLAlchemy(default, _Order, cursor_codec=codec)
+        self.entries = RepositorySQLAlchemy(audit, _Entry, cursor_codec=codec)
+        self.ran: list[str] = []
+        self.executor = RuntimeExecutor(UseCaseCompiler())
+        # Until the composition builds it (PR 11).
         self.executor._coordinator = OrderedCommits(
-            {
-                DEFAULT_STORE: _Factory(self.default, self.failures),
-                AUDIT: _Factory(self.audit, self.failures),
-                EVENTS: _AutocommitFactory(),
-            }
+            {DEFAULT_STORE: _Sql(default), AUDIT: _Sql(audit), EVENTS: _NoTransactions()}
         )
 
-    async def run(self, *steps: Step) -> None:
-        """Execute :class:`_Invocation`, which writes to ``default`` and then runs ``steps``."""
-        await self.executor.execute(_Invocation(cast("RepoFor[_Order]", self.orders), steps))
+    def mark(self, label: str) -> Callable[[], None]:
+        return lambda: self.ran.append(label)
 
-    def queue(self, store: str = "default") -> Step:
+    def queue(self, label: str) -> Step:
+        """Queue one action per lane for the running execution."""
+
         async def step() -> None:
-            self.ran.queue(store)
+            channel = store_channel()
+            assert channel is not None
+            channel.enqueue_priority(self.mark(f"{label}.priority"))
+            add_pending_publish(self.mark(f"{label}.publish"))
+            add_pending_dispatch(self.mark(f"{label}.plain"))
 
         return step
 
-    def nested(self, use_case: UseCase[Any, None], *, read_only: bool = False) -> Step:
+    def dispatch(self, label: str) -> Step:
         async def step() -> None:
-            await self.executor.execute(use_case, read_only=read_only)
+            add_pending_dispatch(self.mark(label))
 
         return step
 
-    def on_audit(self) -> Step:
-        return self.nested(_QueueOnAudit(cast("RepoFor[_AuditEntry]", self.entries), self.ran))
+    def gathered(self) -> Step:
+        """Queue a dispatch from a gather child, which does not own the scope."""
+        return lambda: asyncio.gather(self.dispatch("gathered")())
 
-    def on_events(self) -> Step:
-        return self.nested(_QueueOnEvents(self.ran))
+    def run(self, use_case: UseCase[Any, Any], *, read_only: bool = False) -> Step:
+        return lambda: self.executor.execute(use_case, read_only=read_only)
 
-    def cached_entries(self, backend: CountingCacheBackend) -> RepoFor[_AuditEntry]:
-        cached = CachedRepository(
-            self.entries,
-            config=CacheConfig(),
-            cache=backend,
-            dependency_resolver=GenerationalDependencyResolver(backend),
+    def write_order(self) -> Step:
+        return lambda: self.orders.create(_New(ref="o"))
+
+    def write_entry(self, entries: Any = None) -> Step:
+        return lambda: (entries or self.entries).create(_New(ref="e"))
+
+    def cached_entries(self, backend: CountingCacheBackend) -> Any:
+        resolver = GenerationalDependencyResolver(backend)
+        return CachedRepository(
+            self.entries, config=CacheConfig(), cache=backend, dependency_resolver=resolver
         )
-        return cast("RepoFor[_AuditEntry]", cached)
 
 
 @pytest.fixture
 async def stores() -> AsyncIterator[_Stores]:
-    compile_all(_Order, _AuditEntry)
+    compile_all(_Order, _Entry)
     default, audit = _manager(DEFAULT_STORE), _manager(AUDIT)
-    codec = CursorCodec(signing="ephemeral")
-    for model, manager in ((_Order, default), (_AuditEntry, audit)):
+    for model, manager in ((_Order, default), (_Entry, audit)):
         compiled = get_compiled(model)
         assert compiled is not None
         async with manager.engine.begin() as connection:
             await connection.run_sync(compiled.metadata.create_all)
     try:
-        yield _Stores(
-            default=default,
-            audit=audit,
-            orders=RepositorySQLAlchemy(default, _Order, cursor_codec=codec),
-            entries=RepositorySQLAlchemy(audit, _AuditEntry, cursor_codec=codec),
-        )
+        yield _Stores(default, audit)
     finally:
+        FAILURES.clear()
         await default.dispose()
         await audit.dispose()
-
-
-async def _fail() -> None:
-    raise _UseCaseFailed
-
-
-async def _poison_default() -> None:
-    scope = current_scope()
-    assert scope is not None
-    scope.participants[DEFAULT_STORE].poison(_UseCaseFailed())
 
 
 def _raises(error: type[BaseException] | None) -> AbstractContextManager[object]:
     return nullcontext() if error is None else pytest.raises(error)
 
 
-class TestTwoTransactionalStores:
-    @pytest.mark.parametrize(
-        ("failures", "ran", "error"),
-        [
-            pytest.param({}, _all_lanes("default", "audit"), None, id="both-commit"),
-            pytest.param(
-                {AUDIT: _CommitRefused()},
-                _all_lanes("default"),
-                StoresNotCommitted,
-                id="audit-rolls-back-after-default-committed",
-            ),
-            pytest.param(
-                {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
-                ["default.priority", "audit.priority", "default.publish", "default.plain"],
-                StoresNotCommitted,
-                id="audit-uncertain-runs-its-priority-lane-only",
-            ),
-            pytest.param(
-                {DEFAULT_STORE: _CommitRefused()}, [], _CommitRefused, id="default-rolls-back-first"
-            ),
-        ],
+@pytest.mark.parametrize(
+    ("failures", "ran", "error"),
+    [
+        pytest.param(
+            {},
+            ["default.priority", "audit.priority", "events.priority"]
+            + ["default.publish", "audit.publish", "events.publish"]
+            + ["gathered", "default.plain", "read-only", "audit.plain", "events.plain"],
+            None,
+            id="every-store-commits",
+        ),
+        pytest.param(
+            {AUDIT: _Refused()},
+            ["default.priority", "events.priority", "default.publish", "events.publish"]
+            + ["default.plain", "read-only", "events.plain"],
+            StoresNotCommitted,
+            id="audit-rolls-back-after-default-committed",
+        ),
+        pytest.param(
+            {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
+            ["default.priority", "audit.priority", "events.priority"]
+            + ["default.publish", "events.publish", "default.plain", "read-only", "events.plain"],
+            StoresNotCommitted,
+            id="audit-uncertain-runs-its-priority-lane-only",
+        ),
+        pytest.param(
+            {DEFAULT_STORE: _Refused()},
+            ["events.priority", "events.publish", "events.plain"],
+            _Refused,
+            id="default-rolls-back-first",
+        ),
+    ],
+)
+async def test_each_store_runs_what_its_outcome_lets_run(
+    stores: _Stores,
+    failures: dict[StoreKey, BaseException],
+    ran: list[str],
+    error: type[BaseException] | None,
+) -> None:
+    FAILURES.update(failures)
+    use_case = _OnDefault(
+        stores.write_order(),
+        stores.queue("default"),
+        stores.gathered(),
+        stores.run(_OnDefault(stores.dispatch("read-only")), read_only=True),
+        stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
+        stores.run(_OnEvents(stores.queue("events"))),
     )
-    async def test_each_store_runs_what_its_outcome_lets_run(
-        self,
-        stores: _Stores,
-        failures: dict[StoreKey, BaseException],
-        ran: list[str],
-        error: type[BaseException] | None,
-    ) -> None:
-        stores.failures.update(failures)
-        steps = (stores.queue(), stores.on_audit())
 
-        with _raises(error):
-            await stores.run(*steps)
+    with _raises(error):
+        await stores.executor.execute(use_case)
 
-        assert stores.ran.labels == ran
+    assert stores.ran == ran
 
-    async def test_a_failed_use_case_runs_no_store_actions(self, stores: _Stores) -> None:
-        steps = (stores.queue(), stores.on_audit(), _fail)
 
-        with pytest.raises(_UseCaseFailed):
-            await stores.run(*steps)
+@pytest.mark.parametrize(
+    ("failures", "ran", "error"),
+    [
+        pytest.param({}, ["job.priority", "job.publish", "job.plain"], None, id="both-commit"),
+        pytest.param({AUDIT: _Refused()}, [], StoresNotCommitted, id="joined-rolls-back"),
+    ],
+)
+async def test_a_dispatch_runs_only_if_every_store_of_its_execution_committed(
+    stores: _Stores,
+    failures: dict[StoreKey, BaseException],
+    ran: list[str],
+    error: type[BaseException] | None,
+) -> None:
+    FAILURES.update(failures)
+    entries = cast("RepoFor[_Entry]", stores.entries)
+    use_case = _JoinsAudit(entries, stores.write_order(), stores.write_entry(), stores.queue("job"))
 
-        assert stores.ran.labels == []
+    with _raises(error):
+        await stores.executor.execute(use_case)
 
-    async def test_a_read_only_nested_execution_queues_for_the_store_around_it(
-        self, stores: _Stores
-    ) -> None:
-        stores.failures[AUDIT] = _CommitRefused()
-        read_only = stores.nested(_DispatchReadOnly(stores.ran), read_only=True)
-        steps = (read_only, stores.on_audit())
+    assert stores.ran == ran
 
-        with pytest.raises(StoresNotCommitted):
-            await stores.run(*steps)
 
-        assert stores.ran.labels == ["read-only.plain"]
+@pytest.mark.parametrize(
+    ("failing", "bumped", "error"),
+    [
+        pytest.param(DEFAULT_STORE, True, StoresNotCommitted, id="audit-committed"),
+        pytest.param(AUDIT, False, _Refused, id="audit-rolled-back"),
+    ],
+)
+async def test_a_cache_invalidation_follows_the_store_of_its_repository(
+    stores: _Stores, failing: StoreKey, bumped: bool, error: type[BaseException]
+) -> None:
+    FAILURES[failing] = _Refused()
+    backend = CountingCacheBackend()
+    cached = stores.cached_entries(backend)
+    use_case = _JoinsAudit(cached, stores.write_entry(cached), stores.write_order())
 
-    @pytest.mark.parametrize(
-        ("failing", "bumped", "error"),
-        [
-            pytest.param(DEFAULT_STORE, True, StoresNotCommitted, id="audit-committed"),
-            pytest.param(AUDIT, False, _CommitRefused, id="audit-rolled-back"),
-        ],
+    with pytest.raises(error):
+        await stores.executor.execute(use_case)
+
+    assert bool(backend.incr_keys) is bumped
+
+
+async def test_a_unit_of_work_entered_by_hand_bumps_inline(stores: _Stores) -> None:
+    backend = CountingCacheBackend()
+    cached = stores.cached_entries(backend)
+
+    async with SQLAlchemyUnitOfWork(stores.audit):
+        await cached.create(_New(ref="by hand"))
+        bumped_inside = bool(backend.incr_keys)
+
+    assert bumped_inside
+
+
+async def test_clearing_the_dispatches_keeps_every_cache_invalidation(stores: _Stores) -> None:
+    async def clear() -> None:
+        clear_pending_dispatches()
+
+    use_case = _OnDefault(
+        stores.write_order(),
+        stores.queue("default"),
+        stores.gathered(),
+        stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
+        clear,
     )
-    async def test_a_cache_invalidation_follows_the_store_of_its_repository(
-        self, stores: _Stores, failing: StoreKey, bumped: bool, error: type[BaseException]
-    ) -> None:
-        backend = CountingCacheBackend()
-        stores.failures[failing] = _CommitRefused()
-        use_case = _AuditFirst(
-            cast("RepoFor[_Order]", stores.orders), stores.cached_entries(backend)
-        )
 
-        with pytest.raises(error):
-            await stores.executor.execute(use_case)
+    await stores.executor.execute(use_case)
 
-        assert bool(backend.incr_keys) is bumped
-
-    @pytest.mark.parametrize(
-        ("failures", "ran", "error"),
-        [
-            pytest.param({}, ["gathered"], None, id="every-store-committed"),
-            pytest.param(
-                {AUDIT: _CommitRefused()}, [], StoresNotCommitted, id="a-store-did-not-commit"
-            ),
-        ],
-    )
-    async def test_an_action_no_store_holds_runs_only_if_every_store_committed(
-        self,
-        stores: _Stores,
-        failures: dict[StoreKey, BaseException],
-        ran: list[str],
-        error: type[BaseException] | None,
-    ) -> None:
-        stores.failures.update(failures)
-
-        async def gathered() -> None:  # a gather child does not own the scope
-            add_pending_dispatch(stores.ran.action("gathered"))
-
-        async def in_a_gather() -> None:
-            await asyncio.gather(gathered())
-
-        steps = (in_a_gather, stores.on_audit())
-
-        with _raises(error):
-            await stores.run(*steps)
-
-        assert [label for label in stores.ran.labels if label == "gathered"] == ran
+    assert stores.ran == ["default.priority", "audit.priority"]
 
 
-class TestStoreWithoutTransactions:
-    @pytest.mark.parametrize(
-        ("failures", "then", "ran", "error"),
-        [
-            pytest.param(
-                {DEFAULT_STORE: _CommitRefused()},
-                (),
-                _all_lanes("events"),
-                _CommitRefused,
-                id="default-rolls-back",
-            ),
-            pytest.param({}, (_fail,), ["events.priority"], _UseCaseFailed, id="use-case-fails"),
-            pytest.param(
-                {},
-                (_poison_default,),
-                ["events.priority"],
-                _UseCaseFailed,
-                id="invocation-poisoned",
-            ),
-        ],
-    )
-    async def test_it_runs_every_lane_unless_the_invocation_failed(
-        self,
-        stores: _Stores,
-        failures: dict[StoreKey, BaseException],
-        then: tuple[Step, ...],
-        ran: list[str],
-        error: type[BaseException],
-    ) -> None:
-        stores.failures.update(failures)
-        steps = (stores.queue(), stores.on_events(), *then)
+async def test_an_action_queued_after_the_settlement_never_runs(stores: _Stores) -> None:
+    FAILURES[AUDIT] = _Refused()
+    settled, queued = asyncio.Event(), asyncio.Event()
+    left_running: list[asyncio.Task[None]] = []
 
-        with pytest.raises(error):
-            await stores.run(*steps)
+    async def late() -> None:  # outlives the use case, sharing its context
+        await settled.wait()
+        add_pending_dispatch(stores.mark("late"))
+        queued.set()
 
-        assert stores.ran.labels == ran
+    async def wait_for_late() -> None:  # runs in the drain, after the settlement
+        settled.set()
+        await queued.wait()
 
+    async def spawn() -> None:
+        channel = store_channel()
+        assert channel is not None
+        channel.enqueue_priority(wait_for_late)
+        left_running.append(asyncio.create_task(late()))
 
-class _Gate:
-    """A priority action that parks until released."""
+    use_case = _OnDefault(stores.write_order(), spawn, stores.run(_OnAudit(stores.write_entry())))
 
-    def __init__(self) -> None:
-        self.started, self.release = asyncio.Event(), asyncio.Event()
+    with pytest.raises(StoresNotCommitted):
+        await stores.executor.execute(use_case)
+    await left_running[0]
 
-    async def __call__(self) -> None:
-        self.started.set()
-        await self.release.wait()
+    assert stores.ran == []
 
 
 async def test_a_cancellation_after_the_commit_still_runs_every_stores_shielded_lanes(
     stores: _Stores,
 ) -> None:
-    gate = _Gate()
+    started, release, published = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
-    async def park_default() -> None:
+    async def gate() -> None:
+        started.set()
+        await release.wait()
+
+    async def park() -> None:
         channel = store_channel()
         assert channel is not None
         channel.enqueue_priority(gate)
 
-    task = asyncio.create_task(stores.run(park_default, stores.queue(), stores.on_audit()))
-    await gate.started.wait()
+    async def publish() -> None:
+        add_pending_publish(published.set)
+
+    use_case = _OnDefault(
+        stores.write_order(),
+        park,
+        stores.queue("default"),
+        stores.run(_OnAudit(stores.write_entry(), publish)),
+    )
+    task = asyncio.create_task(stores.executor.execute(use_case))
+    await started.wait()
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    gate.release.set()
-    await stores.ran.seen("audit.publish").wait()
+    release.set()
+    await published.wait()
 
-    assert stores.ran.labels == [
-        "default.priority",
-        "audit.priority",
-        "default.publish",
-        "audit.publish",
+    assert stores.ran == ["default.priority", "default.publish"]
+
+
+async def test_sqs_jobs_leave_in_one_batch_per_store(stores: _Stores) -> None:
+    client = SQSClient()
+    service = sqs_service(client)
+    ids: list[str] = []
+
+    async def dispatch() -> None:
+        ids.append(service.dispatch(EmailJob).job_id)
+
+    use_case = _OnDefault(
+        stores.write_order(), dispatch, stores.run(_OnAudit(stores.write_entry(), dispatch))
+    )
+
+    await stores.executor.execute(use_case)
+
+    assert client.batches == [(SQS_URL, [ids[0]]), (SQS_URL, [ids[1]])]
+
+
+class _FailsWhenDone:
+    def on_event(self, event: RuntimeEvent) -> None:
+        if event.kind is EventKind.EXEC_DONE:
+            raise _Failed
+
+
+async def test_a_failing_metrics_adapter_does_not_skip_the_actions(stores: _Stores) -> None:
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), uow_factory=_Sql(stores.default), metrics=_FailsWhenDone()
+    )
+    use_case = _OnDefault(stores.write_order(), stores.queue("default"))
+
+    with pytest.raises(_Failed):
+        await executor.execute(use_case)
+
+    assert stores.ran == ["default.priority", "default.publish", "default.plain"]
+
+
+async def _poison() -> None:
+    scope = current_scope()
+    assert scope is not None
+    scope.participants[DEFAULT_STORE].poison(_Failed())
+
+
+async def _fail() -> None:
+    raise _Failed
+
+
+@pytest.mark.parametrize("failure", [_fail, _poison], ids=["use-case-fails", "poisoned"])
+async def test_one_store_without_transactions_in_a_failed_invocation_runs_its_priority_lane(
+    stores: _Stores, failure: Step
+) -> None:
+    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=_NoTransactions())
+    use_case = _OnDefault(stores.queue("default"), stores.gathered(), failure)
+
+    with pytest.raises(_Failed):
+        await executor.execute(use_case)
+
+    assert stores.ran == ["default.priority"]
+
+
+class _Send:
+    """A broker send naming its job and task for the logs, never its payload."""
+
+    def __call__(self) -> None:
+        raise AssertionError("an uncertain store's send must not run")
+
+    def log_fields(self) -> list[dict[str, object]]:
+        return [{"job_name": "EmailJob", "task_id": "task-1"}]
+
+
+async def test_the_dispatches_an_uncertain_store_drops_are_logged_by_job_and_task(
+    stores: _Stores, caplog: pytest.LogCaptureFixture
+) -> None:
+    FAILURES[AUDIT] = CommitUncertain(ConnectionError("ack lost"))
+
+    async def send() -> None:
+        add_pending_publish(_Send())
+
+    use_case = _OnDefault(stores.write_order(), stores.run(_OnAudit(stores.write_entry(), send)))
+
+    with pytest.raises(StoresNotCommitted):
+        await stores.executor.execute(use_case)
+
+    (fields,) = [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
     ]
-
-
-class _AuditService:
-    """A ``@transactional`` service writing through a cached audit repository."""
-
-    def __init__(self, session_manager: SessionManager, entries: RepoFor[_AuditEntry]) -> None:
-        self.session_manager = session_manager
-        self.entries = entries
-        self.bumped_inside: bool | None = None
-
-    @transactional
-    async def write(self, backend: CountingCacheBackend) -> None:
-        await self.entries.create(_NewEntry(note="service"))
-        self.bumped_inside = bool(backend.incr_keys)
-
-
-class TestOutsideTheExecutor:
-    async def test_a_unit_of_work_entered_by_hand_bumps_inline(self, stores: _Stores) -> None:
-        backend = CountingCacheBackend()
-        entries = stores.cached_entries(backend)
-
-        async with SQLAlchemyUnitOfWork(stores.audit):
-            await entries.create(_NewEntry(note="by hand"))
-            bumped_inside = bool(backend.incr_keys)
-
-        assert bumped_inside
-
-    async def test_transactional_bumps_after_its_commit(self, stores: _Stores) -> None:
-        backend = CountingCacheBackend()
-        service = _AuditService(stores.audit, stores.cached_entries(backend))
-
-        await service.write(backend)
-
-        assert (service.bumped_inside, bool(backend.incr_keys)) == (False, True)
+    assert (fields["job_name"], fields["task_id"]) == ("EmailJob", "task-1")

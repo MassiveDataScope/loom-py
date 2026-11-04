@@ -252,10 +252,10 @@ class InvocationScope:
         outcome: Set by the coordinator when it ends the participants.
         identity: The ambient identity when the scope opened; an execution
             joining it must run as this identity.
-        post_commit: The channel its owner drains once the scope ended; while
-            set, each store's post-commit actions wait in
-            :attr:`store_channels` for :meth:`settle_post_commit`.
-        store_channels: The post-commit actions of each store, by store.
+        post_commit: The channel its owner bound, holding the actions no
+            store holds; while set, the others wait in :attr:`store_channels`
+            for :meth:`settle_post_commit`.
+        store_channels: The post-commit actions, by the stores they depend on.
     """
 
     owner_task: asyncio.Task[Any] | None
@@ -266,7 +266,7 @@ class InvocationScope:
     outcome: InvocationOutcome | None = None
     identity: Identity = ANONYMOUS
     post_commit: PostCommitChannel | None = None
-    store_channels: dict[StoreKey, PostCommitChannel] = field(default_factory=dict)
+    store_channels: dict[frozenset[StoreKey], PostCommitChannel] = field(default_factory=dict)
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
 
     def require_owner(self) -> None:
@@ -356,31 +356,40 @@ class InvocationScope:
             "inject its repository as Joined[...] to write to it"
         )
 
-    def settle_post_commit(self, error: BaseException | None) -> None:
-        """Move into :attr:`post_commit` the actions each store's outcome lets run.
+    @property
+    def poisoned(self) -> BaseException | None:
+        """Why the invocation must not succeed: the first poisoned participant's cause."""
+        return next((p.poisoned for p in self.participants.values() if p.poisoned), None)
 
-        A store that committed, or wrote without a transaction, runs all its
-        actions, unless the body failed or a participant was poisoned. An
-        ``Uncertain`` store, or a non-transactional one in a failed body, runs
-        only its priority lane: a cache invalidation is safe whether or not its
-        write landed. A rolled-back store runs none. Actions no store holds
-        stay on :attr:`post_commit` only if the whole invocation succeeded.
+    def settle_post_commit(self, into: PostCommitChannel, error: BaseException | None) -> None:
+        """Move into ``into`` the post-commit actions the stores' outcomes let run.
+
+        Each group of actions runs by the stores it depends on (a cache
+        invalidation on its repository's store, a job dispatch on every store
+        of the execution that queued it): every lane if all of them
+        committed, or wrote without a transaction, in an invocation that
+        neither failed nor was poisoned; only the priority lane if one is
+        ``Uncertain`` or non-transactional in a failed invocation, since a
+        cache invalidation is safe whether or not the write landed; nothing
+        if one rolled back. Actions no store holds, on :attr:`post_commit`,
+        run only if the whole invocation succeeded. What reaches
+        :attr:`post_commit` after this call never runs.
 
         Args:
+            into: The channel the owner drains next.
             error: The exception the invocation's body raised, or ``None``.
         """
-        into, outcome = self.post_commit, self.outcome
-        if into is None:
+        outcome, unowned = self.outcome, self.post_commit
+        if outcome is None or unowned is None:
             return
-        if error is not None or outcome is None or not outcome.succeeded:
-            into.discard()
-        failed = error is not None or any(
-            p.poisoned is not None for p in self.participants.values()
-        )
-        for store in () if outcome is None else outcome.stores:
-            channel = self.store_channels.get(store.key)
-            if channel is not None and not isinstance(store, RolledBack):
-                into.adopt(channel, priority_only=failed or isinstance(store, Uncertain))
+        failed = error is not None or self.poisoned is not None
+        if not failed and outcome.succeeded:
+            into.adopt(unowned)
+        lanes = {store.key: _lanes(store, failed=failed) for store in outcome.stores}
+        for owners, channel in self.store_channels.items():
+            allowed = min(lanes.get(key, _NO_LANE) for key in owners)
+            if allowed != _NO_LANE:
+                into.adopt(channel, priority_only=allowed == _PRIORITY_LANE)
 
     @asynccontextmanager
     async def frame(self, frame: Frame) -> AsyncIterator[None]:
@@ -401,6 +410,18 @@ class InvocationScope:
             yield
         finally:
             self.frames.pop()
+
+
+_NO_LANE, _PRIORITY_LANE, _EVERY_LANE = 0, 1, 2
+
+
+def _lanes(store: StoreOutcome, *, failed: bool) -> int:
+    """Which lanes of the actions depending on ``store`` may run, given its outcome."""
+    if isinstance(store, RolledBack):
+        return _NO_LANE
+    if failed or isinstance(store, Uncertain):
+        return _PRIORITY_LANE
+    return _EVERY_LANE
 
 
 def _described(owner: object) -> str:
@@ -554,7 +575,7 @@ async def single_store(key: StoreKey, unit_of_work: UnitOfWork) -> AsyncIterator
         async with scope.frame(Frame(key)):
             yield scope
         outcome = await coordinator.finish(scope, None)
-    failure = invocation_error(outcome, None)
+    failure = invocation_error(outcome, scope.poisoned)
     if failure is not None:
         raise failure
 

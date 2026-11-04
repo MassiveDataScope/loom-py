@@ -87,12 +87,12 @@ class _ExecutionState:
 
     ``phase`` names the lifecycle step in flight so a failure can be
     reported with the ``error_kind`` of the step that raised; it is
-    ``commit`` from the flush on. ``settled`` is set once the coordinator
-    has ended the invocation scope this execution owns and the scope moved
-    into the channel the actions its stores' outcomes let run;
-    :meth:`RuntimeExecutor._run_lifecycle` then drains the channel even on
-    failure — a write already committed must never lose its queued
-    invalidations to another store's failure or an unrelated teardown one.
+    ``commit`` from the flush on. ``post_commit`` is set once the
+    coordinator has ended the invocation scope this execution owns: the
+    actions its stores' outcomes let run, which
+    :meth:`RuntimeExecutor._run_lifecycle` drains even on failure — a write
+    already committed must never lose its queued invalidations to another
+    store's failure or an unrelated teardown one.
     """
 
     use_case_name: str
@@ -102,7 +102,7 @@ class _ExecutionState:
     phase: str = _ERROR_KIND_BEGIN
     pipeline_ms: float | None = None
     commit_ms: float | None = None
-    settled: bool = False
+    post_commit: PostCommitChannel | None = None
 
     def elapsed_ms(self) -> float:
         return (time.perf_counter() - self.start) * 1000
@@ -490,11 +490,11 @@ class RuntimeExecutor:
                     result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
-            # accounted for and re-raised.  Once ``state.settled``, the
-            # channel holds only the actions of stores whose writes may be
-            # durable, so they run even though the invocation failed (another
-            # store did not commit, or resetting the scope's token raised).
-            # Before that, nothing durable happened: discard.
+            # accounted for and re-raised.  ``state.post_commit`` holds only
+            # the actions of stores whose writes may be durable, so they run
+            # even though the invocation failed (another store did not commit,
+            # or resetting the scope's token raised).  Without it, nothing
+            # durable happened: discard.
             #
             # Unbound here, before either branch, not left to the trailing
             # ``finally``: a drain must never run with its own channel still
@@ -505,17 +505,22 @@ class RuntimeExecutor:
             # ``finally`` below does not unbind a second time.
             self._unbind(channel_token)
             channel_token = None
-            if channel is not None and state.settled:
-                await self._drain_committed_channel_logging_failure(channel)
+            if state.post_commit is not None:
+                await self._drain_committed_channel_logging_failure(state.post_commit)
             else:
                 self._discard(channel)
             self._handle_failure(state, exc)
             raise
         finally:
             self._unbind(channel_token)
-        self._handle_success(state)
-        if channel is not None:
-            await channel.drain(committed=owned is not None)
+        try:
+            self._handle_success(state)
+        finally:
+            # In a ``finally``: a failing metrics adapter must not skip the
+            # actions of a committed invocation.
+            settled = state.post_commit if state.post_commit is not None else channel
+            if settled is not None:
+                await settled.drain(committed=owned is not None)
         return result
 
     async def _run_in_invocation(
@@ -544,9 +549,9 @@ class RuntimeExecutor:
             finally:
                 # ``finish`` records the outcome before it raises an
                 # interruption caught while ending a store (a cancelled close).
-                scope.settle_post_commit(error)
-                state.settled = True
-        failure = invocation_error(outcome, error)
+                state.post_commit = PostCommitChannel()
+                scope.settle_post_commit(state.post_commit, error)
+        failure = invocation_error(outcome, error or scope.poisoned)
         if failure is not None:
             raise failure
         return result

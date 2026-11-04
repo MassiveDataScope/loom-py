@@ -142,20 +142,28 @@ class PostCommitChannel:
 
         Args:
             other: Channel whose actions move here.
-            priority_only: Move only its priority actions and drop the rest.
+            priority_only: Move only its priority actions; the others are
+                logged as never ran (:func:`log_never_ran`) and dropped.
         """
         self._priority_actions += other._priority_actions
-        if not priority_only:
+        if priority_only:
+            for action in (*other._publish_actions, *other._actions):
+                log_never_ran(action)
+        else:
             self._publish_actions += other._publish_actions
             self._actions += other._actions
         other.discard()
 
-    def discard(self) -> None:
-        """Drop every queued action without running it."""
+    def discard_dispatches(self) -> None:
+        """Drop the publish and plain actions, keeping the priority ones (cache invalidations)."""
         self._publish_groups.clear()
-        self._priority_actions.clear()
         self._publish_actions.clear()
         self._actions.clear()
+
+    def discard(self) -> None:
+        """Drop every queued action without running it."""
+        self.discard_dispatches()
+        self._priority_actions.clear()
 
     async def drain(self, *, committed: bool) -> None:
         """Run every queued action; a failing one does not stop the others.
@@ -296,21 +304,26 @@ def active_channel() -> PostCommitChannel | None:
 
 
 def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
-    """Return the channel an action owned by ``store`` is queued on.
+    """Return the channel an action that depends on ``store`` is queued on.
 
     In an invocation scope that settles its actions by store, owned by this
-    task, that is the channel of ``store``, or with ``None`` of the store the
-    running execution writes to, once that store is enlisted. Anywhere else
-    it is :func:`active_channel`.
+    task, that is the channel of the stores the action depends on: ``store``
+    alone (a cache invalidation), or with ``None`` every store of the running
+    execution (a job dispatch: its primary and ``Joined`` stores), once
+    enlisted. Anywhere else it is :func:`active_channel`.
 
     Args:
-        store: Store the action belongs to; ``None`` for the running
-            execution's own store.
+        store: Store the action depends on; ``None`` for the running
+            execution's stores.
     """
     scope = current_scope()
     if scope is None or scope.post_commit is None or not scope.owned_here():
         return active_channel()
-    key = store or next((f.primary for f in reversed(scope.frames) if f.primary), None)
-    if key is None or key not in scope.participants:
+    running = next((f.stores for f in reversed(scope.frames) if f.primary), ())
+    owners = frozenset((store,) if store else running)
+    if not owners or not owners <= scope.participants.keys():
         return active_channel()
-    return scope.store_channels.setdefault(key, PostCommitChannel())
+    channel = scope.store_channels.get(owners)
+    if channel is None:
+        channel = scope.store_channels[owners] = PostCommitChannel()
+    return channel

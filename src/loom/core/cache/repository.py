@@ -43,7 +43,7 @@ from loom.core.model.introspection import (
 )
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
-from loom.core.persistence.stores import StoreKey, store_of
+from loom.core.persistence.stores import store_of
 from loom.core.projection.loaders import resolve_model_reference
 from loom.core.repository import FilterParams, MutationEvent, PageParams, PageResult, Repository
 from loom.core.repository.abc.query import (
@@ -153,12 +153,6 @@ class _PrimaryKey(NamedTuple):
 _FALLBACK_PRIMARY_KEY = _PrimaryKey(attributes=("id",), python_types=(None,))
 
 
-def _model_store(repository: Repository[Any, Any, Any, Any]) -> StoreKey | None:
-    """The store of the wrapped repository's model; ``None`` without a model."""
-    model = getattr(repository, "model", None)
-    return store_of(model) if isinstance(model, type) else None
-
-
 def _resolve_primary_key(repository: Repository[Any, Any, Any, Any]) -> _PrimaryKey:
     """Resolve the primary key of the wrapped repository's model.
 
@@ -253,7 +247,8 @@ class CachedRepository(
         self._entity_name = getattr(repository, "entity_name", fallback_name)
         self._depends_on = self._parse_dependency_specs(self._collect_dependency_specs(repository))
         self._primary_key = _resolve_primary_key(repository)
-        self._store = _model_store(repository)
+        model = getattr(repository, "model", None)
+        self._store = store_of(model) if isinstance(model, type) else None
         self._single_flight = SingleFlight(self._log_abandoned_load)
         self._rng = random.Random()
         self._log = get_logger(__name__).bind(repository=repository.__class__.__name__)
