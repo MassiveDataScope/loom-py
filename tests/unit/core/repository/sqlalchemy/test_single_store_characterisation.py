@@ -35,7 +35,6 @@ from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import ForeignSessionError, transactional
 from loom.core.repository.sqlalchemy.uow import (
@@ -46,6 +45,7 @@ from loom.core.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
 from tests.helpers.composition import ProjectFactory, fixture_project
+from tests.helpers.elevation import sink_for
 
 __all__ = ["fixture_project"]
 
@@ -443,7 +443,7 @@ async def test_an_elevation_sink_of_another_store_refuses_to_set_a_flag(
     two_stores: tuple[SessionManager, SessionManager, Path, Path],
 ) -> None:
     first, second, _, _ = two_stores
-    sink = SQLAlchemyElevationSink(second)
+    sink = sink_for(second, "editor")
 
     async with SQLAlchemyUnitOfWork(first):
         with pytest.raises(ForeignSessionError, match="cannot join the active session"):
@@ -454,11 +454,12 @@ async def test_an_elevation_sink_of_another_store_refuses_its_transaction(
     two_stores: tuple[SessionManager, SessionManager, Path, Path],
 ) -> None:
     first, second, _, _ = two_stores
-    sink = SQLAlchemyElevationSink(second)
+    sink = sink_for(second, "editor")
+    editor = frozenset({"editor"})
 
     async with SQLAlchemyUnitOfWork(first):
         with pytest.raises(ForeignSessionError, match="cannot join the active session"):
-            sink.in_transaction()
+            sink.in_transaction(editor)
 
 
 _WRITE = Permission("rows.write")
@@ -474,7 +475,7 @@ async def test_an_elevation_refused_by_another_store_leaves_the_scope_unelevated
 
     async with (
         SQLAlchemyUnitOfWork(first),
-        elevation_scope(owns_transaction=False, sink=SQLAlchemyElevationSink(second)),
+        elevation_scope(owns_transaction=False, sink=sink_for(second, "editor")),
     ):
         with pytest.raises(ForeignSessionError, match="cannot join the active session"):
             await elevate_scope(

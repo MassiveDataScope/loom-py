@@ -13,8 +13,6 @@ from sqlalchemy import MetaData, Time, inspect, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.pool import QueuePool
 
-from loom.core.authz.elevation import ElevationSink
-from loom.core.authz.product import load_authz_product
 from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
 from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
@@ -41,10 +39,7 @@ from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls.elevate import (
-    SQLAlchemyElevationSink,
-    validate_elevations,
-)
+from loom.core.repository.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.rls.integrity import OWNER_TRIGGER, startup_problems
 from loom.core.repository.sqlalchemy.rls.provider import DeferredScopedSettings, install_pool_reset
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
@@ -138,6 +133,7 @@ class SQLAlchemyBackend:
         module: Callable[[LoomContainer], None]
         prepare: Callable[[Sequence[type[BaseModel]]], None]
         check: Callable[[_Store], Awaitable[None]]
+        elevation: SQLAlchemyStoreElevation | None = None
         if runtime.connection_only:  # no repository is served
             # metadata=None: the manager serves the shared metadata, where the
             # caller's own compile_all() put its models.
@@ -154,12 +150,8 @@ class SQLAlchemyBackend:
             # Before the engine: an invalid persistence.cursors fails with none built.
             cursor_codec = CursorCodec.from_context(ctx)
             session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, metadata)
-            module = _with_elevation_sink(
-                build_sqlalchemy_repository_registration_module(
-                    session_manager, models, cursor_codec=cursor_codec
-                ),
-                session_manager,
-                enabled=settings is not None,
+            module = build_sqlalchemy_repository_registration_module(
+                session_manager, models, cursor_codec=cursor_codec
             )
             prepare = functools.partial(
                 _prepare_models,
@@ -168,6 +160,8 @@ class SQLAlchemyBackend:
                 settings=settings,
             )
             check = _run_startup_checks
+            if settings is not None:
+                elevation = SQLAlchemyStoreElevation(session_manager)
         store = _Store(path=spec.path, schema=db_cfg.schema, session_manager=session_manager)
         return PersistenceWiring(
             uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
@@ -176,6 +170,7 @@ class SQLAlchemyBackend:
             prepare_models=prepare,
             startup_checks=functools.partial(check, store),
             readiness=lambda: _readiness(session_manager),
+            elevation=elevation,
         )
 
 
@@ -210,22 +205,6 @@ def _register_session_manager(session_manager: SessionManager, container: LoomCo
     container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
 
 
-def _with_elevation_sink(
-    module: Callable[[LoomContainer], None],
-    session_manager: SessionManager,
-    *,
-    enabled: bool,
-) -> Callable[[LoomContainer], None]:
-    if not enabled:
-        return module
-
-    def register(container: LoomContainer) -> None:
-        module(container)
-        container.register_instance(ElevationSink, SQLAlchemyElevationSink(session_manager))
-
-    return register
-
-
 def _prepare_models(
     models: Sequence[type[BaseModel]],
     *,
@@ -248,11 +227,7 @@ def _prepare_models(
     compile_all(*models, metadata=metadata)
     if settings is None:
         return
-    scoped = scoped_tables(metadata)
-    settings.bind(scoped)
-    product = load_authz_product()
-    if product is not None:
-        validate_elevations(product, scoped)
+    settings.bind(scoped_tables(metadata))
 
 
 async def _readiness(session_manager: SessionManager) -> bool:

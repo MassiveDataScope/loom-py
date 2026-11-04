@@ -15,14 +15,10 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import elevation_scope
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.repository.sqlalchemy.rls import (
-    SQLAlchemyElevationSink,
-    create_schema,
-    elevate,
-    rls_session_settings,
-)
+from loom.core.repository.sqlalchemy.rls import create_schema, elevate, rls_session_settings
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.helpers.elevation import sink_for
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
     FLAG,
@@ -50,9 +46,7 @@ async def test_read_then_authorize_sets_the_flag_on_the_open_transaction_and_com
         async with SQLAlchemyUnitOfWork(manager):
             session = manager.active_session
             assert session is not None
-            async with elevation_scope(
-                owns_transaction=True, sink=SQLAlchemyElevationSink(manager)
-            ):
+            async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
                 assert (await session.execute(text("SELECT count(*) FROM notes"))).scalar() == 2
                 assert (await session.execute(text(FLAG))).scalar() == ""
 
@@ -84,7 +78,7 @@ async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
     decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
     identity = set_identity(Identity(subject=U1))
     try:
-        async with elevation_scope(owns_transaction=True, sink=SQLAlchemyElevationSink(manager)):
+        async with elevation_scope(owns_transaction=True, sink=sink_for(manager, "editor")):
             await elevate("editor", decision, at=Scope.of(U1))
             async with manager.session() as session:
                 assert (await session.execute(text(FLAG))).scalar() == "on"
@@ -112,7 +106,7 @@ async def _nested_elevation(
     manager: SessionManager, decision: Decision
 ) -> tuple[str, str, int, int]:
     """Write, run a nested execution that elevates ``editor``, write again; one unit of work."""
-    sink = SQLAlchemyElevationSink(manager)
+    sink = sink_for(manager, "editor")
     insert = "INSERT INTO notes (owner_id, editor, body) VALUES ('" + U1 + "', 'ana', :body)"
     async with (
         elevation_scope(owns_transaction=True, sink=sink),

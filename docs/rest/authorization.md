@@ -316,9 +316,12 @@ none is registered; {func}`~loom.core.authz.product.register_authz_product` inst
 for the process ahead of the entry point, which is what tests use.
 {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
 `elevations` names a scope that no compiled model declares, or one that is not elevable.
-The standard SQLAlchemy backend calls it at startup, with the compiled scoped tables,
-when `stores.default.schema.mode` is `external` on Postgres; it remains available for
-programmatic use.
+It also raises `ElevableScopeInSeveralStores`
+(`ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES`) when a scope that is elevable, or
+named in `elevations`, is declared by two or more stores: an elevation must reach exactly
+one store. A shared scope that is never elevated stays allowed. The composition calls it
+at startup with the compiled scoped tables of every store whose `schema.mode` is
+`external` on Postgres; it remains available for programmatic use.
 
 ## Elevating a write scope
 
@@ -361,16 +364,23 @@ lives:
 
 - the flag is transaction-local: the session-settings provider emits `'on'` in every
   transaction that begins while the frame holds the scope, and `''` otherwise;
-- elevating after a read in the same unit of work also flags the open transaction, through
-  the executor's elevation sink,
-  {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink`; the standard
-  SQLAlchemy backend registers it in the container in `external` mode on Postgres, and a
-  kernel built by hand registers an `ElevationSink` through one of its `modules`;
+- elevating after a read in the same unit of work also flags the open transaction of the
+  store that declares the scope, and no other store's, through the executor's elevation
+  sink, {class}`~loom.core.persistence.elevation.ScopedElevationSink`. The composition
+  registers it once, over every store whose wiring exposes an elevation
+  ({class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyStoreElevation` in `external`
+  mode on Postgres); a kernel built by hand registers an `ElevationSink` through one of its
+  `modules`. Elevating from a task other than the execution's own (a `gather` child)
+  while the scope's store is enlisted raises
+  {class}`~loom.core.uow.scope.ScopeOwnershipError` and elevates nothing;
 - an elevation is never inherited: invoking another use case after `elevate` in the same
   execution raises {class}`~loom.core.uow.scope.NestedElevation`; elevate inside the
   nested use case instead, or dispatch a job, which runs after the execution ends;
 - a nested execution that elevates clears on exit what it added; when that clearing
-  fails, the session is invalidated, so no flag outlives the execution that set it;
+  fails, the session is invalidated and the nested execution raises the failure (the
+  invalidation's own, chained from it, when that fails too). The invocation then commits
+  nothing, in any store, even when a parent use case catches that error: it fails with
+  the clearing failure, so no flag outlives the execution that set it;
 - a task spawned during the execution shares the frame and loses the elevation when the
   execution ends;
 - post-commit actions and the next execution on the same pooled connection are not

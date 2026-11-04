@@ -22,6 +22,7 @@ from loom.core.persistence.profile import BackendRuntime
 from loom.core.uow.abc import UnitOfWorkFactory
 
 if TYPE_CHECKING:
+    from loom.core.persistence.elevation import StoreElevation
     from loom.core.persistence.stores import StoreCapabilities, StoreSpec
 
 
@@ -62,6 +63,10 @@ class PersistenceWiring:
         startup_checks: Schema and role checks. When they finish, a queued
             pool holds no connection. Defaults to :func:`no_startup_checks`.
         readiness: Optional asynchronous readiness probe.
+        elevation: How the store's open transaction gets elevation flags;
+            ``None`` when its sessions carry none. The composition hands
+            every store's to one
+            :class:`~loom.core.persistence.elevation.ScopedElevationSink`.
     """
 
     uow_factory: UnitOfWorkFactory | None
@@ -70,6 +75,7 @@ class PersistenceWiring:
     prepare_models: Callable[[Sequence[type[BaseModel]]], None] = no_model_preparation
     startup_checks: Callable[[], Awaitable[None]] = no_startup_checks
     readiness: Callable[[], Awaitable[bool]] | None = None
+    elevation: StoreElevation | None = None
 
 
 class PersistenceBackend(Protocol):

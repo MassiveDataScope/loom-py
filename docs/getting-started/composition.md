@@ -269,6 +269,11 @@ request or task:
   [Caller bindings and framework defaults](#caller-bindings-and-framework-defaults)).
   It is an entry of the `IssueCode` catalogue and carries a `CompileIssue`
   naming the binding.
+- `ElevableScopeInSeveralStores` (`loom.core.persistence.elevation`, code
+  `ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES`): a scope that is
+  elevable, or named in `AuthzProduct.elevations`, is declared by two or more
+  stores, so an elevation could not reach exactly one of them. It is a
+  `ConfigError` and carries a `CompileIssue` naming the scope.
 - `DeployCheckError` — a deploy check of level error in production or
   staging.
 

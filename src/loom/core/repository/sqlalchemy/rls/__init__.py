@@ -7,6 +7,7 @@ never names anything itself.
 
 from __future__ import annotations
 
+from loom.core.persistence.elevation import validate_elevations
 from loom.core.repository.sqlalchemy.rls.bootstrap import (
     MIN_SERVER_VERSION_NUM,
     apply_bootstrap,
@@ -16,11 +17,7 @@ from loom.core.repository.sqlalchemy.rls.config import (
     DatabaseRoles,
     DatabaseUser,
 )
-from loom.core.repository.sqlalchemy.rls.elevate import (
-    SQLAlchemyElevationSink,
-    elevate,
-    validate_elevations,
-)
+from loom.core.repository.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation, elevate
 from loom.core.repository.sqlalchemy.rls.partitions import (
     detach_range_partitions,
     ensure_range_partitions,
@@ -38,7 +35,7 @@ __all__ = [
     "Report",
     "DatabaseRoles",
     "DatabaseUser",
-    "SQLAlchemyElevationSink",
+    "SQLAlchemyStoreElevation",
     "SchemaNames",
     "apply_bootstrap",
     "create_schema",

@@ -205,6 +205,10 @@ class SessionManager:
     async def session(self) -> AsyncIterator[AsyncSession]:
         """Yield a scoped async session that is automatically closed on exit.
 
+        Outside the invocation's transaction: a session begun while the
+        execution holds an elevation keeps that flag until its own
+        transaction ends, even after the execution's frame closes.
+
         Yields:
             An ``AsyncSession`` bound to the managed engine.
         """

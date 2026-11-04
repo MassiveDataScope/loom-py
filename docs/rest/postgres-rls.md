@@ -410,13 +410,18 @@ standard SQLAlchemy backend:
   when a connection returns to the pool;
 - binds the provider at startup to the compiled scoped tables and validates the bindings
   of `stores.default.schema.scopes` against the scopes they declare;
-- validates the registered product's `elevations` with
-  {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations`;
-- registers {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyElevationSink` in the
-  container as the `ElevationSink`, which the kernel hands to the executor.
+- exposes {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyStoreElevation` as the
+  store's `elevation`, which sets and clears flags on that store's transaction only.
 
-A kernel built by hand registers an `ElevationSink` through one of its `modules`. In
-`create_all` mode, or on another dialect, the backend installs none of this.
+The composition then validates the registered product's `elevations` against every such
+store with {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations`, and registers
+one {class}`~loom.core.persistence.elevation.ScopedElevationSink` over them as the
+`ElevationSink`, which the kernel hands to the executor.
+
+A kernel built by hand registers an `ElevationSink` through one of its `modules`, for
+example `ScopedElevationSink({DEFAULT_STORE: SQLAlchemyStoreElevation(manager)},
+{DEFAULT_STORE: frozenset({"editor"})})`. In `create_all` mode, or on another dialect, the
+backend installs none of this.
 
 The provider never returns `None`. In every outer transaction it emits every declared
 key: the value or `''` for each scope, `'on'` or `''` for each elevation flag. A residue on
