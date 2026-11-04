@@ -9,6 +9,22 @@
   `celery.queues`, but Celery's default queue, go to Celery through the new
   `JobRouter`. Use cases keep
   injecting `JobService`.
+- **jobs:** `app.job_service: sqs` (extra `loom[sqs]`) sends each job to the
+  SQS queue `sqs.queues` maps its queue to, after the commit, as the
+  `JobEnvelope` the Lambda SQS adapter runs. `sqs:` inherits `aws:`.
+  FIFO queues take the SHA-256 of the new `Job.__group_by__` payload field as
+  `MessageGroupId`. Callbacks, priorities, delays SQS cannot honour and bodies
+  over 256 KiB raise `SQSDispatchError`; unmapped queues stop startup.
+
+### config
+
+- **config:** a top-level `aws:` section (`region`, `url`, `profile`, `pool`,
+  timeouts and retries; no credentials) sets the AWS client defaults every
+  AWS product inherits: `dynamodb` stores, `storage.dynamodb`, the `secrets`
+  and `ssm` resolvers (which read it as written and refuse a placeholder in
+  it) and the SNS notifier (from the flow's YAML; the topic's region wins).
+  A product's own keys override it key by key; without `aws:` nothing changes.
+  No `config.overridable` entry may open `aws` or `sqs.queues`.
 
 ### etl
 

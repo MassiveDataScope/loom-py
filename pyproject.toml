@@ -51,6 +51,9 @@ clickhouse = [
 dynamodb = [
     "boto3>=1.35",
 ]
+sqs = [
+    "boto3>=1.35",
+]
 mongo = [
     "pymongo>=4.9,<5.0",
 ]

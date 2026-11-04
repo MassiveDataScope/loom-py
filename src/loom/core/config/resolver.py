@@ -93,8 +93,9 @@ class ConfigResolver(Protocol):
 def default_resolvers() -> tuple[ConfigResolver, ...]:
     """Return loom's built-in resolvers: ``secrets`` and ``ssm``.
 
-    Both use the AWS SDK's default region and credential chain and create
-    their client lazily on the first resolution.
+    Both build their client lazily on the first resolution from the ``aws:``
+    section of the configuration they resolve, as written, and the AWS SDK's
+    default credential chain.
 
     Returns:
         A :class:`~loom.core.config.secrets.SecretsManagerResolver` followed

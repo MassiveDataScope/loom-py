@@ -17,13 +17,15 @@ import logging
 from typing import Any
 
 from loom.core.config._resolver_utils import (
-    _aws_error_code,
+    CLIENT,
     _expand_env_vars,
     _navigate_json,
     _split_resolver_key,
     aws_client,
+    root_cache,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.connections.aws import aws_error_code
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,7 @@ def _fetch_secret(client: Any, name: str, *, label: str) -> str:
         result = client.get_secret_value(SecretId=name)
     except Exception as exc:
         raise ConfigError(
-            f"Failed to fetch Secrets Manager secret {label!r}: {_aws_error_code(exc)}"
+            f"Failed to fetch Secrets Manager secret {label!r}: {aws_error_code(exc)}"
         ) from exc
     if "SecretString" not in result:
         raise ConfigError(
@@ -65,7 +67,7 @@ class SecretsManagerResolver:
     """Resolves AWS Secrets Manager paths for use with :func:`~loom.core.config.load_config`.
 
     Fetches secret values from AWS Secrets Manager. The boto3 client is
-    created lazily on first use and reused across calls.
+    created on first use, once per configuration.
 
     Env-var tokens in the form ``%VAR_NAME%`` (uppercase letters, digits,
     and underscores only) are expanded from ``os.environ`` before the
@@ -85,8 +87,8 @@ class SecretsManagerResolver:
 
     Args:
         region: AWS region name. Passed directly to ``boto3.client``.
-            Defaults to ``None``, which lets boto3 use its own resolution
-            chain (env vars, instance metadata, etc.).
+            Defaults to ``None``: ``aws.region`` of the configuration, else
+            boto3's own resolution chain (env vars, instance metadata, etc.).
 
     Example::
 
@@ -96,7 +98,7 @@ class SecretsManagerResolver:
 
     def __init__(self, region: str | None = None) -> None:
         self._region = region
-        self._client: Any = None
+        self._unbound: dict[Any, Any] = {}
 
     @property
     def name(self) -> str:
@@ -107,22 +109,7 @@ class SecretsManagerResolver:
         """
         return "secrets"
 
-    def _get_client(self) -> Any:
-        """Return the boto3 secretsmanager client, creating it on first call.
-
-        Returns:
-            A boto3 secretsmanager client instance.
-
-        Raises:
-            ConfigError: When boto3 is not installed.
-        """
-        if self._client is None:
-            self._client = aws_client(
-                "secretsmanager", self._region, resolver="SecretsManagerResolver"
-            )
-        return self._client
-
-    def resolve(self, key: str) -> object:
+    def resolve(self, key: str, _root_: Any = None) -> object:
         """Resolve an AWS Secrets Manager path to its stored value.
 
         Splits the dot-notation tail off *key* as written, expands
@@ -136,6 +123,9 @@ class SecretsManagerResolver:
                 fetches ``/path/secret`` and returns ``secret["key"]``. Dots are read
                 from the key as written, so an expanded value containing a dot
                 is part of the path and never a navigation separator.
+            _root_: The configuration being resolved; its ``aws:`` section,
+                as written, configures the client. Client and values are
+                kept per configuration.
 
         Returns:
             Resolved value. A plain string for secrets without dot-notation;
@@ -147,15 +137,21 @@ class SecretsManagerResolver:
                 missing, boto3 is not installed, the secret is binary,
                 or the API call fails.
         """
+        cache = root_cache(_root_, self.name, self._unbound)
+        if key in cache:
+            return cache[key]
         if not key:
             raise ConfigError("Secrets Manager key must not be empty")
         base, json_keys = _split_resolver_key(key)
         path = _expand_env_vars(base)
         logger.info("secrets_resolver: fetching %s", key)
-        raw = _fetch_secret(self._get_client(), path, label=key)
-        if not json_keys:
-            return raw
-        return _navigate_json(raw, json_keys, key)
+        if CLIENT not in cache:
+            cache[CLIENT] = aws_client(
+                "secretsmanager", self._region, resolver="SecretsManagerResolver", root=_root_
+            )
+        raw = _fetch_secret(cache[CLIENT], path, label=key)
+        cache[key] = _navigate_json(raw, json_keys, key) if json_keys else raw
+        return cache[key]
 
 
 __all__ = ["SecretsManagerResolver"]

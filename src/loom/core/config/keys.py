@@ -18,6 +18,7 @@ class ConfigKey(StrEnum):
 
     APP = "app"
     AI = "ai"
+    AWS = "aws"
     CACHE = "cache"
     PERSISTENCE = "persistence"
     PERSISTENCE_CURSORS = "persistence.cursors"
@@ -25,6 +26,7 @@ class ConfigKey(StrEnum):
     KAFKA = "kafka"
     MONGO = "mongo"
     SQL = "sql"
+    SQS = "sqs"
     STORAGE = "storage"
     STORES = "stores"
     STREAMING = "streaming"

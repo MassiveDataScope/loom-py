@@ -327,7 +327,7 @@ def compose_application(
         environment=source.environment,
     )
     job_resources = configure_job_service(
-        ctx, kernel, observability, backend=source.app.job_service
+        ctx, kernel, observability, backend=source.app.job_service, jobs=discovered.jobs
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)

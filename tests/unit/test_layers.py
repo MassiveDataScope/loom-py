@@ -22,7 +22,7 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # The core composes nothing: the composition root and the transports sit outside it.
     "loom.core": (
-        ("loom.composition", "loom.rest", "loom.celery", "loom.ai", "loom.serverless"),
+        ("loom.composition", "loom.rest", "loom.celery", "loom.ai", "loom.serverless", "loom.jobs"),
         (),
     ),
     # No transport but the JobService adapter and the ones app.entry selects, lazily.
