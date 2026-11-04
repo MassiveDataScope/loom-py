@@ -77,6 +77,7 @@ reported across them::
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
@@ -466,6 +467,8 @@ def _register_resolvers(resolvers: Sequence[Any], omega_conf: Any) -> None:
     """Register the given resolvers with OmegaConf before parsing.
 
     Each resolver replaces any earlier registration of the same name.
+    OmegaConf caches no resolver that receives the configuration root
+    (``_root_``); such a resolver keeps its own cache.
 
     Args:
         resolvers: Sequence of :class:`~loom.core.config.resolver.ConfigResolver`
@@ -473,8 +476,9 @@ def _register_resolvers(resolvers: Sequence[Any], omega_conf: Any) -> None:
         omega_conf: OmegaConf module.
     """
     for resolver in resolvers:
+        reads_root = "_root_" in inspect.signature(resolver.resolve).parameters
         omega_conf.register_new_resolver(
-            resolver.name, resolver.resolve, replace=True, use_cache=True
+            resolver.name, resolver.resolve, replace=True, use_cache=not reads_root
         )
 
 

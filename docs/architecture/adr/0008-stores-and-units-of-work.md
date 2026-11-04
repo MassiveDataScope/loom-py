@@ -151,6 +151,15 @@ or a nested use case.
   store.
 - A scoped table reachable through a store without settings fails closed, as
   it does today.
+- The executor binds the identity it is given for the whole execution, its
+  post-commit drain included, so `Caller()` and every session read the same
+  identity.
+- A nested execution that joins the invocation scope as another identity is
+  refused (`NestedIdentityMismatch`), and so is any nested execution while an
+  elevation is active (`NestedElevation`). Elevations are never inherited.
+- An inline job dispatched without a transport runs as `ANONYMOUS`.
+- The identity carried by a job envelope is not signed: whoever can publish to
+  the broker or queue can name any subject. Signing it is deferred.
 
 ### Identifiers
 
@@ -218,6 +227,9 @@ A delivery is not done until all of these pass:
   is gone.
 - Partial failures across stores remain possible during the commit phase. They
   are reported per store, and loom never claims to have rolled them back.
+- A nested `execute(identity=Y)` inside an execution of `X` used to give `Y`
+  to `Caller()` and `X` to row-level security. Both now see `Y`, and joining
+  `X`'s unit of work as `Y` is refused.
 
 ## Sources
 

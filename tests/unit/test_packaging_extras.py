@@ -42,6 +42,10 @@ def test_mongo_extra_installs_pymongo() -> None:
     assert not requirements["pymongo"].specifier.contains("5.0")
 
 
+def test_sqs_extra_installs_boto3() -> None:
+    assert "boto3" in _extra_requirements("sqs")
+
+
 def test_sqlalchemy_extra_pins_greenlet_explicitly() -> None:
     requirements = _extra_requirements("sqlalchemy")
 

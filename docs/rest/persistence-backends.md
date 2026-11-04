@@ -516,6 +516,32 @@ and `ssm` resolvers, the SNS notifier), and `profile` and `url` (an
 endpoint override; absent, the AWS regional endpoint) are accepted too. Credentials never come from configuration; boto3's default
 chain applies. See ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
 
+### Shared `aws:` section
+
+A top-level `aws:` section holds the client defaults every AWS product of loom
+inherits: a `dynamodb` store, the ETL's `storage.dynamodb`, the `secrets` and
+`ssm` resolvers, the SNS notifier and the `sqs` job backend. A product's own keys override it key by
+key.
+
+```yaml
+aws:
+  region: eu-west-1
+  url: http://localhost:4566
+
+stores:
+  default:
+    backend: dynamodb
+    table: app
+    read_timeout: 3
+```
+
+- `aws:` takes the keys of `AwsClientConfig`; a credential key is refused.
+- The resolvers read `aws:` as written, since they resolve the placeholders, so
+  they refuse a `${...}` in it; boto3 reads `AWS_REGION` and
+  `AWS_ENDPOINT_URL` itself. A resolver built with a region keeps it.
+- `aws:` alone enables no `storage.dynamodb` source.
+- The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
+
 ## Health
 
 `GET /health` aggregates the readiness of the configured backend; its shape, the

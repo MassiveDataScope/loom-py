@@ -89,3 +89,29 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
 
 
 __all__ = ["AwsClientConfig", "AwsPool", "RetryMode"]
+
+
+def aws_error_code(exc: BaseException) -> str:
+    """Return the AWS error code of *exc*, or its exception type name.
+
+    ``botocore.exceptions.ClientError`` is raised for nearly every AWS API
+    failure, so its type name alone cannot tell a missing parameter from an
+    access denial, a disabled KMS key, or throttling. The ``Error.Code``
+    field of the response carries that distinction. It is an enum-like
+    constant chosen by AWS, so it can never echo the expanded path.
+
+    Args:
+        exc: Exception raised by the AWS client.
+
+    Returns:
+        The AWS error code when the exception carries a botocore-shaped
+        ``response`` mapping, otherwise ``type(exc).__name__``.
+    """
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error")
+        if isinstance(error, dict):
+            code = error.get("Code")
+            if isinstance(code, str) and code:
+                return code
+    return type(exc).__name__

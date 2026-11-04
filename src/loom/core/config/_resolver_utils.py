@@ -7,30 +7,37 @@ import os
 import re
 from typing import Any
 
+from loom.core.config.aws import aws_section
+from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.config.keys import ConfigKey
+from loom.core.config.loader import convert_section
 from loom.core.connections.aws import AwsClientConfig, aws_island
 from loom.core.plugins.optional import MissingExtraError
 
 _AWS_EXTRA = "config-ssm"
 
 
-def aws_client(service: str, region: str | None, *, resolver: str) -> Any:
-    """Build one boto3 client through the AWS island, with loom's bounded defaults.
+def aws_client(service: str, region: str | None, *, resolver: str, root: Any) -> Any:
+    """Build one boto3 client through the AWS island from the ``aws:`` section as written.
 
-    The resolvers run before the configuration is loaded (they resolve its
-    placeholders), so no section configures their client: it takes the
-    defaults of :class:`~loom.core.connections.AwsClientConfig` and *region*.
+    The resolvers are the ones resolving the placeholders, so they read
+    ``aws:`` of the configuration *root* unresolved; *region*, when given,
+    overrides its region.
 
     Args:
         service: Service name, ``"ssm"`` or ``"secretsmanager"``.
-        region: AWS region, or ``None`` to let boto3 resolve its own.
-        resolver: Resolver class name, for the message when boto3 is missing.
+        region: AWS region, or ``None`` to take ``aws.region`` or let boto3
+            resolve its own.
+        resolver: Resolver class name, for the messages.
+        root: The configuration being resolved, or ``None`` outside one.
 
     Returns:
         The client; typed ``Any`` because boto3 ships no stubs.
 
     Raises:
-        ConfigError: When boto3 is not installed, naming the extra.
+        ConfigError: When boto3 is not installed, naming the extra, or
+            ``aws:`` is invalid or holds a placeholder.
     """
     try:
         island = aws_island(extra=_AWS_EXTRA)
@@ -39,7 +46,36 @@ def aws_client(service: str, region: str | None, *, resolver: str) -> Any:
             f"boto3 is required for {resolver}. "
             "Install it with: pip install loom-kernel[config-ssm]"
         ) from exc
-    return island.build_aws_client(service, AwsClientConfig(region=region))
+    raw = None if root is None else ConfigContext(root).raw(ConfigKey.AWS)
+    for key, value in raw.items() if isinstance(raw, dict) else ():
+        if isinstance(value, str) and "${" in value:
+            raise ConfigError(
+                f"{ConfigKey.AWS}.{key} is a placeholder, but {resolver} reads "
+                f"{ConfigKey.AWS} as written: write the value, or leave it out for boto3 "
+                "to read its environment (AWS_REGION, AWS_ENDPOINT_URL)"
+            )
+    written = aws_section(raw)
+    settings = written if region is None else {**written, "region": region}
+    config = convert_section(settings, ConfigKey.AWS, AwsClientConfig)
+    return island.build_aws_client(service, config)
+
+
+CLIENT = ("client",)
+"""Key of the client in a resolver's cache; a resolver key is a string."""
+
+
+def root_cache(root: Any, name: str, unbound: dict[Any, Any]) -> dict[Any, Any]:
+    """Return the cache of resolver *name* for configuration *root*, *unbound* outside one.
+
+    OmegaConf caches no resolver that receives the root, so the client and
+    the values live in its cache of the root: one per configuration.
+    """
+    if root is None:
+        return unbound
+    from omegaconf import OmegaConf
+
+    cache: dict[Any, Any] = OmegaConf.get_cache(root)[name]
+    return cache
 
 
 _ENV_VAR_PATTERN = re.compile(r"%([A-Z][A-Z0-9_]*)%")
@@ -149,30 +185,4 @@ def _navigate_json(raw: str, keys: list[str], path: str) -> object:
     return current
 
 
-def _aws_error_code(exc: BaseException) -> str:
-    """Return the AWS error code of *exc*, or its exception type name.
-
-    ``botocore.exceptions.ClientError`` is raised for nearly every AWS API
-    failure, so its type name alone cannot tell a missing parameter from an
-    access denial, a disabled KMS key, or throttling. The ``Error.Code``
-    field of the response carries that distinction. It is an enum-like
-    constant chosen by AWS, so it can never echo the expanded path.
-
-    Args:
-        exc: Exception raised by the AWS client.
-
-    Returns:
-        The AWS error code when the exception carries a botocore-shaped
-        ``response`` mapping, otherwise ``type(exc).__name__``.
-    """
-    response = getattr(exc, "response", None)
-    if isinstance(response, dict):
-        error = response.get("Error")
-        if isinstance(error, dict):
-            code = error.get("Code")
-            if isinstance(code, str) and code:
-                return code
-    return type(exc).__name__
-
-
-__all__ = ["_expand_env_vars", "_split_resolver_key", "_navigate_json", "_aws_error_code"]
+__all__ = ["_expand_env_vars", "_split_resolver_key", "_navigate_json"]

@@ -86,12 +86,19 @@ _ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
 _ALLOWLIST_SECTION: Final = "config"
 _ALLOWLIST_FIELD: Final = "overridable"
 _ALLOWLIST_KEY: Final = f"{_ALLOWLIST_SECTION}.{_ALLOWLIST_FIELD}"
-_PROTECTED: Final = ((_ALLOWLIST_SECTION,), ("checks",), ("persistence", "cursors"))
+_PROTECTED: Final = (
+    (_ALLOWLIST_SECTION,),
+    ("checks",),
+    ("persistence", "cursors"),
+    ("aws",),
+    ("sqs", "queues"),
+)
 """Keys no ``config.overridable`` entry may open, with everything below them.
 
 ``config`` and ``checks`` are read as written, so the files cannot route them to
 the environment any other way. ``persistence.cursors`` decides whether, and with
-which key, cursor tokens are signed, which no per-deploy variable may change."""
+which key, cursor tokens are signed, and ``aws`` and ``sqs.queues`` where AWS
+calls and jobs go, which no per-deploy variable may change."""
 
 OVERRIDABLE: Final = (
     "app.entry",
@@ -329,7 +336,7 @@ def _refuse_protected(entry: str) -> None:
     if levels[0] == "*" or opens_protected:
         raise ConfigError(
             f"{_ALLOWLIST_KEY} entry {entry!r} opens a key no override may set: '*' as the "
-            "first level, checks, config or persistence.cursors"
+            "first level, checks, config, persistence.cursors, aws or sqs.queues"
         )
 
 
