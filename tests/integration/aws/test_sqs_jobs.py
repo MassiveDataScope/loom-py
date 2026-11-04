@@ -19,6 +19,7 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.use_case.use_case import UseCase
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter
+from loom.testing import sqs_raw_record
 from tests.helpers.jobs import JobsAdapter
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
 
@@ -201,11 +202,7 @@ def test_the_lambda_sqs_adapter_runs_the_received_message(
     _dispatch(producer, job_type)
     queue = queues.of(job_type)
     (message,) = _receive(sqs, queue)
-    record = {
-        "messageId": message["MessageId"],
-        "body": message["Body"],
-        "eventSourceARN": queue.arn,
-    }
+    record = sqs_raw_record(message["Body"], message_id=message["MessageId"], queue_arn=queue.arn)
     adapter = LambdaSQSAdapter(jobs=[WelcomeJob, OrderJob])
     consumer = build_application(
         str(config_path), adapter=adapter, environment="test", code_path=str(tmp_path)

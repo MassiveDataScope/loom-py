@@ -6,6 +6,8 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from loom.testing import sqs_raw_record
+
 RecordFactory = Callable[..., dict[str, Any]]
 
 
@@ -19,18 +21,7 @@ def make_record(
     job_name: str = "ProbeJob",
     body: str | None = None,
 ) -> dict[str, Any]:
-    return {
-        "messageId": message_id,
-        "body": body
-        if body is not None
-        else json.dumps(
-            {
-                "job": job_name,
-                "payload": {},
-                "params": {"marker": marker},
-                "identity": identity,
-                "trace_id": trace_id,
-            }
-        ),
-        "eventSourceARN": "arn:aws:sqs:us-east-1:123:queue.fifo" if fifo else "queue",
-    }
+    if body is None:
+        envelope = {"job": job_name, "params": {"marker": marker}, "identity": identity}
+        body = json.dumps(envelope | {"payload": {}, "trace_id": trace_id})
+    return sqs_raw_record(body, message_id=message_id, group_id="group" if fifo else None)

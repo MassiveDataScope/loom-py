@@ -7,8 +7,8 @@ from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
-from loom.core.config.aws import aws_section
-from loom.core.config.loader import convert_section
+from loom.core.config.aws import decode_aws
+from loom.core.config.keys import ConfigKey
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.logger import get_logger
@@ -44,16 +44,11 @@ class SnsNotifier:
         self._topic_arn = topic_arn
         self._on_failure = on_failure
         self._on_completion = on_completion
-        self._client = (
-            client
-            if client is not None
-            else build_aws_client(
-                "sns",
-                convert_section(
-                    {**aws_section(aws), "region": topic_arn.split(":")[3]}, "aws", AwsClientConfig
-                ),
-            )
-        )
+        if client is None:
+            region = topic_arn.split(":")[3]
+            config = decode_aws(aws, {}, ConfigKey.AWS, AwsClientConfig, region=region)
+            client = build_aws_client("sns", config)
+        self._client = client
 
     def notify(self, event: NotifyEvent) -> None:
         """Publish *event* to the topic when filters match."""

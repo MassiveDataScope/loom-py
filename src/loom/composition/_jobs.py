@@ -12,10 +12,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from loom.composition.errors import JobBackendError
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
-from loom.core.config import ConfigContext, ConfigKey, reject_retired_keys
-from loom.core.config.aws import aws_defaults
-from loom.core.config.loader import convert_section
-from loom.core.connections.aws import aws_island
+from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
@@ -92,29 +89,14 @@ def _celery(context: JobBackendContext) -> _Built:
 
 
 def _sqs(context: JobBackendContext) -> _Built:
-    from loom.jobs.aws.sqs import SQSConfig, SQSJobService, check_queues
+    from loom.jobs.aws.sqs import build_backend
 
-    ctx = context.config
-    written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
-    reject_retired_keys(written, ConfigKey.SQS, SQSConfig)
-    config = convert_section({**aws_defaults(ctx), **written}, ConfigKey.SQS, SQSConfig)
-    check_queues(config.queues, context.jobs)
     try:
-        client = aws_island(extra="sqs").build_aws_client("sqs", config)
+        return build_backend(context), ()
     except MissingExtraError as exc:
         raise JobBackendError(
             "app.job_service is sqs, but the loom[sqs] extra is not installed"
         ) from exc
-    service = SQSJobService(
-        client,
-        config.queues,
-        factory=context.factory,
-        executor=context.executor,
-        metrics=context.metrics,
-        batch_size=config.batch_size if config.batch else None,
-        max_concurrent_sends=config.max_concurrent_sends,
-    )
-    return service, ()
 
 
 _BUILTIN_JOB_BACKENDS: Final[Mapping[str, Callable[[JobBackendContext], _Built]]] = {
@@ -146,10 +128,10 @@ def _routed(context: JobBackendContext, default: str) -> _Built:
     celery_cfg = _celery_config(context.config)
     # Celery's own default queue stays with the default backend: it is every job's queue.
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
-    if not queues:
-        return _backend(default, context)
     served = tuple(job for job in context.jobs if job.__queue__ not in queues)
     service, resources = _backend(default, replace(context, jobs=served))  # NOSONAR(S5655)
+    if not queues:
+        return service, resources
     celery, closers = _celery_backend(context, celery_cfg)
     return JobRouter(dict.fromkeys(queues, celery), default=service), (
         *resources,

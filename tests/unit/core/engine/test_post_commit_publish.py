@@ -70,6 +70,9 @@ class _Send:
         if self._error is not None:
             raise self._error
 
+    def log_fields(self) -> tuple[dict[str, object]]:
+        return ({"job_name": self.task_name, "task_id": self.task_id},)
+
 
 @pytest.fixture
 def logged() -> Iterator[Callable[[str], asyncio.Event]]:

@@ -38,6 +38,8 @@ _RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
     ),
     "loom.rest": (("loom.serverless",), ()),
+    # A job backend raises its own errors; the composition root maps them.
+    "loom.jobs": (("loom.composition",), ()),
 }
 
 

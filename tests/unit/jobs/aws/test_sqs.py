@@ -12,8 +12,8 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, JobBackendError, compose_application
-from loom.core.config import ConfigContext, ConfigError
+from loom.composition import JobBackendError, compose_application
+from loom.core.config import ConfigError
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -24,13 +24,14 @@ from loom.core.engine.post_commit import (
     bind_channel,
     reset_channel,
 )
-from loom.core.identity import Identity, current_identity, reset_identity, set_identity
+from loom.core.identity import Identity, reset_identity, set_identity
+from loom.core.identity.wire import decode_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import JobService
-from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
+from loom.core.tracing import reset_trace_id, set_trace_id
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.sqs import (
     MAX_MESSAGE_BYTES,
@@ -38,10 +39,17 @@ from loom.jobs.aws.sqs import (
     SQSJobService,
     SQSQueueConfigError,
 )
-from loom.serverless.aws.lambda_ import LambdaSQSAdapter
-from tests.helpers.composition import composition_source
 from tests.helpers.extras import patched_aws_clients, without_boto3
-from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_source
+from tests.helpers.jobs import (
+    BROKER,
+    SQS_FIFO_URL,
+    SQS_URL,
+    EmailJob,
+    JobsAdapter,
+    SQSClient,
+    job_source,
+    sqs_service,
+)
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(10)
@@ -49,8 +57,8 @@ pytestmark = pytest.mark.timeout(10)
 _UNREPORTED = "PostCommitActionFailedAfterInterruption"
 _NEVER_RAN = "PostCommitShieldedActionNeverRan"
 
-_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/emails"
-_FIFO_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo"
+_URL, _FIFO_URL = SQS_URL, SQS_FIFO_URL
+_SEND_FAILED = "SQS send failed"
 _CONFIG = {"aws": {"region": "eu-west-1"}, "sqs": {"queues": {"emails": _URL, "orders": _FIFO_URL}}}
 
 
@@ -76,63 +84,6 @@ class ReportJob(Job[None]):
         return None
 
 
-class _Client:
-    """Stands in for the boto3 ``sqs`` client.
-
-    ``requests`` holds each message sent, one ``send_message`` or one batch
-    entry; ``batches`` each ``send_message_batch`` call as its queue and ids.
-    ``refuse`` counts how many more times SQS refuses a task's batch entry.
-    """
-
-    def __init__(self, error: Exception | None = None, *, overlap: float = 0) -> None:
-        self.requests: list[dict[str, Any]] = []
-        self.batches: list[tuple[str, list[str]]] = []
-        self.refuse: dict[str, int] = {}
-        self.sent = threading.Event()
-        self.peak = 0
-        self.entered = threading.Event()
-        self.hold: threading.Event | None = None
-        self._error = error
-        self._overlap = overlap
-        self._in_flight = 0
-        self._lock = threading.Lock()
-        self._other = threading.Condition(self._lock)
-
-    def send_message(self, **request: Any) -> dict[str, str]:
-        if self._error is not None:
-            raise self._error
-        self.requests.append(request)
-        self.sent.set()
-        return {"MessageId": "m-1"}
-
-    def send_message_batch(self, QueueUrl: str, Entries: list[dict[str, Any]]) -> dict[str, Any]:  # noqa: N803
-        self.entered.set()
-        if self.hold is not None:
-            self.hold.wait(5)
-        self._wait_for_another_call()
-        self.batches.append((QueueUrl, [entry["Id"] for entry in Entries]))
-        if self._error is not None:
-            raise self._error
-        failed = []
-        for entry in Entries:
-            if self.refuse.get(entry["Id"], 0) > 0:
-                self.refuse[entry["Id"]] -= 1
-                failed.append({"Id": entry["Id"], "Code": "InternalError", "Message": "hunter2"})
-            else:
-                self.requests.append({"QueueUrl": QueueUrl} | entry)
-        self.sent.set()
-        return {"Successful": [], "Failed": failed}
-
-    def _wait_for_another_call(self) -> None:
-        """Hold the call up to ``overlap`` seconds while another one starts: records the peak."""
-        with self._other:
-            self._in_flight += 1
-            self.peak = max(self.peak, self._in_flight)
-            self._other.notify_all()
-            self._other.wait_for(lambda: self._in_flight > 1, timeout=self._overlap)
-            self._in_flight -= 1
-
-
 class _ClientError(Exception):
     """botocore-shaped: its message echoes a payload value, its response holds the code."""
 
@@ -148,17 +99,17 @@ def _no_leftover_dispatches() -> Iterator[None]:
 
 
 @pytest.fixture
-def client() -> _Client:
-    return _Client()
+def client() -> SQSClient:
+    return SQSClient()
 
 
 @pytest.fixture
-def service(tmp_path: Path, client: _Client) -> JobService:
+def service(tmp_path: Path, client: SQSClient) -> JobService:
     return _compose(tmp_path, _CONFIG, client, EmailJob, OrderJob)
 
 
 def _compose(
-    tmp_path: Path, config: dict[str, Any], client: _Client, *jobs: type[Job[Any]]
+    tmp_path: Path, config: dict[str, Any], client: SQSClient, *jobs: type[Job[Any]]
 ) -> JobService:
     with patched_aws_clients(client):
         application = compose_application(job_source(tmp_path, config, "sqs"), JobsAdapter(*jobs))
@@ -170,7 +121,7 @@ def _sqs_config(**knobs: Any) -> dict[str, Any]:
 
 
 async def _sent(
-    service: JobService, client: _Client, job: type[Job[Any]], **options: Any
+    service: JobService, client: SQSClient, job: type[Job[Any]], **options: Any
 ) -> tuple[str, dict[str, Any]]:
     handle = service.dispatch(job, **options)
     await flush_pending_dispatches()
@@ -179,19 +130,38 @@ async def _sent(
 
 
 async def test_a_standard_queue_gets_the_envelope_and_the_delay(
-    service: JobService, client: _Client
+    service: JobService, client: SQSClient
 ) -> None:
-    _, request = await _sent(service, client, EmailJob, payload={"to": "a@b.c"}, countdown=30)
+    identity, trace = set_identity(Identity(subject="alice")), set_trace_id("trace-1")
+    try:
+        _, request = await _sent(service, client, EmailJob, payload={"to": "a@b.c"}, countdown=30)
+    finally:
+        reset_trace_id(trace)
+        reset_identity(identity)
 
     assert (request["QueueUrl"], request["DelaySeconds"]) == (_URL, 30)
     assert "MessageGroupId" not in request
     envelope = decode_job_envelope(request["MessageBody"])
-    assert (envelope.job_name, envelope.payload) == ("EmailJob", {"to": "a@b.c"})
+    assert (envelope.job_name, envelope.payload, envelope.trace_id) == (
+        "EmailJob",
+        {"to": "a@b.c"},
+        "trace-1",
+    )
+    assert getattr(decode_identity(envelope.identity), "subject", None) == "alice"
+
+
+async def test_control_characters_and_emoji_reach_sqs(
+    service: JobService, client: SQSClient
+) -> None:
+    note = "\x00\x1f\t \U0001f600"
+    _, request = await _sent(service, client, EmailJob, payload={"note": note})
+
+    assert decode_job_envelope(request["MessageBody"]).payload == {"note": note}
 
 
 @pytest.mark.parametrize("customer", [7, "a b \U0001f600", "x" * 500])
 async def test_a_fifo_queue_gets_a_hashed_group_and_the_task_as_deduplication_id(
-    service: JobService, client: _Client, customer: object
+    service: JobService, client: SQSClient, customer: object
 ) -> None:
     task_id, request = await _sent(service, client, OrderJob, payload={"customer": customer})
 
@@ -252,7 +222,8 @@ def test_startup_without_the_extra_names_it(
         compose_application(source, adapter)
 
 
-_LATER = datetime.now(UTC) + timedelta(minutes=20)
+_LATER = timedelta(minutes=20)
+"""An ``eta`` this far ahead, taken from the clock when the test runs."""
 
 
 @pytest.mark.parametrize(
@@ -266,17 +237,20 @@ _LATER = datetime.now(UTC) + timedelta(minutes=20)
         (OrderJob, {"payload": {"customer": 1}, "countdown": 5}, "sqs_fifo_delay"),
         (OrderJob, {"payload": {}}, "sqs_group_missing"),
         (OrderJob, {"payload": {"customer": None}}, "sqs_group_missing"),
-        (EmailJob, {"payload": {"note": "￿"}}, "sqs_invalid_character"),
+        (EmailJob, {"payload": {"note": "\ufffe"}}, "sqs_invalid_character"),
+        (EmailJob, {"payload": {"note": "\uffff"}}, "sqs_invalid_character"),
         (EmailJob, {"payload": {"blob": "x" * MAX_MESSAGE_BYTES}}, "sqs_message_too_large"),
     ],
 )
 async def test_dispatch_refuses_what_sqs_cannot_carry_and_sends_nothing(
     service: JobService,
-    client: _Client,
+    client: SQSClient,
     job: type[Job[Any]],
     options: dict[str, Any],
     code: str,
 ) -> None:
+    if "eta" in options:
+        options = {**options, "eta": datetime.now(UTC) + options["eta"]}
     with pytest.raises(SQSDispatchError) as raised:
         service.dispatch(job, **options)
     await flush_pending_dispatches()
@@ -287,15 +261,31 @@ async def test_dispatch_refuses_what_sqs_cannot_carry_and_sends_nothing(
 
 def test_dispatch_parallel_refuses_callbacks(service: JobService) -> None:
     jobs = [(EmailJob, {})]
+    callback = cast(Any, object)
     with pytest.raises(SQSDispatchError, match="no callbacks"):
-        service.dispatch_parallel(jobs, on_all_success=cast(Any, object))
+        service.dispatch_parallel(jobs, on_all_success=callback)
 
 
-async def test_a_failed_send_names_job_task_queue_and_code_never_the_payload(
+def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    return [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == event
+    ]
+
+
+def _failed_sends(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str, str, str]]:
+    return [
+        (fields["job"], fields["task_id"], fields["queue"], fields["error_code"])
+        for fields in _logged(caplog, _SEND_FAILED)
+    ]
+
+
+async def test_a_failed_send_names_job_task_queue_and_code(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    service = _compose(tmp_path, _sqs_config(batch=False), _Client(_ClientError()), EmailJob)
-    handle = service.dispatch(EmailJob, payload={"secret": "hunter2"})
+    service = _compose(tmp_path, _sqs_config(batch=False), SQSClient(_ClientError()), EmailJob)
+    handle = service.dispatch(EmailJob)
     with pytest.raises(PostCommitError) as raised:
         await flush_pending_dispatches()
 
@@ -306,18 +296,26 @@ async def test_a_failed_send_names_job_task_queue_and_code_never_the_payload(
         None,
         True,
     )
-    (fields,) = [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == "SQS send failed"
+    assert _failed_sends(caplog) == [
+        ("loom.job.EmailJob", handle.job_id, "emails", "InvalidMessageContents")
     ]
-    assert (fields["job"], fields["task_id"], fields["queue"], fields["error_code"]) == (
-        "loom.job.EmailJob",
-        handle.job_id,
-        "emails",
-        "InvalidMessageContents",
-    )
-    assert "hunter2" not in f"{failure!r} {[record.msg for record in caplog.records]}"
+
+
+@pytest.mark.parametrize(
+    ("batch", "error", "refusals"),
+    [(False, True, 0), (True, False, 2), (True, True, 0)],
+    ids=["single send fails", "entry refused twice", "batch call fails"],
+)
+async def test_a_failed_send_never_logs_or_raises_the_payload(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, batch: bool, error: bool, refusals: int
+) -> None:
+    client = SQSClient(_ClientError() if error else None)
+    service = _compose(tmp_path, _sqs_config(batch=batch), client, EmailJob)
+    client.refuse[service.dispatch(EmailJob, payload={"secret": "hunter2"}).job_id] = refusals
+    with pytest.raises(PostCommitError) as raised:
+        await flush_pending_dispatches()
+
+    assert "hunter2" not in f"{raised.value.failures!r} {[r.msg for r in caplog.records]}"
 
 
 class _Gate:
@@ -341,19 +339,13 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         self.service.dispatch(EmailJob)
 
 
-@pytest.mark.parametrize("batch_size", [10, None], ids=["batch", "one send each"])
+@pytest.mark.parametrize("batch", [True, False], ids=["batch", "one send each"])
 async def test_a_send_committed_before_the_cancellation_still_reaches_sqs(
-    client: _Client, batch_size: int | None
+    client: SQSClient, batch: bool
 ) -> None:
     log = Log()
     executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(log))
-    service = SQSJobService(
-        client,
-        {"emails": _URL},
-        factory=cast(Any, None),
-        executor=executor,
-        batch_size=batch_size,
-    )
+    service = sqs_service(client, batch=batch)
     bump = _Gate()
     task = asyncio.create_task(executor.execute(_DispatchAfterCommit(service, bump)))
     await bump.started.wait()
@@ -370,7 +362,7 @@ async def test_a_send_committed_before_the_cancellation_still_reaches_sqs(
 
 
 async def test_one_execution_sends_one_batch_per_queue_in_dispatch_order(
-    service: JobService, client: _Client
+    service: JobService, client: SQSClient
 ) -> None:
     ids = [
         service.dispatch(job, payload={"customer": n}).job_id
@@ -395,7 +387,7 @@ async def test_one_execution_sends_one_batch_per_queue_in_dispatch_order(
     ids=["by batch_size", "up to ten", "by total bytes"],
 )
 async def test_a_queue_is_sent_in_chunks_bounded_by_count_and_bytes(
-    tmp_path: Path, client: _Client, knobs: dict[str, Any], blob: str, sizes: list[int]
+    tmp_path: Path, client: SQSClient, knobs: dict[str, Any], blob: str, sizes: list[int]
 ) -> None:
     service = _compose(tmp_path, _sqs_config(**knobs), client, EmailJob)
     ids = [service.dispatch(EmailJob, payload={"blob": blob}).job_id for _ in range(7)]
@@ -406,7 +398,7 @@ async def test_a_queue_is_sent_in_chunks_bounded_by_count_and_bytes(
 
 
 async def test_batch_false_sends_each_job_with_its_own_send_message(
-    tmp_path: Path, client: _Client
+    tmp_path: Path, client: SQSClient
 ) -> None:
     service = _compose(tmp_path, _sqs_config(batch=False), client, EmailJob)
     service.dispatch(EmailJob)
@@ -421,7 +413,7 @@ async def test_batch_false_sends_each_job_with_its_own_send_message(
 async def test_max_concurrent_sends_bounds_the_queues_sent_at_once(
     tmp_path: Path, concurrent: int
 ) -> None:
-    client = _Client(overlap=0.5)
+    client = SQSClient(overlap=0.5)
     service = _compose(
         tmp_path, _sqs_config(max_concurrent_sends=concurrent), client, EmailJob, OrderJob
     )
@@ -444,7 +436,7 @@ def test_startup_refuses_an_invalid_batch_knob(tmp_path: Path, knobs: dict[str, 
 
 
 async def test_an_entry_sqs_refuses_once_is_sent_again(
-    service: JobService, client: _Client
+    service: JobService, client: SQSClient
 ) -> None:
     first, second = (service.dispatch(EmailJob).job_id for _ in range(2))
     client.refuse[first] = 1
@@ -454,18 +446,10 @@ async def test_an_entry_sqs_refuses_once_is_sent_again(
     assert len(client.requests) == 2
 
 
-def _failed_sends(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str, str, str]]:
-    return [
-        (fields["job"], fields["task_id"], fields["queue"], fields["error_code"])
-        for fields in (record.msg for record in caplog.records)
-        if isinstance(fields, dict) and fields.get("event") == "SQS send failed"
-    ]
-
-
-async def test_an_entry_refused_twice_fails_the_batch_naming_job_task_and_code_only(
-    service: JobService, client: _Client, caplog: pytest.LogCaptureFixture
+async def test_an_entry_refused_twice_fails_the_batch_naming_job_task_and_code(
+    service: JobService, client: SQSClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    refused = service.dispatch(EmailJob, payload={"secret": "hunter2"}).job_id
+    refused = service.dispatch(EmailJob).job_id
     service.dispatch(EmailJob)
     client.refuse[refused] = 2
     with pytest.raises(PostCommitError) as raised:
@@ -476,11 +460,10 @@ async def test_an_entry_refused_twice_fails_the_batch_naming_job_task_and_code_o
     assert failure.code == "sqs_batch_partial_failure"
     assert failure.message == "1 of 2 SQS sends failed: InternalError"
     assert _failed_sends(caplog) == [("loom.job.EmailJob", refused, "emails", "InternalError")]
-    assert "hunter2" not in f"{failure!r} {[record.msg for record in caplog.records]}"
 
 
 async def test_a_fifo_queue_resends_nothing_and_holds_back_what_would_overtake(
-    tmp_path: Path, client: _Client, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, client: SQSClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     service = _compose(tmp_path, _sqs_config(batch_size=2), client, OrderJob)
     ids = [service.dispatch(OrderJob, payload={"customer": "c"}).job_id for _ in range(5)]
@@ -501,9 +484,9 @@ async def test_a_fifo_queue_resends_nothing_and_holds_back_what_would_overtake(
 async def test_a_failed_batch_call_is_not_sent_again(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client = _Client(_ClientError())
+    client = SQSClient(_ClientError())
     service = _compose(tmp_path, _CONFIG, client, EmailJob)
-    ids = [service.dispatch(EmailJob, payload={"secret": "hunter2"}).job_id for _ in range(2)]
+    ids = [service.dispatch(EmailJob).job_id for _ in range(2)]
     with pytest.raises(PostCommitError) as raised:
         await flush_pending_dispatches()
 
@@ -511,11 +494,10 @@ async def test_a_failed_batch_call_is_not_sent_again(
     assert isinstance(failure, SQSDispatchError)
     assert (failure.code, client.batches) == ("sqs_batch_partial_failure", [(_URL, ids)])
     assert [task for _, task, _, _ in _failed_sends(caplog)] == ids
-    assert "hunter2" not in f"{failure!r} {[record.msg for record in caplog.records]}"
 
 
 async def test_a_rolled_back_dispatch_leaves_no_batch_behind(
-    service: JobService, client: _Client
+    service: JobService, client: SQSClient
 ) -> None:
     service.dispatch(EmailJob)
     clear_pending_dispatches()
@@ -523,20 +505,6 @@ async def test_a_rolled_back_dispatch_leaves_no_batch_behind(
     await flush_pending_dispatches()
 
     assert client.batches == [(_URL, [kept])]
-
-
-def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
-    return [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == event
-    ]
-
-
-def _service(client: _Client) -> SQSJobService:
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(Log()))
-    queues = {"emails": _URL, "orders": _FIFO_URL}
-    return SQSJobService(client, queues, factory=cast(Any, None), executor=executor)
 
 
 def _queued(service: SQSJobService, channel: PostCommitChannel, *jobs: type[Job[Any]]) -> list[str]:
@@ -569,7 +537,7 @@ async def test_a_batch_failing_after_the_cancellation_logs_each_job_and_task(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     channel, bump = PostCommitChannel(), _Gate()
-    ids = _queued(_service(_Client(_ClientError())), channel, EmailJob, EmailJob)
+    ids = _queued(sqs_service(SQSClient(_ClientError())), channel, EmailJob, EmailJob)
     channel.enqueue_priority(bump)
     task = asyncio.create_task(channel.drain(committed=True))
     await bump.started.wait()
@@ -585,11 +553,11 @@ async def test_a_batch_failing_after_the_cancellation_logs_each_job_and_task(
 
 
 async def test_a_dead_batch_holds_its_slot_until_the_running_call_returns(
-    client: _Client, caplog: pytest.LogCaptureFixture
+    client: SQSClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     client.hold = threading.Event()
     channel = PostCommitChannel()
-    sent, unsent = _queued(_service(client), channel, EmailJob, OrderJob)
+    sent, unsent = _queued(sqs_service(client), channel, EmailJob, OrderJob)
     drain = asyncio.create_task(channel.drain(committed=True))
     assert await asyncio.to_thread(client.entered.wait, 5)
     await _kill_the_shield(drain)
@@ -605,7 +573,7 @@ async def test_a_dead_batch_holds_its_slot_until_the_running_call_returns(
 
 
 async def test_a_call_still_waiting_for_a_thread_when_the_batch_dies_sends_nothing(
-    client: _Client, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    client: SQSClient, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     waiting, thread_free = asyncio.Event(), asyncio.Event()
 
@@ -617,7 +585,7 @@ async def test_a_call_still_waiting_for_a_thread_when_the_batch_dies_sends_nothi
 
     monkeypatch.setattr(asyncio, "to_thread", to_thread)
     channel = PostCommitChannel()
-    (queued,) = _queued(_service(client), channel, EmailJob)
+    (queued,) = _queued(sqs_service(client), channel, EmailJob)
     drain = asyncio.create_task(channel.drain(committed=True))
     await waiting.wait()
     shielded = await _kill_the_shield(drain)
@@ -626,41 +594,3 @@ async def test_a_call_still_waiting_for_a_thread_when_the_batch_dies_sends_nothi
 
     assert [fields["task_id"] for fields in _logged(caplog, _NEVER_RAN)] == [queued]
     assert (client.entered.is_set(), client.batches) == (False, [])
-
-
-_SEEN: list[tuple[str, str, str | None]] = []
-
-
-class ProbeJob(Job[None]):
-    def execute(self, marker: str) -> None:
-        _SEEN.append((marker, current_identity().subject, get_trace_id()))
-
-
-def test_the_lambda_sqs_adapter_runs_what_the_service_sent(
-    tmp_path: Path, service: JobService, client: _Client
-) -> None:
-    identity, trace = set_identity(Identity(subject="alice")), set_trace_id("trace-1")
-    try:
-        service.dispatch(ProbeJob, params={"marker": "m"}, queue="emails")
-    finally:
-        reset_trace_id(trace)
-        reset_identity(identity)
-    asyncio.run(flush_pending_dispatches())
-    _SEEN.clear()
-    adapter = LambdaSQSAdapter(jobs=[ProbeJob])
-    source = composition_source(
-        ConfigContext.from_dict({"app": {"name": "lambda-sqs"}}),
-        app=AppConfig(name="lambda-sqs", job_service="inline"),
-        code_path=tmp_path,
-        config_root=tmp_path,
-    )
-    handler = adapter.bind(compose_application(source, adapter))
-    (request,) = client.requests
-    record = {"messageId": "1", "body": request["MessageBody"], "eventSourceARN": "queue"}
-    try:
-        result = handler({"Records": [record]}, None)
-    finally:
-        adapter.close()
-
-    assert result == {"batchItemFailures": []}
-    assert _SEEN == [("m", "alice", "trace-1")]

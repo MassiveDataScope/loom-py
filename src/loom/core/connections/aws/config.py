@@ -88,9 +88,6 @@ class AwsClientConfig(ConnectionSettings, frozen=True, kw_only=True, forbid_unkn
         }
 
 
-__all__ = ["AwsClientConfig", "AwsPool", "RetryMode"]
-
-
 def aws_error_code(exc: BaseException) -> str:
     """Return the AWS error code of *exc*, or its exception type name.
 
@@ -115,3 +112,6 @@ def aws_error_code(exc: BaseException) -> str:
             if isinstance(code, str) and code:
                 return code
     return type(exc).__name__
+
+
+__all__ = ["AwsClientConfig", "AwsPool", "RetryMode", "aws_error_code"]

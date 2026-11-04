@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 
 import pytest
 
@@ -10,19 +9,12 @@ from loom.core.authz.elevation import elevated_scopes, elevation_scope
 from loom.core.authz.product import clear_authz_product, load_authz_product, register_authz_product
 from loom.core.config import ConfigError
 from loom.core.repository.sqlalchemy.rls import elevate
+from tests.helpers.elevation import MANAGE, Product
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
-MANAGE = Permission("members.manage")
 CATALOG = RoleCatalog((WRITE, MANAGE), (Role("editor", (WRITE,)), Role("admin", (WRITE, MANAGE))))
 BOUNDARY = Scope.of("b1")
-
-
-@dataclass
-class Product:
-    catalog: RoleCatalog = CATALOG
-    delegate: Permission = MANAGE
-    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +33,7 @@ def test_no_product_is_registered_by_default() -> None:
 
 
 def test_a_registered_product_is_what_the_loader_returns() -> None:
-    product = Product()
+    product = Product(CATALOG)
     register_authz_product(product)
 
     assert load_authz_product() is product
@@ -55,7 +47,7 @@ async def test_elevate_without_a_product_is_a_configuration_error() -> None:
 
 
 async def test_elevate_refuses_a_scope_the_product_did_not_map() -> None:
-    register_authz_product(Product())
+    register_authz_product(Product(CATALOG))
     admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):
         with pytest.raises(ConfigError, match="holder"):
@@ -63,7 +55,7 @@ async def test_elevate_refuses_a_scope_the_product_did_not_map() -> None:
 
 
 async def test_elevate_requires_the_mapped_permission_on_the_grant_role() -> None:
-    register_authz_product(Product())
+    register_authz_product(Product(CATALOG))
     editor_decision = _decision("editor")
     admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):
@@ -74,14 +66,14 @@ async def test_elevate_requires_the_mapped_permission_on_the_grant_role() -> Non
 
 
 async def test_elevate_outside_an_execution_is_a_programming_error() -> None:
-    register_authz_product(Product())
+    register_authz_product(Product(CATALOG))
     admin_decision = _decision("admin")
     with pytest.raises(RuntimeError, match="frame"):
         await elevate("editor", admin_decision, at=BOUNDARY)
 
 
 async def test_an_explicit_catalog_overrides_the_product_catalog() -> None:
-    register_authz_product(Product())
+    register_authz_product(Product(CATALOG))
     narrower = RoleCatalog((WRITE, MANAGE), (Role("admin", (WRITE,)),))
     admin_decision = _decision("admin")
     async with elevation_scope(owns_transaction=True, sink=FakeSink()):

@@ -9,7 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError, SsmResolver, load_config
-from loom.core.config.aws import aws_section
+from loom.core.config.aws import inherit_aws
+from loom.core.connections.aws import AwsClientConfig
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from loom.etl.runner.config_loader import _parse_sections
@@ -30,31 +31,40 @@ def _store(config: dict[str, Any]) -> AwsClientFactory:
     return clients
 
 
+def _ssm_client() -> MagicMock:
+    client = MagicMock()
+    client.get_parameter.return_value = {"Parameter": {"Value": "v"}}
+    return client
+
+
 def _ssm(tmp_path: Path, yaml: str, resolver: SsmResolver) -> AwsClientFactory:
     path = tmp_path / "config.yaml"
     path.write_text(yaml + "app:\n  token: ${ssm:/app/token}\n", encoding="utf-8")
-    client = MagicMock()
-    client.get_parameter.return_value = {"Parameter": {"Value": "v"}}
-    with patched_aws_clients(client) as clients:
+    with patched_aws_clients(_ssm_client()) as clients:
         ConfigContext(load_config(str(path), resolvers=[resolver])).section("app", dict)
     return clients
 
 
-def test_no_aws_section_decodes_to_nothing() -> None:
-    assert aws_section(None) == {}
+def _inherit(aws: object) -> dict[str, Any]:
+    return inherit_aws(aws, {"read_timeout": 3}, "storage.dynamodb", AwsClientConfig)
 
 
-@pytest.mark.parametrize("key", ["aws_access_key_id", "aws_secret_access_key", "credentials"])
-def test_aws_refuses_credentials(key: str) -> None:
-    written = {"region": "eu-west-1", key: "x"}
-    with pytest.raises(ConfigError, match="'aws'"):
-        aws_section(written)
+def test_no_aws_section_adds_nothing() -> None:
+    assert _inherit(None) == {"read_timeout": 3}
+
+
+@pytest.mark.parametrize(
+    "key", ["aws_access_key_id", "aws_secret_access_key", "credentials", "table", "queues"]
+)
+def test_aws_refuses_credentials_and_product_keys(key: str) -> None:
+    with pytest.raises(ConfigError, match=f"'aws' takes no key '{key}'"):
+        _inherit({"region": "eu-west-1", key: "x"})
 
 
 def test_aws_names_the_replacement_of_a_retired_key() -> None:
     written = {"endpoint_url": "http://localhost:4566"}
     with pytest.raises(ConfigError, match=r"aws\.endpoint_url was removed; use aws\.url"):
-        aws_section(written)
+        _inherit(written)
 
 
 def test_a_dynamodb_store_inherits_aws() -> None:
@@ -133,8 +143,7 @@ def test_the_resolver_refuses_a_placeholder_in_aws(tmp_path: Path, key: str) -> 
 def test_the_resolver_fetches_a_key_once_per_configuration(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("a: ${ssm:/k}\nb: ${ssm:/k}\n", encoding="utf-8")
-    client = MagicMock()
-    client.get_parameter.return_value = {"Parameter": {"Value": "v"}}
+    client = _ssm_client()
     ctx = ConfigContext(load_config(str(path), resolvers=[SsmResolver()]))
     with patched_aws_clients(client):
         ctx.section("a", str)
@@ -159,8 +168,7 @@ def test_one_resolver_builds_a_client_per_configuration(tmp_path: Path) -> None:
     second.write_text(
         "aws:\n  region: us-east-1\n  url: http://localhost:4566\na: ${ssm:/k}\n", encoding="utf-8"
     )
-    client = MagicMock()
-    client.get_parameter.return_value = {"Parameter": {"Value": "v"}}
+    client = _ssm_client()
     with patched_aws_clients(client) as clients:
         for path in (first, second):
             ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)

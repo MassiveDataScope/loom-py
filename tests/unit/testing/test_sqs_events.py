@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -13,11 +13,11 @@ from loom.core.config import ConfigContext
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.jobs.aws.sqs import SQSJobService
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter
 from loom.serverless.aws.lambda_.sqs import SQSHandler
 from loom.testing import sqs_raw_record, sqs_record
 from tests.helpers.composition import composition_source
+from tests.helpers.jobs import SQSClient, sqs_service
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -103,32 +103,16 @@ def test_a_raw_body_loom_cannot_read_is_retried(
     assert (_failed(result), seen) == (["poison"], [])
 
 
-class _Client:
-    """Stands in for the boto3 ``sqs`` client."""
-
-    def __init__(self) -> None:
-        self.bodies: list[str] = []
-
-    def send_message(self, **request: Any) -> None:
-        self.bodies.append(request["MessageBody"])
-
-
 async def test_the_body_is_the_one_sqs_job_service_sends() -> None:
-    client = _Client()
-    service = SQSJobService(
-        client,
-        {"default": "queue"},
-        factory=cast(Any, None),
-        executor=cast(Any, None),
-        batch_size=None,
-    )
+    client = SQSClient()
+    service = sqs_service(client)
     token = set_identity(_ALICE)
     try:
-        service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1})
+        service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
         await flush_pending_dispatches()
     finally:
         reset_identity(token)
         clear_pending_dispatches()
 
     record = sqs_record(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
-    assert client.bodies == [record["body"]]
+    assert [request["MessageBody"] for request in client.requests] == [record["body"]]
