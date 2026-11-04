@@ -286,7 +286,8 @@ invocation that joins the caller's unit of work must run as the same identity;
 otherwise the executor raises `NestedIdentityMismatch` ("invoke it with the same
 identity, or dispatch a job that runs as the other one"). Any nested execution
 while an elevation is active raises `NestedElevation`. See
-{doc}`ADR 0008 </architecture/adr/0008-stores-and-units-of-work>`.
+ADR 0008
+(`docs/architecture/adr/0008-stores-and-units-of-work.md`).
 
 `JobService.dispatch(Job, payload=..., params=...)` is asynchronous: the job is
 sent after the caller's commit, runs in its own unit of work, possibly in
