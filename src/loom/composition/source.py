@@ -28,6 +28,7 @@ class AppConfig(msgspec.Struct, kw_only=True):
 
     name: str
     entry: str | None = None
+    job_service: str | None = None
     code_path: str = DEFAULT_CODE_PATH
     discovery: DiscoveryConfig = msgspec.field(default_factory=DiscoveryConfig)
 

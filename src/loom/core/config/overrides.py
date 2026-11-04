@@ -24,7 +24,9 @@ In production and staging an override may set only an allowlisted key: the
 operational keys loom lists in :data:`OVERRIDABLE` (log levels, worker and
 pool sizes, driver timeouts), plus the keys the reviewed files list under
 ``config.overridable``. Every other key is a startup error naming the
-variable. An entry is a dotted key; ``*`` stands for one level but never the
+variable. There ``app.job_service`` takes only a built-in name: a
+``module:Class`` reference would import code chosen by the environment. An
+entry is a dotted key; ``*`` stands for one level but never the
 first, and an entry inside ``checks`` or ``config`` is refused: both are read
 as written, so the files could not route them to the environment otherwise.
 The entries are checked at every load, in any environment and with or
@@ -69,6 +71,7 @@ from loom.core.environment import (
     override_variables,
     resolve_environment,
 )
+from loom.core.job.router import BUILTIN_JOB_BACKENDS
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -93,6 +96,7 @@ which key, cursor tokens are signed, which no per-deploy variable may change."""
 
 OVERRIDABLE: Final = (
     "app.entry",
+    "app.job_service",
     "observability.log.config.level",
     "observability.log.config.named_levels.*",
     "celery.worker_concurrency",
@@ -120,6 +124,8 @@ OVERRIDABLE: Final = (
 )
 """Keys a ``LOOM__`` variable may set in production and staging; ``*`` is one level."""
 _KNOWN_SECTIONS: Final = frozenset(str(key).split(".", 1)[0] for key in ConfigKey)
+_BUILTIN_ONLY: Final = {"app.job_service": BUILTIN_JOB_BACKENDS}
+"""Keys a deployed override sets only to a built-in name: any other value imports code."""
 
 
 def load_application_config(
@@ -183,7 +189,10 @@ def _apply_overrides(
             _require_allowlisted(name, key, (*OVERRIDABLE, *declared), environment)
     merged: Any = config
     for name, key in sorted(keys.items(), key=lambda item: item[1]):
-        merged = _merged(merged, name, key, _parsed(name, key, variables[name]))
+        layer, leaf = _parsed(name, key, variables[name])
+        if environment.is_deployed:
+            _require_builtin(name, key, leaf, environment)
+        merged = _merged(merged, name, key, layer)
     _logger.warning(
         "configuration keys overridden by %s variables: %s",
         OVERRIDE_PREFIX,
@@ -193,8 +202,8 @@ def _apply_overrides(
     return result
 
 
-def _parsed(name: str, key: str, value: str) -> Any:
-    """Parse one override into a dotlist layer holding a single literal leaf."""
+def _parsed(name: str, key: str, value: str) -> tuple[Any, Any]:
+    """Parse one override into a dotlist layer holding a single literal leaf, and that leaf."""
     from omegaconf import OmegaConf
 
     try:
@@ -211,7 +220,17 @@ def _parsed(name: str, key: str, value: str) -> Any:
         leaf = leaf[level]
     if _holds_mapping(leaf):
         raise ConfigError(f"{name} is or holds a mapping; an override sets one leaf value")
-    return layer
+    return layer, leaf
+
+
+def _require_builtin(name: str, key: str, leaf: Any, environment: Environment) -> None:
+    builtins = _BUILTIN_ONLY.get(key.casefold())
+    if builtins is not None and leaf not in builtins:
+        raise ConfigError(
+            f"{name} sets {key!r} to a value other than {', '.join(builtins)}, which is "
+            f"refused in {str(environment)!r}: a module:Class reference is set in the "
+            "reviewed configuration files"
+        )
 
 
 def _holds_mapping(node: Any) -> bool:

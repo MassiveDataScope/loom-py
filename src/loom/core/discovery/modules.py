@@ -21,6 +21,8 @@ class ModulesDiscoveryEngine:
     def discover(self) -> DiscoveryResult:
         """Scan modules and supplement use cases found in auto interfaces.
 
+        Jobs the modules declare are collected too.
+
         Returns:
             :class:`~loom.core.discovery.base.DiscoveryResult` with all
             discovered models, use cases, and interfaces.
@@ -36,7 +38,7 @@ class ModulesDiscoveryEngine:
             )
 
         modules = import_modules(self._module_paths)
-        models, use_cases, interfaces, _ = collect_from_modules(modules)
+        models, use_cases, interfaces, jobs = collect_from_modules(modules)
 
         seen_ucs: set[type[UseCase[object, object]]] = set(use_cases)
         for uc in collect_use_cases_from_interfaces(interfaces):
@@ -46,4 +48,5 @@ class ModulesDiscoveryEngine:
             models=tuple(models),
             use_cases=tuple(use_cases),
             interfaces=tuple(interfaces),
+            jobs=tuple(jobs),
         )

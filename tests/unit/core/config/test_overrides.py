@@ -302,6 +302,38 @@ def test_the_files_extend_the_allowlist_under_config_overridable(
     assert _value(context, "app.rest.title") == "Live"
 
 
+@pytest.mark.parametrize("value", ["inline", "celery"])
+def test_a_deployed_environment_takes_a_built_in_job_service(
+    deployed_file: str, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("LOOM__APP__JOB_SERVICE", value)
+
+    assert _value(_load_deployed(deployed_file), "app.job_service") == value
+
+
+@pytest.mark.parametrize("overridable", [[], ["app.job_service"]], ids=["loom", "the files"])
+def test_a_deployed_environment_refuses_a_job_service_class_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overridable: list[str]
+) -> None:
+    path = _write_document(tmp_path, {**_DEPLOYED_DOCUMENT, "config": {"overridable": overridable}})
+    monkeypatch.setenv("LOOM__APP__JOB_SERVICE", "evil.module:Backend")
+
+    with pytest.raises(ConfigError, match="LOOM__APP__JOB_SERVICE sets 'app.job_service'") as info:
+        _load_deployed(path)
+
+    assert "evil" not in str(info.value)
+
+
+def test_a_development_environment_takes_a_job_service_class_reference(
+    config_file: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOOM__APP__JOB_SERVICE", "app.jobs:Backend")
+
+    context = load_application_config(config_file, environment=Environment.DEVELOPMENT)
+
+    assert _value(context, "app.job_service") == "app.jobs:Backend"
+
+
 def test_an_allowlist_entry_covers_one_key_and_not_its_siblings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

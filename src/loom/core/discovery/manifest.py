@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from loom.core.contracts.manifest import AppManifestAttr
 from loom.core.discovery._utils import _append_unique, collect_use_cases_from_interfaces
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.job.job import Job
 from loom.core.model import BaseModel
 from loom.core.repository.abc import Repository
 from loom.core.use_case.use_case import UseCase
@@ -28,7 +29,8 @@ class ManifestDiscoveryEngine:
         The manifest module is expected to expose ``MODELS``, ``USE_CASES``,
         and ``INTERFACES`` lists. It may also expose ``REPOSITORIES`` to make
         custom repository imports explicit in the composition root, and
-        ``AGENTS`` to declare agent artifacts as paths or globs. When
+        ``AGENTS`` to declare agent artifacts as paths or globs, and ``JOBS``
+        whose ``jobs.<Job>`` overrides the composition applies. When
         ``USE_CASES`` is empty but
         ``INTERFACES`` contain ``auto=True`` interfaces, the generated use
         cases are discovered automatically from the interface routes.
@@ -52,6 +54,7 @@ class ManifestDiscoveryEngine:
         raw_interfaces = cast(list[Any], getattr(module, AppManifestAttr.INTERFACES, []))
         raw_repositories = cast(list[Any], getattr(module, AppManifestAttr.REPOSITORIES, []))
         raw_agent_specs = cast(list[Any], getattr(module, AppManifestAttr.AGENTS, []))
+        jobs = tuple(cast(list[type[Job[Any]]], getattr(module, AppManifestAttr.JOBS, [])))
 
         models = [cast(type[BaseModel], item) for item in raw_models]
         use_cases = [cast(type[UseCase[object, object]], item) for item in raw_use_cases]
@@ -65,11 +68,11 @@ class ManifestDiscoveryEngine:
         for uc in collect_use_cases_from_interfaces(interfaces):
             _append_unique(use_cases, seen_ucs, uc)
 
-        if not interfaces and not use_cases and not models and not repositories and not agent_specs:
+        if not (interfaces or use_cases or models or repositories or agent_specs or jobs):
             expected = (
                 f"{AppManifestAttr.MODELS}/{AppManifestAttr.USE_CASES}/"
                 f"{AppManifestAttr.INTERFACES}/{AppManifestAttr.REPOSITORIES}/"
-                f"{AppManifestAttr.AGENTS}"
+                f"{AppManifestAttr.AGENTS}/{AppManifestAttr.JOBS}"
             )
             raise ValueError(
                 f"Manifest module {self._manifest_module!r} exposes no components. "
@@ -81,6 +84,7 @@ class ManifestDiscoveryEngine:
             use_cases=tuple(use_cases),
             interfaces=tuple(interfaces),
             agent_specs=agent_specs,
+            jobs=jobs,
         )
 
     def _validate_repositories(

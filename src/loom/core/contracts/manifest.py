@@ -11,12 +11,14 @@ Example manifest module::
     from app.product.use_cases import GetProductUseCase
     from app.product.interface import ProductInterface
     from app.product.repository import ProductRepository
+    from app.product.jobs import SendRestockEmailJob
 
     MODELS = [Product]
     USE_CASES = [GetProductUseCase]
     INTERFACES = [ProductInterface]
     REPOSITORIES = [ProductRepository]
     AGENTS = ["ai/agents/*/agent.yaml"]
+    JOBS = [SendRestockEmailJob]
 """
 
 from __future__ import annotations
@@ -43,3 +45,4 @@ class AppManifestAttr(StrEnum):
     INTERFACES = "INTERFACES"
     REPOSITORIES = "REPOSITORIES"
     AGENTS = "AGENTS"
+    JOBS = "JOBS"

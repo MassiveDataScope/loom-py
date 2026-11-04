@@ -100,10 +100,9 @@ def test_create_app_uses_observability_section(monkeypatch: pytest.MonkeyPatch) 
         captured["environment"] = environment
         return runtime
 
-    def _fake_configure_job_service(
-        raw_cfg: Any, result: Any, observability_runtime: ObservabilityRuntime | None
-    ) -> None:
-        del raw_cfg, result, observability_runtime
+    def _fake_configure_job_service(*args: Any, **kwargs: Any) -> tuple[()]:
+        del args, kwargs
+        return ()
 
     def _fake_create_fastapi_app(
         result: Any,

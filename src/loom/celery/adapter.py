@@ -74,7 +74,6 @@ from loom.core.config import ConfigKey
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.discovery.worker import (
     WorkerComponents,
-    apply_job_overrides,
     merge_unique,
     use_cases_from_interfaces,
 )
@@ -351,7 +350,7 @@ class CeleryAdapter:
         self._declared: _Declared | None = None
 
     def recipe(self, source: CompositionSource) -> Recipe:
-        """Decode ``celery``, discover the worker's components and apply the per-job config.
+        """Decode ``celery`` and discover the worker's components; the composition applies ``jobs``.
 
         Raises:
             ConfigError: When ``celery`` or ``stores`` is misdeclared, or no
@@ -371,8 +370,6 @@ class CeleryAdapter:
         compilables = merge_unique(
             resolved.compilables, use_cases_from_interfaces(self._interfaces)
         )
-        for job_type in resolved.jobs:
-            apply_job_overrides(ctx, job_type)
         resolved = WorkerComponents(
             compilables=compilables,
             jobs=resolved.jobs,
@@ -394,6 +391,7 @@ class CeleryAdapter:
                 # Jobs compile and register like any use case.
                 use_cases=cast(Any, resolved.compilables),
                 interfaces=(),
+                jobs=resolved.jobs,
             ),
             backend=backend,
             skip_checks=frozenset({REST_CHECKS}),
