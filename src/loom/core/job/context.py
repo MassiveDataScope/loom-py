@@ -1,13 +1,14 @@
 """Pending job dispatches, delegated to the post-commit channel.
 
 The public names are kept for existing callers; the queue itself is the
-:class:`~loom.core.engine.post_commit.PostCommitChannel` bound by the
-executor.  When no channel is bound, a per-context fallback channel holds
-the dispatches so :func:`flush_pending_dispatches` and
+:class:`~loom.core.engine.post_commit.PostCommitChannel` that
+:func:`~loom.core.engine.post_commit.store_channel` returns for the store the
+running execution writes to.  When no channel is bound, a per-context fallback
+channel holds the dispatches so :func:`flush_pending_dispatches` and
 :func:`clear_pending_dispatches` keep working for hand-driven callers.
 
 Inside an execution the executor owns the drain: :func:`flush_pending_dispatches`
-refuses to run then, and :func:`clear_pending_dispatches` discards the bound
+refuses to run then, and :func:`clear_pending_dispatches` discards that
 channel rather than the fallback one.
 """
 
@@ -17,7 +18,7 @@ from collections.abc import Callable, Hashable
 from contextvars import ContextVar
 from typing import Any
 
-from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel
+from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
 
 # default=None, never a channel instance: a shared default would leak
 # dispatches across contexts.  Each context creates its own on first use.
@@ -58,7 +59,7 @@ def pending_publish_group(key: Hashable, create: Callable[[], ActionT]) -> Actio
 
 
 def _target_channel() -> PostCommitChannel:
-    bound = active_channel()
+    bound = store_channel()
     return _fallback_channel() if bound is None else bound
 
 
@@ -89,11 +90,11 @@ async def flush_pending_dispatches() -> None:
 
 
 def clear_pending_dispatches() -> None:
-    """Discard the pending dispatches of the active channel, or of the fallback one.
+    """Discard the pending dispatches of the execution's channel, or of the fallback one.
 
     Jobs registered during a failed transaction must not be sent to the broker.
     """
-    bound = active_channel()
+    bound = store_channel()
     channel = _fallback.get() if bound is None else bound
     if channel is not None:
         channel.discard()

@@ -35,7 +35,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
@@ -53,6 +53,10 @@ from loom.core.uow.coordinator import (
     StoreOutcome,
     Uncertain,
 )
+
+if TYPE_CHECKING:
+    # Only typed here: ``loom.core.engine`` imports this module.
+    from loom.core.engine.post_commit import PostCommitChannel
 
 
 class ScopeOwnershipError(SystemError):
@@ -248,6 +252,10 @@ class InvocationScope:
         outcome: Set by the coordinator when it ends the participants.
         identity: The ambient identity when the scope opened; an execution
             joining it must run as this identity.
+        post_commit: The channel its owner drains once the scope ended; while
+            set, each store's post-commit actions wait in
+            :attr:`store_channels` for :meth:`settle_post_commit`.
+        store_channels: The post-commit actions of each store, by store.
     """
 
     owner_task: asyncio.Task[Any] | None
@@ -257,12 +265,9 @@ class InvocationScope:
     frames: list[Frame] = field(default_factory=list)
     outcome: InvocationOutcome | None = None
     identity: Identity = ANONYMOUS
+    post_commit: PostCommitChannel | None = None
+    store_channels: dict[StoreKey, PostCommitChannel] = field(default_factory=dict)
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
-
-    @property
-    def committed(self) -> bool:
-        """Whether the coordinator recorded an outcome in which every store succeeded."""
-        return self.outcome is not None and self.outcome.succeeded
 
     def require_owner(self) -> None:
         """Check that the caller may touch this scope's participants.
@@ -350,6 +355,32 @@ class InvocationScope:
             f"the execution running now {declared}; "
             "inject its repository as Joined[...] to write to it"
         )
+
+    def settle_post_commit(self, error: BaseException | None) -> None:
+        """Move into :attr:`post_commit` the actions each store's outcome lets run.
+
+        A store that committed, or wrote without a transaction, runs all its
+        actions, unless the body failed or a participant was poisoned. An
+        ``Uncertain`` store, or a non-transactional one in a failed body, runs
+        only its priority lane: a cache invalidation is safe whether or not its
+        write landed. A rolled-back store runs none. Actions no store holds
+        stay on :attr:`post_commit` only if the whole invocation succeeded.
+
+        Args:
+            error: The exception the invocation's body raised, or ``None``.
+        """
+        into, outcome = self.post_commit, self.outcome
+        if into is None:
+            return
+        if error is not None or outcome is None or not outcome.succeeded:
+            into.discard()
+        failed = error is not None or any(
+            p.poisoned is not None for p in self.participants.values()
+        )
+        for store in () if outcome is None else outcome.stores:
+            channel = self.store_channels.get(store.key)
+            if channel is not None and not isinstance(store, RolledBack):
+                into.adopt(channel, priority_only=failed or isinstance(store, Uncertain))
 
     @asynccontextmanager
     async def frame(self, frame: Frame) -> AsyncIterator[None]:

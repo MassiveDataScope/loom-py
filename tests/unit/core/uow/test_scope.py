@@ -726,22 +726,6 @@ class TestInvocation:
 
         assert ledger.calls_of(S0) == ["begin", "flush", "commit", "close"]
 
-    @pytest.mark.parametrize(
-        ("outcome", "committed"),
-        [
-            (None, False),
-            (InvocationOutcome((Committed(S0),)), True),
-            (InvocationOutcome((RolledBack(S0, Boom()),)), False),
-        ],
-        ids=["no-outcome", "succeeded", "rolled-back"],
-    )
-    def test_committed_is_whether_a_recorded_outcome_succeeded(
-        self, outcome: InvocationOutcome | None, committed: bool
-    ) -> None:
-        scope = InvocationScope(None, _coordinator(), outcome=outcome)
-
-        assert scope.committed is committed
-
     async def test_the_scope_is_closed_on_exit(self) -> None:
         async with invocation(_coordinator()) as scope:
             pass

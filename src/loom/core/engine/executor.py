@@ -87,12 +87,12 @@ class _ExecutionState:
 
     ``phase`` names the lifecycle step in flight so a failure can be
     reported with the ``error_kind`` of the step that raised; it is
-    ``commit`` from the flush on. ``committed`` is set once the coordinator
-    has ended the invocation scope this execution owns and every store
-    succeeded; :meth:`RuntimeExecutor._run_lifecycle` reads it to decide
-    whether a later failure (e.g. resetting the scope's token) may still
-    discard the channel — a write already committed must never lose its
-    queued invalidations to an unrelated teardown failure.
+    ``commit`` from the flush on. ``settled`` is set once the coordinator
+    has ended the invocation scope this execution owns and the scope moved
+    into the channel the actions its stores' outcomes let run;
+    :meth:`RuntimeExecutor._run_lifecycle` then drains the channel even on
+    failure — a write already committed must never lose its queued
+    invalidations to another store's failure or an unrelated teardown one.
     """
 
     use_case_name: str
@@ -102,7 +102,7 @@ class _ExecutionState:
     phase: str = _ERROR_KIND_BEGIN
     pipeline_ms: float | None = None
     commit_ms: float | None = None
-    committed: bool = False
+    settled: bool = False
 
     def elapsed_ms(self) -> float:
         return (time.perf_counter() - self.start) * 1000
@@ -132,10 +132,11 @@ class RuntimeExecutor:
     included.  A nested execution in the task that owns the scope pushes its
     frame and never commits; one from another task, or into a closed scope,
     raises :class:`~loom.core.uow.scope.ScopeOwnershipError`.  Post-commit
-    actions (job dispatches) are queued on a
-    :class:`~loom.core.engine.post_commit.PostCommitChannel` owned by the
-    execution that owns the scope (or by the outermost execution when there
-    is none) and run once the scope has closed.
+    actions (job dispatches, cache invalidations) are held by the store that
+    owns them and, once the scope has closed, run on the
+    :class:`~loom.core.engine.post_commit.PostCommitChannel` of the execution
+    that owns the scope as that store's outcome allows (or on the outermost
+    execution's channel when there is no scope).
 
     An execution given an ``identity`` installs it as the ambient
     :func:`~loom.core.identity.current_identity` until it ends, drain
@@ -368,7 +369,8 @@ class RuntimeExecutor:
         rollback on any exception, cancellation included.  A nested call in
         the task that owns the scope joins it and never commits.
         Post-commit actions queued during the execution run after the scope
-        has closed; when they fail the result is a
+        has closed, those of each store as its outcome allows; when they
+        fail the result is a
         :class:`~loom.core.engine.post_commit.PostCommitError` and the
         transaction stays committed.
 
@@ -488,12 +490,11 @@ class RuntimeExecutor:
                     result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
-            # accounted for and re-raised.  ``state.committed`` tells apart
-            # a genuine transaction failure (discard is correct: nothing
-            # durable happened) from an exception raised *after* every store
-            # committed, e.g. resetting the scope's token — that channel's
-            # invalidations describe a durable write and must still run, not
-            # be thrown away with an unrelated teardown error.
+            # accounted for and re-raised.  Once ``state.settled``, the
+            # channel holds only the actions of stores whose writes may be
+            # durable, so they run even though the invocation failed (another
+            # store did not commit, or resetting the scope's token raised).
+            # Before that, nothing durable happened: discard.
             #
             # Unbound here, before either branch, not left to the trailing
             # ``finally``: a drain must never run with its own channel still
@@ -504,7 +505,7 @@ class RuntimeExecutor:
             # ``finally`` below does not unbind a second time.
             self._unbind(channel_token)
             channel_token = None
-            if channel is not None and state.committed:
+            if channel is not None and state.settled:
                 await self._drain_committed_channel_logging_failure(channel)
             else:
                 self._discard(channel)
@@ -533,6 +534,7 @@ class RuntimeExecutor:
         result: Any = None
         error: BaseException | None = None
         async with invocation(coordinator) as scope:
+            scope.post_commit = active_channel()
             try:
                 result = await self._run_in_frame(scope, state, plan, compilable, inputs)
             except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
@@ -540,13 +542,10 @@ class RuntimeExecutor:
             try:
                 outcome = await self._finish(scope, error, state)
             finally:
-                # Read from the scope: ``finish`` records the outcome before it
-                # raises an interruption caught while ending a store (a
-                # cancelled close).  Once every store committed, a failure past
-                # this point must not read as "the transaction failed".  The
-                # error still counts: a failed body over non-transactional
-                # stores alone ends in an outcome that succeeded.
-                state.committed = error is None and scope.committed
+                # ``finish`` records the outcome before it raises an
+                # interruption caught while ending a store (a cancelled close).
+                scope.settle_post_commit(error)
+                state.settled = True
         failure = invocation_error(outcome, error)
         if failure is not None:
             raise failure
@@ -585,11 +584,12 @@ class RuntimeExecutor:
             channel.discard()
 
     async def _drain_committed_channel_logging_failure(self, channel: PostCommitChannel) -> None:
-        """Drain a channel whose transaction committed, despite the exception about to propagate.
+        """Drain the actions of the stores that may have written, despite the exception.
 
         Called from an exception handler that is already about to re-raise
-        the failure that brought it here (a teardown error, not the
-        transaction's own).  Letting some other exception from the drain
+        the failure that brought it here: another store that did not commit
+        (``StoresNotCommitted``), or a teardown error.  Letting some other
+        exception from the drain
         replace that exception would hide the reason this path was reached
         at all, so any ordinary failure — a ``PostCommitError`` from a
         failed action, or any other ``Exception`` a misbehaving action
