@@ -118,6 +118,14 @@ def test_celery_without_its_extra_stops_startup(
         compose_application(source, adapter)
 
 
+def test_celery_queues_without_its_default_queue_stops_startup(tmp_path: Path) -> None:
+    source = job_source(tmp_path, {"celery": {**BROKER, "queues": ["emails"]}}, "inline")
+    adapter = JobsAdapter()
+
+    with pytest.raises(JobBackendError, match="the celery section is invalid"):
+        compose_application(source, adapter)
+
+
 # ---------------------------------------------------------------------------
 # The API process
 # ---------------------------------------------------------------------------

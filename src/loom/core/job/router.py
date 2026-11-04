@@ -99,9 +99,7 @@ class JobRouter:
                 to more than one backend.
         """
         backends = [self._backend_for(job_type, None) for job_type, _ in jobs]
-        if not backends:
-            return JobGroup(handles=())
-        first = backends[0]
+        first = backends[0] if backends else self._default
         if all(backend is first for backend in backends):
             return first.dispatch_parallel(
                 jobs, on_all_success=on_all_success, on_any_failure=on_any_failure

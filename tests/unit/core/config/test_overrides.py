@@ -312,11 +312,16 @@ def test_a_deployed_environment_takes_a_built_in_job_service(
 
 
 @pytest.mark.parametrize("overridable", [[], ["app.job_service"]], ids=["loom", "the files"])
+@pytest.mark.parametrize(
+    "value",
+    ["evil.module:Backend", r'"evil.module\x3aBackend"', r'"evil.module\U0000003aBackend"'],
+    ids=["plain", "hex escape", "unicode escape"],
+)
 def test_a_deployed_environment_refuses_a_job_service_class_reference(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overridable: list[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overridable: list[str], value: str
 ) -> None:
     path = _write_document(tmp_path, {**_DEPLOYED_DOCUMENT, "config": {"overridable": overridable}})
-    monkeypatch.setenv("LOOM__APP__JOB_SERVICE", "evil.module:Backend")
+    monkeypatch.setenv("LOOM__APP__JOB_SERVICE", value)
 
     with pytest.raises(ConfigError, match="LOOM__APP__JOB_SERVICE sets 'app.job_service'") as info:
         _load_deployed(path)

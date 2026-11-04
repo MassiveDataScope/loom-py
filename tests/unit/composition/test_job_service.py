@@ -136,7 +136,7 @@ def test_without_job_service_or_celery_section_jobs_run_inline(tmp_path: Path) -
 def test_without_job_service_a_missing_extra_falls_back_to_inline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setitem(sys.modules, "loom.celery.service", None)
+    monkeypatch.setitem(sys.modules, "loom.celery.config", None)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)

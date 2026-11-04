@@ -186,9 +186,10 @@ def _apply_overrides(
             _require_allowlisted(name, key, (*OVERRIDABLE, *declared), environment)
     merged: Any = config
     for name, key in sorted(keys.items(), key=lambda item: item[1]):
+        layer = _parsed(name, key, variables[name])
         if environment.is_deployed:
-            _require_no_import(name, key, variables[name], environment)
-        merged = _merged(merged, name, key, _parsed(name, key, variables[name]))
+            _require_no_import(name, key, layer, environment)
+        merged = _merged(merged, name, key, layer)
     _logger.warning(
         "configuration keys overridden by %s variables: %s",
         OVERRIDE_PREFIX,
@@ -219,8 +220,12 @@ def _parsed(name: str, key: str, value: str) -> Any:
     return layer
 
 
-def _require_no_import(name: str, key: str, value: str, environment: Environment) -> None:
-    if key.casefold() == "app.job_service" and ":" in value:
+def _require_no_import(name: str, key: str, layer: Any, environment: Environment) -> None:
+    from omegaconf import OmegaConf
+
+    # The parsed value: a YAML escape such as "\x3a" hides the colon from the raw text.
+    parsed = _strings(OmegaConf.to_container(layer, resolve=False))
+    if key.casefold() == "app.job_service" and any(":" in text for text in parsed):
         raise ConfigError(
             f"{name} sets {key!r} to a module:Class reference, which is refused in "
             f"{str(environment)!r}: set it in the reviewed configuration files"

@@ -20,7 +20,7 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.symbols import import_symbol
 
 if TYPE_CHECKING:
-    from loom.celery.service import CeleryJobService
+    from loom.celery.config import CeleryConfig
     from loom.core.engine.executor import RuntimeExecutor
     from loom.core.engine.metrics import MetricsAdapter
     from loom.core.use_case.factory import UseCaseFactory
@@ -37,44 +37,48 @@ class JobBackendContext:
     observability: ObservabilityRuntime | None
 
 
-_Built = tuple[JobService, Resource | None]
+_Built = tuple[JobService, tuple[Resource, ...]]
 
 
-def _celery_service(context: JobBackendContext) -> CeleryJobService:
-    """Build the Celery producer; ``ImportError`` without the ``loom[celery]`` extra."""
-    from loom.celery.config import CeleryConfig, create_celery_app
+def _celery_config(ctx: ConfigContext) -> CeleryConfig:
+    try:
+        from loom.celery.config import CeleryConfig
+    except ImportError as exc:
+        raise JobBackendError(
+            "jobs are routed to celery, but the loom[celery] extra is not installed"
+        ) from exc
+    return ctx.section(ConfigKey.CELERY, CeleryConfig)
+
+
+def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Built:
+    from loom.celery.config import create_celery_app
     from loom.celery.service import CeleryJobService
 
-    celery_cfg = context.config.section(ConfigKey.CELERY, CeleryConfig)
-    return CeleryJobService(
-        create_celery_app(celery_cfg),
+    try:
+        app = create_celery_app(celery_cfg)
+    except ValueError as exc:
+        raise JobBackendError(f"the celery section is invalid: {exc}") from exc
+    service = CeleryJobService(
+        app,
         metrics=context.metrics,
         factory=context.factory,
         executor=context.executor,
         observability_runtime=context.observability,
     )
-
-
-def _celery_resource(service: CeleryJobService) -> Resource:
-    return Resource(
+    closer = Resource(
         kind=ResourceKind.CELERY,
         name="jobs",
         manager=closing(lambda: asyncio.to_thread(service.close)),
     )
+    return service, (closer,)
 
 
 def _inline(context: JobBackendContext) -> _Built:
-    return InlineJobService(context.factory, context.executor), None
+    return InlineJobService(context.factory, context.executor), ()
 
 
 def _celery(context: JobBackendContext) -> _Built:
-    try:
-        service = _celery_service(context)
-    except ImportError as exc:
-        raise JobBackendError(
-            "app.job_service routes jobs to celery, but the loom[celery] extra is not installed"
-        ) from exc
-    return service, _celery_resource(service)
+    return _celery_backend(context, _celery_config(context.config))
 
 
 _BUILTIN_JOB_BACKENDS: Final[Mapping[str, Callable[[JobBackendContext], _Built]]] = {
@@ -94,33 +98,22 @@ def _backend(name: str, context: JobBackendContext) -> _Built:
             f"{', '.join(_BUILTIN_JOB_BACKENDS)} or a module:Class reference"
         )
     backend_type = cast(Callable[[JobBackendContext], JobService], import_symbol(name))
-    return backend_type(context), None
+    return backend_type(context), ()
 
 
-def _celery_queues(ctx: ConfigContext) -> list[str]:
-    """The queues ``celery`` routes to itself; Celery is imported only when it declares some."""
-    if not ctx.has("celery.queues"):
-        return []
-    try:
-        from loom.celery.config import CeleryConfig
-    except ImportError as exc:
-        raise JobBackendError(
-            "celery.queues routes jobs to celery, but the loom[celery] extra is not installed"
-        ) from exc
-    return ctx.section(ConfigKey.CELERY, CeleryConfig).queues
-
-
-def _routed(context: JobBackendContext, default: str) -> tuple[JobService, tuple[Resource, ...]]:
+def _routed(context: JobBackendContext, default: str) -> _Built:
     """The *default* backend, behind a router when ``celery.queues`` routes to Celery."""
-    service, resource = _backend(default, context)
-    resources = () if resource is None else (resource,)
-    queues = [] if default == "celery" else _celery_queues(context.config)
-    if not queues:
+    service, resources = _backend(default, context)
+    # Celery is imported only when it declares queues.
+    if default == "celery" or not context.config.has("celery.queues"):
         return service, resources
-    celery = _celery_service(context)
-    return JobRouter(dict.fromkeys(queues, celery), default=service), (
+    celery_cfg = _celery_config(context.config)
+    if not celery_cfg.queues:
+        return service, resources
+    celery, closers = _celery_backend(context, celery_cfg)
+    return JobRouter(dict.fromkeys(celery_cfg.queues, celery), default=service), (
         *resources,
-        _celery_resource(celery),
+        *closers,
     )
 
 
@@ -147,10 +140,10 @@ def _implicit(context: JobBackendContext) -> _Built:
             )
         return _inline(context)
     try:
-        service = _celery_service(context)
-    except ImportError:
+        celery_cfg = _celery_config(ctx)
+    except JobBackendError:
         return _inline(context)
-    return service, _celery_resource(service)
+    return _celery_backend(context, celery_cfg)
 
 
 def configure_job_service(
@@ -193,10 +186,6 @@ def configure_job_service(
         metrics=result.metrics,
         observability=observability_runtime,
     )
-    if backend is None:
-        service, resource = _implicit(context)
-        resources: tuple[Resource, ...] = () if resource is None else (resource,)
-    else:
-        service, resources = _routed(context, backend)
+    service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)
     return resources
