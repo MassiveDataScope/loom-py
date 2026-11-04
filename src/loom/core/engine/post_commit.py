@@ -213,7 +213,12 @@ def _log_unreported(
     _log_failures(failures)
     if shielded.cancelled() or shielded.exception() is not None:
         for action in unsent:
-            _logger.error(_SHIELDED_UNSENT, **_describe(action))
+            log_never_ran(action)
+
+
+def log_never_ran(action: PostCommitAction) -> None:
+    """Log a shielded action the interruption stopped, by job name and task id only."""
+    _logger.error(_SHIELDED_UNSENT, **_describe(action))
 
 
 def _log_failures(failures: list[_Failure]) -> None:

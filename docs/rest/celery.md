@@ -382,10 +382,15 @@ sqs:
   limit.
 - `max_concurrent_sends` (default 1): queues sent at the same time; the calls
   of one queue always run one after another.
-- The entries SQS refuses in a call are sent once more. Those refused again,
-  and every entry of a call that raised, are logged one by one with job, task
-  id, queue and AWS error code, then raised together as one `SQSDispatchError`
-  (`code="sqs_batch_partial_failure"`) carrying their count and codes.
+- On a standard queue, the entries SQS refuses in a call are sent once more.
+  A FIFO queue resends nothing and, after a failure, holds back its later
+  calls (code `NotSent`), so no job overtakes the one that failed.
+- What still failed, and every entry of a call that raised, is logged one by
+  one with job, task id, queue and AWS error code, then raised together as one
+  `SQSDispatchError` (`code="sqs_batch_partial_failure"`) carrying the count
+  and codes.
+- If the shielded send itself dies (the loop closing), each job not yet handed
+  to SQS is logged as `PostCommitShieldedActionNeverRan`.
 - Nothing waits for jobs from other requests: a batch never outlives the
   execution that committed it.
 

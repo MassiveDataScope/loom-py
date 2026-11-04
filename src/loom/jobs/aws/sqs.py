@@ -18,6 +18,7 @@ import msgspec
 from loom.core.config import ConfigError
 from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.engine.post_commit import log_never_ran
 from loom.core.errors import LoomError
 from loom.core.identity import current_identity
 from loom.core.identity.wire import encode_identity
@@ -126,6 +127,8 @@ class _PendingSQSSend:
 
 
 _Failure = tuple[_PendingSQSSend, str]
+_NOT_SENT = "NotSent"
+"""The code of a FIFO entry held back because an earlier one of its queue failed."""
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,8 @@ class _PendingSQSBatch:
     batch_size: int
     max_concurrent_sends: int
     sends: list[_PendingSQSSend] = field(default_factory=list, repr=False)
+    handed: set[str] = field(default_factory=set, repr=False)
+    """Task ids already handed to an SQS call."""
 
     @property
     def task_name(self) -> str:
@@ -150,13 +155,16 @@ class _PendingSQSBatch:
         for send in self.sends:
             by_queue.setdefault(send.request["QueueUrl"], []).append(send)
         limit = asyncio.Semaphore(self.max_concurrent_sends)
-        failed = [
-            failure
-            for failures in await asyncio.gather(
+        try:
+            results = await asyncio.gather(
                 *(self._send_queue(url, sends, limit) for url, sends in by_queue.items())
             )
-            for failure in failures
-        ]
+        except BaseException:
+            for send in self.sends:
+                if send.task_id not in self.handed:
+                    log_never_ran(send)
+            raise
+        failed = [failure for failures in results for failure in failures]
         if not failed:
             return
         for send, code in failed:
@@ -170,11 +178,19 @@ class _PendingSQSBatch:
     async def _send_queue(
         self, url: str, sends: list[_PendingSQSSend], limit: asyncio.Semaphore
     ) -> list[_Failure]:
-        """One chunk after the other, so a FIFO queue receives the jobs in dispatch order."""
+        """One chunk after the other, so a FIFO queue receives the jobs in dispatch order.
+
+        A FIFO queue resends nothing and stops at its first failure: a later
+        message would overtake the failed one.
+        """
+        fifo = url.endswith(".fifo")
         failed: list[_Failure] = []
         async with limit:
             for chunk in _chunks(sends, self.batch_size):
-                failed += await self._send_chunk(url, chunk, retry=True)
+                if fifo and failed:
+                    failed += [(send, _NOT_SENT) for send in chunk]
+                else:
+                    failed += await self._send_chunk(url, chunk, retry=not fifo)
         return failed
 
     async def _send_chunk(
@@ -182,6 +198,7 @@ class _PendingSQSBatch:
     ) -> list[_Failure]:
         """Send ``chunk``; the entries SQS refuses are sent once more when ``retry``."""
         entries = [send.batch_entry() for send in chunk]
+        self.handed.update(send.task_id for send in chunk)
         try:
             response = await asyncio.to_thread(
                 self.client.send_message_batch, QueueUrl=url, Entries=entries

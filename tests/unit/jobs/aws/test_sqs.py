@@ -14,6 +14,7 @@ import pytest
 
 from loom.composition import AppConfig, JobBackendError, compose_application
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import (
@@ -46,6 +47,7 @@ from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 pytestmark = pytest.mark.timeout(10)
 
 _UNREPORTED = "PostCommitActionFailedAfterInterruption"
+_NEVER_RAN = "PostCommitShieldedActionNeverRan"
 
 _URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/emails"
 _FIFO_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo"
@@ -88,6 +90,8 @@ class _Client:
         self.refuse: dict[str, int] = {}
         self.sent = threading.Event()
         self.peak = 0
+        self.entered = threading.Event()
+        self.hold: threading.Event | None = None
         self._error = error
         self._overlap = overlap
         self._in_flight = 0
@@ -102,6 +106,9 @@ class _Client:
         return {"MessageId": "m-1"}
 
     def send_message_batch(self, QueueUrl: str, Entries: list[dict[str, Any]]) -> dict[str, Any]:  # noqa: N803
+        self.entered.set()
+        if self.hold is not None:
+            self.hold.wait(5)
         self._wait_for_another_call()
         self.batches.append((QueueUrl, [entry["Id"] for entry in Entries]))
         if self._error is not None:
@@ -472,6 +479,25 @@ async def test_an_entry_refused_twice_fails_the_batch_naming_job_task_and_code_o
     assert "hunter2" not in f"{failure!r} {[record.msg for record in caplog.records]}"
 
 
+async def test_a_fifo_queue_resends_nothing_and_holds_back_what_would_overtake(
+    tmp_path: Path, client: _Client, caplog: pytest.LogCaptureFixture
+) -> None:
+    service = _compose(tmp_path, _sqs_config(batch_size=2), client, OrderJob)
+    ids = [service.dispatch(OrderJob, payload={"customer": "c"}).job_id for _ in range(5)]
+    client.refuse[ids[1]] = 1
+    with pytest.raises(PostCommitError) as raised:
+        await flush_pending_dispatches()
+
+    (failure,) = raised.value.failures
+    assert isinstance(failure, SQSDispatchError)
+    assert failure.message == "4 of 5 SQS sends failed: InternalError, NotSent"
+    assert client.batches == [(_FIFO_URL, ids[:2])]
+    assert [(task, code) for _, task, _, code in _failed_sends(caplog)] == [
+        (ids[1], "InternalError"),
+        *((task, "NotSent") for task in ids[2:]),
+    ]
+
+
 async def test_a_failed_batch_call_is_not_sent_again(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -531,6 +557,41 @@ async def test_a_batch_failing_after_the_cancellation_logs_its_jobs_and_tasks(
         "loom.job.EmailJob,loom.job.EmailJob",
         ",".join(ids),
     )
+    assert "hunter2" not in caplog.text
+
+
+async def test_entries_a_dead_batch_never_handed_to_sqs_are_logged(
+    client: _Client, caplog: pytest.LogCaptureFixture
+) -> None:
+    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(Log()))
+    queues = {"emails": _URL, "orders": _FIFO_URL}
+    service = SQSJobService(client, queues, factory=cast(Any, None), executor=executor)
+    client.hold = threading.Event()
+    channel = PostCommitChannel()
+    token = bind_channel(channel)
+    try:
+        service.dispatch(EmailJob)
+        unsent = service.dispatch(OrderJob, payload={"customer": "hunter2"}).job_id
+    finally:
+        reset_channel(token)
+    task = asyncio.create_task(channel.drain(committed=True))
+    assert await asyncio.to_thread(client.entered.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    for shielded in list(post_commit._shielded_tasks):  # what closing the loop does
+        shielded.cancel()
+    while _NEVER_RAN not in caplog.text:
+        await asyncio.sleep(0.01)
+    client.hold.set()
+
+    never_ran = [
+        record.msg["task_id"]
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
+    ]
+    assert never_ran == [unsent]
     assert "hunter2" not in caplog.text
 
 

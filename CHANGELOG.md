@@ -17,8 +17,8 @@
   over 256 KiB raise `SQSDispatchError`; unmapped queues stop startup.
 - **jobs:** an execution's SQS jobs leave after the commit in
   `SendMessageBatch` calls per queue, in dispatch order (`sqs.batch`,
-  `sqs.batch_size`, `sqs.max_concurrent_sends`); entries SQS refuses are sent
-  once more. `lambda.functions.<name>` with `sqs: true` declares `batch_size`,
+  `sqs.batch_size`, `sqs.max_concurrent_sends`); a standard queue resends the
+  entries SQS refuses once, a FIFO queue stops at its first failure. `lambda.functions.<name>` with `sqs: true` declares `batch_size`,
   `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
   `false` makes the SQS handler fail the whole batch.
 
