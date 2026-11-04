@@ -16,6 +16,7 @@ from loom.core.persistence.elevation import ScopedTables
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
+from loom.core.uow.scope import current_participant
 
 _SET_SETTINGS: Final = text(SET_SETTINGS)
 
@@ -61,9 +62,14 @@ class SQLAlchemyStoreElevation:
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
         return self._apply({elevation_setting(scope): "" for scope in sorted(scopes)})
 
-    def invalidate(self) -> Awaitable[object]:
-        session = self._session_manager.active_session
-        return _nothing() if session is None else session.invalidate()
+    def invalidate(self, cause: BaseException) -> Awaitable[object]:
+        manager = self._session_manager
+        participant = current_participant(manager.store, manager, write=False)
+        session = manager.active_session
+        if participant is None or session is None:
+            return _nothing()
+        participant.poison(cause)
+        return session.invalidate()
 
     def _apply(self, values: Mapping[str, str]) -> Awaitable[object]:
         # Read now, in the calling task: the frame may await the statement in another.

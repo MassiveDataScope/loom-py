@@ -377,9 +377,10 @@ lives:
   execution raises {class}`~loom.core.uow.scope.NestedElevation`; elevate inside the
   nested use case instead, or dispatch a job, which runs after the execution ends;
 - a nested execution that elevates clears on exit what it added; when that clearing
-  fails, the session is invalidated, so no flag outlives the execution that set it; when
-  the invalidation fails too, its error is raised from the nested execution, so the
-  invocation rolls back unless the caller catches it;
+  fails, the session is invalidated and the nested execution raises the failure (the
+  invalidation's own, chained from it, when that fails too). The invocation then commits
+  nothing, in any store, even when a parent use case catches that error: it fails with
+  the clearing failure, so no flag outlives the execution that set it;
 - a task spawned during the execution shares the frame and loses the elevation when the
   execution ends;
 - post-commit actions and the next execution on the same pooled connection are not

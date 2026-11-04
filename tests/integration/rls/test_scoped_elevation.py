@@ -4,9 +4,10 @@
   outer execution keeps, and both executions' writes commit together.
 - ``elevate`` from a ``gather`` child is refused by the invocation scope's
   checkpoint and leaves nothing elevated.
-- When clearing the flag fails and invalidating the session fails too, the
-  error ends the invocation: nothing is persisted, and the connection that
-  held the flag returns to the pool without it.
+- When clearing the flag fails, whether invalidating the session then
+  succeeds or fails, the invocation commits nothing, even when a parent use
+  case catches the error, and the connection that held the flag returns to
+  the pool without it.
 
 The use cases run through the real composition (``build_application``) with
 ``schema.mode: external``, on a pool of one connection, so the next checkout
@@ -25,7 +26,7 @@ from typing import Any, cast
 import pytest
 import yaml
 from sqlalchemy import CursorResult, text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.composition import build_application
@@ -245,25 +246,79 @@ def _refused(message: str) -> Awaitable[object]:
     return refuse()
 
 
-@pytest.fixture
-def cleanup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clearing the flags fails, and so does invalidating the session after it."""
+class WriteThenNestEditorCatching(UseCase[notes.Note, str]):
+    """Write, run :class:`EditBobElevated` nested, catch its failure and write again."""
+
+    def __init__(self, session_manager: SessionManager, app: ApplicationInvoker) -> None:
+        self._session_manager = session_manager
+        self._app = app
+
+    async def execute(self) -> str:
+        session = _active(self._session_manager)
+        await session.execute(text(_INSERT_OUTER))
+        try:
+            await self._app.invoke(EditBobElevated)
+        except RuntimeError as exc:
+            caught = str(exc)
+        else:
+            caught = ""
+        await _active(self._session_manager).execute(text(_INSERT_OUTER))
+        return caught
+
+
+@dataclass(frozen=True)
+class CleanupFailure:
+    """How a failed cleanup ends.
+
+    Attributes:
+        raised: What the outer invocation raises when nothing catches it.
+        connection_kept: Whether the connection that held the flag goes back
+            to the pool; an invalidated one is discarded.
+    """
+
+    raised: str
+    connection_kept: bool
+
+
+@pytest.fixture(params=["invalidation-succeeds", "invalidation-fails"])
+def cleanup_fails(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> CleanupFailure:
+    """Clearing the flags fails; invalidating the session after it succeeds, or fails too."""
     monkeypatch.setattr(
         SQLAlchemyStoreElevation, "clear_flags", lambda _, __: _refused("clearing refused")
     )
-    monkeypatch.setattr(
-        SQLAlchemyStoreElevation, "invalidate", lambda _: _refused("invalidation refused")
-    )
+    if request.param == "invalidation-succeeds":
+        return CleanupFailure("clearing refused", connection_kept=False)
+    monkeypatch.setattr(AsyncSession, "invalidate", lambda _: _refused("invalidation refused"))
+    return CleanupFailure("invalidation refused", connection_kept=True)
 
 
-@pytest.mark.usefixtures("cleanup_fails")
-async def test_a_failed_cleanup_rolls_back_and_the_flag_never_reaches_the_next_checkout(
-    composed: Composed, held: list[OnConnection]
+async def _no_flag_reaches_the_pool(
+    composed: Composed, held: list[OnConnection], failure: CleanupFailure
 ) -> None:
-    with pytest.raises(RuntimeError, match="invalidation refused"):
-        await composed.app.invoke(WriteThenNestEditor)
-
+    """The flag was on; nothing is persisted; the next checkout carries no flag."""
     (flagged,) = held
     assert flagged.flag == "on"
     assert await composed.bodies() == _SEEDED
-    assert await composed.next_checkout() == OnConnection(flagged.pid, "")
+    following = await composed.next_checkout()
+    assert following.flag == ""
+    assert (following.pid == flagged.pid) is failure.connection_kept
+
+
+async def test_a_failed_cleanup_rolls_back_and_the_flag_never_reaches_the_next_checkout(
+    composed: Composed, held: list[OnConnection], cleanup_fails: CleanupFailure
+) -> None:
+    with pytest.raises(RuntimeError, match=cleanup_fails.raised):
+        await composed.app.invoke(WriteThenNestEditor)
+
+    await _no_flag_reaches_the_pool(composed, held, cleanup_fails)
+
+
+async def test_a_parent_catching_a_failed_cleanup_still_commits_nothing(
+    composed: Composed, held: list[OnConnection], cleanup_fails: CleanupFailure
+) -> None:
+    with pytest.raises(RuntimeError, match="clearing refused"):
+        await composed.app.invoke(WriteThenNestEditorCatching)
+
+    await _no_flag_reaches_the_pool(composed, held, cleanup_fails)

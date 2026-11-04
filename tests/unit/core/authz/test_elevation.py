@@ -167,26 +167,6 @@ async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
     assert sink.cleared == [frozenset({"editor"})]
 
 
-async def test_a_failed_clear_invalidates_the_session() -> None:
-    sink = FakeSink(open=True, fail_on_clear=True)
-    outer = elevation_scope(owns_transaction=True, sink=sink)
-    inner = elevation_scope(owns_transaction=False, sink=sink)
-    async with outer, inner:
-        await _elevate()
-
-    assert sink.invalidated == 1
-
-
-async def test_a_clear_refused_before_any_statement_invalidates_the_session() -> None:
-    sink = FakeSink(open=True, refuse_clear=True)
-    outer = elevation_scope(owns_transaction=True, sink=sink)
-    inner = elevation_scope(owns_transaction=False, sink=sink)
-    async with outer, inner:
-        await _elevate()
-
-    assert sink.invalidated == 1
-
-
 async def _nested_elevation(sink: FakeSink, *, hold: asyncio.Event | None = None) -> None:
     """Elevate in a nested frame; with ``hold``, wait for it before the frame closes."""
     outer = elevation_scope(owns_transaction=True, sink=sink)
@@ -195,6 +175,23 @@ async def _nested_elevation(sink: FakeSink, *, hold: asyncio.Event | None = None
         await _elevate()
         if hold is not None:
             await hold.wait()
+
+
+@pytest.mark.parametrize(
+    ("sink", "message"),
+    [
+        (FakeSink(open=True, fail_on_clear=True), "database says no"),
+        (FakeSink(open=True, refuse_clear=True), "refused before any statement"),
+    ],
+    ids=["clear-fails", "clear-refused"],
+)
+async def test_a_failed_clear_invalidates_the_session_and_is_raised(
+    sink: FakeSink, message: str
+) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        await _nested_elevation(sink)
+
+    assert sink.invalidated == 1
 
 
 async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(

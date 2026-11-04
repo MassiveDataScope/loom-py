@@ -49,7 +49,7 @@ class FakeSink:
         self.cleared.append(scopes)
         return _done()
 
-    def invalidate(self, scopes: frozenset[str]) -> Awaitable[object]:
-        del scopes
+    def invalidate(self, scopes: frozenset[str], cause: BaseException) -> Awaitable[object]:
+        del scopes, cause
         self.invalidated += 1
         return _refused() if self.fail_on_invalidate else _done()

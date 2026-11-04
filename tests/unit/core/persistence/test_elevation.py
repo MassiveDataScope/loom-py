@@ -152,7 +152,8 @@ class _Store:
         self.calls.append(("clear", scopes))
         return _done()
 
-    def invalidate(self) -> Awaitable[object]:
+    def invalidate(self, cause: BaseException) -> Awaitable[object]:
+        del cause
         self.calls.append(("invalidate", frozenset()))
         return _done()
 
@@ -219,7 +220,7 @@ class TestScopedElevationSink:
         stores = _two_stores(default_open=True, audit_open=False)
 
         await stores.sink.clear_flags(frozenset({"editor", "reviewer"}))
-        await stores.sink.invalidate(frozenset({"editor", "reviewer"}))
+        await stores.sink.invalidate(frozenset({"editor", "reviewer"}), RuntimeError("cause"))
 
         assert (stores.default.calls, stores.audit.calls) == (
             [("clear", frozenset({"editor"})), ("invalidate", frozenset())],

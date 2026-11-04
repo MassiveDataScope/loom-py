@@ -74,8 +74,8 @@ class StoreElevation(Protocol):
         """Clear ``scopes`` on the open transaction."""
         ...
 
-    def invalidate(self) -> Awaitable[object]:
-        """Invalidate the session holding the open transaction."""
+    def invalidate(self, cause: BaseException) -> Awaitable[object]:
+        """Forbid the invocation to commit, for ``cause``, and invalidate the open session."""
         ...
 
 
@@ -110,8 +110,8 @@ class ScopedElevationSink:
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
         return _together([store.clear_flags(own) for store, own in self._open(scopes)])
 
-    def invalidate(self, scopes: frozenset[str]) -> Awaitable[object]:
-        return _together([store.invalidate() for store, _ in self._open(scopes)])
+    def invalidate(self, scopes: frozenset[str], cause: BaseException) -> Awaitable[object]:
+        return _together([store.invalidate(cause) for store, _ in self._open(scopes)])
 
     def _declaring(self, scopes: frozenset[str]) -> list[tuple[StoreElevation, frozenset[str]]]:
         """Each store declaring some of ``scopes``, with the ones it declares."""

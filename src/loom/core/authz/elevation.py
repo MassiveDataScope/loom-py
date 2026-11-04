@@ -52,8 +52,12 @@ class ElevationSink(Protocol):
         """Clear ``scopes`` on the open transactions of the stores declaring them."""
         ...
 
-    def invalidate(self, scopes: frozenset[str]) -> Awaitable[object]:
-        """Invalidate the sessions of the open transactions of the stores declaring ``scopes``."""
+    def invalidate(self, scopes: frozenset[str], cause: BaseException) -> Awaitable[object]:
+        """Invalidate the sessions of the open transactions of the stores declaring ``scopes``.
+
+        Those stores' invocation must not commit any more, whatever the caller
+        does with the error: ``cause`` is why.
+        """
         ...
 
 
@@ -154,17 +158,18 @@ def _check(
 
 
 async def _clear_added(frame: _Frame) -> None:
-    """Clear the flags ``frame`` added to the open transactions, or invalidate their sessions.
+    """Clear the flags ``frame`` added to the open transactions, or fail their invocation.
 
-    A cancellation arriving meanwhile waits for both and is re-raised after:
+    When the clearing fails, the sessions are invalidated and the invocation
+    can no longer commit (:meth:`ElevationSink.invalidate`), and the failure
+    is raised. A cancellation arriving meanwhile waits for both and wins:
     the outer execution keeps the transaction, so it must never get it back
     with a flag still on.
 
     Raises:
         asyncio.CancelledError: The first cancellation received meanwhile.
-        Exception: What the invalidation failed with, after the clearing
-            failed, even over a cancellation: the session may still hold a
-            flag, so the invocation must end and roll it back.
+        Exception: What the clearing failed with; or what the invalidation
+            failed with, chained from it.
     """
     if frame.owns_transaction or frame.sink is None:
         return
@@ -176,24 +181,25 @@ async def _clear_added(frame: _Frame) -> None:
         return
     sink = frame.sink
     failure, cancelled = await _settle(lambda: sink.clear_flags(added))
-    if failure is not None:
-        _logger.error(
-            "elevation flags could not be cleared for %s; invalidating the session",
-            sorted(added),
-            exc_info=failure,
-        )
-        invalidation, cancelled_again = await _settle(lambda: sink.invalidate(added))
-        cancelled = cancelled or cancelled_again
-        if invalidation is not None:
-            _logger.error(
-                "the session could not be invalidated after a failed clearing",
-                exc_info=invalidation,
-            )
-            # Raised over any cancellation, as over the error leaving the frame:
-            # the invocation must end without committing that transaction.
-            raise invalidation from failure
+    if failure is None:
+        if cancelled is not None:
+            raise cancelled
+        return
+    _logger.error(
+        "elevation flags could not be cleared for %s; invalidating the session",
+        sorted(added),
+        exc_info=failure,
+    )
+    invalidation, cancelled_again = await _settle(lambda: sink.invalidate(added, failure))
+    cancelled = cancelled or cancelled_again
     if cancelled is not None:
         raise cancelled
+    if invalidation is not None:
+        _logger.error(
+            "the session could not be invalidated after a failed clearing", exc_info=invalidation
+        )
+        raise invalidation from failure
+    raise failure
 
 
 async def _settle(
