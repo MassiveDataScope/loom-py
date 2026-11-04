@@ -94,6 +94,14 @@
 - **jobs:** the Lambda SQS adapter logs the type of its job service instead
   of assuming Celery for anything that is not inline.
 
+### identity
+
+- **identity:** the executor binds the identity it is given for the whole
+  execution, so `Caller()` and row-level security always agree. A nested
+  execution joining the caller's unit of work as another identity raises
+  `NestedIdentityMismatch`; any nested execution under an active elevation
+  raises `NestedElevation`.
+
 ### etl
 
 - **etl:** the `PolarsStepRunner` reader applies what a `FromTable` or
