@@ -56,8 +56,7 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
             ``sqs: true``, ``auth`` on an sqs function, or an interface another
             function already serves.
     """
-    config = ctx.section_optional(ConfigKey.LAMBDA, _LambdaConfig)
-    functions = {} if config is None else config.functions
+    functions = _unresolved(ctx).functions
     owners: dict[str, str] = {}
     for name, function in functions.items():
         if bool(function.http) == function.sqs:
@@ -71,6 +70,20 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
                     f"{interface!r} is served by both {_SECTION}.{owner} and {_SECTION}.{name}"
                 )
     return functions
+
+
+def _unresolved(ctx: ConfigContext) -> _LambdaConfig:
+    """``lambda`` as written: another function's ``auth`` may name secrets this one cannot read.
+
+    Only the function served resolves its own ``auth``, through its section path.
+    """
+    raw = ctx.raw(ConfigKey.LAMBDA)
+    if raw is None:
+        return _LambdaConfig()
+    try:
+        return msgspec.convert(raw, _LambdaConfig)
+    except msgspec.ValidationError as exc:
+        raise ConfigError(f"lambda: {exc}") from exc
 
 
 def declared_function(ctx: ConfigContext, name: str) -> LambdaFunction:

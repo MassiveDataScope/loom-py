@@ -347,3 +347,41 @@ def test_without_an_entry_create_app_needs_an_adapter(
 
     with pytest.raises(ConfigError, match="adapter= or app.entry"):
         serve(path)
+
+
+class _Secrets:
+    """Serves ``${secret:<function>}`` as the contract key's path, recording each lookup."""
+
+    name = "secret"
+
+    def __init__(self) -> None:
+        self.read: list[str] = []
+        self.path = ""
+
+    def resolve(self, key: str) -> object:
+        self.read.append(key)
+        return self.path
+
+
+def _auth_through_secret(function: str) -> Edit:
+    def edit(config: dict[str, Any], root: Path) -> None:
+        jwt_auth = dict(config["app"]["rest"]["auth"]["jwt"], secret_path=f"${{secret:{function}}}")
+        config["lambda"]["functions"][function]["auth"] = {"jwt": jwt_auth}
+
+    return edit
+
+
+@pytest.mark.parametrize(
+    ("entry", "read"),
+    [pytest.param("public_api", [], id="another-function"), ("admin_api", ["admin_api"])],
+)
+def test_a_function_resolves_only_its_own_secrets(
+    project: Callable[..., str], serve: Callable[..., Any], entry: str, read: list[str]
+) -> None:
+    secrets = _Secrets()
+    path = project(entry, _PUBLIC_AND_ADMIN, _auth_through_secret("admin_api"))
+    secrets.path = str(Path(path).parent / "jwt.key")
+
+    serve(path, resolvers=[secrets])
+
+    assert secrets.read == read
