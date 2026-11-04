@@ -188,33 +188,31 @@ class _SQSBatch:
         self._report_failures = report_failures
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
-        result = self._run_batch(event["Records"], context)
-        if self._report_failures:
-            return result
-        if result["batchItemFailures"]:
-            raise SQSBatchFailedError(
-                f"{len(result['batchItemFailures'])} of {len(event['Records'])} SQS records "
-                "failed; report_batch_item_failures is off, so the whole batch is retried",
-                code="sqs_batch_failed",
-            )
-        return {}
-
-    def _run_batch(self, records: list[Any], context: Any) -> dict[str, list[dict[str, str]]]:
+        records: list[Any] = event["Records"]
         fifo = bool(records) and _is_fifo(records[0])
         failures: list[dict[str, str]] = []
         for index, record in enumerate(records):
             if _out_of_time(context):
-                return _batch_with_remaining(failures, records[index:])
+                failures += _failed(records[index:])
+                break
             try:
                 self._host.run(self._run(record, context))
             except Exception as exc:
                 _log_failure(record, exc)
                 if not is_retryable(exc):
                     continue
+                failures += _failed(records[index:] if fifo else [record])
                 if fifo:
-                    return _batch_with_remaining(failures, records[index:])
-                failures.extend(_failed([record]))
-        return {"batchItemFailures": failures}
+                    break
+        if self._report_failures:
+            return {"batchItemFailures": failures}
+        if failures:
+            raise SQSBatchFailedError(
+                f"{len(failures)} of {len(records)} SQS records failed; "
+                "report_batch_item_failures is off, so the whole batch is retried",
+                code="sqs_batch_failed",
+            )
+        return {}
 
     def close(self) -> None:
         """Close the application and its loop; a second call does nothing."""
@@ -261,12 +259,6 @@ class _SQSBatch:
             Scope.JOB, name, id=_message_id(record) or None, **meta
         ):
             raise error
-
-
-def _batch_with_remaining(
-    failures: list[dict[str, str]], records: Sequence[Any]
-) -> dict[str, list[dict[str, str]]]:
-    return {"batchItemFailures": failures + _failed(records)}
 
 
 def _record_timeout(job_type: type[Job[Any]], context: Any) -> float | None:

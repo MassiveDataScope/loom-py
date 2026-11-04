@@ -231,15 +231,6 @@ def test_an_sqs_entry_serves_the_jobs(
     assert handler({"Records": []}, None) == {"batchItemFailures": []}
 
 
-def test_an_sqs_function_without_batch_item_failures_reports_none(
-    project: Callable[..., str], serve: Callable[..., Any]
-) -> None:
-    functions = {"worker": {"sqs": True, "report_batch_item_failures": False}}
-    handler = serve(project("worker", functions, _manifest_discovery))
-
-    assert handler({"Records": []}, None) == {}
-
-
 def test_an_interface_no_function_serves_is_warned_about(
     project: Callable[..., str], serve: Callable[..., Any]
 ) -> None:

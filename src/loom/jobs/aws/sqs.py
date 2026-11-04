@@ -7,6 +7,7 @@ import functools
 import hashlib
 import math
 import re
+import threading
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -140,26 +141,22 @@ class _PendingSQSBatch:
     max_concurrent_sends: int
     sends: list[_PendingSQSSend] = field(default_factory=list, repr=False)
     handed: set[str] = field(default_factory=set, repr=False)
-    """Task ids already handed to an SQS call."""
-
-    @property
-    def task_name(self) -> str:
-        return ",".join(send.task_name for send in self.sends)
-
-    @property
-    def task_id(self) -> str:
-        return ",".join(send.task_id for send in self.sends)
+    """Task ids a running thread has handed to an SQS call."""
+    stopped: threading.Event = field(default_factory=threading.Event, repr=False)
 
     async def __call__(self) -> None:
         by_queue: dict[str, list[_PendingSQSSend]] = {}
         for send in self.sends:
             by_queue.setdefault(send.request["QueueUrl"], []).append(send)
         limit = asyncio.Semaphore(self.max_concurrent_sends)
+        queues = [
+            asyncio.ensure_future(self._send_queue(url, sends, limit))
+            for url, sends in by_queue.items()
+        ]
         try:
-            results = await asyncio.gather(
-                *(self._send_queue(url, sends, limit) for url, sends in by_queue.items())
-            )
+            results = await asyncio.gather(*queues)
         except BaseException:
+            await asyncio.wait(queues)  # gather cancelled them; each waits for its running call
             for send in self.sends:
                 if send.task_id not in self.handed:
                     log_never_ran(send)
@@ -197,12 +194,15 @@ class _PendingSQSBatch:
         self, url: str, chunk: list[_PendingSQSSend], *, retry: bool
     ) -> list[_Failure]:
         """Send ``chunk``; the entries SQS refuses are sent once more when ``retry``."""
-        entries = [send.batch_entry() for send in chunk]
-        self.handed.update(send.task_id for send in chunk)
+        call = asyncio.ensure_future(asyncio.to_thread(self._call, url, chunk))
         try:
-            response = await asyncio.to_thread(
-                self.client.send_message_batch, QueueUrl=url, Entries=entries
-            )
+            response = await asyncio.shield(call)
+        except asyncio.CancelledError:
+            # A call still waiting for a thread sends nothing; one running keeps
+            # its max_concurrent_sends slot until it returns.
+            self.stopped.set()
+            await asyncio.wait([call])
+            raise
         except Exception as exc:
             # botocore already retried the call, and its message may echo a body.
             code = aws_error_code(exc)
@@ -212,6 +212,15 @@ class _PendingSQSBatch:
         if failed and retry:
             return await self._send_chunk(url, [send for send, _ in failed], retry=False)
         return failed
+
+    def _call(self, url: str, chunk: list[_PendingSQSSend]) -> dict[str, Any]:
+        """In the thread: hand ``chunk`` to SQS, unless the batch stopped before it started."""
+        if self.stopped.is_set():
+            raise asyncio.CancelledError
+        self.handed.update(send.task_id for send in chunk)
+        entries = [send.batch_entry() for send in chunk]
+        response: dict[str, Any] = self.client.send_message_batch(QueueUrl=url, Entries=entries)
+        return response
 
 
 def _chunks(sends: list[_PendingSQSSend], size: int) -> Iterator[list[_PendingSQSSend]]:

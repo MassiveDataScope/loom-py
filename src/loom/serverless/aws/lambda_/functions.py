@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from loom.rest.model import RestInterface
 
 _SECTION = "lambda.functions"
+_BATCHING = ("batch_size", "batching_window_s", "max_concurrency", "report_batch_item_failures")
 
 
 class LambdaFunction(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -73,7 +74,12 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
             raise ConfigError(f"{_SECTION}.{name} declares exactly one of 'http' or 'sqs: true'")
         if function.auth is not None and function.sqs:
             raise ConfigError(f"{_SECTION}.{name}.auth applies to an http function only")
-        _check_batching(name, function)
+        batching = [key for key in _BATCHING if getattr(function, key) is not None]
+        if batching and not function.sqs:
+            raise ConfigError(f"{_SECTION}.{name}.{batching[0]} applies to an sqs function only")
+        # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
+        if (function.batch_size or 0) > 10 and not function.batching_window_s:
+            raise ConfigError(f"{_SECTION}.{name}.batch_size over 10 needs batching_window_s >= 1")
         for interface in function.http:
             owner = owners.setdefault(interface, name)
             if owner != name:
@@ -81,19 +87,6 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
                     f"{interface!r} is served by both {_SECTION}.{owner} and {_SECTION}.{name}"
                 )
     return functions
-
-
-_BATCHING = ("batch_size", "batching_window_s", "max_concurrency", "report_batch_item_failures")
-
-
-def _check_batching(name: str, function: LambdaFunction) -> None:
-    if not function.sqs:
-        for key in _BATCHING:
-            if getattr(function, key) is not None:
-                raise ConfigError(f"{_SECTION}.{name}.{key} applies to an sqs function only")
-    # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
-    if (function.batch_size or 0) > 10 and not function.batching_window_s:
-        raise ConfigError(f"{_SECTION}.{name}.batch_size over 10 needs batching_window_s >= 1")
 
 
 def _unresolved(ctx: ConfigContext) -> _LambdaConfig:
@@ -150,7 +143,8 @@ def reports_batch_item_failures(ctx: ConfigContext, entry: str | None) -> bool:
     Raises:
         ConfigError: When ``lambda.functions`` is misdeclared.
     """
-    function = None if entry is None else declared_functions(ctx).get(entry)
+    functions = declared_functions(ctx)
+    function = None if entry is None else functions.get(entry)
     return function is None or function.report_batch_item_failures is not False
 
 

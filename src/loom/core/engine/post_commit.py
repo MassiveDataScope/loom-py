@@ -115,15 +115,7 @@ class PostCommitChannel:
         self._publish_actions.append(action)
 
     def publish_group(self, key: Hashable, create: Callable[[], ActionT]) -> ActionT:
-        """The publish action queued under ``key`` since the last drain, created on first use.
-
-        Lets a broker gather the sends of one transaction into a single action,
-        such as one batch call.
-
-        Args:
-            key: Who owns the group, such as the job service.
-            create: Builds the action and is called once per drain.
-        """
+        """The publish action queued under ``key`` until the next drain; ``create`` makes it."""
         queued = self._publish_groups.get(key)
         if queued is not None:
             return cast(ActionT, queued)
@@ -218,20 +210,25 @@ def _log_unreported(
 
 def log_never_ran(action: PostCommitAction) -> None:
     """Log a shielded action the interruption stopped, by job name and task id only."""
-    _logger.error(_SHIELDED_UNSENT, **_describe(action))
+    for fields in _describe(action):
+        _logger.error(_SHIELDED_UNSENT, **fields)
 
 
 def _log_failures(failures: list[_Failure]) -> None:
     for action, error in failures:
-        _logger.error(_UNREPORTED_FAILURE, **_describe(action), error=repr(error))
+        for fields in _describe(action):
+            _logger.error(_UNREPORTED_FAILURE, **fields, error=repr(error))
 
 
-def _describe(action: PostCommitAction) -> dict[str, object]:
-    """A broker send's job name and task id, never its repr: that would log the payload."""
-    return {
-        "job_name": getattr(action, "task_name", None),
-        "task_id": getattr(action, "task_id", None),
-    }
+def _describe(action: PostCommitAction) -> list[dict[str, object]]:
+    """Each broker send's job name and task id, never its repr: that would log the payload.
+
+    An action gathering several sends lists them as ``sends``.
+    """
+    return [
+        {"job_name": getattr(send, "task_name", None), "task_id": getattr(send, "task_id", None)}
+        for send in getattr(action, "sends", None) or (action,)
+    ]
 
 
 async def _run_all(pending: collections.deque[PostCommitAction], failures: list[_Failure]) -> None:

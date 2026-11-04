@@ -22,7 +22,7 @@ from loom.composition import (
 )
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.checks import REST_CHECKS
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.identity import ANONYMOUS, current_identity
 from loom.core.job.job import Job
@@ -79,6 +79,22 @@ def whole_batch_handler(tmp_path: Path, probe: tuple[type[Job[None]], Any]) -> I
     adapter = LambdaSQSAdapter(jobs=[probe[0]])
     yield adapter.bind(compose_application(source, adapter))
     adapter.close()
+
+
+@pytest.mark.parametrize("entry", [None, "worker"])
+def test_the_recipe_refuses_a_misdeclared_lambda_section(
+    tmp_path: Path, probe: tuple[type[Job[None]], Any], entry: str | None
+) -> None:
+    worker = {"sqs": True, "batch_size": 11}
+    source = composition_source(
+        ConfigContext.from_dict({"lambda": {"functions": {"worker": worker}}}),
+        app=AppConfig(name="lambda-sqs", entry=entry),
+        code_path=tmp_path,
+        config_root=tmp_path,
+    )
+    adapter = LambdaSQSAdapter(jobs=[probe[0]])
+    with pytest.raises(ConfigError, match="needs batching_window_s"):
+        adapter.recipe(source)
 
 
 @pytest.mark.parametrize("fifo", [False, True])
@@ -158,7 +174,7 @@ import sys
 from pathlib import Path
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter
 from loom.composition import AppConfig, CompositionSource
-from loom.core.config import ConfigContext
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime

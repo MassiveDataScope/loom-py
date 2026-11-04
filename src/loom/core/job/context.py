@@ -53,7 +53,7 @@ def add_pending_publish(fn: Callable[[], Any]) -> None:
 
 
 def pending_publish_group(key: Hashable, create: Callable[[], ActionT]) -> ActionT:
-    """The broker send gathering this UoW's sends under ``key``, queued on first use."""
+    """The active channel's publish action under ``key``; see ``publish_group``."""
     return _target_channel().publish_group(key, create)
 
 

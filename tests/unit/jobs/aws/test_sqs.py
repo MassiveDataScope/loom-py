@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -525,19 +526,48 @@ async def test_a_rolled_back_dispatch_leaves_no_batch_behind(
     assert client.batches == [(_URL, [kept])]
 
 
-async def test_a_batch_failing_after_the_cancellation_logs_its_jobs_and_tasks(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    return [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict) and record.msg.get("event") == event
+    ]
+
+
+def _service(client: _Client) -> SQSJobService:
     executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(Log()))
-    service = SQSJobService(
-        _Client(_ClientError()), {"emails": _URL}, factory=cast(Any, None), executor=executor
-    )
-    channel, bump = PostCommitChannel(), _Gate()
+    queues = {"emails": _URL, "orders": _FIFO_URL}
+    return SQSJobService(client, queues, factory=cast(Any, None), executor=executor)
+
+
+def _queued(service: SQSJobService, channel: PostCommitChannel, *jobs: type[Job[Any]]) -> list[str]:
     token = bind_channel(channel)
     try:
-        ids = [service.dispatch(EmailJob, payload={"secret": "hunter2"}).job_id for _ in range(2)]
+        payload = {"customer": "hunter2", "secret": "hunter2"}
+        return [service.dispatch(job, payload=payload).job_id for job in jobs]
     finally:
         reset_channel(token)
+
+
+async def _kill_the_shield(drain: asyncio.Task[None]) -> None:
+    """Cancel the drain, then its shielded task: what closing the loop does."""
+    drain.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await drain
+    for shielded in list(post_commit._shielded_tasks):
+        shielded.cancel()
+
+
+async def _until_logged(caplog: pytest.LogCaptureFixture, event: str) -> None:
+    while event not in caplog.text:
+        await asyncio.sleep(0.01)
+
+
+async def test_a_batch_failing_after_the_cancellation_logs_each_job_and_task(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel, bump = PostCommitChannel(), _Gate()
+    ids = _queued(_service(_Client(_ClientError())), channel, EmailJob, EmailJob)
     channel.enqueue_priority(bump)
     task = asyncio.create_task(channel.drain(committed=True))
     await bump.started.wait()
@@ -545,54 +575,52 @@ async def test_a_batch_failing_after_the_cancellation_logs_its_jobs_and_tasks(
     with pytest.raises(asyncio.CancelledError):
         await task
     bump.release.set()
-    while _UNREPORTED not in caplog.text:
-        await asyncio.sleep(0.01)
+    await _until_logged(caplog, _UNREPORTED)
 
-    (fields,) = [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == _UNREPORTED
-    ]
-    assert (fields["job_name"], fields["task_id"]) == (
-        "loom.job.EmailJob,loom.job.EmailJob",
-        ",".join(ids),
-    )
+    logged = [(f["job_name"], f["task_id"]) for f in _logged(caplog, _UNREPORTED)]
+    assert logged == [("loom.job.EmailJob", task) for task in ids]
     assert "hunter2" not in caplog.text
 
 
-async def test_entries_a_dead_batch_never_handed_to_sqs_are_logged(
+async def test_a_dead_batch_holds_its_slot_until_the_running_call_returns(
     client: _Client, caplog: pytest.LogCaptureFixture
 ) -> None:
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(Log()))
-    queues = {"emails": _URL, "orders": _FIFO_URL}
-    service = SQSJobService(client, queues, factory=cast(Any, None), executor=executor)
     client.hold = threading.Event()
     channel = PostCommitChannel()
-    token = bind_channel(channel)
-    try:
-        service.dispatch(EmailJob)
-        unsent = service.dispatch(OrderJob, payload={"customer": "hunter2"}).job_id
-    finally:
-        reset_channel(token)
-    task = asyncio.create_task(channel.drain(committed=True))
+    sent, unsent = _queued(_service(client), channel, EmailJob, OrderJob)
+    drain = asyncio.create_task(channel.drain(committed=True))
     assert await asyncio.to_thread(client.entered.wait, 5)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    await _kill_the_shield(drain)
+    await asyncio.sleep(0.1)
 
-    for shielded in list(post_commit._shielded_tasks):  # what closing the loop does
-        shielded.cancel()
-    while _NEVER_RAN not in caplog.text:
-        await asyncio.sleep(0.01)
+    assert (post_commit._shielded_tasks != set(), _NEVER_RAN in caplog.text) == (True, False)
     client.hold.set()
+    await _until_logged(caplog, _NEVER_RAN)
 
-    never_ran = [
-        record.msg["task_id"]
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
-    ]
-    assert never_ran == [unsent]
+    assert [fields["task_id"] for fields in _logged(caplog, _NEVER_RAN)] == [unsent]
+    assert client.batches == [(_URL, [sent])]
     assert "hunter2" not in caplog.text
+
+
+async def test_a_call_still_waiting_for_a_thread_when_the_batch_dies_sends_nothing(
+    client: _Client, caplog: pytest.LogCaptureFixture
+) -> None:
+    loop = asyncio.get_running_loop()
+    pool = ThreadPoolExecutor(max_workers=1)
+    loop.set_default_executor(pool)
+    busy = threading.Event()
+    occupied = loop.run_in_executor(None, busy.wait, 5)
+    channel = PostCommitChannel()
+    (queued,) = _queued(_service(client), channel, EmailJob)
+    drain = asyncio.create_task(channel.drain(committed=True))
+    await asyncio.sleep(0.05)
+    await _kill_the_shield(drain)
+    busy.set()
+    await occupied
+    await _until_logged(caplog, _NEVER_RAN)
+
+    assert [fields["task_id"] for fields in _logged(caplog, _NEVER_RAN)] == [queued]
+    assert (client.entered.is_set(), client.batches) == (False, [])
 
 
 _SEEN: list[tuple[str, str, str | None]] = []
