@@ -57,7 +57,7 @@ def test_composing_celery_service_preserves_current_app(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("config", "job_service"),
-    [(_CELERY, None), ({"celery": {**BROKER, "queues": ["default"]}}, "inline")],
+    [(_CELERY, None), ({"celery": {**BROKER, "queues": ["default", "emails"]}}, "inline")],
     ids=["celery", "routed to celery"],
 )
 async def test_application_closes_its_celery_service_once(

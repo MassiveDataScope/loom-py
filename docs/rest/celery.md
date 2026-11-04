@@ -295,10 +295,9 @@ jobs:
     queue: erp
 ```
 
-Here `notifications`, `erp` and `default` go to Celery and any other queue
-runs inline. `task_default_queue` (`default` unless set) must be listed in
-`queues`, so a non-empty `celery.queues` always claims `default` too: a job
-left on `__queue__ = "default"` goes to Celery.
+Here `notifications` and `erp` go to Celery and any other queue runs inline.
+`task_default_queue` (`default` unless set) must be listed in `queues`, but it
+stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
 
 - Only the backends in use are built: with no `celery.queues` and an inline
   default, Celery is not even imported.

@@ -47,8 +47,13 @@ def _service(tmp_path: Path, config: dict[str, Any], job_service: str) -> JobSer
 
 @pytest.mark.parametrize(
     ("queue", "expected"),
-    [(None, CeleryJobService), ("emails", CeleryJobService), ("reports", InlineJobService)],
-    ids=["job queue", "per-call celery queue", "per-call other queue"],
+    [
+        (None, CeleryJobService),
+        ("emails", CeleryJobService),
+        ("reports", InlineJobService),
+        ("default", InlineJobService),
+    ],
+    ids=["job queue", "per-call celery queue", "per-call other queue", "celery default queue"],
 )
 def test_celery_queues_go_to_celery_and_the_rest_to_the_default(
     tmp_path: Path, queue: str | None, expected: type[JobService]
@@ -72,8 +77,15 @@ def test_celery_queues_go_to_celery_and_the_rest_to_the_default(
         ({}, "inline", InlineJobService),
         (_ROUTED, "celery", CeleryJobService),
         ({"celery": BROKER}, "celery", CeleryJobService),
+        ({"celery": {**BROKER, "queues": ["default"]}}, "inline", InlineJobService),
     ],
-    ids=["celery without queues", "no celery", "celery declares queues", "celery default"],
+    ids=[
+        "celery without queues",
+        "no celery",
+        "celery declares queues",
+        "celery default",
+        "celery declares only its default queue",
+    ],
 )
 def test_one_backend_is_registered_as_itself(
     tmp_path: Path, config: dict[str, Any], job_service: str, expected: type[JobService]

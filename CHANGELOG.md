@@ -6,7 +6,8 @@
 
 - **jobs:** `app.job_service` (`inline`, `celery` or `module:Class` built with
   a `JobBackendContext`) names the job backend; queues listed in
-  `celery.queues` go to Celery through the new `JobRouter`. Use cases keep
+  `celery.queues`, but Celery's default queue, go to Celery through the new
+  `JobRouter`. Use cases keep
   injecting `JobService`.
 
 ### etl

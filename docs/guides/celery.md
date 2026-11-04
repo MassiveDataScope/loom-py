@@ -252,7 +252,7 @@ recover entity IDs and other parameters the callback needs.
 ## Pick the job backend
 
 `app.job_service` names the backend of every queue `celery.queues` does not
-list; see [Pick the job backend](../rest/celery.md#pick-the-job-backend).
+list, and of Celery's default queue; see [Pick the job backend](../rest/celery.md#pick-the-job-backend).
 
 ---
 

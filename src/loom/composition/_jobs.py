@@ -102,16 +102,18 @@ def _backend(name: str, context: JobBackendContext) -> _Built:
 
 
 def _routed(context: JobBackendContext, default: str) -> _Built:
-    """The *default* backend, behind a router when ``celery.queues`` routes to Celery."""
+    """The *default* backend; ``celery.queues`` but Celery's default queue go to Celery."""
     service, resources = _backend(default, context)
     # Celery is imported only when it declares queues.
     if default == "celery" or not context.config.has("celery.queues"):
         return service, resources
     celery_cfg = _celery_config(context.config)
-    if not celery_cfg.queues:
+    # Celery's own default queue stays with the default backend: it is every job's queue.
+    queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
+    if not queues:
         return service, resources
     celery, closers = _celery_backend(context, celery_cfg)
-    return JobRouter(dict.fromkeys(celery_cfg.queues, celery), default=service), (
+    return JobRouter(dict.fromkeys(queues, celery), default=service), (
         *resources,
         *closers,
     )
