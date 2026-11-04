@@ -40,6 +40,7 @@ _DYNAMIC_READERS = {
 # LOOM_* names loom owns outside loom.core.environment, with why.
 _OWNED_ELSEWHERE = {
     "LOOM_PG_IT_URI": "the database loom's own integration tests run against",
+    "LOOM_AWS_IT_URL": "the AWS emulator loom's own integration tests run against",
 }
 _ENVIRON = frozenset({"os.environ", "environ"})
 _GETENV = frozenset({"os.getenv", "getenv"})
