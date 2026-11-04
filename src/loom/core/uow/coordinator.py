@@ -334,6 +334,7 @@ class Participant:
         transactional: Whether its unit of work can roll back.
         first_write: Invocation-wide order of its first write, or ``None``.
         wrote: Whether a write went through it.
+        poisoned: Why the invocation must not commit, once :meth:`poison` set it.
     """
 
     def __init__(self, key: StoreKey, uow: UnitOfWork) -> None:
@@ -341,6 +342,7 @@ class Participant:
         self.transactional = type(uow).transactional
         self.first_write: int | None = None
         self.wrote = False
+        self.poisoned: BaseException | None = None
         self._driver: _Driver = (
             _PhasedDriver(key, uow) if _is_phased(uow) else _SinglePhaseDriver(uow)
         )
@@ -381,6 +383,18 @@ class Participant:
         if self.first_write is None:
             self.first_write = order
         self.wrote = True
+
+    def poison(self, cause: BaseException) -> None:
+        """Forbid the invocation to commit: :meth:`OrderedCommits.finish` rolls every store back.
+
+        For a transaction whose state can no longer be trusted, such as one
+        whose elevation flag could not be cleared. It holds even when the
+        caller catches the error that reported it.
+
+        Args:
+            cause: Why; the stores' :class:`RolledBack` outcomes carry it.
+        """
+        self.poisoned = self.poisoned or cause
 
     async def begin(self) -> None:
         """Open the unit of work; a phased one whose ``begin`` fails is closed."""
@@ -486,7 +500,9 @@ class OrderedCommits:
 
         Args:
             scope: Scope whose participants end.
-            error: Exception the invocation failed with, or ``None``.
+            error: Exception the invocation failed with, or ``None``. Without
+                one, a poisoned participant's cause fails the invocation:
+                every store rolls back.
 
         Returns:
             One outcome per participant, in commit order.
@@ -546,7 +562,10 @@ class _Settlement:
 
     def __init__(self, enlisted: tuple[Participant, ...], error: BaseException | None) -> None:
         self._enlisted = enlisted
-        self._failure = error
+        # A poisoned participant fails a clean invocation, as its business error would.
+        self._failure = error or next(
+            (p.poisoned for p in enlisted if p.poisoned is not None), None
+        )
         self._outcomes: dict[StoreKey, StoreOutcome] = {}
         self._interrupt: BaseException | None = None
 

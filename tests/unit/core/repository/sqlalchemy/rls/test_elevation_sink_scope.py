@@ -18,11 +18,11 @@ import pytest
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevation_scope
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits, PhysicalStore
 from loom.core.uow.scope import Frame, invocation
+from tests.helpers.elevation import sink_for
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
@@ -43,6 +43,8 @@ class _RecordingSession:
     """When given, a clearing statement waits for it before it is recorded."""
     fail_clearing: bool = False
     """A clearing statement raises once released, as a dropped connection would."""
+    elevated: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set once the nested execution has elevated and holds."""
 
     def in_transaction(self) -> bool:
         return True
@@ -129,7 +131,7 @@ async def _nested_elevation(
 
     With ``hold`` the nested execution waits, to be cancelled, before it returns.
     """
-    sink = SQLAlchemyElevationSink(manager)
+    sink = sink_for(manager, "editor")
     unit_of_work: Any = _PhasedUnitOfWork(manager, session)
     coordinator = OrderedCommits({DEFAULT_STORE: _Given(unit_of_work)})
     async with (
@@ -140,6 +142,7 @@ async def _nested_elevation(
     ):
         await elevate_scope("editor", _decision(), at=BOUNDARY, permission=WRITE, catalog=CATALOG)
         if hold:
+            session.elevated.set()
             await asyncio.sleep(10)
 
 
@@ -169,7 +172,8 @@ async def _cancelled_twice_while_clearing(
         settings recorded by then.
     """
     task = asyncio.create_task(_nested_elevation(manager, session, hold=True))
-    await asyncio.sleep(0.01)
+    async with asyncio.timeout(1):
+        await session.elevated.wait()
     task.cancel()
     async with asyncio.timeout(1):
         await session.clearing.wait()

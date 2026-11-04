@@ -418,6 +418,31 @@ class TestOutcome:
         assert outcome.stores == (NonTransactional(S0, wrote=False),)
 
 
+class TestPoisoned:
+    async def test_a_poisoned_participant_rolls_every_store_back_on_a_clean_finish(
+        self,
+    ) -> None:
+        ledger = Ledger()
+        coordinator, scope = _coordinator(PhasedStore(S0, ledger), PhasedStore(S1, ledger)), Scope()
+        await _enlist_all(coordinator, scope, S0, S1)
+        cause = Boom("flag left on")
+        scope.participants[S1].poison(cause)
+
+        outcome = await coordinator.finish(scope, None)
+
+        assert outcome.stores == (RolledBack(S0, cause), RolledBack(S1, cause))
+        assert _calls(ledger, "commit") == []
+
+    async def test_the_first_poison_is_the_cause(self) -> None:
+        participant = Participant(S0, PhasedStore(S0, Ledger()))
+        first = Boom("first")
+
+        participant.poison(first)
+        participant.poison(Boom("second"))
+
+        assert participant.poisoned is first
+
+
 class TestTeardownFailures:
     @pytest.mark.parametrize(
         ("store_type", "phase", "event"),

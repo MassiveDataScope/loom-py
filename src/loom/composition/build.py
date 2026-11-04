@@ -22,6 +22,7 @@ from loom.composition._sql import SqlWiring, register_sql_collaborators, resolve
 from loom.composition.application import Application
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.composition.source import AppConfig, CompositionSource
+from loom.core.authz.elevation import ElevationSink
 from loom.core.bootstrap import KernelRuntime, create_kernel
 from loom.core.cache.wiring import CacheGateways, cache_module_for
 from loom.core.checks import enforce_deploy_checks
@@ -36,6 +37,7 @@ from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
+from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
     StoreCatalog,
@@ -301,7 +303,7 @@ def compose_application(
     for job_type in discovered.jobs:
         apply_job_overrides(ctx, job_type)
     catalog = source.catalog
-    # One store until US7 PR 11: the elevation sink is still one per application.
+    # One store until US7 PR 11.
     require_single_store(discovered.models)
     runtime = BackendRuntime(
         recipe.profile,
@@ -321,6 +323,7 @@ def compose_application(
             *refusing_reserved(modules),
             wiring.repo_registration_module,
             cache_module_for(ctx),
+            *_elevation_modules({DEFAULT_STORE: wiring}),
         ],
         uow_factory=wiring.uow_factory,
         metrics=recipe.metrics,
@@ -357,6 +360,25 @@ def compose_application(
             job_resources=job_resources,
         ),
     )
+
+
+def _elevation_modules(
+    wirings: Mapping[StoreKey, PersistenceWiring],
+) -> list[Callable[[LoomContainer], None]]:
+    """Register the one elevation sink of the stores whose sessions carry elevation flags.
+
+    Run once every store's models are prepared: the sink knows each store's
+    elevable scopes, and the product's elevations are checked against all of
+    them. Without such a store nothing is registered.
+
+    Raises:
+        ConfigError: See :func:`~loom.core.persistence.elevation.validate_elevations`.
+    """
+    stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
+    if not stores:
+        return []
+    sink = ScopedElevationSink(stores)
+    return [lambda container: container.register_instance(ElevationSink, sink)]
 
 
 def _marker_reads(

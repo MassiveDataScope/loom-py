@@ -160,3 +160,11 @@ def test_the_adapter_under_test_stays_under_thirty_lines() -> None:
     lines = [line for line in source[start:end].splitlines() if line.strip()]
 
     assert len(lines) < 30
+
+
+def test_the_composition_registers_no_elevation_sink_without_a_store_that_elevates(
+    fixture_project: ProjectFactory,
+) -> None:
+    application = build_application(fixture_project(), adapter=_Bare(), environment="test")
+
+    assert application.kernel.executor._elevation_sink is None
