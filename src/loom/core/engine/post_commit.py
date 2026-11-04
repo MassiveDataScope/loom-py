@@ -15,9 +15,9 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
-from collections.abc import Awaitable, Callable, Hashable
+from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping
 from contextvars import ContextVar, Token
-from typing import TypeVar, cast
+from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from loom.core.errors import LoomError
 from loom.core.errors.codes import ErrorCode
@@ -28,6 +28,14 @@ from loom.core.uow.scope import current_scope
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
 ActionT = TypeVar("ActionT", bound=PostCommitAction)
+
+
+@runtime_checkable
+class LoggedAction(Protocol):
+    """A post-commit action naming what it sends, for the logs: never its payload."""
+
+    def log_fields(self) -> Iterable[Mapping[str, object]]: ...  # job_name, task_id per send
+
 
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
@@ -238,15 +246,11 @@ def _log_failures(failures: list[_Failure]) -> None:
             _logger.error(_UNREPORTED_FAILURE, **fields, error=repr(error))
 
 
-def _describe(action: PostCommitAction) -> list[dict[str, object]]:
-    """Each broker send's job name and task id, never its repr: that would log the payload.
-
-    An action gathering several sends lists them as ``sends``.
-    """
-    return [
-        {"job_name": getattr(send, "task_name", None), "task_id": getattr(send, "task_id", None)}
-        for send in getattr(action, "sends", None) or (action,)
-    ]
+def _describe(action: PostCommitAction) -> Iterable[Mapping[str, object]]:
+    """What a log may name of ``action``, never its repr: that would log the payload."""
+    if isinstance(action, LoggedAction):
+        return action.log_fields()
+    return ({"job_name": None, "task_id": None},)
 
 
 async def _run_all(pending: collections.deque[PostCommitAction], failures: list[_Failure]) -> None:

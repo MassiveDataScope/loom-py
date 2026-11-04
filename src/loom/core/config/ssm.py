@@ -13,21 +13,12 @@ Example::
 
 from __future__ import annotations
 
-import logging
+import functools
 from typing import Any
 
-from loom.core.config._resolver_utils import (
-    CLIENT,
-    _expand_env_vars,
-    _navigate_json,
-    _split_resolver_key,
-    aws_client,
-    root_cache,
-)
+from loom.core.config._resolver_utils import aws_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
-
-logger = logging.getLogger(__name__)
 
 
 def _fetch_parameter(client: Any, name: str, with_decryption: bool, *, label: str) -> str:
@@ -139,16 +130,12 @@ class SsmResolver:
             ConfigError: When *key* is empty, an env-var placeholder is missing,
                 boto3 is not installed, or the SSM API call fails.
         """
-        cache = root_cache(_root_, self.name, self._unbound)
-        if key in cache:
-            return cache[key]
-        if not key:
-            raise ConfigError("SSM key must not be empty")
-        base, json_keys = _split_resolver_key(key)
-        ssm_path = _expand_env_vars(base)
-        logger.info("ssm_resolver: fetching %s", key)
-        if CLIENT not in cache:
-            cache[CLIENT] = aws_client("ssm", self._region, resolver="SsmResolver", root=_root_)
-        raw = _fetch_parameter(cache[CLIENT], ssm_path, self._with_decryption, label=key)
-        cache[key] = _navigate_json(raw, json_keys, key) if json_keys else raw
-        return cache[key]
+        return resolve_cached(
+            key,
+            _root_,
+            name=self.name,
+            label="SSM",
+            unbound=self._unbound,
+            client=lambda: aws_client("ssm", self._region, resolver="SsmResolver", root=_root_),
+            fetch=functools.partial(_fetch_parameter, with_decryption=self._with_decryption),
+        )

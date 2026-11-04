@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+INTERPOLATION = "${"  # opens a placeholder
+
 
 class ConfigKey(StrEnum):
     """Top-level YAML section keys consumed by :func:`~loom.core.config.loader.section`.

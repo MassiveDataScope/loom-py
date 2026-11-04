@@ -26,7 +26,7 @@ from loom.core.authz._scope import Scope
 
 _logger = logging.getLogger(__name__)
 
-_CLEAR_TIMEOUT_S = 30.0
+_FLAG_STEP_TIMEOUT_S = 30.0
 """How long setting or clearing flags, then invalidating the session, may take."""
 
 
@@ -213,7 +213,7 @@ async def _fail_closed(
 async def _settle(
     call: Callable[[], Awaitable[object]],
 ) -> tuple[BaseException | None, asyncio.CancelledError | None]:
-    """Run ``call`` to completion or to :data:`_CLEAR_TIMEOUT_S`, whatever cancels the caller.
+    """Run ``call`` to completion or to :data:`_FLAG_STEP_TIMEOUT_S`, whatever cancels the caller.
 
     ``call`` itself runs here, in the caller's task, where the sink finds the
     session; only the driver call it returns is awaited in a task of its own.
@@ -238,7 +238,7 @@ async def _settle(
 
 async def _failure_of(step: Awaitable[object]) -> BaseException | None:
     try:
-        await asyncio.wait_for(step, _CLEAR_TIMEOUT_S)
+        await asyncio.wait_for(step, _FLAG_STEP_TIMEOUT_S)
     except BaseException as exc:  # NOSONAR S5754 - returned, the caller fails closed
         return exc
     return None

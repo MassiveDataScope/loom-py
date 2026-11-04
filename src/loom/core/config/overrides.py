@@ -62,7 +62,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import INTERPOLATION, ConfigKey
 from loom.core.config.loader import load_config
 from loom.core.config.retired import reject_retired_sections
 from loom.core.environment import (
@@ -81,7 +81,6 @@ _logger = logging.getLogger(__name__)
 
 _SEPARATOR: Final = "__"
 _LEVEL: Final = re.compile(r"\w+", re.ASCII)  # ASCII: \w is [A-Za-z0-9_]
-_INTERPOLATION: Final = "${"
 _ENTRY: Final = re.compile(r"(\w+|\*)(\.(\w+|\*))*", re.ASCII)
 _ALLOWLIST_SECTION: Final = "config"
 _ALLOWLIST_FIELD: Final = "overridable"
@@ -217,7 +216,7 @@ def _parsed(name: str, key: str, value: str) -> Any:
         # Any parse failure, a YAML tag that fails to construct included; from
         # None, since the chained exception's message may quote the value.
         raise ConfigError(f"{name} does not parse as a value for {key!r}") from None
-    if any(_INTERPOLATION in text for text in _strings(written)):
+    if any(INTERPOLATION in text for text in _strings(written)):
         raise ConfigError(f"{name} holds an interpolation; override values are literals")
     leaf: Any = written
     for level in key.split("."):
@@ -286,7 +285,7 @@ def _leaf_key(written: Any, name: str) -> str:
     node: Any = written
     keys: list[str] = []
     for level in levels:
-        if isinstance(node, str) and _INTERPOLATION in node:
+        if isinstance(node, str) and INTERPOLATION in node:
             raise ConfigError(
                 f"{name} reaches inside {'.'.join(keys)!r}, which is an interpolation; "
                 "override the whole key in the files instead"

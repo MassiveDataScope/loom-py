@@ -17,8 +17,6 @@ from loom.core.persistence.elevation import ScopedTables
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
-from loom.core.uow.coordinator import Participant
-from loom.core.uow.scope import current_participant
 
 _SET_SETTINGS: Final = text(SET_SETTINGS)
 
@@ -58,10 +56,7 @@ class SQLAlchemyStoreElevation:
         values = {elevation_setting(scope): "" for scope in sorted(scopes)}
         return self._open_session().execute(_SET_SETTINGS, settings_parameters(values))
 
-    def invalidate(self, cause: BaseException) -> Awaitable[object]:
-        manager = self._session_manager
-        participant = cast("Participant", current_participant(manager.store, manager, write=False))
-        participant.poison(cause)
+    def invalidate(self) -> Awaitable[object]:
         return self._open_session().invalidate()
 
     def _open_session(self) -> AsyncSession:

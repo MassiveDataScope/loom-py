@@ -1,12 +1,26 @@
-"""The elevation sink the composition builds, over one SQLAlchemy store."""
+"""The elevation sink the composition builds, over one SQLAlchemy store, and a product."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
+from loom.core.authz import Permission, RoleCatalog
 from loom.core.model.privilege import READ_WRITE
 from loom.core.model.scoped import ScopeColumn, ScopedTable
 from loom.core.persistence.elevation import ScopedElevationSink, ScopedTables
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+
+MANAGE = Permission("members.manage")
+
+
+@dataclass
+class Product:
+    """An authorization product whose ``members.manage`` elevates ``editor``."""
+
+    catalog: RoleCatalog
+    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
+    delegate: Permission = MANAGE
 
 
 class _Declaring(SQLAlchemyStoreElevation):

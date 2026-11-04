@@ -55,6 +55,17 @@ class ScopedTable:
         return next(scope for scope in self.scopes if scope.is_boundary)
 
 
+ScopedTables = Mapping[tuple[str | None, str], ScopedTable]  # by schema and name
+
+
+def declared_scopes(scoped: ScopedTables) -> dict[str, bool]:
+    """Each scope ``scoped`` declares, and whether one of its columns makes it elevable."""
+    scopes: dict[str, bool] = {}
+    for column in (column for table in scoped.values() for column in table.scopes):
+        scopes[column.scope] = scopes.get(column.scope, False) or column.elevable
+    return scopes
+
+
 def registered_model_tables(
     registered: Mapping[str, str | None], scoped: Iterable[ScopedTable]
 ) -> frozenset[str]:

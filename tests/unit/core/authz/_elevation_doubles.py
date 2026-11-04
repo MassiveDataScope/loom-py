@@ -32,9 +32,8 @@ class FakeSink:
     fail_on_set: bool = False
     set_gate: asyncio.Event | None = None
     """``set_flag``'s statement finishes only once the gate opens."""
-    fail_on_clear: bool = False
     clear_raises: BaseException | None = None
-    """What ``clear_flags``'s statement raises, when it is not an ``Exception``."""
+    """What ``clear_flags``'s statement raises."""
     refuse_clear: bool = False
     """``clear_flags`` raises when called, as a sink refused by the scope checkpoint does."""
     fail_on_invalidate: bool = False
@@ -53,7 +52,7 @@ class FakeSink:
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
         if self.refuse_clear:
             raise RuntimeError("refused before any statement")
-        if self.fail_on_clear or self.clear_raises is not None:
+        if self.clear_raises is not None:
             return _refused(self.clear_raises)
         self.cleared.append(scopes)
         return _done()

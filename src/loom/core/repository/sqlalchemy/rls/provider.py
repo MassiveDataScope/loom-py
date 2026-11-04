@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
-from loom.core.model.scoped import ScopedTable
+from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.repository.sqlalchemy.rls.sources import resolve_binding, validate_bindings
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
 
@@ -54,7 +54,7 @@ def rls_session_settings(
 
 def scoped_session_settings(
     scope_sources: Mapping[str, str],
-    scoped: Mapping[tuple[str | None, str], ScopedTable],
+    scoped: ScopedTables,
     product: SessionSettings | None = None,
     *,
     path: str,
@@ -71,7 +71,7 @@ def scoped_session_settings(
         ConfigError: When a declared scope has no binding, or a binding is
             malformed or unregistered.
     """
-    scopes = _declared_scopes(scoped)
+    scopes = declared_scopes(scoped)
     missing = sorted(scope for scope in scopes if scope not in scope_sources)
     if missing:
         raise ConfigError(f"{path}.schema.scopes is missing bindings for {missing}")
@@ -113,7 +113,7 @@ class DeferredScopedSettings:
         self._path = path
         self._provide: Callable[[], Mapping[str, str]] | None = None
 
-    def bind(self, scoped: Mapping[tuple[str | None, str], ScopedTable]) -> None:
+    def bind(self, scoped: ScopedTables) -> None:
         """Build the provider for the compiled scoped tables; validates every binding."""
         self._provide = scoped_session_settings(self._scope_sources, scoped, path=self._path)
 
@@ -142,14 +142,6 @@ def install_pool_reset(engine: AsyncEngine) -> None:
         finally:
             cursor.close()
         dbapi_connection.commit()
-
-
-def _declared_scopes(scoped: Mapping[tuple[str | None, str], ScopedTable]) -> dict[str, bool]:
-    scopes: dict[str, bool] = {}
-    for table in scoped.values():
-        for column in table.scopes:
-            scopes[column.scope] = scopes.get(column.scope, False) or column.elevable
-    return scopes
 
 
 def _product_settings(product: SessionSettings | None) -> Mapping[str, str]:

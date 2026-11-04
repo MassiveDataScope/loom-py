@@ -18,15 +18,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import msgspec
-
 from loom.core.identity import Identity, current_identity
-from loom.core.identity.wire import encode_identity
 from loom.core.job.context import add_pending_publish
-from loom.core.job.envelope import JobEnvelope, wire_job_name
+from loom.core.job.envelope import encode_job_message
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
+from loom.jobs.aws import FIFO_SUFFIX
 
 if TYPE_CHECKING:
     from loom.composition import JobBackendContext
@@ -59,14 +57,10 @@ def sqs_record(
         group_id: The FIFO ``MessageGroupId``; the default queue is then a FIFO one.
         queue_arn: The source queue; a ``.fifo`` one makes the batch FIFO.
     """
-    envelope = JobEnvelope(
-        job=wire_job_name(job_type.__qualname__),
-        payload=payload or {},
-        params=params,
-        identity=encode_identity(identity),
+    body = encode_job_message(job_type, payload=payload, params=params, identity=identity)
+    return sqs_raw_record(
+        body.decode(), message_id=message_id, group_id=group_id, queue_arn=queue_arn
     )
-    body = msgspec.json.encode(envelope).decode()
-    return sqs_raw_record(body, message_id=message_id, group_id=group_id, queue_arn=queue_arn)
 
 
 def sqs_raw_record(
@@ -83,7 +77,7 @@ def sqs_raw_record(
     attributes = {"ApproximateReceiveCount": "1", "SentTimestamp": "0"}
     if group_id is not None:
         attributes["MessageGroupId"] = group_id
-    default_arn = _QUEUE_ARN + (".fifo" if group_id is not None else "")
+    default_arn = _QUEUE_ARN + (FIFO_SUFFIX if group_id is not None else "")
     return {
         "messageId": message_id or str(uuid.uuid4()),
         "receiptHandle": "test-receipt",

@@ -8,7 +8,7 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
 from loom.core.config import ConfigContext
-from loom.core.config.aws import aws_defaults
+from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
@@ -88,7 +88,8 @@ class DynamoDBBackend:
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         del ctx
-        dynamo_cfg = spec.decode(DynamoDBRepositoryConfig, defaults=aws_defaults(spec.config))
+        aws = written_aws(spec.config)
+        dynamo_cfg = decode_aws(aws, spec.settings(), spec.path, DynamoDBRepositoryConfig)
         # The low-level client, not the resource: it is thread-safe, and
         # repository calls share it across the executor's threads.
         client = build_aws_client("dynamodb", dynamo_cfg)

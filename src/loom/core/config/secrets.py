@@ -13,21 +13,11 @@ Example::
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from loom.core.config._resolver_utils import (
-    CLIENT,
-    _expand_env_vars,
-    _navigate_json,
-    _split_resolver_key,
-    aws_client,
-    root_cache,
-)
+from loom.core.config._resolver_utils import aws_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
-
-logger = logging.getLogger(__name__)
 
 
 def _fetch_secret(client: Any, name: str, *, label: str) -> str:
@@ -137,21 +127,17 @@ class SecretsManagerResolver:
                 missing, boto3 is not installed, the secret is binary,
                 or the API call fails.
         """
-        cache = root_cache(_root_, self.name, self._unbound)
-        if key in cache:
-            return cache[key]
-        if not key:
-            raise ConfigError("Secrets Manager key must not be empty")
-        base, json_keys = _split_resolver_key(key)
-        path = _expand_env_vars(base)
-        logger.info("secrets_resolver: fetching %s", key)
-        if CLIENT not in cache:
-            cache[CLIENT] = aws_client(
+        return resolve_cached(
+            key,
+            _root_,
+            name=self.name,
+            label="Secrets Manager",
+            unbound=self._unbound,
+            client=lambda: aws_client(
                 "secretsmanager", self._region, resolver="SecretsManagerResolver", root=_root_
-            )
-        raw = _fetch_secret(cache[CLIENT], path, label=key)
-        cache[key] = _navigate_json(raw, json_keys, key) if json_keys else raw
-        return cache[key]
+            ),
+            fetch=_fetch_secret,
+        )
 
 
 __all__ = ["SecretsManagerResolver"]

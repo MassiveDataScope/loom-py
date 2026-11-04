@@ -151,11 +151,10 @@ class StoreSpec:
         """
         return dict(self._resolved)
 
-    def decode(self, target: type[T], *, defaults: Mapping[str, Any] | None = None) -> T:
+    def decode(self, target: type[T]) -> T:
         """Decode :meth:`settings` into *target*, as a section of the configuration decodes.
 
         A connection type's retired keys fail first, naming their replacement.
-        *defaults* (``aws:``, say) apply to every key the section does not set.
 
         Raises:
             ConfigError: When the section holds a retired key, does not
@@ -163,7 +162,7 @@ class StoreSpec:
         """
         if isinstance(target, type) and issubclass(target, ConnectionSettings):
             reject_retired_keys(self._resolved, self.path, target)
-        return convert_section({**(defaults or {}), **self._resolved}, self.path, target)
+        return convert_section(self._resolved, self.path, target)
 
 
 @dataclass(frozen=True, slots=True)
