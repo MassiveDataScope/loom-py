@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
@@ -111,31 +112,35 @@ class DynamoDBBackend:
 
 
 class _ReopenableThreads(Executor):
-    """Threads started on first use; after ``shutdown``, a reopened application starts new ones."""
+    """A thread pool that refuses work once shut down, until the next lifespan reopens it."""
 
     def __init__(self, size: int) -> None:
         self._size = size
-        self._pool: ThreadPoolExecutor | None = None
+        self._closed = False
+        self._pool = self._new_pool()
+
+    def _new_pool(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(max_workers=self._size, thread_name_prefix="loom-dynamodb")
+
+    def reopen(self) -> None:
+        if self._closed:
+            self._closed, self._pool = False, self._new_pool()
 
     def submit(self, fn: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs) -> Future[_T]:
-        if self._pool is None:
-            self._pool = ThreadPoolExecutor(
-                max_workers=self._size, thread_name_prefix="loom-dynamodb"
-            )
         return self._pool.submit(fn, *args, **kwargs)
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
-        pool, self._pool = self._pool, None
-        if pool is not None:
-            pool.shutdown(wait, cancel_futures=cancel_futures)
+        self._closed = True
+        self._pool.shutdown(wait, cancel_futures=cancel_futures)
 
 
 @asynccontextmanager
-async def _lifespan(executor: Executor) -> AsyncIterator[None]:
+async def _lifespan(executor: _ReopenableThreads) -> AsyncIterator[None]:
+    executor.reopen()
     try:
         yield
     finally:
-        executor.shutdown()
+        await asyncio.to_thread(executor.shutdown)
 
 
 async def _readiness(client: Any, table: str, executor: Executor) -> bool:

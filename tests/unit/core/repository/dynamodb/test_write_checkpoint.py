@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import pytest
 
@@ -44,18 +44,23 @@ def coordinator() -> OrderedCommits:
 
 
 @pytest.mark.parametrize("write", WRITES)
-async def test_a_write_to_an_undeclared_store_sends_nothing(
-    coordinator: OrderedCommits, fake_client: FakeClient, write: Write
+async def test_a_write_to_an_undeclared_store_calls_no_client_method(
+    coordinator: OrderedCommits,
+    fake_client: FakeClient,
+    write: Write,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    for method in ("get_item", "put_item", "delete_item"):
+        monkeypatch.setattr(fake_client, method, _refuse_call)
     audit: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(fake_client, "products", AuditEntry)
-    await audit.create(ProductCreate(id=1, name="kept"))
-    stored = dict(fake_client.items["products"])
 
     async with invocation(coordinator) as scope, scope.frame(Frame(DEFAULT_STORE)):
         with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
             await write(audit)
 
-    assert fake_client.items["products"] == stored
+
+def _refuse_call(**kwargs: Any) -> NoReturn:
+    raise AssertionError(f"the client was called with {kwargs}")
 
 
 async def test_a_declared_write_is_reported_as_written(

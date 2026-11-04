@@ -357,33 +357,62 @@ class TestRollbackFailure:
 
 
 @pytest.mark.parametrize(
-    ("error", "outcome"),
+    ("step", "error", "outcome"),
     [
-        pytest.param(OperationalError("COMMIT", None, OSError()), Uncertain, id="operational"),
-        pytest.param(InterfaceError("COMMIT", None, OSError()), Uncertain, id="interface"),
         pytest.param(
+            "commit", OperationalError("COMMIT", None, OSError()), Uncertain, id="operational"
+        ),
+        pytest.param(
+            "commit", InterfaceError("COMMIT", None, OSError()), Uncertain, id="interface"
+        ),
+        pytest.param(
+            "commit",
             DBAPIError("COMMIT", None, OSError(), connection_invalidated=True),
             Uncertain,
             id="invalidated",
         ),
+        pytest.param("commit", TimeoutError(), Uncertain, id="timeout"),
+        pytest.param("commit", ConnectionResetError(), Uncertain, id="transport"),
         pytest.param(
-            IntegrityError("COMMIT", None, OSError()), RolledBack, id="deferred-integrity"
+            "commit",
+            IntegrityError("COMMIT", None, OSError()),
+            RolledBack,
+            id="deferred-integrity",
+        ),
+        pytest.param(
+            "flush", OperationalError("INSERT", None, OSError()), RolledBack, id="flush-operational"
         ),
     ],
 )
 async def test_a_failed_commit_is_classified_and_the_caller_gets_the_driver_error(
-    error: DBAPIError, outcome: type[Uncertain | RolledBack]
+    step: str, error: Exception, outcome: type[Uncertain | RolledBack]
 ) -> None:
     session = make_session()
-    session.commit = AsyncMock(side_effect=error)
+    setattr(session, step, AsyncMock(side_effect=error))
     uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
 
-    with pytest.raises(DBAPIError) as raised:
+    with pytest.raises(type(error)) as raised:
         async with single_store(DEFAULT_STORE, uow) as scope:
             pass
 
     assert raised.value is error
     assert scope.outcome == InvocationOutcome((outcome(DEFAULT_STORE, error),))
+    assert session.invalidate.await_count == (outcome is Uncertain)
+
+
+async def test_a_failing_invalidate_leaves_the_commit_uncertain_with_its_own_error() -> None:
+    error = OperationalError("COMMIT", None, OSError())
+    session = make_session()
+    session.commit = AsyncMock(side_effect=error)
+    session.invalidate = AsyncMock(side_effect=OSError("socket gone"))
+    uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
+
+    with pytest.raises(OperationalError) as raised:
+        async with single_store(DEFAULT_STORE, uow) as scope:
+            pass
+
+    assert raised.value is error
+    assert scope.outcome == InvocationOutcome((Uncertain(DEFAULT_STORE, error),))
 
 
 class TestPhased:

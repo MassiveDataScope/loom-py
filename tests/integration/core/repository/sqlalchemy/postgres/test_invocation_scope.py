@@ -200,6 +200,7 @@ async def test_a_connection_lost_before_commit_leaves_the_store_uncertain(
     [store] = outcome.stores
     assert isinstance(store, Uncertain)
     assert isinstance(store.cause, DBAPIError)
+    assert manager.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
     assert await _committed_ids(observer, table) == []
 
 

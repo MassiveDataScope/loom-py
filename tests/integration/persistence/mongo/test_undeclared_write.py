@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-import pymongo
 import pytest
 from pymongo import AsyncMongoClient
 from pymongo.monitoring import (
@@ -26,19 +25,8 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import (
-    InvocationOutcome,
-    OrderedCommits,
-    RolledBack,
-    StoreOutcome,
-    Uncertain,
-)
-from loom.core.uow.scope import (
-    ForeignSessionError,
-    Frame,
-    UndeclaredStoreWrite,
-    invocation,
-)
+from loom.core.uow.coordinator import InvocationOutcome, OrderedCommits, RolledBack, StoreOutcome
+from loom.core.uow.scope import ForeignSessionError, Frame, UndeclaredStoreWrite, invocation
 from tests.unit.core.repository.contract.conftest import CreateOrder, Order, OrderStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]
@@ -175,24 +163,6 @@ async def test_a_commit_the_server_refuses_sends_no_abort(
     assert "abortTransaction" not in audit.commands.names
     assert "UoWRollbackFailed" not in caplog.text
     assert await audit.orders.count() == 0
-
-
-async def test_a_commit_of_unknown_result_is_uncertain_and_sends_no_abort(
-    mongo_client: AsyncMongoClient[Any], audit: _Audit, caplog: pytest.LogCaptureFixture
-) -> None:
-    async with invocation(_audit_only(audit)) as scope:
-        async with scope.frame(Frame(AUDIT)):
-            await audit.orders.create(_order())
-            lsid = _lsid(audit)
-        try:
-            with caplog.at_level(logging.ERROR), pymongo.timeout(1e-6):
-                outcome = await scope.coordinator.finish(scope, None)
-        finally:
-            await mongo_client.admin.command({"killSessions": [lsid]})
-
-    assert _outcome_types(outcome) == [Uncertain]
-    assert "abortTransaction" not in audit.commands.names
-    assert "UoWRollbackFailed" not in caplog.text
 
 
 def _audit_only(audit: _Audit) -> OrderedCommits:

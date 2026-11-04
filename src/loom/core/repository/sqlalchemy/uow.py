@@ -140,18 +140,30 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         Raises:
             RuntimeError: If :meth:`begin` has not been called.
             CommitUncertain: If the connection failed during ``COMMIT``
-                (``OperationalError``, ``InterfaceError`` or an invalidated
-                connection): the commit may have been applied.
+                (``OperationalError``, ``InterfaceError``, an invalidated
+                connection, or an ``OSError`` such as a timeout): the commit
+                may have been applied. The connection is invalidated first,
+                so it never returns to the pool.
         """
         if self._session is None:
             raise RuntimeError("SQLAlchemyUnitOfWork.commit() called before begin()")
         try:
             await self._session.commit()
-        except DBAPIError as exc:
-            if exc.connection_invalidated or isinstance(exc, OperationalError | InterfaceError):
+        except (DBAPIError, OSError) as exc:
+            if isinstance(exc, OSError | OperationalError | InterfaceError) or (
+                exc.connection_invalidated
+            ):
+                await self._invalidate(self._session)
                 raise CommitUncertain(exc) from exc
             raise
         _log.debug("UoWCommit")
+
+    @staticmethod
+    async def _invalidate(session: AsyncSession) -> None:
+        try:
+            await session.invalidate()
+        except Exception:
+            _log.exception("UoWInvalidateFailed")
 
     async def rollback(self) -> None:
         """Discard all pending changes.

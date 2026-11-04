@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import threading
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -81,32 +81,22 @@ def _wiring(monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> PersistenceW
     return build_backend(DynamoDBBackend(), ctx, (), SERVER_PROFILE)
 
 
-def _dynamodb_threads() -> list[str]:
-    return [t.name for t in threading.enumerate() if t.name.startswith("loom-dynamodb")]
-
-
-async def test_the_backend_sizes_its_executor_by_the_pool_size(
-    monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient
-) -> None:
-    created: list[int] = []
+@pytest.fixture
+def created(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Sizes of the thread pools the backend creates."""
+    sizes: list[int] = []
     real = backend_module.ThreadPoolExecutor
 
     def _executor(*, max_workers: int, thread_name_prefix: str) -> ThreadPoolExecutor:
-        created.append(max_workers)
+        sizes.append(max_workers)
         return real(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
 
     monkeypatch.setattr(backend_module, "ThreadPoolExecutor", _executor)
-    wiring = _wiring(monkeypatch, fake_client)
-    assert wiring.readiness is not None
-
-    async with wiring.lifespan_init():
-        await wiring.readiness()
-
-    assert created == [16]
+    return sizes
 
 
-async def test_closing_the_store_stops_its_threads_and_reopening_starts_new_ones(
-    monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient
+async def test_each_lifespan_runs_on_a_new_pool_sized_by_the_pool_size(
+    monkeypatch: pytest.MonkeyPatch, fake_client: FakeClient, created: list[int]
 ) -> None:
     wiring = _wiring(monkeypatch, fake_client)
     assert wiring.readiness is not None
@@ -115,6 +105,27 @@ async def test_closing_the_store_stops_its_threads_and_reopening_starts_new_ones
     for _ in range(2):
         async with wiring.lifespan_init():
             answers.append(await wiring.readiness())
-        assert _dynamodb_threads() == []
 
     assert answers == [True, True]
+    assert created == [16, 16]
+
+
+async def test_a_closed_pool_refuses_work_until_the_next_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_client: FakeClient,
+    created: list[int],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wiring = _wiring(monkeypatch, fake_client)
+    assert wiring.readiness is not None
+    async with wiring.lifespan_init():
+        pass
+
+    with caplog.at_level(logging.WARNING, logger=backend_module.__name__):
+        ready = await wiring.readiness()
+
+    assert ready is False
+    [record] = caplog.records
+    assert record.exc_info is not None
+    assert record.exc_info[0] is RuntimeError
+    assert created == [16]
