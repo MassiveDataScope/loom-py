@@ -261,8 +261,9 @@ async def test_dispatch_refuses_what_sqs_cannot_carry_and_sends_nothing(
 
 def test_dispatch_parallel_refuses_callbacks(service: JobService) -> None:
     jobs = [(EmailJob, {})]
+    callback = cast(Any, object)
     with pytest.raises(SQSDispatchError, match="no callbacks"):
-        service.dispatch_parallel(jobs, on_all_success=cast(Any, object))
+        service.dispatch_parallel(jobs, on_all_success=callback)
 
 
 def _logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
