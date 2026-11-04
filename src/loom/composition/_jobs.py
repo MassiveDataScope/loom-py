@@ -147,7 +147,7 @@ def _routed(context: JobBackendContext, default: str) -> _Built:
     if not queues:
         return _backend(default, context)
     served = tuple(job for job in context.jobs if job.__queue__ not in queues)
-    service, resources = _backend(default, replace(context, jobs=served))
+    service, resources = _backend(default, replace(context, jobs=served))  # NOSONAR(S5655)
     celery, closers = _celery_backend(context, celery_cfg)
     return JobRouter(dict.fromkeys(queues, celery), default=service), (
         *resources,

@@ -37,7 +37,7 @@ ResultT = TypeVar("ResultT")
 
 MAX_DELAY_SECONDS = 900
 MAX_MESSAGE_BYTES = 256 * 1024
-_INVALID_CHARACTER = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+_INVALID_CHARACTER = re.compile(r"[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 """A character SQS refuses in a message body."""
 
 _log = get_logger(__name__)
