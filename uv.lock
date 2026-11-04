@@ -2276,6 +2276,9 @@ sqlalchemy = [
     { name = "greenlet" },
     { name = "sqlalchemy" },
 ]
+sqs = [
+    { name = "boto3" },
+]
 streaming = [
     { name = "anyio" },
     { name = "bytewax", marker = "python_full_version < '3.13'" },
@@ -2360,6 +2363,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'config-ssm'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'dynamodb'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'prefect'", specifier = ">=1.35" },
+    { name = "boto3", marker = "extra == 'sqs'", specifier = ">=1.35" },
     { name = "bytewax", marker = "python_full_version < '3.13' and extra == 'streaming'", specifier = ">=0.21" },
     { name = "celery", marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.9.2,<1.0" },
@@ -2438,7 +2442,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'rest'", specifier = ">=0.21,<1.0" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'streaming'", specifier = ">=0.21,<1.0" },
 ]
-provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "dynamodb", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "streaming", "testing"]
+provides-extras = ["ai-a2a", "ai-anthropic", "ai-bedrock", "ai-harness", "ai-openai", "ai-pydantic", "ai-templates", "ai-typesafe", "cache", "celery", "cli", "clickhouse", "config", "config-ssm", "dynamodb", "etl-otel", "etl-polars", "etl-spark", "jwt", "lambda", "logfire", "mongo", "prefect", "prometheus", "pyspark", "rest", "sqlalchemy", "sqs", "streaming", "testing"]
 
 [package.metadata.requires-dev]
 dev = [

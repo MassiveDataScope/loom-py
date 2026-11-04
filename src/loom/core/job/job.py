@@ -42,6 +42,8 @@ class Job(ABC, Generic[ResultT]):
         __timeout__: Soft time limit in seconds; ``None`` means no limit.
         __priority__: Celery task priority (0 = lowest, 9 = highest for most
             brokers).
+        __group_by__: Payload field whose value is the SQS ``MessageGroupId``;
+            required on a FIFO queue, ``None`` elsewhere.
 
     Example::
 
@@ -65,6 +67,7 @@ class Job(ABC, Generic[ResultT]):
     __countdown__: ClassVar[int] = 0
     __timeout__: ClassVar[int | None] = None
     __priority__: ClassVar[int] = 0
+    __group_by__: ClassVar[str | None] = None
 
     @abstractmethod
     def execute(self, *args: Any, **kwargs: Any) -> Any:

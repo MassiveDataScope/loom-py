@@ -6,17 +6,22 @@ import asyncio
 import importlib.util
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from loom.composition.errors import JobBackendError
 from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigKey, reject_retired_keys
+from loom.core.config.aws import aws_defaults
+from loom.core.config.loader import convert_section
+from loom.core.connections.aws import aws_island
 from loom.core.di.scope import Scope
+from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.plugins.optional import MissingExtraError
 from loom.core.symbols import import_symbol
 
 if TYPE_CHECKING:
@@ -28,13 +33,18 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, kw_only=True)
 class JobBackendContext:
-    """What a job backend is built with; a ``module:Class`` backend receives it."""
+    """What a job backend is built with; a ``module:Class`` backend receives it.
+
+    ``jobs`` are the discovered jobs this backend serves, their ``jobs.<Job>``
+    overrides applied: those on ``celery.queues`` go to Celery instead.
+    """
 
     config: ConfigContext
     factory: UseCaseFactory
     executor: RuntimeExecutor
     metrics: MetricsAdapter | None
     observability: ObservabilityRuntime | None
+    jobs: tuple[type[Job[Any]], ...] = ()
 
 
 _Built = tuple[JobService, tuple[Resource, ...]]
@@ -81,9 +91,34 @@ def _celery(context: JobBackendContext) -> _Built:
     return _celery_backend(context, _celery_config(context.config))
 
 
+def _sqs(context: JobBackendContext) -> _Built:
+    from loom.jobs.aws.sqs import SQSConfig, SQSJobService, check_queues
+
+    ctx = context.config
+    written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
+    reject_retired_keys(written, ConfigKey.SQS, SQSConfig)
+    config = convert_section({**aws_defaults(ctx), **written}, ConfigKey.SQS, SQSConfig)
+    check_queues(config.queues, context.jobs)
+    try:
+        client = aws_island(extra="sqs").build_aws_client("sqs", config)
+    except MissingExtraError as exc:
+        raise JobBackendError(
+            "app.job_service is sqs, but the loom[sqs] extra is not installed"
+        ) from exc
+    service = SQSJobService(
+        client,
+        config.queues,
+        factory=context.factory,
+        executor=context.executor,
+        metrics=context.metrics,
+    )
+    return service, ()
+
+
 _BUILTIN_JOB_BACKENDS: Final[Mapping[str, Callable[[JobBackendContext], _Built]]] = {
     "inline": _inline,
     "celery": _celery,
+    "sqs": _sqs,
 }
 """Each built-in backend by name; its section is the one named alike."""
 
@@ -103,15 +138,16 @@ def _backend(name: str, context: JobBackendContext) -> _Built:
 
 def _routed(context: JobBackendContext, default: str) -> _Built:
     """The *default* backend; ``celery.queues`` but Celery's default queue go to Celery."""
-    service, resources = _backend(default, context)
     # Celery is imported only when it declares queues.
     if default == "celery" or not context.config.has("celery.queues"):
-        return service, resources
+        return _backend(default, context)
     celery_cfg = _celery_config(context.config)
     # Celery's own default queue stays with the default backend: it is every job's queue.
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
     if not queues:
-        return service, resources
+        return _backend(default, context)
+    served = tuple(job for job in context.jobs if job.__queue__ not in queues)
+    service, resources = _backend(default, replace(context, jobs=served))
     celery, closers = _celery_backend(context, celery_cfg)
     return JobRouter(dict.fromkeys(queues, celery), default=service), (
         *resources,
@@ -154,6 +190,7 @@ def configure_job_service(
     observability_runtime: ObservabilityRuntime | None,
     *,
     backend: str | None = None,
+    jobs: tuple[type[Job[Any]], ...] = (),
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
@@ -171,13 +208,16 @@ def configure_job_service(
         observability_runtime: Observability runtime the backends trace
             with, or ``None``.
         backend: ``app.job_service``: a built-in name or ``module:Class``.
+        jobs: The discovered jobs, their ``jobs.<Job>`` overrides applied.
 
     Returns:
         One resource per built backend that owns something to close.
 
     Raises:
-        JobBackendError: When *backend* names no backend, or Celery is
-            needed without the extra installed.
+        JobBackendError: When *backend* names no backend, or Celery or
+            SQS is needed without its extra installed.
+        SQSQueueConfigError: When SQS serves a job whose queue has no URL,
+            or whose FIFO queue it names no ``__group_by__`` for.
     """
     if result.container.is_registered(JobService):
         return ()
@@ -187,6 +227,7 @@ def configure_job_service(
         executor=result.executor,
         metrics=result.metrics,
         observability=observability_runtime,
+        jobs=jobs,
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)

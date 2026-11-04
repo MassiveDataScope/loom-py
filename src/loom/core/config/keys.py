@@ -26,6 +26,7 @@ class ConfigKey(StrEnum):
     KAFKA = "kafka"
     MONGO = "mongo"
     SQL = "sql"
+    SQS = "sqs"
     STORAGE = "storage"
     STORES = "stores"
     STREAMING = "streaming"

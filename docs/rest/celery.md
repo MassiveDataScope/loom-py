@@ -276,7 +276,7 @@ executor drives commit and drains post-commit actions.
 
 A use case injects `JobService` and never names a backend. `app.job_service`
 names the backend for every queue `celery.queues` does not list: `inline`,
-`celery` or a `module:Class` reference. The effective queue of a job is the
+`celery`, `sqs` or a `module:Class` reference. The effective queue of a job is the
 `queue=` of the call, otherwise its `__queue__` after the `jobs.<Job>.queue`
 override.
 
@@ -302,11 +302,11 @@ stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
 - Only the backends in use are built: with no `celery.queues` and an inline
   default, Celery is not even imported.
 - One backend is registered as itself; two sit behind a `JobRouter`.
-- `run()` goes to the default backend (in-process for `inline` and `celery`).
+- `run()` goes to the default backend (in-process for `inline`, `celery` and `sqs`).
 - `dispatch_parallel()` over jobs of several backends returns one `JobGroup`
   in input order, and refuses callbacks with `MixedJobBackendsError`.
-- Startup fails with `JobBackendError` for an unknown name or when Celery is
-  needed without the `loom[celery]` extra.
+- Startup fails with `JobBackendError` for an unknown name or when Celery or
+  SQS is needed without its `loom[celery]` or `loom[sqs]` extra.
 - A `module:Class` backend is built as `Class(context)`, where `context` is a
   `loom.composition.JobBackendContext`.
 - `LOOM__APP__JOB_SERVICE` can override the key in production and staging,
@@ -315,6 +315,46 @@ stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
 Without `app.job_service` the old rule still applies, with a
 `DeprecationWarning` when Celery is installed or configured: a `celery`
 section and the extra select Celery, and anything else runs inline.
+
+### SQS
+
+`app.job_service: sqs` sends each dispatched job to Amazon SQS as one message
+whose body is the `JobEnvelope` the Lambda SQS adapter runs. Install
+`loom-kernel[sqs]`.
+
+```yaml
+app:
+  name: shop
+  job_service: sqs
+
+aws:
+  region: eu-west-1
+
+sqs:
+  queues:
+    default: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
+    orders: https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo
+```
+
+```python
+class ShipOrderJob(Job[None]):
+    __queue__ = "orders"
+    __group_by__ = "customer_id"  # payload field -> MessageGroupId
+```
+
+- `sqs:` takes the `aws:` client keys, overriding them, plus `queues`.
+- Only the jobs SQS serves need a URL: those on `celery.queues` go to Celery.
+- Startup fails with `SQSQueueConfigError` when a job's queue has no URL, or
+  when a job on a FIFO queue (URL ending in `.fifo`) declares no `__group_by__`.
+- On a FIFO queue, the task id is the `MessageDeduplicationId`.
+- `dispatch` raises `SQSDispatchError`, before anything is sent, for:
+  callbacks, a `priority` other than the job's, a queue without a URL, a
+  delay over 900 s, any delay on a FIFO queue (FIFO queues take a delay per
+  queue only), a FIFO payload without its group field, or a body over 256 KiB.
+- The message is sent after the commit, on the shielded publish lane, so a
+  cancellation after the commit does not lose it. A failed send is logged
+  with the job, task id and queue, never the payload.
+- `run()` executes in-process.
 
 ---
 

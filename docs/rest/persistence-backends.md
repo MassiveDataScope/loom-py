@@ -520,7 +520,7 @@ chain applies. See ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
 
 A top-level `aws:` section holds the client defaults every AWS product of loom
 inherits: a `dynamodb` store, the ETL's `storage.dynamodb`, the `secrets` and
-`ssm` resolvers and the SNS notifier. A product's own keys override it key by
+`ssm` resolvers, the SNS notifier and the `sqs` job backend. A product's own keys override it key by
 key.
 
 ```yaml
