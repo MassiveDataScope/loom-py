@@ -187,16 +187,38 @@ async def test_a_clear_refused_before_any_statement_invalidates_the_session() ->
     assert sink.invalidated == 1
 
 
-async def test_a_failed_invalidation_is_logged_and_the_frame_still_closes(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
+async def _nested_elevation(sink: FakeSink, *, hold: asyncio.Event | None = None) -> None:
+    """Elevate in a nested frame; with ``hold``, wait for it before the frame closes."""
     outer = elevation_scope(owns_transaction=True, sink=sink)
     inner = elevation_scope(owns_transaction=False, sink=sink)
     async with outer, inner:
         await _elevate()
+        if hold is not None:
+            await hold.wait()
 
+
+async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
+
+    with pytest.raises(RuntimeError, match="database says no") as raised:
+        await _nested_elevation(sink)
+
+    assert isinstance(raised.value.__cause__, RuntimeError)
     assert "could not be invalidated" in caplog.text
+    assert elevated_scopes() == frozenset()
+
+
+async def test_a_failed_invalidation_is_raised_over_a_cancellation() -> None:
+    sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
+    task = asyncio.create_task(_nested_elevation(sink, hold=asyncio.Event()))
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(RuntimeError, match="database says no"):
+        await task
+    assert sink.invalidated == 1
 
 
 async def test_elevate_outside_an_execution_is_a_runtime_error_even_without_a_product() -> None:

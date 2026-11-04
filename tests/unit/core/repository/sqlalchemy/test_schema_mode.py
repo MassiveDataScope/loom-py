@@ -7,9 +7,13 @@ import msgspec
 import pytest
 from sqlalchemy import MetaData
 
+from loom.core.authz.elevation import ElevationSink
 from loom.core.backend.sqlalchemy import compile_all, scoped_tables
+from loom.core.bootstrap.kernel import create_kernel
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
+from loom.core.di.container import LoomContainer
+from loom.core.engine.executor import RuntimeExecutor
 from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, ScopedField
 from loom.core.model.types import Integer, Text
 from loom.core.persistence.database import DatabaseConfig, SchemaConfig
@@ -19,7 +23,9 @@ from loom.core.repository.sqlalchemy.backend import (
     check_time_zone_columns,
     startup_checks,
 )
+from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from tests.helpers.elevation import sink_for
 from tests.helpers.persistence import build_backend
 
 
@@ -204,20 +210,13 @@ def test_external_mode_refuses_scoped_models_on_another_dialect_unless_allowed()
     ) == ("scoped_items",)
 
 
-def test_external_mode_wires_the_scoped_provider_and_the_elevation_sink() -> None:
-    from loom.core.authz.elevation import ElevationSink
-    from loom.core.di.container import LoomContainer
-    from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
-
+def test_external_mode_wires_the_scoped_provider_and_the_store_s_elevation() -> None:
     external = _wiring("postgresql+asyncpg://app:secret@localhost/app", Plain, mode="external")
     create_all = _wiring("sqlite+aiosqlite://", Plain)
-    external_container, create_all_container = LoomContainer(), LoomContainer()
-    external.repo_registration_module(external_container)
-    create_all.repo_registration_module(create_all_container)
 
-    assert isinstance(external_container.resolve(ElevationSink), SQLAlchemyElevationSink)
+    assert isinstance(external.elevation, SQLAlchemyStoreElevation)
     assert external.uow_factory._session_manager.has_session_settings
-    assert not create_all_container.is_registered(ElevationSink)
+    assert create_all.elevation is None
     assert not create_all.uow_factory._session_manager.has_session_settings
 
 
@@ -233,12 +232,6 @@ async def test_external_mode_validates_scope_bindings_at_startup() -> None:
 
 
 def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> None:
-    from loom.core.authz.elevation import ElevationSink
-    from loom.core.bootstrap.kernel import create_kernel
-    from loom.core.di.container import LoomContainer
-    from loom.core.engine.executor import RuntimeExecutor
-    from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
-
     config = convert_config({"url": "sqlite+aiosqlite://"}, DatabaseConfig, strict=True)
     manager = SessionManager(
         "sqlite+aiosqlite://",
@@ -247,7 +240,7 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
         pool_timeout=None,
         pool_recycle=None,
     )
-    sink = SQLAlchemyElevationSink(manager)
+    sink = sink_for(manager, "editor")
 
     def register(container: LoomContainer) -> None:
         container.register_instance(ElevationSink, sink)

@@ -18,11 +18,11 @@ import pytest
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, elevation_scope
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits, PhysicalStore
 from loom.core.uow.scope import Frame, invocation
+from tests.helpers.elevation import sink_for
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
@@ -129,7 +129,7 @@ async def _nested_elevation(
 
     With ``hold`` the nested execution waits, to be cancelled, before it returns.
     """
-    sink = SQLAlchemyElevationSink(manager)
+    sink = sink_for(manager, "editor")
     unit_of_work: Any = _PhasedUnitOfWork(manager, session)
     coordinator = OrderedCommits({DEFAULT_STORE: _Given(unit_of_work)})
     async with (

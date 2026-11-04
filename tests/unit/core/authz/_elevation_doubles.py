@@ -31,7 +31,8 @@ class FakeSink:
     fail_on_invalidate: bool = False
     invalidated: int = 0
 
-    def in_transaction(self) -> bool:
+    def in_transaction(self, scopes: frozenset[str]) -> bool:
+        del scopes
         return self.open
 
     def set_flag(self, scope: str) -> Awaitable[object]:
@@ -48,6 +49,7 @@ class FakeSink:
         self.cleared.append(scopes)
         return _done()
 
-    def invalidate(self) -> Awaitable[object]:
+    def invalidate(self, scopes: frozenset[str]) -> Awaitable[object]:
+        del scopes
         self.invalidated += 1
         return _refused() if self.fail_on_invalidate else _done()

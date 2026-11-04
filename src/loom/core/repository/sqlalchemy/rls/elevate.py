@@ -9,9 +9,10 @@ from sqlalchemy import text
 
 from loom.core.authz import Decision, RoleCatalog, Scope
 from loom.core.authz.elevation import elevate_scope, in_execution_frame
-from loom.core.authz.product import AuthzProduct, load_authz_product
+from loom.core.authz.product import load_authz_product
+from loom.core.backend.sqlalchemy import scoped_tables
 from loom.core.config import ConfigError
-from loom.core.model.scoped import ScopedTable
+from loom.core.persistence.elevation import ScopedTables
 from loom.core.repository.sqlalchemy.rls.provider import elevation_setting
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_parameters
@@ -19,12 +20,15 @@ from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, setti
 _SET_SETTINGS: Final = text(SET_SETTINGS)
 
 
-class SQLAlchemyElevationSink:
+class SQLAlchemyStoreElevation:
     """Sets and clears elevation flags on the transaction of its store's participant.
 
-    The sink only ever touches the session its own store's participant holds
-    in the current invocation, so an elevation flag can never be set on
-    another store's session. Without that participant it does nothing.
+    Implements :class:`~loom.core.persistence.elevation.StoreElevation`; the
+    composition hands it to the application's
+    :class:`~loom.core.persistence.elevation.ScopedElevationSink`. It only ever
+    touches the session its own store's participant holds in the current
+    invocation, so an elevation flag can never be set on another store's
+    session. Without that participant it does nothing.
 
     Every method reads that session when it is called, through
     :attr:`SessionManager.active_session`, and returns the statement left to
@@ -43,6 +47,9 @@ class SQLAlchemyElevationSink:
 
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
+
+    def scoped_tables(self) -> ScopedTables:
+        return scoped_tables(self._session_manager.metadata)
 
     def in_transaction(self) -> bool:
         session = self._session_manager.active_session
@@ -92,18 +99,3 @@ async def elevate(
     await elevate_scope(
         scope, decision, at=at, permission=permission, catalog=catalog or product.catalog
     )
-
-
-def validate_elevations(
-    product: AuthzProduct, scoped: Mapping[tuple[str | None, str], ScopedTable]
-) -> None:
-    """Fail at startup when ``elevations`` names a scope that is unknown or not elevable."""
-    elevable = {c.scope for table in scoped.values() for c in table.scopes if c.elevable}
-    declared = {c.scope for table in scoped.values() for c in table.scopes}
-    for scope in product.elevations:
-        if scope not in declared:
-            raise ConfigError(f"AuthzProduct.elevations names unknown scope {scope!r}")
-        if scope not in elevable:
-            raise ConfigError(
-                f"AuthzProduct.elevations names scope {scope!r}, which is not elevable"
-            )

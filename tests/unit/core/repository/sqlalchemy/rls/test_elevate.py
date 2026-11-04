@@ -4,29 +4,18 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import pytest
-from sqlalchemy import MetaData
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import elevated_scopes, elevation_scope
 from loom.core.authz.product import clear_authz_product, load_authz_product, register_authz_product
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.config import ConfigError
-from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
-from loom.core.model.types import Integer, String, Text
-from loom.core.repository.sqlalchemy.rls import elevate, validate_elevations
+from loom.core.repository.sqlalchemy.rls import elevate
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
 MANAGE = Permission("members.manage")
 CATALOG = RoleCatalog((WRITE, MANAGE), (Role("editor", (WRITE,)), Role("admin", (WRITE, MANAGE))))
 BOUNDARY = Scope.of("b1")
-
-
-class Note(BaseModel, RowScoped):
-    __tablename__ = "notes"
-    key: str = ScopedField(String(36), primary_key=True, scope="holder")
-    id: int = ColumnField(Integer, primary_key=True, autoincrement=True)
-    editor: str = ScopedField(Text, scope="editor", on="write", elevable=True)
 
 
 @dataclass
@@ -43,12 +32,6 @@ def _no_product() -> Iterator[None]:
     clear_authz_product()
 
 
-def _scoped():
-    metadata = MetaData()
-    compile_all(Note, metadata=metadata)
-    return scoped_tables(metadata)
-
-
 def _decision(role: str) -> Decision:
     return Decision(allowed=True, grant=Grant(subject="ana", role=role, scope=BOUNDARY))
 
@@ -62,18 +45,6 @@ def test_a_registered_product_is_what_the_loader_returns() -> None:
     register_authz_product(product)
 
     assert load_authz_product() is product
-
-
-def test_validate_elevations_accepts_elevable_scopes_only() -> None:
-    scoped = _scoped()
-    validate_elevations(Product(), scoped)
-    product_mapping_holder = Product(elevations={"holder": MANAGE})
-    product_mapping_nope = Product(elevations={"nope": MANAGE})
-
-    with pytest.raises(ConfigError, match=r"holder.*elevable"):
-        validate_elevations(product_mapping_holder, scoped)
-    with pytest.raises(ConfigError, match=r"nope"):
-        validate_elevations(product_mapping_nope, scoped)
 
 
 async def test_elevate_without_a_product_is_a_configuration_error() -> None:

@@ -19,10 +19,11 @@ from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors.errors import ForeignSessionError
 from loom.core.model import BaseModel, ColumnField
+from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec, PageParams
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
-from loom.core.repository.sqlalchemy.rls import SQLAlchemyElevationSink
+from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
@@ -167,19 +168,66 @@ class TestTransactional:
         assert service.sessions[0] is not None
 
 
+def _sink(stores: _Stores) -> ScopedElevationSink:
+    """``editor`` elevable in the default store, ``reviewer`` in the audit store."""
+    return ScopedElevationSink(
+        {
+            DEFAULT_STORE: SQLAlchemyStoreElevation(stores.default),
+            AUDIT: SQLAlchemyStoreElevation(stores.audit),
+        },
+        {DEFAULT_STORE: frozenset({"editor"}), AUDIT: frozenset({"reviewer"})},
+    )
+
+
 class TestElevationSink:
-    async def test_it_sees_the_transaction_of_its_own_store_only(self, stores: _Stores) -> None:
+    async def test_a_store_sees_the_transaction_of_its_own_store_only(
+        self, stores: _Stores
+    ) -> None:
         async with (
             invocation(stores.coordinator()) as scope,
             scope.frame(Frame(DEFAULT_STORE)),
         ):
             await _begin_transaction(stores.default)
             seen = (
-                SQLAlchemyElevationSink(stores.default).in_transaction(),
-                SQLAlchemyElevationSink(stores.audit).in_transaction(),
+                SQLAlchemyStoreElevation(stores.default).in_transaction(),
+                SQLAlchemyStoreElevation(stores.audit).in_transaction(),
             )
 
         assert seen == (True, False)
+
+    @pytest.mark.parametrize(
+        ("begun", "expected"),
+        [(DEFAULT_STORE, (True, False)), (AUDIT, (False, True))],
+    )
+    async def test_the_sink_sees_the_transaction_of_the_store_declaring_the_scope(
+        self, stores: _Stores, begun: StoreKey, expected: tuple[bool, bool]
+    ) -> None:
+        sink = _sink(stores)
+        async with (
+            invocation(stores.coordinator()) as scope,
+            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
+        ):
+            await _begin_transaction(stores.default if begun == DEFAULT_STORE else stores.audit)
+            seen = (
+                sink.in_transaction(frozenset({"editor"})),
+                sink.in_transaction(frozenset({"reviewer"})),
+            )
+
+        assert seen == expected
+
+    async def test_the_sink_refuses_a_gather_child(self, stores: _Stores) -> None:
+        sink = _sink(stores)
+
+        async def child() -> bool:
+            return sink.in_transaction(frozenset({"reviewer"}))
+
+        async with (
+            invocation(stores.coordinator()) as scope,
+            scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
+        ):
+            pending = asyncio.gather(child())
+            with pytest.raises(ScopeOwnershipError, match="task other than"):
+                await pending
 
 
 async def _begin_transaction(manager: SessionManager) -> None:

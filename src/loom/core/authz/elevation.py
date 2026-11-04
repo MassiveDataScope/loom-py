@@ -31,22 +31,30 @@ _CLEAR_TIMEOUT_S = 30.0
 
 
 class ElevationSink(Protocol):
-    """How the frame reaches the transaction that is open right now.
+    """How the frame reaches the open transactions of the stores that declare a scope.
 
-    Each method finds that transaction when it is called, in the calling
+    Each method finds those transactions when it is called, in the calling
     task, and returns only the driver call left to await. The frame may await
     that call in a task of its own, so a cancellation cannot cut it short;
-    finding the transaction there would fail the owner-task check of the
+    finding the transactions there would fail the owner-task check of the
     invocation scope.
     """
 
-    def in_transaction(self) -> bool: ...
+    def in_transaction(self, scopes: frozenset[str]) -> bool:
+        """Whether a store declaring one of ``scopes`` has a transaction open."""
+        ...
 
-    def set_flag(self, scope: str) -> Awaitable[object]: ...
+    def set_flag(self, scope: str) -> Awaitable[object]:
+        """Flag ``scope`` on the open transaction of the store declaring it."""
+        ...
 
-    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]: ...
+    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
+        """Clear ``scopes`` on the open transactions of the stores declaring them."""
+        ...
 
-    def invalidate(self) -> Awaitable[object]: ...
+    def invalidate(self, scopes: frozenset[str]) -> Awaitable[object]:
+        """Invalidate the sessions of the open transactions of the stores declaring ``scopes``."""
+        ...
 
 
 @dataclass(slots=True)
@@ -120,7 +128,7 @@ async def elevate_scope(
     if frame.sink is None:
         return
     try:
-        if frame.sink.in_transaction():
+        if frame.sink.in_transaction(frozenset({scope})):
             await frame.sink.set_flag(scope)
     except BaseException:
         # A refused or failed sink leaves the scope unelevated, so neither the
@@ -146,7 +154,7 @@ def _check(
 
 
 async def _clear_added(frame: _Frame) -> None:
-    """Clear the flags ``frame`` added to the open transaction, or invalidate its session.
+    """Clear the flags ``frame`` added to the open transactions, or invalidate their sessions.
 
     A cancellation arriving meanwhile waits for both and is re-raised after:
     the outer execution keeps the transaction, so it must never get it back
@@ -154,6 +162,9 @@ async def _clear_added(frame: _Frame) -> None:
 
     Raises:
         asyncio.CancelledError: The first cancellation received meanwhile.
+        Exception: What the invalidation failed with, after the clearing
+            failed, even over a cancellation: the session may still hold a
+            flag, so the invocation must end and roll it back.
     """
     if frame.owns_transaction or frame.sink is None:
         return
@@ -161,7 +172,7 @@ async def _clear_added(frame: _Frame) -> None:
     added = frozenset(frame.scopes - held_by_parent)
     # The sink is asked only when there is something to clear: a frame that
     # elevated nothing closes without touching the session.
-    if not added or not frame.sink.in_transaction():
+    if not added or not frame.sink.in_transaction(added):
         return
     sink = frame.sink
     failure, cancelled = await _settle(lambda: sink.clear_flags(added))
@@ -171,12 +182,16 @@ async def _clear_added(frame: _Frame) -> None:
             sorted(added),
             exc_info=failure,
         )
-        failure, cancelled_again = await _settle(sink.invalidate)
+        invalidation, cancelled_again = await _settle(lambda: sink.invalidate(added))
         cancelled = cancelled or cancelled_again
-        if failure is not None:
+        if invalidation is not None:
             _logger.error(
-                "the session could not be invalidated after a failed clearing", exc_info=failure
+                "the session could not be invalidated after a failed clearing",
+                exc_info=invalidation,
             )
+            # Raised over any cancellation, as over the error leaving the frame:
+            # the invocation must end without committing that transaction.
+            raise invalidation from failure
     if cancelled is not None:
         raise cancelled
 

@@ -31,6 +31,13 @@ from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.identity.identity import ANONYMOUS
 from loom.core.persistence import PersistenceWiring
+from loom.core.persistence.elevation import (
+    ElevableScopeInSeveralStores,
+    ScopedElevationSink,
+    StoreElevation,
+    elevable_scopes,
+    scoped_elevation_sink,
+)
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
@@ -179,7 +186,7 @@ class Store:
     wiring: PersistenceWiring
     manager: SessionManager
     notes: RepositorySQLAlchemy
-    wired_sink: ElevationSink | None
+    elevation: StoreElevation | None
 
     def unit_of_work(self) -> UnitOfWork:
         factory = self.wiring.uow_factory
@@ -189,10 +196,11 @@ class Store:
 
     @property
     def sink(self) -> ElevationSink:
-        """The elevation sink the backend registered for this store."""
-        if self.wired_sink is None:
-            raise RuntimeError(f"store {self.key!r} registers no elevation sink")
-        return self.wired_sink
+        """The composition's sink over this store alone, from the elevation its wiring exposes."""
+        if self.elevation is None:
+            raise RuntimeError(f"store {self.key!r} exposes no elevation")
+        elevable = elevable_scopes(self.elevation.scoped_tables())
+        return ScopedElevationSink({self.key: self.elevation}, {self.key: elevable})
 
     def checked_out(self) -> int:
         pool = self.manager.engine.sync_engine.pool
@@ -215,9 +223,7 @@ def _build(ctx: ConfigContext, key: StoreKey) -> Store:
         wiring=wiring,
         manager=manager,
         notes=repository,
-        wired_sink=(
-            container.resolve(ElevationSink) if container.is_registered(ElevationSink) else None
-        ),
+        elevation=wiring.elevation,
     )
 
 
@@ -560,34 +566,14 @@ async def test_an_elevation_before_the_transaction_arrives_through_the_provider(
     assert flag == "on"
 
 
-async def _per_call_flag_after_elevating(
-    stores: Mapping[StoreKey, Store], elevated: StoreKey
-) -> str:
-    """Elevate ``editor`` in *elevated*'s execution; read the other store's per-call flag."""
-    async with (
-        invocation(_both(stores)) as scope,
-        scope.frame(Frame(elevated)),
-        elevation_scope(owns_transaction=True, sink=stores[elevated].sink),
-    ):
-        await _active(stores[elevated]).execute(OWNER)
-        await elevate("editor", DECISION, at=Scope.of(U1))
-        async with stores[OTHER[elevated]].manager.session() as per_call:
-            return str((await per_call.execute(EDITOR_FLAG)).scalar_one())
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="D2 / PR 5: the elevated scope set is not per store, so the other store's "
-    "session-settings provider applies a same-named elevable scope too (F2)",
-)
-@pytest.mark.parametrize("elevated", STORES)
-async def test_an_elevation_in_one_store_never_reaches_a_per_call_session_of_the_other(
-    two_servers: TwoServers, elevated: StoreKey
+async def test_the_same_elevable_scope_in_both_stores_is_refused_at_startup(
+    two_servers: TwoServers,
 ) -> None:
-    async with _started(two_servers.context()) as stores:
-        flag = await _as(U1, lambda: _per_call_flag_after_elevating(stores, elevated))
-
-    assert flag == ""
+    async with _wired(two_servers.context()) as stores:
+        elevations = {k: s.elevation for k, s in stores.items() if s.elevation is not None}
+        assert elevations.keys() == set(STORES)
+        with pytest.raises(ElevableScopeInSeveralStores, match="stores audit, default"):
+            scoped_elevation_sink(elevations)
 
 
 async def _session_setting_left_behind(store: Store) -> tuple[int, str]:
