@@ -29,32 +29,53 @@ class _ReportJob(Job[None]):
         return None
 
 
-def _compose(tmp_path: Path, name: str, jobs: dict[str, Any] | None) -> Application:
-    config: dict[str, Any] = {"celery": BROKER}
+def _compose(
+    tmp_path: Path,
+    name: str,
+    jobs: dict[str, Any] | None,
+    *,
+    celery: dict[str, Any] = BROKER,
+    job_service: str = "celery",
+) -> Application:
+    config: dict[str, Any] = {"celery": celery}
     if jobs is not None:
         config["jobs"] = jobs
     directory = tmp_path / name
     directory.mkdir()
-    return compose_application(job_source(directory, config, "celery"), JobsAdapter(_ReportJob))
+    source = job_source(directory, config, job_service)
+    return compose_application(source, JobsAdapter(_ReportJob))
 
 
-async def _sent(application: Application) -> dict[str, Any]:
-    """The routing ``send_task`` got when *application* dispatched the job."""
+async def _sent(application: Application) -> dict[str, Any] | None:
+    """The routing ``send_task`` got when *application* dispatched the job; ``None`` if not sent."""
     service = application.kernel.container.resolve(JobService)
     with patch.object(Celery, "send_task", autospec=True) as send_task:
         service.dispatch(_ReportJob)
         await flush_pending_dispatches()
+    if send_task.call_args is None:
+        return None
     kwargs = send_task.call_args.kwargs
     return {key: kwargs[key] for key in _DECLARED}
 
 
-@pytest.mark.parametrize("configured_first", [True, False], ids=["configured first", "last"])
+def _in_order(configured_first: bool) -> list[tuple[str, dict[str, Any] | None]]:
+    order: list[tuple[str, dict[str, Any] | None]] = [
+        ("configured", {"_ReportJob": _CONFIGURED}),
+        ("plain", None),
+    ]
+    return order if configured_first else order[::-1]
+
+
+_ORDERS = pytest.mark.parametrize(
+    "configured_first", [True, False], ids=["configured first", "configured last"]
+)
+
+
+@_ORDERS
 async def test_each_application_dispatches_with_its_own_job_section(
     tmp_path: Path, configured_first: bool
 ) -> None:
-    order = [("configured", {"_ReportJob": _CONFIGURED}), ("plain", None)]
-    if not configured_first:
-        order.reverse()
+    order = _in_order(configured_first)
     applications = {name: _compose(tmp_path, name, jobs) for name, jobs in order}
 
     sent = {name: await _sent(application) for name, application in applications.items()}
@@ -68,3 +89,21 @@ async def test_each_application_dispatches_with_its_own_job_section(
         0,
         None,
     )
+
+
+@_ORDERS
+async def test_each_application_routes_by_the_queue_of_its_own_job_section(
+    tmp_path: Path, configured_first: bool
+) -> None:
+    """``celery.queues`` sends ``reports`` to Celery; only the configured job is on it."""
+    celery = {**BROKER, "queues": ["default", "reports"]}
+    applications = {
+        name: _compose(tmp_path, name, jobs, celery=celery, job_service="inline")
+        for name, jobs in _in_order(configured_first)
+    }
+
+    sent = {name: await _sent(application) for name, application in applications.items()}
+
+    assert sent["plain"] is None
+    assert sent["configured"] is not None
+    assert sent["configured"]["queue"] == "reports"

@@ -187,9 +187,10 @@ async def test_a_cursor_one_application_issued_is_refused_by_the_other(tmp_path:
         page = await repositories[0].list_with_query(_by_number())
         assert isinstance(page, CursorResult)
         assert page.next_cursor is not None
-        own = await repositories[0].list_with_query(_by_number(page.next_cursor))
+        following = _by_number(page.next_cursor)
+        own = await repositories[0].list_with_query(following)
         with pytest.raises(UnsupportedQuery, match="cursor token is not valid"):
-            await repositories[1].list_with_query(_by_number(page.next_cursor))
+            await repositories[1].list_with_query(following)
 
     assert [invoice.number for invoice in own.items] == ["N-2"]
     codecs = [app.kernel.container.resolve(CursorCodec) for app in (first, second)]

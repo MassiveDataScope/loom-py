@@ -19,6 +19,7 @@ from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
 from loom.core.discovery.worker import DuplicateJobName, apply_job_overrides
+from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.registry import UseCaseRegistry
@@ -223,21 +224,14 @@ class TestBootstrapWorkerTaskRegistration:
         assert isinstance(result, WorkerBootstrapResult)
 
     def test_registers_each_task_with_the_applications_job_config(self, tmp_path: Any) -> None:
-        """The task takes its retries from the ``jobs:`` section; the ClassVar stays as declared."""
-        import loom.celery.runner as _runner
+        """The task's retries and time limit come from ``jobs:``; the ClassVars stay as declared."""
+        declared = (_SyncJob.__retries__, _SyncJob.__timeout__)
 
-        declared = _SyncJob.__retries__
-        captured_retries: list[int] = []
+        result = self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7, "timeout": 9}}})
 
-        def _spy(celery_app: Any, job_type: Any, *args: Any, **kwargs: Any) -> Any:
-            captured_retries.append(kwargs["settings"].retries(job_type))
-            return _runner._make_job_task(celery_app, job_type, *args, **kwargs)
-
-        with patch.object(adapter, "_make_job_task", side_effect=_spy):
-            self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7}}})
-
-        assert captured_retries == [7]
-        assert _SyncJob.__retries__ == declared
+        task = result.celery_app.tasks[wire_job_name(_SyncJob.__qualname__)]
+        assert (task.max_retries, task.soft_time_limit) == (7, 9)
+        assert (_SyncJob.__retries__, _SyncJob.__timeout__) == declared
 
     def test_pure_job_bootstrap_without_database_section(self, tmp_path: Any) -> None:
         """Database config is optional for jobs that do not access repositories."""
