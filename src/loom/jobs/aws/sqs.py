@@ -15,8 +15,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import msgspec
 
 from loom.core.config import ConfigError
-from loom.core.config._resolver_utils import _aws_error_code
-from loom.core.connections.aws import AwsClientConfig
+from loom.core.connections.aws import AwsClientConfig, aws_error_code
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.errors import LoomError
 from loom.core.identity import current_identity
@@ -91,7 +90,7 @@ class _PendingSQSSend:
             await asyncio.to_thread(self.client.send_message, **self.request)
         except Exception as exc:
             # botocore's message may echo the body: neither it nor the cause leaves here.
-            code = _aws_error_code(exc)
+            code = aws_error_code(exc)
             _log.error(
                 "SQS send failed",
                 job=self.task_name,

@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 
 from loom.core.config._resolver_utils import (
-    _aws_error_code,
     _expand_env_vars,
     _navigate_json,
     _split_resolver_key,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.connections.aws import aws_error_code
 
 # ---------------------------------------------------------------------------
 # _split_resolver_key
@@ -153,7 +153,7 @@ class TestNavigateJson:
 
 
 # ---------------------------------------------------------------------------
-# _aws_error_code
+# aws_error_code
 # ---------------------------------------------------------------------------
 
 
@@ -168,19 +168,19 @@ class _BotocoreShapedError(Exception):
 class TestAwsErrorCode:
     def test_returns_code_from_botocore_shaped_response(self) -> None:
         exc = _BotocoreShapedError({"Error": {"Code": "AccessDeniedException"}})
-        assert _aws_error_code(exc) == "AccessDeniedException"
+        assert aws_error_code(exc) == "AccessDeniedException"
 
     def test_falls_back_to_type_name_without_response(self) -> None:
-        assert _aws_error_code(ValueError("boom")) == "ValueError"
+        assert aws_error_code(ValueError("boom")) == "ValueError"
 
     def test_falls_back_to_type_name_when_response_is_not_a_dict(self) -> None:
-        assert _aws_error_code(_BotocoreShapedError("not-a-dict")) == "_BotocoreShapedError"
+        assert aws_error_code(_BotocoreShapedError("not-a-dict")) == "_BotocoreShapedError"
 
     def test_falls_back_to_type_name_when_code_is_absent(self) -> None:
         exc = _BotocoreShapedError({"Error": {"Message": "no code here"}})
-        assert _aws_error_code(exc) == "_BotocoreShapedError"
+        assert aws_error_code(exc) == "_BotocoreShapedError"
 
     def test_falls_back_to_type_name_when_code_is_empty(self) -> None:
-        assert _aws_error_code(_BotocoreShapedError({"Error": {"Code": ""}})) == (
+        assert aws_error_code(_BotocoreShapedError({"Error": {"Code": ""}})) == (
             "_BotocoreShapedError"
         )

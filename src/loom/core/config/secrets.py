@@ -18,7 +18,6 @@ from typing import Any
 
 from loom.core.config._resolver_utils import (
     CLIENT,
-    _aws_error_code,
     _expand_env_vars,
     _navigate_json,
     _split_resolver_key,
@@ -26,6 +25,7 @@ from loom.core.config._resolver_utils import (
     root_cache,
 )
 from loom.core.config.errors import ConfigError
+from loom.core.connections.aws import aws_error_code
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _fetch_secret(client: Any, name: str, *, label: str) -> str:
         result = client.get_secret_value(SecretId=name)
     except Exception as exc:
         raise ConfigError(
-            f"Failed to fetch Secrets Manager secret {label!r}: {_aws_error_code(exc)}"
+            f"Failed to fetch Secrets Manager secret {label!r}: {aws_error_code(exc)}"
         ) from exc
     if "SecretString" not in result:
         raise ConfigError(
