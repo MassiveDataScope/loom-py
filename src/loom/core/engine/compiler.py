@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import typing
 from dataclasses import dataclass, field
-from typing import Any, get_args
+from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, RuntimeEvent
@@ -26,6 +26,16 @@ from loom.core.logger import LoggerPort, get_logger
 from loom.core.model import BaseModel, UnsupportedBoundaryType, loom_type
 from loom.core.model.introspection import resolve_type_hints
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
+from loom.core.repository.abc.repo_for import (
+    BulkCreatable,
+    Countable,
+    Creatable,
+    Deletable,
+    Listable,
+    Readable,
+    RepoFor,
+    Updatable,
+)
 from loom.core.use_case.joined import joined_repository
 from loom.core.use_case.markers import (
     LookupKind,
@@ -464,6 +474,11 @@ def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
     return DEFAULT_STORE if model is None else store_of(model)
 
 
+_REPOSITORY_CONTRACTS: Final = frozenset(
+    {Readable, Creatable, BulkCreatable, Updatable, Deletable, Listable, Countable, RepoFor}
+)
+
+
 def _joined_stores(use_case_type: type[Compilable]) -> frozenset[StoreKey]:
     """The stores of the ``Joined[...]`` repositories the constructor injects.
 
@@ -479,7 +494,8 @@ def _joined_stores(use_case_type: type[Compilable]) -> frozenset[StoreKey]:
             continue
         args = get_args(repository)
         model = args[0] if len(args) == 1 else None
-        if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        contract = get_origin(repository) in _REPOSITORY_CONTRACTS
+        if not (contract and isinstance(model, type) and issubclass(model, BaseModel)):
             raise CompilationError(
                 f"{use_case_type.__qualname__}.__init__: {name}: Joined[{repository!r}] "
                 "must wrap a repository annotation naming its model, such as "

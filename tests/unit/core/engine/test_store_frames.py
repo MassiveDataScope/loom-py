@@ -26,7 +26,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec, RepoFor
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import Committed, InvocationOutcome, OrderedCommits
@@ -220,6 +220,47 @@ class _ReadAuditWriteOrder(UseCase[_Order, int]):
         return await self.entries.count()
 
 
+class _MarkingEntries(RepositorySQLAlchemy[_AuditEntry, int]):
+    """An audit repository with a custom write; records each run of its body."""
+
+    ran: list[object]
+
+    @with_session_scope(write=True)
+    async def mark(self, session: object) -> None:
+        self.ran.append(session)
+
+
+class _WriteAuditInItsOwnSession(UseCase[_Order, None]):
+    """Primary store ``default``; hands an audit session to a custom audit write."""
+
+    def __init__(self, stores: _Stores, entries: _MarkingEntries) -> None:
+        self.stores = stores
+        self.entries = entries
+
+    async def execute(self) -> None:
+        async with self.stores.audit.session() as session:
+            await self.entries.mark(session=session)
+
+
+class _WriteOrder(UseCase[_Order, None]):
+    def __init__(self, orders: RepoFor[_Order]) -> None:
+        self.orders = orders
+
+    async def execute(self) -> None:
+        await self.orders.create(_NewOrder(ref="nested"))
+
+
+class _NestReadOnlyWriter(UseCase[_Order, None]):
+    """Runs a writing use case as read-only inside its own execution."""
+
+    def __init__(self, executor: RuntimeExecutor, orders: RepoFor[_Order]) -> None:
+        self.executor = executor
+        self.orders = orders
+
+    async def execute(self) -> None:
+        await self.executor.execute(_WriteOrder(self.orders), read_only=True)
+
+
 class TestUndeclaredWrite:
     @pytest.mark.parametrize("operation", sorted(_ENTRY_WRITES))
     async def test_a_plain_repository_of_another_store_is_refused_before_the_driver(
@@ -243,6 +284,26 @@ class TestUndeclaredWrite:
 
         assert len(stores.audit_writes()) == 1, "only the nested execution's insert is sent"
         assert await stores.entries.count() == 1, "the invocation rolled back the nested write"
+
+    async def test_a_session_handed_to_a_custom_write_is_checked_too(self, stores: _Stores) -> None:
+        entries = _MarkingEntries(
+            stores.audit, _AuditEntry, cursor_codec=CursorCodec(signing="ephemeral")
+        )
+        entries.ran = []
+        use_case = _WriteAuditInItsOwnSession(stores, entries)
+
+        with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
+            await stores.run(use_case)
+
+        assert entries.ran == []
+
+    async def test_a_read_only_nested_execution_may_not_write(self, stores: _Stores) -> None:
+        use_case = _NestReadOnlyWriter(RuntimeExecutor(UseCaseCompiler()), stores.order_port)
+
+        with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
+            await stores.run(use_case)
+
+        assert await stores.orders.count() == 0
 
     async def test_a_read_of_another_store_is_not_refused(self, stores: _Stores) -> None:
         outcome = await stores.run(_ReadAuditWriteOrder(stores.order_port, stores.entry_port))
@@ -305,6 +366,14 @@ class _JoinsANonModel(UseCase[_Order, None]):
         return None
 
 
+class _JoinsAListOfModels(UseCase[_Order, None]):
+    def __init__(self, entries: Joined[list[_AuditEntry]]) -> None:
+        self.entries = entries
+
+    async def execute(self) -> None:
+        return None
+
+
 class TestCompiledStores:
     @pytest.mark.parametrize(
         ("use_case", "primary", "joined"),
@@ -328,6 +397,7 @@ class TestCompiledStores:
         [
             pytest.param(_JoinsAConcreteRepository, id="concrete-repository"),
             pytest.param(_JoinsANonModel, id="not-a-model"),
+            pytest.param(_JoinsAListOfModels, id="not-a-repository"),
         ],
     )
     def test_joined_without_a_model_does_not_compile(

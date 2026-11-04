@@ -216,17 +216,20 @@ class Frame:
     """The stores one execution uses.
 
     Attributes:
-        primary: The store the execution writes to.
+        primary: The store the execution writes to; ``None`` for a read-only
+            execution, which may write to none.
         joined: Further stores it may write to (``Joined[...]``).
         stores: The primary store, then the joined stores in name order.
     """
 
-    primary: StoreKey
+    primary: StoreKey | None
     joined: frozenset[StoreKey] = frozenset()
     stores: tuple[StoreKey, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        stores = (self.primary, *sorted(self.joined - {self.primary}))
+        stores = (
+            () if self.primary is None else (self.primary, *sorted(self.joined - {self.primary}))
+        )
         object.__setattr__(self, "stores", stores)
 
 
@@ -336,10 +339,15 @@ class InvocationScope:
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:
         if not self.frames or key in self.frames[-1].stores:
             return
-        declared = ", ".join(repr(store) for store in self.frames[-1].stores)
+        stores = self.frames[-1].stores
+        declared = (
+            f"declares only store {', '.join(repr(store) for store in stores)}"
+            if stores
+            else "is read-only"
+        )
         raise UndeclaredStoreWrite(
             f"a write to {ForeignSessionError.side(key, _described(owner))} is refused: "
-            f"the execution running now declares only store {declared}; "
+            f"the execution running now {declared}; "
             "inject its repository as Joined[...] to write to it"
         )
 

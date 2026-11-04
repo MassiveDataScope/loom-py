@@ -202,20 +202,21 @@ class TestAtomicity:
 
         assert (seen, stores.created) == ([None], [])
 
-    async def test_a_read_only_nested_execution_pushes_no_frame(self) -> None:
+    async def test_a_read_only_nested_execution_pushes_a_frame_writing_to_no_store(self) -> None:
         stores = _Stores(Ledger())
         executor = _executor(stores)
-        depths: list[int] = []
+        depths: list[tuple[int, tuple[object, ...]]] = []
 
         async def nested() -> None:
-            depths.append(len(_scope().frames))
+            frames = _scope().frames
+            depths.append((len(frames), frames[-1].stores))
 
         async def outer() -> None:
             await executor.execute(Run(nested), read_only=True)
 
         await executor.execute(Run(outer))
 
-        assert depths == [1]
+        assert depths == [(2, ())]
 
     async def test_an_executor_without_a_factory_opens_no_scope(self) -> None:
         seen: list[InvocationScope | None] = []

@@ -53,6 +53,7 @@ _LOG_DONE = "[DONE]"
 _LOG_FAIL = "[FAIL]"
 _STATUS_SUCCESS = "success"
 _STATUS_FAILURE = "failure"
+_READ_ONLY = Frame(None)
 _STATUS_RULE_FAILURE = "rule_failure"
 _ERROR_KIND_BEGIN = "begin"
 _ERROR_KIND_BUSINESS = "business"
@@ -425,7 +426,10 @@ class RuntimeExecutor:
         token = None if identity is None else set_identity(identity)
         try:
             if read_only or plan.read_only:
-                with nullcontext() if scope is None or scope.owned_here() else unscoped():
+                if scope is not None and scope.owned_here():
+                    async with scope.frame(_READ_ONLY):
+                        return await self._run_lifecycle(plan, compilable, inputs, None, None)
+                with nullcontext() if scope is None else unscoped():
                     return await self._run_lifecycle(plan, compilable, inputs, None, None)
             owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)

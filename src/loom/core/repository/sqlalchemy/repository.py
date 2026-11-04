@@ -165,11 +165,11 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             ForeignSessionError: See :meth:`SessionManager.joined_session`.
             UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
+        context_session = self.session_manager.joined_session(write=write)
         if session is not None:
             yield session
             return
 
-        context_session = self.session_manager.joined_session(write=write)
         if context_session is not None:
             yield context_session
             return
