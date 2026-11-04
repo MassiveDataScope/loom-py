@@ -30,7 +30,7 @@ class AuditEntry(BaseModel):
 
 
 WRITES = [
-    pytest.param(lambda repo: repo.create(ProductCreate(id=1)), id="create"),
+    pytest.param(lambda repo: repo.create(ProductCreate(id=2)), id="create"),
     pytest.param(lambda repo: repo.update(1, ProductUpdate(name="n")), id="update"),
     pytest.param(lambda repo: repo.delete(1), id="delete"),
 ]
@@ -48,12 +48,14 @@ async def test_a_write_to_an_undeclared_store_sends_nothing(
     coordinator: OrderedCommits, fake_client: FakeClient, write: Write
 ) -> None:
     audit: RepositoryDynamoDB[Any, int] = RepositoryDynamoDB(fake_client, "products", AuditEntry)
+    await audit.create(ProductCreate(id=1, name="kept"))
+    stored = dict(fake_client.items["products"])
 
     async with invocation(coordinator) as scope, scope.frame(Frame(DEFAULT_STORE)):
         with pytest.raises(UndeclaredStoreWrite, match="store 'audit'"):
             await write(audit)
 
-    assert fake_client.items["products"] == {}
+    assert fake_client.items["products"] == stored
 
 
 async def test_a_declared_write_is_reported_as_written(

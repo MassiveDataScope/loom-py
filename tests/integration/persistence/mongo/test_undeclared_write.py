@@ -155,8 +155,9 @@ async def test_each_store_joins_a_session_of_its_own_client(
         assert joined is not None
         assert default.client is mongo_client
         assert joined.client is audit.client
+        foreign = MongoSessions(audit.client)
         with pytest.raises(ForeignSessionError):
-            MongoSessions(audit.client)(True)
+            foreign(True)
 
 
 async def test_a_commit_the_server_refuses_sends_no_abort(
@@ -177,20 +178,21 @@ async def test_a_commit_the_server_refuses_sends_no_abort(
 
 
 async def test_a_commit_of_unknown_result_is_uncertain_and_sends_no_abort(
-    mongo_client: AsyncMongoClient[Any], audit: _Audit
+    mongo_client: AsyncMongoClient[Any], audit: _Audit, caplog: pytest.LogCaptureFixture
 ) -> None:
     async with invocation(_audit_only(audit)) as scope:
         async with scope.frame(Frame(AUDIT)):
             await audit.orders.create(_order())
             lsid = _lsid(audit)
         try:
-            with pymongo.timeout(1e-6):
+            with caplog.at_level(logging.ERROR), pymongo.timeout(1e-6):
                 outcome = await scope.coordinator.finish(scope, None)
         finally:
             await mongo_client.admin.command({"killSessions": [lsid]})
 
     assert _outcome_types(outcome) == [Uncertain]
     assert "abortTransaction" not in audit.commands.names
+    assert "UoWRollbackFailed" not in caplog.text
 
 
 def _audit_only(audit: _Audit) -> OrderedCommits:
