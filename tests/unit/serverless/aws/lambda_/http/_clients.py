@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any, NamedTuple, Protocol
 
 from fastapi.testclient import TestClient
 
 from loom.serverless.aws.lambda_ import LambdaHTTPHandler
-from tests.unit.serverless.aws.lambda_.http._contract_app import http_api_event
+from loom.testing import LambdaTestClient
 
 TRACE_ID = "contract-trace-0001"
 """Sent on every request, so bodies carrying a trace id compare exactly."""
-
-LAMBDA_CONTEXT = SimpleNamespace(function_name="contract", aws_request_id="contract-request")
 
 
 class LambdaProject(NamedTuple):
@@ -54,35 +50,18 @@ def _with_trace(headers: Mapping[str, str] | None) -> dict[str, str]:
     return {"x-request-id": TRACE_ID, **(headers or {})}
 
 
-def fastapi_client(test_client: TestClient) -> Client:
-    """Drive a FastAPI application through its test client."""
+def driven_by(test_client: TestClient | LambdaTestClient) -> Client:
+    """Drive an application through a test client: FastAPI's, or loom's for Lambda."""
 
     def call(
         method: str, path: str, *, headers: Mapping[str, str] | None = None, body: bytes = b""
     ) -> Reply:
         response = test_client.request(method, path, headers=_with_trace(headers), content=body)
-        return Reply(
-            response.status_code,
-            {name.lower(): value for name, value in response.headers.items()},
-            response.content,
-        )
+        return Reply(response.status_code, dict(response.headers.items()), response.content)
 
     return call
 
 
 def lambda_client(handler: LambdaHTTPHandler) -> Client:
     """Drive a Lambda handler with API Gateway HTTP API events."""
-
-    def call(
-        method: str, path: str, *, headers: Mapping[str, str] | None = None, body: bytes = b""
-    ) -> Reply:
-        result = handler(http_api_event(method, path, _with_trace(headers), body), LAMBDA_CONTEXT)
-        raw = result["body"]
-        payload = base64.b64decode(raw) if result["isBase64Encoded"] else raw.encode()
-        return Reply(
-            result["statusCode"],
-            {name.lower(): value for name, value in result["headers"].items()},
-            payload,
-        )
-
-    return call
+    return driven_by(LambdaTestClient(handler))

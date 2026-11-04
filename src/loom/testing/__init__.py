@@ -4,6 +4,12 @@ from typing import TYPE_CHECKING, Any
 from loom.testing.agents import ContractScenario, FakeAgentEngine, agent_engine_contract_suite
 from loom.testing.golden import GoldenHarness, serialize_plan
 from loom.testing.in_memory import InMemoryRepository
+from loom.testing.jobs import (
+    DispatchedJob,
+    RecordingJobService,
+    sqs_raw_record,
+    sqs_record,
+)
 from loom.testing.runner import (
     AgentHandleDouble,
     McpHandleDouble,
@@ -13,6 +19,7 @@ from loom.testing.runner import (
 
 if TYPE_CHECKING:
     from loom.testing.http_harness import HttpTestHarness
+    from loom.testing.lambda_http import LambdaTestClient
     from loom.testing.repository_harness import (
         RepositoryIntegrationHarness,
         ScenarioDict,
@@ -22,11 +29,14 @@ if TYPE_CHECKING:
 __all__ = [
     "AgentHandleDouble",
     "ContractScenario",
+    "DispatchedJob",
     "FakeAgentEngine",
     "GoldenHarness",
     "HttpTestHarness",
     "InMemoryRepository",
+    "LambdaTestClient",
     "McpHandleDouble",
+    "RecordingJobService",
     "RepositoryIntegrationHarness",
     "ScenarioDict",
     "SqlGrantHandleDouble",
@@ -34,6 +44,8 @@ __all__ = [
     "agent_engine_contract_suite",
     "build_repository_harness",
     "serialize_plan",
+    "sqs_raw_record",
+    "sqs_record",
 ]
 
 _REPOSITORY_HARNESS_EXPORTS = frozenset(
@@ -45,6 +57,8 @@ def __getattr__(name: str) -> Any:
     """Resolve exports whose dependencies belong to optional extras on first access."""
     if name == "HttpTestHarness":
         return _http_test_harness()
+    if name == "LambdaTestClient":
+        return _lambda_test_client()
     if name in _REPOSITORY_HARNESS_EXPORTS:
         return _repository_harness_export(name)
     raise AttributeError(name)
@@ -72,3 +86,15 @@ def _repository_harness_export(name: str) -> Any:
             "Install loom-kernel[sqlalchemy] to use repository integration harnesses."
         ) from exc
     return getattr(repository_harness, name)
+
+
+def _lambda_test_client() -> Any:
+    """Import ``LambdaTestClient``, naming the extras it needs when they are missing."""
+    try:
+        from loom.testing.lambda_http import LambdaTestClient as _LambdaTestClient
+    except ImportError as exc:
+        raise ImportError(
+            "LambdaTestClient requires the 'lambda' and 'testing' extras (mangum, httpx). "
+            "Install loom-kernel[lambda,testing] to test Lambda HTTP functions."
+        ) from exc
+    return _LambdaTestClient

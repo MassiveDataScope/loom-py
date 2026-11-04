@@ -21,7 +21,15 @@ _SRC = Path(__file__).resolve().parents[3] / "src"
 _IMPORT_TESTING_SCRIPT = """
 import sys
 sys.modules["sqlalchemy"] = None
-from loom.testing import GoldenHarness, InMemoryRepository, UseCaseTest  # noqa: F401
+sys.modules["mangum"] = None
+sys.modules["httpx"] = None
+from loom.testing import (  # noqa: F401
+    GoldenHarness,
+    InMemoryRepository,
+    RecordingJobService,
+    UseCaseTest,
+    sqs_record,
+)
 """
 
 _SQLALCHEMY_EXPORTS = ("RepositoryIntegrationHarness", "ScenarioDict", "build_repository_harness")
@@ -39,8 +47,8 @@ def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_loom_testing_imports_without_sqlalchemy() -> None:
-    """``from loom.testing import InMemoryRepository`` succeeds with ``sqlalchemy`` hidden."""
+def test_loom_testing_imports_without_optional_extras() -> None:
+    """The eager exports import with ``sqlalchemy``, ``mangum`` and ``httpx`` hidden."""
     result = _run_in_clean_interpreter(_IMPORT_TESTING_SCRIPT)
 
     assert result.returncode == 0, f"import loom.testing failed:\n{result.stderr}"
@@ -61,6 +69,13 @@ def test_repository_harness_exports_name_sqlalchemy_extra_when_missing(
 
     with pytest.raises(ImportError, match=r"loom-kernel\[sqlalchemy\]"):
         getattr(loom.testing, name)
+
+
+def test_lambda_test_client_names_its_extras_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "loom.testing.lambda_http", None)
+
+    with pytest.raises(ImportError, match=r"loom-kernel\[lambda,testing\]"):
+        _ = loom.testing.LambdaTestClient
 
 
 def test_unknown_attribute_raises_attribute_error() -> None:
