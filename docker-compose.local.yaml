@@ -185,6 +185,21 @@ services:
       retries: 20
       start_period: 3s
 
+  # AWS emulator for tests/integration/aws; 4.14.0 is the last tag that runs without an auth token.
+  localstack:
+    image: localstack/localstack:4.14.0
+    ports:
+      - "127.0.0.1:4566:4566"
+    networks: [loom_net]
+    environment:
+      SERVICES: sqs,dynamodb,secretsmanager,ssm,sns
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health >/dev/null"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
   prefect-worker:
     image: prefecthq/prefect:3-latest
     command: >
