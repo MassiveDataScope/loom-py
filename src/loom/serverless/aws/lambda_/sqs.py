@@ -17,7 +17,6 @@ from loom.core.discovery.worker import resolve_worker_components
 from loom.core.errors import MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.outcome import failure_log_fields, is_retryable
-from loom.core.job.router import JobRouter
 from loom.core.job.run import run_job
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
@@ -149,7 +148,7 @@ class LambdaSQSAdapter:
         else:
             _log.warning(
                 "Lambda dispatched jobs leave this invocation through the configured job service",
-                **_job_service_fields(service),
+                job_service=type(service).__qualname__,
             )
         return self._handler
 
@@ -235,16 +234,6 @@ class _SQSBatch:
             Scope.JOB, name, id=_message_id(record) or None, **meta
         ):
             raise error
-
-
-def _job_service_fields(service: object) -> dict[str, Any]:
-    if not isinstance(service, JobRouter):
-        return {"job_service": type(service).__qualname__}
-    return {
-        "job_service": JobRouter.__qualname__,
-        "default": type(service.default).__qualname__,
-        "routes": {queue: type(backend).__qualname__ for queue, backend in service.routes.items()},
-    }
 
 
 def _batch_with_remaining(

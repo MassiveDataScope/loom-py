@@ -4,26 +4,10 @@
 
 ### jobs
 
-- **jobs:** `app.job_service` (`inline`, `celery` or `module:Class`) names the
-  backend for every queue no other backend declares, and a backend section
-  that lists `queues` serves those (today `celery.queues`; a non-empty list
-  always claims `task_default_queue`, `default` unless set). A job routes by
-  the `queue=` of the call, otherwise its `__queue__` after `jobs.<Job>.queue`.
-  Use cases keep injecting `JobService`. Only the default and the backends
-  whose section declares queues are built; one backend is registered as
-  itself, several sit behind the new transport-neutral `JobRouter`
-  (`loom.core.job`). `run()` always executes in-process.
-  `dispatch_parallel()` over several backends returns one `JobGroup` in
-  input order and raises `MixedJobBackendsError` with callbacks; a per-call
-  queue with no backend and no default raises `UnroutedJobError` before
-  anything is registered for the commit. Startup raises `DuplicateJobQueue`
-  when two backends declare one queue, `UnservedJobQueue` for a discovered
-  job with no backend and no default, and `JobBackendError`
-  (`loom.composition`) for an unknown name, for `sqs` (reserved, arrives with
-  T076) or for `celery` without the extra. A `module:Class` backend is built
-  as `Class(JobBackendContext)` and can only be the default.
-  `LOOM__APP__JOB_SERVICE` is overridable in production and staging with a
-  built-in name only. The REST manifest accepts `JOBS`.
+- **jobs:** `app.job_service` (`inline`, `celery` or `module:Class` built with
+  a `JobBackendContext`) names the job backend; queues listed in
+  `celery.queues` go to Celery through the new `JobRouter`. Use cases keep
+  injecting `JobService`.
 
 ### etl
 
@@ -84,17 +68,14 @@
 
 ### jobs
 
-- **jobs:** the API process now honours `jobs.<Job>.queue/countdown/priority/timeout`:
-  discovery keeps the jobs (`DiscoveryResult.jobs`) and the composition
-  applies `jobs.<Job>.*` once for every entry point, workers included. Before,
-  only the Celery and Lambda SQS workers applied them, so the API dispatched
-  with the class defaults.
+- **jobs:** the composition applies `jobs.<Job>.*` once for every entry point,
+  so the API process now honours them too; before, only the Celery and Lambda
+  SQS workers did.
 - **jobs:** without `app.job_service` the job service is still chosen from the
   `celery` section, now with a `DeprecationWarning` when Celery is installed or
   configured. Set `app.job_service` to keep the choice explicit.
-- **jobs:** the Lambda SQS adapter logs the job service it really has (its
-  type, and the routes of a `JobRouter`) instead of assuming Celery for
-  anything that is not inline.
+- **jobs:** the Lambda SQS adapter logs the type of its job service instead
+  of assuming Celery for anything that is not inline.
 
 ### etl
 

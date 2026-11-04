@@ -249,52 +249,10 @@ recover entity IDs and other parameters the callback needs.
 
 ---
 
-## Pick the job backend: `app.job_service`
+## Pick the job backend
 
-A use case injects `JobService` and never names a backend. `app.job_service`
-names the backend for every queue no other backend declares: `inline`,
-`celery` or a `module:Class` reference. A backend section that lists `queues`
-serves those queues; today only `celery.queues` does. The effective queue of a
-job is the `queue=` of the call, otherwise its `__queue__` after the
-`jobs.<Job>.queue` override.
-
-```yaml
-app:
-  name: shop
-  job_service: inline
-
-celery:
-  broker_url: ${oc.env:CELERY_BROKER_URL}
-  result_backend: ${oc.env:CELERY_RESULT_BACKEND}
-  queues: [default, notifications, erp]
-
-jobs:
-  SyncProductToErpJob:
-    queue: erp
-```
-
-Here `notifications`, `erp` and `default` go to Celery and any other queue
-runs inline. `task_default_queue` (`default` unless set) must be listed in
-`queues`, so a non-empty `celery.queues` always claims `default` too: a job
-left on `__queue__ = "default"` goes to Celery.
-
-- Only the backends in use are built: with no `celery.queues` and an inline
-  default, Celery is not even imported.
-- One backend is registered as itself; several sit behind a `JobRouter`.
-- `run()` always executes in the calling process.
-- `dispatch_parallel()` over jobs of several backends returns one `JobGroup`
-  in input order, and refuses callbacks with `MixedJobBackendsError`.
-- Startup fails with `DuplicateJobQueue` when two backends declare one queue,
-  and with `JobBackendError` for an unknown name, for `sqs` (it arrives with
-  T076) or for `celery` without the `loom[celery]` extra.
-- A `module:Class` backend is built as `Class(context)`, where `context` is a
-  `loom.composition.JobBackendContext`. It can only be the default.
-- `LOOM__APP__JOB_SERVICE` can override the key in production and staging,
-  but only with a built-in name.
-
-Without `app.job_service` the old rule still applies, with a
-`DeprecationWarning` when Celery is installed or configured: a `celery`
-section and the extra select Celery, and anything else runs inline.
+`app.job_service` names the backend of every queue `celery.queues` does not
+list; see [Pick the job backend](../rest/celery.md#pick-the-job-backend).
 
 ---
 

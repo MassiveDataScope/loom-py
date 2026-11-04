@@ -286,10 +286,7 @@ def compose_application(
 
     Raises:
         ConfigError: When a model declares a store other than the default, or
-            the store section is invalid; or, with ``app.job_service`` set, a
-            job backend cannot be built (``JobBackendError``), two backends
-            declare a queue (``DuplicateJobQueue``) or a discovered job's
-            queue has none (``UnservedJobQueue``).
+            the store section is invalid, or a job backend cannot be built.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
@@ -330,7 +327,7 @@ def compose_application(
         environment=source.environment,
     )
     job_resources = configure_job_service(
-        ctx, kernel, observability, backend=source.app.job_service, jobs=discovered.jobs
+        ctx, kernel, observability, backend=source.app.job_service
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)

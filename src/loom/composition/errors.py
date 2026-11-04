@@ -11,8 +11,7 @@
     framework service is registered.
 
 ``JobBackendError``
-    ``app.job_service`` names a backend the composition cannot build: an
-    unknown name, the reserved ``sqs``, or ``celery`` without its extra.
+    A job backend ``app.job_service`` or ``celery.queues`` needs cannot be built.
 
 ``CompositionStateError``
     An adapter or an :class:`~loom.composition.ApplicationHost` was used out
@@ -133,12 +132,7 @@ class ReservedBindingError(BootstrapError):
 
 
 class JobBackendError(ConfigError):
-    """Raised at start-up when ``app.job_service`` names a backend that cannot be built.
-
-    Example::
-
-        raise JobBackendError("the sqs job backend arrives with T076; use inline or celery")
-    """
+    """Raised at start-up when a job backend the configuration needs cannot be built."""
 
 
 __all__ = [

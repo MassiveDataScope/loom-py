@@ -225,7 +225,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   timeouts; the full list and
   the reason for each are in ADR 0005, whose `database.*` and
   `persistence.dynamodb.*` entries are now `stores.*.<key>` for every store;
-  `app.job_service` takes only a built-in name there, never `module:Class`),
+  `app.job_service` never takes a `module:Class` reference there),
   plus the keys your reviewed files
   list:
 

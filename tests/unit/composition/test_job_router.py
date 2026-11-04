@@ -1,7 +1,7 @@
-"""``app.job_service`` picks the default job backend; a section's ``queues`` routes to its own.
+"""``app.job_service`` picks the default job backend; ``celery.queues`` routes to Celery.
 
-Only the default and the backends whose section declares queues are built.
-One backend is registered as itself; several sit behind a ``JobRouter``.
+Only the backends in use are built. One backend is registered as itself;
+several sit behind a ``JobRouter``.
 """
 
 from __future__ import annotations
@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import warnings
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -19,37 +18,18 @@ import yaml
 
 from loom.celery.service import CeleryJobService
 from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
     JobBackendContext,
     JobBackendError,
-    Recipe,
-    _jobs,
     build_application,
     compose_application,
 )
-from loom.composition.resources import ResourceKind
-from loom.core.config import ConfigContext
-from loom.core.discovery.base import DiscoveryResult
-from loom.core.job.job import Job
-from loom.core.job.router import BUILTIN_JOB_BACKENDS, DuplicateJobQueue, JobRouter
 from loom.core.job.service import InlineJobService, JobService
-from loom.core.persistence.profile import WORKER_PROFILE
-from loom.core.persistence.stores import NONE_BACKEND
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.helpers.composition import ProjectFactory, composition_source
+from tests.helpers.composition import ProjectFactory
+from tests.helpers.jobs import BROKER, EmailJob, JobsAdapter, job_source
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
-_BROKER = {"broker_url": "memory://", "result_backend": "cache+memory://"}
-_ROUTED = {"celery": {**_BROKER, "queues": ["default", "emails"]}}
-
-
-class _EmailJob(Job[str]):
-    __queue__ = "emails"
-
-    def execute(self) -> str:
-        return "sent"
+_ROUTED = {"celery": {**BROKER, "queues": ["default", "emails"]}}
 
 
 class _ContextBackend(InlineJobService):
@@ -60,64 +40,38 @@ class _ContextBackend(InlineJobService):
         self.context = context
 
 
-class _Jobs:
-    """Compose the given jobs, as a worker would, and mount nothing."""
-
-    def __init__(self, *jobs: type[Job[Any]]) -> None:
-        self._jobs = jobs
-
-    def recipe(self, source: CompositionSource) -> Recipe:
-        return Recipe(
-            profile=WORKER_PROFILE,
-            discovered=DiscoveryResult(
-                models=(), use_cases=cast(Any, self._jobs), interfaces=(), jobs=self._jobs
-            ),
-            backend=source.backend(default=NONE_BACKEND),
-            connection_only=True,
-        )
-
-    def bind(self, application: Application) -> Application:
-        return application
-
-
-def _source(tmp_path: Path, config: dict[str, Any], job_service: str | None) -> CompositionSource:
-    return composition_source(
-        ConfigContext.from_dict(config),
-        app=AppConfig(name="jobs", job_service=job_service),
-        code_path=tmp_path,
-        config_root=tmp_path,
-    )
-
-
-def _service(
-    tmp_path: Path, config: dict[str, Any], job_service: str | None, *jobs: type[Job[Any]]
-) -> JobService:
-    application = compose_application(_source(tmp_path, config, job_service), _Jobs(*jobs))
+def _service(tmp_path: Path, config: dict[str, Any], job_service: str) -> JobService:
+    application = compose_application(job_source(tmp_path, config, job_service), JobsAdapter())
     return application.kernel.container.resolve(JobService)
 
 
-def test_the_overrides_allow_exactly_the_built_in_backends() -> None:
-    assert tuple(_jobs._BUILTIN_JOB_BACKENDS) == BUILTIN_JOB_BACKENDS
+@pytest.mark.parametrize(
+    ("queue", "expected"),
+    [(None, CeleryJobService), ("emails", CeleryJobService), ("reports", InlineJobService)],
+    ids=["job queue", "per-call celery queue", "per-call other queue"],
+)
+def test_celery_queues_go_to_celery_and_the_rest_to_the_default(
+    tmp_path: Path, queue: str | None, expected: type[JobService]
+) -> None:
+    service = _service(tmp_path, _ROUTED, "inline")
 
+    with (
+        patch.object(CeleryJobService, "dispatch", autospec=True) as celery,
+        patch.object(InlineJobService, "dispatch", autospec=True) as inline,
+    ):
+        service.dispatch(EmailJob, queue=queue)
 
-def test_a_section_declaring_queues_routes_them_to_its_backend(tmp_path: Path) -> None:
-    service = _service(tmp_path, _ROUTED, "inline", _EmailJob)
-
-    assert isinstance(service, JobRouter)
-    assert isinstance(service.default, InlineJobService)
-    assert {queue: type(backend) for queue, backend in service.routes.items()} == {
-        "default": CeleryJobService,
-        "emails": CeleryJobService,
-    }
+    reached = {CeleryJobService: celery, InlineJobService: inline}
+    assert [backend for backend, mock in reached.items() if mock.called] == [expected]
 
 
 @pytest.mark.parametrize(
     ("config", "job_service", "expected"),
     [
-        ({"celery": _BROKER}, "inline", InlineJobService),
+        ({"celery": BROKER}, "inline", InlineJobService),
         ({}, "inline", InlineJobService),
         (_ROUTED, "celery", CeleryJobService),
-        ({"celery": _BROKER}, "celery", CeleryJobService),
+        ({"celery": BROKER}, "celery", CeleryJobService),
     ],
     ids=["celery without queues", "no celery", "celery declares queues", "celery default"],
 )
@@ -127,25 +81,10 @@ def test_one_backend_is_registered_as_itself(
     assert type(_service(tmp_path, config, job_service)) is expected
 
 
-def test_a_queue_two_backends_declare_stops_startup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(
-        cast(dict[str, Any], _jobs._BUILTIN_JOB_BACKENDS),
-        "rival",
-        lambda context: (InlineJobService(context.factory, context.executor), None),
-    )
-    source = _source(tmp_path, {**_ROUTED, "rival": {"queues": ["emails"]}}, "inline")
-    adapter = _Jobs(_EmailJob)
-
-    with pytest.raises(DuplicateJobQueue, match="'emails'"):
-        compose_application(source, adapter)
-
-
 def test_a_module_class_backend_receives_the_backend_context(tmp_path: Path) -> None:
-    source = _source(tmp_path, {}, f"{__name__}:_ContextBackend")
+    source = job_source(tmp_path, {}, f"{__name__}:_ContextBackend")
 
-    application = compose_application(source, _Jobs())
+    application = compose_application(source, JobsAdapter())
 
     service = application.kernel.container.resolve(JobService)
     assert isinstance(service, _ContextBackend)
@@ -155,106 +94,28 @@ def test_a_module_class_backend_receives_the_backend_context(tmp_path: Path) -> 
     assert service.context.observability is source.observability
 
 
-@pytest.mark.parametrize(
-    ("job_service", "message"),
-    [
-        ("sqs", "sqs job backend arrives with T076"),
-        ("rabbit", "'rabbit' names no job backend"),
-    ],
-)
-def test_a_backend_that_cannot_be_built_stops_startup(
-    tmp_path: Path, job_service: str, message: str
-) -> None:
-    source = _source(tmp_path, {}, job_service)
-    adapter = _Jobs()
+def test_a_name_of_no_backend_stops_startup(tmp_path: Path) -> None:
+    source = job_source(tmp_path, {}, "rabbit")
+    adapter = JobsAdapter()
 
-    with pytest.raises(JobBackendError, match=message):
+    with pytest.raises(JobBackendError, match="'rabbit' names no job backend"):
         compose_application(source, adapter)
 
 
-async def test_run_executes_in_process_a_job_routed_to_celery(tmp_path: Path) -> None:
-    service = _service(tmp_path, _ROUTED, "inline", _EmailJob)
-    assert isinstance(service, JobRouter)
-    celery = service.routes["emails"]
-
-    with patch.object(celery, "run", side_effect=AssertionError("run reached Celery")):
-        assert await service.run(_EmailJob) == "sent"
-
-
-async def test_each_backend_resource_closes_once(tmp_path: Path) -> None:
-    application = compose_application(_source(tmp_path, _ROUTED, "inline"), _Jobs())
-    service = application.kernel.container.resolve(JobService)
-    assert isinstance(service, JobRouter)
-    celery = cast(CeleryJobService, service.routes["emails"])
-    job_resources = [r for r in application.resources if r.kind is ResourceKind.CELERY]
-    assert len(job_resources) == 1
-
-    with patch.object(celery, "close", wraps=celery.close) as close:
-        async with application.running(check=False):
-            close.assert_not_called()
-
-    close.assert_called_once_with()
-
-
-def test_celery_named_without_its_extra_stops_startup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("config", "job_service"),
+    [({"celery": BROKER}, "celery"), (_ROUTED, "inline")],
+    ids=["celery default", "celery queues"],
+)
+def test_celery_without_its_extra_stops_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: dict[str, Any], job_service: str
 ) -> None:
-    monkeypatch.setitem(sys.modules, "loom.celery.service", None)
-    source = _source(tmp_path, {"celery": _BROKER}, "celery")
-    adapter = _Jobs()
+    monkeypatch.setitem(sys.modules, "loom.celery.config", None)
+    source = job_source(tmp_path, config, job_service)
+    adapter = JobsAdapter()
 
     with pytest.raises(JobBackendError, match=r"loom\[celery\] extra is not installed"):
         compose_application(source, adapter)
-
-
-# ---------------------------------------------------------------------------
-# Without app.job_service: today's rule, deprecated
-# ---------------------------------------------------------------------------
-
-
-def test_without_job_service_a_celery_section_picks_celery(tmp_path: Path) -> None:
-    with pytest.deprecated_call(match="app.job_service is not set"):
-        service = _service(tmp_path, {"celery": _BROKER}, None)
-
-    assert isinstance(service, CeleryJobService)
-
-
-def test_without_job_service_or_celery_section_jobs_run_inline(tmp_path: Path) -> None:
-    with (
-        pytest.deprecated_call(match="app.job_service is not set"),
-        pytest.warns(UserWarning, match="Celery config section is missing"),
-    ):
-        service = _service(tmp_path, {}, None)
-
-    assert type(service) is InlineJobService
-
-
-def test_without_job_service_a_missing_extra_falls_back_to_inline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(sys.modules, "loom.celery.service", None)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        service = _service(tmp_path, {"celery": _BROKER}, None)
-
-    assert type(service) is InlineJobService
-
-
-def test_without_job_service_no_routing_check_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(
-        cast(dict[str, Any], _jobs._BUILTIN_JOB_BACKENDS),
-        "rival",
-        lambda context: (InlineJobService(context.factory, context.executor), None),
-    )
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        service = _service(tmp_path, {**_ROUTED, "rival": {"queues": ["emails"]}}, None)
-
-    assert isinstance(service, CeleryJobService)
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +190,7 @@ def test_an_inline_default_without_celery_queues_loads_no_celery(tmp_path: Path)
     document = {
         "app": {"name": "inline", "code_path": ".", "job_service": "inline"},
         "stores": {"default": {"backend": "none"}},
-        "celery": _BROKER,
+        "celery": BROKER,
     }
     config.write_text(yaml.safe_dump(document), encoding="utf-8")
 

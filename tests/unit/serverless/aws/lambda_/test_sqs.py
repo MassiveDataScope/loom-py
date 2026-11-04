@@ -281,7 +281,6 @@ def test_outer_trace_survives_batch(
     record: RecordFactory,
     seen: list[tuple[str, str | None, str | None]],
 ) -> None:
-
     token = set_trace_id("outer")
     try:
         records = [record("1", "a", trace_id="inner"), record("2", "b")]
@@ -333,7 +332,6 @@ def test_close_closes_opened_resources(
 
 
 def test_duplicate_qualname_is_configuration_error(source: CompositionSource) -> None:
-
     def make_job() -> type[Job[None]]:
         class Duplicate(Job[None]):
             def execute(self) -> None:
@@ -414,7 +412,6 @@ def test_the_composition_applies_the_job_config(source: CompositionSource) -> No
 def test_job_span_is_emitted(
     built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
-
     class Observer:
         def __init__(self) -> None:
             self.events: list[LifecycleEvent] = []
@@ -499,7 +496,6 @@ def test_job_timeout_is_retryable(source: CompositionSource, record: RecordFacto
 def test_malformed_record_emits_error_span(
     built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
-
     class Observer:
         def __init__(self) -> None:
             self.events: list[LifecycleEvent] = []
