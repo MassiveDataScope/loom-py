@@ -68,3 +68,109 @@ hand.
 
 `serialize_plan` produces a deterministic, JSON-serialisable snapshot of an
 `ExecutionPlan` for golden tests.
+
+## Testing Lambda functions
+
+The Lambda helpers in `loom.testing` call the real handler in process, the way
+AWS would, without AWS. `LambdaTestClient` needs the `lambda` extra.
+
+### HTTP functions
+
+`LambdaTestClient` has the calls of FastAPI's `TestClient` (`get`, `post`,
+`put`, `patch`, `delete`, `request` with `headers=`, `json=`, `params=`,
+`content=`). Each call becomes an API Gateway HTTP API event (payload 2.0), or
+a REST API one with `event_format="v1"`, so Mangum, the middleware and the
+authentication run as deployed. Give it a configuration path and the function
+of `lambda.functions` to serve, plus any `create_app` option:
+
+```yaml
+lambda:
+  functions:
+    orders:
+      http: [OrderInterface]
+```
+
+```python
+from loom.testing import LambdaTestClient
+
+def test_get_order(token: str) -> None:
+    with LambdaTestClient("config.yaml", function="orders", environment="test") as client:
+        response = client.get("/orders/7", headers={"authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json()["id"] == 7
+```
+
+It also takes the handler `create_app` returned, which the test then closes
+itself. A response has `status_code`, `headers`, `content`, `text` and
+`json()`.
+
+### SQS functions
+
+`sqs_record(Job, payload, params=, identity=, message_id=, group_id=, queue_arn=)`
+builds a record whose body is the `JobEnvelope` `SQSJobService` sends;
+`group_id` makes the queue a FIFO one. `sqs_raw_record(body)` carries any other
+body. `sqs_event(*records)` wraps them in a batch, and `failed_ids` reads the
+message ids the handler asks SQS to retry:
+
+```python
+from loom.composition import create_app
+from loom.serverless.aws.lambda_ import LambdaSQSAdapter
+from loom.testing import failed_ids, sqs_event, sqs_raw_record, sqs_record
+
+def test_a_poison_message_is_retried() -> None:
+    handler = create_app("config.yaml", adapter=LambdaSQSAdapter(), environment="test")
+    try:
+        result = handler(
+            sqs_event(
+                sqs_record(SendEmailJob, {"to": "ada@example.com"}, message_id="1"),
+                sqs_raw_record("{", message_id="2"),
+            ),
+            None,
+        )
+    finally:
+        handler.close()
+
+    assert failed_ids(result) == ["2"]
+```
+
+### Dispatched jobs
+
+`RecordingJobService` sends nothing: it records each dispatch once the
+execution that made it commits, with its job, payload, params, effective queue
+and caller, and records nothing when it rolls back. Select it in the test
+configuration:
+
+```yaml
+app:
+  job_service: loom.testing:RecordingJobService
+```
+
+```python
+from loom.core.job.service import JobService
+from loom.testing import LambdaTestClient, RecordingJobService
+
+def test_placing_an_order_ships_it(token: str) -> None:
+    with LambdaTestClient("config.yaml", function="orders", environment="test") as client:
+        client.post("/orders/", json={"sku": "lamp"}, headers={"authorization": f"Bearer {token}"})
+        assert client.application is not None
+        jobs = client.application.kernel.container.resolve(JobService)
+
+    assert isinstance(jobs, RecordingJobService)
+    jobs.assert_dispatched(ShipOrderJob, queue="shipping")
+```
+
+`dispatched` lists every record; `assert_dispatched(Job, **fields)` returns
+the first that matches `payload`, `params`, `queue` or `identity`, or fails
+naming what was dispatched. `run()` executes a job in process. It also works
+without configuration, as `RecordingJobService()`; it then records dispatches
+made outside an execution on `flush_pending_dispatches()` and cannot `run()`.
+
+### Beyond the process
+
+`sam local invoke` runs the built function in the Lambda container, for what
+only the image shows: packaging, the handler path, the runtime. For the AWS
+APIs themselves, loom's own integration tests run against LocalStack:
+`docker compose -f docker-compose.local.yaml up -d localstack`, then set
+`LOOM_AWS_IT_URL=http://localhost:4566` (see
+[persistence backends](persistence-backends.md)).

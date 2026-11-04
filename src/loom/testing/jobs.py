@@ -1,0 +1,225 @@
+"""Test SQS-driven Lambda functions and observe the jobs an application dispatches.
+
+* :func:`sqs_record` and :func:`sqs_event` build the event the Lambda SQS
+  handler receives, each body the ``JobEnvelope`` ``SQSJobService`` sends;
+  :func:`sqs_raw_record` carries any other body. :func:`failed_ids` reads
+  which records the handler asked SQS to retry.
+* :class:`RecordingJobService` records each dispatch once the execution that
+  made it commits; ``app.job_service: loom.testing:RecordingJobService``
+  selects it.
+"""
+
+from __future__ import annotations
+
+import functools
+import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, fields
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, TypeVar
+
+import msgspec
+
+from loom.core.identity import Identity, current_identity
+from loom.core.identity.wire import encode_identity
+from loom.core.job.context import add_pending_publish
+from loom.core.job.envelope import JobEnvelope, wire_job_name
+from loom.core.job.handle import JobGroup, JobHandle
+from loom.core.job.job import Job
+from loom.core.job.service import InlineJobService
+
+if TYPE_CHECKING:
+    from loom.composition import JobBackendContext
+    from loom.core.job.callback import JobCallback
+
+ResultT = TypeVar("ResultT")
+
+_REGION = "us-east-1"
+_QUEUE_ARN = f"arn:aws:sqs:{_REGION}:000000000000:loom-jobs"
+
+
+def sqs_record(
+    job_type: type[Job[Any]],
+    payload: dict[str, Any] | None = None,
+    *,
+    params: dict[str, Any] | None = None,
+    identity: Identity | None = None,
+    message_id: str | None = None,
+    group_id: str | None = None,
+    queue_arn: str | None = None,
+) -> dict[str, Any]:
+    """One SQS record carrying *job_type*, as ``SQSJobService`` would have sent it.
+
+    Args:
+        job_type: The job the message runs.
+        payload: The job's payload.
+        params: The job's params.
+        identity: The caller the job runs as; anonymous when omitted.
+        message_id: The record's id; a fresh one when omitted.
+        group_id: The FIFO ``MessageGroupId``; the default queue is then a FIFO one.
+        queue_arn: The source queue; a ``.fifo`` one makes the batch FIFO.
+    """
+    envelope = JobEnvelope(
+        job=wire_job_name(job_type.__qualname__),
+        payload=payload or {},
+        params=params,
+        identity=encode_identity(identity),
+    )
+    body = msgspec.json.encode(envelope).decode()
+    return sqs_raw_record(body, message_id=message_id, group_id=group_id, queue_arn=queue_arn)
+
+
+def sqs_raw_record(
+    body: str,
+    *,
+    message_id: str | None = None,
+    group_id: str | None = None,
+    queue_arn: str | None = None,
+) -> dict[str, Any]:
+    """One SQS record with *body* as written, for a message loom did not produce.
+
+    Args: as :func:`sqs_record`.
+    """
+    attributes = {"ApproximateReceiveCount": "1", "SentTimestamp": "0"}
+    if group_id is not None:
+        attributes["MessageGroupId"] = group_id
+    default_arn = _QUEUE_ARN + (".fifo" if group_id is not None else "")
+    return {
+        "messageId": message_id or str(uuid.uuid4()),
+        "receiptHandle": "test-receipt",
+        "body": body,
+        "attributes": attributes,
+        "messageAttributes": {},
+        "eventSource": "aws:sqs",
+        "eventSourceARN": queue_arn or default_arn,
+        "awsRegion": _REGION,
+    }
+
+
+def sqs_event(*records: dict[str, Any]) -> dict[str, Any]:
+    """The event of one SQS batch holding *records*."""
+    return {"Records": list(records)}
+
+
+def failed_ids(result: Mapping[str, Any]) -> list[str]:
+    """The message ids an SQS handler's *result* asks SQS to retry."""
+    return [failure["itemIdentifier"] for failure in result["batchItemFailures"]]
+
+
+@dataclass(frozen=True)
+class DispatchedJob:
+    """One dispatch :class:`RecordingJobService` saw committed."""
+
+    job_type: type[Job[Any]]
+    payload: dict[str, Any]
+    params: dict[str, Any] | None
+    queue: str
+    identity: Identity
+
+
+_MATCHABLE = frozenset(field.name for field in fields(DispatchedJob)) - {"job_type"}
+
+
+class RecordingJobService:
+    """A ``JobService`` recording what would be sent, for tests; nothing is sent.
+
+    A dispatch is recorded on the publish lane, where a real backend sends:
+    after the execution commits, never when it rolls back. Outside an
+    execution it is recorded by
+    :func:`~loom.core.job.context.flush_pending_dispatches`. :meth:`run`
+    executes in process, as ``InlineJobService`` does; callbacks are accepted
+    and never invoked.
+
+    Args:
+        context: Given when ``app.job_service`` selects this class; needed by
+            :meth:`run` only.
+
+    Attributes:
+        dispatched: Every committed dispatch, in order.
+    """
+
+    def __init__(self, context: JobBackendContext | None = None) -> None:
+        self.dispatched: list[DispatchedJob] = []
+        self._inline = (
+            None if context is None else InlineJobService(context.factory, context.executor)
+        )
+
+    async def run(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> ResultT:
+        """Execute *job_type* now, as ``InlineJobService.run`` does.
+
+        Raises:
+            RuntimeError: When the service was built without a context.
+        """
+        if self._inline is None:
+            raise RuntimeError("RecordingJobService runs jobs only when built with a context")
+        return await self._inline.run(job_type, params=params, payload=payload)
+
+    def dispatch(
+        self,
+        job_type: type[Job[ResultT]],
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        on_success: type[JobCallback] | None = None,
+        on_failure: type[JobCallback] | None = None,
+        queue: str | None = None,
+        countdown: int | None = None,
+        priority: int | None = None,
+        eta: datetime | None = None,
+    ) -> JobHandle[ResultT]:
+        """Record *job_type* once the current execution commits."""
+        _ = (on_success, on_failure, countdown, priority, eta)
+        record = DispatchedJob(
+            job_type=job_type,
+            payload=payload or {},
+            params=params,
+            queue=queue or job_type.__queue__,
+            identity=current_identity(),
+        )
+        add_pending_publish(functools.partial(self.dispatched.append, record))
+        return JobHandle(
+            job_id=str(uuid.uuid4()), queue=record.queue, dispatched_at=datetime.now(UTC)
+        )
+
+    def dispatch_parallel(
+        self,
+        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
+        *,
+        on_all_success: type[JobCallback] | None = None,
+        on_any_failure: type[JobCallback] | None = None,
+    ) -> JobGroup:
+        """Record each job as :meth:`dispatch` does; callbacks are never invoked."""
+        _ = (on_all_success, on_any_failure)
+        return JobGroup(
+            handles=tuple(self.dispatch(job_type, payload=payload) for job_type, payload in jobs)
+        )
+
+    def assert_dispatched(self, job_type: type[Job[Any]], **match: Any) -> DispatchedJob:
+        """Return the first committed dispatch of *job_type* whose fields equal *match*.
+
+        Args:
+            job_type: The job dispatched.
+            **match: Values of ``payload``, ``params``, ``queue`` or ``identity``.
+
+        Raises:
+            TypeError: When *match* names another field.
+            AssertionError: When no committed dispatch matches.
+        """
+        unknown = sorted(set(match) - _MATCHABLE)
+        if unknown:
+            raise TypeError(f"assert_dispatched matches {sorted(_MATCHABLE)}, not {unknown}")
+        for record in self.dispatched:
+            if record.job_type is job_type and all(
+                getattr(record, name) == value for name, value in match.items()
+            ):
+                return record
+        seen = [(record.job_type.__qualname__, record.payload) for record in self.dispatched]
+        raise AssertionError(
+            f"{job_type.__qualname__} was not dispatched with {match}; dispatched: {seen}"
+        )

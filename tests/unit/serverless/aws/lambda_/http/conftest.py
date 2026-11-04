@@ -15,7 +15,7 @@ from tests.helpers.composition import application_openings
 from tests.unit.serverless.aws.lambda_.http._clients import (
     Client,
     LambdaProject,
-    fastapi_client,
+    driven_by,
     lambda_client,
 )
 from tests.unit.serverless.aws.lambda_.http._contract_app import write_contract_project
@@ -37,7 +37,7 @@ def contract_project(tmp_path_factory: pytest.TempPathFactory) -> Callable[..., 
 def fastapi_served(contract_project: Callable[..., str]) -> Iterator[Client]:
     app = create_app(contract_project(), adapter=FastAPIAdapter(), environment="test")
     with TestClient(app) as test_client:
-        yield fastapi_client(test_client)
+        yield driven_by(test_client)
 
 
 @pytest.fixture(scope="module")
