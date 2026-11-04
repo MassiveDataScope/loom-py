@@ -199,24 +199,21 @@ async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
     assert (sink.cleared, sink.invalidated) == ([frozenset({"editor"})], 0)
 
 
-async def _nested_elevation(
-    sink: FakeSink, *, hold: asyncio.Event | None = None, elevated: asyncio.Event | None = None
-) -> None:
-    """Elevate in a nested frame; with ``hold``, wait for it before the frame closes."""
+async def _nested_elevation(sink: FakeSink, elevated: asyncio.Event | None = None) -> None:
+    """Elevate in a nested frame; with ``elevated``, set it and wait to be cancelled."""
     outer = elevation_scope(owns_transaction=True, sink=sink)
     inner = elevation_scope(owns_transaction=False, sink=sink)
     async with outer, inner:
         await _elevate()
         if elevated is not None:
             elevated.set()
-        if hold is not None:
-            await hold.wait()
+            await asyncio.Event().wait()
 
 
 @pytest.mark.parametrize(
     ("sink", "message"),
     [
-        (FakeSink(open=True, fail_on_clear=True), "database says no"),
+        (FakeSink(open=True, clear_raises=RuntimeError("database says no")), "database says no"),
         (FakeSink(open=True, refuse_clear=True), "refused before any statement"),
     ],
     ids=["clear-fails", "clear-refused"],
@@ -233,7 +230,9 @@ async def test_a_failed_clear_invalidates_the_session_and_is_raised(
 async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
+    sink = FakeSink(
+        open=True, clear_raises=RuntimeError("database says no"), fail_on_invalidate=True
+    )
 
     with pytest.raises(RuntimeError, match="database says no") as raised:
         await _nested_elevation(sink)
@@ -244,9 +243,11 @@ async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(
 
 
 async def test_a_failed_invalidation_is_raised_over_a_cancellation() -> None:
-    sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
+    sink = FakeSink(
+        open=True, clear_raises=RuntimeError("database says no"), fail_on_invalidate=True
+    )
     elevated = asyncio.Event()
-    task = asyncio.create_task(_nested_elevation(sink, hold=asyncio.Event(), elevated=elevated))
+    task = asyncio.create_task(_nested_elevation(sink, elevated))
     await elevated.wait()
     task.cancel()
 

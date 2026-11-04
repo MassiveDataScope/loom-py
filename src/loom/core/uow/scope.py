@@ -314,6 +314,13 @@ class InvocationScope:
                 participant.record_write(next(self._writes))
         return participant
 
+    def poison(self, key: StoreKey, cause: BaseException) -> None:
+        """:meth:`Participant.poison` ``key``'s participant, when enlisted, as its owner task."""
+        self.require_owner()
+        participant = self.participants.get(key)
+        if participant is not None:
+            participant.poison(cause)
+
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:
         if not self.frames or key in self.frames[-1].stores:
             return

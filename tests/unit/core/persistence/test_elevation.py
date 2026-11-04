@@ -21,11 +21,12 @@ from loom.core.persistence.elevation import (
     validate_elevations,
 )
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from tests.helpers.elevation import MANAGE, Product
 from tests.helpers.issue_catalogue import IssueCall, check_renders, issue_calls
 
 pytestmark = pytest.mark.timeout(10)
 
-MANAGE = Permission("members.manage")
+CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
 AUDIT = StoreKey("audit")
 HOLDER = ScopeColumn("holder", "owner_id", "both", elevable=False)
 EDITOR = ScopeColumn("editor", "editor", "write", elevable=True)
@@ -37,13 +38,6 @@ def _store(*columns: ScopeColumn, table: str = "rows") -> ScopedTables:
     return {(None, table): ScopedTable(None, table, (HOLDER, *columns), READ_WRITE)}
 
 
-@dataclass
-class _Product:
-    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
-    catalog: RoleCatalog = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
-    delegate: Permission = MANAGE
-
-
 @pytest.fixture(autouse=True)
 def _no_product() -> Iterator[None]:
     clear_authz_product()
@@ -53,7 +47,7 @@ def _no_product() -> Iterator[None]:
 
 class TestValidateElevations:
     def test_an_elevable_scope_named_by_the_product_is_accepted(self) -> None:
-        validate_elevations(_Product(), {DEFAULT_STORE: _store(), AUDIT: _store(EDITOR)})
+        validate_elevations(Product(CATALOG), {DEFAULT_STORE: _store(), AUDIT: _store(EDITOR)})
 
     @pytest.mark.parametrize(
         ("elevations", "message"),
@@ -66,14 +60,14 @@ class TestValidateElevations:
     def test_a_scope_the_product_cannot_elevate_is_refused(
         self, elevations: dict[str, Permission], message: str
     ) -> None:
-        product = _Product(elevations=elevations)
+        product = Product(CATALOG, elevations)
         stores = {DEFAULT_STORE: _store(EDITOR)}
 
         with pytest.raises(ConfigError, match=message):
             validate_elevations(product, stores)
 
     def test_an_elevated_scope_declared_by_two_stores_is_refused(self) -> None:
-        product = _Product()
+        product = Product(CATALOG)
         stores = {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(EDITOR_NOT_ELEVABLE, table="e")}
 
         with pytest.raises(ElevableScopeInSeveralStores) as refused:
@@ -83,7 +77,9 @@ class TestValidateElevations:
         assert "stores audit, default all declare it" in str(refused.value)
 
     def test_a_shared_scope_that_is_never_elevated_is_allowed(self) -> None:
-        validate_elevations(_Product(), {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(table="e")})
+        validate_elevations(
+            Product(CATALOG), {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(table="e")}
+        )
 
 
 class TestTheCatalogue:
@@ -122,8 +118,7 @@ class _Store:
         self.calls.append(("clear", scopes))
         return _done() if self.clearing is None else self.clearing()
 
-    def invalidate(self, cause: BaseException) -> Awaitable[object]:
-        del cause
+    def invalidate(self) -> Awaitable[object]:
         self.calls.append(("invalidate", frozenset()))
         return _done()
 
@@ -169,7 +164,7 @@ class TestScopedElevationSink:
         assert finished == ["audit"]
 
     def test_it_checks_the_registered_product_against_every_store(self) -> None:
-        register_authz_product(_Product())
+        register_authz_product(Product(CATALOG))
         default, audit = _Store(_store(EDITOR)), _Store(_store(EDITOR, table="e"))
 
         with pytest.raises(ElevableScopeInSeveralStores):

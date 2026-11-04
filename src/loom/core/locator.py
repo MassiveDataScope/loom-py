@@ -29,7 +29,7 @@ from loom.core.environment import (
     loom_variable,
     resolve_environment,
 )
-from loom.core.model.scoped import ScopedTable
+from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.persistence.database import (
     DatabaseConfig,
     SchemaConfig,
@@ -78,7 +78,7 @@ class Application:
     metadata: MetaData
     database: DatabaseConfig
     bootstrap: BootstrapConfig | None
-    scoped: Mapping[tuple[str | None, str], ScopedTable]
+    scoped: ScopedTables
     scope_sources: Mapping[str, str]
     path: str = DEFAULT_STORE_PATH
 
@@ -236,11 +236,9 @@ def _database_user(user: str, section: SchemaUser, path: str) -> DatabaseUser:
     return DatabaseUser(login=section.login, access=access)
 
 
-def _scope_sources(
-    schema: SchemaConfig, scoped: Mapping[tuple[str | None, str], ScopedTable], path: str
-) -> dict[str, str]:
+def _scope_sources(schema: SchemaConfig, scoped: ScopedTables, path: str) -> dict[str, str]:
     sources = require_schema_key(schema.scopes, path, "scopes")
-    declared = {scope.scope for table in scoped.values() for scope in table.scopes}
+    declared = declared_scopes(scoped)
     for scope in sorted(declared):
         if scope not in sources:
             raise ConfigError(f"{path}.schema.scopes.{scope} is missing")

@@ -16,11 +16,9 @@ from typing import Protocol
 from loom.core.authz.product import AuthzProduct, load_authz_product
 from loom.core.config import ConfigError
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
-from loom.core.model.scoped import ScopedTable
+from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.persistence.stores import StoreKey
-
-ScopedTables = Mapping[tuple[str | None, str], ScopedTable]
-"""One store's compiled scoped tables, by schema and name."""
+from loom.core.uow.scope import current_scope
 
 
 @unique
@@ -69,8 +67,8 @@ class StoreElevation(Protocol):
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]: ...
 
-    def invalidate(self, cause: BaseException) -> Awaitable[object]:
-        """Invalidate the open session; the invocation then never commits, for ``cause``."""
+    def invalidate(self) -> Awaitable[object]:
+        """Drop the open session: the flags it may hold on go with it."""
         ...
 
 
@@ -81,9 +79,10 @@ class ScopedElevationSink:
     touched only when it declares one of the scopes asked about and has a
     transaction open, and each check reads its session through the
     invocation scope's checkpoint: a task other than the invocation's owner
-    gets ``ScopeOwnershipError``. Build it once every store's models are
-    prepared: it reads each store's elevable scopes then, and checks the
-    registered product's elevations against all of them.
+    gets ``ScopeOwnershipError``. An invalidation first forbids each store's
+    invocation to commit. Build it once every store's models are prepared:
+    it reads each store's elevable scopes then, and checks the registered
+    product's elevations against all of them.
 
     Args:
         stores: How each store's open transaction gets its flags.
@@ -101,34 +100,42 @@ class ScopedElevationSink:
         self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
 
     def in_transaction(self, scopes: frozenset[str]) -> bool:
-        return any(store.in_transaction() for store, _ in self._declaring(scopes))
+        declaring = (key for key, elevable in self._elevable.items() if scopes & elevable)
+        return any(self._stores[key].in_transaction() for key in declaring)
 
     # Each store's call is made here, in the calling task, where the checkpoint
     # passes: only the awaiting may happen in another task.
     def set_flag(self, scope: str) -> Awaitable[object]:
-        return _together([store.set_flag(scope) for store, _ in self._open(frozenset({scope}))])
+        open_stores = self._open(frozenset({scope}))
+        return _together([self._stores[key].set_flag(scope) for key in open_stores])
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
-        return _together([store.clear_flags(own) for store, own in self._open(scopes)])
+        open_stores = self._open(scopes).items()
+        return _together([self._stores[key].clear_flags(own) for key, own in open_stores])
 
     def invalidate(self, scopes: frozenset[str], cause: BaseException) -> Awaitable[object]:
-        return _together([store.invalidate(cause) for store, _ in self._open(scopes)])
+        """Poison every open store's participant first, so no invalidation can let it commit."""
+        open_stores = self._open(scopes)
+        invocation_scope = current_scope()
+        if invocation_scope is not None:
+            for key in open_stores:
+                invocation_scope.poison(key, cause)
+        return _together([self._stores[key].invalidate() for key in open_stores])
 
-    def _declaring(self, scopes: frozenset[str]) -> list[tuple[StoreElevation, frozenset[str]]]:
-        """Each store declaring some of ``scopes``, with the ones it declares."""
-        return [
-            (self._stores[key], scopes & elevable)
+    def _open(self, scopes: frozenset[str]) -> dict[StoreKey, frozenset[str]]:
+        """Each store declaring some of ``scopes`` with a transaction open: the ones it declares."""
+        return {
+            key: scopes & elevable
             for key, elevable in self._elevable.items()
-            if scopes & elevable
-        ]
-
-    def _open(self, scopes: frozenset[str]) -> list[tuple[StoreElevation, frozenset[str]]]:
-        """:meth:`_declaring`, keeping the stores with a transaction open."""
-        return [(store, own) for store, own in self._declaring(scopes) if store.in_transaction()]
+            if scopes & elevable and self._stores[key].in_transaction()
+        }
 
 
 async def _together(steps: list[Awaitable[object]]) -> None:
     """Await every store's driver call; the first failure is raised once all have finished."""
+    if len(steps) == 1:
+        await steps[0]
+        return
     results = await asyncio.gather(*steps, return_exceptions=True)
     failure = next((r for r in results if isinstance(r, BaseException)), None)
     if failure is not None:
@@ -137,7 +144,7 @@ async def _together(steps: list[Awaitable[object]]) -> None:
 
 def elevable_scopes(scoped: ScopedTables) -> frozenset[str]:
     """The scopes ``scoped`` declares elevable."""
-    return frozenset(c.scope for table in scoped.values() for c in table.scopes if c.elevable)
+    return frozenset(scope for scope, elevable in declared_scopes(scoped).items() if elevable)
 
 
 def validate_elevations(product: AuthzProduct, scoped: Mapping[StoreKey, ScopedTables]) -> None:
@@ -158,7 +165,7 @@ def validate_elevations(product: AuthzProduct, scoped: Mapping[StoreKey, ScopedT
         ElevableScopeInSeveralStores: When an elevated scope is declared by
             two or more stores.
     """
-    declared = {key: _declared_scopes(tables) for key, tables in scoped.items()}
+    declared = {key: declared_scopes(tables).keys() for key, tables in scoped.items()}
     elevable = frozenset().union(*(elevable_scopes(tables) for tables in scoped.values()))
     for scope in product.elevations:
         if not any(scope in scopes for scopes in declared.values()):
@@ -176,14 +183,11 @@ def validate_elevations(product: AuthzProduct, scoped: Mapping[StoreKey, ScopedT
             raise ElevableScopeInSeveralStores(issue)
 
 
-def _declared_scopes(scoped: ScopedTables) -> frozenset[str]:
-    return frozenset(c.scope for table in scoped.values() for c in table.scopes)
-
-
 __all__ = [
     "ElevableScopeInSeveralStores",
     "ElevationErrorCode",
     "ScopedElevationSink",
+    "ScopedTables",
     "StoreElevation",
     "elevable_scopes",
     "validate_elevations",
