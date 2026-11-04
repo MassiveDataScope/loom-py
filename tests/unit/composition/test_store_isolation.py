@@ -25,7 +25,15 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.abc import PageParams
+from loom.core.repository.abc import (
+    CursorCodec,
+    CursorResult,
+    PageParams,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
+    UnsupportedQuery,
+)
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
 from tests.helpers.composition import composition_source
@@ -160,6 +168,48 @@ async def test_the_store_resource_is_named_by_its_key_and_probed_under_its_backe
 
     assert stores == ["default"]
     assert ready == {"sqlalchemy": True}
+
+
+def _by_number(cursor: str | None = None) -> QuerySpec:
+    return QuerySpec(
+        sort=(SortSpec(field="number"),), pagination=PaginationMode.CURSOR, limit=1, cursor=cursor
+    )
+
+
+async def test_a_cursor_one_application_issued_is_refused_by_the_other(tmp_path: Path) -> None:
+    first = _compose(tmp_path / "a.db", _Invoice)
+    second = _compose(tmp_path / "b.db", _Invoice)
+
+    async with first.running(), second.running():
+        repositories = [app.kernel.container.resolve_repo(_Invoice) for app in (first, second)]
+        for repository in repositories:
+            await repository.create_many([_NewInvoice(number="N-1"), _NewInvoice(number="N-2")])
+        page = await repositories[0].list_with_query(_by_number())
+        assert isinstance(page, CursorResult)
+        assert page.next_cursor is not None
+        own = await repositories[0].list_with_query(_by_number(page.next_cursor))
+        with pytest.raises(UnsupportedQuery, match="cursor token is not valid"):
+            await repositories[1].list_with_query(_by_number(page.next_cursor))
+
+    assert [invoice.number for invoice in own.items] == ["N-2"]
+    codecs = [app.kernel.container.resolve(CursorCodec) for app in (first, second)]
+    assert codecs[0] is not codecs[1]
+
+
+async def test_closing_one_application_leaves_the_other_serving(tmp_path: Path) -> None:
+    first = _compose(tmp_path / "a.db", _Invoice)
+    second = _compose(tmp_path / "b.db", _Invoice)
+
+    async with second.running():
+        async with first.running():
+            await first.kernel.container.resolve_repo(_Invoice).create(_NewInvoice(number="A-1"))
+        repository = second.kernel.container.resolve_repo(_Invoice)
+        created = await repository.create(_NewInvoice(number="B-1"))
+        found = await repository.get_by_id(created.id)
+
+    assert found is not None
+    assert found.number == "B-1"
+    assert not first.is_open
 
 
 def test_a_model_of_another_store_is_refused_until_the_invocation_scope_exists(

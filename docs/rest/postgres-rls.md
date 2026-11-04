@@ -394,7 +394,8 @@ Every declared scope needs an explicit source under `stores.default.schema.scope
 
 A scope without an entry, a malformed source or an unregistered `request.<name>` raises
 `ConfigError` at startup; registering a name twice raises `ValueError`. Register the
-product's sources before startup:
+product's sources before startup; each application takes the sources registered when it
+is composed, and keeps them whatever is registered afterwards:
 
 ```python
 from loom.core.repository.sqlalchemy.rls import register_scope_source

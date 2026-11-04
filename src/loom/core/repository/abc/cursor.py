@@ -592,7 +592,7 @@ def require_cursor_sort(
 
 
 def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
-    """Register ``codec`` as the process's one ``CursorCodec``.
+    """Register ``codec`` as the container's one ``CursorCodec``, which every store shares.
 
     A codec built in code never meets :data:`CURSOR_SIGNING_CHECK`, so the same
     rule applies here: in the deployed environment the container resolves,
@@ -623,8 +623,8 @@ def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
         container.register_instance(CursorCodec, codec)
     elif container.resolve(CursorCodec) is not codec:
         raise ConfigError(
-            "another CursorCodec is already registered; one codec per process issues and "
-            "verifies every cursor"
+            "another CursorCodec is already registered; one codec per application issues "
+            "and verifies every cursor"
         )
 
 

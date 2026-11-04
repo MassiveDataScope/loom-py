@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.config import ConfigError
 from loom.core.model.scoped import ScopedTables, declared_scopes
-from loom.core.repository.sqlalchemy.rls.sources import resolve_binding, validate_bindings
+from loom.core.repository.sqlalchemy.rls.sources import ScopeSource, bind_sources
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
 
 if TYPE_CHECKING:
@@ -75,26 +75,26 @@ def scoped_session_settings(
     missing = sorted(scope for scope in scopes if scope not in scope_sources)
     if missing:
         raise ConfigError(f"{path}.schema.scopes is missing bindings for {missing}")
-    validate_bindings({scope: scope_sources[scope] for scope in scopes}, path=path)
-    return _ScopedProvider(scopes, scope_sources, product)
+    sources = bind_sources({scope: scope_sources[scope] for scope in scopes}, path=path)
+    return _ScopedProvider(scopes, sources, product)
 
 
 class _ScopedProvider:
     def __init__(
         self,
         scopes: Mapping[str, bool],
-        scope_sources: Mapping[str, str],
+        sources: Mapping[str, ScopeSource],
         product: SessionSettings | None,
     ) -> None:
         self._scopes = dict(scopes)
-        self._sources = dict(scope_sources)
+        self._sources = dict(sources)
         self._product = product
 
     def __call__(self) -> Mapping[str, str]:
         active = elevated_scopes()
         settings = dict(_product_settings(self._product))
         for scope, elevable in self._scopes.items():
-            value = resolve_binding(self._sources[scope])
+            value = self._sources[scope]()
             settings[scope_setting(scope)] = "" if value is None else str(value)
             if elevable:
                 settings[elevation_setting(scope)] = "on" if scope in active else ""

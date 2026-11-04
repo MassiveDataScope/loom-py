@@ -168,12 +168,14 @@ def test_the_api_applies_the_job_config(fixture_project: ProjectFactory) -> None
     application = build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
 
     (job,) = application.discovered.jobs
-    assert (job.__name__, job.__queue__, job.__countdown__, job.__priority__) == (
+    settings = application.job_settings
+    assert (job.__name__, settings.queue(job), settings.countdown(job), settings.priority(job)) == (
         "ReportJob",
         "reports",
         5,
         3,
     )
+    assert (job.__queue__, job.__countdown__, job.__priority__) == ("default", 0, 0)
 
 
 _NO_CELERY_SCRIPT = """

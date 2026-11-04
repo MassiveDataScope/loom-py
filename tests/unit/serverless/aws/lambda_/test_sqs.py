@@ -451,9 +451,10 @@ def test_the_composition_applies_the_job_config(source: CompositionSource) -> No
         config_root=source.config_root,
     )
 
-    compose_application(configured, LambdaSQSAdapter(jobs=[ConfiguredJob]))
+    application = compose_application(configured, LambdaSQSAdapter(jobs=[ConfiguredJob]))
 
-    assert ConfiguredJob.__retries__ == 7
+    assert application.job_settings.retries(ConfiguredJob) == 7
+    assert ConfiguredJob.__retries__ == 0
 
 
 def test_job_span_is_emitted(

@@ -1,0 +1,70 @@
+"""Each application dispatches a job with its own ``jobs:`` section; none leaks into another.
+
+T090: the composition used to write each ``jobs.<Job>`` section onto the
+job's ClassVars, so with two applications in one process the last one won and
+one without the section kept the other's values.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+from celery import Celery
+
+from loom.composition import Application, compose_application
+from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.job import Job
+from loom.core.job.service import JobService
+from tests.helpers.jobs import BROKER, JobsAdapter, job_source
+
+_CONFIGURED = {"queue": "reports", "countdown": 5, "priority": 3, "timeout": 60}
+_DECLARED = {"queue": "default", "countdown": 0, "priority": 0, "soft_time_limit": None}
+
+
+class _ReportJob(Job[None]):
+    def execute(self) -> None:
+        return None
+
+
+def _compose(tmp_path: Path, name: str, jobs: dict[str, Any] | None) -> Application:
+    config: dict[str, Any] = {"celery": BROKER}
+    if jobs is not None:
+        config["jobs"] = jobs
+    directory = tmp_path / name
+    directory.mkdir()
+    return compose_application(job_source(directory, config, "celery"), JobsAdapter(_ReportJob))
+
+
+async def _sent(application: Application) -> dict[str, Any]:
+    """The routing ``send_task`` got when *application* dispatched the job."""
+    service = application.kernel.container.resolve(JobService)
+    with patch.object(Celery, "send_task", autospec=True) as send_task:
+        service.dispatch(_ReportJob)
+        await flush_pending_dispatches()
+    kwargs = send_task.call_args.kwargs
+    return {key: kwargs[key] for key in _DECLARED}
+
+
+@pytest.mark.parametrize("configured_first", [True, False], ids=["configured first", "last"])
+async def test_each_application_dispatches_with_its_own_job_section(
+    tmp_path: Path, configured_first: bool
+) -> None:
+    order = [("configured", {"_ReportJob": _CONFIGURED}), ("plain", None)]
+    if not configured_first:
+        order.reverse()
+    applications = {name: _compose(tmp_path, name, jobs) for name, jobs in order}
+
+    sent = {name: await _sent(application) for name, application in applications.items()}
+
+    assert sent == {
+        "configured": {"queue": "reports", "countdown": 5, "priority": 3, "soft_time_limit": 60},
+        "plain": _DECLARED,
+    }
+    assert (_ReportJob.__queue__, _ReportJob.__countdown__, _ReportJob.__timeout__) == (
+        "default",
+        0,
+        None,
+    )

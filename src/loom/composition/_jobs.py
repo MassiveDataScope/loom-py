@@ -6,7 +6,7 @@ import asyncio
 import importlib.util
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from loom.composition.errors import JobBackendError
@@ -14,6 +14,7 @@ from loom.composition.resources import Resource, ResourceKind, closing
 from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext, ConfigKey
 from loom.core.di.scope import Scope
+from loom.core.job.config import JobSettings
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
@@ -32,8 +33,9 @@ if TYPE_CHECKING:
 class JobBackendContext:
     """What a job backend is built with; a ``module:Class`` backend receives it.
 
-    ``jobs`` are the discovered jobs this backend serves, their ``jobs.<Job>``
-    overrides applied: those on ``celery.queues`` go to Celery instead.
+    ``jobs`` are the discovered jobs this backend serves: those on
+    ``celery.queues`` go to Celery instead. ``settings`` hold each job's
+    queue, retries, countdown, timeout and priority in this application.
     """
 
     config: ConfigContext
@@ -42,6 +44,7 @@ class JobBackendContext:
     metrics: MetricsAdapter | None
     observability: ObservabilityRuntime | None
     jobs: tuple[type[Job[Any]], ...] = ()
+    settings: JobSettings = field(default_factory=JobSettings)
 
 
 _Built = tuple[JobService, tuple[Resource, ...]]
@@ -71,6 +74,7 @@ def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Bu
         factory=context.factory,
         executor=context.executor,
         observability_runtime=context.observability,
+        settings=context.settings,
     )
     closer = Resource(
         kind=ResourceKind.CELERY,
@@ -81,7 +85,7 @@ def _celery_backend(context: JobBackendContext, celery_cfg: CeleryConfig) -> _Bu
 
 
 def _inline(context: JobBackendContext) -> _Built:
-    return InlineJobService(context.factory, context.executor), ()
+    return InlineJobService(context.factory, context.executor, settings=context.settings), ()
 
 
 def _celery(context: JobBackendContext) -> _Built:
@@ -128,12 +132,12 @@ def _routed(context: JobBackendContext, default: str) -> _Built:
     celery_cfg = _celery_config(context.config)
     # Celery's own default queue stays with the default backend: it is every job's queue.
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
-    served = tuple(job for job in context.jobs if job.__queue__ not in queues)
+    served = tuple(job for job in context.jobs if context.settings.queue(job) not in queues)
     service, resources = _backend(default, replace(context, jobs=served))  # NOSONAR(S5655)
     if not queues:
         return service, resources
     celery, closers = _celery_backend(context, celery_cfg)
-    return JobRouter(dict.fromkeys(queues, celery), default=service), (
+    return JobRouter(dict.fromkeys(queues, celery), default=service, settings=context.settings), (
         *resources,
         *closers,
     )
@@ -175,6 +179,7 @@ def configure_job_service(
     *,
     backend: str | None = None,
     jobs: tuple[type[Job[Any]], ...] = (),
+    settings: JobSettings | None = None,
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
@@ -192,7 +197,9 @@ def configure_job_service(
         observability_runtime: Observability runtime the backends trace
             with, or ``None``.
         backend: ``app.job_service``: a built-in name or ``module:Class``.
-        jobs: The discovered jobs, their ``jobs.<Job>`` overrides applied.
+        jobs: The discovered jobs.
+        settings: Each job's settings in this application; the ClassVars
+            when omitted.
 
     Returns:
         One resource per built backend that owns something to close.
@@ -212,6 +219,7 @@ def configure_job_service(
         metrics=result.metrics,
         observability=observability_runtime,
         jobs=jobs,
+        settings=settings or JobSettings(),
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)

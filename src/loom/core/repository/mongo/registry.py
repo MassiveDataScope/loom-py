@@ -112,7 +112,7 @@ def build_mongo_repository_registration_module(
     The module registers a ``DefaultRepositoryBuilder`` bound to the shared
     database unless one is already registered, so a deployment may swap the
     builder by registering its own before loading the module. It registers
-    ``cursor_codec`` as the process's one ``CursorCodec`` too, raising
+    ``cursor_codec`` as the application's one ``CursorCodec`` too, raising
     ``ConfigError`` when another is already registered, so a custom builder
     or a service paginating by hand resolves the codec the repositories sign
     with.

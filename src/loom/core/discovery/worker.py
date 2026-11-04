@@ -6,7 +6,6 @@ import importlib
 import inspect
 import logging
 from collections.abc import Callable, Sequence
-from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Final, TypeVar
 
@@ -16,7 +15,7 @@ from loom.core.discovery._utils import collect_from_modules, import_modules
 from loom.core.discovery.config import DiscoveryConfig, decode_discovery
 from loom.core.discovery.worker_manifest import WorkerManifestAttr
 from loom.core.engine.compilable import Compilable
-from loom.core.job.config import JobConfig, apply_job_config
+from loom.core.job.config import apply_job_config, read_job_config
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 
@@ -110,9 +109,7 @@ def apply_job_overrides(
         ctx: Resolved configuration context.
         job_type: Concrete ``Job`` subclass to configure.
     """
-    with suppress(ConfigError):
-        cfg = ctx.section(f"{ConfigKey.JOBS}.{job_type.__name__}", JobConfig)
-        apply_job_config(job_type, cfg)
+    apply_job_config(job_type, read_job_config(ctx, job_type))
 
 
 def use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Compilable], ...]:

@@ -121,7 +121,7 @@ class MongoBackend:
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         mongo_cfg = spec.decode(MongoRepositoryConfig)
-        cursor_codec = CursorCodec.from_context(ctx)
+        cursor_codec = runtime.cursor_codec or CursorCodec.from_context(ctx)
         pool = mongo_cfg.pool.resolve(runtime.profile)
         client_cfg = msgspec.structs.replace(
             mongo_cfg,

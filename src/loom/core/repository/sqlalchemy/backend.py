@@ -148,7 +148,7 @@ class SQLAlchemyBackend:
                 )
             )
             # Before the engine: an invalid persistence.cursors fails with none built.
-            cursor_codec = CursorCodec.from_context(ctx)
+            cursor_codec = runtime.cursor_codec or CursorCodec.from_context(ctx)
             session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, metadata)
             module = build_sqlalchemy_repository_registration_module(
                 session_manager, models, cursor_codec=cursor_codec

@@ -11,11 +11,14 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.di.container import LoomContainer
+from loom.core.environment import Environment
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer
 from loom.core.persistence import PersistenceWiring
 from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, load_catalog
+from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 
 _AUDIT = StoreKey("audit")
@@ -105,3 +108,22 @@ def test_row_level_security_bindings_are_named_under_the_store_they_belong_to() 
 
     with pytest.raises(ConfigError, match=r"stores\.audit\.schema\.scopes is missing .*holder"):
         wiring.prepare_models((_Entry,))
+
+
+def test_every_store_of_an_application_registers_the_one_codec_the_host_built() -> None:
+    """Two codecs in one container would each refuse the other's cursors: the second is an error."""
+    ctx = _context(
+        default={"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+        audit={"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+    )
+    codec = CursorCodec.from_context(ctx)
+    container = LoomContainer()
+    container.register_instance(Environment, Environment.TEST)
+
+    for store in (DEFAULT_STORE, _AUDIT):
+        runtime = BackendRuntime(
+            SERVER_PROFILE, catalog=load_catalog(ctx), store=store, cursor_codec=codec
+        )
+        SQLAlchemyBackend().build(ctx, (), runtime).repo_registration_module(container)
+
+    assert container.resolve(CursorCodec) is codec

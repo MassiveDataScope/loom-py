@@ -238,7 +238,7 @@ class _SQSBatch:
                 observability=self._application.observability,
                 message_id=_message_id(record),
             ),
-            timeout=_record_timeout(job_type, context),
+            timeout=_record_timeout(self._application.job_settings.timeout(job_type), context),
         )
 
     def _decode(self, record: Any) -> JobEnvelope:
@@ -269,7 +269,7 @@ class _SQSBatch:
             raise error
 
 
-def _record_timeout(job_type: type[Job[Any]], context: Any) -> float | None:
+def _record_timeout(job_timeout: int | None, context: Any) -> float | None:
     limits: list[float] = []
     remaining = getattr(context, "get_remaining_time_in_millis", None)
     if callable(remaining):
@@ -279,8 +279,8 @@ def _record_timeout(job_type: type[Job[Any]], context: Any) -> float | None:
                 (cast(Callable[[], int], remaining)() - TIMEOUT_SAFETY_MARGIN_MS) / 1000,
             )
         )
-    if job_type.__timeout__ is not None:
-        limits.append(float(job_type.__timeout__))
+    if job_timeout is not None:
+        limits.append(float(job_timeout))
     return min(limits) if limits else None
 
 

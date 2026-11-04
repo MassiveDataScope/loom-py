@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.job.callback import JobCallback
+from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_dispatch
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
@@ -223,6 +224,7 @@ class InlineJobService:
     Args:
         factory: Used to build Job and callback instances from the container.
         executor: Used to drive the compiled ExecutionPlan.
+        settings: The application's job settings; the ClassVars when omitted.
 
     Example::
 
@@ -232,9 +234,16 @@ class InlineJobService:
         result = handle.wait()
     """
 
-    def __init__(self, factory: UseCaseFactory, executor: RuntimeExecutor) -> None:
+    def __init__(
+        self,
+        factory: UseCaseFactory,
+        executor: RuntimeExecutor,
+        *,
+        settings: JobSettings | None = None,
+    ) -> None:
         self._factory = factory
         self._executor = executor
+        self._settings = settings or JobSettings()
 
     async def run(
         self,
@@ -282,7 +291,7 @@ class InlineJobService:
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked after successful execution.
             on_failure: Callback type invoked after failed execution.
-            queue: Overrides the job's ``__queue__`` for the returned handle.
+            queue: Overrides the job's queue for the returned handle.
             countdown: Ignored in inline mode.
             priority: Ignored in inline mode.
             eta: Ignored in inline mode.
@@ -311,7 +320,7 @@ class InlineJobService:
         add_pending_dispatch(pending.run)
         return JobHandle(
             job_id=task_id,
-            queue=queue or job_type.__queue__,
+            queue=queue or self._settings.queue(job_type),
             dispatched_at=datetime.now(UTC),
             _inline_result_holder=result_holder,
         )

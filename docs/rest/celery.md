@@ -546,7 +546,9 @@ celery:
 
 Override any Job ClassVar from YAML without touching Python code. Only the fields
 you declare are applied; unset fields keep their ClassVar defaults. Every process
-that discovers the job applies them, the API included:
+that discovers the job applies them, the API included. Each application keeps its
+own values and the ClassVars stay as declared, so two applications composed in one
+process never see each other's `jobs` section:
 
 In `config/worker.yaml`:
 
