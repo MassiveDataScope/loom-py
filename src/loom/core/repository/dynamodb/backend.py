@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Sequence
-from concurrent.futures import Executor, ThreadPoolExecutor
-from typing import Any, ClassVar
+from collections.abc import AsyncIterator, Callable, Sequence
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from typing import Any, ClassVar, ParamSpec, TypeVar
 
 from loom.core.config import ConfigContext
 from loom.core.config.aws import decode_aws, written_aws
@@ -22,6 +24,9 @@ from loom.core.repository.dynamodb.repository import RepositoryDynamoDB, run_in_
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
 
 _READY_TABLE_STATUSES = frozenset({"ACTIVE", "UPDATING"})
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 _logger = logging.getLogger(__name__)
 
@@ -95,16 +100,47 @@ class DynamoDBBackend:
         client = build_aws_client("dynamodb", dynamo_cfg)
         # One pool of threads per backend, as wide as the client's connection
         # pool: the default executor would cap parallel calls at cpu + 4.
-        executor = ThreadPoolExecutor(
-            max_workers=dynamo_cfg.pool.size, thread_name_prefix="loom-dynamodb"
-        )
+        executor = _ReopenableThreads(dynamo_cfg.pool.size)
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),
             repo_registration_module=build_dynamodb_repository_registration_module(
                 client, dynamo_cfg.table, models, executor=executor
             ),
+            lifespan_init=lambda: _lifespan(executor),
             readiness=lambda: _readiness(client, dynamo_cfg.table, executor),
         )
+
+
+class _ReopenableThreads(Executor):
+    """A thread pool that refuses work once shut down, until the next lifespan reopens it."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+        self._closed = False
+        self._pool = self._new_pool()
+
+    def _new_pool(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(max_workers=self._size, thread_name_prefix="loom-dynamodb")
+
+    def reopen(self) -> None:
+        if self._closed:
+            self._closed, self._pool = False, self._new_pool()
+
+    def submit(self, fn: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs) -> Future[_T]:
+        return self._pool.submit(fn, *args, **kwargs)
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        self._closed = True
+        self._pool.shutdown(wait, cancel_futures=cancel_futures)
+
+
+@asynccontextmanager
+async def _lifespan(executor: _ReopenableThreads) -> AsyncIterator[None]:
+    executor.reopen()
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(executor.shutdown)
 
 
 async def _readiness(client: Any, table: str, executor: Executor) -> bool:

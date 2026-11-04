@@ -29,6 +29,7 @@ import asyncio
 import contextvars
 from typing import Any, ClassVar
 
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.logger import get_logger
@@ -39,7 +40,7 @@ from loom.core.repository.sqlalchemy.transactional import (
 )
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import PhysicalStore
+from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
 from loom.core.uow.scope import EntersAlone
 
 _log = get_logger(__name__).bind(component="uow")
@@ -138,11 +139,31 @@ class SQLAlchemyUnitOfWork(EntersAlone):
 
         Raises:
             RuntimeError: If :meth:`begin` has not been called.
+            CommitUncertain: If the connection failed during ``COMMIT``
+                (``OperationalError``, ``InterfaceError``, an invalidated
+                connection, or an ``OSError`` such as a timeout): the commit
+                may have been applied. The connection is invalidated first,
+                so it never returns to the pool.
         """
         if self._session is None:
             raise RuntimeError("SQLAlchemyUnitOfWork.commit() called before begin()")
-        await self._session.commit()
+        try:
+            await self._session.commit()
+        except (DBAPIError, OSError) as exc:
+            if isinstance(exc, OSError | OperationalError | InterfaceError) or (
+                exc.connection_invalidated
+            ):
+                await self._invalidate(self._session)
+                raise CommitUncertain(exc) from exc
+            raise
         _log.debug("UoWCommit")
+
+    @staticmethod
+    async def _invalidate(session: AsyncSession) -> None:
+        try:
+            await session.invalidate()
+        except Exception:
+            _log.exception("UoWInvalidateFailed")
 
     async def rollback(self) -> None:
         """Discard all pending changes.

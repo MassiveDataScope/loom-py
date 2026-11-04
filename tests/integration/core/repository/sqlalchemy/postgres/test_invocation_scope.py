@@ -13,16 +13,18 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
-from loom.core.uow.scope import ScopeOwnershipError, current_scope
+from loom.core.uow.coordinator import OrderedCommits, Uncertain
+from loom.core.uow.scope import Frame, ScopeOwnershipError, current_scope, invocation
 from tests.integration.support.scope_doubles import BusinessError, Run
 
 
@@ -183,6 +185,31 @@ async def test_a_failed_commit_raises_the_driver_error_and_persists_nothing(
         await executor.execute(use_case)
 
     assert await _committed_ids(observer, table) == [1]
+
+
+async def test_a_connection_lost_before_commit_leaves_the_store_uncertain(
+    manager: SessionManager, table: str, observer: AsyncEngine
+) -> None:
+    coordinator = OrderedCommits({DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(manager)})
+    async with invocation(coordinator) as scope:
+        async with scope.frame(Frame(DEFAULT_STORE)):
+            await _insert(manager, table, 1)
+            await _terminate_own_backend(manager, observer)
+        outcome = await coordinator.finish(scope, None)
+
+    [store] = outcome.stores
+    assert isinstance(store, Uncertain)
+    assert isinstance(store.cause, DBAPIError)
+    assert manager.engine.pool.checkedout() == 0  # type: ignore[attr-defined]
+    assert await _committed_ids(observer, table) == []
+
+
+async def _terminate_own_backend(manager: SessionManager, observer: AsyncEngine) -> None:
+    session = manager.active_session
+    assert session is not None
+    pid = (await session.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+    async with observer.connect() as conn:
+        await conn.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
 
 
 async def test_a_gather_child_running_a_nested_execution_writes_nothing(

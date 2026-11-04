@@ -32,6 +32,7 @@ from loom.core.errors import Conflict
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
+from loom.core.persistence.stores import store_of
 from loom.core.repository.abc import (
     Creatable,
     Deletable,
@@ -41,6 +42,7 @@ from loom.core.repository.abc import (
     UnsupportedQuery,
     Updatable,
 )
+from loom.core.uow.scope import current_participant
 
 _ResultT = TypeVar("_ResultT")
 
@@ -101,6 +103,7 @@ class RepositoryDynamoDB(
         self._executor = executor
         self._table_name = table_name
         self._model = model
+        self._store = store_of(model)
         self._id_attr = _single_id_attribute(model)
         self._column_fields = frozenset(get_column_fields(model).keys())
         self._serializer = TypeSerializer()
@@ -165,6 +168,7 @@ class RepositoryDynamoDB(
         existing item; a failed condition is surfaced as
         :class:`~loom.core.errors.Conflict`.
         """
+        self._require_writable()
         internal = self._to_internal(data)
         try:
             await run_in_executor(
@@ -192,6 +196,7 @@ class RepositoryDynamoDB(
         ``None`` when no item exists for ``obj_id`` — whether detected by the
         initial read or by the conditional write losing the race.
         """
+        self._require_writable()
         response = await run_in_executor(
             self._executor,
             self._client.get_item,
@@ -221,6 +226,7 @@ class RepositoryDynamoDB(
 
     async def delete(self, obj_id: IdT) -> bool:
         """Delete an item by partition key, returning whether it existed."""
+        self._require_writable()
         response = await run_in_executor(
             self._executor,
             self._client.delete_item,
@@ -229,6 +235,10 @@ class RepositoryDynamoDB(
             ReturnValues="ALL_OLD",
         )
         return "Attributes" in response
+
+    def _require_writable(self) -> None:
+        """Pass the write through the invocation scope's checkpoint, on the event loop."""
+        current_participant(self._store, self._client, write=True)
 
     def _unsupported_field(self, operation: str, field: str) -> UnsupportedQuery:
         """Build the error for a lookup on a field the partition key does not cover."""

@@ -25,11 +25,12 @@ SessionManagerFactory = Callable[[type], Awaitable["SessionManager"]]
 
 
 def make_session() -> MagicMock:
-    """Return a session double whose ``flush``/``commit``/``rollback``/``close`` are awaitable."""
+    """Return a session double whose transaction methods are awaitable."""
     session = MagicMock()
     session.flush = AsyncMock()
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
+    session.invalidate = AsyncMock()
     session.close = AsyncMock()
     return session
 
