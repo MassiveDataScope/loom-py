@@ -198,13 +198,11 @@ class TestBootstrapWorkerTaskRegistration:
 
     def test_registers_each_task_with_the_applications_job_config(self, tmp_path: Any) -> None:
         """The task's retries and time limit come from ``jobs:``; the ClassVars stay as declared."""
-        declared = (_SyncJob.__retries__, _SyncJob.__timeout__)
-
         result = self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7, "timeout": 9}}})
 
         task = result.celery_app.tasks[wire_job_name(_SyncJob.__qualname__)]
         assert (task.max_retries, task.soft_time_limit) == (7, 9)
-        assert (_SyncJob.__retries__, _SyncJob.__timeout__) == declared
+        assert (_SyncJob.__retries__, _SyncJob.__timeout__) == (0, None)
 
     def test_pure_job_bootstrap_without_database_section(self, tmp_path: Any) -> None:
         """Database config is optional for jobs that do not access repositories."""
