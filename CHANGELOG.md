@@ -19,12 +19,12 @@
 ### testing
 
 - **testing:** Lambda functions are tested in process, without AWS:
-  `LambdaTestClient` (the calls of FastAPI's `TestClient`) sends API Gateway
-  HTTP API or REST events to the real handler; `sqs_record`, `sqs_raw_record`,
-  `sqs_event` and `failed_ids` drive the SQS handler with the `JobEnvelope`
+  `LambdaTestClient`, an `httpx.Client` like FastAPI's `TestClient`, sends API
+  Gateway HTTP API or REST events to the real handler; `sqs_record` and
+  `sqs_raw_record` drive the SQS handler with the `JobEnvelope`
   `SQSJobService` sends; `RecordingJobService`
   (`app.job_service: loom.testing:RecordingJobService`) records each dispatch
-  after the commit.
+  after the commit. The `testing` extra now includes `httpx`.
 
 ### config
 

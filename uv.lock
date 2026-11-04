@@ -2290,6 +2290,7 @@ streaming = [
     { name = "uvloop", marker = "sys_platform != 'win32'" },
 ]
 testing = [
+    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -2382,6 +2383,7 @@ requires-dist = [
     { name = "fsspec", marker = "extra == 'prefect'", specifier = ">=2024.2.0" },
     { name = "greenlet", marker = "extra == 'sqlalchemy'", specifier = ">=3.0" },
     { name = "httptools", marker = "extra == 'rest'", specifier = ">=0.6,<1.0" },
+    { name = "httpx", marker = "extra == 'testing'", specifier = ">=0.27" },
     { name = "kombu", marker = "extra == 'celery'", specifier = ">=5.3,<6.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.0,<5" },
     { name = "mangum", marker = "extra == 'lambda'", specifier = ">=0.22,<1.0" },

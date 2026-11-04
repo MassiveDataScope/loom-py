@@ -1,4 +1,4 @@
-"""``sqs_record``/``sqs_event`` feed the real Lambda SQS handler what ``SQSJobService`` sends."""
+"""``sqs_record`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from loom.core.job.job import Job
 from loom.jobs.aws.sqs import SQSJobService
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter
 from loom.serverless.aws.lambda_.sqs import SQSHandler
-from loom.testing import failed_ids, sqs_event, sqs_raw_record, sqs_record
+from loom.testing import sqs_raw_record, sqs_record
 from tests.helpers.composition import composition_source
 
 pytestmark = pytest.mark.timeout(30)
@@ -54,6 +54,10 @@ def handler(tmp_path: Path) -> Iterator[SQSHandler]:
     adapter.close()
 
 
+def _failed(result: dict[str, Any]) -> list[str]:
+    return [failure["itemIdentifier"] for failure in result["batchItemFailures"]]
+
+
 def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
     return sqs_record(MarkJob, params={"marker": marker}, message_id=message_id, **options)
 
@@ -61,9 +65,9 @@ def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
 def test_a_batch_that_succeeds_retries_nothing(
     handler: SQSHandler, seen: list[tuple[str, str]]
 ) -> None:
-    result = handler(sqs_event(_marked("a", "1"), _marked("b", "2")), None)
+    result = handler({"Records": [_marked("a", "1"), _marked("b", "2")]}, None)
 
-    assert (failed_ids(result), seen) == ([], [("a", ""), ("b", "")])
+    assert (_failed(result), seen) == ([], [("a", ""), ("b", "")])
 
 
 @pytest.mark.parametrize(
@@ -80,13 +84,13 @@ def test_a_failed_record_is_retried_and_a_fifo_group_stops_at_it(
 ) -> None:
     records = [_marked(m, str(i), group_id=group_id) for i, m in enumerate(["a", "fail", "c"], 1)]
 
-    result = handler(sqs_event(*records), None)
+    result = handler({"Records": records}, None)
 
-    assert (failed_ids(result), [marker for marker, _ in seen]) == (failed, ran)
+    assert (_failed(result), [marker for marker, _ in seen]) == (failed, ran)
 
 
 def test_the_identity_reaches_the_job(handler: SQSHandler, seen: list[tuple[str, str]]) -> None:
-    handler(sqs_event(_marked("a", "1", identity=_ALICE)), None)
+    handler({"Records": [_marked("a", "1", identity=_ALICE)]}, None)
 
     assert seen == [("a", "alice")]
 
@@ -94,9 +98,9 @@ def test_the_identity_reaches_the_job(handler: SQSHandler, seen: list[tuple[str,
 def test_a_raw_body_loom_cannot_read_is_retried(
     handler: SQSHandler, seen: list[tuple[str, str]]
 ) -> None:
-    result = handler(sqs_event(sqs_raw_record("{", message_id="poison")), None)
+    result = handler({"Records": [sqs_raw_record("{", message_id="poison")]}, None)
 
-    assert (failed_ids(result), seen) == (["poison"], [])
+    assert (_failed(result), seen) == (["poison"], [])
 
 
 class _Client:

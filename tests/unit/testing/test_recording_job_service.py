@@ -122,7 +122,7 @@ async def test_the_recorded_queue_is_the_effective_one(
     service.dispatch(moved, queue=queue)
     await flush_pending_dispatches()
 
-    assert service.assert_dispatched(moved).queue == expected
+    assert [(record.job_type, record.queue) for record in service.dispatched] == [(moved, expected)]
 
 
 async def test_a_composed_service_runs_a_job_in_process(
@@ -138,28 +138,16 @@ async def test_a_service_without_a_context_cannot_run(jobs: RecordingJobService)
         await jobs.run(ShipJob)
 
 
-async def test_assert_dispatched_matches_the_given_fields(jobs: RecordingJobService) -> None:
-    jobs.dispatch(ShipJob, payload={"note": "fragile"})
+async def test_a_payload_changed_after_dispatch_is_recorded_as_dispatched(
+    jobs: RecordingJobService,
+) -> None:
+    payload, params = {"note": "fragile"}, {"order": 7}
+    jobs.dispatch(ShipJob, payload=payload, params=params)
+    payload["note"], params["order"] = "sturdy", 8
+
     await flush_pending_dispatches()
 
-    record = jobs.assert_dispatched(ShipJob, payload={"note": "fragile"}, queue="shipping")
-
-    assert record is jobs.dispatched[0]
-
-
-async def test_assert_dispatched_names_what_was_dispatched(jobs: RecordingJobService) -> None:
-    jobs.dispatch(ShipJob, payload={"note": "fragile"})
-    await flush_pending_dispatches()
-
-    with pytest.raises(AssertionError) as raised:
-        jobs.assert_dispatched(ShipJob, payload={"note": "sturdy"})
-
-    assert str(raised.value) == (
-        "ShipJob was not dispatched with {'payload': {'note': 'sturdy'}}; "
-        "dispatched: [('ShipJob', {'note': 'fragile'})]"
+    assert (jobs.dispatched[0].payload, jobs.dispatched[0].params) == (
+        {"note": "fragile"},
+        {"order": 7},
     )
-
-
-def test_assert_dispatched_refuses_an_unknown_field(jobs: RecordingJobService) -> None:
-    with pytest.raises(TypeError, match="not \\['priority'\\]"):
-        jobs.assert_dispatched(ShipJob, priority=1)

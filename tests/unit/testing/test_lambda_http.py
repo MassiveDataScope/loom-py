@@ -45,6 +45,18 @@ def alice() -> dict[str, str]:
     return bearer("alice")
 
 
+class _Spy:
+    """Passes each event on to the real handler, keeping it."""
+
+    def __init__(self, handler: LambdaHTTPHandler) -> None:
+        self.handler = handler
+        self.events: list[dict[str, Any]] = []
+
+    def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
+        self.events.append(event)
+        return self.handler(event, context)
+
+
 def test_a_get_answers_the_use_case_result_as_json(
     client: LambdaTestClient, alice: dict[str, str]
 ) -> None:
@@ -68,6 +80,36 @@ def test_query_parameters_reach_the_route(
     response = client.get(url, headers=alice, params={"profile": "full"})
 
     assert (response.status_code, response.json()["detail"]["code"]) == (400, "bad_request")
+
+
+def test_the_function_sees_the_decoded_path(client: LambdaTestClient) -> None:
+    assert client.post("/public/who%61mi").json() == {"subject": ""}
+
+
+@pytest.mark.parametrize(
+    ("event_format", "path", "query"),
+    [
+        ("v2", ("requestContext", "http", "path"), ("rawQueryString", "tag=a&tag=b")),
+        ("v1", ("path",), ("multiValueQueryStringParameters", {"tag": ["a", "b"]})),
+    ],
+)
+def test_the_event_carries_a_path_with_a_space_and_repeated_parameters(
+    handler: LambdaHTTPHandler,
+    alice: dict[str, str],
+    event_format: EventFormat,
+    path: tuple[str, ...],
+    query: tuple[str, Any],
+) -> None:
+    spy = _Spy(handler)
+
+    response = LambdaTestClient(spy, event_format=event_format).get(
+        "/items/a b", headers=alice, params=[("tag", "a"), ("tag", "b")]
+    )
+
+    (event,) = spy.events
+    for key in path:
+        event = event[key]
+    assert (event, spy.events[0][query[0]], response.status_code) == ("/items/a b", query[1], 422)
 
 
 def test_a_request_without_a_token_answers_401_with_a_challenge(client: LambdaTestClient) -> None:

@@ -72,16 +72,17 @@ hand.
 ## Testing Lambda functions
 
 The Lambda helpers in `loom.testing` call the real handler in process, the way
-AWS would, without AWS. `LambdaTestClient` needs the `lambda` extra.
+AWS would, without AWS. `LambdaTestClient` needs the `lambda` and `testing`
+extras.
 
 ### HTTP functions
 
-`LambdaTestClient` has the calls of FastAPI's `TestClient` (`get`, `post`,
-`put`, `patch`, `delete`, `request` with `headers=`, `json=`, `params=`,
-`content=`). Each call becomes an API Gateway HTTP API event (payload 2.0), or
-a REST API one with `event_format="v1"`, so Mangum, the middleware and the
-authentication run as deployed. Give it a configuration path and the function
-of `lambda.functions` to serve, plus any `create_app` option:
+`LambdaTestClient` is an `httpx.Client`, like FastAPI's `TestClient`: every
+call, argument and response attribute of httpx works. Each request becomes an
+API Gateway HTTP API event (payload 2.0), or a REST API one with
+`event_format="v1"`, so Mangum, the middleware and the authentication run as
+deployed. Give it a configuration path and the function of `lambda.functions`
+to serve, plus any `create_app` option:
 
 ```yaml
 lambda:
@@ -102,36 +103,32 @@ def test_get_order(token: str) -> None:
 ```
 
 It also takes the handler `create_app` returned, which the test then closes
-itself. A response has `status_code`, `headers`, `content`, `text` and
-`json()`.
+itself.
 
 ### SQS functions
 
 `sqs_record(Job, payload, params=, identity=, message_id=, group_id=, queue_arn=)`
 builds a record whose body is the `JobEnvelope` `SQSJobService` sends;
 `group_id` makes the queue a FIFO one. `sqs_raw_record(body)` carries any other
-body. `sqs_event(*records)` wraps them in a batch, and `failed_ids` reads the
-message ids the handler asks SQS to retry:
+body. The handler returns the records SQS should retry:
 
 ```python
 from loom.composition import create_app
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter
-from loom.testing import failed_ids, sqs_event, sqs_raw_record, sqs_record
+from loom.testing import sqs_raw_record, sqs_record
 
 def test_a_poison_message_is_retried() -> None:
     handler = create_app("config.yaml", adapter=LambdaSQSAdapter(), environment="test")
     try:
-        result = handler(
-            sqs_event(
-                sqs_record(SendEmailJob, {"to": "ada@example.com"}, message_id="1"),
-                sqs_raw_record("{", message_id="2"),
-            ),
-            None,
-        )
+        records = [
+            sqs_record(SendEmailJob, {"to": "ada@example.com"}, message_id="1"),
+            sqs_raw_record("{", message_id="2"),
+        ]
+        result = handler({"Records": records}, None)
     finally:
         handler.close()
 
-    assert failed_ids(result) == ["2"]
+    assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
 ```
 
 ### Dispatched jobs
@@ -157,14 +154,16 @@ def test_placing_an_order_ships_it(token: str) -> None:
         jobs = client.application.kernel.container.resolve(JobService)
 
     assert isinstance(jobs, RecordingJobService)
-    jobs.assert_dispatched(ShipOrderJob, queue="shipping")
+    assert [(job.job_type, job.queue) for job in jobs.dispatched] == [
+        (ShipOrderJob, "shipping")
+    ]
 ```
 
-`dispatched` lists every record; `assert_dispatched(Job, **fields)` returns
-the first that matches `payload`, `params`, `queue` or `identity`, or fails
-naming what was dispatched. `run()` executes a job in process. It also works
-without configuration, as `RecordingJobService()`; it then records dispatches
-made outside an execution on `flush_pending_dispatches()` and cannot `run()`.
+`dispatched` lists every committed dispatch as a frozen `DispatchedJob`
+(`job_type`, `payload`, `params`, `queue`, `identity`), payload and params
+copied at dispatch. `run()` executes a job in process. It also works without
+configuration, as `RecordingJobService()`; it then records dispatches made
+outside an execution on `flush_pending_dispatches()` and cannot `run()`.
 
 ### Beyond the process
 

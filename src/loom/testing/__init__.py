@@ -7,8 +7,6 @@ from loom.testing.in_memory import InMemoryRepository
 from loom.testing.jobs import (
     DispatchedJob,
     RecordingJobService,
-    failed_ids,
-    sqs_event,
     sqs_raw_record,
     sqs_record,
 )
@@ -21,7 +19,7 @@ from loom.testing.runner import (
 
 if TYPE_CHECKING:
     from loom.testing.http_harness import HttpTestHarness
-    from loom.testing.lambda_http import LambdaResponse, LambdaTestClient
+    from loom.testing.lambda_http import LambdaTestClient
     from loom.testing.repository_harness import (
         RepositoryIntegrationHarness,
         ScenarioDict,
@@ -36,7 +34,6 @@ __all__ = [
     "GoldenHarness",
     "HttpTestHarness",
     "InMemoryRepository",
-    "LambdaResponse",
     "LambdaTestClient",
     "McpHandleDouble",
     "RecordingJobService",
@@ -46,9 +43,7 @@ __all__ = [
     "UseCaseTest",
     "agent_engine_contract_suite",
     "build_repository_harness",
-    "failed_ids",
     "serialize_plan",
-    "sqs_event",
     "sqs_raw_record",
     "sqs_record",
 ]
@@ -57,15 +52,13 @@ _REPOSITORY_HARNESS_EXPORTS = frozenset(
     {"RepositoryIntegrationHarness", "ScenarioDict", "build_repository_harness"}
 )
 
-_LAMBDA_HTTP_EXPORTS = frozenset({"LambdaResponse", "LambdaTestClient"})
-
 
 def __getattr__(name: str) -> Any:
     """Resolve exports whose dependencies belong to optional extras on first access."""
     if name == "HttpTestHarness":
         return _http_test_harness()
-    if name in _LAMBDA_HTTP_EXPORTS:
-        return _lambda_http_export(name)
+    if name == "LambdaTestClient":
+        return _lambda_test_client()
     if name in _REPOSITORY_HARNESS_EXPORTS:
         return _repository_harness_export(name)
     raise AttributeError(name)
@@ -95,13 +88,13 @@ def _repository_harness_export(name: str) -> Any:
     return getattr(repository_harness, name)
 
 
-def _lambda_http_export(name: str) -> Any:
-    """Import one ``lambda_http`` export, naming the ``lambda`` extra when missing."""
+def _lambda_test_client() -> Any:
+    """Import ``LambdaTestClient``, naming the extras it needs when they are missing."""
     try:
-        lambda_http = importlib.import_module("loom.testing.lambda_http")
+        from loom.testing.lambda_http import LambdaTestClient as _LambdaTestClient
     except ImportError as exc:
         raise ImportError(
-            f"{name} requires the 'lambda' extra. "
-            "Install loom-kernel[lambda] to test Lambda HTTP functions."
+            "LambdaTestClient requires the 'lambda' and 'testing' extras (mangum, httpx). "
+            "Install loom-kernel[lambda,testing] to test Lambda HTTP functions."
         ) from exc
-    return getattr(lambda_http, name)
+    return _LambdaTestClient

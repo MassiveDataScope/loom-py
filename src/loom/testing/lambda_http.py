@@ -1,9 +1,10 @@
-"""Call a Lambda HTTP function in process, as API Gateway would, with a test client's API.
+"""Call a Lambda HTTP function in process, as API Gateway would, with an ``httpx`` client.
 
-:class:`LambdaTestClient` turns ``get``/``post``/... calls into API Gateway
-events, HTTP API payload 2.0 by default or REST API (``event_format="v1"``),
-and answers with what the real handler returned: Mangum, the middleware and
-the authentication all run. Needs the ``lambda`` extra.
+:class:`LambdaTestClient` is an ``httpx.Client`` whose transport turns each
+request into an API Gateway event, HTTP API payload 2.0 by default or REST API
+(``event_format="v1"``), and answers with what the real handler returned:
+Mangum, the middleware and the authentication all run. Needs the ``lambda``
+and ``testing`` extras.
 
 Usage::
 
@@ -15,14 +16,11 @@ Usage::
 from __future__ import annotations
 
 import base64
-import json as jsonlib
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from types import TracebackType
+from collections.abc import Callable
 from typing import Any, Literal
-from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qsl
 
-from starlette.datastructures import Headers
+import httpx
 
 from loom.composition import Application, build_application
 from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter, LambdaHTTPHandler
@@ -30,35 +28,14 @@ from loom.serverless.aws.lambda_.http import LambdaHTTPAdapter, LambdaHTTPHandle
 EventFormat = Literal["v1", "v2"]
 LambdaHandler = Callable[[dict[str, Any], Any], dict[str, Any]]
 
-_HOST = "testserver"
-_SOURCE_IP = "127.0.0.1"
 
-
-@dataclass(frozen=True)
-class LambdaResponse:
-    """What the function answered: status, headers (case-insensitive) and body."""
-
-    status_code: int
-    headers: Headers
-    content: bytes
-
-    @property
-    def text(self) -> str:
-        """The body decoded as UTF-8."""
-        return self.content.decode()
-
-    def json(self) -> Any:
-        """The body decoded as JSON."""
-        return jsonlib.loads(self.content)
-
-
-class LambdaTestClient:
-    """Drive a Lambda HTTP function with ``starlette.testclient.TestClient``'s calls.
+class LambdaTestClient(httpx.Client):
+    """An ``httpx.Client`` served by a Lambda HTTP function, like Starlette's ``TestClient``.
 
     Args:
         app: The handler ``create_app`` returned, which the caller closes; or a
             configuration path, composed here as ``create_app`` would with
-            ``LambdaHTTPAdapter(function=function)`` and closed by :meth:`close`.
+            ``LambdaHTTPAdapter(function=function)`` and closed with the client.
         function: The function of ``lambda.functions`` to serve; with a
             configuration path only.
         event_format: ``"v2"`` for HTTP API events, ``"v1"`` for REST API ones.
@@ -81,143 +58,71 @@ class LambdaTestClient:
         event_format: EventFormat = "v2",
         **options: Any,
     ) -> None:
-        self._event_format = event_format
         self.application: Application | None = None
-        self._owned: LambdaHTTPHandler | None = None
-        if not isinstance(app, str):
-            if function is not None or options:
-                raise TypeError("function and create_app options need a configuration path")
-            self._handler = app
-            return
-        adapter = LambdaHTTPAdapter(function=function)
-        self.application = build_application(app, adapter=adapter, **options)
-        self._handler = self._owned = adapter.bind(self.application)
+        owned: LambdaHTTPHandler | None = None
+        if isinstance(app, str):
+            adapter = LambdaHTTPAdapter(function=function)
+            self.application = build_application(app, adapter=adapter, **options)
+            app = owned = adapter.bind(self.application)
+        elif function is not None or options:
+            raise TypeError("function and create_app options need a configuration path")
+        transport = _LambdaTransport(app, event_format, owned)
+        super().__init__(transport=transport, base_url="http://testserver")
 
-    def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        json: Any = None,
-        params: Mapping[str, str] | None = None,
-        content: bytes | str | None = None,
-    ) -> LambdaResponse:
-        """Send one request to the function and return its response."""
-        sent = {name.lower(): value for name, value in (headers or {}).items()}
-        body = content.encode() if isinstance(content, str) else content or b""
-        if json is not None:
-            body = jsonlib.dumps(json).encode()
-            sent.setdefault("content-type", "application/json")
-        target = urlsplit(url)
-        query = [*parse_qsl(target.query, keep_blank_values=True), *(params or {}).items()]
-        build = _rest_event if self._event_format == "v1" else _http_api_event
-        event = build(method.upper(), target.path or "/", query, sent, body)
-        return _response(self._handler(event, None))
 
-    def get(self, url: str, **kwargs: Any) -> LambdaResponse:
-        """Send a ``GET``; *kwargs* as :meth:`request`."""
-        return self.request("GET", url, **kwargs)
+class _LambdaTransport(httpx.BaseTransport):
+    """Answers each request with *handler*; closing it closes *owned*, the handler composed."""
 
-    def post(self, url: str, **kwargs: Any) -> LambdaResponse:
-        """Send a ``POST``; *kwargs* as :meth:`request`."""
-        return self.request("POST", url, **kwargs)
-
-    def put(self, url: str, **kwargs: Any) -> LambdaResponse:
-        """Send a ``PUT``; *kwargs* as :meth:`request`."""
-        return self.request("PUT", url, **kwargs)
-
-    def patch(self, url: str, **kwargs: Any) -> LambdaResponse:
-        """Send a ``PATCH``; *kwargs* as :meth:`request`."""
-        return self.request("PATCH", url, **kwargs)
-
-    def delete(self, url: str, **kwargs: Any) -> LambdaResponse:
-        """Send a ``DELETE``; *kwargs* as :meth:`request`."""
-        return self.request("DELETE", url, **kwargs)
+    def __init__(
+        self, handler: LambdaHandler, event_format: EventFormat, owned: LambdaHTTPHandler | None
+    ) -> None:
+        self._handler = handler
+        self._event_format: EventFormat = event_format
+        self._owned = owned
 
     def close(self) -> None:
-        """Close the handler this client composed; a handler passed in stays open."""
         if self._owned is not None:
             self._owned.close()
 
-    def __enter__(self) -> LambdaTestClient:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
-
-
-def _with_length(headers: dict[str, str], body: bytes) -> dict[str, str]:
-    """API Gateway forwards the ``content-length`` of a request with a body."""
-    length = {"content-length": str(len(body))} if body else {}
-    return {"host": _HOST, **length, **headers}
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        result = self._handler(_event(request, self._event_format), None)
+        headers = [*(result.get("headers") or {}).items()]
+        for name, values in (result.get("multiValueHeaders") or {}).items():
+            headers.extend((name, value) for value in values)
+        headers.extend(("set-cookie", cookie) for cookie in result.get("cookies") or ())
+        body: str = result.get("body") or ""
+        content = base64.b64decode(body) if result.get("isBase64Encoded") else body.encode()
+        return httpx.Response(result["statusCode"], headers=headers, content=content)
 
 
-def _http_api_event(
-    method: str, path: str, query: list[tuple[str, str]], headers: dict[str, str], body: bytes
-) -> dict[str, Any]:
-    return {
-        "version": "2.0",
-        "routeKey": "$default",
-        "rawPath": path,
-        "rawQueryString": urlencode(query),
-        "headers": _with_length(headers, body),
-        "requestContext": {
-            "domainName": _HOST,
-            "http": {
-                "method": method,
-                "path": path,
-                "protocol": "HTTP/1.1",
-                "sourceIp": _SOURCE_IP,
-            },
-            "requestId": "test-request",
-            "routeKey": "$default",
-            "stage": "$default",
-        },
-        "body": base64.b64encode(body).decode("ascii"),
+def _event(request: httpx.Request, event_format: EventFormat) -> dict[str, Any]:
+    """The API Gateway event of *request*; the path is decoded, as API Gateway passes it."""
+    headers: dict[str, str] = {}
+    for name, value in request.headers.multi_items():
+        headers[name] = f"{headers[name]},{value}" if name in headers else value
+    method, path, query = request.method, request.url.path, request.url.query.decode()
+    event: dict[str, Any] = {
+        "headers": headers,
+        "body": base64.b64encode(request.read()).decode("ascii"),
         "isBase64Encoded": True,
     }
-
-
-def _rest_event(
-    method: str, path: str, query: list[tuple[str, str]], headers: dict[str, str], body: bytes
-) -> dict[str, Any]:
-    """A REST API event: ``resource`` and no ``version`` key, as Mangum tells it apart."""
+    if event_format == "v2":
+        http = {"method": method, "path": path, "protocol": "HTTP/1.1", "sourceIp": "127.0.0.1"}
+        return event | {
+            "version": "2.0",
+            "routeKey": "$default",
+            "rawPath": path,
+            "rawQueryString": query,
+            "requestContext": {"http": http, "requestId": "test", "stage": "$default"},
+        }
     multi: dict[str, list[str]] = {}
-    for name, value in query:
+    for name, value in parse_qsl(query, keep_blank_values=True):
         multi.setdefault(name, []).append(value)
-    return {
+    # A REST event has "resource" and no "version" key: that is how Mangum tells them apart.
+    return event | {
         "resource": "/{proxy+}",
         "path": path,
         "httpMethod": method,
-        "headers": _with_length(headers, body),
-        "queryStringParameters": {name: values[-1] for name, values in multi.items()} or None,
         "multiValueQueryStringParameters": multi or None,
-        "requestContext": {
-            "httpMethod": method,
-            "identity": {"sourceIp": _SOURCE_IP},
-            "path": path,
-            "requestId": "test-request",
-            "stage": "test",
-        },
-        "body": base64.b64encode(body).decode("ascii"),
-        "isBase64Encoded": True,
+        "requestContext": {"identity": {"sourceIp": "127.0.0.1"}, "requestId": "test"},
     }
-
-
-def _response(result: Mapping[str, Any]) -> LambdaResponse:
-    raw = [(name, value) for name, value in (result.get("headers") or {}).items()]
-    for name, values in (result.get("multiValueHeaders") or {}).items():
-        raw.extend((name, value) for value in values)
-    raw.extend(("set-cookie", cookie) for cookie in result.get("cookies") or ())
-    body: str = result.get("body") or ""
-    return LambdaResponse(
-        status_code=result["statusCode"],
-        headers=Headers(raw=[(name.lower().encode(), value.encode()) for name, value in raw]),
-        content=base64.b64decode(body) if result.get("isBase64Encoded") else body.encode(),
-    )

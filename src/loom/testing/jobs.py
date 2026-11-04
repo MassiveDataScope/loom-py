@@ -1,9 +1,8 @@
 """Test SQS-driven Lambda functions and observe the jobs an application dispatches.
 
-* :func:`sqs_record` and :func:`sqs_event` build the event the Lambda SQS
-  handler receives, each body the ``JobEnvelope`` ``SQSJobService`` sends;
-  :func:`sqs_raw_record` carries any other body. :func:`failed_ids` reads
-  which records the handler asked SQS to retry.
+* :func:`sqs_record` builds a record of the event the Lambda SQS handler
+  receives, its body the ``JobEnvelope`` ``SQSJobService`` sends;
+  :func:`sqs_raw_record` carries any other body.
 * :class:`RecordingJobService` records each dispatch once the execution that
   made it commits; ``app.job_service: loom.testing:RecordingJobService``
   selects it.
@@ -11,10 +10,11 @@
 
 from __future__ import annotations
 
+import copy
 import functools
 import uuid
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -96,28 +96,15 @@ def sqs_raw_record(
     }
 
 
-def sqs_event(*records: dict[str, Any]) -> dict[str, Any]:
-    """The event of one SQS batch holding *records*."""
-    return {"Records": list(records)}
-
-
-def failed_ids(result: Mapping[str, Any]) -> list[str]:
-    """The message ids an SQS handler's *result* asks SQS to retry."""
-    return [failure["itemIdentifier"] for failure in result["batchItemFailures"]]
-
-
 @dataclass(frozen=True)
 class DispatchedJob:
-    """One dispatch :class:`RecordingJobService` saw committed."""
+    """One dispatch :class:`RecordingJobService` saw committed, as it was at dispatch."""
 
     job_type: type[Job[Any]]
     payload: dict[str, Any]
     params: dict[str, Any] | None
     queue: str
     identity: Identity
-
-
-_MATCHABLE = frozenset(field.name for field in fields(DispatchedJob)) - {"job_type"}
 
 
 class RecordingJobService:
@@ -135,7 +122,8 @@ class RecordingJobService:
             :meth:`run` only.
 
     Attributes:
-        dispatched: Every committed dispatch, in order.
+        dispatched: Every committed dispatch, in order; payload and params are
+            copied at dispatch, so a later mutation does not show.
     """
 
     def __init__(self, context: JobBackendContext | None = None) -> None:
@@ -177,8 +165,8 @@ class RecordingJobService:
         _ = (on_success, on_failure, countdown, priority, eta)
         record = DispatchedJob(
             job_type=job_type,
-            payload=payload or {},
-            params=params,
+            payload=copy.deepcopy(payload or {}),
+            params=copy.deepcopy(params),
             queue=queue or job_type.__queue__,
             identity=current_identity(),
         )
@@ -198,28 +186,4 @@ class RecordingJobService:
         _ = (on_all_success, on_any_failure)
         return JobGroup(
             handles=tuple(self.dispatch(job_type, payload=payload) for job_type, payload in jobs)
-        )
-
-    def assert_dispatched(self, job_type: type[Job[Any]], **match: Any) -> DispatchedJob:
-        """Return the first committed dispatch of *job_type* whose fields equal *match*.
-
-        Args:
-            job_type: The job dispatched.
-            **match: Values of ``payload``, ``params``, ``queue`` or ``identity``.
-
-        Raises:
-            TypeError: When *match* names another field.
-            AssertionError: When no committed dispatch matches.
-        """
-        unknown = sorted(set(match) - _MATCHABLE)
-        if unknown:
-            raise TypeError(f"assert_dispatched matches {sorted(_MATCHABLE)}, not {unknown}")
-        for record in self.dispatched:
-            if record.job_type is job_type and all(
-                getattr(record, name) == value for name, value in match.items()
-            ):
-                return record
-        seen = [(record.job_type.__qualname__, record.payload) for record in self.dispatched]
-        raise AssertionError(
-            f"{job_type.__qualname__} was not dispatched with {match}; dispatched: {seen}"
         )
