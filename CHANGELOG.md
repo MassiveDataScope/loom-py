@@ -132,6 +132,19 @@
   `self._session_scope()` passes `write=` too. A custom write is now refused
   or joins the invocation like a built-in one, instead of committing on its
   own when its store was not enlisted.
+- **stores:** post-commit actions run by the outcome of the stores they
+  depend on: a job dispatch or publish on every store of the execution that
+  queued it, a cache invalidation on its repository's store. With one store
+  two outcomes change. A commit whose result is unknown (a lost
+  acknowledgement, a cancellation during the commit) now runs the cache
+  invalidations it queued, and still sends no job. A store without
+  transactions whose use case raised, or whose invocation was poisoned, now
+  runs its cache invalidations too, and sends no job; a poisoned invocation
+  over such stores alone now fails with the poison's cause instead of
+  succeeding.
+- **stores:** `clear_pending_dispatches()` drops the job dispatches and
+  publishes of every store of the running invocation, and never a cache
+  invalidation.
 
 ### identity
 

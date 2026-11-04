@@ -6,7 +6,7 @@ a token created in a different context, in principle — the exception used
 to propagate straight into ``_run_lifecycle``'s ``except BaseException``,
 which called ``channel.discard()`` unconditionally: a write that had just
 committed lost every queued invalidation to an unrelated bookkeeping
-failure.  ``_ExecutionState.committed`` closes this: once set, the handler
+failure.  ``_ExecutionState.settled`` closes this: once set, the handler
 drains instead of discarding, and only logs a further drain failure so the
 teardown error is what actually propagates.
 """

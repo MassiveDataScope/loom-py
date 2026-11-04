@@ -29,7 +29,7 @@ from loom.core.cache.result_codec import (
     build_result_codec,
     to_payload,
 )
-from loom.core.engine.post_commit import active_channel
+from loom.core.engine.post_commit import store_channel
 from loom.core.logger import get_logger
 from loom.core.model import BoundaryValidationError, LoomType, is_pydantic_model, loom_type_of
 from loom.core.model.convert import to_struct
@@ -43,6 +43,7 @@ from loom.core.model.introspection import (
 )
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
+from loom.core.persistence.stores import store_of
 from loom.core.projection.loaders import resolve_model_reference
 from loom.core.repository import FilterParams, MutationEvent, PageParams, PageResult, Repository
 from loom.core.repository.abc.query import (
@@ -246,6 +247,8 @@ class CachedRepository(
         self._entity_name = getattr(repository, "entity_name", fallback_name)
         self._depends_on = self._parse_dependency_specs(self._collect_dependency_specs(repository))
         self._primary_key = _resolve_primary_key(repository)
+        model = getattr(repository, "model", None)
+        self._store = store_of(model) if isinstance(model, type) else None
         self._single_flight = SingleFlight(self._log_abandoned_load)
         self._rng = random.Random()
         self._log = get_logger(__name__).bind(repository=repository.__class__.__name__)
@@ -640,7 +643,8 @@ class CachedRepository(
           early and risking the F03 race this method otherwise closes is the
           lesser fault of the two.
 
-        Otherwise deferred through
+        Otherwise deferred, on the channel of the model's store
+        (:func:`~loom.core.engine.post_commit.store_channel`), through
         :meth:`~loom.core.engine.post_commit.PostCommitChannel.enqueue_priority`
         so the bump always precedes any job dispatch queued during the same
         pipeline (:mod:`loom.core.job.context`), which might otherwise read
@@ -651,7 +655,7 @@ class CachedRepository(
         it, nothing else; the affected entries' TTL is the backstop for
         that one remaining gap.
         """
-        channel = active_channel() if in_atomic_transaction() else None
+        channel = store_channel(self._store) if in_atomic_transaction() else None
         if channel is None:
             await self._resolver.bump_from_events((event,))
             return

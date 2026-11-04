@@ -5,6 +5,9 @@ unit of work (or when no channel is bound) and drains it after the commit.
 Actions enqueued while a channel is bound belong to that channel; a
 failed transaction discards them.  The owner unbinds the channel before
 draining, so an execution started from an action opens its own lifecycle.
+Inside an invocation scope the executor owns, :func:`store_channel` holds
+each action on the channel of the store that owns it until that store has
+ended (ADR 0008).
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ from typing import Protocol, TypeVar, cast, runtime_checkable
 from loom.core.errors import LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.logger import get_logger
+from loom.core.persistence.stores import StoreKey
+from loom.core.uow.scope import current_scope
 
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
@@ -132,12 +137,33 @@ class PostCommitChannel:
         self.enqueue_publish(action)
         return action
 
-    def discard(self) -> None:
-        """Drop every queued action without running it."""
+    def adopt(self, other: PostCommitChannel, *, priority_only: bool = False) -> None:
+        """Move ``other``'s actions to the end of this channel's lanes, emptying ``other``.
+
+        Args:
+            other: Channel whose actions move here.
+            priority_only: Move only its priority actions; the others are
+                logged as never ran (:func:`log_never_ran`) and dropped.
+        """
+        self._priority_actions += other._priority_actions
+        if priority_only:
+            for action in (*other._publish_actions, *other._actions):
+                log_never_ran(action)
+        else:
+            self._publish_actions += other._publish_actions
+            self._actions += other._actions
+        other.discard()
+
+    def discard_dispatches(self) -> None:
+        """Drop the publish and plain actions, keeping the priority ones (cache invalidations)."""
         self._publish_groups.clear()
-        self._priority_actions.clear()
         self._publish_actions.clear()
         self._actions.clear()
+
+    def discard(self) -> None:
+        """Drop every queued action without running it."""
+        self.discard_dispatches()
+        self._priority_actions.clear()
 
     async def drain(self, *, committed: bool) -> None:
         """Run every queued action; a failing one does not stop the others.
@@ -275,3 +301,29 @@ def reset_channel(token: Token[PostCommitChannel | None]) -> None:
 def active_channel() -> PostCommitChannel | None:
     """Return the channel bound to the current context, if any."""
     return _channel.get()
+
+
+def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
+    """Return the channel an action that depends on ``store`` is queued on.
+
+    In an invocation scope that settles its actions by store, owned by this
+    task, that is the channel of the stores the action depends on: ``store``
+    alone (a cache invalidation), or with ``None`` every store of the running
+    execution (a job dispatch: its primary and ``Joined`` stores), once
+    enlisted. Anywhere else it is :func:`active_channel`.
+
+    Args:
+        store: Store the action depends on; ``None`` for the running
+            execution's stores.
+    """
+    scope = current_scope()
+    if scope is None or scope.post_commit is None or not scope.owned_here():
+        return active_channel()
+    running = next((f.stores for f in reversed(scope.frames) if f.primary), ())
+    owners = frozenset((store,) if store else running)
+    if not owners or not owners <= scope.participants.keys():
+        return active_channel()
+    channel = scope.store_channels.get(owners)
+    if channel is None:
+        channel = scope.store_channels[owners] = PostCommitChannel()
+    return channel
