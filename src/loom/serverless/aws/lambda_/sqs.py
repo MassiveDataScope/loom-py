@@ -189,21 +189,7 @@ class _SQSBatch:
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
         records: list[Any] = event["Records"]
-        fifo = bool(records) and _is_fifo(records[0])
-        failures: list[dict[str, str]] = []
-        for index, record in enumerate(records):
-            if _out_of_time(context):
-                failures += _failed(records[index:])
-                break
-            try:
-                self._host.run(self._run(record, context))
-            except Exception as exc:
-                _log_failure(record, exc)
-                if not is_retryable(exc):
-                    continue
-                failures += _failed(records[index:] if fifo else [record])
-                if fifo:
-                    break
+        failures = self._failures(records, context)
         if self._report_failures:
             return {"batchItemFailures": failures}
         if failures:
@@ -213,6 +199,26 @@ class _SQSBatch:
                 code="sqs_batch_failed",
             )
         return {}
+
+    def _failures(self, records: list[Any], context: Any) -> list[dict[str, str]]:
+        fifo = bool(records) and _is_fifo(records[0])
+        failures: list[dict[str, str]] = []
+        for index, record in enumerate(records):
+            if _out_of_time(context):
+                return failures + _failed(records[index:])
+            if self._failed_and_retryable(record, context):
+                if fifo:
+                    return failures + _failed(records[index:])
+                failures += _failed([record])
+        return failures
+
+    def _failed_and_retryable(self, record: Any, context: Any) -> bool:
+        try:
+            self._host.run(self._run(record, context))
+        except Exception as exc:
+            _log_failure(record, exc)
+            return is_retryable(exc)
+        return False
 
     def close(self) -> None:
         """Close the application and its loop; a second call does nothing."""

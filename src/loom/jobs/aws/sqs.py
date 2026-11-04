@@ -50,6 +50,10 @@ _INVALID_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe
 _log = get_logger(__name__)
 
 
+def _is_fifo(url: str) -> bool:
+    return url.endswith(".fifo")
+
+
 class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
     """The ``sqs`` section: ``aws:`` client keys plus each logical queue's URL (``.fifo``: FIFO).
 
@@ -83,7 +87,7 @@ def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> N
                 f"{job_type.__qualname__} uses queue {job_type.__queue__!r}, which "
                 f"sqs.queues does not map to a URL"
             )
-        if url.endswith(".fifo") and job_type.__group_by__ is None:
+        if _is_fifo(url) and job_type.__group_by__ is None:
             raise SQSQueueConfigError(
                 f"{job_type.__qualname__} uses FIFO queue {job_type.__queue__!r} but "
                 "declares no __group_by__ payload field"
@@ -180,7 +184,7 @@ class _PendingSQSBatch:
         A FIFO queue resends nothing and stops at its first failure: a later
         message would overtake the failed one.
         """
-        fifo = url.endswith(".fifo")
+        fifo = _is_fifo(url)
         failed: list[_Failure] = []
         async with limit:
             for chunk in _chunks(sends, self.batch_size):
@@ -373,7 +377,7 @@ def _placement(
     job_type: type[Job[Any]], url: str, payload: Mapping[str, Any], task_id: str, delay: int
 ) -> dict[str, Any]:
     """``DelaySeconds`` on a standard queue; hashed group and deduplication ids on a FIFO one."""
-    if not url.endswith(".fifo"):
+    if not _is_fifo(url):
         return {"DelaySeconds": delay} if delay else {}
     if delay:
         raise SQSDispatchError("a FIFO queue takes no per-message delay", code="sqs_fifo_delay")
