@@ -364,7 +364,7 @@ def compose_application(
 
 def _elevation_modules(
     wirings: Mapping[StoreKey, PersistenceWiring],
-) -> tuple[Callable[[LoomContainer], None], ...]:
+) -> list[Callable[[LoomContainer], None]]:
     """Register the one elevation sink of the stores whose sessions carry elevation flags.
 
     Run once every store's models are prepared: the sink knows each store's
@@ -376,9 +376,9 @@ def _elevation_modules(
     """
     stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
     if not stores:
-        return ()
+        return []
     sink = ScopedElevationSink(stores)
-    return (lambda container: container.register_instance(ElevationSink, sink),)
+    return [lambda container: container.register_instance(ElevationSink, sink)]
 
 
 def _marker_reads(
