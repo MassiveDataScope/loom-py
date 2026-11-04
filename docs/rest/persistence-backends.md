@@ -542,6 +542,16 @@ stores:
 - `aws:` alone enables no `storage.dynamodb` source.
 - The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
 
+loom's own integration tests run these products (the `sqs` job backend and the
+Lambda SQS adapter, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
+SNS notifier) against LocalStack, configured only through `aws:`. Without
+`LOOM_AWS_IT_URL` they skip:
+
+```bash
+docker compose -f docker-compose.local.yaml up -d localstack
+LOOM_AWS_IT_URL=http://localhost:4566 uv run pytest tests/integration/aws -m integration
+```
+
 ## Health
 
 `GET /health` aggregates the readiness of the configured backend; its shape, the
