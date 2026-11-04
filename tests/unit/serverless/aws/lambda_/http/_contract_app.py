@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import importlib
 import time
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -211,38 +209,3 @@ def bearer(subject: str, *roles: str) -> dict[str, str]:
     """The ``Authorization`` header of a valid token for *subject* holding *roles*."""
     claims = {"sub": subject, "aud": AUDIENCE, "roles": list(roles), "exp": int(time.time()) + 600}
     return {"authorization": f"Bearer {jwt.encode(claims, SECRET, algorithm='HS256')}"}
-
-
-def http_api_event(
-    method: str, target: str, headers: Mapping[str, str], body: bytes = b""
-) -> dict[str, Any]:
-    """An API Gateway HTTP API (payload 2.0) event for *target*, a path and query string.
-
-    API Gateway forwards the ``content-length`` of a request with a body.
-    """
-    length = {"content-length": str(len(body))} if body else {}
-    path, _, query = target.partition("?")
-    return {
-        "version": "2.0",
-        "routeKey": "$default",
-        "rawPath": path,
-        "rawQueryString": query,
-        "headers": {"host": "api.example", **length, **headers},
-        "requestContext": {
-            "accountId": "123456789012",
-            "apiId": "contract",
-            "domainName": "api.example",
-            "http": {
-                "method": method,
-                "path": path,
-                "protocol": "HTTP/1.1",
-                "sourceIp": "203.0.113.7",
-                "userAgent": "pytest",
-            },
-            "requestId": "contract-request",
-            "routeKey": "$default",
-            "stage": "$default",
-        },
-        "body": base64.b64encode(body).decode("ascii"),
-        "isBase64Encoded": True,
-    }
