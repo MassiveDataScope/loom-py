@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
-from typing import Any
+from collections.abc import Callable, Hashable
+from typing import Any, cast
 
-from loom.core.config.aws import aws_section
-from loom.core.config.context import ConfigContext
+from loom.core.config.aws import decode_aws
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import ConfigKey
-from loom.core.config.loader import convert_section
+from loom.core.config.keys import INTERPOLATION, ConfigKey
 from loom.core.connections.aws import AwsClientConfig, aws_island
 from loom.core.plugins.optional import MissingExtraError
 
 _AWS_EXTRA = "config-ssm"
+_CLIENT = ("client",)  # a resolver key is a string
 
 
 def aws_client(service: str, region: str | None, *, resolver: str, root: Any) -> Any:
@@ -46,36 +47,61 @@ def aws_client(service: str, region: str | None, *, resolver: str, root: Any) ->
             f"boto3 is required for {resolver}. "
             "Install it with: pip install loom-kernel[config-ssm]"
         ) from exc
-    raw = None if root is None else ConfigContext(root).raw(ConfigKey.AWS)
-    for key, value in raw.items() if isinstance(raw, dict) else ():
-        if isinstance(value, str) and "${" in value:
+    written = None if root is None else _written_aws(root)
+    for key, value in written.items() if isinstance(written, dict) else ():
+        if isinstance(value, str) and INTERPOLATION in value:
             raise ConfigError(
                 f"{ConfigKey.AWS}.{key} is a placeholder, but {resolver} reads "
                 f"{ConfigKey.AWS} as written: write the value, or leave it out for boto3 "
                 "to read its environment (AWS_REGION, AWS_ENDPOINT_URL)"
             )
-    written = aws_section(raw)
-    settings = written if region is None else {**written, "region": region}
-    config = convert_section(settings, ConfigKey.AWS, AwsClientConfig)
+    overrides = {} if region is None else {"region": region}
+    config = decode_aws(written, {}, ConfigKey.AWS, AwsClientConfig, **overrides)
     return island.build_aws_client(service, config)
 
 
-CLIENT = ("client",)
-"""Key of the client in a resolver's cache; a resolver key is a string."""
-
-
-def root_cache(root: Any, name: str, unbound: dict[Any, Any]) -> dict[Any, Any]:
-    """Return the cache of resolver *name* for configuration *root*, *unbound* outside one.
-
-    OmegaConf caches no resolver that receives the root, so the client and
-    the values live in its cache of the root: one per configuration.
-    """
-    if root is None:
-        return unbound
+def _written_aws(root: Any) -> object:
+    """``aws:`` of *root* as written; the rest of the configuration is not converted."""
     from omegaconf import OmegaConf
 
-    cache: dict[Any, Any] = OmegaConf.get_cache(root)[name]
-    return cache
+    only_aws = OmegaConf.to_container(OmegaConf.masked_copy(root, ConfigKey.AWS), resolve=False)
+    return cast("dict[str, object]", only_aws).get(ConfigKey.AWS)
+
+
+def resolve_cached(
+    key: str,
+    root: Any,
+    *,
+    name: str,
+    label: str,
+    unbound: dict[Hashable, Any],
+    client: Callable[[], Any],
+    fetch: Callable[..., str],
+    logger: logging.Logger,
+) -> object:
+    """Resolve *key* with ``fetch(client, path, label=key)``, once per configuration *root*.
+
+    OmegaConf caches no resolver that receives the root, so the client
+    *client* builds and the values live in its cache of the root, *unbound*
+    outside one.
+    """
+    cache: dict[Hashable, Any] = unbound
+    if root is not None:
+        from omegaconf import OmegaConf
+
+        cache = OmegaConf.get_cache(root)[name]
+    if key in cache:
+        return cache[key]
+    if not key:
+        raise ConfigError(f"{label} key must not be empty")
+    base, json_keys = _split_resolver_key(key)
+    path = _expand_env_vars(base)
+    logger.info("%s_resolver: fetching %s", name, key)
+    if _CLIENT not in cache:
+        cache[_CLIENT] = client()
+    raw = fetch(cache[_CLIENT], path, label=key)
+    cache[key] = _navigate_json(raw, json_keys, key) if json_keys else raw
+    return cache[key]
 
 
 _ENV_VAR_PATTERN = re.compile(r"%([A-Z][A-Z0-9_]*)%")

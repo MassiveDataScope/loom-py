@@ -23,6 +23,7 @@ from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.persistence.stores import NONE_BACKEND
+from loom.jobs.aws import is_fifo_queue
 from loom.serverless.aws.lambda_._refusals import refuse_manifest_agents, refuse_unserved_config
 from loom.serverless.aws.lambda_.functions import reports_batch_item_failures
 
@@ -59,6 +60,9 @@ class SQSHandler(Protocol):
 class LambdaSQSAdapter:
     """Compose jobs with Lambda pool defaults and serve SQS batches."""
 
+    _report_batch_item_failures: bool
+    """Set by :meth:`recipe`, from the function ``app.entry`` names."""
+
     def __init__(
         self,
         *,
@@ -75,7 +79,6 @@ class LambdaSQSAdapter:
                 deferred for this adapter version.
         """
         self._jobs = tuple(jobs)
-        self._report_batch_item_failures = True
         self._use_cases = tuple(use_cases)
         self._metrics = metrics
         self._declared: dict[str, type[Job[Any]]] | None = None
@@ -180,7 +183,7 @@ class _SQSBatch:
         jobs: Mapping[str, type[Job[Any]]],
         host: LoopHost,
         *,
-        report_failures: bool = True,
+        report_failures: bool,
     ) -> None:
         self._application = application
         self._jobs = jobs
@@ -291,7 +294,7 @@ def _failed(records: Sequence[Any]) -> list[dict[str, str]]:
 
 
 def _is_fifo(record: Any) -> bool:
-    return isinstance(record, Mapping) and str(record.get("eventSourceARN", "")).endswith(".fifo")
+    return isinstance(record, Mapping) and is_fifo_queue(str(record.get("eventSourceARN", "")))
 
 
 def _out_of_time(context: Any) -> bool:
