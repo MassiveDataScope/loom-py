@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import threading
-from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -549,13 +548,16 @@ def _queued(service: SQSJobService, channel: PostCommitChannel, *jobs: type[Job[
         reset_channel(token)
 
 
-async def _kill_the_shield(drain: asyncio.Task[None]) -> None:
-    """Cancel the drain, then its shielded task: what closing the loop does."""
+async def _kill_the_shield(drain: asyncio.Task[None]) -> list[asyncio.Task[None]]:
+    """Cancel the drain, then its shielded tasks (what closing the loop does); return them."""
     drain.cancel()
     with pytest.raises(asyncio.CancelledError):
         await drain
-    for shielded in list(post_commit._shielded_tasks):
-        shielded.cancel()
+    loop = asyncio.get_running_loop()
+    shielded = [task for task in post_commit._shielded_tasks if task.get_loop() is loop]
+    for task in shielded:
+        task.cancel()
+    return shielded
 
 
 async def _until_logged(caplog: pytest.LogCaptureFixture, event: str) -> None:
@@ -603,21 +605,24 @@ async def test_a_dead_batch_holds_its_slot_until_the_running_call_returns(
 
 
 async def test_a_call_still_waiting_for_a_thread_when_the_batch_dies_sends_nothing(
-    client: _Client, caplog: pytest.LogCaptureFixture
+    client: _Client, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    loop = asyncio.get_running_loop()
-    pool = ThreadPoolExecutor(max_workers=1)
-    loop.set_default_executor(pool)
-    busy = threading.Event()
-    occupied = loop.run_in_executor(None, busy.wait, 5)
+    waiting, thread_free = asyncio.Event(), asyncio.Event()
+
+    async def to_thread(func: Callable[..., Any], /, *args: Any) -> Any:
+        """A thread pool whose only thread is busy until ``thread_free``."""
+        waiting.set()
+        await thread_free.wait()
+        return func(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", to_thread)
     channel = PostCommitChannel()
     (queued,) = _queued(_service(client), channel, EmailJob)
     drain = asyncio.create_task(channel.drain(committed=True))
-    await asyncio.sleep(0.05)
-    await _kill_the_shield(drain)
-    busy.set()
-    await occupied
-    await _until_logged(caplog, _NEVER_RAN)
+    await waiting.wait()
+    shielded = await _kill_the_shield(drain)
+    thread_free.set()
+    await asyncio.gather(*shielded, return_exceptions=True)
 
     assert [fields["task_id"] for fields in _logged(caplog, _NEVER_RAN)] == [queued]
     assert (client.entered.is_set(), client.batches) == (False, [])
