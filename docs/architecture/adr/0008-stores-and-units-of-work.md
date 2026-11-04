@@ -108,6 +108,10 @@ Callers ask the capability, never the backend's name.
   enlisted. Its value depends on the context it is read from, like
   `request.user`, and it raises `ScopeOwnershipError` from a `gather` child,
   a thread or a task that outlives its use case.
+- A repository's own methods declare their write intent too:
+  `@with_session_scope(write=...)` and `_session_scope(write=...)` require
+  it, so a custom write is refused or recorded exactly as a built-in one, and
+  a custom read of a store that is not enlisted still uses a session per call.
 - No facade reads the session of every backend: it would return `object` and
   lose the typing. `in_atomic_transaction()` stays, because it answers
   another question for third parties and the ETL.

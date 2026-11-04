@@ -33,7 +33,7 @@ class TestRepositorySessionScope:
         )
         mock_session.new = {"pending"}
 
-        async with repo._session_scope(None) as session:
+        async with repo._session_scope(None, write=False) as session:
             assert session is mock_session
 
         mock_session.commit.assert_awaited_once()
@@ -55,7 +55,7 @@ class TestRepositorySessionScope:
         mock_session.dirty = set()
         mock_session.deleted = set()
 
-        async with repo._session_scope(None) as session:
+        async with repo._session_scope(None, write=False) as session:
             assert session is mock_session
 
         mock_session.commit.assert_awaited_once()
@@ -74,7 +74,7 @@ class TestRepositorySessionScope:
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
-        scope = repo._session_scope(None)
+        scope = repo._session_scope(None, write=False)
         with pytest.raises(RuntimeError, match="boom"):
             async with scope:
                 raise RuntimeError("boom")
@@ -94,7 +94,7 @@ class TestRepositorySessionScope:
         )
         explicit_session = AsyncMock()
 
-        async with repo._session_scope(explicit_session):
+        async with repo._session_scope(explicit_session, write=False):
             pass
 
         explicit_session.commit.assert_not_awaited()
@@ -110,7 +110,7 @@ class TestWithSessionScopeDecorator:
         dummy_model: type,
     ) -> None:
         class _CustomRepo(RepositorySQLAlchemy[msgspec.Struct, int]):
-            @with_session_scope
+            @with_session_scope(write=True)
             async def custom_operation(self, session: Any, value: int) -> int:
                 await session.flush()
                 return value + 1
@@ -134,7 +134,7 @@ class TestWithSessionScopeDecorator:
         dummy_model: type,
     ) -> None:
         class _CustomRepo(RepositorySQLAlchemy[msgspec.Struct, int]):
-            @with_session_scope
+            @with_session_scope(write=True)
             async def custom_operation(self, session: Any, value: int) -> int:
                 await session.flush()
                 return value + 1

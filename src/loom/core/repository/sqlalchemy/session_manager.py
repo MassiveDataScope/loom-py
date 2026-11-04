@@ -196,8 +196,9 @@ class SessionManager:
         Raises:
             ScopeOwnershipError: See :attr:`active_session`; a write is also
                 refused outside the owning task when the store is not enlisted.
-            ForeignSessionError: See :attr:`active_session`, or when a write
-                targets a store the running execution did not declare.
+            ForeignSessionError: See :attr:`active_session`.
+            UndeclaredStoreWrite: When a write targets a store the running
+                execution did not declare.
         """
         return cast("AsyncSession | None", current_handle(self.store, self, write=write))
 

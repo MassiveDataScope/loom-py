@@ -11,12 +11,17 @@
     ``self.main_repo``, or through ``LoadById``, ``Load`` or ``Exists``. Every
     entry point raises it before serving, from ``verify``, instead of failing
     the first request or task.
+
+``JoinedAutocommitStore``
+    A use case declares ``Joined[...]`` on a store that cannot roll back.
+    Composition raises it at startup.
 """
 
 from __future__ import annotations
 
 from enum import unique
 
+from loom.core.config import ConfigError
 from loom.core.di.container import ResolutionError
 from loom.core.errors.codes import CompileIssue, IssueCode, Template
 
@@ -24,6 +29,17 @@ from loom.core.errors.codes import CompileIssue, IssueCode, Template
 @unique
 class UseCaseErrorCode(IssueCode):
     """Catalogue of the use-case wiring failures and the issue each renders."""
+
+    JOINED_AUTOCOMMIT_STORE = (
+        "JOINED_AUTOCOMMIT_STORE",
+        Template(
+            "{component} declares Joined on store {store}, which cannot roll back, so it "
+            "cannot commit with the invocation. Write to it from a use case whose primary "
+            "store it is, or after the commit, through the post-commit channel.",
+            field="{store}",
+            component="{component}",
+        ),
+    )
 
     UNSERVED_MODEL = (
         "UNSERVED_MODEL",
@@ -68,4 +84,17 @@ class UnservedModelError(ResolutionError):
         return cls(issue, model)
 
 
-__all__ = ["UnservedModelError", "UseCaseErrorCode"]
+class JoinedAutocommitStore(ConfigError):
+    """Raised at startup when a use case declares ``Joined`` on a store that cannot roll back.
+
+    Attributes:
+        issue: The typed issue: code, component (the use case or job), field
+            (the store) and message.
+    """
+
+    def __init__(self, issue: CompileIssue[UseCaseErrorCode]) -> None:
+        super().__init__(issue.message)
+        self.issue = issue
+
+
+__all__ = ["JoinedAutocommitStore", "UnservedModelError", "UseCaseErrorCode"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import typing
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final, get_args, get_origin
 
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.events import EventKind, RuntimeEvent
@@ -23,7 +23,20 @@ from loom.core.engine.plan import (
 )
 from loom.core.job.job import Job
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.model import UnsupportedBoundaryType, loom_type
+from loom.core.model import BaseModel, UnsupportedBoundaryType, loom_type
+from loom.core.model.introspection import resolve_type_hints
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
+from loom.core.repository.abc.repo_for import (
+    BulkCreatable,
+    Countable,
+    Creatable,
+    Deletable,
+    Listable,
+    Readable,
+    RepoFor,
+    Updatable,
+)
+from loom.core.use_case.joined import joined_repository
 from loom.core.use_case.markers import (
     LookupKind,
     SourceKind,
@@ -166,6 +179,7 @@ class UseCaseCompiler:
         )
         self._emit(RuntimeEvent(kind=EventKind.COMPILE_DONE, use_case_name=uc_name))
 
+        primary = _primary_store(use_case_type)
         plan = ExecutionPlan(
             use_case_type=use_case_type,
             param_bindings=tuple(bindings.param_bindings),
@@ -179,6 +193,8 @@ class UseCaseCompiler:
             agent_bindings=tuple(bindings.agent_bindings),
             mcp_bindings=tuple(bindings.mcp_bindings),
             query_binding=bindings.query_binding,
+            primary=primary,
+            joined=_joined_stores(use_case_type) - {primary},
         )
         use_case_type.__execution_plan__ = plan
         return plan
@@ -450,6 +466,43 @@ class UseCaseCompiler:
                     f"{use_case_type.__qualname__}.execute: "
                     f"Exists({es.entity_type.__name__}): from_command requires Input() parameter"
                 )
+
+
+def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
+    """The ``__store__`` of the use case's main model; the default store without one."""
+    model = getattr(use_case_type, "__loom_main_model__", None)
+    return DEFAULT_STORE if model is None else store_of(model)
+
+
+_REPOSITORY_CONTRACTS: Final = frozenset(
+    {Readable, Creatable, BulkCreatable, Updatable, Deletable, Listable, Countable, RepoFor}
+)
+
+
+def _joined_stores(use_case_type: type[Compilable]) -> frozenset[StoreKey]:
+    """The stores of the ``Joined[...]`` repositories the constructor injects.
+
+    Raises:
+        CompilationError: When a ``Joined[...]`` repository annotation names
+            no model, so its store is unknown.
+    """
+    hints = resolve_type_hints(use_case_type.__init__, include_extras=True)
+    stores: set[StoreKey] = set()
+    for name, hint in hints.items():
+        repository = joined_repository(hint)
+        if repository is None:
+            continue
+        args = get_args(repository)
+        model = args[0] if len(args) == 1 else None
+        contract = get_origin(repository) in _REPOSITORY_CONTRACTS
+        if not (contract and isinstance(model, type) and issubclass(model, BaseModel)):
+            raise CompilationError(
+                f"{use_case_type.__qualname__}.__init__: {name}: Joined[{repository!r}] "
+                "must wrap a repository annotation naming its model, such as "
+                "Joined[RepoFor[Model]]"
+            )
+        stores.add(store_of(model))
+    return frozenset(stores)
 
 
 def _fn_accepts_context(fn: Any) -> bool:

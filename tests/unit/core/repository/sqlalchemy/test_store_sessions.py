@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
-from loom.core.errors.errors import ForeignSessionError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
@@ -28,11 +27,18 @@ from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, InvocationScope, ScopeOwnershipError, invocation
+from loom.core.uow.scope import (
+    Frame,
+    InvocationScope,
+    ScopeOwnershipError,
+    UndeclaredStoreWrite,
+    invocation,
+)
 from tests.helpers.elevation import declaring
 from tests.unit.core.conftest import SessionManagerFactory
 
 AUDIT = StoreKey("audit")
+JOINED_AUDIT = Frame(DEFAULT_STORE, frozenset({AUDIT}))
 
 
 def _manager(store: StoreKey, url: str = "sqlite+aiosqlite:///:memory:") -> SessionManager:
@@ -105,7 +111,7 @@ class TestTransactional:
         service = _AuditService(stores.audit)
 
         async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-            with pytest.raises(ForeignSessionError, match="'audit'"):
+            with pytest.raises(UndeclaredStoreWrite, match="'audit'"):
                 await service.record()
 
         assert service.sessions == []
@@ -116,7 +122,7 @@ class TestTransactional:
         service = _AuditService(stores.audit)
 
         async with invocation(stores.coordinator()):
-            with pytest.raises(ForeignSessionError, match="'audit'.*this invocation"):
+            with pytest.raises(UndeclaredStoreWrite, match="'audit'.*this invocation"):
                 await service.record()
 
         assert service.sessions == []
@@ -125,7 +131,7 @@ class TestTransactional:
         service = _AuditService(stores.audit)
 
         async with invocation(stores.coordinator()):
-            with pytest.raises(ForeignSessionError, match="with no store enlisted"):
+            with pytest.raises(UndeclaredStoreWrite, match="with no store enlisted"):
                 await service.record()
 
     async def test_the_refusal_names_the_stores_this_invocation_enlisted(
@@ -135,7 +141,7 @@ class TestTransactional:
 
         async with invocation(stores.coordinator()) as scope:
             await scope.coordinator.enlist(scope, DEFAULT_STORE)
-            with pytest.raises(ForeignSessionError, match="store 'default' \\(this invocation\\)"):
+            with pytest.raises(UndeclaredStoreWrite, match="enlisted only store default$"):
                 await service.record()
 
     async def test_the_refusal_never_prints_the_url_s_query(self, stores: _Stores) -> None:
@@ -143,7 +149,7 @@ class TestTransactional:
         service = _AuditService(manager)
         try:
             async with invocation(stores.coordinator()):
-                with pytest.raises(ForeignSessionError) as raised:
+                with pytest.raises(UndeclaredStoreWrite) as raised:
                     await service.record()
         finally:
             await manager.dispose()
@@ -297,37 +303,75 @@ class TestRepositoryWriteIntent:
 
 
 class _AuditRows(RepositorySQLAlchemy[_Row, int]):
-    @with_session_scope
+    @with_session_scope(write=True)
     async def insert_raw(self, session: AsyncSession, name: str) -> None:
         await session.execute(
             text("INSERT INTO store_session_rows (name) VALUES (:name)"), {"name": name}
         )
+
+    @with_session_scope(write=False)
+    async def count_raw(self, session: AsyncSession) -> int:
+        result = await session.execute(text("SELECT count(*) FROM store_session_rows"))
+        return int(result.scalar_one())
 
 
 class _InvocationFailed(Exception):
     pass
 
 
-async def _write_outside_then_fail(stores: _Stores, audit: _AuditRows) -> None:
-    """Inside an invocation of the default store, write to audit by hand, then fail."""
-    async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
-        await audit.insert_raw("outside")
-        raise _InvocationFailed
+@pytest.fixture
+async def audit_rows(stores: _Stores) -> _AuditRows:
+    compile_all(_Row)
+    compiled = get_compiled(_Row)
+    assert compiled is not None
+    async with stores.audit.engine.begin() as connection:
+        await connection.run_sync(compiled.metadata.create_all)
+    return _AuditRows(stores.audit, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
 
 
 class TestWithSessionScope:
-    async def test_a_custom_write_to_a_store_not_enlisted_commits_per_call_today(
-        self, stores: _Stores
+    """A custom method declares its write intent (T079)."""
+
+    async def test_a_custom_write_to_an_undeclared_store_is_refused_and_persists_nothing(
+        self, stores: _Stores, audit_rows: _AuditRows
     ) -> None:
-        """Pins today's behaviour: T079 (PR 6) refuses this write instead."""
-        compile_all(_Row)
-        compiled = get_compiled(_Row)
-        assert compiled is not None
-        async with stores.audit.engine.begin() as connection:
-            await connection.run_sync(compiled.metadata.create_all)
-        audit = _AuditRows(stores.audit, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            with pytest.raises(UndeclaredStoreWrite, match="'audit'"):
+                await audit_rows.insert_raw("outside")
 
+        assert await audit_rows.count() == 0
+
+    async def test_a_custom_write_to_a_joined_store_rolls_back_with_the_invocation(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
         with pytest.raises(_InvocationFailed):
-            await _write_outside_then_fail(stores, audit)
+            await _write_joined_then_fail(stores, audit_rows)
 
-        assert await audit.count() == 1
+        assert await audit_rows.count() == 0
+
+    async def test_a_custom_write_to_a_joined_store_is_recorded_for_the_commit_order(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async with invocation(stores.coordinator()) as scope, scope.frame(JOINED_AUDIT):
+            await audit_rows.insert_raw("joined")
+            wrote = scope.participants[AUDIT].wrote
+
+        assert (wrote, await audit_rows.count()) == (True, 1)
+
+    async def test_a_custom_read_of_an_undeclared_store_runs_in_a_session_of_its_own(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        await audit_rows.insert_raw("before")
+
+        async with invocation(stores.coordinator()) as scope, scope.frame(Frame(DEFAULT_STORE)):
+            counted = await audit_rows.count_raw()
+            enlisted = AUDIT in scope.participants
+
+        assert (counted, enlisted) == (1, False)
+
+
+async def _write_joined_then_fail(stores: _Stores, audit: _AuditRows) -> None:
+    """Inside an invocation that joins audit, write to it by hand, then fail."""
+    async with invocation(stores.coordinator()) as scope, scope.frame(JOINED_AUDIT):
+        await audit.insert_raw("joined")
+        raise _InvocationFailed

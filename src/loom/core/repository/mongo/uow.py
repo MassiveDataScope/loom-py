@@ -81,6 +81,8 @@ class MongoSessions:
             ScopeOwnershipError: See :attr:`active_session`; a write is also
                 refused outside the owning task when the store is not enlisted.
             ForeignSessionError: See :attr:`active_session`.
+            UndeclaredStoreWrite: When a write targets a store the running
+                execution did not declare.
         """
         return cast(
             "AsyncClientSession | None", current_handle(self._store, self._client, write=write)

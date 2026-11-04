@@ -26,7 +26,7 @@ from tests.integration.fake_repo.product.schemas import CreateProduct, UpdatePro
 class _CustomProductRepository(RepositorySQLAlchemy[Product, int]):
     """Example custom repository using the compiled CoreModel read path."""
 
-    @with_session_scope
+    @with_session_scope(write=False)
     async def list_ids_with_price_gt(self, session: Any, *, min_price: float) -> list[int]:
         core_model = self._effective_core_model
         stmt = (

@@ -290,7 +290,7 @@ class SQLAlchemyContextMixin(Generic[OutputT, IdT]):
 
     @abstractmethod
     def _session_scope(
-        self, session: AsyncSession | None = None, *, write: bool = False
+        self, session: AsyncSession | None = None, *, write: bool
     ) -> AbstractAsyncContextManager[AsyncSession]:
         """Open the session the operation runs in, reusing *session* when given.
 
@@ -457,7 +457,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
                 every key value.
         """
         clause = self._id_clause(obj_id)
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=False) as scoped_session:
             core_model = self._effective_core_model
             stmt = core_model.select(profile).where(clause).limit(1)
             loaded = await core_model.fetch_one(scoped_session, stmt, profile=profile)
@@ -470,7 +470,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         profile: str = "default",
     ) -> OutputT | None:
         """Fetch one entity by equality over an arbitrary column field."""
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=False) as scoped_session:
             core_model = self._effective_core_model
             column = self._column_for_field(field)
             stmt = core_model.select(profile).where(column == to_comparison_value(column, value))
@@ -485,7 +485,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         profile: str = "default",
     ) -> PageResult[OutputT]:
         """Fetch a paginated entity list and total count."""
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=False) as scoped_session:
             core_model = self._effective_core_model
             stmt = core_model.select(profile).order_by(*self._id_columns())
             stmt = self._apply_offset_page_filters(stmt, filter_params)
@@ -525,7 +525,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
             queries, :class:`~loom.core.repository.abc.query.CursorResult`
             for cursor queries.
         """
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=False) as scoped_session:
             sa_model = self._effective_sa_model
             compiler = QuerySpecCompiler(
                 sa_model,
@@ -630,7 +630,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         return await self._exists_where(column == to_comparison_value(column, value))
 
     async def _exists_where(self, clause: Any) -> bool:
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=False) as scoped_session:
             result = await scoped_session.execute(select(exists().where(clause)))
             return bool(result.scalar())
 
@@ -640,7 +640,7 @@ class SQLAlchemyReadMixin(SQLAlchemyContextMixin[OutputT, IdT], Generic[OutputT,
         Returns:
             Total row count as an integer.
         """
-        async with self._session_scope() as scoped_session:
+        async with self._session_scope(write=False) as scoped_session:
             stmt = select(func.count()).select_from(self._effective_sa_model)
             result = await scoped_session.execute(stmt)
             return int(result.scalar() or 0)

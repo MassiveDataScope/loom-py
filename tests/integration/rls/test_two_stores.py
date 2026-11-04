@@ -47,11 +47,10 @@ from loom.core.repository.sqlalchemy.rls import (
 )
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, current_scope, invocation
+from loom.core.uow.scope import Frame, UndeclaredStoreWrite, current_scope, invocation
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
@@ -489,8 +488,8 @@ async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
     before = await two_servers.row_counts()
     async with _started(two_servers.context()) as stores:
         with pytest.raises(
-            ForeignSessionError,
-            match=rf"a write to store '{inner}' .* declares only store '{outer}'$",
+            UndeclaredStoreWrite,
+            match=rf"a write to store '{inner}' .* declares only store '{outer}'; ",
         ):
             await _as(U1, lambda: _write_both(stores[outer], stores[inner]))
 

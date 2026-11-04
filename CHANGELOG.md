@@ -32,6 +32,16 @@
   (`app.job_service: loom.testing:RecordingJobService`) records each dispatch
   after the commit. The `testing` extra now includes `httpx`.
 
+### stores
+
+- **stores:** `Joined[...]` (`loom.core.use_case`) wraps a repository a use
+  case or job injects, such as `Joined[RepoFor[AuditEntry]]`, to declare that
+  it writes to that repository's store as well as to its primary store, the
+  `__store__` of its main model. Composition refuses `Joined` on a store that
+  cannot roll back (`UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE`). A model of a
+  store other than `default` still fails at startup until several stores
+  compose.
+
 ### config
 
 - **config:** a top-level `aws:` section (`region`, `url`, `profile`, `pool`,
@@ -109,6 +119,19 @@
   configured. Set `app.job_service` to keep the choice explicit.
 - **jobs:** the Lambda SQS adapter logs the type of its job service instead
   of assuming Celery for anything that is not inline.
+
+### stores
+
+- **stores:** a write to a store the running use case did not declare raises
+  `UndeclaredStoreWrite` (`undeclared_store_write`, HTTP 500) before the
+  driver is called, where it raised `ForeignSessionError`. So does a
+  `@transactional` call inside an invocation that did not enlist its store.
+- **stores:** `with_session_scope` takes the method's write intent:
+  `@with_session_scope(write=True)` or `@with_session_scope(write=False)`; a
+  bare `@with_session_scope` fails at import. A repository subclass calling
+  `self._session_scope()` passes `write=` too. A custom write is now refused
+  or joins the invocation like a built-in one, instead of committing on its
+  own when its store was not enlisted.
 
 ### identity
 
