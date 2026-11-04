@@ -1,17 +1,18 @@
-"""A write to an undeclared Mongo store sends no command to the replica set (ADR 0008, T046).
+"""Two Mongo stores on one replica set, each with a client of its own (ADR 0008, T046, T048).
 
-Two stores on one replica set, each with a client of its own; the audit
-client's command listener sees every command sent through it.
+The audit client's command listener sees every command sent through it.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+import pymongo
 import pytest
 from pymongo import AsyncMongoClient
 from pymongo.monitoring import (
@@ -25,8 +26,19 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, UndeclaredStoreWrite, invocation
+from loom.core.uow.coordinator import (
+    InvocationOutcome,
+    OrderedCommits,
+    RolledBack,
+    StoreOutcome,
+    Uncertain,
+)
+from loom.core.uow.scope import (
+    ForeignSessionError,
+    Frame,
+    UndeclaredStoreWrite,
+    invocation,
+)
 from tests.unit.core.repository.contract.conftest import CreateOrder, Order, OrderStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]
@@ -128,3 +140,68 @@ async def test_a_joined_write_commits_with_the_invocation(
 
     assert audit.commands.names[-2:] == ["insert", "commitTransaction"]
     assert await audit.orders.count() == 1
+
+
+async def test_each_store_joins_a_session_of_its_own_client(
+    mongo_client: AsyncMongoClient[Any], audit: _Audit
+) -> None:
+    async with (
+        invocation(_coordinator(mongo_client, audit)) as scope,
+        scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
+    ):
+        default = MongoSessions(mongo_client).active_session
+        joined = MongoSessions(audit.client, AUDIT).active_session
+        assert default is not None
+        assert joined is not None
+        assert default.client is mongo_client
+        assert joined.client is audit.client
+        with pytest.raises(ForeignSessionError):
+            MongoSessions(audit.client)(True)
+
+
+async def test_a_commit_the_server_refuses_sends_no_abort(
+    mongo_client: AsyncMongoClient[Any], audit: _Audit, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with invocation(_audit_only(audit)) as scope:
+        async with scope.frame(Frame(AUDIT)):
+            await audit.orders.create(_order())
+            await mongo_client.admin.command({"killSessions": [_lsid(audit)]})
+        with caplog.at_level(logging.ERROR):
+            outcome = await scope.coordinator.finish(scope, None)
+
+    assert _outcome_types(outcome) == [RolledBack]
+    assert audit.commands.names[-1] == "commitTransaction"
+    assert "abortTransaction" not in audit.commands.names
+    assert "UoWRollbackFailed" not in caplog.text
+    assert await audit.orders.count() == 0
+
+
+async def test_a_commit_of_unknown_result_is_uncertain_and_sends_no_abort(
+    mongo_client: AsyncMongoClient[Any], audit: _Audit
+) -> None:
+    async with invocation(_audit_only(audit)) as scope:
+        async with scope.frame(Frame(AUDIT)):
+            await audit.orders.create(_order())
+            lsid = _lsid(audit)
+        try:
+            with pymongo.timeout(1e-6):
+                outcome = await scope.coordinator.finish(scope, None)
+        finally:
+            await mongo_client.admin.command({"killSessions": [lsid]})
+
+    assert _outcome_types(outcome) == [Uncertain]
+    assert "abortTransaction" not in audit.commands.names
+
+
+def _audit_only(audit: _Audit) -> OrderedCommits:
+    return OrderedCommits({AUDIT: MongoUnitOfWorkFactory.transactional(audit.client, AUDIT)})
+
+
+def _lsid(audit: _Audit) -> Any:
+    session = MongoSessions(audit.client, AUDIT).active_session
+    assert session is not None
+    return session.session_id
+
+
+def _outcome_types(outcome: InvocationOutcome) -> list[type[StoreOutcome]]:
+    return [type(store) for store in outcome.stores]

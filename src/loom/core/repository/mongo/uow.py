@@ -29,12 +29,13 @@ from typing import Any, ClassVar, cast
 
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
+from pymongo.errors import PyMongoError
 
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import PhysicalStore
+from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
 from loom.core.uow.scope import EntersAlone, current_handle
 
 _log = get_logger(__name__).bind(component="uow")
@@ -201,9 +202,17 @@ class MongoUnitOfWork(EntersAlone):
 
         Raises:
             RuntimeError: If ``begin`` has not been called.
+            CommitUncertain: If the error carries the
+                ``UnknownTransactionCommitResult`` label: the commit may
+                have been applied.
         """
         session = self._require_session("commit")
-        await session.commit_transaction()
+        try:
+            await session.commit_transaction()
+        except PyMongoError as exc:
+            if exc.has_error_label("UnknownTransactionCommitResult"):
+                raise CommitUncertain(exc) from exc
+            raise
         _log.debug("UoWCommit")
 
     async def rollback(self) -> None:

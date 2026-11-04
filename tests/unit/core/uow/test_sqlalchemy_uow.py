@@ -9,13 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, OperationalError
 
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.transactional import _mutations
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.coordinator import PhysicalStore
-from loom.core.uow.scope import current_scope
+from loom.core.uow.coordinator import InvocationOutcome, PhysicalStore, RolledBack, Uncertain
+from loom.core.uow.scope import current_scope, single_store
 
 from ..conftest import RecordingSessionManager, make_session
 from .conftest import SessionPair, make_session_manager
@@ -352,6 +354,36 @@ class TestRollbackFailure:
 # ---------------------------------------------------------------------------
 # Phased surface (driven by the ordered-commits coordinator)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        pytest.param(OperationalError("COMMIT", None, OSError()), Uncertain, id="operational"),
+        pytest.param(InterfaceError("COMMIT", None, OSError()), Uncertain, id="interface"),
+        pytest.param(
+            DBAPIError("COMMIT", None, OSError(), connection_invalidated=True),
+            Uncertain,
+            id="invalidated",
+        ),
+        pytest.param(
+            IntegrityError("COMMIT", None, OSError()), RolledBack, id="deferred-integrity"
+        ),
+    ],
+)
+async def test_a_failed_commit_is_classified_and_the_caller_gets_the_driver_error(
+    error: DBAPIError, outcome: type[Uncertain | RolledBack]
+) -> None:
+    session = make_session()
+    session.commit = AsyncMock(side_effect=error)
+    uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
+
+    with pytest.raises(DBAPIError) as raised:
+        async with single_store(DEFAULT_STORE, uow) as scope:
+            pass
+
+    assert raised.value is error
+    assert scope.outcome == InvocationOutcome((outcome(DEFAULT_STORE, error),))
 
 
 class TestPhased:

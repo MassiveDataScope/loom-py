@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 from pymongo import AsyncMongoClient
-from pymongo.errors import OperationFailure
+from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 
 import loom.core.repository.mongo.uow as uow_module
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
@@ -23,6 +23,7 @@ from loom.core.uow.coordinator import (
     Participant,
     PhysicalStore,
     RolledBack,
+    Uncertain,
 )
 from loom.core.uow.scope import current_scope
 
@@ -31,6 +32,8 @@ from .conftest import Article
 from .test_repository import ArticleCreate
 
 pytestmark = pytest.mark.asyncio
+
+_UNKNOWN_COMMIT = "UnknownTransactionCommitResult"
 
 
 class _WriteFailed(RuntimeError):
@@ -515,6 +518,36 @@ class TestPhased:
         assert client.aborted == 0
         assert client.sessions[0].ended is True
         assert "UoWRollbackFailed" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(
+                ConnectionFailure("ack lost", error_labels=[_UNKNOWN_COMMIT]), id="connection"
+            ),
+            pytest.param(
+                OperationFailure(
+                    "waiting for replication timed out",
+                    code=64,
+                    details={"errorLabels": [_UNKNOWN_COMMIT]},
+                ),
+                id="write-concern",
+            ),
+        ],
+    )
+    async def test_a_commit_of_unknown_result_is_uncertain_without_an_abort(
+        self, error: PyMongoError
+    ) -> None:
+        client = FakeMongoClient()
+        client.commit_error = error
+        coordinator = OrderedCommits({DEFAULT_STORE: _transactional(client)})
+        scope = _Scope()
+        await coordinator.enlist(scope, DEFAULT_STORE)
+
+        outcome = await coordinator.finish(scope, None)
+
+        assert outcome.stores == (Uncertain(DEFAULT_STORE, error),)
+        assert client.aborted == 0
 
 
 @dataclass
