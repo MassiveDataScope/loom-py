@@ -18,7 +18,7 @@ from loom.core.repository.sqlalchemy.rls import (
     register_scope_source,
     rls_session_settings,
 )
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, resolve_binding
+from loom.core.repository.sqlalchemy.rls.sources import bind_sources, clear_scope_sources
 from loom.core.repository.sqlalchemy.session_settings import SET_SETTINGS, settings_statement
 
 
@@ -53,10 +53,6 @@ def _application(**sources: str) -> Application:
     )
 
 
-def _as(identity: Identity | None):
-    return set_identity(identity) if identity is not None else None
-
-
 def test_three_part_keys_are_accepted_by_the_settings_statement() -> None:
     clause, params = settings_statement({"loom.scope.holder": "x", "loom.scope.editor.any": "on"})
 
@@ -70,25 +66,51 @@ def test_three_part_keys_are_accepted_by_the_settings_statement() -> None:
 def test_a_registered_request_source_is_published_under_request_and_cannot_repeat() -> None:
     register_scope_source("editor", lambda: "ana")
 
-    assert resolve_binding("request.editor") == "ana"
+    assert bind_sources({"editor": "request.editor"}, path="p")["editor"]() == "ana"
     with pytest.raises(ValueError, match="editor"):
         register_scope_source("editor", lambda: "bob")
 
 
 def test_identity_bindings_read_the_subject_and_the_verified_attributes() -> None:
+    sources = bind_sources(
+        {"holder": "identity.subject", "region": "identity.region", "lost": "identity.missing"},
+        path="p",
+    )
     token = set_identity(Identity(subject="sub-1", attributes={"region": "7"}))
     try:
-        assert resolve_binding("identity.subject") == "sub-1"
-        assert resolve_binding("identity.region") == "7"
-        assert resolve_binding("identity.missing") is None
+        assert {scope: source() for scope, source in sources.items()} == {
+            "holder": "sub-1",
+            "region": "7",
+            "lost": None,
+        }
     finally:
         reset_identity(token)
+
+
+def test_a_provider_keeps_the_sources_registered_when_it_was_built() -> None:
+    register_scope_source("editor", lambda: "ana")
+    provider = rls_session_settings(_application())
+    clear_scope_sources()
+    register_scope_source("editor", lambda: "bob")
+
+    assert provider()["loom.scope.editor"] == "ana"
 
 
 def test_an_unregistered_request_source_is_a_configuration_error() -> None:
     application = _application()
 
     with pytest.raises(ConfigError, match=r"request\.editor"):
+        rls_session_settings(application)
+
+
+@pytest.mark.parametrize("binding", ["env.spare", "request.spare"])
+def test_a_binding_no_model_declares_is_validated_too(binding: str) -> None:
+    register_scope_source("editor", lambda: "ana")
+    application = _application(
+        holder="identity.subject", editor="request.editor", region="identity.region", spare=binding
+    )
+
+    with pytest.raises(ConfigError, match=r"scopes\.spare"):
         rls_session_settings(application)
 
 

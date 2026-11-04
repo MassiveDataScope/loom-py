@@ -19,6 +19,7 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 
 if TYPE_CHECKING:
     from loom.core.persistence.stores import StoreCatalog
+    from loom.core.repository.abc import CursorCodec
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,9 @@ class BackendRuntime:
             :data:`~loom.core.persistence.stores.DEFAULT_STORE` unless it
             builds another store; a backend that ignores it, written before
             it existed, keeps serving the default store.
+        cursor_codec: The application's one cursor codec, which the host
+            builds once and every store it composes registers. A backend
+            given none builds its own from ``persistence.cursors``.
     """
 
     profile: RuntimeProfile
@@ -115,6 +119,7 @@ class BackendRuntime:
     connection_only: bool = False
     catalog: StoreCatalog = field(kw_only=True)
     store: StoreKey = field(default=DEFAULT_STORE, kw_only=True)
+    cursor_codec: CursorCodec | None = field(default=None, kw_only=True)
 
 
 SERVER_PROFILE = RuntimeProfile(

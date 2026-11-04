@@ -437,25 +437,6 @@ def test_closing_the_handler_closes_the_application(
     assert lifecycle == ["open", "close"]
 
 
-def test_the_composition_applies_the_job_config(source: CompositionSource) -> None:
-    class ConfiguredJob(Job[None]):
-        def execute(self) -> None:
-            return None
-
-    configured = composition_source(
-        ConfigContext.from_dict(
-            {"app": {"name": "lambda-sqs"}, "jobs": {"ConfiguredJob": {"retries": 7}}}
-        ),
-        app=source.app,
-        code_path=source.code_path,
-        config_root=source.config_root,
-    )
-
-    compose_application(configured, LambdaSQSAdapter(jobs=[ConfiguredJob]))
-
-    assert ConfiguredJob.__retries__ == 7
-
-
 def test_job_span_is_emitted(
     built: tuple[LambdaSQSAdapter, Application, list[str]], record: RecordFactory
 ) -> None:
@@ -517,7 +498,16 @@ def test_poison_errors_remain_retryable(error: Exception) -> None:
     assert error.retryable is True  # type: ignore[attr-defined]
 
 
-def test_job_timeout_is_retryable(source: CompositionSource, record: RecordFactory) -> None:
+@pytest.mark.parametrize(
+    ("jobs", "failed"),
+    [({}, [{"itemIdentifier": "slow"}]), ({"SlowJob": {"timeout": 30}}, [])],
+    ids=["declared timeout", "jobs section timeout"],
+)
+def test_a_record_runs_under_the_applications_job_timeout(
+    source: CompositionSource, record: RecordFactory, jobs: dict[str, Any], failed: list[Any]
+) -> None:
+    """A timed-out record is retried; the ``jobs:`` section lifts the declared limit."""
+
     class SlowJob(Job[None]):
         __timeout__ = 0.001  # type: ignore[assignment]
 
@@ -528,16 +518,23 @@ def test_job_timeout_is_retryable(source: CompositionSource, record: RecordFacto
         def get_remaining_time_in_millis(self) -> int:
             return 5000
 
+    configured = composition_source(
+        ConfigContext.from_dict({"app": {"name": "lambda-sqs"}, "jobs": jobs}),
+        app=source.app,
+        code_path=source.code_path,
+        config_root=source.config_root,
+    )
     adapter = LambdaSQSAdapter(jobs=[SlowJob])
-    application = compose_application(source, adapter)
-    handler = adapter.bind(application)
+    handler = adapter.bind(compose_application(configured, adapter))
     try:
         result = handler(
             {"Records": [record("slow", "a", job_name=SlowJob.__qualname__)]}, Context()
         )
-        assert result["batchItemFailures"] == [{"itemIdentifier": "slow"}]
     finally:
         adapter.close()
+
+    assert result["batchItemFailures"] == failed
+    assert SlowJob.__timeout__ == 0.001
 
 
 def test_malformed_record_emits_error_span(

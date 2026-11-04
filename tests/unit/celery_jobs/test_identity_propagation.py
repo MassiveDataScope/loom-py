@@ -20,6 +20,7 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.errors import Unauthenticated
 from loom.core.identity import ANONYMOUS, Identity, current_identity, reset_identity, set_identity
+from loom.core.job.config import JobSettings
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.use_case.markers import Caller
@@ -136,6 +137,7 @@ def _run_task(envelope_identity: dict[str, Any] | None) -> _RecordingExecutor:
         factory,
         executor,  # type: ignore[arg-type]
         runtime,
+        settings=JobSettings(),
     )
     task(MagicMock(), payload={}, identity=envelope_identity)
     return executor

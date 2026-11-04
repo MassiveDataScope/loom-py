@@ -22,6 +22,7 @@ from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import log_never_ran
 from loom.core.errors import LoomError
 from loom.core.identity import current_identity
+from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish, pending_publish_group
 from loom.core.job.envelope import encode_job_message, wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
@@ -76,18 +77,21 @@ class SQSDispatchError(LoomError):
     retryable = False
 
 
-def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> None:
+def check_queues(
+    queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]], settings: JobSettings
+) -> None:
     """Fail at startup unless every job's queue has a URL and a FIFO job names its group."""
     for job_type in jobs:
-        url = queues.get(job_type.__queue__)
+        queue = settings.of(job_type).queue
+        url = queues.get(queue)
         if url is None:
             raise SQSQueueConfigError(
-                f"{job_type.__qualname__} uses queue {job_type.__queue__!r}, which "
+                f"{job_type.__qualname__} uses queue {queue!r}, which "
                 f"sqs.queues does not map to a URL"
             )
         if url.endswith(FIFO_SUFFIX) and job_type.__group_by__ is None:
             raise SQSQueueConfigError(
-                f"{job_type.__qualname__} uses FIFO queue {job_type.__queue__!r} but "
+                f"{job_type.__qualname__} uses FIFO queue {queue!r} but "
                 "declares no __group_by__ payload field"
             )
 
@@ -97,10 +101,15 @@ def build_backend(context: JobBackendContext) -> SQSJobService:
     ctx = context.config
     written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
     config = decode_aws(written_aws(ctx), written, ConfigKey.SQS, SQSConfig)
-    check_queues(config.queues, context.jobs)
+    check_queues(config.queues, context.jobs, context.settings)
     client = aws_island(extra="sqs").build_aws_client("sqs", config)
     return SQSJobService(
-        client, config, factory=context.factory, executor=context.executor, metrics=context.metrics
+        client,
+        config,
+        factory=context.factory,
+        executor=context.executor,
+        metrics=context.metrics,
+        settings=context.settings,
     )
 
 
@@ -258,7 +267,11 @@ def _chunks(sends: list[_PendingSQSSend], size: int) -> Iterator[list[_PendingSQ
 
 
 class SQSJobService:
-    """``JobService`` sending each job to SQS after the commit; :meth:`run` is in-process."""
+    """``JobService`` sending each job to SQS after the commit; :meth:`run` is in-process.
+
+    *settings* give each job's queue, countdown and priority; the ClassVars
+    when omitted.
+    """
 
     def __init__(
         self,
@@ -268,11 +281,13 @@ class SQSJobService:
         factory: UseCaseFactory,
         executor: RuntimeExecutor,
         metrics: MetricsAdapter | None = None,
+        settings: JobSettings | None = None,
     ) -> None:
         self._client = client
         self._config = config
+        self._settings = settings or JobSettings()
         self._new_batch = functools.partial(_PendingSQSBatch, client, config)
-        self._inline = InlineJobService(factory, executor)
+        self._inline = InlineJobService(factory, executor, settings=self._settings)
         self._metrics = metrics
 
     async def run(
@@ -300,9 +315,10 @@ class SQSJobService:
         """Validate and encode now, so a refusal comes before the commit; send after it."""
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code="sqs_callbacks")
-        if priority is not None and priority != job_type.__priority__:
+        options = self._settings.of(job_type)
+        if priority is not None and priority != options.priority:
             raise SQSDispatchError("SQS queues have no priority", code="sqs_priority")
-        eff_queue = queue or job_type.__queue__
+        eff_queue = queue or options.queue
         url = self._config.queues.get(eff_queue)
         if url is None:
             raise SQSDispatchError(
@@ -329,7 +345,7 @@ class SQSJobService:
                 f"at most {MAX_MESSAGE_BYTES}",
                 code="sqs_message_too_large",
             )
-        delay = _delay(job_type, countdown, eta)
+        delay = _delay(options.countdown if countdown is None else countdown, eta)
         request = {"QueueUrl": url, "MessageBody": body.decode()}
         request |= _placement(job_type, url, payload, task_id, delay)
         task_name = wire_job_name(job_type.__qualname__)
@@ -362,11 +378,11 @@ class SQSJobService:
         )
 
 
-def _delay(job_type: type[Job[Any]], countdown: int | None, eta: datetime | None) -> int:
+def _delay(countdown: int, eta: datetime | None) -> int:
     if eta is not None:
         seconds = math.ceil((eta.astimezone(UTC) - datetime.now(UTC)).total_seconds())
     else:
-        seconds = job_type.__countdown__ if countdown is None else countdown
+        seconds = countdown
     if seconds > MAX_DELAY_SECONDS:
         raise SQSDispatchError(
             f"SQS delays a message at most {MAX_DELAY_SECONDS} s, not {seconds}",

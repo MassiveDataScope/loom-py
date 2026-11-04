@@ -29,10 +29,10 @@ from loom.core.checks import enforce_deploy_checks
 from loom.core.config import ConfigError, ConfigKey, ConfigResolver, with_default_resolvers
 from loom.core.config.overrides import load_application_config
 from loom.core.di.scope import Scope
-from loom.core.discovery.worker import apply_job_overrides
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExistsStep, LoadStep
 from loom.core.environment import Environment, resolve_environment, select_config_paths
+from loom.core.job.config import JobSettings
 from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
@@ -44,6 +44,7 @@ from loom.core.persistence.stores import (
     StoreKey,
     require_single_store,
 )
+from loom.core.repository.abc import CursorCodec
 from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
 
@@ -303,8 +304,7 @@ def compose_application(
     enforce_deploy_checks(ctx, source.environment, skip=recipe.skip_checks)
 
     discovered = recipe.discovered
-    for job_type in discovered.jobs:
-        apply_job_overrides(ctx, job_type)
+    job_settings = JobSettings.from_config(ctx, discovered.jobs)
     catalog = source.catalog
     # One store until US7 PR 11.
     require_single_store(discovered.models)
@@ -314,6 +314,7 @@ def compose_application(
         connection_only=recipe.connection_only,
         catalog=catalog,
         store=DEFAULT_STORE,
+        cursor_codec=_cursor_codec(ctx, recipe),
     )
     wiring = recipe.backend.build(ctx, discovered.models, runtime)
     wiring.prepare_models(discovered.models)
@@ -333,7 +334,12 @@ def compose_application(
         environment=source.environment,
     )
     job_resources = configure_job_service(
-        ctx, kernel, observability, backend=source.app.job_service, jobs=discovered.jobs
+        ctx,
+        kernel,
+        observability,
+        backend=source.app.job_service,
+        jobs=discovered.jobs,
+        settings=job_settings,
     )
     sql = resolve_sql(ctx)
     register_sql_collaborators(kernel.container, sql, observability)
@@ -356,6 +362,7 @@ def compose_application(
         sql=sql,
         ai=ai,
         persistence=wiring,
+        job_settings=job_settings,
         resources=_resources(
             kernel=kernel,
             stores=(_store_resource(DEFAULT_STORE, wiring, label=recipe.backend.name),),
@@ -364,6 +371,17 @@ def compose_application(
             job_resources=job_resources,
         ),
     )
+
+
+def _cursor_codec(ctx: ConfigContext, recipe: Recipe) -> CursorCodec | None:
+    """The application's one cursor codec, shared by every store; none without repositories.
+
+    Built before any store: an invalid ``persistence.cursors`` fails with no
+    engine or client built.
+    """
+    if recipe.connection_only or not recipe.discovered.models:
+        return None
+    return CursorCodec.from_context(ctx)
 
 
 def _elevation_modules(

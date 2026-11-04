@@ -7,14 +7,11 @@ import dataclasses
 import secrets
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 import yaml  # type: ignore[import-untyped]
 from celery import Celery  # type: ignore[import-untyped]
 
-import loom.celery.adapter as adapter
-import loom.celery.runner as _runner
 from loom.ai.abc import AgentHandle, McpHandle
 from loom.ai.errors import AgentCompilationError
 from loom.celery.bootstrap import WorkerBootstrapResult, bootstrap_worker
@@ -236,52 +233,6 @@ class TestBootstrapWorkerTaskExecution:
 
         eager_result = task.apply(kwargs={"params": {"text": "hello"}})
         assert eager_result.result == "HELLO"
-
-
-class TestBootstrapWorkerJobConfigOverride:
-    def test_job_config_override_applied_before_task_registration(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Retries override from YAML is visible to _make_job_task at registration.
-
-        Querying celery_app.tasks[name].max_retries is unreliable when multiple
-        Celery instances share the global task registry across tests.  Instead,
-        spy on _make_job_task to capture job_type.__retries__ at call time.
-        """
-        monkeypatch.setattr(
-            _DoubleSyncJob, "__retries__", _DoubleSyncJob.__retries__, raising=False
-        )
-        captured_retries: list[int] = []
-
-        def _spy(celery_app: Any, job_type: Any, *args: Any, **kwargs: Any) -> Any:
-            captured_retries.append(job_type.__retries__)
-            return _runner._make_job_task(celery_app, job_type, *args, **kwargs)
-
-        cfg: dict[str, Any] = {
-            "app": {"name": "worker"},
-            "celery": {
-                "broker_url": "memory://",
-                "result_backend": "cache+memory://",
-                "task_always_eager": True,
-            },
-            "stores": {
-                "default": {
-                    "backend": "sqlalchemy",
-                    "url": f"sqlite+aiosqlite:///{tmp_path / 'test_worker.db'}",
-                }
-            },
-            "jobs": {"_DoubleSyncJob": {"retries": 3}},
-        }
-        config_file = tmp_path / "worker_with_override.yaml"
-        config_file.write_text(yaml.dump(cfg))
-
-        with patch.object(adapter, "_make_job_task", side_effect=_spy):
-            bootstrap_worker(str(config_file), jobs=[_DoubleSyncJob])
-
-        assert captured_retries == [3], (
-            f"_make_job_task saw __retries__={captured_retries}; expected [3]"
-        )
-        assert _DoubleSyncJob.__retries__ == 3
 
 
 class TestBootstrapWorkerRejectsAgentMarkers:

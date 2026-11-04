@@ -2,11 +2,13 @@
 
 A binding is ``identity.<attribute>`` (``subject`` or a verified attribute of
 the caller) or ``request.<name>`` (a callable the product registered before
-startup). loom never names a scope or a source itself.
+startup). Each application binds its sources when it is composed, so the
+registry is only read then. loom never names a scope or a source itself.
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Callable, Mapping
 
@@ -31,40 +33,46 @@ def clear_scope_sources() -> None:
     _sources.clear()
 
 
-def validate_bindings(scope_sources: Mapping[str, str], *, path: str) -> None:
-    """Fail at startup when a binding is malformed or names an unregistered source.
+def bind_sources(scope_sources: Mapping[str, str], *, path: str) -> dict[str, ScopeSource]:
+    """Return what gives each scope its value; called once, when the application is composed.
+
+    A ``request.<name>`` binding takes the source registered under that name
+    now: an application keeps the sources it was composed with, whatever is
+    registered or cleared afterwards for another one.
 
     Args:
         scope_sources: The store's ``schema.scopes``, binding per scope.
         path: Dotted path of the store's section, which the messages name.
 
     Raises:
-        ConfigError: Naming the scope and the binding.
+        ConfigError: When a binding is malformed or names an unregistered
+            source, naming the scope and the binding.
     """
-    for scope, binding in scope_sources.items():
-        if _BINDING.fullmatch(binding) is None:
-            raise ConfigError(
-                f"{path}.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
-                "or request.<name>"
-            )
-        kind, name = binding.split(".", 1)
-        if kind == "request" and name not in _sources:
-            raise ConfigError(
-                f"{path}.schema.scopes.{scope} binds {binding!r} but no scope source "
-                f"named {name!r} was registered"
-            )
+    return {scope: _source(scope, binding, path=path) for scope, binding in scope_sources.items()}
 
 
-def resolve_binding(binding: str) -> object | None:
-    """Return the current value of ``binding`` or ``None`` when there is none.
-
-    *binding* is one :func:`validate_bindings` accepted at startup.
-    """
-    kind, name = binding.split(".", 1)
+def _source(scope: str, binding: str, *, path: str) -> ScopeSource:
+    match = _BINDING.fullmatch(binding)
+    if match is None:
+        raise ConfigError(
+            f"{path}.schema.scopes.{scope} {binding!r} must be identity.<attribute> "
+            "or request.<name>"
+        )
+    kind, name = match.groups()
     if kind == "identity":
-        identity = current_identity()
-        if name == "subject":
-            return identity.subject or None
-        return identity.attribute(name)
+        return _subject if name == "subject" else functools.partial(_attribute, name)
     source = _sources.get(name)
-    return source() if source is not None else None
+    if source is None:
+        raise ConfigError(
+            f"{path}.schema.scopes.{scope} binds {binding!r} but no scope source "
+            f"named {name!r} was registered"
+        )
+    return source
+
+
+def _subject() -> str | None:
+    return current_identity().subject or None
+
+
+def _attribute(name: str) -> object | None:
+    return current_identity().attribute(name)

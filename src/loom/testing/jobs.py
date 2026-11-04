@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.identity import Identity, current_identity
+from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import encode_job_message
 from loom.core.job.handle import JobGroup, JobHandle
@@ -122,8 +123,11 @@ class RecordingJobService:
 
     def __init__(self, context: JobBackendContext | None = None) -> None:
         self.dispatched: list[DispatchedJob] = []
+        self._settings = JobSettings() if context is None else context.settings
         self._inline = (
-            None if context is None else InlineJobService(context.factory, context.executor)
+            None
+            if context is None
+            else InlineJobService(context.factory, context.executor, settings=self._settings)
         )
 
     async def run(
@@ -161,7 +165,7 @@ class RecordingJobService:
             job_type=job_type,
             payload=copy.deepcopy(payload or {}),
             params=copy.deepcopy(params),
-            queue=queue or job_type.__queue__,
+            queue=queue or self._settings.of(job_type).queue,
             identity=current_identity(),
         )
         add_pending_publish(functools.partial(self.dispatched.append, record))

@@ -41,6 +41,7 @@ from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREF
 from loom.celery.errors import WorkerNotOpenError
 from loom.core.async_bridge import AsyncBridge
 from loom.core.engine.events import EventKind, RuntimeEvent
+from loom.core.job.config import JobSettings
 from loom.core.job.envelope import JobEnvelope, job_context, wire_job_name
 from loom.core.job.outcome import failure_log_fields, is_retryable
 from loom.core.job.run import run_job
@@ -214,6 +215,8 @@ def _make_job_task(
     metrics: MetricsAdapter | None = None,
     observability_runtime: ObservabilityRuntime | None = None,
     backoff: int = 2,
+    *,
+    settings: JobSettings,
 ) -> Any:
     """Register and return a Celery task that executes *job_type* on the worker.
 
@@ -244,14 +247,16 @@ def _make_job_task(
             ``JOB_SUCCEEDED``, ``JOB_RETRYING``, and ``JOB_EXHAUSTED``
             events during task execution in the worker process.
         backoff: Base for exponential retry delay (seconds).  Defaults to 2.
+        settings: The application's job settings, which give the task its
+            retries and time limit.
 
     Returns:
         The registered Celery task object.
     """
-
-    timeout_value = job_type.__timeout__
+    options = settings.of(job_type)
+    timeout = options.timeout
     runtime = observability_runtime or ObservabilityRuntime.noop()
-    run_timeout = float(timeout_value) if timeout_value is not None and timeout_value > 0 else None
+    run_timeout = float(timeout) if timeout is not None and timeout > 0 else None
     name = job_type.__qualname__
 
     def _execute_job(
@@ -305,8 +310,8 @@ def _make_job_task(
         bind=True,
         acks_late=True,
         reject_on_worker_lost=True,
-        max_retries=job_type.__retries__,
-        soft_time_limit=job_type.__timeout__,
+        max_retries=options.retries,
+        soft_time_limit=timeout,
     )
     def _job_task(
         self: Any,

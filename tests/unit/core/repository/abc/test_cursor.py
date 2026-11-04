@@ -619,7 +619,7 @@ class TestOneCodecPerProcess:
         container = LoomContainer()
         register_cursor_codec(container, codec)
 
-        with pytest.raises(ConfigError, match="one codec per process"):
+        with pytest.raises(ConfigError, match="one codec per application"):
             register_cursor_codec(container, CursorCodec(signing="ephemeral"))
 
 

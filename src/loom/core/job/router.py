@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.core.errors.errors import LoomError
+from loom.core.job.config import JobSettings
 from loom.core.job.handle import JobGroup, JobHandle
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -34,18 +35,26 @@ class JobRouter:
     """A :class:`~loom.core.job.service.JobService` that routes each job by its queue.
 
     The effective queue is the ``queue=`` of the call, otherwise the job's
-    ``__queue__``; a queue *routes* does not name goes to *default*. Each
+    queue in *settings*; a queue *routes* does not name goes to *default*. Each
     backend keeps its own post-commit semantics, callbacks and handles.
     :meth:`run` goes to *default*: the built-in backends all run in-process.
 
     Args:
         routes: The backend of each routed queue.
         default: The backend of every other queue.
+        settings: The application's job settings; the ClassVars when omitted.
     """
 
-    def __init__(self, routes: Mapping[str, JobService], *, default: JobService) -> None:
+    def __init__(
+        self,
+        routes: Mapping[str, JobService],
+        *,
+        default: JobService,
+        settings: JobSettings | None = None,
+    ) -> None:
         self._routes = dict(routes)
         self._default = default
+        self._settings = settings or JobSettings()
 
     async def run(
         self,
@@ -114,4 +123,4 @@ class JobRouter:
         )
 
     def _backend_for(self, job_type: type[Job[Any]], queue: str | None) -> JobService:
-        return self._routes.get(queue or job_type.__queue__, self._default)
+        return self._routes.get(queue or self._settings.of(job_type).queue, self._default)

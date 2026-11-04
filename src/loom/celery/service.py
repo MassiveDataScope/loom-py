@@ -36,6 +36,7 @@ from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREF
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.identity import current_identity
 from loom.core.identity.wire import encode_identity
+from loom.core.job.config import JobSettings
 from loom.core.job.context import add_pending_publish
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.handle import JobGroup, JobHandle
@@ -233,6 +234,7 @@ class CeleryJobService:
             is made.
         factory: Optional use-case factory.  Required for :meth:`run`.
         executor: Optional runtime executor.  Required for :meth:`run`.
+        settings: The application's job settings; the ClassVars when omitted.
 
     Example::
 
@@ -248,8 +250,11 @@ class CeleryJobService:
         factory: UseCaseFactory | None = None,
         executor: RuntimeExecutor | None = None,
         observability_runtime: ObservabilityRuntime | None = None,
+        *,
+        settings: JobSettings | None = None,
     ) -> None:
         self._app = celery_app
+        self._settings = settings or JobSettings()
         self._metrics = metrics
         self._factory = factory
         self._executor = executor
@@ -331,10 +336,10 @@ class CeleryJobService:
             payload: Raw dict for ``Input()`` command construction.
             on_success: Callback type invoked by the broker on task success.
             on_failure: Callback type invoked by the broker on task failure.
-            queue: Override the job's ``__queue__`` for this dispatch only.
+            queue: Override the job's queue for this dispatch only.
             countdown: Delay in seconds before first execution.  Defaults
-                to ``job_type.__countdown__``.
-            priority: Task priority.  Defaults to ``job_type.__priority__``.
+                to the job's countdown.
+            priority: Task priority.  Defaults to the job's priority.
             eta: Absolute datetime for first execution.  Mutually exclusive
                 with ``countdown`` in Celery semantics.
 
@@ -345,9 +350,10 @@ class CeleryJobService:
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
         identity = encode_identity(current_identity())
-        eff_queue = queue or job_type.__queue__
-        eff_countdown = countdown if countdown is not None else job_type.__countdown__
-        eff_priority = priority if priority is not None else job_type.__priority__
+        options = self._settings.of(job_type)
+        eff_queue = queue or options.queue
+        eff_countdown = countdown if countdown is not None else options.countdown
+        eff_priority = priority if priority is not None else options.priority
 
         link = (
             _build_success_link(self._app, on_success, payload or {}, task_id, trace_id)
@@ -372,7 +378,7 @@ class CeleryJobService:
             countdown=eff_countdown,
             priority=eff_priority,
             eta=eta,
-            soft_time_limit=job_type.__timeout__,
+            soft_time_limit=options.timeout,
             link=link,
             link_error=link_error,
             observability_runtime=self._observability_runtime,

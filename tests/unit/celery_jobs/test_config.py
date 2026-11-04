@@ -1,4 +1,4 @@
-"""Unit tests for CeleryConfig, JobConfig, apply_job_config, and create_celery_app."""
+"""Unit tests for CeleryConfig, JobConfig and create_celery_app."""
 
 from __future__ import annotations
 
@@ -13,35 +13,8 @@ from loom.celery.config import (
     create_celery_app,
 )
 from loom.core.config.convert import convert_config
-from loom.core.job.config import JobConfig, apply_job_config
-from loom.core.job.job import Job
+from loom.core.job.config import JobConfig
 from loom.core.model.redaction import Dsn
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-class _JobA(Job[None]):
-    __queue__ = "default"
-    __retries__ = 0
-    __countdown__ = 0
-    __timeout__ = None
-    __priority__ = 0
-
-    def execute(self) -> None:
-        # Intentional no-op: the test only needs a concrete Job subclass.
-        return None
-
-
-class _JobB(Job[None]):
-    __queue__ = "other"
-    __retries__ = 1
-
-    def execute(self) -> None:
-        # Intentional no-op: the test only needs a concrete Job subclass.
-        return None
-
 
 # ---------------------------------------------------------------------------
 # CeleryConfig
@@ -132,68 +105,6 @@ class TestJobConfig:
         cfg = msgspec.convert({"queue": "prices"}, JobConfig, strict=False)
         assert cfg.queue == "prices"
         assert cfg.retries is None
-
-
-# ---------------------------------------------------------------------------
-# apply_job_config
-# ---------------------------------------------------------------------------
-
-
-class TestApplyJobConfig:
-    def setup_method(self) -> None:
-        # Reset _JobA ClassVars before each test
-        _JobA.__queue__ = "default"
-        _JobA.__retries__ = 0
-        _JobA.__countdown__ = 0
-        _JobA.__timeout__ = None
-        _JobA.__priority__ = 0
-
-    def test_applies_queue(self) -> None:
-        apply_job_config(_JobA, JobConfig(queue="prices.heavy"))
-        assert _JobA.__queue__ == "prices.heavy"
-
-    def test_applies_retries(self) -> None:
-        apply_job_config(_JobA, JobConfig(retries=5))
-        assert _JobA.__retries__ == 5
-
-    def test_applies_timeout(self) -> None:
-        apply_job_config(_JobA, JobConfig(timeout=600))
-        assert _JobA.__timeout__ == 600
-
-    def test_applies_countdown(self) -> None:
-        apply_job_config(_JobA, JobConfig(countdown=30))
-        assert _JobA.__countdown__ == 30
-
-    def test_applies_priority(self) -> None:
-        apply_job_config(_JobA, JobConfig(priority=9))
-        assert _JobA.__priority__ == 9
-
-    def test_empty_config_leaves_classvars_unchanged(self) -> None:
-        apply_job_config(_JobA, JobConfig())
-        assert _JobA.__queue__ == "default"
-        assert _JobA.__retries__ == 0
-
-    def test_partial_config_only_updates_set_fields(self) -> None:
-        apply_job_config(_JobA, JobConfig(queue="email"))
-        assert _JobA.__queue__ == "email"
-        assert _JobA.__retries__ == 0  # unchanged
-        assert _JobA.__timeout__ is None  # unchanged
-
-    def test_is_idempotent(self) -> None:
-        cfg = JobConfig(retries=3)
-        apply_job_config(_JobA, cfg)
-        apply_job_config(_JobA, cfg)
-        assert _JobA.__retries__ == 3
-
-    def test_does_not_affect_sibling_job(self) -> None:
-        original_queue = _JobB.__queue__
-        apply_job_config(_JobA, JobConfig(queue="custom"))
-        assert _JobB.__queue__ == original_queue
-
-    def test_does_not_modify_job_base_class(self) -> None:
-        base_queue = Job.__queue__
-        apply_job_config(_JobA, JobConfig(queue="custom"))
-        assert Job.__queue__ == base_queue
 
 
 # ---------------------------------------------------------------------------

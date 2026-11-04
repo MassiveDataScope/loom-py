@@ -82,7 +82,7 @@ def build_sqlalchemy_repository_registration_module(
     ``SessionManager``, ``CursorCodec`` and ``DefaultRepositoryBuilder`` in the
     container so that the bootstrap does not need to know about SQLAlchemy
     internals, and a service paginating by hand resolves the codec the
-    repositories sign with. ``cursor_codec`` is the process's one codec: the
+    repositories sign with. ``cursor_codec`` is the application's one codec: the
     module raises ``ConfigError`` when another is already registered. A custom
     ``builder`` builds its repository with that codec too: resolve
     ``CursorCodec`` from ``context.container``.

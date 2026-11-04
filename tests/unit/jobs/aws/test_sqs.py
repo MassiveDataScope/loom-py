@@ -203,6 +203,19 @@ def test_startup_refuses_a_job_sqs_cannot_place(
         compose_application(source, adapter)
 
 
+async def test_the_jobs_section_gives_the_queue_the_delay_and_the_priority(
+    tmp_path: Path, client: SQSClient
+) -> None:
+    """``reports`` has no URL: the job starts and is sent only because its section moves it."""
+    section = {"ReportJob": {"queue": "emails", "countdown": 7, "priority": 3}}
+    service = _compose(tmp_path, {**_CONFIG, "jobs": section}, client, ReportJob)
+
+    _, request = await _sent(service, client, ReportJob, priority=3)
+
+    assert (request["QueueUrl"], request["DelaySeconds"]) == (_URL, 7)
+    assert (ReportJob.__queue__, ReportJob.__countdown__) == ("reports", 0)
+
+
 def test_jobs_on_celery_queues_need_no_sqs_url(tmp_path: Path) -> None:
     config = {**_CONFIG, "celery": {**BROKER, "queues": ["default", "reports"]}}
     source = job_source(tmp_path, config, "sqs")

@@ -283,6 +283,7 @@ def _register_tasks(
             async_runtime,
             metrics,
             observability_runtime=observability,
+            settings=application.job_settings,
         )
     for callback_type in declared.callbacks:
         _make_callback_task(

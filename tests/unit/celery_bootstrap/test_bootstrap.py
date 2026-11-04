@@ -18,7 +18,8 @@ from loom.celery.bootstrap import WorkerBootstrapResult, WorkerManifest
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
-from loom.core.discovery.worker import DuplicateJobName, apply_job_overrides
+from loom.core.discovery.worker import DuplicateJobName
+from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.registry import UseCaseRegistry
@@ -89,33 +90,6 @@ def test_celery_discovery_rejects_duplicate_job_qualnames() -> None:
 
     with pytest.raises(DuplicateJobName):
         discovery._resolve_compilables_and_jobs(ctx, jobs, [])
-
-
-# apply_job_overrides
-# ---------------------------------------------------------------------------
-
-
-class TestApplyJobOverrides:
-    def test_applies_override_when_section_exists(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        raw = _make_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
-        monkeypatch.setattr(_SyncJob, "__queue__", _SyncJob.__queue__, raising=False)
-        monkeypatch.setattr(_SyncJob, "__retries__", _SyncJob.__retries__, raising=False)
-
-        apply_job_overrides(raw, _SyncJob)
-
-        assert _SyncJob.__queue__ == "override"
-        assert _SyncJob.__retries__ == 5
-
-    def test_does_not_raise_when_section_absent(self) -> None:
-        raw = _make_config()
-        # Must not raise even though jobs._SyncJob section is missing
-        apply_job_overrides(raw, _SyncJob)
-
-    def test_classvar_unchanged_when_section_absent(self) -> None:
-        raw = _make_config()
-        original = _SyncJob.__queue__
-        apply_job_overrides(raw, _SyncJob)
-        assert _SyncJob.__queue__ == original
 
 
 # ---------------------------------------------------------------------------
@@ -222,30 +196,13 @@ class TestBootstrapWorkerTaskRegistration:
         result = self._run(tmp_path)
         assert isinstance(result, WorkerBootstrapResult)
 
-    def test_applies_job_config_before_registration(
-        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """JobConfig overrides must be applied before task registration.
+    def test_registers_each_task_with_the_applications_job_config(self, tmp_path: Any) -> None:
+        """The task's retries and time limit come from ``jobs:``; the ClassVars stay as declared."""
+        result = self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7, "timeout": 9}}})
 
-        Verifies ordering by spying on _make_job_task and capturing the value
-        of job_type.__retries__ at the moment of registration.
-        """
-        import loom.celery.runner as _runner
-
-        monkeypatch.setattr(_SyncJob, "__retries__", _SyncJob.__retries__, raising=False)
-        captured_retries: list[int] = []
-
-        def _spy(celery_app: Any, job_type: Any, *args: Any, **kwargs: Any) -> Any:
-            captured_retries.append(job_type.__retries__)
-            return _runner._make_job_task(celery_app, job_type, *args, **kwargs)
-
-        with patch.object(adapter, "_make_job_task", side_effect=_spy):
-            self._run(tmp_path, extra_cfg={"jobs": {"_SyncJob": {"retries": 7}}})
-
-        assert captured_retries == [7], (
-            f"_make_job_task saw __retries__={captured_retries}; expected [7]"
-        )
-        assert _SyncJob.__retries__ == 7
+        task = result.celery_app.tasks[wire_job_name(_SyncJob.__qualname__)]
+        assert (task.max_retries, task.soft_time_limit) == (7, 9)
+        assert (_SyncJob.__retries__, _SyncJob.__timeout__) == (0, None)
 
     def test_pure_job_bootstrap_without_database_section(self, tmp_path: Any) -> None:
         """Database config is optional for jobs that do not access repositories."""

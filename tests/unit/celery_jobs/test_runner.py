@@ -26,12 +26,15 @@ from loom.celery.runner import (
 )
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.engine.post_commit import PostCommitError
+from loom.core.job.config import JobSettings
 from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
 from loom.core.tracing import get_trace_id
 from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 from tests.helpers.spans import build_recorder, hex_trace
+
+_SETTINGS = JobSettings()
 
 _WIRE_TRACE = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
 
@@ -182,7 +185,7 @@ class TestMakeJobTaskRegistration:
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime())
+        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
         assert registered_kwargs["name"] == f"{TASK_JOB_PREFIX}.{_SyncJob.__qualname__}"
 
     def test_task_registered_with_correct_name_async(self) -> None:
@@ -191,7 +194,9 @@ class TestMakeJobTaskRegistration:
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
-        _make_job_task(app, _AsyncJob, MagicMock(), MagicMock(), _mock_runtime())
+        _make_job_task(
+            app, _AsyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS
+        )
         assert registered_kwargs["name"] == f"{TASK_JOB_PREFIX}.{_AsyncJob.__qualname__}"
 
     def test_acks_late_is_true(self) -> None:
@@ -200,7 +205,7 @@ class TestMakeJobTaskRegistration:
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime())
+        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
         assert registered_kwargs["acks_late"] is True
 
     def test_reject_on_worker_lost_is_true(self) -> None:
@@ -209,7 +214,7 @@ class TestMakeJobTaskRegistration:
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime())
+        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
         assert registered_kwargs["reject_on_worker_lost"] is True
 
     def test_max_retries_uses_job_classvar(self) -> None:
@@ -218,7 +223,7 @@ class TestMakeJobTaskRegistration:
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
-        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime())
+        _make_job_task(app, _SyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS)
         assert registered_kwargs["max_retries"] == _SyncJob.__retries__
 
     def test_soft_time_limit_uses_job_classvar(self) -> None:
@@ -227,7 +232,9 @@ class TestMakeJobTaskRegistration:
         app.task = MagicMock(
             side_effect=lambda **kw: registered_kwargs.update(kw) or (lambda fn: fn)
         )
-        _make_job_task(app, _AsyncJob, MagicMock(), MagicMock(), _mock_runtime())
+        _make_job_task(
+            app, _AsyncJob, MagicMock(), MagicMock(), _mock_runtime(), settings=_SETTINGS
+        )
         assert registered_kwargs["soft_time_limit"] == _AsyncJob.__timeout__
 
 
@@ -252,7 +259,9 @@ class TestMakeJobTaskExecution:
         instance = _SyncJob()
         factory = _mock_factory(instance)
         runtime = _mock_runtime(return_value=10)
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, MagicMock(), runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+        )
         task_fn(_mock_self(), payload={"value": 5})
         runtime.run.assert_called_once()
         _, kwargs = runtime.run.call_args
@@ -267,7 +276,9 @@ class TestMakeJobTaskExecution:
         submitted: list[Coroutine[Any, Any, Any]] = []
         runtime = MagicMock()
         runtime.run = MagicMock(side_effect=lambda coro, **_: submitted.append(coro) or 7)
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, executor, runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, executor, runtime, settings=_SETTINGS
+        )
 
         assert task_fn(_mock_self(), payload={"value": 5}, params={"p": 2}) == 7
 
@@ -288,6 +299,7 @@ class TestMakeJobTaskExecution:
             MagicMock(execute=AsyncMock(return_value=10)),
             runtime,
             observability_runtime=observability_runtime,
+            settings=_SETTINGS,
         )
         task_fn(_mock_self(), payload={"value": 5})
 
@@ -303,7 +315,9 @@ class TestMakeJobTaskExecution:
         factory = _mock_factory(instance)
         executor = MagicMock()
         runtime = _mock_runtime(return_value="ok")
-        task_fn = _make_job_task(_mock_celery_app(), _AsyncJob, factory, executor, runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _AsyncJob, factory, executor, runtime, settings=_SETTINGS
+        )
         task_fn(_mock_self(), payload={"msg": "hello"})
         runtime.run.assert_called_once()
         _, kwargs = runtime.run.call_args
@@ -313,7 +327,9 @@ class TestMakeJobTaskExecution:
         instance = _SyncJob()
         factory = _mock_factory(instance)
         runtime = _mock_runtime(return_value=42)
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, MagicMock(), runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+        )
         result = task_fn(_mock_self(), payload={"value": 4})
         assert result == 42
 
@@ -321,7 +337,9 @@ class TestMakeJobTaskExecution:
         instance = _SyncJob()
         factory = _mock_factory(instance)
         runtime = _mock_runtime(return_value=10)
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, MagicMock(), runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+        )
         task_self = _mock_self()
         task_self.request.is_eager = True
 
@@ -352,7 +370,9 @@ class TestMakeJobTaskRetry:
         mock_self.retry = MagicMock(side_effect=RetryError)
 
         runtime = _mock_runtime(error=ValueError("err"))
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, MagicMock(), runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+        )
         raw_fn = task_fn if callable(task_fn) else task_fn.__func__
         with pytest.raises(RetryError):
             raw_fn(mock_self, payload={"value": 1})
@@ -368,7 +388,7 @@ class TestMakeJobTaskRetry:
 
         runtime = _mock_runtime(error=error)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         with pytest.raises(PostCommitError):
             task_fn(mock_self, payload={"value": 1})
@@ -390,7 +410,9 @@ class TestMakeJobTaskRetry:
         error = PostCommitError(committed=False, failures=(ConnectionError("broker down"),))
 
         runtime = _mock_runtime(error=error)
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, MagicMock(), runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+        )
         with pytest.raises(RetryError):
             task_fn(mock_self, payload={"value": 1})
 
@@ -414,6 +436,7 @@ class TestMakeJobTaskRetry:
             _mock_factory(MagicMock()),
             MagicMock(),
             _mock_runtime(error=error),
+            settings=_SETTINGS,
         )
         with pytest.raises(type(error)):
             task_fn(mock_self, payload={"value": 1})
@@ -435,7 +458,13 @@ class TestMakeJobTaskRetry:
 
         runtime = _mock_runtime(error=ValueError("err"))
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, backoff=3
+            _mock_celery_app(),
+            _SyncJob,
+            factory,
+            MagicMock(),
+            runtime,
+            backoff=3,
+            settings=_SETTINGS,
         )
         raw_fn = task_fn if callable(task_fn) else task_fn.__func__
         with pytest.raises(RetryError):
@@ -451,7 +480,7 @@ class TestMakeJobTaskRetry:
         metrics = MagicMock()
         runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         task_fn(_mock_self())
         first_event = metrics.on_event.call_args_list[0].args[0]
@@ -464,7 +493,7 @@ class TestMakeJobTaskRetry:
         metrics = MagicMock()
         runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         task_fn(_mock_self())
         kinds = [c.args[0].kind for c in metrics.on_event.call_args_list]
@@ -476,7 +505,7 @@ class TestMakeJobTaskRetry:
         metrics = MagicMock()
         runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         task_fn(_mock_self())
         succeeded = next(
@@ -493,7 +522,7 @@ class TestMakeJobTaskRetry:
         metrics = MagicMock()
         runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         task_fn(_mock_self(), trace_id="tid-999")
         started = next(
@@ -519,6 +548,7 @@ class TestMakeJobTaskRetry:
             _executing_runtime(),
             None,
             recorder.runtime,
+            settings=_SETTINGS,
         )
 
         task_fn(_mock_self(), trace_id=_WIRE_TRACE)
@@ -540,6 +570,7 @@ class TestMakeJobTaskRetry:
             _executing_runtime(),
             None,
             recorder.runtime,
+            settings=_SETTINGS,
         )
 
         task_fn(_mock_self())
@@ -563,6 +594,7 @@ class TestMakeJobTaskRetry:
             MagicMock(execute=AsyncMock(return_value=0)),
             _executing_runtime(),
             metrics,
+            settings=_SETTINGS,
         )
 
         task_fn(_mock_self())
@@ -592,6 +624,7 @@ class TestMakeJobTaskRetry:
             MagicMock(),
             _mock_runtime(error=ValueError("err")),
             metrics,
+            settings=_SETTINGS,
         )
 
         with pytest.raises(expected_error):
@@ -611,6 +644,7 @@ class TestMakeJobTaskRetry:
             MagicMock(execute=AsyncMock(return_value=0)),
             _executing_runtime(),
             metrics,
+            settings=_SETTINGS,
         )
 
         task_fn(_mock_self(), trace_id=_WIRE_TRACE)
@@ -625,7 +659,13 @@ class TestMakeJobTaskRetry:
         factory = _mock_factory(instance)
         runtime = _mock_runtime(return_value=0)
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics=None
+            _mock_celery_app(),
+            _SyncJob,
+            factory,
+            MagicMock(),
+            runtime,
+            metrics=None,
+            settings=_SETTINGS,
         )
         task_fn(_mock_self())  # must not raise
 
@@ -638,7 +678,9 @@ class TestMakeJobTaskRetry:
         mock_self.max_retries = 2
 
         runtime = _mock_runtime(error=ValueError("final"))
-        task_fn = _make_job_task(_mock_celery_app(), _SyncJob, factory, MagicMock(), runtime)
+        task_fn = _make_job_task(
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, settings=_SETTINGS
+        )
         raw_fn = task_fn if callable(task_fn) else task_fn.__func__
         with pytest.raises(ValueError, match="final"):
             raw_fn(mock_self, payload={"value": 1})
@@ -660,7 +702,7 @@ class TestMakeJobTaskRetry:
         mock_self.retry = MagicMock(side_effect=_RetryError)
         runtime = _mock_runtime(error=ValueError("boom"))
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         with pytest.raises(_RetryError):
             task_fn(mock_self)
@@ -678,7 +720,7 @@ class TestMakeJobTaskRetry:
         mock_self.app.conf.task_always_eager = False
         runtime = _mock_runtime(error=ValueError("final"))
         task_fn = _make_job_task(
-            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics
+            _mock_celery_app(), _SyncJob, factory, MagicMock(), runtime, metrics, settings=_SETTINGS
         )
         with pytest.raises(ValueError):
             task_fn(mock_self)
@@ -902,6 +944,7 @@ class TestTwoApplicationsInOneProcess:
                 _mock_factory(_TwinJob()),
                 MagicMock(),
                 _mock_runtime(return_value=answer),
+                settings=_SETTINGS,
             )
         name = f"{TASK_JOB_PREFIX}.{_TwinJob.__qualname__}"
 

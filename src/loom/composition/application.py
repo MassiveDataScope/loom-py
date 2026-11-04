@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from loom.composition.errors import ApplicationAlreadyOpenError
 from loom.composition.resources import Resource, ResourceKind, in_opening_order
+from loom.core.job.config import JobSettings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -50,6 +51,8 @@ class Application:
         ai: Agent runtime and its plans.
         persistence: Wiring of the default store, the only one an
             application composes.
+        job_settings: Each job's queue, retries, countdown, timeout and
+            priority in this application.
         resources: What the application owns, in any order.
     """
 
@@ -62,6 +65,7 @@ class Application:
     sql: SqlWiring
     ai: AiWiring
     persistence: PersistenceWiring
+    job_settings: JobSettings = field(default_factory=JobSettings)
     resources: tuple[Resource, ...] = ()
     _open: bool = field(default=False, init=False)
 

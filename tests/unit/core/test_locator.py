@@ -156,13 +156,26 @@ def test_a_declared_scope_without_a_source_names_the_scope(tmp_path: Path) -> No
         load_application(config_path)
 
 
-def test_a_scope_source_must_be_an_identity_or_request_reference(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("scopes", "match"),
+    [
+        ({"owner": "env.subject", "editor": "request.editor"}, r"scopes\.owner.*env\.subject"),
+        (
+            {"owner": "identity.subject", "editor": "request.editor", "spare": "env.spare"},
+            r"scopes\.spare.*env\.spare",
+        ),
+    ],
+    ids=["declared", "undeclared"],
+)
+def test_a_scope_source_must_be_an_identity_or_request_reference(
+    tmp_path: Path, scopes: dict[str, str], match: str
+) -> None:
     schema = _scoped_schema()
-    schema["scopes"] = {"owner": "env.subject", "editor": "request.editor"}
+    schema["scopes"] = scopes
 
     config_path = _write(tmp_path, "a.yaml", _config(SCOPED_MODULE, **schema))
 
-    with pytest.raises(ConfigError, match=r"scopes\.owner.*env\.subject"):
+    with pytest.raises(ConfigError, match=match):
         load_application(config_path)
 
 
