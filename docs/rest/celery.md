@@ -272,6 +272,62 @@ executor drives commit and drains post-commit actions.
 
 ---
 
+## invoke or dispatch
+
+`ApplicationInvoker.invoke(UseCase, params=..., payload=...)` runs another use
+case now: synchronously from the caller's point of view (awaited), in the same
+process, and inside the caller's open unit of work, so it shares the caller's
+transaction and commits or rolls back with it. It returns the use case's result.
+
+`invoke` takes no `identity=` argument. The identity is bound on the invoker:
+`AppInvoker.for_identity(identity)` returns a copy that invokes every use case
+as that identity (for example `invoker.for_identity(operator)`). A nested
+invocation that joins the caller's unit of work must run as the same identity;
+otherwise the executor raises `NestedIdentityMismatch` ("invoke it with the same
+identity, or dispatch a job that runs as the other one"). Any nested execution
+while an elevation is active raises `NestedElevation`. See
+{doc}`ADR 0008 </architecture/adr/0008-stores-and-units-of-work>`.
+
+`JobService.dispatch(Job, payload=..., params=...)` is asynchronous: the job is
+sent after the caller's commit, runs in its own unit of work, possibly in
+another process, and is delivered at least once. It returns a `JobHandle`, not
+the result.
+
+Use `invoke` when the caller needs the result or the two writes must be atomic;
+use `dispatch` for work that can happen later, or that must run as another
+identity.
+
+---
+
+## Anti-patterns
+
+- `asyncio.gather` over several `invoke` calls: one invocation scope has one
+  owner task; a participant touched from a `gather` child raises
+  `ScopeOwnershipError`. Await the calls one after another.
+- Callbacks (`on_success` / `on_failure`, or `on_all_success` /
+  `on_any_failure` on `dispatch_parallel`) with the SQS backend: `dispatch`
+  refuses them with `SQSDispatchError` (code `sqs_callbacks`).
+- `handle.wait()` with the SQS backend: an SQS `JobHandle` carries no result
+  to wait for. Use `run()` or `invoke` when you need the result.
+- Renaming or moving a `Job` class while messages are in flight: the envelope
+  names the job `loom.job.<qualname>` (Celery task name and SQS message
+  alike), so old messages no longer route to a job. Drain the queue first, or
+  keep the old class until it is empty.
+- Queue URLs or boto3 clients inside a use case: the configuration belongs in
+  `sqs.queues` and `aws:`; a use case injects `JobService` and names a queue
+  at most.
+- `dispatch` for work the request needs now: it runs after the commit, so the
+  response cannot depend on it. Use `invoke`.
+- Non-idempotent jobs: delivery is at least once with SQS and with Celery
+  (tasks are registered with `acks_late=True`, so a worker lost mid-task
+  re-runs it). Make `execute()` safe to repeat, for example keyed by a
+  business id.
+
+A transactional outbox, for exactly-once hand-off between the commit and the
+broker, is deferred.
+
+---
+
 ## Pick the job backend
 
 A use case injects `JobService` and never names a backend. `app.job_service`
@@ -359,6 +415,17 @@ class ShipOrderJob(Job[None]):
   raised as `SQSDispatchError` with the job, task id, queue and AWS error code,
   never the payload.
 - `run()` executes in-process.
+
+### Who can run a job
+
+The identity in a job envelope is not signed. Anyone allowed to
+`sqs:SendMessage` on the queue, or to publish to an SNS topic subscribed to it,
+can run any job as any subject, row-level security included.
+
+- The queue policy is the authorization boundary: allow `sqs:SendMessage` only
+  to the producer's role.
+- The same holds for a Celery broker: only the producers may publish to it.
+- Signing the envelope is planned.
 
 ---
 
