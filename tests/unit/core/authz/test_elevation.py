@@ -181,19 +181,22 @@ async def test_a_task_spawned_inside_the_frame_loses_elevation_when_the_frame_cl
 
 async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
     sink = FakeSink(open=True)
+    elevated = asyncio.Event()
 
     async def inner() -> None:
         async with elevation_scope(owns_transaction=False, sink=sink):
             await _elevate()
-            await asyncio.sleep(10)
+            elevated.set()
+            await asyncio.Event().wait()
 
-    short_timeout = asyncio.timeout(0.01)
     async with elevation_scope(owns_transaction=True, sink=sink):
-        with pytest.raises(TimeoutError):
-            async with short_timeout:
-                await inner()
+        task = asyncio.create_task(inner())
+        await elevated.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
         assert elevated_scopes() == frozenset()
-    assert sink.cleared == [frozenset({"editor"})]
+    assert (sink.cleared, sink.invalidated) == ([frozenset({"editor"})], 0)
 
 
 async def _nested_elevation(
