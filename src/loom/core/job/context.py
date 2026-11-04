@@ -13,11 +13,11 @@ channel rather than the fallback one.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from contextvars import ContextVar
 from typing import Any
 
-from loom.core.engine.post_commit import PostCommitChannel, active_channel
+from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel
 
 # default=None, never a channel instance: a shared default would leak
 # dispatches across contexts.  Each context creates its own on first use.
@@ -50,6 +50,11 @@ def add_pending_dispatch(fn: Callable[[], Any]) -> None:
 def add_pending_publish(fn: Callable[[], Any]) -> None:
     """Register a broker send to run, shielded, after the current UoW commits."""
     _target_channel().enqueue_publish(fn)
+
+
+def pending_publish_group(key: Hashable, create: Callable[[], ActionT]) -> ActionT:
+    """The active channel's publish action under ``key``; see ``publish_group``."""
+    return _target_channel().publish_group(key, create)
 
 
 def _target_channel() -> PostCommitChannel:

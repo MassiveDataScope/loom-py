@@ -116,7 +116,11 @@ class _Client:
 async def test_the_body_is_the_one_sqs_job_service_sends() -> None:
     client = _Client()
     service = SQSJobService(
-        client, {"default": "queue"}, factory=cast(Any, None), executor=cast(Any, None)
+        client,
+        {"default": "queue"},
+        factory=cast(Any, None),
+        executor=cast(Any, None),
+        batch_size=None,
     )
     token = set_identity(_ALICE)
     try:
