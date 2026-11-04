@@ -103,6 +103,17 @@ def test_an_unregistered_request_source_is_a_configuration_error() -> None:
         rls_session_settings(application)
 
 
+@pytest.mark.parametrize("binding", ["env.spare", "request.spare"])
+def test_a_binding_no_model_declares_is_validated_too(binding: str) -> None:
+    register_scope_source("editor", lambda: "ana")
+    application = _application(
+        holder="identity.subject", editor="request.editor", region="identity.region", spare=binding
+    )
+
+    with pytest.raises(ConfigError, match=r"scopes\.spare"):
+        rls_session_settings(application)
+
+
 def test_the_provider_emits_every_key_as_empty_when_nobody_is_authenticated() -> None:
     register_scope_source("editor", lambda: None)
     provider = rls_session_settings(_application())

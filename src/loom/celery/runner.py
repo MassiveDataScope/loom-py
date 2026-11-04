@@ -215,7 +215,8 @@ def _make_job_task(
     metrics: MetricsAdapter | None = None,
     observability_runtime: ObservabilityRuntime | None = None,
     backoff: int = 2,
-    settings: JobSettings | None = None,
+    *,
+    settings: JobSettings,
 ) -> Any:
     """Register and return a Celery task that executes *job_type* on the worker.
 
@@ -247,15 +248,15 @@ def _make_job_task(
             events during task execution in the worker process.
         backoff: Base for exponential retry delay (seconds).  Defaults to 2.
         settings: The application's job settings, which give the task its
-            retries and time limit; the ClassVars when omitted.
+            retries and time limit.
 
     Returns:
         The registered Celery task object.
     """
-    settings = settings or JobSettings()
-    timeout_value = settings.timeout(job_type)
+    options = settings.of(job_type)
+    timeout = options.timeout
     runtime = observability_runtime or ObservabilityRuntime.noop()
-    run_timeout = float(timeout_value) if timeout_value is not None and timeout_value > 0 else None
+    run_timeout = float(timeout) if timeout is not None and timeout > 0 else None
     name = job_type.__qualname__
 
     def _execute_job(
@@ -309,8 +310,8 @@ def _make_job_task(
         bind=True,
         acks_late=True,
         reject_on_worker_lost=True,
-        max_retries=settings.retries(job_type),
-        soft_time_limit=timeout_value,
+        max_retries=options.retries,
+        soft_time_limit=timeout,
     )
     def _job_task(
         self: Any,

@@ -312,7 +312,8 @@ Override any Job ClassVar from YAML without touching Python code. Only the field
 you declare are applied; unset fields keep their ClassVar defaults. Every process
 that discovers the job applies them, the API included. Each application keeps its
 own values and the ClassVars stay as declared, so two applications composed in one
-process never see each other's `jobs` section:
+process never see each other's `jobs` section. An invalid section raises
+`ConfigError` at startup:
 
 In `config/worker.yaml`:
 

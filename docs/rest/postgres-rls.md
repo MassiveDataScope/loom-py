@@ -392,7 +392,7 @@ Every declared scope needs an explicit source under `stores.default.schema.scope
 | `identity.<attr>` | the caller's verified attribute of that name |
 | `request.<name>` | a callable the product registered with `register_scope_source(name, callable)` before startup |
 
-A scope without an entry, a malformed source or an unregistered `request.<name>` raises
+A declared scope without an entry, or any malformed source or unregistered `request.<name>`, raises
 `ConfigError` at startup; registering a name twice raises `ValueError`. Register the
 product's sources before startup; each application takes the sources registered when it
 is composed, and keeps them whatever is registered afterwards:

@@ -78,17 +78,11 @@ class SQSDispatchError(LoomError):
 
 
 def check_queues(
-    queues: Mapping[str, str],
-    jobs: Sequence[type[Job[Any]]],
-    settings: JobSettings | None = None,
+    queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]], settings: JobSettings
 ) -> None:
-    """Fail at startup unless every job's queue has a URL and a FIFO job names its group.
-
-    Each job's queue is the one *settings* give it; its ClassVar without them.
-    """
-    settings = settings or JobSettings()
+    """Fail at startup unless every job's queue has a URL and a FIFO job names its group."""
     for job_type in jobs:
-        queue = settings.queue(job_type)
+        queue = settings.of(job_type).queue
         url = queues.get(queue)
         if url is None:
             raise SQSQueueConfigError(
@@ -321,9 +315,10 @@ class SQSJobService:
         """Validate and encode now, so a refusal comes before the commit; send after it."""
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code="sqs_callbacks")
-        if priority is not None and priority != self._settings.priority(job_type):
+        options = self._settings.of(job_type)
+        if priority is not None and priority != options.priority:
             raise SQSDispatchError("SQS queues have no priority", code="sqs_priority")
-        eff_queue = queue or self._settings.queue(job_type)
+        eff_queue = queue or options.queue
         url = self._config.queues.get(eff_queue)
         if url is None:
             raise SQSDispatchError(
@@ -350,7 +345,7 @@ class SQSJobService:
                 f"at most {MAX_MESSAGE_BYTES}",
                 code="sqs_message_too_large",
             )
-        delay = _delay(self._settings.countdown(job_type) if countdown is None else countdown, eta)
+        delay = _delay(options.countdown if countdown is None else countdown, eta)
         request = {"QueueUrl": url, "MessageBody": body.decode()}
         request |= _placement(job_type, url, payload, task_id, delay)
         task_name = wire_job_name(job_type.__qualname__)

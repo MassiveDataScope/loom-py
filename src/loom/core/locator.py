@@ -238,13 +238,14 @@ def _database_user(user: str, section: SchemaUser, path: str) -> DatabaseUser:
 
 def _scope_sources(schema: SchemaConfig, scoped: ScopedTables, path: str) -> dict[str, str]:
     sources = require_schema_key(schema.scopes, path, "scopes")
-    declared = declared_scopes(scoped)
-    for scope in sorted(declared):
-        if scope not in sources:
-            raise ConfigError(f"{path}.schema.scopes.{scope} is missing")
-        if not _SCOPE_SOURCE.fullmatch(sources[scope]):
+    for scope, binding in sorted(sources.items()):
+        if not _SCOPE_SOURCE.fullmatch(binding):
             raise ConfigError(
-                f"{path}.schema.scopes.{scope} {sources[scope]!r} must be "
+                f"{path}.schema.scopes.{scope} {binding!r} must be "
                 "identity.<attribute> or request.<name>"
             )
-    return {scope: sources[scope] for scope in sorted(declared)}
+    declared = sorted(declared_scopes(scoped))
+    for scope in declared:
+        if scope not in sources:
+            raise ConfigError(f"{path}.schema.scopes.{scope} is missing")
+    return {scope: sources[scope] for scope in declared}

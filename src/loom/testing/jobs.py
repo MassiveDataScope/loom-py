@@ -165,7 +165,7 @@ class RecordingJobService:
             job_type=job_type,
             payload=copy.deepcopy(payload or {}),
             params=copy.deepcopy(params),
-            queue=queue or self._settings.queue(job_type),
+            queue=queue or self._settings.of(job_type).queue,
             identity=current_identity(),
         )
         add_pending_publish(functools.partial(self.dispatched.append, record))

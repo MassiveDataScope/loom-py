@@ -350,9 +350,10 @@ class CeleryJobService:
         task_id = str(uuid.uuid4())
         trace_id = get_trace_id()
         identity = encode_identity(current_identity())
-        eff_queue = queue or self._settings.queue(job_type)
-        eff_countdown = countdown if countdown is not None else self._settings.countdown(job_type)
-        eff_priority = priority if priority is not None else self._settings.priority(job_type)
+        options = self._settings.of(job_type)
+        eff_queue = queue or options.queue
+        eff_countdown = countdown if countdown is not None else options.countdown
+        eff_priority = priority if priority is not None else options.priority
 
         link = (
             _build_success_link(self._app, on_success, payload or {}, task_id, trace_id)
@@ -377,7 +378,7 @@ class CeleryJobService:
             countdown=eff_countdown,
             priority=eff_priority,
             eta=eta,
-            soft_time_limit=self._settings.timeout(job_type),
+            soft_time_limit=options.timeout,
             link=link,
             link_error=link_error,
             observability_runtime=self._observability_runtime,

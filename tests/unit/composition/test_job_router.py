@@ -168,8 +168,8 @@ def test_the_api_applies_the_job_config(fixture_project: ProjectFactory) -> None
     application = build_application(str(config_path), adapter=FastAPIAdapter(), environment="test")
 
     (job,) = application.discovered.jobs
-    settings = application.job_settings
-    assert (job.__name__, settings.queue(job), settings.countdown(job), settings.priority(job)) == (
+    options = application.job_settings.of(job)
+    assert (job.__name__, options.queue, options.countdown, options.priority) == (
         "ReportJob",
         "reports",
         5,

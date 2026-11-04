@@ -132,7 +132,7 @@ def _routed(context: JobBackendContext, default: str) -> _Built:
     celery_cfg = _celery_config(context.config)
     # Celery's own default queue stays with the default backend: it is every job's queue.
     queues = [queue for queue in celery_cfg.queues if queue != celery_cfg.task_default_queue]
-    served = tuple(job for job in context.jobs if context.settings.queue(job) not in queues)
+    served = tuple(job for job in context.jobs if context.settings.of(job).queue not in queues)
     service, resources = _backend(default, replace(context, jobs=served))  # NOSONAR(S5655)
     if not queues:
         return service, resources
@@ -179,7 +179,7 @@ def configure_job_service(
     *,
     backend: str | None = None,
     jobs: tuple[type[Job[Any]], ...] = (),
-    settings: JobSettings | None = None,
+    settings: JobSettings,
 ) -> tuple[Resource, ...]:
     """Register the ``JobService`` in the container, ``APPLICATION`` scoped.
 
@@ -198,8 +198,7 @@ def configure_job_service(
             with, or ``None``.
         backend: ``app.job_service``: a built-in name or ``module:Class``.
         jobs: The discovered jobs.
-        settings: Each job's settings in this application; the ClassVars
-            when omitted.
+        settings: Each job's settings in this application.
 
     Returns:
         One resource per built backend that owns something to close.
@@ -219,7 +218,7 @@ def configure_job_service(
         metrics=result.metrics,
         observability=observability_runtime,
         jobs=jobs,
-        settings=settings or JobSettings(),
+        settings=settings,
     )
     service, resources = _implicit(context) if backend is None else _routed(context, backend)
     result.container.register(JobService, lambda: service, scope=Scope.APPLICATION)

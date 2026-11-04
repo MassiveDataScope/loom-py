@@ -123,4 +123,4 @@ class JobRouter:
         )
 
     def _backend_for(self, job_type: type[Job[Any]], queue: str | None) -> JobService:
-        return self._routes.get(queue or self._settings.queue(job_type), self._default)
+        return self._routes.get(queue or self._settings.of(job_type).queue, self._default)

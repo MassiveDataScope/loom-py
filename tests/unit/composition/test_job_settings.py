@@ -15,6 +15,7 @@ import pytest
 from celery import Celery
 
 from loom.composition import Application, compose_application
+from loom.core.config import ConfigError
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
@@ -107,3 +108,11 @@ async def test_each_application_routes_by_the_queue_of_its_own_job_section(
     assert sent["plain"] is None
     assert sent["configured"] is not None
     assert sent["configured"]["queue"] == "reports"
+
+
+def test_a_malformed_jobs_section_fails_the_composition(tmp_path: Path) -> None:
+    source = job_source(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
+    adapter = JobsAdapter(_ReportJob)
+
+    with pytest.raises(ConfigError, match="_ReportJob"):
+        compose_application(source, adapter)

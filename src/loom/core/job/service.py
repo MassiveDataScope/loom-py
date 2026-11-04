@@ -320,7 +320,7 @@ class InlineJobService:
         add_pending_dispatch(pending.run)
         return JobHandle(
             job_id=task_id,
-            queue=queue or self._settings.queue(job_type),
+            queue=queue or self._settings.of(job_type).queue,
             dispatched_at=datetime.now(UTC),
             _inline_result_holder=result_holder,
         )

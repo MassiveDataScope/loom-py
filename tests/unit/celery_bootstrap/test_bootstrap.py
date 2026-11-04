@@ -18,7 +18,7 @@ from loom.celery.bootstrap import WorkerBootstrapResult, WorkerManifest
 from loom.celery.config import CeleryRuntimeConfig
 from loom.celery.constants import TASK_CALLBACK_ERROR_PREFIX, TASK_CALLBACK_PREFIX, TASK_JOB_PREFIX
 from loom.core.config import ConfigContext
-from loom.core.discovery.worker import DuplicateJobName, apply_job_overrides
+from loom.core.discovery.worker import DuplicateJobName
 from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
@@ -90,33 +90,6 @@ def test_celery_discovery_rejects_duplicate_job_qualnames() -> None:
 
     with pytest.raises(DuplicateJobName):
         discovery._resolve_compilables_and_jobs(ctx, jobs, [])
-
-
-# apply_job_overrides
-# ---------------------------------------------------------------------------
-
-
-class TestApplyJobOverrides:
-    def test_applies_override_when_section_exists(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        raw = _make_config(extra={"jobs": {"_SyncJob": {"queue": "override", "retries": 5}}})
-        monkeypatch.setattr(_SyncJob, "__queue__", _SyncJob.__queue__, raising=False)
-        monkeypatch.setattr(_SyncJob, "__retries__", _SyncJob.__retries__, raising=False)
-
-        apply_job_overrides(raw, _SyncJob)
-
-        assert _SyncJob.__queue__ == "override"
-        assert _SyncJob.__retries__ == 5
-
-    def test_does_not_raise_when_section_absent(self) -> None:
-        raw = _make_config()
-        # Must not raise even though jobs._SyncJob section is missing
-        apply_job_overrides(raw, _SyncJob)
-
-    def test_classvar_unchanged_when_section_absent(self) -> None:
-        raw = _make_config()
-        original = _SyncJob.__queue__
-        apply_job_overrides(raw, _SyncJob)
-        assert _SyncJob.__queue__ == original
 
 
 # ---------------------------------------------------------------------------

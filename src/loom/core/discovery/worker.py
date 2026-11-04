@@ -15,7 +15,6 @@ from loom.core.discovery._utils import collect_from_modules, import_modules
 from loom.core.discovery.config import DiscoveryConfig, decode_discovery
 from loom.core.discovery.worker_manifest import WorkerManifestAttr
 from loom.core.engine.compilable import Compilable
-from loom.core.job.config import apply_job_config, read_job_config
 from loom.core.job.job import Job
 from loom.core.model import BaseModel
 
@@ -89,27 +88,6 @@ class WorkerComponents:
     models: tuple[type[BaseModel], ...]
     callbacks: tuple[type[Any], ...]
     agent_specs: tuple[str, ...] = ()
-
-
-# ---------------------------------------------------------------------------
-# Job config override helper
-# ---------------------------------------------------------------------------
-
-
-def apply_job_overrides(
-    ctx: ConfigContext,
-    job_type: type[Job[Any]],
-) -> None:
-    """Apply ``JobConfig`` overrides from YAML to ``job_type``'s ClassVars.
-
-    Silently skips when the ``jobs.<JobTypeName>`` section is absent — the
-    Job's ClassVar defaults remain unchanged.
-
-    Args:
-        ctx: Resolved configuration context.
-        job_type: Concrete ``Job`` subclass to configure.
-    """
-    apply_job_config(job_type, read_job_config(ctx, job_type))
 
 
 def use_cases_from_interfaces(interfaces: Sequence[type[Any]]) -> tuple[type[Compilable], ...]:

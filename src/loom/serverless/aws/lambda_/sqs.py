@@ -238,7 +238,7 @@ class _SQSBatch:
                 observability=self._application.observability,
                 message_id=_message_id(record),
             ),
-            timeout=_record_timeout(self._application.job_settings.timeout(job_type), context),
+            timeout=_record_timeout(self._application.job_settings.of(job_type).timeout, context),
         )
 
     def _decode(self, record: Any) -> JobEnvelope:

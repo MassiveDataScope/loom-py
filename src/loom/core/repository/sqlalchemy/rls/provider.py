@@ -68,14 +68,14 @@ def scoped_session_settings(
         path: Dotted path of the store's section, which the messages name.
 
     Raises:
-        ConfigError: When a declared scope has no binding, or a binding is
+        ConfigError: When a declared scope has no binding, or any binding is
             malformed or unregistered.
     """
     scopes = declared_scopes(scoped)
     missing = sorted(scope for scope in scopes if scope not in scope_sources)
     if missing:
         raise ConfigError(f"{path}.schema.scopes is missing bindings for {missing}")
-    sources = bind_sources({scope: scope_sources[scope] for scope in scopes}, path=path)
+    sources = bind_sources(scope_sources, path=path)
     return _ScopedProvider(scopes, sources, product)
 
 
