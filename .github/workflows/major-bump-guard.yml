@@ -1,0 +1,38 @@
+name: major-bump-guard
+
+on:
+  pull_request:
+    branches: ["master"]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: major-bump-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    if: ${{ !startsWith(github.head_ref, 'docs/release-') && !contains(github.event.pull_request.labels.*.name, 'major') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse breaking commits without the major label
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          breaking='^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:'
+          messages="$(gh api --paginate "repos/${REPO}/pulls/${PR}/commits" --jq '.[].commit.message')"
+          found="$(printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$messages" | grep -E "$breaking" || true)"
+          if [ -n "$found" ]; then
+            echo "::error title=Breaking change without the major label::This would bump the major version. Drop the '!' / 'BREAKING CHANGE:' marker, or label the pull request 'major' if the team decided on a new major."
+            printf '%s\n' "$found"
+            exit 1
+          fi
