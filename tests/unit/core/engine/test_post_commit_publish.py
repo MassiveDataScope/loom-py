@@ -299,3 +299,41 @@ async def test_a_publish_runs_before_an_inline_job_queued_earlier() -> None:
     await channel.drain(committed=True)
 
     assert calls == ["publish", "inline"]
+
+
+class _Batch:
+    """A grouped publish: counts its runs and the items it carried."""
+
+    def __init__(self, runs: list[list[str]]) -> None:
+        self.items: list[str] = []
+        self._runs = runs
+
+    def __call__(self) -> None:
+        self._runs.append(self.items)
+
+
+def _grouped(channel: PostCommitChannel, runs: list[list[str]], item: str) -> None:
+    channel.publish_group("broker", lambda: _Batch(runs)).items.append(item)
+
+
+async def test_a_publish_group_is_queued_once_and_gathers_until_the_drain() -> None:
+    channel = PostCommitChannel()
+    runs: list[list[str]] = []
+    _grouped(channel, runs, "a")
+    _grouped(channel, runs, "b")
+    await channel.drain(committed=True)
+    _grouped(channel, runs, "c")
+    await channel.drain(committed=True)
+
+    assert runs == [["a", "b"], ["c"]]
+
+
+async def test_a_discarded_publish_group_is_not_reused() -> None:
+    channel = PostCommitChannel()
+    runs: list[list[str]] = []
+    _grouped(channel, runs, "rolled back")
+    channel.discard()
+    _grouped(channel, runs, "committed")
+    await channel.drain(committed=True)
+
+    assert runs == [["committed"]]

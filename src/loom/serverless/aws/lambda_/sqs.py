@@ -14,7 +14,7 @@ from loom.core.discovery.worker import (
     DuplicateJobName as DuplicateJobName,
 )
 from loom.core.discovery.worker import resolve_worker_components
-from loom.core.errors import MalformedJobMessage, UnknownJob
+from loom.core.errors import LoomError, MalformedJobMessage, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope
 from loom.core.job.outcome import failure_log_fields, is_retryable
 from loom.core.job.run import run_job
@@ -24,6 +24,7 @@ from loom.core.observability.event import Scope
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.persistence.stores import NONE_BACKEND
 from loom.serverless.aws.lambda_._refusals import refuse_manifest_agents, refuse_unserved_config
+from loom.serverless.aws.lambda_.functions import reports_batch_item_failures
 
 if TYPE_CHECKING:
     from loom.composition import Application, CompositionSource
@@ -37,6 +38,10 @@ MALFORMED_JOB = "<malformed>"
 """Job label of a record whose body could not be decoded."""
 TIMEOUT_SAFETY_MARGIN_MS = 1000
 """Stop starting records when fewer than one second remains in the invocation."""
+
+
+class SQSBatchFailedError(LoomError):
+    """A record of the batch failed and the function does not report batch item failures."""
 
 
 class SQSHandler(Protocol):
@@ -70,6 +75,7 @@ class LambdaSQSAdapter:
                 deferred for this adapter version.
         """
         self._jobs = tuple(jobs)
+        self._report_batch_item_failures = True
         self._use_cases = tuple(use_cases)
         self._metrics = metrics
         self._declared: dict[str, type[Job[Any]]] | None = None
@@ -79,7 +85,8 @@ class LambdaSQSAdapter:
         """Discover jobs and declared use cases for Lambda.
 
         AutoCRUD use cases for discovered models are not compiled here.
-        Discovered callbacks are not registered by this adapter.
+        Discovered callbacks are not registered by this adapter. The function
+        ``app.entry`` names sets ``report_batch_item_failures``.
 
         Raises:
             LambdaUnservedConfigError: When the configuration enables metrics
@@ -87,12 +94,16 @@ class LambdaSQSAdapter:
                 agents.
             CompositionStateError: When this instance already composed an
                 application.
+            ConfigError: When ``lambda.functions`` is misdeclared.
         """
         if self._declared is not None:
             raise CompositionStateError(
                 CompositionErrorCode.ADAPTER_ALREADY_COMPOSED.issue(component=_COMPONENT)
             )
         refuse_unserved_config(source, _COMPONENT)
+        self._report_batch_item_failures = reports_batch_item_failures(
+            source.config, source.app.entry
+        )
         resolved = resolve_worker_components(source.config, self._jobs, self._use_cases)
         refuse_manifest_agents(resolved.agent_specs, _COMPONENT)
         if resolved.models:
@@ -140,7 +151,9 @@ class LambdaSQSAdapter:
         service = application.kernel.container.resolve(JobService)
         host = LoopHost(application)
         host.start()
-        self._handler = _SQSBatch(application, self._declared, host)
+        self._handler = _SQSBatch(
+            application, self._declared, host, report_failures=self._report_batch_item_failures
+        )
         if isinstance(service, InlineJobService):
             _log.info(
                 "Lambda dispatched jobs run inline in this invocation without a queue or retries"
@@ -166,13 +179,27 @@ class _SQSBatch:
         application: Application,
         jobs: Mapping[str, type[Job[Any]]],
         host: LoopHost,
+        *,
+        report_failures: bool = True,
     ) -> None:
         self._application = application
         self._jobs = jobs
         self._host = host
+        self._report_failures = report_failures
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, list[dict[str, str]]]:
-        records: list[Any] = event["Records"]
+        result = self._run_batch(event["Records"], context)
+        if self._report_failures:
+            return result
+        if result["batchItemFailures"]:
+            raise SQSBatchFailedError(
+                f"{len(result['batchItemFailures'])} of {len(event['Records'])} SQS records "
+                "failed; report_batch_item_failures is off, so the whole batch is retried",
+                code="sqs_batch_failed",
+            )
+        return {}
+
+    def _run_batch(self, records: list[Any], context: Any) -> dict[str, list[dict[str, str]]]:
         fifo = bool(records) and _is_fifo(records[0])
         failures: list[dict[str, str]] = []
         for index, record in enumerate(records):

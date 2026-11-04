@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import collections
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Hashable
 from contextvars import ContextVar, Token
+from typing import TypeVar, cast
 
 from loom.core.errors import LoomError
 from loom.core.errors.codes import ErrorCode
@@ -21,6 +22,7 @@ from loom.core.logger import get_logger
 
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
+ActionT = TypeVar("ActionT", bound=PostCommitAction)
 
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
@@ -65,12 +67,19 @@ class PostCommitChannel:
         await channel.drain(committed=True)
     """
 
-    __slots__ = ("_actions", "_priority_actions", "_publish_actions", "_requeue_on_cancel")
+    __slots__ = (
+        "_actions",
+        "_priority_actions",
+        "_publish_actions",
+        "_publish_groups",
+        "_requeue_on_cancel",
+    )
 
     def __init__(self, *, requeue_on_cancel: bool = False) -> None:
         self._priority_actions: list[PostCommitAction] = []
         self._publish_actions: list[PostCommitAction] = []
         self._actions: list[PostCommitAction] = []
+        self._publish_groups: dict[Hashable, PostCommitAction] = {}
         self._requeue_on_cancel = requeue_on_cancel
 
     def enqueue(self, action: PostCommitAction) -> None:
@@ -105,8 +114,27 @@ class PostCommitChannel:
         """
         self._publish_actions.append(action)
 
+    def publish_group(self, key: Hashable, create: Callable[[], ActionT]) -> ActionT:
+        """The publish action queued under ``key`` since the last drain, created on first use.
+
+        Lets a broker gather the sends of one transaction into a single action,
+        such as one batch call.
+
+        Args:
+            key: Who owns the group, such as the job service.
+            create: Builds the action and is called once per drain.
+        """
+        queued = self._publish_groups.get(key)
+        if queued is not None:
+            return cast(ActionT, queued)
+        action = create()
+        self._publish_groups[key] = action
+        self.enqueue_publish(action)
+        return action
+
     def discard(self) -> None:
         """Drop every queued action without running it."""
+        self._publish_groups.clear()
         self._priority_actions.clear()
         self._publish_actions.clear()
         self._actions.clear()
@@ -135,6 +163,7 @@ class PostCommitChannel:
         plain_failures: list[_Failure] = []
         shielded_pending = collections.deque([*self._priority_actions, *self._publish_actions])
         self._priority_actions, self._publish_actions = [], []
+        self._publish_groups.clear()
         shielded = asyncio.create_task(_run_all(shielded_pending, shielded_failures))
         _shielded_tasks.add(shielded)
         shielded.add_done_callback(_shielded_tasks.discard)

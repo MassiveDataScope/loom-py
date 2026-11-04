@@ -360,6 +360,63 @@ class ShipOrderJob(Job[None]):
   never the payload.
 - `run()` executes in-process.
 
+#### Batches
+
+After the commit, the jobs one execution dispatched leave in `SendMessageBatch`
+calls, one queue after another, in dispatch order: FIFO order holds within each
+queue.
+
+```yaml
+sqs:
+  batch: true
+  batch_size: 10
+  max_concurrent_sends: 1
+  queues:
+    default: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
+```
+
+- `batch` (default `true`): `false` sends each job with its own `SendMessage`.
+- `batch_size` (1–10, default 10): entries per call; a call also never carries
+  more than 1 MiB of bodies, the
+  [SendMessageBatch](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html)
+  limit.
+- `max_concurrent_sends` (default 1): queues sent at the same time; the calls
+  of one queue always run one after another.
+- The entries SQS refuses in a call are sent once more. Those refused again,
+  and every entry of a call that raised, are logged one by one with job, task
+  id, queue and AWS error code, then raised together as one `SQSDispatchError`
+  (`code="sqs_batch_partial_failure"`) carrying their count and codes.
+- Nothing waits for jobs from other requests: a batch never outlives the
+  execution that committed it.
+
+#### Lambda consumers
+
+A `lambda.functions` entry with `sqs: true` may declare its event source
+mapping:
+
+```yaml
+lambda:
+  functions:
+    worker:
+      sqs: true
+      batch_size: 100
+      batching_window_s: 5
+      max_concurrency: 50
+      report_batch_item_failures: true
+```
+
+- `batch_size` (1–10000; 10 at most on a FIFO queue; over 10 needs
+  `batching_window_s` of at least 1), `batching_window_s` (0–300) and
+  `max_concurrency` (2–1000) are the
+  [event source mapping](https://docs.aws.amazon.com/lambda/latest/api/API_CreateEventSourceMapping.html)
+  `BatchSize`, `MaximumBatchingWindowInSeconds` and
+  [`ScalingConfig.MaximumConcurrency`](https://docs.aws.amazon.com/lambda/latest/api/API_ScalingConfig.html).
+  loom validates them for the deployment but does not apply them.
+- `report_batch_item_failures` (default `true`) must match the mapping's
+  `ReportBatchItemFailures`: `false` makes the handler raise
+  `SQSBatchFailedError` when a record fails, so Lambda retries the whole batch.
+- An http function refuses these keys.
+
 ---
 
 ## YAML configuration reference

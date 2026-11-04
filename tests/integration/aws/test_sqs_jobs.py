@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+from botocore.client import BaseClient  # type: ignore[import-untyped]
 
 from loom.composition import Application, build_application
 from loom.core.job.envelope import decode_job_envelope
@@ -58,6 +60,22 @@ class Dispatch(UseCase[Any, str]):
         if fail:
             raise _Rollback
         return handle.job_id
+
+
+class DispatchMany(UseCase[Any, list[str]]):
+    """Dispatch ``count`` jobs of one customer in one execution, marked by their order."""
+
+    def __init__(self, jobs: JobService) -> None:
+        self._jobs = jobs
+
+    async def execute(self, job: str, count: int) -> list[str]:
+        job_type = WelcomeJob if job == "WelcomeJob" else OrderJob
+        return [
+            self._jobs.dispatch(
+                job_type, params={"marker": str(n)}, payload={"customer": "c-7"}
+            ).job_id
+            for n in range(count)
+        ]
 
 
 @dataclass(frozen=True)
@@ -200,3 +218,47 @@ def test_the_lambda_sqs_adapter_runs_the_received_message(
 
     assert result == {"batchItemFailures": []}
     assert _runs == [(job_type.__qualname__, "m-1")]
+
+
+@pytest.fixture
+def sqs_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The name of each SQS send operation any boto3 client makes."""
+    calls: list[str] = []
+    make_api_call = BaseClient._make_api_call
+
+    def spy(client: Any, operation: str, params: dict[str, Any]) -> Any:
+        if operation.startswith("SendMessage"):
+            calls.append(operation)
+        return make_api_call(client, operation, params)
+
+    monkeypatch.setattr(BaseClient, "_make_api_call", spy)
+    return calls
+
+
+def _drain(sqs: Any, queue: _Queue, count: int) -> list[str]:
+    """Receive and delete until *count* messages arrived; their markers in arrival order."""
+    markers: list[str] = []
+    deadline = time.monotonic() + 30
+    while len(markers) < count and time.monotonic() < deadline:
+        for message in _receive(sqs, queue, wait=1):
+            markers.append(str(decode_job_envelope(message["Body"]).params["marker"]))
+            sqs.delete_message(QueueUrl=queue.url, ReceiptHandle=message["ReceiptHandle"])
+    return markers
+
+
+@pytest.mark.parametrize("job_type", [WelcomeJob, OrderJob], ids=["standard", "fifo"])
+def test_one_execution_sends_its_jobs_in_batches_of_ten(
+    producer: Application,
+    sqs: Any,
+    queues: _Queues,
+    sqs_calls: list[str],
+    job_type: type[Job[Any]],
+) -> None:
+    use_case = producer.kernel.factory.build(DispatchMany)
+    params = {"job": job_type.__qualname__, "count": 25}
+    asyncio.run(producer.kernel.executor.execute(use_case, params=params))
+
+    assert sqs_calls == ["SendMessageBatch"] * 3
+    markers = _drain(sqs, queues.of(job_type), 25)
+    arrived = markers if job_type is OrderJob else sorted(markers, key=int)
+    assert arrived == [str(n) for n in range(25)]

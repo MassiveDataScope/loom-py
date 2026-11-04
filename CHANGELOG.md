@@ -15,6 +15,12 @@
   FIFO queues take the SHA-256 of the new `Job.__group_by__` payload field as
   `MessageGroupId`. Callbacks, priorities, delays SQS cannot honour and bodies
   over 256 KiB raise `SQSDispatchError`; unmapped queues stop startup.
+- **jobs:** an execution's SQS jobs leave after the commit in
+  `SendMessageBatch` calls per queue, in dispatch order (`sqs.batch`,
+  `sqs.batch_size`, `sqs.max_concurrent_sends`); entries SQS refuses are sent
+  once more. `lambda.functions.<name>` with `sqs: true` declares `batch_size`,
+  `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
+  `false` makes the SQS handler fail the whole batch.
 
 ### config
 

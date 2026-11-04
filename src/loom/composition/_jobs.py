@@ -111,6 +111,8 @@ def _sqs(context: JobBackendContext) -> _Built:
         factory=context.factory,
         executor=context.executor,
         metrics=context.metrics,
+        batch_size=config.batch_size if config.batch else None,
+        max_concurrent_sends=config.max_concurrent_sends,
     )
     return service, ()
 

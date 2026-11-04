@@ -4,15 +4,17 @@ import asyncio
 import json
 import subprocess
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from functools import partial
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
 
 from loom.composition import (
+    AppConfig,
     Application,
     CompositionSource,
     CompositionStateError,
@@ -30,7 +32,7 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.tracing import get_trace_id, reset_trace_id, set_trace_id
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter, LambdaUnservedConfigError
-from loom.serverless.aws.lambda_.sqs import DuplicateJobName, SQSHandler
+from loom.serverless.aws.lambda_.sqs import DuplicateJobName, SQSBatchFailedError, SQSHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_._probe import Probe
@@ -63,6 +65,35 @@ def test_batch_outcomes(
     result = handler({"Records": records}, None)
     assert result["batchItemFailures"] == [{"itemIdentifier": item} for item in failed]
     assert [item[0] for item in seen] == ran
+
+
+@pytest.fixture
+def whole_batch_handler(tmp_path: Path, probe: tuple[type[Job[None]], Any]) -> Iterator[SQSHandler]:
+    worker = {"sqs": True, "report_batch_item_failures": False}
+    source = composition_source(
+        ConfigContext.from_dict({"lambda": {"functions": {"worker": worker}}}),
+        app=AppConfig(name="lambda-sqs", entry="worker"),
+        code_path=tmp_path,
+        config_root=tmp_path,
+    )
+    adapter = LambdaSQSAdapter(jobs=[probe[0]])
+    yield adapter.bind(compose_application(source, adapter))
+    adapter.close()
+
+
+@pytest.mark.parametrize("fifo", [False, True])
+def test_without_batch_item_failures_a_failed_record_fails_the_whole_batch(
+    whole_batch_handler: SQSHandler, record: RecordFactory, fifo: bool
+) -> None:
+    records = [record("1", "a", fifo=fifo), record("2", "fail", fifo=fifo)]
+    with pytest.raises(SQSBatchFailedError, match="1 of 2 SQS records failed"):
+        whole_batch_handler({"Records": records}, None)
+
+
+def test_without_batch_item_failures_a_batch_that_ran_returns_no_report(
+    whole_batch_handler: SQSHandler, record: RecordFactory
+) -> None:
+    assert whole_batch_handler({"Records": [record("1", "a")]}, None) == {}
 
 
 def test_malformed_body_fails_only_that_standard_record(
