@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError, ConfigKey
+from loom.core.config.loader import convert_section
 
 if TYPE_CHECKING:
     from loom.rest.fastapi.adapter import InterfaceSelector
@@ -78,12 +79,7 @@ def _unresolved(ctx: ConfigContext) -> _LambdaConfig:
     Only the function served resolves its own ``auth``, through its section path.
     """
     raw = ctx.raw(ConfigKey.LAMBDA)
-    if raw is None:
-        return _LambdaConfig()
-    try:
-        return msgspec.convert(raw, _LambdaConfig)
-    except msgspec.ValidationError as exc:
-        raise ConfigError(f"lambda: {exc}") from exc
+    return _LambdaConfig() if raw is None else convert_section(raw, ConfigKey.LAMBDA, _LambdaConfig)
 
 
 def declared_function(ctx: ConfigContext, name: str) -> LambdaFunction:
