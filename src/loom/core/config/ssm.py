@@ -13,17 +13,17 @@ Example::
 
 from __future__ import annotations
 
-import functools
 import logging
 from typing import Any
 
 from loom.core.config._resolver_utils import (
+    CLIENT,
     _aws_error_code,
     _expand_env_vars,
     _navigate_json,
     _split_resolver_key,
     aws_client,
-    cached,
+    root_cache,
 )
 from loom.core.config.errors import ConfigError
 
@@ -62,7 +62,7 @@ class SsmResolver:
     """Resolves SSM Parameter Store paths for use with :func:`~loom.core.config.load_config`.
 
     Fetches parameter values from AWS Systems Manager Parameter Store.
-    The boto3 client is created lazily on first use and reused across calls.
+    The boto3 client is created on first use, once per configuration.
 
     Env-var tokens in the form ``%VAR_NAME%`` (uppercase letters, digits,
     and underscores only) are expanded from ``os.environ`` before the
@@ -101,7 +101,7 @@ class SsmResolver:
     ) -> None:
         self._region = region
         self._with_decryption = with_decryption
-        self._client: Any = None
+        self._unbound: dict[Any, Any] = {}
 
     @property
     def name(self) -> str:
@@ -111,20 +111,6 @@ class SsmResolver:
             The string ``"ssm"``.
         """
         return "ssm"
-
-    def _get_client(self, root: Any) -> Any:
-        """Return the boto3 SSM client, creating it on first call.
-
-        Returns:
-            A boto3 SSM client instance.
-
-        Raises:
-            ConfigError: When boto3 is not installed, or the ``aws:`` section of
-                *root* is invalid.
-        """
-        if self._client is None:
-            self._client = aws_client("ssm", self._region, resolver="SsmResolver", root=root)
-        return self._client
 
     def resolve(self, key: str, _root_: Any = None) -> object:
         """Resolve an SSM parameter path to its stored value.
@@ -140,9 +126,9 @@ class SsmResolver:
                 fetches ``/path/param`` and returns ``param["key"]``. Dots are read
                 from the key as written, so an expanded value containing a dot
                 is part of the path and never a navigation separator.
-            _root_: The configuration OmegaConf is resolving, or ``None``;
-                its ``aws:`` section, as written, configures the client, and
-                the value is fetched once per configuration.
+            _root_: The configuration being resolved; its ``aws:`` section,
+                as written, configures the client. Client and values are
+                kept per configuration.
 
         Returns:
             Resolved value. A plain string for parameters without dot-notation;
@@ -153,16 +139,16 @@ class SsmResolver:
             ConfigError: When *key* is empty, an env-var placeholder is missing,
                 boto3 is not installed, or the SSM API call fails.
         """
-        return cached(_root_, self.name, key, functools.partial(self._fetch, root=_root_))
-
-    def _fetch(self, key: str, root: Any) -> object:
+        cache = root_cache(_root_, self.name, self._unbound)
+        if key in cache:
+            return cache[key]
         if not key:
             raise ConfigError("SSM key must not be empty")
         base, json_keys = _split_resolver_key(key)
         ssm_path = _expand_env_vars(base)
         logger.info("ssm_resolver: fetching %s", key)
-        client = self._get_client(root)
-        raw = _fetch_parameter(client, ssm_path, self._with_decryption, label=key)
-        if not json_keys:
-            return raw
-        return _navigate_json(raw, json_keys, key)
+        if CLIENT not in cache:
+            cache[CLIENT] = aws_client("ssm", self._region, resolver="SsmResolver", root=_root_)
+        raw = _fetch_parameter(cache[CLIENT], ssm_path, self._with_decryption, label=key)
+        cache[key] = _navigate_json(raw, json_keys, key) if json_keys else raw
+        return cache[key]

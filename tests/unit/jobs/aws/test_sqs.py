@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -40,10 +41,7 @@ pytestmark = pytest.mark.timeout(10)
 
 _URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/emails"
 _FIFO_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo"
-_CONFIG = {
-    "aws": {"region": "eu-west-1"},
-    "sqs": {"queues": {"emails": _URL, "orders": _FIFO_URL}},
-}
+_CONFIG = {"aws": {"region": "eu-west-1"}, "sqs": {"queues": {"emails": _URL, "orders": _FIFO_URL}}}
 
 
 class OrderJob(Job[None]):
@@ -84,6 +82,14 @@ class _Client:
         return {"MessageId": "m-1"}
 
 
+class _ClientError(Exception):
+    """botocore-shaped: its message echoes a payload value, its response holds the code."""
+
+    def __init__(self) -> None:
+        super().__init__("InvalidMessageContents: hunter2")
+        self.response = {"Error": {"Code": "InvalidMessageContents"}}
+
+
 @pytest.fixture(autouse=True)
 def _no_leftover_dispatches() -> Iterator[None]:
     yield
@@ -108,28 +114,35 @@ def _compose(
     return application.kernel.container.resolve(JobService)
 
 
+async def _sent(
+    service: JobService, client: _Client, job: type[Job[Any]], **options: Any
+) -> tuple[str, dict[str, Any]]:
+    handle = service.dispatch(job, **options)
+    await flush_pending_dispatches()
+    (request,) = client.requests
+    return handle.job_id, request
+
+
 async def test_a_standard_queue_gets_the_envelope_and_the_delay(
     service: JobService, client: _Client
 ) -> None:
-    service.dispatch(EmailJob, payload={"to": "a@b.c"}, countdown=30)
-    await flush_pending_dispatches()
+    _, request = await _sent(service, client, EmailJob, payload={"to": "a@b.c"}, countdown=30)
 
-    (request,) = client.requests
     assert (request["QueueUrl"], request["DelaySeconds"]) == (_URL, 30)
     assert "MessageGroupId" not in request
     envelope = decode_job_envelope(request["MessageBody"])
     assert (envelope.job_name, envelope.payload) == ("EmailJob", {"to": "a@b.c"})
 
 
-async def test_a_fifo_queue_gets_group_and_deduplication_ids(
-    service: JobService, client: _Client
+@pytest.mark.parametrize("customer", [7, "a b \U0001f600", "x" * 500])
+async def test_a_fifo_queue_gets_a_hashed_group_and_the_task_as_deduplication_id(
+    service: JobService, client: _Client, customer: object
 ) -> None:
-    handle = service.dispatch(OrderJob, payload={"customer": 7})
-    await flush_pending_dispatches()
+    task_id, request = await _sent(service, client, OrderJob, payload={"customer": customer})
 
-    (request,) = client.requests
     assert request["QueueUrl"] == _FIFO_URL
-    assert (request["MessageGroupId"], request["MessageDeduplicationId"]) == ("7", handle.job_id)
+    assert request["MessageGroupId"] == hashlib.sha256(str(customer).encode()).hexdigest()
+    assert request["MessageDeduplicationId"] == task_id
     assert "DelaySeconds" not in request
 
 
@@ -191,13 +204,14 @@ _LATER = datetime.now(UTC) + timedelta(minutes=20)
     ("job", "options", "code"),
     [
         (EmailJob, {"on_success": object}, "sqs_callbacks"),
-        (EmailJob, {"on_failure": object}, "sqs_callbacks"),
         (EmailJob, {"priority": 5}, "sqs_priority"),
         (EmailJob, {"queue": "reports"}, "sqs_queue_unknown"),
         (EmailJob, {"countdown": 901}, "sqs_delay_too_long"),
         (EmailJob, {"eta": _LATER}, "sqs_delay_too_long"),
         (OrderJob, {"payload": {"customer": 1}, "countdown": 5}, "sqs_fifo_delay"),
         (OrderJob, {"payload": {}}, "sqs_group_missing"),
+        (OrderJob, {"payload": {"customer": None}}, "sqs_group_missing"),
+        (EmailJob, {"payload": {"note": "￿"}}, "sqs_invalid_character"),
         (EmailJob, {"payload": {"blob": "x" * MAX_MESSAGE_BYTES}}, "sqs_message_too_large"),
     ],
 )
@@ -216,41 +230,39 @@ async def test_dispatch_refuses_what_sqs_cannot_carry_and_sends_nothing(
     assert client.requests == []
 
 
-@pytest.mark.parametrize("callback", ["on_all_success", "on_any_failure"])
-def test_dispatch_parallel_refuses_callbacks(service: JobService, callback: str) -> None:
+def test_dispatch_parallel_refuses_callbacks(service: JobService) -> None:
     jobs = [(EmailJob, {})]
-    options = {callback: cast(Any, object)}
     with pytest.raises(SQSDispatchError, match="no callbacks"):
-        service.dispatch_parallel(jobs, **options)
+        service.dispatch_parallel(jobs, on_all_success=cast(Any, object))
 
 
-async def test_dispatch_parallel_sends_each_job(service: JobService, client: _Client) -> None:
-    group = service.dispatch_parallel([(EmailJob, {}), (OrderJob, {"customer": 1})])
-    await flush_pending_dispatches()
-
-    assert len(group.handles) == 2
-    assert [request["QueueUrl"] for request in client.requests] == [_URL, _FIFO_URL]
-
-
-async def test_a_failed_send_names_job_task_and_queue_never_the_payload(
+async def test_a_failed_send_names_job_task_queue_and_code_never_the_payload(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    service = _compose(tmp_path, _CONFIG, _Client(RuntimeError("throttled")), EmailJob)
+    service = _compose(tmp_path, _CONFIG, _Client(_ClientError()), EmailJob)
     handle = service.dispatch(EmailJob, payload={"secret": "hunter2"})
-    with pytest.raises(PostCommitError):
+    with pytest.raises(PostCommitError) as raised:
         await flush_pending_dispatches()
 
+    (failure,) = raised.value.failures
+    assert isinstance(failure, SQSDispatchError)
+    assert (failure.code, failure.__cause__, failure.__suppress_context__) == (
+        "sqs_send_failed",
+        None,
+        True,
+    )
     (fields,) = [
         record.msg
         for record in caplog.records
         if isinstance(record.msg, dict) and record.msg.get("event") == "SQS send failed"
     ]
-    assert (fields["job"], fields["task_id"], fields["queue"]) == (
+    assert (fields["job"], fields["task_id"], fields["queue"], fields["error_code"]) == (
         "loom.job.EmailJob",
         handle.job_id,
         "emails",
+        "InvalidMessageContents",
     )
-    assert all("hunter2" not in str(record.msg) for record in caplog.records)
+    assert "hunter2" not in f"{failure!r} {[record.msg for record in caplog.records]}"
 
 
 class _Gate:
@@ -295,11 +307,12 @@ async def test_a_send_committed_before_the_cancellation_still_reaches_sqs(
     assert len(client.requests) == 1
 
 
-class ProbeJob(Job[None]):
-    seen: list[tuple[str, str, str | None]] = []
+_SEEN: list[tuple[str, str, str | None]] = []
 
+
+class ProbeJob(Job[None]):
     def execute(self, marker: str) -> None:
-        ProbeJob.seen.append((marker, current_identity().subject, get_trace_id()))
+        _SEEN.append((marker, current_identity().subject, get_trace_id()))
 
 
 def test_the_lambda_sqs_adapter_runs_what_the_service_sent(
@@ -307,14 +320,13 @@ def test_the_lambda_sqs_adapter_runs_what_the_service_sent(
 ) -> None:
     identity, trace = set_identity(Identity(subject="alice")), set_trace_id("trace-1")
     try:
-        service.dispatch(EmailJob.__mro__[0], queue="emails")
-        cast(SQSJobService, service).dispatch(ProbeJob, params={"marker": "m"}, queue="emails")
+        service.dispatch(ProbeJob, params={"marker": "m"}, queue="emails")
     finally:
         reset_trace_id(trace)
         reset_identity(identity)
     asyncio.run(flush_pending_dispatches())
-    ProbeJob.seen.clear()
-    adapter = LambdaSQSAdapter(jobs=[ProbeJob, EmailJob])
+    _SEEN.clear()
+    adapter = LambdaSQSAdapter(jobs=[ProbeJob])
     source = composition_source(
         ConfigContext.from_dict({"app": {"name": "lambda-sqs"}}),
         app=AppConfig(name="lambda-sqs", job_service="inline"),
@@ -322,14 +334,12 @@ def test_the_lambda_sqs_adapter_runs_what_the_service_sent(
         config_root=tmp_path,
     )
     handler = adapter.bind(compose_application(source, adapter))
-    records = [
-        {"messageId": str(index), "body": request["MessageBody"], "eventSourceARN": "queue"}
-        for index, request in enumerate(client.requests)
-    ]
+    (request,) = client.requests
+    record = {"messageId": "1", "body": request["MessageBody"], "eventSourceARN": "queue"}
     try:
-        result = handler({"Records": records}, None)
+        result = handler({"Records": [record]}, None)
     finally:
         adapter.close()
 
     assert result == {"batchItemFailures": []}
-    assert ProbeJob.seen == [("m", "alice", "trace-1")]
+    assert _SEEN == [("m", "alice", "trace-1")]

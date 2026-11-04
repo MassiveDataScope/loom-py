@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Callable
 from typing import Any
 
 from loom.core.config.aws import aws_section
@@ -61,20 +60,22 @@ def aws_client(service: str, region: str | None, *, resolver: str, root: Any) ->
     return island.build_aws_client(service, config)
 
 
-def cached(root: Any, name: str, key: str, fetch: Callable[[str], object]) -> object:
-    """Return ``fetch(key)``, fetched once per configuration *root* for resolver *name*.
+CLIENT = ("client",)
+"""Key of the client in a resolver's cache; a resolver key is a string."""
 
-    OmegaConf caches no resolver that receives the root, so these keep
-    their values in its cache of the root themselves, as it would.
+
+def root_cache(root: Any, name: str, unbound: dict[Any, Any]) -> dict[Any, Any]:
+    """Return the cache of resolver *name* for configuration *root*, *unbound* outside one.
+
+    OmegaConf caches no resolver that receives the root, so the client and
+    the values live in its cache of the root: one per configuration.
     """
     if root is None:
-        return fetch(key)
+        return unbound
     from omegaconf import OmegaConf
 
-    values = OmegaConf.get_cache(root)[name]
-    if key not in values:
-        values[key] = fetch(key)
-    return values[key]
+    cache: dict[Any, Any] = OmegaConf.get_cache(root)[name]
+    return cache
 
 
 _ENV_VAR_PATTERN = re.compile(r"%([A-Z][A-Z0-9_]*)%")

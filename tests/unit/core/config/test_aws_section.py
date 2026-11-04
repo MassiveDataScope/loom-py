@@ -149,3 +149,22 @@ def test_the_sns_topic_region_overrides_aws() -> None:
 
     assert clients.calls == [("sns", "us-east-1")]
     assert clients.options[0]["endpoint_url"] == "http://localhost:4566"
+
+
+def test_one_resolver_builds_a_client_per_configuration(tmp_path: Path) -> None:
+    resolver = SsmResolver()
+    first = tmp_path / "first.yaml"
+    second = tmp_path / "second.yaml"
+    first.write_text("aws:\n  region: eu-west-1\na: ${ssm:/k}\n", encoding="utf-8")
+    second.write_text(
+        "aws:\n  region: us-east-1\n  url: http://localhost:4566\na: ${ssm:/k}\n", encoding="utf-8"
+    )
+    client = MagicMock()
+    client.get_parameter.return_value = {"Parameter": {"Value": "v"}}
+    with patched_aws_clients(client) as clients:
+        for path in (first, second):
+            ConfigContext(load_config(str(path), resolvers=[resolver])).section("a", str)
+
+    assert clients.calls == [("ssm", "eu-west-1"), ("ssm", "us-east-1")]
+    assert "endpoint_url" not in clients.options[0]
+    assert clients.options[1]["endpoint_url"] == "http://localhost:4566"

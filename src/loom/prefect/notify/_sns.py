@@ -47,7 +47,12 @@ class SnsNotifier:
         self._client = (
             client
             if client is not None
-            else build_aws_client("sns", _client_config(aws, region=topic_arn.split(":")[3]))
+            else build_aws_client(
+                "sns",
+                convert_section(
+                    {**aws_section(aws), "region": topic_arn.split(":")[3]}, "aws", AwsClientConfig
+                ),
+            )
         )
 
     def notify(self, event: NotifyEvent) -> None:
@@ -70,10 +75,6 @@ class SnsNotifier:
                 state=event.state,
                 exc_info=True,
             )
-
-
-def _client_config(aws: Mapping[str, Any] | None, *, region: str) -> AwsClientConfig:
-    return convert_section({**aws_section(aws), "region": region}, "aws", AwsClientConfig)
 
 
 def _render_message(event: NotifyEvent) -> str:

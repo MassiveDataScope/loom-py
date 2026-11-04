@@ -346,14 +346,18 @@ class ShipOrderJob(Job[None]):
 - Only the jobs SQS serves need a URL: those on `celery.queues` go to Celery.
 - Startup fails with `SQSQueueConfigError` when a job's queue has no URL, or
   when a job on a FIFO queue (URL ending in `.fifo`) declares no `__group_by__`.
-- On a FIFO queue, the task id is the `MessageDeduplicationId`.
+- On a FIFO queue, the SHA-256 of the group field's value is the
+  `MessageGroupId` (it meets SQS's limits and keeps the value out of SQS), and
+  the task id is the `MessageDeduplicationId`.
 - `dispatch` raises `SQSDispatchError`, before anything is sent, for:
   callbacks, a `priority` other than the job's, a queue without a URL, a
   delay over 900 s, any delay on a FIFO queue (FIFO queues take a delay per
-  queue only), a FIFO payload without its group field, or a body over 256 KiB.
+  queue only), a FIFO payload whose group field is missing or null, a body
+  holding a character SQS refuses, or a body over 256 KiB.
 - The message is sent after the commit, on the shielded publish lane, so a
-  cancellation after the commit does not lose it. A failed send is logged
-  with the job, task id and queue, never the payload.
+  cancellation after the commit does not lose it. A failed send is logged and
+  raised as `SQSDispatchError` with the job, task id, queue and AWS error code,
+  never the payload.
 - `run()` executes in-process.
 
 ---

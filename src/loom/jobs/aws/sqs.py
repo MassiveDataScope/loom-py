@@ -1,15 +1,11 @@
-"""SQSJobService: dispatches each job as one Amazon SQS message.
-
-Selected by ``app.job_service: sqs``. The body is the
-:class:`~loom.core.job.envelope.JobEnvelope` the Lambda SQS adapter decodes.
-:meth:`SQSJobService.dispatch` validates and encodes; the send runs, shielded,
-on the post-commit publish lane, after the unit of work commits.
-"""
+"""``app.job_service: sqs``: each job is one SQS message whose body is a ``JobEnvelope``."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -19,6 +15,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import msgspec
 
 from loom.core.config import ConfigError
+from loom.core.config._resolver_utils import _aws_error_code
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.engine.events import EventKind, RuntimeEvent
 from loom.core.errors import LoomError
@@ -40,20 +37,15 @@ if TYPE_CHECKING:
 ResultT = TypeVar("ResultT")
 
 MAX_DELAY_SECONDS = 900
-"""Longest per-message delay SQS accepts (15 minutes)."""
 MAX_MESSAGE_BYTES = 256 * 1024
-"""Largest body this service sends."""
+_INVALID_CHARACTER = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+"""A character SQS refuses in a message body."""
 
 _log = get_logger(__name__)
 
 
 class SQSConfig(AwsClientConfig, frozen=True, kw_only=True):
-    """The ``sqs`` section: the AWS client, inheriting ``aws:``, and the URL of each queue.
-
-    Args:
-        queues: Queue URL by logical queue name; a URL ending in ``.fifo``
-            is a FIFO queue.
-    """
+    """The ``sqs`` section: ``aws:`` client keys plus each logical queue's URL (``.fifo``: FIFO)."""
 
     queues: dict[str, str] = {}
 
@@ -63,17 +55,13 @@ class SQSQueueConfigError(ConfigError):
 
 
 class SQSDispatchError(LoomError):
-    """A dispatch SQS cannot carry; ``code`` names which. Raised before anything is sent."""
+    """A message SQS cannot carry, or a send that failed; ``code`` names which."""
 
     retryable = False
 
 
 def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> None:
-    """Fail at startup unless every job's queue has a URL and a FIFO job names its group.
-
-    Raises:
-        SQSQueueConfigError: Naming the first job that does not.
-    """
+    """Fail at startup unless every job's queue has a URL and a FIFO job names its group."""
     for job_type in jobs:
         url = queues.get(job_type.__queue__)
         if url is None:
@@ -81,7 +69,7 @@ def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> N
                 f"{job_type.__qualname__} uses queue {job_type.__queue__!r}, which "
                 f"sqs.queues does not map to a URL"
             )
-        if _is_fifo(url) and job_type.__group_by__ is None:
+        if url.endswith(".fifo") and job_type.__group_by__ is None:
             raise SQSQueueConfigError(
                 f"{job_type.__qualname__} uses FIFO queue {job_type.__queue__!r} but "
                 "declares no __group_by__ payload field"
@@ -90,11 +78,7 @@ def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> N
 
 @dataclass(frozen=True)
 class _PendingSQSSend:
-    """One ``SendMessage``, run on the post-commit publish lane.
-
-    ``task_name`` and ``task_id`` are what the post-commit logs name; the
-    request holds the body and is left out of the repr.
-    """
+    """One ``SendMessage`` on the publish lane; ``task_name``/``task_id`` name it in logs."""
 
     client: Any
     task_name: str
@@ -106,29 +90,23 @@ class _PendingSQSSend:
         try:
             await asyncio.to_thread(self.client.send_message, **self.request)
         except Exception as exc:
+            # botocore's message may echo the body: neither it nor the cause leaves here.
+            code = _aws_error_code(exc)
             _log.error(
                 "SQS send failed",
                 job=self.task_name,
                 task_id=self.task_id,
                 queue=self.queue,
-                error_class=type(exc).__name__,
+                error_code=code,
             )
-            raise
+            raise SQSDispatchError(
+                f"sending {self.task_name} to queue {self.queue!r} failed: {code}",
+                code="sqs_send_failed",
+            ) from None
 
 
 class SQSJobService:
-    """``JobService`` that sends each dispatched job to its SQS queue after the commit.
-
-    :meth:`run` executes in-process, as
-    :class:`~loom.core.job.service.InlineJobService` does.
-
-    Args:
-        client: boto3 ``sqs`` client.
-        queues: Queue URL by logical queue name.
-        factory: Builds the job :meth:`run` executes.
-        executor: Executes it.
-        metrics: Receives ``JOB_DISPATCHED`` for each dispatch.
-    """
+    """``JobService`` sending each job to SQS after the commit; :meth:`run` is in-process."""
 
     def __init__(
         self,
@@ -152,7 +130,6 @@ class SQSJobService:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> ResultT:
-        """Execute the job in-process and return its result."""
         instance = self._factory.build(job_type)
         return await self._executor.execute(
             instance, params=params, payload=payload, identity=current_identity()
@@ -171,14 +148,7 @@ class SQSJobService:
         priority: int | None = None,
         eta: datetime | None = None,
     ) -> JobHandle[ResultT]:
-        """Validate and encode the message now; send it once the unit of work commits.
-
-        Raises:
-            SQSDispatchError: For a callback, a priority other than the
-                job's, a queue without URL, a delay over 900 s or any delay
-                on a FIFO queue, a FIFO job whose payload lacks its group
-                field, or a body over 256 KiB.
-        """
+        """Validate and encode now, so a refusal comes before the commit; send after it."""
         if on_success is not None or on_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code="sqs_callbacks")
         if priority is not None and priority != job_type.__priority__:
@@ -201,6 +171,11 @@ class SQSJobService:
                 identity=encode_identity(current_identity()),
             )
         )
+        if _INVALID_CHARACTER.search(body.decode()):
+            raise SQSDispatchError(
+                f"{job_type.__qualname__} message holds a character SQS refuses",
+                code="sqs_invalid_character",
+            )
         if len(body) > MAX_MESSAGE_BYTES:
             raise SQSDispatchError(
                 f"{job_type.__qualname__} message is {len(body)} bytes; SQS jobs take "
@@ -228,11 +203,6 @@ class SQSJobService:
         on_all_success: type[JobCallback] | None = None,
         on_any_failure: type[JobCallback] | None = None,
     ) -> JobGroup:
-        """Dispatch each job independently.
-
-        Raises:
-            SQSDispatchError: For a callback, or as :meth:`dispatch`.
-        """
         if on_all_success is not None or on_any_failure is not None:
             raise SQSDispatchError("SQS jobs take no callbacks", code="sqs_callbacks")
         return JobGroup(
@@ -256,23 +226,22 @@ def _delay(job_type: type[Job[Any]], countdown: int | None, eta: datetime | None
 def _placement(
     job_type: type[Job[Any]], url: str, payload: Mapping[str, Any], task_id: str, delay: int
 ) -> dict[str, Any]:
-    """``DelaySeconds`` on a standard queue; group and deduplication ids on a FIFO one."""
-    if not _is_fifo(url):
+    """``DelaySeconds`` on a standard queue; hashed group and deduplication ids on a FIFO one."""
+    if not url.endswith(".fifo"):
         return {"DelaySeconds": delay} if delay else {}
     if delay:
         raise SQSDispatchError("a FIFO queue takes no per-message delay", code="sqs_fifo_delay")
     group_by = job_type.__group_by__
-    if group_by is None or group_by not in payload:
+    group = None if group_by is None else payload.get(group_by)
+    if group is None:
         raise SQSDispatchError(
-            f"{job_type.__qualname__} payload has no {group_by!r} field for its "
+            f"{job_type.__qualname__} payload has no {group_by!r} value for its "
             "FIFO MessageGroupId",
             code="sqs_group_missing",
         )
-    return {"MessageGroupId": str(payload[group_by]), "MessageDeduplicationId": task_id}
-
-
-def _is_fifo(url: str) -> bool:
-    return url.endswith(".fifo")
+    # A hash meets SQS's 128-character ASCII limit and keeps the value out of SQS metadata.
+    group_id = hashlib.sha256(str(group).encode()).hexdigest()
+    return {"MessageGroupId": group_id, "MessageDeduplicationId": task_id}
 
 
 __all__ = [
