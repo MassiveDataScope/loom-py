@@ -5,32 +5,40 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from typing import Any
 
+from loom.core.config.aws import aws_section
+from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
+from loom.core.config.keys import ConfigKey
+from loom.core.config.loader import convert_section
 from loom.core.connections.aws import AwsClientConfig, aws_island
 from loom.core.plugins.optional import MissingExtraError
 
 _AWS_EXTRA = "config-ssm"
 
 
-def aws_client(service: str, region: str | None, *, resolver: str) -> Any:
-    """Build one boto3 client through the AWS island, with loom's bounded defaults.
+def aws_client(service: str, region: str | None, *, resolver: str, root: Any) -> Any:
+    """Build one boto3 client through the AWS island from the ``aws:`` section as written.
 
-    The resolvers run before the configuration is loaded (they resolve its
-    placeholders), so no section configures their client: it takes the
-    defaults of :class:`~loom.core.connections.AwsClientConfig` and *region*.
+    The resolvers are the ones resolving the placeholders, so they read
+    ``aws:`` of the configuration *root* unresolved; *region*, when given,
+    overrides its region.
 
     Args:
         service: Service name, ``"ssm"`` or ``"secretsmanager"``.
-        region: AWS region, or ``None`` to let boto3 resolve its own.
-        resolver: Resolver class name, for the message when boto3 is missing.
+        region: AWS region, or ``None`` to take ``aws.region`` or let boto3
+            resolve its own.
+        resolver: Resolver class name, for the messages.
+        root: The configuration being resolved, or ``None`` outside one.
 
     Returns:
         The client; typed ``Any`` because boto3 ships no stubs.
 
     Raises:
-        ConfigError: When boto3 is not installed, naming the extra.
+        ConfigError: When boto3 is not installed, naming the extra, or
+            ``aws:`` is invalid or holds a placeholder.
     """
     try:
         island = aws_island(extra=_AWS_EXTRA)
@@ -39,7 +47,34 @@ def aws_client(service: str, region: str | None, *, resolver: str) -> Any:
             f"boto3 is required for {resolver}. "
             "Install it with: pip install loom-kernel[config-ssm]"
         ) from exc
-    return island.build_aws_client(service, AwsClientConfig(region=region))
+    raw = None if root is None else ConfigContext(root).raw(ConfigKey.AWS)
+    for key, value in raw.items() if isinstance(raw, dict) else ():
+        if isinstance(value, str) and "${" in value:
+            raise ConfigError(
+                f"{ConfigKey.AWS}.{key} is a placeholder, but {resolver} reads "
+                f"{ConfigKey.AWS} as written: write the value, or leave it out for boto3 "
+                "to read its environment (AWS_REGION, AWS_ENDPOINT_URL)"
+            )
+    written = aws_section(raw)
+    settings = written if region is None else {**written, "region": region}
+    config = convert_section(settings, ConfigKey.AWS, AwsClientConfig)
+    return island.build_aws_client(service, config)
+
+
+def cached(root: Any, name: str, key: str, fetch: Callable[[str], object]) -> object:
+    """Return ``fetch(key)``, fetched once per configuration *root* for resolver *name*.
+
+    OmegaConf caches no resolver that receives the root, so these keep
+    their values in its cache of the root themselves, as it would.
+    """
+    if root is None:
+        return fetch(key)
+    from omegaconf import OmegaConf
+
+    values = OmegaConf.get_cache(root)[name]
+    if key not in values:
+        values[key] = fetch(key)
+    return values[key]
 
 
 _ENV_VAR_PATTERN = re.compile(r"%([A-Z][A-Z0-9_]*)%")

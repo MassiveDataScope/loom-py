@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
+from loom.core.config.aws import aws_section
+from loom.core.config.loader import convert_section
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.logger import get_logger
@@ -25,6 +28,8 @@ class SnsNotifier:
         on_failure: Publish when state is ``"Failed"`` or ``"Crashed"``.
         on_completion: Publish when state is ``"Completed"``.
         client: boto3 ``sns`` client. Defaults to one for the topic's region.
+        aws: The ``aws:`` section of the flow's YAML, whose keys the default
+            client takes; the topic's region overrides ``aws.region``.
     """
 
     def __init__(
@@ -34,6 +39,7 @@ class SnsNotifier:
         on_failure: bool = True,
         on_completion: bool = False,
         client: Any = None,
+        aws: Mapping[str, Any] | None = None,
     ) -> None:
         self._topic_arn = topic_arn
         self._on_failure = on_failure
@@ -41,7 +47,7 @@ class SnsNotifier:
         self._client = (
             client
             if client is not None
-            else build_aws_client("sns", AwsClientConfig(region=topic_arn.split(":")[3]))
+            else build_aws_client("sns", _client_config(aws, region=topic_arn.split(":")[3]))
         )
 
     def notify(self, event: NotifyEvent) -> None:
@@ -64,6 +70,10 @@ class SnsNotifier:
                 state=event.state,
                 exc_info=True,
             )
+
+
+def _client_config(aws: Mapping[str, Any] | None, *, region: str) -> AwsClientConfig:
+    return convert_section({**aws_section(aws), "region": region}, "aws", AwsClientConfig)
 
 
 def _render_message(event: NotifyEvent) -> str:

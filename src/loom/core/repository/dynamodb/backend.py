@@ -8,6 +8,7 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Any, ClassVar
 
 from loom.core.config import ConfigContext
+from loom.core.config.aws import aws_defaults
 from loom.core.connections.aws import AwsClientConfig
 from loom.core.connections.aws.client import build_aws_client
 from loom.core.model import BaseModel
@@ -29,8 +30,9 @@ class DynamoDBRepositoryConfig(AwsClientConfig, frozen=True, kw_only=True):
     """A ``dynamodb`` store section: the AWS client settings plus the table backing every model.
 
     Every key of :class:`~loom.core.connections.AwsClientConfig` applies, with
-    the same defaults as anywhere else loom calls AWS; this context only adds
-    *table* and requires *region*.
+    the same defaults as anywhere else loom calls AWS, and the store takes
+    every key it does not set from ``aws:``; this context only adds *table*
+    and requires *region*.
 
     Args:
         table: Table backing every model.
@@ -80,12 +82,13 @@ class DynamoDBBackend:
             The DynamoDB wiring.
 
         Raises:
-            ConfigError: When the store's section is missing, names
-                another backend, holds a retired key or is invalid.
+            ConfigError: When the store's section or ``aws:`` is missing a
+                required key, names another backend, holds a retired key or
+                is invalid.
         """
         spec = runtime.catalog.served_by(self.name, runtime.store)
         del ctx
-        dynamo_cfg = spec.decode(DynamoDBRepositoryConfig)
+        dynamo_cfg = spec.decode(DynamoDBRepositoryConfig, defaults=aws_defaults(spec.config))
         # The low-level client, not the resource: it is thread-safe, and
         # repository calls share it across the executor's threads.
         client = build_aws_client("dynamodb", dynamo_cfg)

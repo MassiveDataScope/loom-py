@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from loom.core.model.redaction import Dsn
@@ -23,7 +23,7 @@ def _build_slack(cfg: dict[str, Any]) -> Notifier | None:
     )
 
 
-def _build_sns(cfg: dict[str, Any]) -> Notifier | None:
+def _build_sns(cfg: dict[str, Any], aws: Mapping[str, Any] | None = None) -> Notifier | None:
     topic_arn = (cfg.get("topic_arn") or "").strip()
     if not topic_arn:
         return None
@@ -31,6 +31,7 @@ def _build_sns(cfg: dict[str, Any]) -> Notifier | None:
         topic_arn=topic_arn,
         on_failure=bool(cfg.get("on_failure", True)),
         on_completion=bool(cfg.get("on_completion", False)),
+        aws=aws,
     )
 
 
@@ -40,11 +41,15 @@ _BUILDERS: dict[str, Callable[[dict[str, Any]], Notifier | None]] = {
 }
 
 
-def build_notifiers(block: Iterable[dict[str, Any]] | None) -> tuple[Notifier, ...]:
+def build_notifiers(
+    block: Iterable[dict[str, Any]] | None, *, aws: Mapping[str, Any] | None = None
+) -> tuple[Notifier, ...]:
     """Parse the YAML ``notifications:`` list into Notifier instances.
 
     Args:
         block: List of dicts from the YAML. ``None`` or empty returns ``()``.
+        aws: The ``aws:`` section of the YAML, which the built-in ``sns``
+            notifier's client inherits.
 
     Returns:
         Tuple of constructed notifiers.
@@ -65,7 +70,7 @@ def build_notifiers(block: Iterable[dict[str, Any]] | None) -> tuple[Notifier, .
             raise ValueError(
                 f"notifications: unknown notifier kind {kind!r}. Available: {sorted(_BUILDERS)}"
             )
-        instance = builder(entry)
+        instance = _build_sns(entry, aws) if builder is _build_sns else builder(entry)
         if instance is not None:
             out.append(instance)
     return tuple(out)

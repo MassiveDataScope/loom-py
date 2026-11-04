@@ -18,6 +18,7 @@ class ConfigKey(StrEnum):
 
     APP = "app"
     AI = "ai"
+    AWS = "aws"
     CACHE = "cache"
     PERSISTENCE = "persistence"
     PERSISTENCE_CURSORS = "persistence.cursors"

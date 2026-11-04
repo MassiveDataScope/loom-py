@@ -13,6 +13,7 @@ Example::
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Any
 
@@ -22,6 +23,7 @@ from loom.core.config._resolver_utils import (
     _navigate_json,
     _split_resolver_key,
     aws_client,
+    cached,
 )
 from loom.core.config.errors import ConfigError
 
@@ -85,8 +87,8 @@ class SecretsManagerResolver:
 
     Args:
         region: AWS region name. Passed directly to ``boto3.client``.
-            Defaults to ``None``, which lets boto3 use its own resolution
-            chain (env vars, instance metadata, etc.).
+            Defaults to ``None``: ``aws.region`` of the configuration, else
+            boto3's own resolution chain (env vars, instance metadata, etc.).
 
     Example::
 
@@ -107,22 +109,23 @@ class SecretsManagerResolver:
         """
         return "secrets"
 
-    def _get_client(self) -> Any:
+    def _get_client(self, root: Any) -> Any:
         """Return the boto3 secretsmanager client, creating it on first call.
 
         Returns:
             A boto3 secretsmanager client instance.
 
         Raises:
-            ConfigError: When boto3 is not installed.
+            ConfigError: When boto3 is not installed, or the ``aws:`` section of
+                *root* is invalid.
         """
         if self._client is None:
             self._client = aws_client(
-                "secretsmanager", self._region, resolver="SecretsManagerResolver"
+                "secretsmanager", self._region, resolver="SecretsManagerResolver", root=root
             )
         return self._client
 
-    def resolve(self, key: str) -> object:
+    def resolve(self, key: str, _root_: Any = None) -> object:
         """Resolve an AWS Secrets Manager path to its stored value.
 
         Splits the dot-notation tail off *key* as written, expands
@@ -136,6 +139,9 @@ class SecretsManagerResolver:
                 fetches ``/path/secret`` and returns ``secret["key"]``. Dots are read
                 from the key as written, so an expanded value containing a dot
                 is part of the path and never a navigation separator.
+            _root_: The configuration OmegaConf is resolving, or ``None``;
+                its ``aws:`` section, as written, configures the client, and
+                the value is fetched once per configuration.
 
         Returns:
             Resolved value. A plain string for secrets without dot-notation;
@@ -147,12 +153,15 @@ class SecretsManagerResolver:
                 missing, boto3 is not installed, the secret is binary,
                 or the API call fails.
         """
+        return cached(_root_, self.name, key, functools.partial(self._fetch, root=_root_))
+
+    def _fetch(self, key: str, root: Any) -> object:
         if not key:
             raise ConfigError("Secrets Manager key must not be empty")
         base, json_keys = _split_resolver_key(key)
         path = _expand_env_vars(base)
         logger.info("secrets_resolver: fetching %s", key)
-        raw = _fetch_secret(self._get_client(), path, label=key)
+        raw = _fetch_secret(self._get_client(root), path, label=key)
         if not json_keys:
             return raw
         return _navigate_json(raw, json_keys, key)

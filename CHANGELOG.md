@@ -10,6 +10,15 @@
   `JobRouter`. Use cases keep
   injecting `JobService`.
 
+### config
+
+- **config:** a top-level `aws:` section (`region`, `url`, `profile`, `pool`,
+  timeouts and retries; no credentials) sets the AWS client defaults every
+  AWS product inherits: `dynamodb` stores, `storage.dynamodb`, the `secrets`
+  and `ssm` resolvers (which read it as written and refuse a placeholder in
+  it) and the SNS notifier (from the flow's YAML; the topic's region wins).
+  A product's own keys override it key by key; without `aws:` nothing changes.
+
 ### etl
 
 - **etl:** `IntoTable(...).upsert(..., delete_flag=...)` deletes matched rows

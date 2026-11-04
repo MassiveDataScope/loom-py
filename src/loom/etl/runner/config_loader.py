@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from loom.core.config import (
     ConfigResolver,
     with_default_resolvers,
 )
+from loom.core.config.aws import aws_defaults
 from loom.core.config.convert import convert_config
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment, config_source_paths, resolve_environment
@@ -121,12 +122,17 @@ def config_dir(path: str) -> Path:
 def _parse_sections(ctx: ConfigContext) -> tuple[StorageConfig, ETLObservabilityConfig]:
     """Bind the ``storage:`` and ``observability:`` sections of *ctx*.
 
+    A declared ``storage.dynamodb`` takes every key it does not set from ``aws:``.
+
     Raises:
         loom.core.config.ConfigError: When the ``storage:`` key is absent or
-            a section shape is invalid.
+            a section shape, ``aws:`` included, is invalid.
         ValueError: When a keyed entry or a ``path.profile`` is invalid.
     """
     raw = ctx.section(ConfigKey.STORAGE, dict)
+    dynamodb = raw.get("dynamodb")
+    if isinstance(dynamodb, Mapping):
+        raw["dynamodb"] = {**aws_defaults(ctx), **dynamodb}
     storage_config = _convert_storage(normalise_storage_section(raw))
     obs_config = ctx.section_or_default(
         ConfigKey.OBSERVABILITY,

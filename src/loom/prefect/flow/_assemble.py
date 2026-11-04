@@ -77,7 +77,7 @@ def flow_settings_from_mapping(raw_cfg: Mapping[str, Any]) -> FlowSettings:
         raw_params=dict(raw_cfg.get("params") or {}),
         pool_config=extract_pool_config(raw_cfg),
         tags=coerce_tags(raw_cfg.get("tags")),
-        notifiers=build_notifiers(raw_cfg.get("notifications")),
+        notifiers=build_notifiers(raw_cfg.get("notifications"), aws=raw_cfg.get("aws")),
         retry_policy=flow_config_from_mapping(raw_cfg.get("retry")),
         trigger=extract_trigger(raw_cfg),
     )
