@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
@@ -233,6 +234,10 @@ class ExecutionPlan:
             ``UnitOfWork`` transaction for this use case.  Set automatically
             from ``UseCase.read_only`` at compile time.  The HTTP layer may
             also override this at the handler level (e.g. GET routes).
+        primary: The store the use case writes to: the ``__store__`` of its
+            main model.
+        joined: The further stores it writes to, those of its ``Joined[...]``
+            repositories other than ``primary``.
 
     Example::
 
@@ -268,3 +273,5 @@ class ExecutionPlan:
     agent_bindings: tuple[AgentBinding, ...] = ()
     mcp_bindings: tuple[McpBinding, ...] = ()
     query_binding: QueryBinding | None = None
+    primary: StoreKey = DEFAULT_STORE
+    joined: frozenset[StoreKey] = frozenset()

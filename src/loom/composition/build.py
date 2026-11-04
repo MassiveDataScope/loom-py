@@ -44,6 +44,7 @@ from loom.core.persistence.stores import (
     StoreKey,
     require_single_store,
 )
+from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
 
 if TYPE_CHECKING:
@@ -289,6 +290,8 @@ def compose_application(
     Raises:
         ConfigError: When a model declares a store other than the default, or
             the store section is invalid, or a job backend cannot be built.
+        JoinedAutocommitStore: When a use case declares ``Joined`` on a store
+            that cannot roll back.
         DeployCheckError: When a deploy check of level error fails in a
             deployed environment.
         ReservedBindingError: When a module binds a framework-owned key.
@@ -340,6 +343,7 @@ def compose_application(
     kernel.container.register(ObservabilityRuntime, lambda: observability, scope=Scope.APPLICATION)
     kernel.container.register(StoreCatalog, lambda: catalog, scope=Scope.APPLICATION)
     ai = _compose_agents(ctx, recipe, kernel, sql, source.code_path)
+    _refuse_joined_autocommit_stores(kernel, (*discovered.use_cases, *discovered.jobs), catalog)
     kernel.factory.verify(reads=_marker_reads(kernel, discovered.use_cases))
 
     return Application(
@@ -393,6 +397,28 @@ def _marker_reads(
         steps: tuple[LoadStep | ExistsStep, ...] = (*plan.load_steps, *plan.exists_steps)
         reads.extend(ModelRead(use_case, step.name, step.entity_type) for step in steps)
     return tuple(reads)
+
+
+def _refuse_joined_autocommit_stores(
+    kernel: KernelRuntime, components: Sequence[type[Compilable]], catalog: StoreCatalog
+) -> None:
+    """Refuse a ``Joined`` store that cannot roll back: it could not commit with the invocation.
+
+    Compiles each use case or job, as its first execution would.
+
+    Raises:
+        CompilationError: When a component does not compile.
+        ConfigError: When a joined store is not declared.
+        JoinedAutocommitStore: When a joined store is not transactional.
+    """
+    for component in components:
+        for key in sorted(kernel.compiler.compile(component).joined):
+            spec = catalog.require(key, purpose=f"Joined in {component.__qualname__}")
+            if not spec.capabilities.transactional:
+                issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
+                    component=component, store=key
+                )
+                raise JoinedAutocommitStore(issue)
 
 
 def _compose_agents(

@@ -18,7 +18,12 @@ from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_
 from loom.core.errors.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
-from loom.core.uow.scope import InvocationScope, current_scope, single_store
+from loom.core.uow.scope import (
+    InvocationScope,
+    UndeclaredStoreWrite,
+    current_scope,
+    single_store,
+)
 
 if TYPE_CHECKING:  # session_manager is the heavier module; it does not import this one
     from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -121,8 +126,10 @@ def transactional(
             ``session_manager`` with a ``session()`` context manager.
         ScopeOwnershipError: Inside a scope this task does not own (a
             ``gather`` child).
-        ForeignSessionError: Inside a scope where the owner's store is not
-            enlisted, or is enlisted with another session manager.
+        ForeignSessionError: Inside a scope where the owner's store is
+            enlisted with another session manager.
+        UndeclaredStoreWrite: Inside a scope where the owner's store is not
+            enlisted, or the running execution did not declare it.
         PostCommitError: If a hook failed after the commit.
     """
 
@@ -162,16 +169,17 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
 
     Raises:
         ScopeOwnershipError: Outside the task that owns ``scope``.
-        ForeignSessionError: When the store is not enlisted in ``scope``, or
-            another session manager's unit of work holds it.
+        ForeignSessionError: When another session manager's unit of work
+            holds the store.
+        UndeclaredStoreWrite: When the store is not enlisted in ``scope``, or
+            the running execution did not declare it.
     """
     if scope.participant_for(session_manager.store, session_manager, write=True) is None:
         enlisted = ", ".join(scope.participants)
-        raise ForeignSessionError.between(
-            ForeignSessionError.side(session_manager.store, session_manager.target),
-            ForeignSessionError.side(enlisted, "this invocation")
-            if enlisted
-            else "this invocation, with no store enlisted",
+        raise UndeclaredStoreWrite(
+            f"{ForeignSessionError.side(session_manager.store, session_manager.target)} "
+            "cannot join this invocation, "
+            + (f"which enlisted only store {enlisted}" if enlisted else "with no store enlisted")
         )
 
 

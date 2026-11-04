@@ -77,11 +77,14 @@ class SessionScopedRepository(TransactionRepository):
         self.sessions_seen: list[object] = []
 
     @asynccontextmanager
-    async def _session_scope(self, session: object | None = None) -> AsyncIterator[object]:
+    async def _session_scope(
+        self, session: object | None = None, *, write: bool
+    ) -> AsyncIterator[object]:
+        del write
         yield "own-session" if session is None else session
 
     @cache_query(scope="list")
-    @with_session_scope
+    @with_session_scope(write=False)
     async def names_with(self, session: object, prefix: str) -> list[str]:
         """Custom read whose session ``with_session_scope`` supplies."""
         self.sessions_seen.append(session)
