@@ -1,6 +1,7 @@
 from loom.core.use_case.compute import Compute, ComputeFn
 from loom.core.use_case.errors import UnservedModelError, UseCaseErrorCode
 from loom.core.use_case.field_ref import F, FieldRef, PredicateOp
+from loom.core.use_case.joined import Joined
 from loom.core.use_case.markers import (
     Agent,
     Caller,
@@ -26,6 +27,7 @@ __all__ = [
     "F",
     "FieldRef",
     "Input",
+    "Joined",
     "Load",
     "LoadById",
     "Mcp",

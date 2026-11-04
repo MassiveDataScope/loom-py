@@ -34,31 +34,44 @@ R = TypeVar("R")
 
 
 def with_session_scope(
-    method: Callable[..., Awaitable[R]],
-) -> Callable[..., Awaitable[R]]:
-    """Inject repository-managed session into custom repository methods.
+    *, write: bool
+) -> Callable[[Callable[..., Awaitable[R]]], Callable[..., Awaitable[R]]]:
+    """Inject repository-managed session into a custom repository method.
 
     The method joins its store's session when the store is enlisted in the
-    invocation, as raw SQL does, and runs in a session of its own otherwise.
-    It declares no write intent, so the scope treats it as a read: a write
-    through it is not recorded for the commit order, and when its store is
-    not enlisted it is not refused either. Inside an invocation, a custom
-    write to a store that is not enlisted therefore commits per call, on its
-    own, outside the invocation's unit of work, and survives a rollback of
-    the invocation (T079 makes this an error, PR 6).
+    invocation, and runs in a session of its own otherwise, as the
+    repository's own operations do.
+
+    Args:
+        write: Whether the method writes. A write is checked like the
+            repository's own: refused with ``UndeclaredStoreWrite`` before the
+            driver is called when the running execution did not declare its
+            store, and recorded for the commit order. A method declared
+            ``write=False`` that writes anyway, to a store the invocation did
+            not enlist, commits on its own and survives a rollback of the
+            invocation.
+
+    Example::
+
+        class OrderRepository(RepositorySQLAlchemy[Order, int]):
+            @with_session_scope(write=True)
+            async def archive(self, session: AsyncSession, order_id: int) -> None: ...
     """
 
-    @wraps(method)
-    async def wrapper(
-        self: RepositorySQLAlchemy[Any, Any],
-        *args: Any,
-        session: AsyncSession | None = None,
-        **kwargs: Any,
-    ) -> R:
-        async with self._session_scope(session) as scoped_session:
-            return await method(self, scoped_session, *args, **kwargs)
+    def decorate(method: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
+        @wraps(method)
+        async def wrapper(
+            self: RepositorySQLAlchemy[Any, Any],
+            *args: Any,
+            session: AsyncSession | None = None,
+            **kwargs: Any,
+        ) -> R:
+            async with self._session_scope(session, write=write) as scoped_session:
+                return await method(self, scoped_session, *args, **kwargs)
 
-    return cast(Callable[..., Awaitable[R]], wrapper)
+        return cast(Callable[..., Awaitable[R]], wrapper)
+
+    return decorate
 
 
 class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve same-named methods across Mixin+Protocol bases; runtime behaviour is correct
@@ -138,18 +151,19 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
 
     @asynccontextmanager
     async def _session_scope(
-        self, session: AsyncSession | None = None, *, write: bool = False
+        self, session: AsyncSession | None = None, *, write: bool
     ) -> AsyncIterator[AsyncSession]:
         """Run in *session*, in the session of the store's participant, or in one of its own.
 
         Args:
             session: A session the caller already holds.
-            write: Whether the operation writes; a write is recorded on the
-                participant for the commit order.
+            write: Whether the operation writes; a write is checked and
+                recorded for the commit order (:meth:`SessionManager.joined_session`).
 
         Raises:
-            ScopeOwnershipError: See :attr:`SessionManager.active_session`.
-            ForeignSessionError: See :attr:`SessionManager.active_session`.
+            ScopeOwnershipError: See :meth:`SessionManager.joined_session`.
+            ForeignSessionError: See :meth:`SessionManager.joined_session`.
+            UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
         if session is not None:
             yield session

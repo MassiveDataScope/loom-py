@@ -25,7 +25,7 @@ class ProductRepository(RepositorySQLAlchemy[Product, int], ProductRepo):
             payload["name"] = name.strip()
         return await super().create(cast(Any, payload))
 
-    @with_session_scope
+    @with_session_scope(write=False)
     async def get_by_name(self, session: Any, name: str) -> Product | None:
         """Lookup a product by normalized name."""
         stmt = select(self._effective_sa_model).where(

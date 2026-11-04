@@ -102,6 +102,24 @@ class UnitOfWorkInsideScope(SystemError):
         )
 
 
+class UndeclaredStoreWrite(SystemError):
+    """A write targeted a store the running execution did not declare.
+
+    An execution writes to its primary store, the ``__store__`` of its main
+    model, and to the stores of its ``Joined[...]`` repositories; it reads
+    from any store. The write is refused before the driver is called.
+
+    Args:
+        message: Names the store written to and the stores declared.
+    """
+
+    retryable = False
+    """A programming error: a retry meets it again."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=ErrorCode.UNDECLARED_STORE_WRITE)
+
+
 class NestedIdentityMismatch(SystemError):
     """A nested execution joined its parent's unit of work as another identity.
 
@@ -199,7 +217,7 @@ class Frame:
 
     Attributes:
         primary: The store the execution writes to.
-        joined: Further stores it may write to (``Joined[...]``, T046).
+        joined: Further stores it may write to (``Joined[...]``).
         stores: The primary store, then the joined stores in name order.
     """
 
@@ -296,8 +314,9 @@ class InvocationScope:
             ScopeOwnershipError: When the caller may not touch the scope
                 (:meth:`require_owner`).
             ForeignSessionError: When the participant is phased and its
-                sessions come from another owner, or a write targets a store
-                outside the innermost frame (until ``Joined`` declares it).
+                sessions come from another owner.
+            UndeclaredStoreWrite: When a write targets a store outside the
+                innermost frame.
         """
         participant = self.participants.get(key)
         if not write and (participant is None or not participant.phased):
@@ -317,11 +336,11 @@ class InvocationScope:
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:
         if not self.frames or key in self.frames[-1].stores:
             return
-        # Its own error type (UndeclaredStoreWrite) arrives with Joined (PR 6).
         declared = ", ".join(repr(store) for store in self.frames[-1].stores)
-        raise ForeignSessionError(
+        raise UndeclaredStoreWrite(
             f"a write to {ForeignSessionError.side(key, _described(owner))} is refused: "
-            f"the execution running now declares only store {declared}"
+            f"the execution running now declares only store {declared}; "
+            "inject its repository as Joined[...] to write to it"
         )
 
     @asynccontextmanager
@@ -383,6 +402,7 @@ def current_participant(key: StoreKey, owner: object, *, write: bool) -> Partici
     Raises:
         ScopeOwnershipError: See :meth:`InvocationScope.participant_for`.
         ForeignSessionError: See :meth:`InvocationScope.participant_for`.
+        UndeclaredStoreWrite: See :meth:`InvocationScope.participant_for`.
     """
     scope = _scope.get()
     return None if scope is None else scope.participant_for(key, owner, write=write)
@@ -406,6 +426,7 @@ def current_handle(key: StoreKey, owner: object, *, write: bool) -> object | Non
     Raises:
         ScopeOwnershipError: See :meth:`InvocationScope.participant_for`.
         ForeignSessionError: See :meth:`InvocationScope.participant_for`.
+        UndeclaredStoreWrite: See :meth:`InvocationScope.participant_for`.
     """
     participant = current_participant(key, owner, write=write)
     return None if participant is None else participant.handle

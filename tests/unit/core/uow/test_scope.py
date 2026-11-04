@@ -36,6 +36,7 @@ from loom.core.uow.scope import (
     NestedIdentityMismatch,
     ScopeOwnershipError,
     StoresNotCommitted,
+    UndeclaredStoreWrite,
     UnitOfWorkInsideScope,
     current_handle,
     current_participant,
@@ -383,10 +384,15 @@ class TestWritesStayInTheInnermostFrame:
 
         async with invocation(_coordinator(*stores.values())) as scope, scope.frame(Frame(S0)):
             with pytest.raises(
-                ForeignSessionError,
-                match=r"a write to store 's1' .* is refused: .* declares only store 's0'$",
-            ):
+                UndeclaredStoreWrite,
+                match=r"a write to store 's1' .* is refused: .* declares only store 's0'; ",
+            ) as raised:
                 scope.participant_for(S1, stores[S1].owner, write=True)
+
+        assert (raised.value.code, raised.value.retryable) == (
+            ErrorCode.UNDECLARED_STORE_WRITE,
+            False,
+        )
 
     async def test_an_enlisted_store_of_an_outer_frame_refuses_the_write_and_records_nothing(
         self,
@@ -395,7 +401,7 @@ class TestWritesStayInTheInnermostFrame:
 
         async with invocation(_coordinator(*stores.values())) as scope:
             async with scope.frame(Frame(S1)), scope.frame(Frame(S0)):
-                with pytest.raises(ForeignSessionError):
+                with pytest.raises(UndeclaredStoreWrite):
                     scope.participant_for(S1, stores[S1].owner, write=True)
             wrote = scope.participants[S1].wrote
 

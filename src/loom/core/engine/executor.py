@@ -59,8 +59,6 @@ _ERROR_KIND_BUSINESS = "business"
 _ERROR_KIND_COMMIT = "commit"
 _ERROR_KIND_CANCELLED = "cancelled"
 _ERROR_KIND_POST_COMMIT = "post_commit"
-_DEFAULT_FRAME = Frame(DEFAULT_STORE)
-"""Every execution's frame until a use case names its primary store (T046)."""
 
 
 class ParameterBindingError(ValueError):
@@ -559,7 +557,7 @@ class RuntimeExecutor:
         inputs: _ExecutionInputs,
     ) -> Any:
         """Push this execution's frame on ``scope``, if any, and run the pipeline under it."""
-        frame = nullcontext() if scope is None else scope.frame(_DEFAULT_FRAME)
+        frame = nullcontext() if scope is None else scope.frame(Frame(plan.primary, plan.joined))
         async with frame:
             return await self._run_pipeline(state, plan, compilable, inputs)
 
