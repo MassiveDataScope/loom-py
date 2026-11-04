@@ -56,26 +56,21 @@ class StoreElevation(Protocol):
 
     Each method reads the store's session when it is called, through the
     invocation scope's checkpoint, and returns the driver call left to await.
+    The flag methods are called only while :meth:`in_transaction` is true.
     """
 
     def scoped_tables(self) -> ScopedTables:
         """The store's compiled scoped tables; known once its models are prepared."""
         ...
 
-    def in_transaction(self) -> bool:
-        """Whether the store's participant has a transaction open."""
-        ...
+    def in_transaction(self) -> bool: ...
 
-    def set_flag(self, scope: str) -> Awaitable[object]:
-        """Flag ``scope`` on the open transaction."""
-        ...
+    def set_flag(self, scope: str) -> Awaitable[object]: ...
 
-    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
-        """Clear ``scopes`` on the open transaction."""
-        ...
+    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]: ...
 
     def invalidate(self, cause: BaseException) -> Awaitable[object]:
-        """Forbid the invocation to commit, for ``cause``, and invalidate the open session."""
+        """Invalidate the open session; the invocation then never commits, for ``cause``."""
         ...
 
 
@@ -86,18 +81,24 @@ class ScopedElevationSink:
     touched only when it declares one of the scopes asked about and has a
     transaction open, and each check reads its session through the
     invocation scope's checkpoint: a task other than the invocation's owner
-    gets ``ScopeOwnershipError``.
+    gets ``ScopeOwnershipError``. Build it once every store's models are
+    prepared: it reads each store's elevable scopes then, and checks the
+    registered product's elevations against all of them.
 
     Args:
         stores: How each store's open transaction gets its flags.
-        elevable: The elevable scopes of each store in ``stores``.
+
+    Raises:
+        ConfigError: See :func:`validate_elevations`.
     """
 
-    def __init__(
-        self, stores: Mapping[StoreKey, StoreElevation], elevable: Mapping[StoreKey, frozenset[str]]
-    ) -> None:
+    def __init__(self, stores: Mapping[StoreKey, StoreElevation]) -> None:
+        scoped = {key: store.scoped_tables() for key, store in stores.items()}
+        product = load_authz_product()
+        if product is not None:
+            validate_elevations(product, scoped)
         self._stores = stores
-        self._elevable = elevable
+        self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
 
     def in_transaction(self, scopes: frozenset[str]) -> bool:
         return any(store.in_transaction() for store, _ in self._declaring(scopes))
@@ -128,7 +129,10 @@ class ScopedElevationSink:
 
 async def _together(steps: list[Awaitable[object]]) -> None:
     """Await every store's driver call; the first failure is raised once all have finished."""
-    await asyncio.gather(*steps)
+    results = await asyncio.gather(*steps, return_exceptions=True)
+    failure = next((r for r in results if isinstance(r, BaseException)), None)
+    if failure is not None:
+        raise failure
 
 
 def elevable_scopes(scoped: ScopedTables) -> frozenset[str]:
@@ -172,23 +176,6 @@ def validate_elevations(product: AuthzProduct, scoped: Mapping[StoreKey, ScopedT
             raise ElevableScopeInSeveralStores(issue)
 
 
-def scoped_elevation_sink(stores: Mapping[StoreKey, StoreElevation]) -> ScopedElevationSink:
-    """Check the registered product's elevations against ``stores``, then build their sink.
-
-    Call it once every store's models are prepared.
-
-    Raises:
-        ConfigError: See :func:`validate_elevations`.
-    """
-    scoped = {key: store.scoped_tables() for key, store in stores.items()}
-    product = load_authz_product()
-    if product is not None:
-        validate_elevations(product, scoped)
-    return ScopedElevationSink(
-        stores, {key: elevable_scopes(tables) for key, tables in scoped.items()}
-    )
-
-
 def _declared_scopes(scoped: ScopedTables) -> frozenset[str]:
     return frozenset(c.scope for table in scoped.values() for c in table.scopes)
 
@@ -199,6 +186,5 @@ __all__ = [
     "ScopedElevationSink",
     "StoreElevation",
     "elevable_scopes",
-    "scoped_elevation_sink",
     "validate_elevations",
 ]

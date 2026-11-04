@@ -37,7 +37,7 @@ from loom.core.locator import add_code_path
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.elevation import scoped_elevation_sink
+from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
     StoreCatalog,
@@ -377,7 +377,7 @@ def _elevation_modules(
     stores = {key: w.elevation for key, w in wirings.items() if w.elevation is not None}
     if not stores:
         return ()
-    sink = scoped_elevation_sink(stores)
+    sink = ScopedElevationSink(stores)
     return (lambda container: container.register_instance(ElevationSink, sink),)
 
 

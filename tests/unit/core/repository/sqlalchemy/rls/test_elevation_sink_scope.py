@@ -43,6 +43,8 @@ class _RecordingSession:
     """When given, a clearing statement waits for it before it is recorded."""
     fail_clearing: bool = False
     """A clearing statement raises once released, as a dropped connection would."""
+    elevated: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set once the nested execution has elevated and holds."""
 
     def in_transaction(self) -> bool:
         return True
@@ -140,6 +142,7 @@ async def _nested_elevation(
     ):
         await elevate_scope("editor", _decision(), at=BOUNDARY, permission=WRITE, catalog=CATALOG)
         if hold:
+            session.elevated.set()
             await asyncio.sleep(10)
 
 
@@ -169,7 +172,8 @@ async def _cancelled_twice_while_clearing(
         settings recorded by then.
     """
     task = asyncio.create_task(_nested_elevation(manager, session, hold=True))
-    await asyncio.sleep(0.01)
+    async with asyncio.timeout(1):
+        await session.elevated.wait()
     task.cancel()
     async with asyncio.timeout(1):
         await session.clearing.wait()

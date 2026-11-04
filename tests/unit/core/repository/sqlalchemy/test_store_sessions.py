@@ -29,6 +29,7 @@ from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import Frame, InvocationScope, ScopeOwnershipError, invocation
+from tests.helpers.elevation import declaring
 from tests.unit.core.conftest import SessionManagerFactory
 
 AUDIT = StoreKey("audit")
@@ -172,10 +173,9 @@ def _sink(stores: _Stores) -> ScopedElevationSink:
     """``editor`` elevable in the default store, ``reviewer`` in the audit store."""
     return ScopedElevationSink(
         {
-            DEFAULT_STORE: SQLAlchemyStoreElevation(stores.default),
-            AUDIT: SQLAlchemyStoreElevation(stores.audit),
-        },
-        {DEFAULT_STORE: frozenset({"editor"}), AUDIT: frozenset({"reviewer"})},
+            DEFAULT_STORE: declaring(stores.default, "editor"),
+            AUDIT: declaring(stores.audit, "reviewer"),
+        }
     )
 
 

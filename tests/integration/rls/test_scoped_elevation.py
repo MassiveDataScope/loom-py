@@ -1,33 +1,28 @@
-"""The composition's one elevation sink against real Postgres (US7 PR 5, S3).
+"""The composition's one elevation sink against real Postgres (US7 PR 5).
 
-- A nested execution that elevates clears its flag on the connection the
-  outer execution keeps, and both executions' writes commit together.
-- ``elevate`` from a ``gather`` child is refused by the invocation scope's
-  checkpoint and leaves nothing elevated.
-- When clearing the flag fails, whether invalidating the session then
-  succeeds or fails, the invocation commits nothing, even when a parent use
-  case catches the error, and the connection that held the flag returns to
-  the pool without it.
+Through ``build_application`` on a pool of one connection, so the next
+checkout is the connection that held the flag. Flags set and cleared by a
+nested execution are pinned in ``test_elevation.py``; here:
 
-The use cases run through the real composition (``build_application``) with
-``schema.mode: external``, on a pool of one connection, so the next checkout
-is the connection that held the flag.
+- the composition wires one ``ScopedElevationSink``;
+- ``elevate`` from a ``gather`` child is refused and elevates nothing;
+- a failed clearing, or a timeout once the flag was sent, commits nothing,
+  even when the parent catches the error, and leaves no flag in the pool.
 """
 
 from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Iterator
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import yaml
-from sqlalchemy import CursorResult, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.composition import build_application
 from loom.core.authz import Decision, Grant, Scope
@@ -41,173 +36,110 @@ from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from tests.integration.agnosticism import notes
-from tests.integration.rls.conftest import FLAG, U1, BootstrapFactory, application_for, seed_notes
+from tests.integration.rls.conftest import (
+    FLAG,
+    U1,
+    BootstrapFactory,
+    application_for,
+    scalar,
+    seed_notes,
+)
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.usefixtures("notes_wiring"),
-    pytest.mark.timeout(120),
-]
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("notes_wiring")]
 
 DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
-_PID = "SELECT pg_backend_pid()"
-_EDIT_BOB = "UPDATE notes SET body = 'edited' WHERE editor = 'bob'"
-_INSERT_OUTER = f"INSERT INTO notes (owner_id, editor, body) VALUES ('{U1}', 'ana', 'outer')"
-_BODIES = "SELECT body FROM {schema}.notes ORDER BY body"
-_SEEDED = ("a", "b", "z")
+_INSERT = f"INSERT INTO notes (owner_id, editor, body) VALUES ('{U1}', 'ana', 'outer')"
+_SEEDED = "a,b,z"
+_flags: list[str] = []
+"""The flag each elevating execution saw, kept even when its invocation fails."""
 
 
-@dataclass(frozen=True)
-class OnConnection:
-    """A connection's backend pid and the ``editor`` flag it carried."""
-
-    pid: int
-    flag: str
-
-
-_held: list[OnConnection] = []
-"""What :class:`EditBobElevated` saw, kept even when its invocation fails afterwards."""
-
-
-def _active(session_manager: SessionManager) -> Any:
+def _session(session_manager: SessionManager) -> AsyncSession:
     session = session_manager.active_session
-    if session is None:
-        raise RuntimeError("no unit-of-work session")
+    assert session is not None
     return session
 
 
-async def _on_connection(session: Any) -> OnConnection:
-    return OnConnection(
-        pid=(await session.execute(text(_PID))).scalar_one(),
-        flag=(await session.execute(text(FLAG))).scalar_one(),
-    )
-
-
-class EditBobElevated(UseCase[notes.Note, int]):
-    """Elevate ``editor`` and edit bob's note; record the connection and its flag."""
-
+class EditBobElevated(UseCase[notes.Note, None]):
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
 
-    async def execute(self) -> int:
+    async def execute(self) -> None:
         await elevate("editor", DECISION, at=Scope.of(U1))
-        session = _active(self._session_manager)
-        edited = cast(CursorResult[Any], await session.execute(text(_EDIT_BOB))).rowcount
-        _held.append(await _on_connection(session))
-        return edited
+        session = _session(self._session_manager)
+        _flags.append((await session.execute(text(FLAG))).scalar_one())
+        await session.execute(text("UPDATE notes SET body = 'edited' WHERE editor = 'bob'"))
 
 
-class WriteThenNestEditor(UseCase[notes.Note, tuple[int, OnConnection]]):
-    """Write, run :class:`EditBobElevated` nested, then report the connection and its flag."""
+class WriteAndNest(UseCase[notes.Note, None]):
+    """Write, run :class:`EditBobElevated` nested, maybe catching its error, write again."""
 
     def __init__(self, session_manager: SessionManager, app: ApplicationInvoker) -> None:
         self._session_manager = session_manager
         self._app = app
 
-    async def execute(self) -> tuple[int, OnConnection]:
-        session = _active(self._session_manager)
-        await session.execute(text(_INSERT_OUTER))
-        edited = cast(int, await self._app.invoke(EditBobElevated))
-        return edited, await _on_connection(session)
+    async def execute(self, catch: bool, timeout_s: float | None) -> None:
+        await _session(self._session_manager).execute(text(_INSERT))
+        try:
+            async with asyncio.timeout(timeout_s):
+                await self._app.invoke(EditBobElevated)
+        except Exception:
+            if not catch:
+                raise
+        await _session(self._session_manager).execute(text(_INSERT))
 
 
-@dataclass(frozen=True)
-class GatherElevation:
-    """What the parent saw after a ``gather`` child tried to elevate ``editor``."""
-
-    refused: ScopeOwnershipError | None
-    elevated: frozenset[str]
-    flag: str
-    bob_rows_writable: int
-
-
-class ElevateFromGatherChild(UseCase[notes.Note, GatherElevation]):
-    """Elevate ``editor`` from a ``gather`` child, before the transaction begins."""
-
+class ElevateFromGatherChild(UseCase[notes.Note, tuple[object, frozenset[str], str]]):
     def __init__(self, session_manager: SessionManager) -> None:
         self._session_manager = session_manager
 
-    async def execute(self) -> GatherElevation:
-        refused: ScopeOwnershipError | None = None
-        try:
-            await asyncio.gather(elevate("editor", DECISION, at=Scope.of(U1)))
-        except ScopeOwnershipError as exc:
-            refused = exc
-        session = _active(self._session_manager)
-        touched = cast(
-            CursorResult[Any],
-            await session.execute(text("UPDATE notes SET body = body WHERE editor = 'bob'")),
-        ).rowcount
-        return GatherElevation(
-            refused=refused,
-            elevated=elevated_scopes(),
-            flag=(await session.execute(text(FLAG))).scalar_one(),
-            bob_rows_writable=touched,
-        )
+    async def execute(self) -> tuple[object, frozenset[str], str]:
+        elevation = elevate("editor", DECISION, at=Scope.of(U1))
+        (refused,) = await asyncio.gather(elevation, return_exceptions=True)
+        flag = (await _session(self._session_manager).execute(text(FLAG))).scalar_one()
+        return refused, elevated_scopes(), flag
 
 
 @dataclass(frozen=True)
 class Composed:
     app: AppInvoker
-    session_manager: SessionManager
+    manager: SessionManager
     sink: object
+    bodies_sql: str
     bypass: str
-    schema: str
 
-    async def bodies(self) -> tuple[str, ...]:
-        """Every note's body, read through the bypass user."""
-        engine = create_async_engine(self.bypass, poolclass=NullPool)
-        try:
-            async with engine.connect() as connection:
-                query = text(_BODIES.format(schema=self.schema))
-                return tuple((await connection.execute(query)).scalars())
-        finally:
-            await engine.dispose()
-
-    async def next_checkout(self) -> OnConnection:
-        """The pool's next connection, checked out without the session-settings provider."""
-        async with self.session_manager.engine.connect() as connection:
-            return await _on_connection(connection)
-
-
-def _config(tmp_path: Path, schema: str) -> str:
-    document: dict[str, Any] = yaml.safe_load((tmp_path / f"{schema}.yaml").read_text())
-    document["app"]["discovery"]["modules"]["include"].append(__name__)
-    document["stores"]["default"]["pool"] = {"size": 1, "max_overflow": 0}
-    document["persistence"] = {"cursors": {"signing": "ephemeral"}}
-    path = tmp_path / "app.yaml"
-    path.write_text(yaml.safe_dump(document))
-    return str(path)
-
-
-@pytest.fixture
-def held() -> Iterator[list[OnConnection]]:
-    _held.clear()
-    yield _held
-    _held.clear()
+    async def outcome(self) -> tuple[str, str]:
+        """Every body, read through the bypass user, and the next checkout's raw flag."""
+        bodies = await scalar(self.bypass, self.bodies_sql)
+        async with self.manager.engine.connect() as connection:
+            return bodies, (await connection.execute(text(FLAG))).scalar_one()
 
 
 @pytest.fixture
 async def composed(scoped_database: BootstrapFactory, tmp_path: Path) -> AsyncIterator[Composed]:
-    """The composed application, as ``U1``, against a fresh seeded schema."""
     schema = f"notes_sink_{secrets.token_hex(3)}"
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
+    document: dict[str, Any] = yaml.safe_load((tmp_path / f"{schema}.yaml").read_text())
+    document["app"]["discovery"]["modules"]["include"].append(__name__)
+    document["stores"]["default"]["pool"] = {"size": 1, "max_overflow": 0}
+    document["persistence"] = {"cursors": {"signing": "ephemeral"}}
+    (tmp_path / "app.yaml").write_text(yaml.safe_dump(document))
     built = build_application(
-        _config(tmp_path, schema), adapter=FastAPIAdapter(), environment="test"
+        str(tmp_path / "app.yaml"), adapter=FastAPIAdapter(), environment="test"
     )
+    _flags.clear()
     identity = set_identity(Identity(subject=U1))
     try:
         async with built.running():
-            container = built.kernel.container
             yield Composed(
                 app=cast(AppInvoker, built.kernel.app),
-                session_manager=container.resolve(SessionManager),
+                manager=built.kernel.container.resolve(SessionManager),
                 sink=built.kernel.executor._elevation_sink,
+                bodies_sql=f"SELECT string_agg(body, ',' ORDER BY body) FROM {schema}.notes",
                 bypass=database.bypass,
-                schema=schema,
             )
     finally:
         reset_identity(identity)
@@ -217,26 +149,13 @@ def test_the_composition_wires_one_scoped_sink(composed: Composed) -> None:
     assert isinstance(composed.sink, ScopedElevationSink)
 
 
-async def test_a_nested_elevation_is_cleared_on_the_connection_the_outer_execution_keeps(
-    composed: Composed, held: list[OnConnection]
-) -> None:
-    edited, after = await composed.app.invoke(WriteThenNestEditor)
-
-    assert (edited, held, after) == (
-        1,
-        [OnConnection(after.pid, "on")],
-        OnConnection(after.pid, ""),
-    )
-    assert await composed.bodies() == ("a", "edited", "outer", "z")
-
-
 async def test_elevate_from_a_gather_child_is_refused_and_elevates_nothing(
     composed: Composed,
 ) -> None:
-    seen: GatherElevation = await composed.app.invoke(ElevateFromGatherChild)
+    refused, elevated, flag = await composed.app.invoke(ElevateFromGatherChild)
 
-    assert isinstance(seen.refused, ScopeOwnershipError)
-    assert (seen.elevated, seen.flag, seen.bob_rows_writable) == (frozenset(), "", 0)
+    assert isinstance(refused, ScopeOwnershipError)
+    assert (elevated, flag) == (frozenset(), "")
 
 
 def _refused(message: str) -> Awaitable[object]:
@@ -246,79 +165,43 @@ def _refused(message: str) -> Awaitable[object]:
     return refuse()
 
 
-class WriteThenNestEditorCatching(UseCase[notes.Note, str]):
-    """Write, run :class:`EditBobElevated` nested, catch its failure and write again."""
-
-    def __init__(self, session_manager: SessionManager, app: ApplicationInvoker) -> None:
-        self._session_manager = session_manager
-        self._app = app
-
-    async def execute(self) -> str:
-        session = _active(self._session_manager)
-        await session.execute(text(_INSERT_OUTER))
-        try:
-            await self._app.invoke(EditBobElevated)
-        except RuntimeError as exc:
-            caught = str(exc)
-        else:
-            caught = ""
-        await _active(self._session_manager).execute(text(_INSERT_OUTER))
-        return caught
-
-
-@dataclass(frozen=True)
-class CleanupFailure:
-    """How a failed cleanup ends.
-
-    Attributes:
-        raised: What the outer invocation raises when nothing catches it.
-        connection_kept: Whether the connection that held the flag goes back
-            to the pool; an invalidated one is discarded.
-    """
-
-    raised: str
-    connection_kept: bool
-
-
-@pytest.fixture(params=["invalidation-succeeds", "invalidation-fails"])
-def cleanup_fails(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> CleanupFailure:
-    """Clearing the flags fails; invalidating the session after it succeeds, or fails too."""
-    monkeypatch.setattr(
-        SQLAlchemyStoreElevation, "clear_flags", lambda _, __: _refused("clearing refused")
-    )
-    if request.param == "invalidation-succeeds":
-        return CleanupFailure("clearing refused", connection_kept=False)
-    monkeypatch.setattr(AsyncSession, "invalidate", lambda _: _refused("invalidation refused"))
-    return CleanupFailure("invalidation refused", connection_kept=True)
-
-
-async def _no_flag_reaches_the_pool(
-    composed: Composed, held: list[OnConnection], failure: CleanupFailure
+@pytest.mark.parametrize("catch", [False, True], ids=["uncaught", "caught"])
+@pytest.mark.parametrize("invalidation_fails", [False, True], ids=["invalidated", "kept"])
+async def test_a_failed_clearing_commits_nothing_and_leaves_no_flag(
+    composed: Composed, monkeypatch: pytest.MonkeyPatch, catch: bool, invalidation_fails: bool
 ) -> None:
-    """The flag was on; nothing is persisted; the next checkout carries no flag."""
-    (flagged,) = held
-    assert flagged.flag == "on"
-    assert await composed.bodies() == _SEEDED
-    following = await composed.next_checkout()
-    assert following.flag == ""
-    assert (following.pid == flagged.pid) is failure.connection_kept
+    monkeypatch.setattr(SQLAlchemyStoreElevation, "clear_flags", lambda *_: _refused("clearing"))
+    if invalidation_fails:
+        monkeypatch.setattr(AsyncSession, "invalidate", lambda _: _refused("invalidation"))
+    raised = "invalidation" if invalidation_fails and not catch else "clearing"
+
+    with pytest.raises(RuntimeError, match=raised):
+        await composed.app.invoke(WriteAndNest, params={"catch": catch, "timeout_s": None})
+
+    assert _flags == ["on"]
+    assert await composed.outcome() == (_SEEDED, "")
 
 
-async def test_a_failed_cleanup_rolls_back_and_the_flag_never_reaches_the_next_checkout(
-    composed: Composed, held: list[OnConnection], cleanup_fails: CleanupFailure
+async def test_a_timeout_once_the_flag_was_sent_commits_nothing_even_when_caught(
+    composed: Composed, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(RuntimeError, match=cleanup_fails.raised):
-        await composed.app.invoke(WriteThenNestEditor)
+    sent = SQLAlchemyStoreElevation.set_flag
+    seen: list[str] = []
 
-    await _no_flag_reaches_the_pool(composed, held, cleanup_fails)
+    def set_then_linger(store: SQLAlchemyStoreElevation, scope: str) -> Awaitable[object]:
+        statement, session = sent(store, scope), store._open_session()
 
+        async def linger() -> None:
+            await statement  # set_config has run on the server
+            seen.append((await session.execute(text(FLAG))).scalar_one())
+            await asyncio.sleep(0.3)
 
-async def test_a_parent_catching_a_failed_cleanup_still_commits_nothing(
-    composed: Composed, held: list[OnConnection], cleanup_fails: CleanupFailure
-) -> None:
-    with pytest.raises(RuntimeError, match="clearing refused"):
-        await composed.app.invoke(WriteThenNestEditorCatching)
+        return linger()
 
-    await _no_flag_reaches_the_pool(composed, held, cleanup_fails)
+    monkeypatch.setattr(SQLAlchemyStoreElevation, "set_flag", set_then_linger)
+
+    with pytest.raises(RuntimeError, match="elevating scope 'editor' was interrupted"):
+        await composed.app.invoke(WriteAndNest, params={"catch": True, "timeout_s": 0.05})
+
+    assert seen == ["on"]
+    assert await composed.outcome() == (_SEEDED, "")

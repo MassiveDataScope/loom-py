@@ -35,8 +35,6 @@ from loom.core.persistence.elevation import (
     ElevableScopeInSeveralStores,
     ScopedElevationSink,
     StoreElevation,
-    elevable_scopes,
-    scoped_elevation_sink,
 )
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
@@ -199,8 +197,7 @@ class Store:
         """The composition's sink over this store alone, from the elevation its wiring exposes."""
         if self.elevation is None:
             raise RuntimeError(f"store {self.key!r} exposes no elevation")
-        elevable = elevable_scopes(self.elevation.scoped_tables())
-        return ScopedElevationSink({self.key: self.elevation}, {self.key: elevable})
+        return ScopedElevationSink({self.key: self.elevation})
 
     def checked_out(self) -> int:
         pool = self.manager.engine.sync_engine.pool
@@ -573,7 +570,7 @@ async def test_the_same_elevable_scope_in_both_stores_is_refused_at_startup(
         elevations = {k: s.elevation for k, s in stores.items() if s.elevation is not None}
         assert elevations.keys() == set(STORES)
         with pytest.raises(ElevableScopeInSeveralStores, match="stores audit, default"):
-            scoped_elevation_sink(elevations)
+            ScopedElevationSink(elevations)
 
 
 async def _session_setting_left_behind(store: Store) -> tuple[int, str]:

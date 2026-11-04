@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 
@@ -8,8 +9,12 @@ async def _done() -> None:
     return None
 
 
-async def _refused() -> None:
-    raise RuntimeError("database says no")
+async def _refused(error: BaseException | None = None) -> None:
+    raise error or RuntimeError("database says no")
+
+
+async def _after(gate: asyncio.Event) -> None:
+    await gate.wait()
 
 
 @dataclass
@@ -25,7 +30,11 @@ class FakeSink:
     set: list[str] = field(default_factory=list)
     cleared: list[frozenset[str]] = field(default_factory=list)
     fail_on_set: bool = False
+    set_gate: asyncio.Event | None = None
+    """``set_flag``'s statement finishes only once the gate opens."""
     fail_on_clear: bool = False
+    clear_raises: BaseException | None = None
+    """What ``clear_flags``'s statement raises, when it is not an ``Exception``."""
     refuse_clear: bool = False
     """``clear_flags`` raises when called, as a sink refused by the scope checkpoint does."""
     fail_on_invalidate: bool = False
@@ -39,13 +48,13 @@ class FakeSink:
         if self.fail_on_set:
             return _refused()
         self.set.append(scope)
-        return _done()
+        return _done() if self.set_gate is None else _after(self.set_gate)
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
         if self.refuse_clear:
             raise RuntimeError("refused before any statement")
-        if self.fail_on_clear:
-            return _refused()
+        if self.fail_on_clear or self.clear_raises is not None:
+            return _refused(self.clear_raises)
         self.cleared.append(scopes)
         return _done()
 

@@ -22,7 +22,6 @@ from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel
 from loom.core.persistence import PersistenceWiring
-from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.profile import (
     SERVER_PROFILE,
     BackendRuntime,
@@ -163,26 +162,9 @@ def test_the_adapter_under_test_stays_under_thirty_lines() -> None:
     assert len(lines) < 30
 
 
-_EXTERNAL_POSTGRES = {
-    "backend": "sqlalchemy",
-    "url": "postgresql+asyncpg://app:secret@localhost/app",
-    "schema": {"mode": "external"},
-}
-
-
-@pytest.mark.parametrize(
-    ("store", "sink_type"),
-    [
-        (_EXTERNAL_POSTGRES, ScopedElevationSink),
-        ({"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}, type(None)),
-    ],
-    ids=["external-postgres", "create-all-sqlite"],
-)
-def test_the_composition_hands_the_executor_one_scoped_sink_when_a_store_elevates(
-    fixture_project: ProjectFactory, store: dict[str, Any], sink_type: type
+def test_the_composition_registers_no_elevation_sink_without_a_store_that_elevates(
+    fixture_project: ProjectFactory,
 ) -> None:
-    application = build_application(
-        fixture_project(store=store), adapter=_Bare(), environment="test"
-    )
+    application = build_application(fixture_project(), adapter=_Bare(), environment="test")
 
-    assert isinstance(application.kernel.executor._elevation_sink, sink_type)
+    assert application.kernel.executor._elevation_sink is None

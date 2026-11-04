@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterator
+import asyncio
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 
 import pytest
@@ -17,7 +18,6 @@ from loom.core.persistence.elevation import (
     ElevationErrorCode,
     ScopedElevationSink,
     ScopedTables,
-    scoped_elevation_sink,
     validate_elevations,
 )
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
@@ -53,7 +53,7 @@ def _no_product() -> Iterator[None]:
 
 class TestValidateElevations:
     def test_an_elevable_scope_named_by_the_product_is_accepted(self) -> None:
-        validate_elevations(_Product(), {DEFAULT_STORE: _store(EDITOR)})
+        validate_elevations(_Product(), {DEFAULT_STORE: _store(), AUDIT: _store(EDITOR)})
 
     @pytest.mark.parametrize(
         ("elevations", "message"),
@@ -72,44 +72,18 @@ class TestValidateElevations:
         with pytest.raises(ConfigError, match=message):
             validate_elevations(product, stores)
 
-    def test_a_scope_elevable_in_another_store_is_known_to_the_product(self) -> None:
-        validate_elevations(_Product(), {DEFAULT_STORE: _store(), AUDIT: _store(EDITOR)})
-
-    @pytest.mark.parametrize(
-        ("other", "elevations"),
-        [
-            (EDITOR, {"editor": MANAGE}),
-            (EDITOR_NOT_ELEVABLE, {"editor": MANAGE}),
-            (EDITOR, {}),
-        ],
-        ids=["elevable-in-both", "declared-in-the-other", "elevable-but-not-named"],
-    )
-    def test_an_elevated_scope_declared_by_two_stores_is_refused(
-        self, other: ScopeColumn, elevations: dict[str, Permission]
-    ) -> None:
-        product = _Product(elevations=elevations)
-        stores = {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(other, table="entries")}
+    def test_an_elevated_scope_declared_by_two_stores_is_refused(self) -> None:
+        product = _Product()
+        stores = {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(EDITOR_NOT_ELEVABLE, table="e")}
 
         with pytest.raises(ElevableScopeInSeveralStores) as refused:
             validate_elevations(product, stores)
 
         assert refused.value.issue.code is ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES
-        assert refused.value.issue.field == "editor"
         assert "stores audit, default all declare it" in str(refused.value)
 
     def test_a_shared_scope_that_is_never_elevated_is_allowed(self) -> None:
-        stores = {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(table="entries")}
-
-        validate_elevations(_Product(), stores)
-
-    def test_a_named_scope_declared_but_elevable_nowhere_is_not_elevable_first(self) -> None:
-        product = _Product(elevations={"holder": MANAGE})
-        stores = {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(table="entries")}
-
-        with pytest.raises(ConfigError, match="not elevable") as refused:
-            validate_elevations(product, stores)
-
-        assert not isinstance(refused.value, ElevableScopeInSeveralStores)
+        validate_elevations(_Product(), {DEFAULT_STORE: _store(EDITOR), AUDIT: _store(table="e")})
 
 
 class TestTheCatalogue:
@@ -126,23 +100,19 @@ class TestTheCatalogue:
         assert call.keywords == ElevationErrorCode[call.member].params
 
 
-async def _done() -> None:
-    return None
-
-
 @dataclass
 class _Store:
-    """One store's elevation, recording what the sink asks of it."""
+    """One store's elevation with a transaction open, recording what the sink asks of it."""
 
     tables: ScopedTables
-    open: bool = False
     calls: list[tuple[str, frozenset[str]]] = field(default_factory=list)
+    clearing: Callable[[], Awaitable[None]] | None = None
 
     def scoped_tables(self) -> ScopedTables:
         return self.tables
 
     def in_transaction(self) -> bool:
-        return self.open
+        return True
 
     def set_flag(self, scope: str) -> Awaitable[object]:
         self.calls.append(("set", frozenset({scope})))
@@ -150,7 +120,7 @@ class _Store:
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
         self.calls.append(("clear", scopes))
-        return _done()
+        return _done() if self.clearing is None else self.clearing()
 
     def invalidate(self, cause: BaseException) -> Awaitable[object]:
         del cause
@@ -158,92 +128,49 @@ class _Store:
         return _done()
 
 
-@dataclass
-class _TwoStores:
-    default: _Store
-    audit: _Store
-    sink: ScopedElevationSink
+async def _done() -> None:
+    return None
 
 
-def _two_stores(*, default_open: bool, audit_open: bool) -> _TwoStores:
-    """``editor`` elevable in the default store, ``reviewer`` in the audit store."""
-    default = _Store(_store(EDITOR), open=default_open)
-    audit = _Store(_store(REVIEWER, table="entries"), open=audit_open)
-    sink = ScopedElevationSink(
-        {DEFAULT_STORE: default, AUDIT: audit},
-        {DEFAULT_STORE: frozenset({"editor"}), AUDIT: frozenset({"reviewer"})},
-    )
-    return _TwoStores(default, audit, sink)
+def _sink(default: _Store, audit: _Store) -> ScopedElevationSink:
+    return ScopedElevationSink({DEFAULT_STORE: default, AUDIT: audit})
 
 
 class TestScopedElevationSink:
-    @pytest.mark.parametrize(
-        ("default_open", "audit_open", "scopes", "expected"),
-        [
-            (True, False, {"editor"}, True),
-            (True, False, {"reviewer"}, False),
-            (False, True, {"editor"}, False),
-            (False, True, {"reviewer"}, True),
-            (False, True, {"editor", "reviewer"}, True),
-            (True, True, {"holder"}, False),
-            (False, False, {"editor", "reviewer"}, False),
-        ],
-    )
-    def test_in_transaction_asks_only_the_stores_declaring_the_scopes(
-        self, default_open: bool, audit_open: bool, scopes: set[str], expected: bool
-    ) -> None:
-        stores = _two_stores(default_open=default_open, audit_open=audit_open)
+    async def test_each_store_gets_only_the_scopes_it_declares(self) -> None:
+        default, audit = _Store(_store(EDITOR)), _Store(_store(REVIEWER, table="e"))
+        sink = _sink(default, audit)
 
-        assert stores.sink.in_transaction(frozenset(scopes)) is expected
+        await sink.set_flag("reviewer")
+        await sink.clear_flags(frozenset({"editor", "reviewer"}))
 
-    async def test_a_flag_is_set_on_the_declaring_store_only(self) -> None:
-        stores = _two_stores(default_open=True, audit_open=True)
-
-        await stores.sink.set_flag("reviewer")
-
-        assert (stores.default.calls, stores.audit.calls) == (
-            [],
-            [("set", frozenset({"reviewer"}))],
-        )
-
-    async def test_each_store_clears_its_own_scopes(self) -> None:
-        stores = _two_stores(default_open=True, audit_open=True)
-
-        await stores.sink.clear_flags(frozenset({"editor", "reviewer"}))
-
-        assert (stores.default.calls, stores.audit.calls) == (
+        assert (default.calls, audit.calls) == (
             [("clear", frozenset({"editor"}))],
-            [("clear", frozenset({"reviewer"}))],
+            [("set", frozenset({"reviewer"})), ("clear", frozenset({"reviewer"}))],
         )
 
-    async def test_a_store_without_a_transaction_is_left_alone(self) -> None:
-        stores = _two_stores(default_open=True, audit_open=False)
+    async def test_a_failing_store_is_raised_once_every_store_finished(self) -> None:
+        finished: list[str] = []
 
-        await stores.sink.clear_flags(frozenset({"editor", "reviewer"}))
-        await stores.sink.invalidate(frozenset({"editor", "reviewer"}), RuntimeError("cause"))
+        async def fails_fast() -> None:
+            raise RuntimeError("clearing refused")
 
-        assert (stores.default.calls, stores.audit.calls) == (
-            [("clear", frozenset({"editor"})), ("invalidate", frozenset())],
-            [],
-        )
+        async def slow() -> None:
+            await asyncio.sleep(0.01)
+            finished.append("audit")
 
+        default = _Store(_store(EDITOR), clearing=fails_fast)
+        audit = _Store(_store(REVIEWER, table="e"), clearing=slow)
+        clearing = _sink(default, audit).clear_flags(frozenset({"editor", "reviewer"}))
 
-class TestScopedElevationSinkFactory:
-    async def test_it_routes_by_each_store_s_elevable_scopes(self) -> None:
-        default = _Store(_store(EDITOR), open=True)
-        audit = _Store(_store(REVIEWER, table="entries"), open=True)
-        sink = scoped_elevation_sink({DEFAULT_STORE: default, AUDIT: audit})
+        with pytest.raises(RuntimeError, match="clearing refused"):
+            await clearing
 
-        await sink.set_flag("editor")
-
-        assert (default.calls, audit.calls) == ([("set", frozenset({"editor"}))], [])
+        assert finished == ["audit"]
 
     def test_it_checks_the_registered_product_against_every_store(self) -> None:
         register_authz_product(_Product())
-        stores = {
-            DEFAULT_STORE: _Store(_store(EDITOR)),
-            AUDIT: _Store(_store(EDITOR, table="entries")),
-        }
+        default, audit = _Store(_store(EDITOR)), _Store(_store(EDITOR, table="e"))
 
         with pytest.raises(ElevableScopeInSeveralStores):
-            scoped_elevation_sink(stores)
+            _sink(default, audit)

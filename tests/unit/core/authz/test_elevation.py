@@ -54,12 +54,41 @@ async def test_with_an_open_transaction_the_flag_is_set_immediately() -> None:
     assert sink.set == ["editor"]
 
 
-async def test_a_failing_sink_leaves_the_scope_unelevated_and_re_raises() -> None:
+async def test_a_failing_sink_invalidates_leaves_the_scope_unelevated_and_re_raises() -> None:
     sink = FakeSink(open=True, fail_on_set=True)
     async with elevation_scope(owns_transaction=True, sink=sink):
         with pytest.raises(RuntimeError, match="database says no"):
             await _elevate()
         assert elevated_scopes() == frozenset()
+    assert sink.invalidated == 1
+
+
+async def test_a_cancellation_once_the_flag_was_sent_invalidates_the_session() -> None:
+    sink = FakeSink(open=True, set_gate=asyncio.Event())
+    assert sink.set_gate is not None
+    task = asyncio.create_task(_nested_elevation(sink))
+    while not sink.set:
+        await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    sink.set_gate.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (sink.invalidated, sink.cleared) == (1, [])
+
+
+class _Interrupt(BaseException):
+    """Not an ``Exception``, and not special to asyncio."""
+
+
+async def test_a_clearing_interrupted_by_a_base_exception_invalidates_the_session() -> None:
+    sink = FakeSink(open=True, clear_raises=_Interrupt())
+
+    with pytest.raises(_Interrupt):
+        await _nested_elevation(sink)
+
+    assert sink.invalidated == 1
 
 
 async def test_a_denied_decision_cannot_elevate() -> None:
@@ -167,12 +196,16 @@ async def test_a_cancelled_inner_frame_still_clears_what_it_added() -> None:
     assert sink.cleared == [frozenset({"editor"})]
 
 
-async def _nested_elevation(sink: FakeSink, *, hold: asyncio.Event | None = None) -> None:
+async def _nested_elevation(
+    sink: FakeSink, *, hold: asyncio.Event | None = None, elevated: asyncio.Event | None = None
+) -> None:
     """Elevate in a nested frame; with ``hold``, wait for it before the frame closes."""
     outer = elevation_scope(owns_transaction=True, sink=sink)
     inner = elevation_scope(owns_transaction=False, sink=sink)
     async with outer, inner:
         await _elevate()
+        if elevated is not None:
+            elevated.set()
         if hold is not None:
             await hold.wait()
 
@@ -209,8 +242,9 @@ async def test_a_failed_invalidation_after_a_failed_clear_is_raised_and_logged(
 
 async def test_a_failed_invalidation_is_raised_over_a_cancellation() -> None:
     sink = FakeSink(open=True, fail_on_clear=True, fail_on_invalidate=True)
-    task = asyncio.create_task(_nested_elevation(sink, hold=asyncio.Event()))
-    await asyncio.sleep(0)
+    elevated = asyncio.Event()
+    task = asyncio.create_task(_nested_elevation(sink, hold=asyncio.Event(), elevated=elevated))
+    await elevated.wait()
     task.cancel()
 
     with pytest.raises(RuntimeError, match="database says no"):
