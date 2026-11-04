@@ -222,7 +222,8 @@ def test_startup_without_the_extra_names_it(
         compose_application(source, adapter)
 
 
-_LATER = datetime.now(UTC) + timedelta(minutes=20)
+_LATER = timedelta(minutes=20)
+"""An ``eta`` this far ahead, taken from the clock when the test runs."""
 
 
 @pytest.mark.parametrize(
@@ -248,6 +249,8 @@ async def test_dispatch_refuses_what_sqs_cannot_carry_and_sends_nothing(
     options: dict[str, Any],
     code: str,
 ) -> None:
+    if "eta" in options:
+        options = {**options, "eta": datetime.now(UTC) + options["eta"]}
     with pytest.raises(SQSDispatchError) as raised:
         service.dispatch(job, **options)
     await flush_pending_dispatches()

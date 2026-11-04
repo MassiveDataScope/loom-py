@@ -18,6 +18,7 @@ from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import InlineJobService, JobService
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.plugins.optional import MissingExtraError
 from loom.core.symbols import import_symbol
 
 if TYPE_CHECKING:
@@ -90,7 +91,12 @@ def _celery(context: JobBackendContext) -> _Built:
 def _sqs(context: JobBackendContext) -> _Built:
     from loom.jobs.aws.sqs import build_backend
 
-    return build_backend(context), ()
+    try:
+        return build_backend(context), ()
+    except MissingExtraError as exc:
+        raise JobBackendError(
+            "app.job_service is sqs, but the loom[sqs] extra is not installed"
+        ) from exc
 
 
 _BUILTIN_JOB_BACKENDS: Final[Mapping[str, Callable[[JobBackendContext], _Built]]] = {

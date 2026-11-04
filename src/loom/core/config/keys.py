@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final
 
-INTERPOLATION: Final = "${"
-"""What opens a placeholder (an interpolation) in a value as written."""
+INTERPOLATION = "${"  # opens a placeholder
 
 
 class ConfigKey(StrEnum):

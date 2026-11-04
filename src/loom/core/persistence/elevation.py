@@ -100,26 +100,25 @@ class ScopedElevationSink:
         self._elevable = {key: elevable_scopes(tables) for key, tables in scoped.items()}
 
     def in_transaction(self, scopes: frozenset[str]) -> bool:
-        declaring = (key for key, elevable in self._elevable.items() if scopes & elevable)
-        return any(self._stores[key].in_transaction() for key in declaring)
+        return any(
+            self._stores[k].in_transaction() for k, e in self._elevable.items() if scopes & e
+        )
 
     # Each store's call is made here, in the calling task, where the checkpoint
     # passes: only the awaiting may happen in another task.
     def set_flag(self, scope: str) -> Awaitable[object]:
-        open_stores = self._open(frozenset({scope}))
-        return _together([self._stores[key].set_flag(scope) for key in open_stores])
+        return _together([self._stores[k].set_flag(scope) for k in self._open(frozenset({scope}))])
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
-        open_stores = self._open(scopes).items()
-        return _together([self._stores[key].clear_flags(own) for key, own in open_stores])
+        return _together([self._stores[k].clear_flags(o) for k, o in self._open(scopes).items()])
 
     def invalidate(self, scopes: frozenset[str], cause: BaseException) -> Awaitable[object]:
-        """Poison every open store's participant first, so no invalidation can let it commit."""
         open_stores = self._open(scopes)
-        invocation_scope = current_scope()
-        if invocation_scope is not None:
-            for key in open_stores:
-                invocation_scope.poison(key, cause)
+        invocation = current_scope()
+        if invocation is not None:  # each store poisoned before any session is touched
+            invocation.require_owner()
+            for key in open_stores.keys() & invocation.participants.keys():
+                invocation.participants[key].poison(cause)
         return _together([self._stores[key].invalidate() for key in open_stores])
 
     def _open(self, scopes: frozenset[str]) -> dict[StoreKey, frozenset[str]]:

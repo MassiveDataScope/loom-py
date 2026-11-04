@@ -47,7 +47,12 @@ def aws_client(service: str, region: str | None, *, resolver: str, root: Any) ->
             f"boto3 is required for {resolver}. "
             "Install it with: pip install loom-kernel[config-ssm]"
         ) from exc
-    written = None if root is None else _written_aws(root)
+    written = None
+    if root is not None:
+        from omegaconf import OmegaConf
+
+        aws = OmegaConf.to_container(OmegaConf.masked_copy(root, ConfigKey.AWS), resolve=False)
+        written = cast("dict[str, object]", aws).get(ConfigKey.AWS)
     for key, value in written.items() if isinstance(written, dict) else ():
         if isinstance(value, str) and INTERPOLATION in value:
             raise ConfigError(
@@ -60,14 +65,6 @@ def aws_client(service: str, region: str | None, *, resolver: str, root: Any) ->
     return island.build_aws_client(service, config)
 
 
-def _written_aws(root: Any) -> object:
-    """``aws:`` of *root* as written; the rest of the configuration is not converted."""
-    from omegaconf import OmegaConf
-
-    only_aws = OmegaConf.to_container(OmegaConf.masked_copy(root, ConfigKey.AWS), resolve=False)
-    return cast("dict[str, object]", only_aws).get(ConfigKey.AWS)
-
-
 def resolve_cached(
     key: str,
     root: Any,
@@ -77,14 +74,8 @@ def resolve_cached(
     unbound: dict[Hashable, Any],
     client: Callable[[], Any],
     fetch: Callable[..., str],
-    logger: logging.Logger,
 ) -> object:
-    """Resolve *key* with ``fetch(client, path, label=key)``, once per configuration *root*.
-
-    OmegaConf caches no resolver that receives the root, so the client
-    *client* builds and the values live in its cache of the root, *unbound*
-    outside one.
-    """
+    """Resolve *key* with ``fetch(client, path, label=key)``, cached in the root (or *unbound*)."""
     cache: dict[Hashable, Any] = unbound
     if root is not None:
         from omegaconf import OmegaConf
@@ -96,7 +87,7 @@ def resolve_cached(
         raise ConfigError(f"{label} key must not be empty")
     base, json_keys = _split_resolver_key(key)
     path = _expand_env_vars(base)
-    logger.info("%s_resolver: fetching %s", name, key)
+    logging.getLogger(f"loom.core.config.{name}").info("%s_resolver: fetching %s", name, key)
     if _CLIENT not in cache:
         cache[_CLIENT] = client()
     raw = fetch(cache[_CLIENT], path, label=key)

@@ -113,7 +113,6 @@ class _PendingCeleryDispatch:
             )
 
     def log_fields(self) -> tuple[dict[str, object]]:
-        """Its job name and task id: what a post-commit log may name of it."""
         return ({"job_name": self.task_name, "task_id": self.task_id},)
 
 

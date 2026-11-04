@@ -55,16 +55,14 @@ class ScopedTable:
         return next(scope for scope in self.scopes if scope.is_boundary)
 
 
-ScopedTables = Mapping[tuple[str | None, str], ScopedTable]
-"""One store's compiled scoped tables, by schema and name."""
+ScopedTables = Mapping[tuple[str | None, str], ScopedTable]  # by schema and name
 
 
 def declared_scopes(scoped: ScopedTables) -> dict[str, bool]:
     """Each scope ``scoped`` declares, and whether one of its columns makes it elevable."""
     scopes: dict[str, bool] = {}
-    for table in scoped.values():
-        for column in table.scopes:
-            scopes[column.scope] = scopes.get(column.scope, False) or column.elevable
+    for column in (column for table in scoped.values() for column in table.scopes):
+        scopes[column.scope] = scopes.get(column.scope, False) or column.elevable
     return scopes
 
 

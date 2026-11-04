@@ -1,8 +1,6 @@
-"""The top-level ``aws:`` section: the client settings every AWS product of loom inherits.
+"""The top-level ``aws:`` section: the client keys every AWS product inherits, never credentials.
 
-A product's own section (a ``dynamodb`` store, ``storage.dynamodb``) overrides
-it key by key. It takes the keys of :class:`~loom.core.connections.AwsClientConfig`
-only, which has no credential key: credentials never come from configuration.
+A product's own section (a ``dynamodb`` store, ``storage.dynamodb``) overrides it key by key.
 """
 
 from __future__ import annotations
@@ -23,44 +21,28 @@ ClientConfigT = TypeVar("ClientConfigT", bound=AwsClientConfig)
 
 
 def written_aws(ctx: ConfigContext) -> object:
-    """Return the resolved ``aws:`` section of *ctx*, or ``None`` when it declares none."""
     return ctx.section(ConfigKey.AWS, dict) if ctx.has(ConfigKey.AWS) else None
 
 
 def inherit_aws(
-    aws: object, section: Mapping[str, Any], path: str, target: type[AwsClientConfig]
+    aws: object, own: Mapping[str, Any], path: str, target: type[AwsClientConfig] = AwsClientConfig
 ) -> dict[str, Any]:
-    """Return the product *section* at *path*, taking every key it does not set from *aws*.
-
-    Raises:
-        ConfigError: When *aws* (``None`` when absent) is not a mapping or
-            holds a key :class:`AwsClientConfig` does not take, a credential
-            among them, or *aws* or *section* (for *target*) a retired key.
-    """
-    if aws is not None and not isinstance(aws, Mapping):
+    """*own* section with the keys it does not set from *aws*; refuses retired and foreign keys."""
+    if not isinstance(aws, Mapping | None):
         raise ConfigError(f"Config section {ConfigKey.AWS.value!r} must be a mapping")
     reject_retired_keys(aws, ConfigKey.AWS, AwsClientConfig)
-    reject_retired_keys(section, path, target)
-    inherited: dict[str, Any] = dict(aws) if isinstance(aws, Mapping) else {}
-    unknown = sorted(set(inherited) - set(AwsClientConfig.__struct_encode_fields__))
+    reject_retired_keys(own, path, target)
+    unknown = sorted(set(aws or {}) - set(AwsClientConfig.__struct_encode_fields__))
     if unknown:
         raise ConfigError(f"Config section {ConfigKey.AWS.value!r} takes no key {unknown[0]!r}")
-    return {**inherited, **section}
+    return {**(aws or {}), **own}
 
 
 def decode_aws(
-    aws: object,
-    section: Mapping[str, Any],
-    path: str,
-    target: type[ClientConfigT],
-    **overrides: Any,
+    aws: object, section: Mapping[str, Any], path: str, target: type[ClientConfigT], **over: Any
 ) -> ClientConfigT:
-    """Decode :func:`inherit_aws` of *section*, then *overrides*, into *target*, once.
-
-    Raises:
-        ConfigError: As :func:`inherit_aws`, or naming *path* when it fails validation.
-    """
-    return convert_section(inherit_aws(aws, section, path, target) | overrides, path, target)
+    """:func:`inherit_aws`, then *over*, decoded once into *target*."""
+    return convert_section(inherit_aws(aws, section, path, target) | over, path, target)
 
 
 __all__ = ["decode_aws", "inherit_aws", "written_aws"]

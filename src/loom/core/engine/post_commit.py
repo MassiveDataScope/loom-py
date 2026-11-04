@@ -29,9 +29,7 @@ ActionT = TypeVar("ActionT", bound=PostCommitAction)
 class LoggedAction(Protocol):
     """A post-commit action naming what it sends, for the logs: never its payload."""
 
-    def log_fields(self) -> Iterable[Mapping[str, object]]:
-        """The ``job_name`` and ``task_id`` of each send the action makes."""
-        ...
+    def log_fields(self) -> Iterable[Mapping[str, object]]: ...  # job_name, task_id per send
 
 
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(

@@ -14,14 +14,11 @@ Example::
 from __future__ import annotations
 
 import functools
-import logging
 from typing import Any
 
 from loom.core.config._resolver_utils import aws_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
-
-logger = logging.getLogger(__name__)
 
 
 def _fetch_parameter(client: Any, name: str, with_decryption: bool, *, label: str) -> str:
@@ -139,9 +136,6 @@ class SsmResolver:
             name=self.name,
             label="SSM",
             unbound=self._unbound,
-            client=functools.partial(
-                aws_client, "ssm", self._region, resolver="SsmResolver", root=_root_
-            ),
+            client=lambda: aws_client("ssm", self._region, resolver="SsmResolver", root=_root_),
             fetch=functools.partial(_fetch_parameter, with_decryption=self._with_decryption),
-            logger=logger,
         )

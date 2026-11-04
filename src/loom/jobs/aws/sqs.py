@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import math
 import threading
@@ -14,7 +15,6 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 import msgspec
 
-from loom.composition.errors import JobBackendError
 from loom.core.config import ConfigError, ConfigKey
 from loom.core.config.aws import decode_aws, written_aws
 from loom.core.connections.aws import AwsClientConfig, aws_error_code, aws_island
@@ -29,9 +29,8 @@ from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
 from loom.core.logger import get_logger
 from loom.core.model.types import PositiveInt
-from loom.core.plugins.optional import MissingExtraError
 from loom.core.tracing import get_trace_id
-from loom.jobs.aws import is_fifo_queue
+from loom.jobs.aws import FIFO_SUFFIX
 
 if TYPE_CHECKING:
     from loom.composition import JobBackendContext
@@ -47,8 +46,8 @@ MAX_MESSAGE_BYTES = 256 * 1024
 MAX_BATCH_ENTRIES = 10
 MAX_BATCH_BYTES = 1024 * 1024
 """What one ``SendMessageBatch`` call carries at most, in entries and in body bytes."""
+# U+FFFE, U+FFFF: what SQS refuses that JSON leaves (control characters escaped, no surrogate).
 _REFUSED_CHARACTERS = (b"\xef\xbf\xbe", b"\xef\xbf\xbf")
-"""U+FFFE, U+FFFF: what SQS refuses that JSON leaves (control characters escaped, no surrogate)."""
 
 _log = get_logger(__name__)
 
@@ -86,7 +85,7 @@ def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> N
                 f"{job_type.__qualname__} uses queue {job_type.__queue__!r}, which "
                 f"sqs.queues does not map to a URL"
             )
-        if is_fifo_queue(url) and job_type.__group_by__ is None:
+        if url.endswith(FIFO_SUFFIX) and job_type.__group_by__ is None:
             raise SQSQueueConfigError(
                 f"{job_type.__qualname__} uses FIFO queue {job_type.__queue__!r} but "
                 "declares no __group_by__ payload field"
@@ -94,21 +93,12 @@ def check_queues(queues: Mapping[str, str], jobs: Sequence[type[Job[Any]]]) -> N
 
 
 def build_backend(context: JobBackendContext) -> SQSJobService:
-    """``app.job_service: sqs``, from ``sqs`` over ``aws:``, once :func:`check_queues` passes.
-
-    Raises:
-        JobBackendError: When the ``loom[sqs]`` extra is not installed.
-    """
+    """``app.job_service: sqs``; ``MissingExtraError`` without the ``loom[sqs]`` extra."""
     ctx = context.config
     written = ctx.section(ConfigKey.SQS, dict) if ctx.has(ConfigKey.SQS) else {}
     config = decode_aws(written_aws(ctx), written, ConfigKey.SQS, SQSConfig)
     check_queues(config.queues, context.jobs)
-    try:
-        client = aws_island(extra="sqs").build_aws_client("sqs", config)
-    except MissingExtraError as exc:
-        raise JobBackendError(
-            "app.job_service is sqs, but the loom[sqs] extra is not installed"
-        ) from exc
+    client = aws_island(extra="sqs").build_aws_client("sqs", config)
     return SQSJobService(
         client, config, factory=context.factory, executor=context.executor, metrics=context.metrics
     )
@@ -210,7 +200,7 @@ class _PendingSQSBatch:
         A FIFO queue resends nothing and stops at its first failure: a later
         message would overtake the failed one.
         """
-        fifo = is_fifo_queue(url)
+        fifo = url.endswith(FIFO_SUFFIX)
         failed: list[_Failure] = []
         async with limit:
             for chunk in _chunks(sends, self.config.batch_size):
@@ -281,6 +271,7 @@ class SQSJobService:
     ) -> None:
         self._client = client
         self._config = config
+        self._new_batch = functools.partial(_PendingSQSBatch, client, config)
         self._inline = InlineJobService(factory, executor)
         self._metrics = metrics
 
@@ -357,9 +348,6 @@ class SQSJobService:
             )
         return JobHandle(job_id=task_id, queue=eff_queue, dispatched_at=datetime.now(UTC))
 
-    def _new_batch(self) -> _PendingSQSBatch:
-        return _PendingSQSBatch(self._client, self._config)
-
     def dispatch_parallel(
         self,
         jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
@@ -391,7 +379,7 @@ def _placement(
     job_type: type[Job[Any]], url: str, payload: Mapping[str, Any], task_id: str, delay: int
 ) -> dict[str, Any]:
     """``DelaySeconds`` on a standard queue; hashed group and deduplication ids on a FIFO one."""
-    if not is_fifo_queue(url):
+    if not url.endswith(FIFO_SUFFIX):
         return {"DelaySeconds": delay} if delay else {}
     if delay:
         raise SQSDispatchError("a FIFO queue takes no per-message delay", code="sqs_fifo_delay")

@@ -112,17 +112,16 @@ def declared_function(ctx: ConfigContext, name: str) -> LambdaFunction:
     return _function(declared_functions(ctx), name)
 
 
-def http_function(ctx: ConfigContext, name: str) -> HttpFunction:
-    """The authentication and interfaces of the HTTP function *name*.
+def http_function(
+    ctx: ConfigContext, name: str, functions: Mapping[str, LambdaFunction] | None = None
+) -> HttpFunction:
+    """The authentication and interfaces of the HTTP function *name*, of *functions* if decoded.
 
     Raises:
         ConfigError: When no HTTP function is called *name*, or
             ``lambda.functions`` is misdeclared.
     """
-    return _http_function(declared_functions(ctx), name)
-
-
-def _http_function(functions: Mapping[str, LambdaFunction], name: str) -> HttpFunction:
+    functions = declared_functions(ctx) if functions is None else functions
     function = _function(functions, name)
     if function.sqs:
         raise ConfigError(f"{_SECTION}.{name} is an sqs function, not an http one")
@@ -142,7 +141,7 @@ def entry_function(ctx: ConfigContext, entry: str | None) -> HttpFunction:
     functions = declared_functions(ctx)
     if entry is None or entry not in functions:
         return HttpFunction()
-    return _http_function(functions, entry)
+    return http_function(ctx, entry, functions)
 
 
 def reports_batch_item_failures(ctx: ConfigContext, entry: str | None) -> bool:

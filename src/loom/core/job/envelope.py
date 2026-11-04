@@ -4,17 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import msgspec
 
 from loom.core.errors import MalformedJobMessage
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.identity.wire import decode_identity, encode_identity
+from loom.core.job.job import Job
 from loom.core.tracing import reset_trace_id, set_trace_id
-
-if TYPE_CHECKING:
-    from loom.core.job.job import Job
 
 TASK_JOB_PREFIX = "loom.job"
 """Public prefix for fully qualified job names on the wire."""
@@ -52,15 +50,11 @@ def encode_job_message(
     identity: Identity | None,
     trace_id: str | None = None,
 ) -> bytes:
-    """Encode the JSON :class:`JobEnvelope` that runs *job_type* as *identity*."""
-    envelope = JobEnvelope(
-        job=wire_job_name(job_type.__qualname__),
-        payload=payload or {},
-        params=params,
-        trace_id=trace_id,
-        identity=encode_identity(identity),
+    """The JSON :class:`JobEnvelope` that runs *job_type* as *identity*."""
+    job, who = wire_job_name(job_type.__qualname__), encode_identity(identity)
+    return msgspec.json.encode(
+        JobEnvelope(job=job, payload=payload or {}, params=params, trace_id=trace_id, identity=who)
     )
-    return msgspec.json.encode(envelope)
 
 
 def decode_job_envelope(body: str) -> JobEnvelope:

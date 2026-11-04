@@ -13,15 +13,11 @@ Example::
 
 from __future__ import annotations
 
-import functools
-import logging
 from typing import Any
 
 from loom.core.config._resolver_utils import aws_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
-
-logger = logging.getLogger(__name__)
 
 
 def _fetch_secret(client: Any, name: str, *, label: str) -> str:
@@ -137,15 +133,10 @@ class SecretsManagerResolver:
             name=self.name,
             label="Secrets Manager",
             unbound=self._unbound,
-            client=functools.partial(
-                aws_client,
-                "secretsmanager",
-                self._region,
-                resolver="SecretsManagerResolver",
-                root=_root_,
+            client=lambda: aws_client(
+                "secretsmanager", self._region, resolver="SecretsManagerResolver", root=_root_
             ),
             fetch=_fetch_secret,
-            logger=logger,
         )
 
 

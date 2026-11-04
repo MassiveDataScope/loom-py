@@ -23,7 +23,7 @@ from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.persistence import LAMBDA_PROFILE
 from loom.core.persistence.stores import NONE_BACKEND
-from loom.jobs.aws import is_fifo_queue
+from loom.jobs.aws import FIFO_SUFFIX
 from loom.serverless.aws.lambda_._refusals import refuse_manifest_agents, refuse_unserved_config
 from loom.serverless.aws.lambda_.functions import reports_batch_item_failures
 
@@ -60,8 +60,7 @@ class SQSHandler(Protocol):
 class LambdaSQSAdapter:
     """Compose jobs with Lambda pool defaults and serve SQS batches."""
 
-    _report_batch_item_failures: bool
-    """Set by :meth:`recipe`, from the function ``app.entry`` names."""
+    _report_batch_item_failures: bool  # set by recipe()
 
     def __init__(
         self,
@@ -294,7 +293,7 @@ def _failed(records: Sequence[Any]) -> list[dict[str, str]]:
 
 
 def _is_fifo(record: Any) -> bool:
-    return isinstance(record, Mapping) and is_fifo_queue(str(record.get("eventSourceARN", "")))
+    return isinstance(record, Mapping) and str(record.get("eventSourceARN")).endswith(FIFO_SUFFIX)
 
 
 def _out_of_time(context: Any) -> bool:
