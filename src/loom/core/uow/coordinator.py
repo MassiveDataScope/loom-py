@@ -39,6 +39,8 @@ from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeGuard
 
 from loom.core._async import run_to_completion
+from loom.core.errors.codes import ErrorCode
+from loom.core.errors.errors import SystemError
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
@@ -138,6 +140,27 @@ class CommitUncertain(Exception):
     def __init__(self, cause: BaseException) -> None:
         super().__init__(f"commit result unknown: {cause!r}")
         self.cause = cause
+
+
+class UncomposedStore(SystemError):
+    """A use case enlisted a store that has no unit of work in this application.
+
+    The store is not declared, or its backend persists nothing.
+
+    Args:
+        key: The store enlisted.
+        composed: The stores that have a unit of work.
+    """
+
+    retryable = False
+    """A configuration error: a retry meets it again."""
+
+    def __init__(self, key: StoreKey, composed: Iterable[StoreKey]) -> None:
+        super().__init__(
+            f"store {key!r} has no unit of work in this application; "
+            f"the stores with one are {sorted(composed)}",
+            code=ErrorCode.UNCOMPOSED_STORE,
+        )
 
 
 class PhasedUnitOfWork(UnitOfWork, Protocol):
@@ -479,12 +502,15 @@ class OrderedCommits:
             The participant of ``key`` in ``scope``.
 
         Raises:
-            KeyError: If no factory is registered for ``key``.
+            UncomposedStore: If no factory is registered for ``key``.
         """
         existing = scope.participants.get(key)
         if existing is not None:
             return existing
-        participant = Participant(key, self._factories[key].create())
+        factory = self._factories.get(key)
+        if factory is None:
+            raise UncomposedStore(key, self._factories)
+        participant = Participant(key, factory.create())
         await participant.begin()
         scope.participants[key] = participant
         return participant

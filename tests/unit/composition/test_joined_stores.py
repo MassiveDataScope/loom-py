@@ -19,7 +19,6 @@ from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import SERVER_PROFILE
 from loom.core.repository.abc import RepoFor
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.use_case import Joined, UnservedModelError, UseCase
 from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
 from tests.helpers.composition import composition_source
@@ -73,7 +72,7 @@ class _Serving:
                 interfaces=(),
                 jobs=cast(Any, (self.component,)) if is_job else (),
             ),
-            backend=SQLAlchemyBackend(),
+            default_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:

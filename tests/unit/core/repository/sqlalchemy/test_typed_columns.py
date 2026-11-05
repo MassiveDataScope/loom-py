@@ -26,6 +26,7 @@ from loom.core.model import (
 )
 from loom.core.model.enums import Cardinality
 from loom.core.model.relation import RelationField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.abc.query import (
     FilterGroup,
@@ -214,6 +215,7 @@ async def session_manager() -> AsyncIterator[SessionManager]:
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
     compiled = get_compiled(_Doc)
     assert compiled is not None

@@ -104,7 +104,7 @@ class DynamoDBBackend:
         return PersistenceWiring(
             uow_factory=DynamoUnitOfWorkFactory(),
             repo_registration_module=build_dynamodb_repository_registration_module(
-                client, dynamo_cfg.table, models, executor=executor
+                client, dynamo_cfg.table, models, store=spec.key, executor=executor
             ),
             lifespan_init=lambda: _lifespan(executor),
             readiness=lambda: _readiness(client, dynamo_cfg.table, executor),

@@ -29,6 +29,8 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.job.context import add_pending_dispatch
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -74,7 +76,9 @@ class _SlowDispatch(UseCase[Any, str]):
 async def test_a_cancellation_after_the_commit_does_not_abort_the_shielded_priority_lane() -> None:
     log = Log()
     factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
     gate = asyncio.Event()
 
     task = asyncio.create_task(
@@ -102,7 +106,9 @@ async def test_a_cancellation_after_the_commit_still_aborts_a_plain_dispatch_in_
     """The property the priority lane's shield must not widen: dispatches stay cancellable."""
     log = Log()
     factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
     gate = asyncio.Event()
 
     task = asyncio.create_task(executor.execute(_SlowDispatch(gate, log), params={"value": "x"}))
@@ -127,7 +133,9 @@ async def test_a_cancellation_before_any_commit_still_aborts_normally() -> None:
     """No lane, no shield, applies before a unit of work has committed anything."""
     log = Log()
     factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
 
     class _Hang(UseCase[Any, str]):
         async def execute(self, value: str) -> str:

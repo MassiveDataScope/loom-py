@@ -46,7 +46,7 @@ from loom.core.persistence import (
     PersistenceBackend,
     PoolMetricsSink,
 )
-from loom.core.persistence.stores import SQLALCHEMY_BACKEND
+from loom.core.persistence.stores import SQLALCHEMY_BACKEND, StoreKey, store_of
 from loom.core.use_case.constants import CrudOp
 from loom.prometheus import PrometheusMetricsAdapter
 from loom.prometheus.db_pool import PrometheusPoolMetrics
@@ -193,15 +193,16 @@ def _reject_autocrud_without_model(discovered: DiscoveryResult) -> None:
 
 
 def _gate_autocrud_capabilities(
-    discovered: DiscoveryResult, backend: PersistenceBackend
+    discovered: DiscoveryResult, source: CompositionSource
 ) -> DiscoveryResult:
     """Mount only the CRUD operations the serving repository class declares.
 
     The repository is the explicit ``repository_for`` class when there is one,
-    else ``backend.repository_type``. An empty ``include`` is recomputed from
-    scratch and narrowed to the declared capabilities, so a later boot on
-    another backend in the same process sees its own routes; an explicit
-    ``include`` is honoured verbatim or refused.
+    else the ``repository_type`` of the backend of the model's store. An
+    empty ``include`` is recomputed from scratch and narrowed to the declared
+    capabilities, so a later boot on another backend in the same process
+    sees its own routes; an explicit ``include`` is honoured verbatim or
+    refused.
 
     Returns:
         The discovery result without the use cases of the routes that were
@@ -215,7 +216,10 @@ def _gate_autocrud_capabilities(
     pruned: set[type[Any]] = set()
     for interface in discovered.interfaces:
         if interface.auto_crud_model is not None:
-            pruned.update(_gate_interface(interface, interface.auto_crud_model, backend))
+            model = interface.auto_crud_model
+            key = store_of(model)
+            backend = source.backend(key, default=SQLALCHEMY_BACKEND)
+            pruned.update(_gate_interface(interface, model, key, backend))
     mounted = {route.use_case for iface in discovered.interfaces for route in iface.routes}
     dropped = pruned - mounted
     return discovered.with_changes(
@@ -226,6 +230,7 @@ def _gate_autocrud_capabilities(
 def _gate_interface(
     interface: type[RestInterface[Any]],
     model: type[Any],
+    key: StoreKey,
     backend: PersistenceBackend,
 ) -> frozenset[type[Any]]:
     """Narrow one interface's generated routes; return the use cases pruned from it."""
@@ -234,7 +239,7 @@ def _gate_interface(
     if repository_type is None:
         raise RuntimeError(
             f"{interface.__name__} generates CRUD routes over {model.__name__}, but "
-            f"stores.default.backend {backend_name!r} serves no repositories."
+            f"stores.{key}.backend {backend_name!r} serves no repositories."
         )
     supported = supported_crud_ops(repository_type)
     if interface.include:
@@ -613,8 +618,7 @@ def compose_rest(
     discovered = _fold_config_interfaces(discovered, config_interfaces)
     # Runs before the backend allocates resources: building it creates them.
     _reject_autocrud_without_model(discovered)
-    backend = source.backend(default=SQLALCHEMY_BACKEND)
-    discovered = _gate_autocrud_capabilities(discovered, backend)
+    discovered = _gate_autocrud_capabilities(discovered, source)
 
     declared = RestDeclaration(
         name=source.app.name,
@@ -631,7 +635,7 @@ def compose_rest(
     recipe = Recipe(
         profile=SERVER_PROFILE,
         discovered=discovered,
-        backend=backend,
+        default_backend=SQLALCHEMY_BACKEND,
         agents=True,
         metrics=_build_metrics_adapter(metrics_cfg, metrics_registry),
         pool_metrics=_build_pool_metrics(metrics_cfg, metrics_registry, source.app.name),

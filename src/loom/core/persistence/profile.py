@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import StoreKey
 
 if TYPE_CHECKING:
     from loom.core.persistence.stores import StoreCatalog
@@ -105,20 +105,18 @@ class BackendRuntime:
             host; the backend takes its store from it
             (``catalog.served_by(name, runtime.store)``) instead of reading
             ``stores`` from the configuration again.
-        store: The store the backend serves. The host passes
-            :data:`~loom.core.persistence.stores.DEFAULT_STORE` unless it
-            builds another store; a backend that ignores it, written before
-            it existed, keeps serving the default store.
+        store: The store the backend serves.
         cursor_codec: The application's one cursor codec, which the host
             builds once and every store it composes registers. A backend
-            given none builds its own from ``persistence.cursors``.
+            given none builds its own from ``persistence.cursors``: the host
+            gives none only when it composes no model, so one store at most.
     """
 
     profile: RuntimeProfile
     pool_metrics: PoolMetricsSink | None = None
     connection_only: bool = False
     catalog: StoreCatalog = field(kw_only=True)
-    store: StoreKey = field(default=DEFAULT_STORE, kw_only=True)
+    store: StoreKey = field(kw_only=True)
     cursor_codec: CursorCodec | None = field(default=None, kw_only=True)
 
 

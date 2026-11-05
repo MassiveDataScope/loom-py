@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from loom.core.persistence.stores import DEFAULT_STORE
+
 if TYPE_CHECKING:
     from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
@@ -102,6 +104,7 @@ async def sqlite_manager_for() -> AsyncIterator[SessionManagerFactory]:
             pool_timeout=None,
             pool_recycle=None,
             connect_args={},
+            store=DEFAULT_STORE,
         )
         managers.append(manager)
         compiled = get_compiled(model)

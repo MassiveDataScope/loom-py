@@ -22,6 +22,8 @@ import loom.core.uow.scope as scope_module
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import PostCommitChannel, active_channel
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -74,7 +76,9 @@ async def test_a_teardown_failure_after_commit_still_drains_instead_of_discardin
 ) -> None:
     log = Log()
     factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
     monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
     action = _RecordingPriorityAction(log)
 
@@ -139,7 +143,9 @@ async def test_a_late_enqueue_from_a_nested_execution_during_the_teardown_drain_
     """
     log = Log()
     factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
     monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
     action = _DispatchStartsNestedExecution(executor, log)
 

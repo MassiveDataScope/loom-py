@@ -196,8 +196,8 @@ class StoreCatalog:
             )
         return spec
 
-    def served_by(self, backend: str, key: StoreKey = DEFAULT_STORE) -> StoreSpec:
-        """Return the store *key*, :data:`DEFAULT_STORE` by default, that *backend* serves.
+    def served_by(self, backend: str, key: StoreKey) -> StoreSpec:
+        """Return the store *key* that *backend* serves.
 
         Args:
             backend: The backend the store must declare.
@@ -253,6 +253,15 @@ def store_of(model: type[BaseModel]) -> StoreKey:
         )
     declared = getattr(model, _STORE_ATTRIBUTE, DEFAULT_STORE)
     return _store_key(declared, owner=f"{model.__name__}.{_STORE_ATTRIBUTE}")
+
+
+def store_binding(binding: type[Any], key: StoreKey) -> object:
+    """The DI key of store *key*'s *binding*: *binding* itself for the default store.
+
+    The default store's binding stays injectable by type; another store's is
+    keyed by ``(binding, key)``.
+    """
+    return binding if key == DEFAULT_STORE else (binding, key)
 
 
 def require_single_store(models: Sequence[type[BaseModel]]) -> None:
@@ -378,5 +387,6 @@ __all__ = [
     "StoreSpec",
     "load_catalog",
     "require_single_store",
+    "store_binding",
     "store_of",
 ]

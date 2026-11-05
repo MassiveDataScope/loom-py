@@ -68,7 +68,7 @@ def _sqlalchemy_case() -> _Case:
 
 def _mongo_case() -> _Case:
     client = FakeMongoClient()
-    uow = MongoUnitOfWork(cast(AsyncMongoClient[Any], client))
+    uow = MongoUnitOfWork(cast(AsyncMongoClient[Any], client), store=DEFAULT_STORE)
     return _Case(uow, "MongoUnitOfWork", lambda: len(client.sessions), lambda: client.committed)
 
 
@@ -118,7 +118,9 @@ class TestInsideAScope:
 
     async def test_a_use_case_entering_one_by_hand_fails_with_it(self) -> None:
         manager = RecordingSessionManager(make_session())
-        executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=Factory(_store()))
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(_store())})
+        )
 
         use_case = _EntersByHand(_sqlalchemy(manager))
 
@@ -127,7 +129,9 @@ class TestInsideAScope:
 
     async def test_a_use_case_entering_one_by_hand_commits_nothing_on_its_own(self) -> None:
         session = make_session()
-        executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=Factory(_store()))
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(_store())})
+        )
 
         use_case = _EntersByHand(_sqlalchemy(RecordingSessionManager(session)))
 

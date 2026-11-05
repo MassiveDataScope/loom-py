@@ -50,7 +50,12 @@ async def table(pg_admin_uri: str) -> AsyncIterator[str]:
 @pytest.fixture
 async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
     session_manager = SessionManager(
-        pg_admin_uri, pool_size=2, max_overflow=0, pool_timeout=5, pool_recycle=None
+        pg_admin_uri,
+        pool_size=2,
+        max_overflow=0,
+        pool_timeout=5,
+        pool_recycle=None,
+        store=DEFAULT_STORE,
     )
     try:
         yield session_manager
@@ -69,7 +74,10 @@ async def observer(pg_admin_uri: str) -> AsyncIterator[AsyncEngine]:
 
 
 def _executor(manager: SessionManager) -> RuntimeExecutor:
-    return RuntimeExecutor(UseCaseCompiler(), uow_factory=SQLAlchemyUnitOfWorkFactory(manager))
+    return RuntimeExecutor(
+        UseCaseCompiler(),
+        coordinator=OrderedCommits({DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(manager)}),
+    )
 
 
 async def _insert(manager: SessionManager, table: str, row_id: int) -> None:

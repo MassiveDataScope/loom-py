@@ -100,36 +100,36 @@ class TestBackendSelection:
         self, agents_only_discovery: None, store: dict[str, object] | None
     ) -> None:
         ctx = _ctx(store=store)
-        _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
+        _runtime, factory, _discovered, _python_interfaces = _build_bootstrap(
             AppConfig(name="demo"), ctx
         )
 
-        assert isinstance(wiring.uow_factory, SQLAlchemyUnitOfWorkFactory)
+        assert isinstance(factory, SQLAlchemyUnitOfWorkFactory)
 
     def test_selects_dynamodb_backend(
         self, agents_only_discovery: None, aws_test_credentials: None
     ) -> None:
-        _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
+        _runtime, factory, _discovered, _python_interfaces = _build_bootstrap(
             AppConfig(name="demo"), _ctx(store=_DYNAMODB_STORE)
         )
 
-        assert isinstance(wiring.uow_factory, DynamoUnitOfWorkFactory)
+        assert isinstance(factory, DynamoUnitOfWorkFactory)
 
     def test_selects_mongo_backend(
         self, agents_only_discovery: None, fake_mongo_client: FakeMongoClient
     ) -> None:
-        _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
+        _runtime, factory, _discovered, _python_interfaces = _build_bootstrap(
             AppConfig(name="demo"), _ctx(store=_MONGO_STORE)
         )
 
-        assert isinstance(wiring.uow_factory, MongoUnitOfWorkFactory)
+        assert isinstance(factory, MongoUnitOfWorkFactory)
 
     def test_none_has_no_unit_of_work(self, agents_only_discovery: None) -> None:
-        _runtime, wiring, _discovered, _python_interfaces = _build_bootstrap(
+        _runtime, factory, _discovered, _python_interfaces = _build_bootstrap(
             AppConfig(name="demo"), _ctx(store={"backend": "none"})
         )
 
-        assert wiring.uow_factory is None
+        assert factory is None
 
     def test_unknown_backend_lists_registered_names(self, tmp_path: Path) -> None:
         config_path = write_project(
@@ -300,11 +300,11 @@ def test_build_bootstrap_sqlalchemy_without_models_warns_and_starts(
     ctx = _ctx()
 
     with caplog.at_level(logging.WARNING, logger=sqlalchemy_backend_module.__name__):
-        runtime, wiring, discovered, _python_interfaces = _build_bootstrap(app_cfg, ctx)
+        runtime, factory, discovered, _python_interfaces = _build_bootstrap(app_cfg, ctx)
 
     assert discovered.models == ()
     assert runtime is not None
-    assert wiring is not None
+    assert factory is not None
     assert "no BaseModel classes discovered" in caplog.text
     assert "stores.default.backend: none" in caplog.text
 

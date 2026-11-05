@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.environment import Environment
     from loom.core.observability.runtime import ObservabilityRuntime
-    from loom.core.persistence.abc import PersistenceWiring
 
 _Exit = Callable[
     [type[BaseException] | None, BaseException | None, TracebackType | None],
@@ -49,8 +48,6 @@ class Application:
         observability: Logging, tracing and metrics runtime.
         sql: SQL registry and services.
         ai: Agent runtime and its plans.
-        persistence: Wiring of the default store, the only one an
-            application composes.
         job_settings: Each job's queue, retries, countdown, timeout and
             priority in this application.
         resources: What the application owns, in any order.
@@ -64,7 +61,6 @@ class Application:
     observability: ObservabilityRuntime
     sql: SqlWiring
     ai: AiWiring
-    persistence: PersistenceWiring
     job_settings: JobSettings = field(default_factory=JobSettings)
     resources: tuple[Resource, ...] = ()
     _open: bool = field(default=False, init=False)

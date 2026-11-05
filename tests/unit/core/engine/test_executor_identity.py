@@ -88,7 +88,9 @@ def sink() -> FakeSink:
 @pytest.fixture
 def executor(sink: FakeSink) -> RuntimeExecutor:
     return RuntimeExecutor(
-        UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(Log()), elevation_sink=sink
+        UseCaseCompiler(),
+        coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())}),
+        elevation_sink=sink,
     )
 
 

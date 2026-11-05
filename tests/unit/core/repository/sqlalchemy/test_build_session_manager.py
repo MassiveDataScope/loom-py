@@ -16,6 +16,7 @@ from loom.core.persistence.profile import (
     PoolDefaults,
     RuntimeProfile,
 )
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy import session_manager as session_manager_module
 from loom.core.repository.sqlalchemy.session_manager import (
     SessionManager,
@@ -34,7 +35,7 @@ async def test_a_queue_pool_takes_the_resolved_values() -> None:
         url=Dsn(_POSTGRES),
         pool=PoolConfig(size=3, max_overflow=1, timeout=4, recycle=60, pre_ping=False),
     )
-    manager = build_session_manager(config, SERVER_PROFILE)
+    manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
     try:
         pool = _pool_of(manager)
         assert pool.size() == 3
@@ -47,7 +48,9 @@ async def test_a_queue_pool_takes_the_resolved_values() -> None:
 
 
 async def test_undeclared_keys_come_from_the_profile() -> None:
-    manager = build_session_manager(DatabaseConfig(url=Dsn(_POSTGRES)), WORKER_PROFILE)
+    manager = build_session_manager(
+        DatabaseConfig(url=Dsn(_POSTGRES)), WORKER_PROFILE, database=DEFAULT_STORE
+    )
     try:
         pool = _pool_of(manager)
         assert (pool.size(), pool._max_overflow, pool._timeout, pool._recycle) == (2, 0, 30, 1800)
@@ -57,7 +60,9 @@ async def test_undeclared_keys_come_from_the_profile() -> None:
 
 
 async def test_an_in_memory_sqlite_omits_the_sizing_keys_and_starts() -> None:
-    manager = build_session_manager(DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")), SERVER_PROFILE)
+    manager = build_session_manager(
+        DatabaseConfig(url=Dsn("sqlite+aiosqlite:///")), SERVER_PROFILE, database=DEFAULT_STORE
+    )
     try:
         assert type(_pool_of(manager)).__name__ == "StaticPool"
     finally:
@@ -66,7 +71,7 @@ async def test_an_in_memory_sqlite_omits_the_sizing_keys_and_starts() -> None:
 
 async def test_a_sqlite_file_takes_every_key(tmp_path: Path) -> None:
     config = DatabaseConfig(url=Dsn(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"))
-    manager = build_session_manager(config, SERVER_PROFILE)
+    manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
     try:
         pool = _pool_of(manager)
         assert (pool.size(), pool._max_overflow, pool._timeout) == (5, 5, 10)
@@ -87,7 +92,7 @@ def test_connect_args_and_echo_reach_the_engine(monkeypatch: pytest.MonkeyPatch)
         url=Dsn(_POSTGRES), echo=True, connect_args=RedactedMap({"command_timeout": 5})
     )
 
-    build_session_manager(config, SERVER_PROFILE)
+    build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
 
     assert seen["connect_args"] == {"command_timeout": 5}
     assert seen["echo"] is True
@@ -103,7 +108,12 @@ def test_manager_options_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(session_manager_module, "SessionManager", _Recording)
 
-    build_session_manager(DatabaseConfig(url=Dsn(_POSTGRES)), SERVER_PROFILE, inject_trace_id=False)
+    build_session_manager(
+        DatabaseConfig(url=Dsn(_POSTGRES)),
+        SERVER_PROFILE,
+        inject_trace_id=False,
+        database=DEFAULT_STORE,
+    )
 
     assert seen["inject_trace_id"] is False
 
@@ -113,7 +123,9 @@ async def test_a_new_profile_applies_without_touching_the_contract() -> None:
         name="lambda",
         pool=PoolDefaults(size=1, max_overflow=0, timeout_s=5, recycle_s=300, pre_ping=True),
     )
-    manager = build_session_manager(DatabaseConfig(url=Dsn(_POSTGRES)), lambda_profile)
+    manager = build_session_manager(
+        DatabaseConfig(url=Dsn(_POSTGRES)), lambda_profile, database=DEFAULT_STORE
+    )
     try:
         pool = _pool_of(manager)
         assert (pool.size(), pool._max_overflow, pool._timeout, pool._recycle) == (1, 0, 5, 300)
@@ -123,7 +135,10 @@ async def test_a_new_profile_applies_without_touching_the_contract() -> None:
 
 async def test_a_caller_pool_class_is_honoured() -> None:
     manager = build_session_manager(
-        DatabaseConfig(url=Dsn(_POSTGRES)), SERVER_PROFILE, poolclass=NullPool
+        DatabaseConfig(url=Dsn(_POSTGRES)),
+        SERVER_PROFILE,
+        poolclass=NullPool,
+        database=DEFAULT_STORE,
     )
     try:
         assert type(_pool_of(manager)) is NullPool

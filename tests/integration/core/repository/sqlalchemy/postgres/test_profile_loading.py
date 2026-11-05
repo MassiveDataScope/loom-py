@@ -9,6 +9,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.projection.loaders import CountLoader, ExistsLoader
 from loom.core.repository import PageParams
 from loom.core.repository.abc import CursorCodec
@@ -97,7 +98,9 @@ class StatementLog:
 async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
     reset_registry()
     compile_all(Ticket)
-    session_manager = SessionManager(pg_admin_uri, pool_size=1, max_overflow=0, pool_pre_ping=False)
+    session_manager = SessionManager(
+        pg_admin_uri, pool_size=1, max_overflow=0, pool_pre_ping=False, store=DEFAULT_STORE
+    )
     async with session_manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().drop_all)
         await conn.run_sync(get_metadata().create_all)

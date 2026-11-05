@@ -17,6 +17,7 @@ from loom.composition import (
     CompositionErrorCode,
     CompositionSource,
     CompositionStateError,
+    Recipe,
 )
 from loom.composition import compose_application as compose
 from loom.core.cache.gateway import CacheGateway
@@ -25,6 +26,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.persistence import WORKER_PROFILE
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case import Agent, Mcp
 from loom.core.use_case.use_case import UseCase
@@ -74,6 +76,11 @@ def _application(tmp_path: Path, config: dict[str, Any], adapter: CeleryAdapter)
     return compose(_source(tmp_path, config), adapter)
 
 
+def _default_backend(source: CompositionSource, recipe: Recipe) -> str:
+    """The backend the composition builds the default store of *recipe* with."""
+    return source.backend(DEFAULT_STORE, default=recipe.default_backend).name
+
+
 class TestBackendRule:
     """The rest of the rule (no default store, sink stores only, a retired key) is pinned by
     ``test_bootstrap_database``."""
@@ -84,16 +91,17 @@ class TestBackendRule:
     ) -> None:
         config = {"stores": {"default": {"backend": backend, "url": _SQLITE}}}
 
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(_source(tmp_path, config))
+        source = _source(tmp_path, config)
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
 
-        assert recipe.backend.name == backend
+        assert _default_backend(source, recipe) == backend
 
     def test_a_database_url_without_backend_serves_sqlalchemy(self, tmp_path: Path) -> None:
-        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(
-            _source(tmp_path, {"stores": {"default": {"backend": "sqlalchemy", "url": _SQLITE}}})
-        )
+        stores = {"default": {"backend": "sqlalchemy", "url": _SQLITE}}
+        source = _source(tmp_path, {"stores": stores})
+        recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
 
-        assert recipe.backend.name == "sqlalchemy"
+        assert _default_backend(source, recipe) == "sqlalchemy"
 
     def test_credentials_without_url_are_the_workers_own_section_decoded_strictly(
         self, tmp_path: Path
@@ -104,7 +112,7 @@ class TestBackendRule:
 
         recipe = CeleryAdapter(jobs=[_PingJob]).recipe(source)
 
-        assert recipe.backend.name == "sqlalchemy"
+        assert _default_backend(source, recipe) == "sqlalchemy"
         adapter = CeleryAdapter(jobs=[_PingJob])
         with pytest.raises(ConfigError, match="url"):
             compose(source, adapter)
@@ -154,7 +162,7 @@ class TestRecipe:
 
     def test_a_failed_recipe_can_be_retried(self, tmp_path: Path) -> None:
         adapter = CeleryAdapter(jobs=[_PingJob])
-        source = _source(tmp_path, {"stores": {"default": {"URL": "x"}}})
+        source = _source(tmp_path, {"celery": {"broker_url": 5}})
         with pytest.raises(ConfigError):
             adapter.recipe(source)
 

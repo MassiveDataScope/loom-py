@@ -33,7 +33,7 @@ from loom.core.sql import CallerBoundSql, SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.helpers.composition import ProjectFactory, composition_source
+from tests.helpers.composition import ProjectFactory, composition_source, uow_factory
 
 
 class _OverrideJob(Job[int]):
@@ -118,6 +118,6 @@ def test_the_composition_registers_one_session_manager_for_repositories(
     container = application.kernel.container
 
     manager = container.resolve(SessionManager)
-    uow_factory: Any = application.persistence.uow_factory
-    assert uow_factory._session_manager is manager
+    factory: Any = uow_factory(application)
+    assert factory._session_manager is manager
     assert container.resolve(DefaultRepositoryBuilder).session_manager is manager

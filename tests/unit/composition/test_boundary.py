@@ -77,7 +77,6 @@ class Bare:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
-            backend=source.backend(default="none"),
         )
 
     def bind(self, application):

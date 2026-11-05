@@ -84,11 +84,10 @@ class PersistenceBackend(Protocol):
     The entry point targets a class with a no-argument constructor; the
     registry instantiates it. Each backend serves the store the host names
     (``runtime.store``), taken from the catalog the host loaded once:
-    ``runtime.catalog.served_by(name, runtime.store)``. It reads any other
-    section (``persistence.cursors``) from the context it is given. A backend
-    written before ``runtime.store`` existed keeps working: ``served_by(name)``
-    still returns the default store, the only store a composition builds (see
-    :func:`~loom.core.persistence.stores.require_single_store`).
+    ``runtime.catalog.served_by(name, runtime.store)``. The host builds one
+    backend per store, so a backend registers nothing another store's
+    instance would overwrite. It reads any other section from the context it
+    is given.
     """
 
     name: ClassVar[str]

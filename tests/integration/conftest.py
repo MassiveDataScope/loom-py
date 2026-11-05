@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.testing import RepositoryIntegrationHarness, build_repository_harness
@@ -30,6 +31,7 @@ async def integration_context(tmp_path: Path) -> AsyncGenerator[RepositoryIntegr
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
 
     integration_context = build_repository_harness(

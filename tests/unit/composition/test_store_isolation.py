@@ -26,9 +26,8 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
 from loom.core.repository.abc import PageParams
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_source, uow_factory
 
 
 class _Invoice(BaseModel):
@@ -67,7 +66,7 @@ class _Models:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=self.models, use_cases=(), interfaces=()),
-            backend=SQLAlchemyBackend(),
+            default_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:
@@ -136,9 +135,10 @@ async def test_a_repository_never_writes_through_another_applications_unit_of_wo
 
     async with first.running(), second.running():
         foreign = second.kernel.container.resolve_repo(_Invoice)
-        assert first.persistence.uow_factory is not None
+        factory = uow_factory(first)
+        assert factory is not None
         invoice = _NewInvoice(number="B-1")
-        async with first.persistence.uow_factory.create():
+        async with factory.create():
             with pytest.raises(
                 ForeignSessionError, match=r"b\.db.*cannot join the active session.*a\.db"
             ):

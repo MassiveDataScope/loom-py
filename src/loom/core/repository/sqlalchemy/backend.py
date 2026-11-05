@@ -17,7 +17,6 @@ from loom.core.backend.scoped_ddl import POSTGRES_DIALECT, check_dialect
 from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention, scoped_tables
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.di.scope import Scope
 from loom.core.model import BaseModel
 from loom.core.model.scoped import ScopedTable
 from loom.core.persistence.abc import PersistenceWiring, no_model_preparation
@@ -37,6 +36,7 @@ from loom.core.persistence.stores import (
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.registry import (
     build_sqlalchemy_repository_registration_module,
+    register_session_manager,
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls.elevate import SQLAlchemyStoreElevation
@@ -138,7 +138,7 @@ class SQLAlchemyBackend:
             # metadata=None: the manager serves the shared metadata, where the
             # caller's own compile_all() put its models.
             session_manager = _open_session_manager(db_cfg, runtime, spec.key, settings, None)
-            module = functools.partial(_register_session_manager, session_manager)
+            module = functools.partial(register_session_manager, session_manager=session_manager)
             prepare = no_model_preparation
             check = _probe_connection
         else:
@@ -193,16 +193,6 @@ def _open_session_manager(
     if settings is not None:
         install_pool_reset(session_manager.engine)
     return session_manager
-
-
-def _register_session_manager(session_manager: SessionManager, container: LoomContainer) -> None:
-    """Register the backend's session manager, the one every consumer shares.
-
-    ``SessionManager`` is framework-owned: the composition refuses a caller's
-    module binding it, so the unit of work, the pool reset and the startup
-    checks hold the same instance the container serves.
-    """
-    container.register(SessionManager, lambda: session_manager, scope=Scope.APPLICATION)
 
 
 def _prepare_models(

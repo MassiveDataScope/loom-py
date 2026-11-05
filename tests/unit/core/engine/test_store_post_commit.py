@@ -454,7 +454,9 @@ class _FailsWhenDone:
 
 async def test_a_failing_metrics_adapter_does_not_skip_the_actions(stores: _Stores) -> None:
     executor = RuntimeExecutor(
-        UseCaseCompiler(), uow_factory=_Sql(stores.default), metrics=_FailsWhenDone()
+        UseCaseCompiler(),
+        coordinator=OrderedCommits({DEFAULT_STORE: _Sql(stores.default)}),
+        metrics=_FailsWhenDone(),
     )
     use_case = _OnDefault(stores.write_order(), stores.queue("default"))
 
@@ -478,7 +480,9 @@ async def _fail() -> None:
 async def test_one_store_without_transactions_in_a_failed_invocation_runs_its_priority_lane(
     stores: _Stores, failure: Step
 ) -> None:
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=_NoTransactions())
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: _NoTransactions()})
+    )
     use_case = _OnDefault(stores.queue("default"), stores.gathered(), failure)
 
     with pytest.raises(_Failed):

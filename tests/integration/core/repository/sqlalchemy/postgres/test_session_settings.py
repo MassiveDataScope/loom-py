@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError, PendingRollbackError
 
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.session_settings import SessionSettings
 
@@ -46,6 +47,7 @@ def _manager(
         pool_size=pool_size,
         max_overflow=0,
         pool_pre_ping=False,
+        store=DEFAULT_STORE,
     )
 
 

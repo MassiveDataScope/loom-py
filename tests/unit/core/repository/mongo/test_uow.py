@@ -42,11 +42,13 @@ class _WriteFailed(RuntimeError):
 
 def _transactional(client: FakeMongoClient) -> MongoUnitOfWorkFactory:
     # The fake stands in for the nominal driver client.
-    return MongoUnitOfWorkFactory.transactional(cast(AsyncMongoClient[Any], client))
+    return MongoUnitOfWorkFactory.transactional(
+        cast(AsyncMongoClient[Any], client), store=DEFAULT_STORE
+    )
 
 
 def _sessions(client: FakeMongoClient) -> MongoSessions:
-    return MongoSessions(cast(AsyncMongoClient[Any], client))
+    return MongoSessions(cast(AsyncMongoClient[Any], client), store=DEFAULT_STORE)
 
 
 def _repository(client: FakeMongoClient) -> RepositoryMongo[Article, str]:
@@ -346,7 +348,7 @@ class TestCallerScopedSessionProbe:
 
 
 def _unit_of_work(client: FakeMongoClient) -> uow_module.MongoUnitOfWork:
-    return uow_module.MongoUnitOfWork(cast(AsyncMongoClient[Any], client))
+    return uow_module.MongoUnitOfWork(cast(AsyncMongoClient[Any], client), DEFAULT_STORE)
 
 
 class TestPhased:
@@ -367,7 +369,7 @@ class TestPhased:
             "mongodb://user:secret@db:27017/?replicaSet=rs0", connect=False
         )
         try:
-            physical = uow_module.MongoUnitOfWork(client).physical
+            physical = uow_module.MongoUnitOfWork(client, DEFAULT_STORE).physical
         finally:
             await client.close()
 

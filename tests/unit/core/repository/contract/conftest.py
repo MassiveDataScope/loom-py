@@ -25,6 +25,7 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime, String
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
 from loom.core.repository.dynamodb.uow import DynamoUnitOfWork
@@ -208,6 +209,7 @@ async def _sqlalchemy_repository() -> AsyncIterator[RepositorySQLAlchemy[Order, 
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
     compiled = get_compiled(Order)
     assert compiled is not None
@@ -252,7 +254,7 @@ async def _mongo_transactional_repository() -> AsyncIterator[RepositoryMongo[Ord
     repository = RepositoryMongo(
         Order,
         collection,
-        session_provider=MongoSessions(cast(Any, client)),
+        session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
     _MONGO_CLIENTS[repository] = client
@@ -312,7 +314,9 @@ def _mongo_transactional_case() -> BackendCase:
         model=Order,
         capabilities=frozenset(capabilities_of(RepositoryMongo)),
         transactions=True,
-        unit_of_work=lambda repository: MongoUnitOfWork(cast(Any, mongo_client_of(repository))),
+        unit_of_work=lambda repository: MongoUnitOfWork(
+            cast(Any, mongo_client_of(repository)), store=DEFAULT_STORE
+        ),
         fail_commit=_fail_mongo_commit,
     )
 

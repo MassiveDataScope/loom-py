@@ -11,6 +11,7 @@ from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.errors.codes import ErrorCode
 from loom.core.model import BaseModel, BoundaryValidationError, ColumnField, DateTime, String
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import (
     Cursor,
     CursorCodec,
@@ -101,6 +102,7 @@ async def session_manager() -> AsyncIterator[SessionManager]:
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
     compiled = get_compiled(_Row)
     assert compiled is not None

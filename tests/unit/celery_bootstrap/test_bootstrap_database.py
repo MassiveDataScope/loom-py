@@ -13,7 +13,7 @@ from loom.composition import AppConfig, compose_application  # noqa: E402
 from loom.core.config import ConfigContext, ConfigError  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
 from loom.core.uow.abc import UnitOfWorkFactory  # noqa: E402
-from tests.helpers.composition import composition_source  # noqa: E402
+from tests.helpers.composition import composition_source, uow_factory  # noqa: E402
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
 
@@ -31,7 +31,7 @@ def _resolve_uow_factory(config: dict[str, Any]) -> UnitOfWorkFactory | None:
         ),
         app=AppConfig(name="worker"),
     )
-    return compose_application(source, CeleryAdapter(jobs=[_PingJob])).persistence.uow_factory
+    return uow_factory(compose_application(source, CeleryAdapter(jobs=[_PingJob])))
 
 
 def _pool(config: dict[str, Any]) -> Any:

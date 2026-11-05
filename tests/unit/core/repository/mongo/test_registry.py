@@ -8,6 +8,7 @@ import pytest
 
 from loom.core.di.container import LoomContainer
 from loom.core.model.introspection import scalar_column_annotations
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 from loom.core.repository.abc import (
     Creatable,
@@ -49,8 +50,9 @@ def _container(
         (Article, Note),
         collections=collections or {},
         id_policy=id_policy or Uuid4IdPolicy(),
-        session_provider=MongoSessions(cast(Any, client)),
+        session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
         cursor_codec=CursorCodec(signing="ephemeral"),
+        store=DEFAULT_STORE,
     )
     module(container)
     return container
@@ -106,7 +108,7 @@ def test_builder_rejects_non_persistible_types() -> None:
         database=_database(client),
         collections={},
         id_policy=Uuid4IdPolicy(),
-        session_provider=MongoSessions(cast(Any, client)),
+        session_provider=MongoSessions(cast(Any, client), store=DEFAULT_STORE),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
 

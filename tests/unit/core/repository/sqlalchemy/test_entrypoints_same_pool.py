@@ -10,12 +10,12 @@ from loom.core.config import ConfigContext
 from loom.core.model import LoomStruct
 from loom.core.persistence.database import load_database_config
 from loom.core.persistence.profile import SERVER_PROFILE, STREAMING_PROFILE
-from loom.core.persistence.stores import load_catalog
+from loom.core.persistence.stores import DEFAULT_STORE, load_catalog
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 from loom.streaming.nodes._table import IntoTable
 from loom.streaming.nodes._table.config import resolve_sqlalchemy_table_config
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_source, uow_factory
 from tests.helpers.persistence import build_backend
 
 _POSTGRES = "postgresql+asyncpg://app:secret@db.invalid/app"
@@ -60,9 +60,7 @@ def _worker_manager(database: dict[str, Any]) -> SessionManager:
         ),
         app=AppConfig(name="worker"),
     )
-    factory: Any = compose_application(
-        source, CeleryAdapter(jobs=[_PingJob])
-    ).persistence.uow_factory
+    factory: Any = uow_factory(compose_application(source, CeleryAdapter(jobs=[_PingJob])))
     return factory._session_manager
 
 
@@ -75,7 +73,7 @@ def _streaming_manager(database: dict[str, Any]) -> SessionManager:
     )
     node = IntoTable(payload=_Row, table="orders", name="orders_sink")
     resolved = resolve_sqlalchemy_table_config(node, ctx, load_catalog(ctx))
-    return build_session_manager(resolved.database, STREAMING_PROFILE)
+    return build_session_manager(resolved.database, STREAMING_PROFILE, database=DEFAULT_STORE)
 
 
 def test_a_fully_declared_pool_is_identical_in_every_entry_point() -> None:

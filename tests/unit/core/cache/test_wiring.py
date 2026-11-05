@@ -34,6 +34,7 @@ from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.model.redaction import RedactedMap
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import (
     RepositoryBuildContext,
     RepositoryDecorator,
@@ -135,6 +136,10 @@ def builder() -> _SpyBuilder:
     return _SpyBuilder()
 
 
+def _no_default_builder(context: RepositoryBuildContext) -> Any:
+    raise AssertionError("every model here has an explicit repository")
+
+
 @pytest.fixture
 def repository_module(builder: _SpyBuilder) -> Iterator[Module]:
     with ExitStack() as stack:
@@ -144,6 +149,8 @@ def repository_module(builder: _SpyBuilder) -> Iterator[Module]:
             models=(),
             explicit_models=(Widget, CodeWidget),
             build_registered_repository=builder,
+            default_builder=_no_default_builder,
+            store=DEFAULT_STORE,
         )
 
 
@@ -241,6 +248,8 @@ class TestIncompleteRepository:
                 models=(),
                 explicit_models=(Widget,),
                 build_registered_repository=_SpyBuilder(),
+                default_builder=_no_default_builder,
+                store=DEFAULT_STORE,
             )
             container = _container(module, cache_module(_single_alias()))
 
@@ -257,6 +266,8 @@ class TestIncompleteRepository:
                 models=(),
                 explicit_models=(Widget,),
                 build_registered_repository=_SpyBuilder(),
+                default_builder=_no_default_builder,
+                store=DEFAULT_STORE,
             )
             container = _container(module, cache_module(_single_alias()))
 

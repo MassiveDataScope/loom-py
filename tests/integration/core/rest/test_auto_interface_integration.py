@@ -23,6 +23,7 @@ from loom.core.bootstrap.bootstrap import bootstrap_app
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -109,6 +110,7 @@ def _build_app(db_path: Path) -> FastAPI:
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
 
     use_cases = tuple(r.use_case for r in AutoProductInterface.routes)
@@ -150,6 +152,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
 
     result = bootstrap_app(

@@ -25,10 +25,8 @@ from loom.core.engine.post_commit import (
 from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
-from loom.core.uow.abc import UnitOfWorkFactory
-from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
+from loom.core.uow.coordinator import Coordinator, InvocationOutcome
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
@@ -125,10 +123,9 @@ class RuntimeExecutor:
     → apply computes → check rules → call execute.
 
     Owns the execution lifecycle around that pipeline.  When a
-    ``uow_factory`` is provided, each top-level execution that is not
+    ``coordinator`` is provided, each top-level execution that is not
     read-only opens an :class:`~loom.core.uow.scope.InvocationScope` and
-    ends it through its :class:`~loom.core.uow.coordinator.OrderedCommits`
-    coordinator: commit on success, rollback on any exception, cancellation
+    ends it through that coordinator: commit on success, rollback on any exception, cancellation
     included.  A nested execution in the task that owns the scope pushes its
     frame and never commits; one from another task, or into a closed scope,
     raises :class:`~loom.core.uow.scope.ScopeOwnershipError`.  Post-commit
@@ -157,10 +154,10 @@ class RuntimeExecutor:
 
     Args:
         compiler: Compiler used to retrieve cached plans.
-        uow_factory: Optional UoW factory.  When provided, each top-level
-            :meth:`execute` call is wrapped in a single atomic transaction.
-            Nested executions in the same task join the outer invocation
-            scope and its unit of work.
+        coordinator: Optional coordinator of the application's stores.
+            When provided, each top-level :meth:`execute` call opens one
+            invocation scope over it, which enlists the stores the use case
+            declares. Nested executions in the same task join that scope.
         debug_execution: When ``True``, emits ``[STEP]`` logs for every
             pipeline stage. Defaults to ``False`` (summary logs only).
         logger: Optional logger. Defaults to the framework logger.
@@ -184,7 +181,7 @@ class RuntimeExecutor:
 
         executor = RuntimeExecutor(
             compiler,
-            uow_factory=SQLAlchemyUnitOfWorkFactory(session_manager),
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
             metrics=prometheus_adapter,
         )
         result = await executor.execute(
@@ -198,7 +195,7 @@ class RuntimeExecutor:
         self,
         compiler: UseCaseCompiler,
         *,
-        uow_factory: UnitOfWorkFactory | None = None,
+        coordinator: Coordinator | None = None,
         debug_execution: bool = False,
         logger: LoggerPort | None = None,
         metrics: MetricsAdapter | None = None,
@@ -208,10 +205,7 @@ class RuntimeExecutor:
         elevation_sink: ElevationSink | None = None,
     ) -> None:
         self._compiler = compiler
-        self._uow_factory = uow_factory
-        self._coordinator: Coordinator | None = (
-            None if uow_factory is None else OrderedCommits({DEFAULT_STORE: uow_factory})
-        )
+        self._coordinator = coordinator
         self._elevation_sink = elevation_sink
         self._debug = debug_execution
         self._logger = logger or get_logger(__name__)

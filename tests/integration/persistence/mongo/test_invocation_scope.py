@@ -16,8 +16,10 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import ScopeOwnershipError, current_scope
 from tests.integration.support.scope_doubles import BusinessError, Run
 
@@ -36,12 +38,15 @@ async def created(collection: AsyncCollection[Any]) -> AsyncCollection[Any]:
 
 def _executor(client: AsyncMongoClient[Any]) -> RuntimeExecutor:
     return RuntimeExecutor(
-        UseCaseCompiler(), uow_factory=MongoUnitOfWorkFactory.transactional(client)
+        UseCaseCompiler(),
+        coordinator=OrderedCommits(
+            {DEFAULT_STORE: MongoUnitOfWorkFactory.transactional(client, store=DEFAULT_STORE)}
+        ),
     )
 
 
 def _sessions(collection: AsyncCollection[Any]) -> MongoSessions:
-    return MongoSessions(collection.database.client)
+    return MongoSessions(collection.database.client, store=DEFAULT_STORE)
 
 
 async def _insert(collection: AsyncCollection[Any], row_id: int) -> None:

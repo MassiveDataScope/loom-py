@@ -11,7 +11,9 @@ from sqlalchemy import text
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 from .._lifecycle_doubles import Boom, Log, Metrics, Ok, cancel_mid_flight, context_is_clean
@@ -158,7 +160,9 @@ class _SelectOne(UseCase[Any, int]):
 async def test_sc002_sqlite_sessions_opened_equal_sessions_closed_after_a_thousand() -> None:
     async with sqlite_session_manager() as manager:
         factory = SQLAlchemyUnitOfWorkFactory(manager.as_session_manager())
-        executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+        executor = RuntimeExecutor(
+            UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+        )
 
         for _ in range(_EXECUTIONS):
             assert await executor.execute(_SelectOne(manager)) == 1

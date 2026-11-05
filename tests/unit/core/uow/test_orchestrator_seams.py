@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
 import loom.core.uow
-from loom.core.persistence.stores import StoreKey
+from loom.core.bootstrap import create_kernel
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.coordinator import (
     Committed,
@@ -25,6 +26,7 @@ from loom.core.uow.coordinator import (
     Uncertain,
 )
 from loom.core.uow.scope import Frame, invocation
+from loom.core.use_case import UseCase
 
 from ._coordinator_fakes import Factory, Ledger, PhasedStore
 
@@ -71,6 +73,22 @@ async def test_loom_drives_an_invocation_through_a_coordinator_written_outside_i
     assert ledger.calls == [(key, phase) for phase in phases for key in (S0, S1)]
     assert external.physical == {key: store.physical for key, store in stores.items()}
     assert opened.outcome == InvocationOutcome((Committed(S0), Committed(S1)))
+
+
+class _Noop(UseCase[Any, None]):
+    async def execute(self) -> None:
+        return None
+
+
+async def test_the_kernel_runs_each_execution_through_the_coordinator_it_is_given() -> None:
+    ledger = Ledger()
+    external = _ExternalCoordinator({DEFAULT_STORE: Factory(PhasedStore(DEFAULT_STORE, ledger))})
+    kernel = create_kernel(config=object(), use_cases=[_Noop], coordinator=external)
+
+    await kernel.app.invoke(_Noop)
+
+    phases = ("begin", "flush", "commit", "close")
+    assert ledger.calls == [(DEFAULT_STORE, phase) for phase in phases]
 
 
 class _FreshStores:

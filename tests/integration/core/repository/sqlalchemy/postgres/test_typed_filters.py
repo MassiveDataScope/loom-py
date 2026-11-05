@@ -24,6 +24,7 @@ from loom.core.model import (
     Postgres,
     String,
 )
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -84,7 +85,9 @@ _SECOND = CreateSample(
 async def repo(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Sample, int]]:
     reset_registry()
     compile_all(Sample)
-    manager = SessionManager(pg_admin_uri, pool_size=1, max_overflow=0, pool_pre_ping=False)
+    manager = SessionManager(
+        pg_admin_uri, pool_size=1, max_overflow=0, pool_pre_ping=False, store=DEFAULT_STORE
+    )
     async with manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().drop_all)
         await conn.run_sync(get_metadata().create_all)

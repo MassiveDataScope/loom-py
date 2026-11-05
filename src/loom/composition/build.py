@@ -34,17 +34,21 @@ from loom.core.engine.plan import ExistsStep, LoadStep
 from loom.core.environment import Environment, resolve_environment, select_config_paths
 from loom.core.job.config import JobSettings
 from loom.core.locator import add_code_path
+from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.persistence import BackendRuntime, PersistenceWiring
 from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
+    DEFAULT_STORE_PATH,
     StoreCatalog,
     StoreKey,
     require_single_store,
+    store_of,
 )
 from loom.core.repository.abc import CursorCodec
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
 
@@ -308,16 +312,24 @@ def compose_application(
     catalog = source.catalog
     # One store until US7 PR 11.
     require_single_store(discovered.models)
-    runtime = BackendRuntime(
-        recipe.profile,
-        pool_metrics=recipe.pool_metrics,
-        connection_only=recipe.connection_only,
-        catalog=catalog,
-        store=DEFAULT_STORE,
-        cursor_codec=_cursor_codec(ctx, recipe),
-    )
-    wiring = recipe.backend.build(ctx, discovered.models, runtime)
-    wiring.prepare_models(discovered.models)
+    stores = _composed_stores(catalog, discovered.models)
+    cursor_codec = _cursor_codec(ctx, recipe)
+    wirings: dict[StoreKey, PersistenceWiring] = {}
+    labels: dict[StoreKey, str] = {}
+    for key, models in stores.items():
+        runtime = BackendRuntime(
+            recipe.profile,
+            pool_metrics=recipe.pool_metrics,
+            connection_only=recipe.connection_only,
+            catalog=catalog,
+            store=key,
+            cursor_codec=cursor_codec,
+        )
+        backend = source.backend(key, default=recipe.default_backend)
+        wirings[key] = backend.build(ctx, models, runtime)
+        wirings[key].prepare_models(models)
+        labels[key] = backend.name if key == DEFAULT_STORE else key
+    factories = {key: w.uow_factory for key, w in wirings.items() if w.uow_factory is not None}
     # Caller modules first, then repositories, then the framework's own. A
     # caller module binding a framework-owned key fails right after it runs.
     kernel = create_kernel(
@@ -325,11 +337,11 @@ def compose_application(
         use_cases=discovered.use_cases,
         modules=[
             *refusing_reserved(modules),
-            wiring.repo_registration_module,
+            *(wiring.repo_registration_module for wiring in wirings.values()),
             cache_module_for(ctx),
-            *_elevation_modules({DEFAULT_STORE: wiring}),
+            *_elevation_modules(wirings),
         ],
-        uow_factory=wiring.uow_factory,
+        coordinator=OrderedCommits(factories) if factories else None,
         metrics=recipe.metrics,
         environment=source.environment,
     )
@@ -361,16 +373,33 @@ def compose_application(
         observability=observability,
         sql=sql,
         ai=ai,
-        persistence=wiring,
         job_settings=job_settings,
         resources=_resources(
             kernel=kernel,
-            stores=(_store_resource(DEFAULT_STORE, wiring, label=recipe.backend.name),),
+            stores=_store_resources(wirings, labels),
             sql=sql,
             ai=ai,
             job_resources=job_resources,
         ),
     )
+
+
+def _composed_stores(
+    catalog: StoreCatalog, models: Sequence[type[BaseModel]]
+) -> dict[StoreKey, tuple[type[BaseModel], ...]]:
+    """The stores the application builds, the default one first, each with its models.
+
+    The default store is always built, declared or not; another store only
+    when a model belongs to it, so a store only streaming sinks name opens
+    nothing here.
+
+    Raises:
+        ConfigError: As :meth:`~loom.core.persistence.stores.StoreCatalog.models_by_store`,
+            for a model of a store other than the default one.
+    """
+    default = tuple(model for model in models if store_of(model) == DEFAULT_STORE)
+    others = catalog.models_by_store([model for model in models if model not in default])
+    return {DEFAULT_STORE: default} | {key: group for key, group in others.items() if group}
 
 
 def _cursor_codec(ctx: ConfigContext, recipe: Recipe) -> CursorCodec | None:
@@ -508,17 +537,31 @@ def _resources(
     return tuple(resources)
 
 
-def _store_resource(key: StoreKey, wiring: PersistenceWiring, *, label: str) -> Resource:
-    """The resource of store *key*, whose readiness is reported under *label*.
+def _store_resources(
+    wirings: Mapping[StoreKey, PersistenceWiring], labels: Mapping[StoreKey, str]
+) -> tuple[Resource, ...]:
+    """The resource of each store, whose readiness is reported under its label.
 
     The default store keeps its backend's name as the label: ``/health`` has
-    always reported it under that key.
+    always reported it under that key. Every other store is reported under
+    its own key.
+
+    Raises:
+        ConfigError: When a store's key is the default store's backend name.
     """
-    return Resource(
-        kind=ResourceKind.STORE,
-        name=key,
-        manager=wiring.lifespan_init,
-        check=wiring.startup_checks,
-        readiness=wiring.readiness,
-        readiness_key=label,
+    if len(set(labels.values())) != len(labels):
+        raise ConfigError(
+            f"{ConfigKey.STORES}.{labels[DEFAULT_STORE]} would report its readiness under the "
+            f"key of {DEFAULT_STORE_PATH}, named after its backend; rename the store"
+        )
+    return tuple(
+        Resource(
+            kind=ResourceKind.STORE,
+            name=key,
+            manager=wiring.lifespan_init,
+            check=wiring.startup_checks,
+            readiness=wiring.readiness,
+            readiness_key=labels[key],
+        )
+        for key, wiring in wirings.items()
     )

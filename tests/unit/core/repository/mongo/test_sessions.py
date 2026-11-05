@@ -74,7 +74,7 @@ def _repository(fake: FakeMongoClient) -> RepositoryMongo[Article, str]:
     return RepositoryMongo(
         Article,
         fake.collection("articles"),
-        session_provider=MongoSessions(_client(fake)),
+        session_provider=MongoSessions(_client(fake), store=DEFAULT_STORE),
         cursor_codec=CursorCodec(signing="ephemeral"),
     )
 
@@ -84,7 +84,7 @@ class TestRepositoryInAGather:
         fake = FakeMongoClient()
         repository = _repository(fake)
 
-        async with MongoUnitOfWork(_client(fake)):
+        async with MongoUnitOfWork(_client(fake), store=DEFAULT_STORE):
             reads = asyncio.gather(repository.get_by_id("a"), repository.count())
             with pytest.raises(ScopeOwnershipError):
                 await reads
@@ -93,7 +93,7 @@ class TestRepositoryInAGather:
         fake = FakeMongoClient()
         repository = _repository(fake)
 
-        async with MongoUnitOfWork(_client(fake)):
+        async with MongoUnitOfWork(_client(fake), store=DEFAULT_STORE):
             await repository.get_by_id("a")
 
         assert fake.collection("articles").last_session is fake.sessions[0]

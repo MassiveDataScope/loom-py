@@ -28,6 +28,7 @@ import pytest
 from pymongo import AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
 
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
@@ -105,7 +106,7 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
         yield RepositoryMongo(
             Order,
             collection,
-            session_provider=MongoSessions(mongo_client),
+            session_provider=MongoSessions(mongo_client, store=DEFAULT_STORE),
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
 
@@ -115,5 +116,5 @@ def case(mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase) 
         model=Order,
         capabilities=frozenset(capabilities_of(RepositoryMongo)),
         transactions=True,
-        unit_of_work=lambda _repository: MongoUnitOfWork(mongo_client),
+        unit_of_work=lambda _repository: MongoUnitOfWork(mongo_client, store=DEFAULT_STORE),
     )

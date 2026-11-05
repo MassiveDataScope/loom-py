@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import elevation_scope
 from loom.core.identity import Identity, reset_identity, set_identity
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.rls import create_schema, elevate, rls_session_settings
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
@@ -39,7 +40,9 @@ async def test_read_then_authorize_sets_the_flag_on_the_open_transaction_and_com
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
 
-    manager = SessionManager(database.write, session_settings=rls_session_settings(application))
+    manager = SessionManager(
+        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+    )
     decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
     identity = set_identity(Identity(subject=U1))
     try:
@@ -74,7 +77,9 @@ async def test_elevation_without_an_open_transaction_arrives_with_the_next_one(
     await create_schema(database.migrator, application)
     await seed_notes(database.bypass)
 
-    manager = SessionManager(database.write, session_settings=rls_session_settings(application))
+    manager = SessionManager(
+        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+    )
     decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
     identity = set_identity(Identity(subject=U1))
     try:
@@ -140,7 +145,9 @@ async def nested(scoped_database: BootstrapFactory, tmp_path: Path) -> _Nested:
     database = await scoped_database(schema)
     application = application_for(notes, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)
-    manager = SessionManager(database.write, session_settings=rls_session_settings(application))
+    manager = SessionManager(
+        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+    )
     decision = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
     identity = set_identity(Identity(subject=U1))
     try:

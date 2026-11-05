@@ -58,7 +58,9 @@ from loom.core.identity import Identity
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import LifecycleEvent
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case import Agent, Caller, Input, UseCase
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
@@ -382,7 +384,9 @@ class RecordingDepsFactory:
         for use_case in self.use_cases:
             compiler.compile(use_case)
         self._registry = UseCaseRegistry.build(list(self.use_cases))
-        self._executor = RuntimeExecutor(compiler, uow_factory=self.uow)
+        self._executor = RuntimeExecutor(
+            compiler, coordinator=OrderedCommits({DEFAULT_STORE: self.uow})
+        )
 
     def build(
         self,

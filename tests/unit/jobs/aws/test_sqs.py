@@ -31,7 +31,9 @@ from loom.core.job.envelope import decode_job_envelope
 from loom.core.job.job import Job
 from loom.core.job.router import JobRouter
 from loom.core.job.service import JobService
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import reset_trace_id, set_trace_id
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from loom.jobs.aws.sqs import (
     MAX_MESSAGE_BYTES,
@@ -357,7 +359,9 @@ async def test_a_send_committed_before_the_cancellation_still_reaches_sqs(
     client: SQSClient, batch: bool
 ) -> None:
     log = Log()
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(log))
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)})
+    )
     service = sqs_service(client, batch=batch)
     bump = _Gate()
     task = asyncio.create_task(executor.execute(_DispatchAfterCommit(service, bump)))

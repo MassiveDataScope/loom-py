@@ -11,7 +11,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
-from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 
@@ -47,18 +47,12 @@ def test_create_kernel_executes_modules_before_validation() -> None:
     assert isinstance(runtime.container.resolve(_Token), _Token)
 
 
-def test_create_kernel_uses_provided_uow_factory() -> None:
-    class _DummyFactory(UnitOfWorkFactory):
-        def create(self) -> Any:
-            return None
+def test_create_kernel_runs_its_executor_through_the_coordinator_it_receives() -> None:
+    coordinator = OrderedCommits({})
 
-    uow_factory = _DummyFactory()
-    runtime = create_kernel(
-        config=_Config(),
-        use_cases=[_NoDepsUseCase],
-        uow_factory=uow_factory,
-    )
-    assert runtime.executor._uow_factory is uow_factory
+    runtime = create_kernel(config=_Config(), use_cases=[_NoDepsUseCase], coordinator=coordinator)
+
+    assert runtime.executor._coordinator is coordinator
 
 
 def test_create_kernel_registers_the_environment_it_receives() -> None:

@@ -36,7 +36,7 @@ from loom.core.persistence.elevation import (
     ScopedElevationSink,
     StoreElevation,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -210,7 +210,7 @@ def _build(ctx: ConfigContext, key: StoreKey) -> Store:
     wiring.prepare_models(notes.MODELS)
     container = LoomContainer()
     wiring.repo_registration_module(container)
-    manager = container.resolve(SessionManager)
+    manager = container.resolve(store_binding(SessionManager, key))
     repository = RepositorySQLAlchemy(
         manager, notes.Note, cursor_codec=container.resolve(CursorCodec)
     )

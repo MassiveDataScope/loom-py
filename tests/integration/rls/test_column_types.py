@@ -8,6 +8,7 @@ import pytest
 
 from loom.core.backend.sqlalchemy import compile_all, reset_registry
 from loom.core.identity import Identity, reset_identity, set_identity
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import create_schema, rls_session_settings
@@ -30,7 +31,9 @@ async def test_bytes_and_inet_values_are_written_and_read_back_by_their_owner_on
     await create_schema(database.migrator, application)
     reset_registry()
     compile_all(*devices.MODELS)
-    manager = SessionManager(database.write, session_settings=rls_session_settings(application))
+    manager = SessionManager(
+        database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+    )
     repository: RepositorySQLAlchemy[devices.Device, tuple[int, str]] = RepositorySQLAlchemy(
         session_manager=manager,
         model=devices.Device,

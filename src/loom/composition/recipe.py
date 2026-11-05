@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
+from loom.core.persistence.stores import NONE_BACKEND
+
 if TYPE_CHECKING:
     from loom.composition.application import Application
     from loom.composition.source import CompositionSource
     from loom.core.discovery.base import DiscoveryResult
     from loom.core.engine.metrics import MetricsAdapter
-    from loom.core.persistence.abc import PersistenceBackend
     from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
 
 T_co = TypeVar("T_co", covariant=True)
@@ -24,7 +25,8 @@ class Recipe:
         profile: Pool defaults of the entry point (server, worker, ...).
         discovered: Use cases, models, interfaces and agent specs, final:
             with whatever the adapter added or pruned.
-        backend: Persistence backend serving the models.
+        default_backend: Backend of the default store when ``stores.default``
+            is not declared.
         skip_checks: Deploy-check areas this entry point does not serve,
             such as :data:`~loom.core.checks.REST_CHECKS` for a worker.
         agents: Whether this entry point hosts the agent runtime; without it
@@ -40,7 +42,7 @@ class Recipe:
 
     profile: RuntimeProfile
     discovered: DiscoveryResult
-    backend: PersistenceBackend
+    default_backend: str = NONE_BACKEND
     skip_checks: frozenset[str] = frozenset()
     agents: bool = False
     metrics: MetricsAdapter | None = None
