@@ -207,18 +207,19 @@ class SessionManager:
     async def operation_session(self, *, write: bool) -> AsyncIterator[AsyncSession]:
         """Yield the session one operation of this store runs in, as a repository's does.
 
-        The session of :meth:`joined_session`, which this block neither commits
-        nor rolls back, when the store is enlisted in the invocation; otherwise
-        one of :meth:`session`, always rolled back when the block raises. A
-        read-only execution enlists no store, so its reads take a short
-        transaction of their own.
+        When the store is enlisted in the invocation, the invocation's session
+        (:meth:`joined_session`), left to the invocation to commit or roll back.
+        Otherwise a transaction of its own (:meth:`session`), committed only
+        when a ``write=True`` block succeeds and rolled back in every other
+        case. So a ``write=False`` block that writes persists nothing only
+        where the store is not enlisted (a read-only execution, or no
+        invocation); in an enlisted store it runs unrecorded in the
+        invocation's transaction and commits with it. Declare writes as
+        ``write=True``.
 
         Args:
-            write: Whether the operation writes. A write is checked and
-                recorded for the commit order (:meth:`joined_session`), and
-                its own transaction is committed when the block succeeds. A
-                read's own transaction is never committed: a block declared
-                ``write=False`` that writes anyway persists nothing.
+            write: Whether the block writes; checked and recorded for the
+                commit order like a repository's write.
 
         Yields:
             The session to run the operation's statements in.
@@ -238,13 +239,17 @@ class SessionManager:
         if joined is not None:
             yield joined
             return
+        # Closing the session without a commit rolls its transaction back.
         async with self.session() as session:
             try:
                 yield session
-                await (session.commit() if write else session.rollback())
-            except Exception:
-                await session.rollback()
-                _log.exception("OperationSessionRollback", store=self.store)
+                if write:
+                    await session.commit()
+            except Exception as exc:
+                # The type only: a driver error's text holds bound parameters.
+                self._log.error(
+                    "OperationSessionRollback", store=self.store, error=type(exc).__name__
+                )
                 raise
 
     @asynccontextmanager

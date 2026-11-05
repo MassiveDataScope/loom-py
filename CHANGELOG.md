@@ -82,11 +82,7 @@
   `loom.core.repository.sqlalchemy.rls`, next to `elevate`.
 - **stores:** `async with session_manager.operation_session(write=...)`
   gives raw SQL the session its operation runs in, as a repository's: the
-  invocation's when the store is enlisted, else a transaction of its own,
-  rolled back on error. A write is checked and recorded for the commit order,
-  and its own transaction commits on success; a read's own transaction is
-  never committed. A read-only execution (a REST `GET`) reads in a short
-  transaction and is refused a write with `UndeclaredStoreWrite`.
+  invocation's when the store is enlisted, else a transaction of its own.
   Repositories now run through it.
 
 ### config
@@ -176,14 +172,16 @@
 
 ### stores
 
-- **stores:** a read that runs in a transaction of its own (a store the
-  invocation did not enlist, or no invocation) ends with a rollback, never a
-  commit: a repository read, a `@with_session_scope(write=False)` method or
-  `operation_session(write=False)` that writes anyway persists nothing, in a
-  `GET` or anywhere.
-- **stores:** a failed own transaction of a repository logs
-  `OperationSessionRollback` with `store=`, where it logged
-  `RepositorySessionRollback` with `repository=`.
+- **stores:** a repository read, a `@with_session_scope(write=False)` method
+  or `operation_session(write=False)` on a store the invocation did not
+  enlist (a read-only execution such as a REST `GET`, or no invocation)
+  runs in a transaction of its own that is never committed: a write in it
+  persists nothing. On an enlisted store a `write=False` block still runs,
+  unrecorded, in the invocation's transaction and commits with it; declare
+  writes as `write=True`.
+- **stores:** a failed transaction of its own logs `OperationSessionRollback`
+  with `store=` and the exception type only, where it logged
+  `RepositorySessionRollback` with `repository=` and the exception text.
 - **stores:** a write to a store the running use case did not declare raises
   `UndeclaredStoreWrite` (`undeclared_store_write`, HTTP 500) before the
   driver is called, where it raised `ForeignSessionError`. So does a

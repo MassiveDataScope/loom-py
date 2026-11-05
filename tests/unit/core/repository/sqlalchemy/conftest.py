@@ -64,11 +64,7 @@ def dummy_model() -> type:
 
 @pytest.fixture
 def mock_session() -> AsyncMock:
-    session = AsyncMock()
-    session.new = set()
-    session.dirty = set()
-    session.deleted = set()
-    return session
+    return AsyncMock()
 
 
 @pytest.fixture

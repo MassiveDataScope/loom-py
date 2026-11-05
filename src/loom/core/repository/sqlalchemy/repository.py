@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from functools import wraps
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
@@ -49,7 +49,7 @@ def with_session_scope(
             driver is called when the running execution did not declare its
             store, and recorded for the commit order. A method declared
             ``write=False`` that writes anyway, to a store the invocation did
-            not enlist, persists nothing: its own transaction is rolled back
+            not enlist, persists nothing: its own transaction is never committed
             (:meth:`SessionManager.operation_session`).
 
     Example::
@@ -159,11 +159,10 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             else f"another engine ({bare_url(engine.url)})",
         )
 
-    @asynccontextmanager
-    async def _session_scope(
+    def _session_scope(
         self, session: AsyncSession | None = None, *, write: bool
-    ) -> AsyncIterator[AsyncSession]:
-        """Run in *session*, or else in :meth:`SessionManager.operation_session`.
+    ) -> AbstractAsyncContextManager[AsyncSession]:
+        """Return *session*, checked, or else :meth:`SessionManager.operation_session`.
 
         Args:
             session: A session the caller already holds.
@@ -178,8 +177,6 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
         if session is None:
-            async with self.session_manager.operation_session(write=write) as own:
-                yield own
-            return
+            return self.session_manager.operation_session(write=write)
         self._require_own(session, self.session_manager.joined_session(write=write))
-        yield session
+        return nullcontext(session)

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
 from typing import Any
 
 import pytest
 from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError, PendingRollbackError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -91,20 +93,21 @@ async def platform_sessions(pg_platform_uri: str) -> AsyncIterator[SessionManage
         await manager.dispose()
 
 
-async def test_a_transaction_runs_with_its_tenant_set(app_sessions: SessionManager) -> None:
-    current_tenant.set("a")
-    async with app_sessions.session() as session:
-        current = (await session.execute(text(_CURRENT))).scalar_one()
-        payloads = list((await session.execute(text(_ROWS))).scalars())
-    assert current == "a"
-    assert payloads == ["a1", "a2"]
-
-
-async def test_an_operation_session_of_its_own_runs_with_its_tenant_set(
+@pytest.mark.parametrize(
+    "open_session",
+    [
+        pytest.param(lambda manager: manager.session(), id="session"),
+        pytest.param(
+            lambda manager: manager.operation_session(write=False), id="operation_session"
+        ),
+    ],
+)
+async def test_a_transaction_runs_with_its_tenant_set(
     app_sessions: SessionManager,
+    open_session: Callable[[SessionManager], AbstractAsyncContextManager[AsyncSession]],
 ) -> None:
     current_tenant.set("a")
-    async with app_sessions.operation_session(write=False) as session:
+    async with open_session(app_sessions) as session:
         current = (await session.execute(text(_CURRENT))).scalar_one()
         payloads = list((await session.execute(text(_ROWS))).scalars())
     assert current == "a"
