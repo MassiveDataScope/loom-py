@@ -134,8 +134,7 @@ def _together(steps: Iterable[Awaitable[object]]) -> Awaitable[None]:
     """
     made: list[Awaitable[object]] = []
     try:
-        for step in steps:
-            made.append(step)
+        made.extend(steps)
     except BaseException:
         _close(made)
         raise

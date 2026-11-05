@@ -490,8 +490,9 @@ class TestPhased:
         session.in_transaction.return_value = still_open
         uow = SQLAlchemyUnitOfWork(make_session_manager(session))
         await uow.begin()
+        rollback = uow.rollback()
         with pytest.raises(TimeoutError):
-            await run_to_completion(uow.rollback(), timeout=0)
+            await run_to_completion(rollback, timeout=0)
 
         await uow.close()
 

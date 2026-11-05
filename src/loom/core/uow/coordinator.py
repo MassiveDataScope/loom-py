@@ -228,7 +228,7 @@ class _Driver(Protocol):
     async def begin(self) -> None: ...
     async def flush(self) -> None: ...
     async def commit(self) -> None: ...
-    async def rollback(self, cause: BaseException, timeout: float) -> None: ...
+    async def rollback(self, cause: BaseException, budget: float) -> None: ...
     async def close(self) -> None: ...
 
 
@@ -273,22 +273,22 @@ class _PhasedDriver:
     async def commit(self) -> None:
         await self._uow.commit()
 
-    async def rollback(self, cause: BaseException, timeout: float) -> None:
-        """Roll back to completion or for ``timeout`` seconds, even if cancelled meanwhile.
+    async def rollback(self, cause: BaseException, budget: float) -> None:
+        """Roll back to completion or for ``budget`` seconds, even if cancelled meanwhile.
 
         ``close`` never runs while the rollback is in flight: a cancellation
-        waits for it, and the timeout bounds that wait, so a rollback hung on
+        waits for it, and the budget bounds that wait, so a rollback hung on
         a dead socket cannot leave the owning task uncancellable. ``cause`` is
         unused: a phased ``rollback`` takes no exception, unlike the
         ``__aexit__`` a single-phase unit of work rolls back with.
 
         Raises:
-            TimeoutError: If the rollback outlasted ``timeout``.
+            TimeoutError: If the rollback outlasted ``budget``.
             asyncio.CancelledError: If the task was cancelled meanwhile, once
                 the rollback has ended.
         """
         del cause
-        await run_to_completion(self._uow.rollback(), timeout=timeout)
+        await run_to_completion(self._uow.rollback(), timeout=budget)
 
     async def close(self) -> None:
         await self._uow.close()
@@ -334,9 +334,9 @@ class _SinglePhaseDriver:
         self._exited = True
         await self._uow.__aexit__(None, None, None)
 
-    async def rollback(self, cause: BaseException, timeout: float) -> None:
+    async def rollback(self, cause: BaseException, budget: float) -> None:
         """Exit with ``cause``; the protocol has the unit of work bound its own I/O."""
-        del timeout
+        del budget
         if self._exited:
             return
         self._exited = True
@@ -435,14 +435,14 @@ class Participant:
         """Commit the unit of work."""
         await self._driver.commit()
 
-    async def rollback(self, cause: BaseException, timeout: float) -> None:
+    async def rollback(self, cause: BaseException, budget: float) -> None:
         """Discard the unit of work's writes.
 
         Args:
             cause: Why the invocation does not commit this store.
-            timeout: Seconds a phased rollback may take.
+            budget: Seconds a phased rollback may take.
         """
-        await self._driver.rollback(cause, timeout)
+        await self._driver.rollback(cause, budget)
 
     async def close(self) -> None:
         """Release the unit of work."""
@@ -661,9 +661,9 @@ class _Settlement:
         failure = self._failure
         if failure is not None and not _is_success(self._outcomes.get(participant.key)):
             self._outcomes.setdefault(participant.key, _undone(participant, failure))
-            timeout = self._rollback_time_left()
+            budget = self._rollback_time_left()
             await self._attempt(
-                lambda: participant.rollback(failure, timeout), participant, "UoWRollbackFailed"
+                lambda: participant.rollback(failure, budget), participant, "UoWRollbackFailed"
             )
         await self._attempt(participant.close, participant, "UoWCloseFailed")
 
