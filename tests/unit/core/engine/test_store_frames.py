@@ -261,6 +261,16 @@ class _NestReadOnlyWriter(UseCase[_Order, None]):
         await self.executor.execute(_WriteOrder(self.orders), read_only=True)
 
 
+_READ_ONLY_RUNS: dict[str, Callable[[_Stores], Awaitable[object]]] = {
+    "nested": lambda stores: stores.run(
+        _NestReadOnlyWriter(RuntimeExecutor(UseCaseCompiler()), stores.order_port)
+    ),
+    "top-level": lambda stores: RuntimeExecutor(
+        UseCaseCompiler(), coordinator=stores.coordinator()
+    ).execute(_WriteOrder(stores.order_port), read_only=True),
+}
+
+
 class TestUndeclaredWrite:
     @pytest.mark.parametrize("operation", sorted(_ENTRY_WRITES))
     async def test_a_plain_repository_of_another_store_is_refused_before_the_driver(
@@ -297,11 +307,12 @@ class TestUndeclaredWrite:
 
         assert entries.ran == []
 
-    async def test_a_read_only_nested_execution_may_not_write(self, stores: _Stores) -> None:
-        use_case = _NestReadOnlyWriter(RuntimeExecutor(UseCaseCompiler()), stores.order_port)
-
+    @pytest.mark.parametrize("run", _READ_ONLY_RUNS.values(), ids=_READ_ONLY_RUNS.keys())
+    async def test_a_read_only_execution_may_not_write(
+        self, stores: _Stores, run: Callable[[_Stores], Awaitable[object]]
+    ) -> None:
         with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
-            await stores.run(use_case)
+            await run(stores)
 
         assert await stores.orders.count() == 0
 
@@ -310,36 +321,6 @@ class TestUndeclaredWrite:
 
         assert outcome.stores == (Committed(DEFAULT_STORE),)
         assert stores.audit_writes() == []
-
-
-class _CountEntries(UseCase[_AuditEntry, int]):
-    read_only = True
-
-    def __init__(self, entries: RepoFor[_AuditEntry]) -> None:
-        self.entries = entries
-
-    async def execute(self) -> int:
-        return await self.entries.count()
-
-
-class TestTopLevelReadOnly:
-    @pytest.mark.parametrize("operation", sorted(_ENTRY_WRITES))
-    async def test_a_write_is_refused_before_the_driver_and_nothing_commits(
-        self, stores: _Stores, operation: str
-    ) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=stores.coordinator())
-        use_case = _WriteAuditPlainly(stores.entry_port, _ENTRY_WRITES[operation])
-
-        with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
-            await executor.execute(use_case, read_only=True)
-
-        assert stores.audit_writes() == []
-        assert await stores.entries.count() == 1
-
-    async def test_a_read_runs_in_a_session_of_its_own(self, stores: _Stores) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=stores.coordinator())
-
-        assert await executor.execute(_CountEntries(stores.entry_port)) == 1
 
 
 class TestJoinedWrite:

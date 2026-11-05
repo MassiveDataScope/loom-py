@@ -93,7 +93,7 @@ def _write(stores: _Stores, row: str) -> None:
 
 
 async def _second_store(store: PhasedStore) -> None:
-    """Enlist ``store`` by hand: before PR 11 the executor knows only the default store."""
+    """Enlist ``store`` by hand, a store the running execution's frame does not name."""
     scope = _scope()
     participant = Participant(store.key, cast(UnitOfWork, store))
     await participant.begin()

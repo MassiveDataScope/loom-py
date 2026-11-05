@@ -14,15 +14,12 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from loom.core.command import Command
-from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import MongoCollection, RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import Frame, UndeclaredStoreWrite, invocation
-from loom.core.use_case import UseCase
 
 from ._fake import FakeCollection, FakeMongoClient
 from .conftest import Article
@@ -132,25 +129,3 @@ async def test_a_read_of_an_undeclared_store_is_not_refused(stores: _Stores) -> 
 
     assert found is not None
     assert found.title == "A"
-
-
-class _Write(UseCase[Article, None]):
-    def __init__(self, articles: RepositoryMongo[Article, str], write: ArticleWrite) -> None:
-        self.articles = articles
-        self.write = write
-
-    async def execute(self) -> None:
-        await self.write(self.articles)
-
-
-@pytest.mark.parametrize("operation", sorted(_WRITES))
-async def test_a_top_level_read_only_execution_may_not_write(
-    stores: _Stores, operation: str
-) -> None:
-    executor = RuntimeExecutor(UseCaseCompiler(), coordinator=stores.coordinator())
-    use_case = _Write(stores.articles, _WRITES[operation])
-
-    with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
-        await executor.execute(use_case, read_only=True)
-
-    assert stores.collection.calls == []

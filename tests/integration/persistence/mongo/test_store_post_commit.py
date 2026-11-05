@@ -138,11 +138,10 @@ async def test_each_store_runs_its_actions_by_its_own_outcome(
     entries = RepositoryMongo(
         _Entry, collection, session_provider=MongoSessions(mongo_client, AUDIT), cursor_codec=codec
     )
-    executor = RuntimeExecutor(UseCaseCompiler())
-    # Until the composition builds it (PR 11).
-    executor._coordinator = OrderedCommits(
+    coordinator = OrderedCommits(
         {DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(sql), AUDIT: _Mongo(mongo_client, refuse)}
     )
+    executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
     labels: list[str] = []
     orders = RepositorySQLAlchemy(sql, _Order, cursor_codec=codec)
     use_case = _WriteOrderThenEntry(executor, orders, _WriteEntry(entries, labels))
