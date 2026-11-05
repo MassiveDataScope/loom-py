@@ -3,9 +3,9 @@
 A use case's primary store is the ``__store__`` of its main model, and
 ``Joined[...]`` repositories declare the further stores it writes to. Every
 use case here runs through ``RuntimeExecutor.execute`` inside an invocation
-of two SQLite stores the test opens, as the composition will once several
-stores compose (PR 11). A refused write must never reach the driver: a
-listener on the audit store's engine sees every statement sent to it.
+of two SQLite stores the test opens, as the composition does. A refused write
+must never reach the driver: a listener on the audit store's engine sees every
+statement sent to it.
 """
 
 from __future__ import annotations
@@ -310,6 +310,36 @@ class TestUndeclaredWrite:
 
         assert outcome.stores == (Committed(DEFAULT_STORE),)
         assert stores.audit_writes() == []
+
+
+class _CountEntries(UseCase[_AuditEntry, int]):
+    read_only = True
+
+    def __init__(self, entries: RepoFor[_AuditEntry]) -> None:
+        self.entries = entries
+
+    async def execute(self) -> int:
+        return await self.entries.count()
+
+
+class TestTopLevelReadOnly:
+    @pytest.mark.parametrize("operation", sorted(_ENTRY_WRITES))
+    async def test_a_write_is_refused_before_the_driver_and_nothing_commits(
+        self, stores: _Stores, operation: str
+    ) -> None:
+        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=stores.coordinator())
+        use_case = _WriteAuditPlainly(stores.entry_port, _ENTRY_WRITES[operation])
+
+        with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
+            await executor.execute(use_case, read_only=True)
+
+        assert stores.audit_writes() == []
+        assert await stores.entries.count() == 1
+
+    async def test_a_read_runs_in_a_session_of_its_own(self, stores: _Stores) -> None:
+        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=stores.coordinator())
+
+        assert await executor.execute(_CountEntries(stores.entry_port)) == 1
 
 
 class TestJoinedWrite:

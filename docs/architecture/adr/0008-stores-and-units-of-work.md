@@ -82,6 +82,8 @@ Callers ask the capability, never the backend's name.
 - Using the scope from a task other than the one that owns it is an error.
 - **The primary store** of a use case is the `__store__` of its main model. A
   plain repository reads from any store and writes only to the primary store.
+  A read-only execution (`read_only = True`, every REST GET) writes to no
+  store; a writing use case it runs opens an invocation of its own.
 - **`Joined[...]`** on an injected repository is the only new public concept.
   It lets that repository write to its store, which joins the invocation and
   commits with it. Writing through a plain repository to a store other than

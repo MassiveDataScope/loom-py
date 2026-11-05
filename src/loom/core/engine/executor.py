@@ -430,9 +430,9 @@ class RuntimeExecutor:
                         )
                 with nullcontext() if scope is None else unscoped():
                     return await self._run_lifecycle(
-                        plan, compilable, inputs, None, None, read_only=True
+                        plan, compilable, inputs, self._coordinator, None, read_only=True
                     )
-            owned = self._coordinator if scope is None else None
+            owned = self._coordinator if scope is None or _read_only(scope) else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
         finally:
             if token is not None:
@@ -479,7 +479,7 @@ class RuntimeExecutor:
         channel = PostCommitChannel() if owned is not None or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
-            _refuse_nesting(state.use_case_name)
+            _refuse_nesting(state.use_case_name, joins=owned is None)
             # The elevation frame wraps the coordinator's flush and commit too:
             # the session-settings provider reads ``elevated_scopes()`` when a
             # transaction begins, which may be at that flush.
@@ -488,10 +488,15 @@ class RuntimeExecutor:
                 sink=self._elevation_sink,
                 read_only=read_only,
             ):
+                frame = _READ_ONLY if read_only else Frame(plan.primary, plan.joined)
                 if owned is None:
-                    result = await self._run_in_frame(enclosing, state, plan, compilable, inputs)
+                    result = await self._run_in_frame(
+                        enclosing, state, plan, compilable, inputs, frame
+                    )
                 else:
-                    result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
+                    result = await self._run_in_invocation(
+                        owned, state, plan, compilable, inputs, frame
+                    )
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
             # accounted for and re-raised.  ``state.post_commit`` holds only
@@ -524,7 +529,7 @@ class RuntimeExecutor:
             # actions of a committed invocation.
             settled = state.post_commit if state.post_commit is not None else channel
             if settled is not None:
-                await settled.drain(committed=owned is not None)
+                await settled.drain(committed=state.commit_ms is not None)
         return result
 
     async def _run_in_invocation(
@@ -534,6 +539,7 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
+        frame: Frame,
     ) -> Any:
         """Open an invocation scope, run the execution in it, end it, raise what it ended with.
 
@@ -545,7 +551,7 @@ class RuntimeExecutor:
         async with invocation(coordinator) as scope:
             scope.post_commit = active_channel()
             try:
-                result = await self._run_in_frame(scope, state, plan, compilable, inputs)
+                result = await self._run_in_frame(scope, state, plan, compilable, inputs, frame)
             except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
                 error = exc
             try:
@@ -567,14 +573,14 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
+        frame: Frame,
     ) -> Any:
-        """Push this execution's frame on ``scope``, if any, and run the pipeline under it.
+        """Push ``frame`` on ``scope``, if any, and run the pipeline under it.
 
         Raises:
             JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
         """
-        frame = nullcontext() if scope is None else scope.frame(Frame(plan.primary, plan.joined))
-        async with frame:
+        async with nullcontext() if scope is None else scope.frame(frame):
             if scope is not None:
                 _refuse_autocommit_joined(scope, plan)
             return await self._run_pipeline(state, plan, compilable, inputs)
@@ -583,8 +589,8 @@ class RuntimeExecutor:
     async def _finish(
         scope: InvocationScope, error: BaseException | None, state: _ExecutionState
     ) -> InvocationOutcome:
-        """End every participant of ``scope``; from the flush on, the phase is the commit."""
-        if error is not None:
+        """End every participant of ``scope``; from a store's flush on, the phase is the commit."""
+        if error is not None or not scope.participants:
             return await scope.coordinator.finish(scope, error)
         state.phase = _ERROR_KIND_COMMIT
         started = time.perf_counter()
@@ -1149,7 +1155,7 @@ def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> No
     What composition refuses at startup for the components it discovers,
     for any plan, compiled then or on its first execution.
     """
-    for key in sorted(plan.joined):
+    for key in sorted(scope.frames[-1].joined):
         if not scope.participants[key].transactional:
             issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                 component=plan.use_case_type, store=key
@@ -1157,7 +1163,12 @@ def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> No
             raise JoinedAutocommitStore(issue)
 
 
-def _refuse_nesting(use_case: str) -> None:
+def _read_only(scope: InvocationScope) -> bool:
+    """Whether ``scope`` was opened by a read-only execution, which no writer joins."""
+    return bool(scope.frames) and not scope.frames[0].stores
+
+
+def _refuse_nesting(use_case: str, *, joins: bool) -> None:
     """Refuse ``use_case`` inside an elevated execution, or joining this task's scope as another.
 
     Its identity is compared with the scope's identity, never the ambient one a parent set.
@@ -1166,5 +1177,5 @@ def _refuse_nesting(use_case: str) -> None:
     if scopes:
         raise NestedElevation.opening(use_case, scopes)
     scope = current_scope()
-    if scope is not None and scope.owned_here() and current_identity() != scope.identity:
+    if joins and scope is not None and scope.owned_here() and current_identity() != scope.identity:
         raise NestedIdentityMismatch.joining(use_case)

@@ -199,16 +199,16 @@ class TestAtomicity:
 
         assert [(scope is seen[0][0], depth) for scope, depth in seen] == [(True, 1), (True, 2)]
 
-    async def test_a_read_only_execution_opens_no_scope(self) -> None:
+    async def test_a_read_only_execution_opens_a_scope_that_writes_to_no_store(self) -> None:
         stores = _Stores(Ledger())
-        seen: list[InvocationScope | None] = []
+        seen: list[tuple[tuple[StoreKey, ...], int]] = []
 
         async def body() -> None:
-            seen.append(current_scope())
+            seen.append((_scope().frames[-1].stores, len(_scope().participants)))
 
         await _executor(stores).execute(Run(body), read_only=True)
 
-        assert (seen, stores.created) == ([None], [])
+        assert (seen, stores.created) == ([((), 0)], [])
 
     async def test_a_read_only_nested_execution_pushes_a_frame_writing_to_no_store(self) -> None:
         stores = _Stores(Ledger())
@@ -276,21 +276,23 @@ class TestOwnership:
 
         assert await executor.execute(Run(outer)) == ["read"]
 
-    async def test_a_gather_child_running_a_read_only_execution_sees_no_scope(self) -> None:
+    async def test_a_gather_child_running_a_read_only_execution_owns_a_scope_of_its_own(
+        self,
+    ) -> None:
         """Its repositories read per call instead of meeting a scope they may not touch."""
         stores = _Stores(Ledger())
         executor = _executor(stores)
-        seen: list[InvocationScope | None] = []
+        seen: list[tuple[bool, int]] = []
 
         async def read() -> None:
-            seen.append(current_scope())
+            seen.append((_scope().owned_here(), len(_scope().participants)))
 
         async def outer() -> None:
             await asyncio.gather(executor.execute(Run(read), read_only=True))
 
         await executor.execute(Run(outer))
 
-        assert seen == [None]
+        assert seen == [(True, 0)]
 
     async def test_a_read_only_execution_in_the_owner_task_still_sees_the_scope(self) -> None:
         """Its reads join the invocation's sessions and see its uncommitted writes."""
