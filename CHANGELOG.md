@@ -195,7 +195,8 @@
   included), raises `UndeclaredStoreWrite` instead of opening and committing
   an invocation of its own, and so does one run from a read-only execution
   nested in a writer. Move the write to a use case that is not read-only. A
-  job it dispatches still runs after it, in an invocation of its own. An
+  job it dispatches, with any job service, raises `UndeclaredStoreWrite` too.
+  An
   invocation that enlists no store closes without an outcome and logs no
   `InvocationOutcome`.
 - **stores:** `async with uow:` and an outermost `@transactional` run through

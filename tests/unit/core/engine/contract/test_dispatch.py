@@ -6,7 +6,8 @@ import pytest
 
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitError, active_channel
+from loom.core.engine.post_commit import PostCommitError
+from loom.core.uow.scope import UndeclaredStoreWrite
 
 from .._lifecycle_doubles import (
     Broker,
@@ -54,36 +55,18 @@ async def test_broker_failure_is_a_post_commit_error_after_a_committed_transacti
     assert context_is_clean()
 
 
-async def test_read_only_execution_opens_no_unit_of_work_and_sends_at_the_end(
-    case: LifecycleCase, executor: RuntimeExecutor, broker: Broker, metrics: Metrics, log: Log
-) -> None:
-    await executor.execute(Dispatching(broker), params={"value": "job-C"}, read_only=True)
-
-    assert broker.sent == ["job-C"]
-    assert case.factory.created == []
-    assert metrics.only(EventKind.EXEC_DONE).commit_ms is None
-    assert log.entries == [
-        "event.EXEC_START",
-        "dispatch.queued(job-C)",
-        "event.EXEC_DONE",
-        "broker.send(job-C) uow=False",
-    ]
-    assert active_channel() is None
-
-
-async def test_a_read_only_dispatch_failure_is_reported_as_not_committed(
+async def test_a_read_only_execution_may_not_dispatch_a_job(
     case: LifecycleCase, executor: RuntimeExecutor, broker: Broker, metrics: Metrics
 ) -> None:
-    """A1: no unit of work was owned, so nothing committed and a retry is safe."""
-    broker.failing.add("job-E")
+    """T120: a read-only execution writes nothing, through a job neither."""
     action = Dispatching(broker)
 
-    with pytest.raises(PostCommitError) as info:
-        await executor.execute(action, params={"value": "job-E"}, read_only=True)
+    with pytest.raises(UndeclaredStoreWrite, match="a job dispatch is refused"):
+        await executor.execute(action, params={"value": "job-C"}, read_only=True)
 
-    assert info.value.committed is False
+    assert broker.sent == []
     assert case.factory.created == []
-    assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_DONE]
+    assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]
     assert context_is_clean()
 
 

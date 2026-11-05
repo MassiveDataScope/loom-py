@@ -9,7 +9,9 @@ channel holds the dispatches so :func:`flush_pending_dispatches` and
 
 Inside an execution the executor owns the drain: :func:`flush_pending_dispatches`
 refuses to run then, and :func:`clear_pending_dispatches` discards the
-execution's dispatches rather than the fallback channel's.
+execution's dispatches rather than the fallback channel's. A read-only
+execution writes nothing, through a job neither: queueing a dispatch from one
+raises :class:`~loom.core.uow.scope.UndeclaredStoreWrite`.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
-from loom.core.uow.scope import current_scope
+from loom.core.uow.scope import current_scope, refuse_write_under_read_only
 
 # default=None, never a channel instance: a shared default would leak
 # dispatches across contexts.  Each context creates its own on first use.
@@ -60,6 +62,7 @@ def pending_publish_group(key: Hashable, create: Callable[[], ActionT]) -> Actio
 
 
 def _target_channel() -> PostCommitChannel:
+    refuse_write_under_read_only("a job dispatch")
     bound = store_channel()
     return _fallback_channel() if bound is None else bound
 

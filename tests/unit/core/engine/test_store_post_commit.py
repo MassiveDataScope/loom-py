@@ -243,21 +243,21 @@ def _raises(error: type[BaseException] | None) -> AbstractContextManager[object]
             {},
             ["default.priority", "audit.priority", "events.priority"]
             + ["default.publish", "audit.publish", "events.publish"]
-            + ["gathered", "default.plain", "read-only", "audit.plain", "events.plain"],
+            + ["gathered", "default.plain", "audit.plain", "events.plain"],
             None,
             id="every-store-commits",
         ),
         pytest.param(
             {AUDIT: _Refused()},
             ["default.priority", "events.priority", "default.publish", "events.publish"]
-            + ["default.plain", "read-only", "events.plain"],
+            + ["default.plain", "events.plain"],
             StoresNotCommitted,
             id="audit-rolls-back-after-default-committed",
         ),
         pytest.param(
             {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
             ["default.priority", "audit.priority", "events.priority"]
-            + ["default.publish", "events.publish", "default.plain", "read-only", "events.plain"],
+            + ["default.publish", "events.publish", "default.plain", "events.plain"],
             StoresNotCommitted,
             id="audit-uncertain-runs-its-priority-lane-only",
         ),
@@ -280,7 +280,6 @@ async def test_each_store_runs_what_its_outcome_lets_run(
         stores.write_order(),
         stores.queue("default"),
         stores.gathered(),
-        stores.run(_OnDefault(stores.dispatch("read-only")), read_only=True),
         stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
         stores.run(_OnEvents(stores.queue("events"))),
     )

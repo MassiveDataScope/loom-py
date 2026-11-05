@@ -84,7 +84,8 @@ Callers ask the capability, never the backend's name.
   a use case or job without one declares `__store__` itself, else it is
   `default`. A plain repository reads from any store and writes only to the
   primary store. A read-only execution (`read_only = True`, every REST GET)
-  writes to no store, and a writing use case or job it runs is refused.
+  writes to no store: a writing use case or job it runs, and a job it
+  dispatches, are refused.
 - **`Joined[...]`** on an injected repository is the only new public concept.
   It lets that repository write to its store, which joins the invocation and
   commits with it. Writing through a plain repository to a store other than

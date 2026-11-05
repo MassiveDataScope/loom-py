@@ -1015,9 +1015,10 @@ of work has closed, outside its transaction, in enqueue order:
 - **With a unit of work**: actions run after `commit`, never inside the
   transaction — a broker failure cannot roll back a write that already
   committed.
-- **Without a unit of work, or `read_only=True`**: the same actions run at
-  the end of the execution — there is nothing to commit, but they still run
-  once, not per repository call.
+- **Without a unit of work**: the same actions run at the end of the
+  execution — there is nothing to commit, but they still run once, not per
+  repository call. A `read_only=True` execution writes nothing, so it may
+  queue no job: a dispatch raises `UndeclaredStoreWrite`.
 - **On failure or cancellation**: the owner discards its queue instead of
   running it — nothing partially dispatched leaks into a later execution
   sharing the same async context.
@@ -1032,8 +1033,8 @@ committed a unit of work of its own:
 
 - `committed=True` — the execution owned a unit of work and it committed.
   A retry would repeat a write that already stands.
-- `committed=False` — the execution owned no unit of work (`read_only=True`,
-  no `uow_factory`), or the drain came from a hand-driven
+- `committed=False` — the execution owned no unit of work (no
+  `uow_factory`), or the drain came from a hand-driven
   `flush_pending_dispatches()` outside any execution. Nothing was written,
   so the whole operation is safe to retry.
 
