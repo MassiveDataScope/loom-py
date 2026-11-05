@@ -274,4 +274,4 @@ class TestAgentsOnlyApp:
         assert executed == [PingUseCase]
         (engine,) = _EngineProvider.engines
         assert isinstance(engine.executor, RuntimeExecutor)
-        assert engine.executor._uow_factory is None  # noqa: SLF001
+        assert engine.executor._coordinator is None  # noqa: SLF001
