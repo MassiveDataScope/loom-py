@@ -258,10 +258,6 @@ class RepositoryMongo(
 
         Implements
         :class:`~loom.core.repository.abc.session_scope.SupportsCallerScopedSession`.
-        :func:`loom.core.transaction.in_atomic_transaction` answers a
-        different question — whether *any* atomic transaction is open — not
-        whether *this* store's session is scoped to the caller, which is
-        what keeps the repository cache out of the caller's transaction.
 
         Returns:
             ``True`` when a caller-scoped session is bound to the context.

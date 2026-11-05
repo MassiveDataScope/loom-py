@@ -326,23 +326,15 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
     """Return the channel an action that depends on ``store`` is queued on.
 
     In an invocation scope that settles its actions by store, owned by this
-    task, that is the channel of the stores the action depends on: ``store``
-    alone (a cache invalidation), or with ``None`` every store of the running
-    execution (a job dispatch: its primary and ``Joined`` stores), once
-    enlisted. Anywhere else it is :func:`active_channel`.
+    task, that is :meth:`~loom.core.uow.scope.InvocationScope.channel_for`.
+    Anywhere else a job dispatch (``store`` omitted) is queued on
+    :func:`active_channel`, and a cache invalidation gets ``None``: its write
+    is already durable, so it runs now.
 
     Args:
         store: Store the action depends on; ``None`` for the running
             execution's stores.
     """
     scope = current_scope()
-    if scope is None or scope.post_commit is None or not scope.owned_here():
-        return active_channel()
-    running = next((f.stores for f in reversed(scope.frames) if f.primary), ())
-    owners = frozenset((store,) if store else running)
-    if not owners or not owners <= scope.participants.keys():
-        return active_channel()
-    channel = scope.store_channels.get(owners)
-    if channel is None:
-        channel = scope.store_channels[owners] = PostCommitChannel()
-    return channel
+    channel = None if scope is None else scope.channel_for(store)
+    return active_channel() if channel is None and store is None else channel

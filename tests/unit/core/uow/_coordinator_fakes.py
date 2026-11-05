@@ -12,12 +12,10 @@ import asyncio
 import enum
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from contextvars import Token
 from dataclasses import dataclass, field
 from typing import ClassVar
 
 from loom.core.persistence.stores import StoreKey
-from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     CommitUncertain,
@@ -131,11 +129,8 @@ class PhasedStore(_RecordingStore):
         self.physical = PhysicalStore(backend="fake", target=f"memory://{key}")
         self.owner: object = object()
         self.session: object | None = None
-        self._token: Token[bool] | None = None
 
     async def begin(self) -> None:
-        if self.transactional:
-            self._token = open_atomic_transaction()
         self.session = object()
         await self._run("begin")
 
@@ -154,9 +149,6 @@ class PhasedStore(_RecordingStore):
             await self._run("close")
         finally:
             self.session = None
-            if self._token is not None:
-                close_atomic_transaction(self._token)
-                self._token = None
 
     async def __aenter__(self) -> PhasedStore:
         raise AssertionError("the coordinator drives a phased unit of work phase by phase")
@@ -172,16 +164,13 @@ class NonTransactionalStore(PhasedStore):
 
 
 class ThirdPartyStore(_RecordingStore):
-    """A protocol-only unit of work; a transactional one opens the atomic signal."""
+    """A protocol-only unit of work."""
 
     def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         super().__init__(key, ledger, fault)
-        self._token: Token[bool] | None = None
 
     async def begin(self) -> None:
         await self._run("begin")
-        if self.transactional:
-            self._token = open_atomic_transaction()
 
     async def commit(self) -> None:
         await self._run("commit", self._persist)
@@ -200,24 +189,19 @@ class ThirdPartyStore(_RecordingStore):
         exc_val: BaseException | None,
         exc_tb: object,
     ) -> None:
-        try:
-            if exc_type is None:
-                self._record("exit-commit")
-                await self.commit()
-            else:
-                self._record("exit-rollback")
-                await self.rollback()
-        finally:
-            if self._token is not None:
-                close_atomic_transaction(self._token)
-                self._token = None
+        if exc_type is None:
+            self._record("exit-commit")
+            await self.commit()
+        else:
+            self._record("exit-rollback")
+            await self.rollback()
 
 
 class AutocommitStore(ThirdPartyStore):
     """A third-party unit of work whose writes autocommit, like ``NoOpMongoUnitOfWork``.
 
     It declares no ``phased`` marker, so the coordinator drives it in a single
-    phase and its participant has no owner; it opens no atomic signal.
+    phase and its participant has no owner.
     """
 
     transactional: ClassVar[bool] = False

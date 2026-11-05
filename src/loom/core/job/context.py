@@ -105,8 +105,8 @@ def clear_pending_dispatches() -> None:
     bound = active_channel()
     channels = [_fallback.get() if bound is None else bound]
     scope = current_scope()
-    if scope is not None and scope.post_commit is not None and scope.owned_here():
-        channels.extend(scope.store_channels.values())
+    if scope is not None:
+        channels.extend(scope.channels())
     for channel in channels:
         if channel is not None:
             channel.discard_dispatches()

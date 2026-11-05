@@ -37,7 +37,7 @@ from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import CommitUncertain, OrderedCommits
-from loom.core.uow.scope import StoresNotCommitted, current_scope
+from loom.core.uow.scope import StoresNotCommitted, current_scope, unscoped
 from loom.core.use_case import Joined, UseCase
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
 from tests.unit.core.cache._doubles import CountingCacheBackend
@@ -343,6 +343,26 @@ async def test_a_unit_of_work_entered_by_hand_bumps_once_it_committed(stores: _S
         bumped_inside = bool(backend.incr_keys)
 
     assert (bumped_inside, bool(backend.incr_keys)) == (False, True)
+
+
+async def test_a_durable_write_bumps_even_if_its_invocation_fails(stores: _Stores) -> None:
+    """T099 P4: a write outside the invocation commits at once; its bump must not wait."""
+    backend = CountingCacheBackend()
+    cached = stores.cached_entries(backend)
+
+    async def durable() -> None:
+        with unscoped():
+            await cached.create(_New(ref="durable"))
+
+    async def fail() -> None:
+        raise _BodyFails
+
+    use_case = _OnDefault(stores.write_order(), durable, fail)
+
+    with pytest.raises(_BodyFails):
+        await stores.executor.execute(use_case)
+
+    assert backend.incr_keys
 
 
 class _BodyFails(Exception):

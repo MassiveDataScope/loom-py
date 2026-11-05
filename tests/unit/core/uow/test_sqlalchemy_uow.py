@@ -13,9 +13,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, Operation
 
 from loom.core._async import run_to_completion
 from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.transactional import _mutations
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.coordinator import InvocationOutcome, PhysicalStore, RolledBack, Uncertain
 from loom.core.uow.scope import StoresNotCommitted, current_scope, single_store
@@ -112,25 +110,6 @@ async def test_begin_twice_raises() -> None:
     await _close(uow)
 
 
-async def test_a_failure_after_the_session_opened_closes_it_before_propagating(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A4: ``begin`` owns the open session from ``__aenter__`` onwards."""
-    session = make_session()
-    sm = RecordingSessionManager(session)
-    uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
-    monkeypatch.setattr(
-        "loom.core.repository.sqlalchemy.uow.set_active_mutations",
-        MagicMock(side_effect=RuntimeError("context lost")),
-    )
-
-    with pytest.raises(RuntimeError, match="context lost"):
-        await uow.begin()
-
-    assert sm.exits == 1
-    assert uow.session is None
-
-
 # ---------------------------------------------------------------------------
 # Context manager — the unit of work is the participant of its store
 # ---------------------------------------------------------------------------
@@ -167,35 +146,6 @@ async def test_the_context_manager_unpublishes_its_scope_when_the_block_raises()
             raise ValueError("test error")
 
     assert current_scope() is None
-
-
-# ---------------------------------------------------------------------------
-# Context manager — the atomic-transaction signal (F03)
-# ---------------------------------------------------------------------------
-
-
-async def test_in_atomic_transaction_true_inside_the_unit_of_work() -> None:
-    session = make_session()
-    sm = make_session_manager(session)
-    uow = SQLAlchemyUnitOfWork(sm)
-
-    assert in_atomic_transaction() is False
-    async with uow:
-        assert in_atomic_transaction() is True
-
-    assert in_atomic_transaction() is False
-
-
-async def test_in_atomic_transaction_reset_after_exception() -> None:
-    session = make_session()
-    sm = make_session_manager(session)
-    uow = SQLAlchemyUnitOfWork(sm)
-
-    with pytest.raises(ValueError):
-        async with uow:
-            raise ValueError("test error")
-
-    assert in_atomic_transaction() is False
 
 
 # ---------------------------------------------------------------------------
@@ -468,22 +418,6 @@ class TestPhased:
 
         assert uow.session is None
 
-    async def test_close_closes_the_atomic_transaction_signal(self) -> None:
-        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
-        await uow.begin()
-
-        await uow.close()
-
-        assert in_atomic_transaction() is False
-
-    async def test_close_resets_the_mutation_list(self) -> None:
-        uow = SQLAlchemyUnitOfWork(make_session_manager(make_session()))
-        await uow.begin()
-
-        await uow.close()
-
-        assert _mutations.get() is None
-
     @pytest.mark.parametrize(("still_open", "invalidations"), [(True, 1), (False, 0)])
     async def test_close_invalidates_only_a_transaction_its_rollback_left_open(
         self, still_open: bool, invalidations: int
@@ -500,7 +434,7 @@ class TestPhased:
 
         assert (session.rollback.await_count, session.invalidate.await_count) == (0, invalidations)
 
-    async def test_a_failure_to_close_still_resets_the_tokens_and_propagates(self) -> None:
+    async def test_a_failure_to_close_still_releases_the_session_and_propagates(self) -> None:
         sm = RecordingSessionManager(make_session(), exit_error=ConnectionError("pool gone"))
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
         await uow.begin()
@@ -508,9 +442,9 @@ class TestPhased:
         with pytest.raises(ConnectionError, match="pool gone"):
             await uow.close()
 
-        assert (uow.session, in_atomic_transaction()) == (None, False)
+        assert uow.session is None
 
-    async def test_a_cancelled_close_still_exits_the_session_and_resets_the_tokens(self) -> None:
+    async def test_a_cancelled_close_still_exits_the_session(self) -> None:
         gate = asyncio.Event()
         sm = _GatedSessionManager(make_session(), gate)
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
@@ -534,7 +468,7 @@ class TestPhased:
         assert observed == [True]
         assert sm.exits == 1
 
-    async def test_a_close_cancelled_while_invalidating_still_exits_and_resets_the_tokens(
+    async def test_a_close_cancelled_while_invalidating_still_exits_the_session(
         self,
     ) -> None:
         gate, invalidating = asyncio.Event(), asyncio.Event()
@@ -548,16 +482,14 @@ class TestPhased:
         session.invalidate = AsyncMock(side_effect=_invalidate)
         sm = RecordingSessionManager(session)
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
-        observed: list[tuple[bool, bool, bool]] = []
+        observed: list[bool] = []
 
         async def close() -> None:
             await uow.begin()
             try:
                 await uow.close()
             finally:
-                observed.append(
-                    (uow.session is None, in_atomic_transaction(), _mutations.get() is None)
-                )
+                observed.append(uow.session is None)
 
         task = asyncio.create_task(close())
         await invalidating.wait()
@@ -567,7 +499,7 @@ class TestPhased:
         gate.set()
         await asyncio.sleep(0)
 
-        assert observed == [(True, False, True)]
+        assert observed == [True]
         assert sm.exits == 1
 
 

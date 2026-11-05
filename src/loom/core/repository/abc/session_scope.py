@@ -25,9 +25,6 @@ class SupportsCallerScopedSession(Protocol):
     This capability is provisional: it exists because each backend publishes
     its transaction through its own ``ContextVar``, and it is not a stable
     extension point to build on.
-    :func:`loom.core.transaction.in_atomic_transaction` does not supersede
-    it: that marker answers whether *any* atomic transaction is open, not
-    whether *this* repository's session belongs to the caller.
     """
 
     def has_caller_scoped_session(self) -> bool:

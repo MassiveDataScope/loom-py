@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import contextvars
 from collections.abc import Awaitable, Callable
 from functools import partial, wraps
 from typing import (
-    TYPE_CHECKING,
     Any,
     Concatenate,
     ParamSpec,
@@ -18,15 +16,14 @@ from loom.core.engine.post_commit import PostCommitChannel, PostCommitError
 from loom.core.errors.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.scope import (
     InvocationScope,
     UndeclaredStoreWrite,
     current_scope,
     single_store,
 )
-
-if TYPE_CHECKING:  # session_manager is the heavier module; it does not import this one
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 
 @runtime_checkable
@@ -39,63 +36,20 @@ class SupportsPostCommit(Protocol):
 T = TypeVar("T")
 P = ParamSpec("P")
 
-_mutations: contextvars.ContextVar[list[MutationEvent] | None] = contextvars.ContextVar(
-    "_mutations",
-    default=None,
-)
 _log = get_logger(__name__).bind(component="transactional")
-
-MutationsToken = contextvars.Token[list[MutationEvent] | None]
-
-
-def set_active_mutations() -> tuple[list[MutationEvent], MutationsToken]:
-    """Initialise a fresh mutations list for the current context.
-
-    Returns:
-        A tuple of ``(mutations_list, reset_token)`` where the list collects
-        :class:`~loom.core.repository.mutation.MutationEvent` objects and
-        the token is passed to :func:`reset_active_mutations` on exit.
-    """
-    mutations: list[MutationEvent] = []
-    token = _mutations.set(mutations)
-    return mutations, token
-
-
-def reset_active_mutations(
-    token: MutationsToken,
-) -> None:
-    """Restore the mutations ContextVar to its previous state.
-
-    Args:
-        token: The token returned by :func:`set_active_mutations`.
-    """
-    _mutations.reset(token)
 
 
 def record_mutation(event: MutationEvent) -> None:
-    """Append a mutation event to the current transaction's pending list.
+    """Record ``event`` on the invocation running in this task, for the ``@transactional`` hooks.
 
-    If called outside a ``@transactional`` scope the event is silently discarded.
+    Outside an invocation this task owns the event is discarded.
 
     Args:
         event: The mutation event to record.
     """
-    events = _mutations.get()
-    if events is None:
-        return
-    events.append(event)
-
-
-def get_pending_mutations() -> tuple[MutationEvent, ...]:
-    """Return all mutation events recorded in the current transaction scope.
-
-    Returns:
-        A tuple of ``MutationEvent`` instances, empty if none were recorded.
-    """
-    events = _mutations.get()
-    if not events:
-        return ()
-    return tuple(events)
+    scope = current_scope()
+    if scope is not None and scope.owned_here():
+        scope.mutations.append(event)
 
 
 def transactional(
@@ -201,15 +155,12 @@ async def _run_in_own_invocation(
     kwargs: dict[str, Any],
 ) -> T:
     """Run ``method`` in an invocation of its store alone; the hooks run only if it commits."""
-    # Local import: ``uow`` imports this module for the mutation list.
-    from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-
     try:
         async with single_store(
             session_manager.store, SQLAlchemyUnitOfWork(session_manager)
         ) as scope:
             result = await method(owner, *args, **kwargs)
-            pending = get_pending_mutations()
+            pending = tuple(scope.mutations)
             if scope.post_commit is not None:  # always: single_store binds it
                 _enqueue_post_commit_hooks(owner, pending, scope.post_commit)
     except PostCommitError:

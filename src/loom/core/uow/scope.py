@@ -55,8 +55,9 @@ from loom.core.uow.coordinator import (
 )
 
 if TYPE_CHECKING:
-    # Only typed here: ``loom.core.engine`` imports this module.
+    # Only typed here: ``loom.core.engine`` and ``loom.core.repository`` import this module.
     from loom.core.engine.post_commit import PostCommitChannel
+    from loom.core.repository.mutation import MutationEvent
 
 
 class ScopeOwnershipError(SystemError):
@@ -258,6 +259,8 @@ class InvocationScope:
         store_channels: The post-commit actions, by the stores they depend on.
         read_only: Whether a read-only execution opened it: nothing run in it
             may write.
+        mutations: What the repositories wrote in it, for the hooks of
+            ``@transactional``.
     """
 
     owner_task: asyncio.Task[Any] | None
@@ -270,6 +273,7 @@ class InvocationScope:
     post_commit: PostCommitChannel | None = None
     store_channels: dict[frozenset[StoreKey], PostCommitChannel] = field(default_factory=dict)
     read_only: bool = False
+    mutations: list[MutationEvent] = field(default_factory=list)
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
 
     def require_owner(self) -> None:
@@ -427,6 +431,44 @@ class InvocationScope:
                 into.adopt(channel, priority_only=allowed == _PRIORITY_LANE)
             elif error is None:
                 channel.discard_dispatches(log=True)
+
+    def channel_for(self, store: StoreKey | None = None) -> PostCommitChannel | None:
+        """Return the channel an action that depends on ``store`` waits on, while this task settles.
+
+        A cache invalidation names ``store`` and waits only while that
+        store's enlisted participant can still roll back: a write anywhere
+        else is already durable. A job dispatch names none and waits on every
+        store of the running execution, its primary and ``Joined`` stores.
+
+        Args:
+            store: Store the action depends on; ``None`` for the running
+                execution's stores.
+
+        Returns:
+            The channel, or ``None`` when no owner settles this scope by store
+            (:attr:`post_commit` unset), another task asks, or those stores
+            are not enlisted, or ``store`` cannot roll back.
+        """
+        if self.post_commit is None or not self.owned_here():
+            return None
+        if store is None:
+            owners = frozenset(next((f.stores for f in reversed(self.frames) if f.primary), ()))
+        else:
+            participant = self.participants.get(store)
+            owners = frozenset((store,) if participant and participant.transactional else ())
+        if not owners or not owners <= self.participants.keys():
+            return None
+        if owners not in self.store_channels:
+            # Local import: ``loom.core.engine`` imports this module.
+            from loom.core.engine.post_commit import PostCommitChannel
+
+            self.store_channels[owners] = PostCommitChannel()
+        return self.store_channels[owners]
+
+    def channels(self) -> list[PostCommitChannel]:
+        """Return the channels :meth:`channel_for` handed out, while this task settles."""
+        settles = self.post_commit is not None and self.owned_here()
+        return list(self.store_channels.values()) if settles else []
 
     @asynccontextmanager
     async def frame(self, frame: Frame) -> AsyncIterator[None]:

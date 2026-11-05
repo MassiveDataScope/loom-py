@@ -18,7 +18,6 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import ScopeOwnershipError, current_scope
 from tests.integration.support.scope_doubles import BusinessError, Run
@@ -143,7 +142,7 @@ async def test_a_hundred_invocations_end_every_session_and_reset_the_context(
         except BusinessError:
             pass
         finally:
-            clean.append(current_scope() is None and not in_atomic_transaction())
+            clean.append(current_scope() is None)
 
     for index in range(100):
         task = asyncio.create_task(invoke(index))

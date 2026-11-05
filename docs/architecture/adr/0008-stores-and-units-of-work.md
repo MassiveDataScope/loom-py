@@ -117,8 +117,9 @@ Callers ask the capability, never the backend's name.
   it, so a custom write is refused or recorded exactly as a built-in one, and
   a custom read of a store that is not enlisted still uses a session per call.
 - No facade reads the session of every backend: it would return `object` and
-  lose the typing. `in_atomic_transaction()` stays, because it answers
-  another question for third parties and the ETL.
+  lose the typing. A cache invalidation asks the scope instead whether its
+  store is enlisted and can still roll back (`InvocationScope.channel_for`);
+  the per-context `in_atomic_transaction()` signal is gone.
 - Raw SQL that must run in the invocation's transaction injects the store's
   `SessionManager` and uses its `active_session`. `session_manager.session()`
   opens a session outside the invocation, which commits on its own.

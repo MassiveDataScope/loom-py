@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from loom.core.repository.abc import Creatable, Readable
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.scope import current_scope
 
 from .conftest import SEED, BackendCase, mongo_client_of, require
@@ -15,10 +14,6 @@ from .conftest import SEED, BackendCase, mongo_client_of, require
 
 class _Abort(Exception):
     pass
-
-
-def _context_state() -> tuple[bool, object]:
-    return (in_atomic_transaction(), current_scope())
 
 
 async def test_commit_makes_writes_visible(case: BackendCase, repository: Any) -> None:
@@ -50,17 +45,6 @@ async def test_unit_of_work_declares_transactional_as_the_case_does(
     case: BackendCase, repository: Any
 ) -> None:
     assert type(case.unit_of_work(repository)).transactional is case.transactions
-
-
-async def test_atomic_transaction_signal_is_open_only_inside_a_transactional_unit_of_work(
-    case: BackendCase, repository: Any
-) -> None:
-    assert in_atomic_transaction() is False
-
-    async with case.unit_of_work(repository):
-        assert in_atomic_transaction() is case.transactions
-
-    assert in_atomic_transaction() is False
 
 
 async def test_reads_inside_the_unit_of_work_see_its_uncommitted_writes(
@@ -100,7 +84,7 @@ async def test_a_failed_sqlalchemy_commit_persists_nothing_and_closes_the_unit_o
     with pytest.raises(IntegrityError):
         await _fail_the_commit(case, repository)
 
-    assert _context_state() == (False, None)
+    assert current_scope() is None
     assert await repository.get_by_id(SEED[0].id) is None
     assert await repository.get_by_id(SEED[1].id) == committed
 
@@ -115,7 +99,7 @@ async def test_a_failed_mongo_commit_leaves_its_write_visible(
         await _fail_the_commit(case, repository)
 
     client = mongo_client_of(repository)
-    assert _context_state() == (False, None)
+    assert current_scope() is None
     assert client.sessions
     assert all(session.ended for session in client.sessions)
     # characterisation: MongoUnitOfWork does not abort after a failed commit
@@ -131,7 +115,7 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
 ) -> None:
     require(case, Creatable, Readable)
     started = asyncio.Event()
-    recorded: list[tuple[bool, object]] = []
+    recorded: list[object] = []
     created: list[Any] = []
 
     async def _run() -> None:
@@ -141,7 +125,7 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
                 started.set()
                 await asyncio.Event().wait()
         except asyncio.CancelledError:
-            recorded.append(_context_state())
+            recorded.append(current_scope())
             raise
 
     task = asyncio.create_task(_run())
@@ -150,7 +134,7 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert recorded == [(False, None)]
+    assert recorded == [None]
     visible = await repository.get_by_id(SEED[0].id)
     if case.transactions:
         assert visible is None
@@ -161,19 +145,19 @@ async def test_cancellation_rolls_back_and_reraises_cancelled_error(
 
 async def test_error_exit_resets_the_session_context(case: BackendCase, repository: Any) -> None:
     require(case, Creatable)
-    assert _context_state() == (False, None)
-    recorded: list[tuple[bool, object]] = []
+    assert current_scope() is None
+    recorded: list[object] = []
 
     try:
         async with case.unit_of_work(repository):
             await repository.create(SEED[0])
             raise _Abort
     except _Abort:
-        recorded.append(_context_state())
+        recorded.append(current_scope())
     else:
         raise AssertionError("unit of work suppressed _Abort")
 
-    assert recorded == [(False, None)]
+    assert recorded == [None]
 
 
 async def test_write_before_an_exception_stays_visible_without_transactions(
@@ -205,14 +189,10 @@ async def test_no_op_unit_of_work_exit_never_suppresses_or_claims_rollback(
     if case.transactions:
         pytest.skip(f"{case.name} rolls back writes")
 
-    assert in_atomic_transaction() is False
     uow = case.unit_of_work(repository)
     assert await uow.__aenter__() is uow
-    assert in_atomic_transaction() is False
     created = await repository.create(SEED[0])
     assert not await uow.__aexit__(_Abort, _Abort(), None)
-    assert in_atomic_transaction() is False
     assert await uow.rollback() is None
     assert await repository.get_by_id(SEED[0].id) == created
     assert await uow.commit() is None
-    assert in_atomic_transaction() is False
