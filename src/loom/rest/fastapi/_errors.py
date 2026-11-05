@@ -17,6 +17,7 @@ the router runtime and the SQL endpoint.
 
 from __future__ import annotations
 
+import logging
 from http import HTTPStatus
 from typing import Any, cast
 
@@ -33,13 +34,15 @@ from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest._body import malformed_body_detail
-from loom.rest.errors import INTERNAL_ERROR_MESSAGE, ErrorField
+from loom.rest.errors import _INTERNAL_ERROR_MESSAGE, ErrorField, _public_message
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
 _INTERNAL_ERROR_CODE = "internal_error"
 _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
+
+_logger = logging.getLogger(__name__)
 
 
 def internal_error_response() -> MsgspecJSONResponse:
@@ -51,7 +54,7 @@ def internal_error_response() -> MsgspecJSONResponse:
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
             ErrorField.CODE: _INTERNAL_ERROR_CODE,
-            ErrorField.MESSAGE: INTERNAL_ERROR_MESSAGE,
+            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
             ErrorField.TRACE_ID: get_trace_id() or "",
         },
     )
@@ -114,9 +117,12 @@ def _detail(exc: HTTPException) -> dict[str, Any]:
     detail = exc.detail
     if isinstance(detail, dict) and ErrorField.CODE in detail:
         return {ErrorField.TRACE_ID: get_trace_id(), **detail}
+    message = detail if isinstance(detail, str) else str(detail)
+    if exc.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
+        _logger.error("HTTP %d (trace_id=%s): %s", exc.status_code, get_trace_id(), message)
     return {
         ErrorField.CODE: _code_for(exc.status_code),
-        ErrorField.MESSAGE: detail if isinstance(detail, str) else str(detail),
+        ErrorField.MESSAGE: _public_message(exc.status_code, message),
         ErrorField.TRACE_ID: get_trace_id(),
     }
 

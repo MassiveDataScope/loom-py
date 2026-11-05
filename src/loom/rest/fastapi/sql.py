@@ -263,7 +263,16 @@ def _make_sql_handler(
         except HTTPException:
             raise
         except LoomError as exc:
-            raise _error_mapper.to_http(exc) from exc
+            http_error = _error_mapper.to_http(exc)
+            if http_error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
+                _logger.error(
+                    "SQL endpoint failed for connection %r (code=%s trace_id=%s)",
+                    name,
+                    exc.code,
+                    get_trace_id(),
+                    exc_info=exc,
+                )
+            raise http_error from exc
         except Exception:
             _logger.exception("Unhandled error in SQL endpoint for connection %r", name)
             return internal_error_response()

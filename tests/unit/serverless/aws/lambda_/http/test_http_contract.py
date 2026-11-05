@@ -248,22 +248,37 @@ def test_an_unexpected_failure_answers_500_without_its_details(
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "status", "code", "message", "secret"),
+    [
+        ("/ops/leak", 500, "foreign_session", "An unexpected error occurred", "db.internal"),
+        (
+            "/ops/unavailable",
+            503,
+            "service_unavailable",
+            "The service is temporarily unavailable",
+            "idp.internal",
+        ),
+    ],
+    ids=["500", "503"],
+)
 def test_a_5xx_loom_error_answers_its_code_without_its_message(
-    served: Client, alice: dict[str, str], caplog: pytest.LogCaptureFixture
+    served: Client,
+    alice: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    status: int,
+    code: str,
+    message: str,
+    secret: str,
 ) -> None:
-    reply = served("GET", "/ops/leak", headers=alice)
+    reply = served("GET", path, headers=alice)
 
     assert (reply.status, reply.json()) == (
-        500,
-        {
-            "detail": {
-                "trace_id": TRACE_ID,
-                "code": "foreign_session",
-                "message": "An unexpected error occurred",
-            }
-        },
+        status,
+        {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
     )
-    assert "db.internal" in caplog.text
+    assert secret in caplog.text
 
 
 def test_a_cors_preflight_is_answered_without_a_token(served: Client) -> None:

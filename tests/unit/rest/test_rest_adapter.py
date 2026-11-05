@@ -245,20 +245,24 @@ class TestHttpErrorMapper:
         exc = self._mapper().to_http(Conflict("duplicate"))
         assert exc.status_code == 409
 
-    def test_post_commit_error_maps_to_500_marked_committed(self) -> None:
-        """FR-003: the client learns the write stood even though the request failed."""
-        error = PostCommitError(committed=True, failures=(ConnectionError("broker down"),))
-        exc = self._mapper().to_http(error)
-        assert exc.status_code == 500
-        assert _detail(exc)["code"] == ErrorCode.POST_COMMIT_FAILURE
-        assert _detail(exc)["committed"] is True
+    @pytest.mark.parametrize("committed", [True, False], ids=["committed", "not-committed"])
+    def test_a_post_commit_error_answers_the_fixed_500_marked_with_its_commit(
+        self, committed: bool
+    ) -> None:
+        """FR-003/A1: the client learns whether a retry would repeat the write."""
+        error = PostCommitError(committed=committed, failures=(ConnectionError(_LEAKY),))
 
-    def test_a_post_commit_error_without_a_commit_is_marked_not_committed(self) -> None:
-        """A1: a read-only execution committed nothing, so the client may retry."""
-        error = PostCommitError(committed=False, failures=(ConnectionError("broker down"),))
         exc = self._mapper().to_http(error)
-        assert exc.status_code == 500
-        assert _detail(exc)["committed"] is False
+
+        assert (exc.status_code, _detail(exc)) == (
+            500,
+            {
+                ErrorField.CODE: ErrorCode.POST_COMMIT_FAILURE,
+                ErrorField.MESSAGE: "An unexpected error occurred",
+                ErrorField.TRACE_ID: get_trace_id(),
+                ErrorField.COMMITTED: committed,
+            },
+        )
 
     def test_an_unsupported_format_maps_to_400(self) -> None:
         """A declaration mistake in an ETL exposed over REST is a caller error."""
@@ -348,9 +352,7 @@ class TestHttpErrorMapper:
         )
 
     @pytest.mark.parametrize("code", [*_SERVER_CODES, "unknown_custom"])
-    def test_a_5xx_body_hides_the_message_and_logs_it(
-        self, code: ErrorCode, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_a_5xx_body_hides_the_message(self, code: ErrorCode) -> None:
         error = SystemError(_LEAKY, code=code)
 
         detail = _detail(self._mapper().to_http(error))
@@ -363,8 +365,6 @@ class TestHttpErrorMapper:
             else "An unexpected error occurred",
             ErrorField.TRACE_ID: get_trace_id(),
         }
-        assert "db.internal" not in str(detail)
-        assert _LEAKY in caplog.text
 
     def test_unknown_code_defaults_to_500(self) -> None:
         class _CustomError(LoomError):
@@ -621,3 +621,26 @@ def test_a_rule_violation_answers_its_field_without_any_database() -> None:
     assert detail[ErrorField.MESSAGE] == "no tenant is selectable"
     assert detail[ErrorField.FIELD] == "tenant"
     assert ErrorField.TRACE_ID in detail
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [(500, "An unexpected error occurred"), (503, "The service is temporarily unavailable")],
+)
+def test_a_5xx_http_exception_answers_the_fixed_message_and_logs_its_detail(
+    status: int, message: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/raw")
+    async def raw() -> None:
+        raise HTTPException(status_code=status, detail=_LEAKY)
+
+    response = TestClient(app).get("/raw")
+
+    assert (response.status_code, response.json()["detail"][ErrorField.MESSAGE]) == (
+        status,
+        message,
+    )
+    assert _LEAKY in caplog.text
