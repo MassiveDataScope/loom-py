@@ -1,9 +1,10 @@
 """The same application answers the same over FastAPI and over Lambda (spec 004, US8, FR-023a).
 
 Every test runs against both adapters, composed from one configuration and one
-codebase; Lambda is driven with API Gateway HTTP API events through the real
-handler. The expected status, body and headers are pinned, so a difference is
-a failure on one side, never a drift both share.
+codebase that only ``LOOM__APP__ENTRY`` switches (scenario 9). Lambda is driven
+with API Gateway HTTP API events through the real handler. The expected status,
+body and headers are pinned, so a difference is a failure on one side, never a
+drift both share.
 """
 
 from __future__ import annotations
@@ -307,6 +308,9 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
         ("GET", "/nowhere", _AS_ALICE, b""),
         ("POST", "/items/", _AS_ALICE, b'{"name": "lamp"}'),
         ("POST", "/items/", _AS_ALICE, b"[1]"),
+        ("POST", "/items/", _AS_ALICE, b'{"title": "x"}'),
+        ("GET", "/items/7", {}, b""),
+        ("POST", PUBLIC_PATH, {}, b""),
         ("POST", "/items/", {}, b"x" * (MAX_BODY_BYTES + 1)),
         ("GET", "/ops/explode", _AS_ALICE, b""),
         ("GET", "/ops/admin", _AS_ALICE, b""),
@@ -321,6 +325,9 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
         "404-route",
         "200-post",
         "422-not-an-object",
+        "422-missing-field",
+        "401",
+        "excluded-path",
         "413",
         "500",
         "403",
