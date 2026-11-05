@@ -353,25 +353,27 @@ def two_stores(tmp_path: Path) -> str:
     return _write(tmp_path, "two.yaml", config)
 
 
-def test_a_named_store_is_loaded_with_its_own_models_section_and_key(two_stores: str) -> None:
-    application = load_application(two_stores, store=StoreKey("audit"))
-
-    assert set(application.metadata.tables) == {"gadgets"}
-    assert (application.store, application.path, application.database.url) == (
-        "audit",
-        "stores.audit",
-        AUDIT_URL,
-    )
-
-
-@pytest.mark.parametrize(("store", "skipped"), [("default", "audit"), ("audit", "default")])
-def test_the_models_of_the_other_stores_are_left_out_with_a_warning(
-    two_stores: str, store: str, skipped: str, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("store", "table", "url", "skipped"),
+    [
+        ("default", "widgets", "postgresql+asyncpg://u:p@localhost/db", "audit"),
+        ("audit", "gadgets", AUDIT_URL, "default"),
+    ],
+)
+def test_a_store_is_loaded_with_its_own_models_and_section_and_names_the_others(
+    two_stores: str,
+    store: str,
+    table: str,
+    url: str,
+    skipped: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         application = load_application(two_stores, store=StoreKey(store))
 
-    warnings = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
-    assert len(application.models) == 1
-    assert len(warnings) == 1
-    assert repr(skipped) in warnings[0]
+    loaded = (set(application.metadata.tables), application.store, application.path)
+    left_out = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
+    assert loaded == ({table}, store, f"stores.{store}")
+    assert application.database.url == url
+    assert len(left_out) == 1
+    assert repr(skipped) in left_out[0]

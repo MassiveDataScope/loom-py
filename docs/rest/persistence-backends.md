@@ -23,7 +23,7 @@ without a main model writes to the store its own `__store__` names, else to
 `default`. How use cases write
 to several stores is in ADR 0008
 (`docs/architecture/adr/0008-stores-and-units-of-work.md`). Migrations cover
-`default` only and log a warning naming the stores they leave out; the
+`default` only and log `StoresNotLoaded` naming the stores they leave out; the
 row-level-security schema tooling takes the store to work on
 (`load_application(path, store="audit")`, then `create_schema` and `verify`).
 A streaming sink

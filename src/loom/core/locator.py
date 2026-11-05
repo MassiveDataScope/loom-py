@@ -40,7 +40,6 @@ from loom.core.persistence.database import (
 )
 from loom.core.persistence.stores import (
     DEFAULT_STORE,
-    DEFAULT_STORE_PATH,
     SQLALCHEMY_BACKEND,
     StoreKey,
     load_catalog,
@@ -74,8 +73,6 @@ class Application:
     """One application: its models compiled into their own metadata and its declarations.
 
     Attributes:
-        path: Dotted path of the store section the declarations were read
-            from, which every message about them names.
         store: The store whose models and declarations these are.
     """
 
@@ -85,8 +82,12 @@ class Application:
     bootstrap: BootstrapConfig | None
     scoped: ScopedTables
     scope_sources: Mapping[str, str]
-    path: str = DEFAULT_STORE_PATH
     store: StoreKey = DEFAULT_STORE
+
+    @property
+    def path(self) -> str:
+        """Dotted path of the store section the declarations were read from, which messages name."""
+        return f"{ConfigKey.STORES}.{self.store}"
 
     def require_bootstrap(self, purpose: str) -> BootstrapConfig:
         """Return the bootstrap declaration, which *purpose* (``"migrations"``, ...) needs.
@@ -112,7 +113,7 @@ def load_application(
     a directory loads ``base.yaml`` then the overlay of the environment
     ``LOOM_ENV`` selects, as the application factories do, and the
     ``LOOM__*`` variables merge last. The models of other stores are left
-    out, and a warning names those stores.
+    out, and a log line names those stores.
 
     Raises:
         ConfigError: When the path is missing, a required key is absent or a
@@ -140,7 +141,7 @@ def load_application(
     models = stores.get(store, ())
     skipped = sorted(key for key, held in stores.items() if held and key != store)
     if skipped:
-        _log.warning("StoresNotLoaded", store=store, skipped=skipped)
+        _log.info("StoresNotLoaded", store=store, skipped=skipped)
     schema = database.schema
     metadata = MetaData(
         naming_convention=configured_naming_convention(schema.naming_convention, path=spec.path)
@@ -158,7 +159,6 @@ def load_application(
         bootstrap=bootstrap,
         scoped=scoped,
         scope_sources=scope_sources,
-        path=spec.path,
         store=store,
     )
 
