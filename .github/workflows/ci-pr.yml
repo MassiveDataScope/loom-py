@@ -490,7 +490,7 @@ jobs:
       # workflow, for this run. A fork gets no OIDC identity, so it cannot publish.
       - name: Publish prerelease package to TestPyPI
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository && steps.version.outputs.deploy == 'true' }}
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1 2026-07-28 (handles Metadata-Version 2.5)
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1 2026-07-28 (handles Metadata-Version 2.5)
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
