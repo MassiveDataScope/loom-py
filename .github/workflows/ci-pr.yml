@@ -181,8 +181,8 @@ jobs:
   # The gate: cheap checks plus the merged results, so a failure in either lane
   # still blocks here.
   validate:
-    needs: [tests-fast, tests-spark, integration]
-    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) }}
+    needs: [tests-fast, tests-spark, integration, dependency-audit]
+    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) && contains(fromJSON('["success", "skipped"]'), needs.dependency-audit.result) }}
     runs-on: ubuntu-latest
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -672,6 +672,36 @@ jobs:
         run: |
           set -euo pipefail
           uv run --no-sync pytest tests/unit/ai tests/contract/ai tests/integration/ai -q
+
+  dependency-audit:
+    if: ${{ !startsWith(github.head_ref, 'docs/release-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PRIMARY_PYTHON }}
+
+      - name: Install uv
+        run: |
+          pip install --only-binary :all: "uv==0.10.2"
+
+      - name: Install pip-audit
+        run: |
+          pip install --only-binary :all: --require-hashes -r .github/requirements/pip-audit.txt
+
+      - name: Audit the locked runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv export --frozen --all-extras --no-dev --no-emit-project \
+            -o "$RUNNER_TEMP/requirements-runtime.txt"
+          pip-audit --disable-pip --require-hashes --strict \
+            --ignore-vuln GHSA-3589-pxp7-3gj8 \
+            -r "$RUNNER_TEMP/requirements-runtime.txt"
 
   # ---------------------------------------------------------------------------
   # Integration lane: everything marked `integration` needs a real external
