@@ -110,13 +110,13 @@ def build_mongo_repository_registration_module(
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers Mongo repositories and capability bindings.
 
-    On the default store the module registers a ``DefaultRepositoryBuilder``
-    bound to the shared database unless one is already registered, so a
-    deployment may swap the builder by registering its own before loading
-    the module. It registers ``cursor_codec`` as the application's one
-    ``CursorCodec`` too, raising ``ConfigError`` when another is already
-    registered, so a custom builder or a service paginating by hand resolves
-    the codec the repositories sign with.
+    The module registers a ``DefaultRepositoryBuilder`` bound to the shared
+    database under ``store_binding(DefaultRepositoryBuilder, store)`` unless
+    one is already registered there, so a deployment may swap the builder. It registers
+    ``cursor_codec`` as the application's one ``CursorCodec`` too, raising
+    ``ConfigError`` when another is already registered, so a custom builder
+    or a service paginating by hand resolves the codec the repositories sign
+    with.
 
     Args:
         database: Shared database the collections are taken from.

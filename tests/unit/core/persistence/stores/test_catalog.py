@@ -219,9 +219,21 @@ def test_models_by_store_groups_default_first_and_preserves_model_order() -> Non
 
     groups = catalog.models_by_store([AuditRecord, DefaultRecord, SecondDefaultRecord])
 
-    assert list(groups) == [StoreKey("default"), StoreKey("audit")]
-    assert groups[DEFAULT_STORE] == (DefaultRecord, SecondDefaultRecord)
-    assert groups[StoreKey("audit")] == (AuditRecord,)
+    assert groups == {
+        DEFAULT_STORE: (DefaultRecord, SecondDefaultRecord),
+        StoreKey("audit"): (AuditRecord,),
+    }
+    assert list(groups) == [DEFAULT_STORE, StoreKey("audit")]
+
+
+def test_models_by_store_keeps_an_undeclared_default_and_drops_a_store_without_models() -> None:
+    catalog = load_catalog(
+        ConfigContext.from_dict(
+            {"stores": {"audit": {"backend": "mongo", "url": "mongodb://localhost"}}}
+        )
+    )
+
+    assert catalog.models_by_store([DefaultRecord]) == {DEFAULT_STORE: (DefaultRecord,)}
 
 
 def test_model_declaring_an_unknown_store_names_model_and_store() -> None:

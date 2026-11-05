@@ -11,8 +11,6 @@ from typing import Any, cast
 
 import pytest
 
-import loom.composition.build
-import loom.core.locator
 from loom.composition import AppConfig, Application, CompositionSource
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
@@ -59,13 +57,6 @@ def uow_factory(
     """The unit-of-work factory *application* runs store *key*'s executions with, if any."""
     coordinator: Any = application.kernel.executor._coordinator  # noqa: SLF001
     return None if coordinator is None else coordinator._factories.get(key)  # noqa: SLF001
-
-
-@pytest.fixture
-def several_stores(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Lift the one-store guard of the composition and the locator for this test only."""
-    for module in (loom.composition.build, loom.core.locator):
-        monkeypatch.setattr(module, "require_single_store", lambda models: None)
 
 
 @pytest.fixture

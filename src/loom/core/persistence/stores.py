@@ -217,26 +217,28 @@ class StoreCatalog:
             models: The discovered models.
 
         Returns:
-            Every declared store, :data:`DEFAULT_STORE` first and the others
-            in declaration order, with its models in the order given.
+            :data:`DEFAULT_STORE`, declared or not, then every other store
+            that holds a model, in declaration order, each with its models in
+            the order given.
 
         Raises:
             ConfigError: When a model declares the retired ``__database__``,
                 or belongs to a store the catalog does not declare or to a
                 connection-only store, naming the model and the store.
         """
-        keys = sorted(self.specs, key=lambda key: key != DEFAULT_STORE)
-        groups: dict[StoreKey, list[type[BaseModel]]] = {key: [] for key in keys}
+        groups: dict[StoreKey, list[type[BaseModel]]] = {DEFAULT_STORE: []}
         for model in models:
-            spec = self.require(store_of(model), purpose=f"model {model.__name__}")
-            if not spec.capabilities.serves_models:
-                raise ConfigError(
-                    f"{model.__name__} belongs to store {spec.key!r}, a connection-only "
-                    f"{spec.backend} store that serves no model; {spec.path} only hands its "
-                    "connection to the sinks that name it"
-                )
-            groups[spec.key].append(model)
-        return {key: tuple(members) for key, members in groups.items()}
+            key = store_of(model)
+            if key != DEFAULT_STORE:
+                spec = self.require(key, purpose=f"model {model.__name__}")
+                if not spec.capabilities.serves_models:
+                    raise ConfigError(
+                        f"{model.__name__} belongs to store {key!r}, a connection-only "
+                        f"{spec.backend} store that serves no model; {spec.path} only hands "
+                        "its connection to the sinks that name it"
+                    )
+            groups.setdefault(key, []).append(model)
+        return {key: tuple(groups[key]) for key in (DEFAULT_STORE, *self.specs) if key in groups}
 
 
 def store_of(model: type[BaseModel]) -> StoreKey:

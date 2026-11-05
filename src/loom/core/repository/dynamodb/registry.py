@@ -77,12 +77,12 @@ def build_dynamodb_repository_registration_module(
 
     Mirrors
     :func:`~loom.core.repository.sqlalchemy.registry.build_sqlalchemy_repository_registration_module`:
-    on the default store the module self-declares its infrastructure by
-    registering a ``DefaultRepositoryBuilder`` bound to the shared boto3
-    client, so the bootstrap needs no knowledge of DynamoDB internals.
+    the module self-declares its infrastructure by registering a
+    ``DefaultRepositoryBuilder`` bound to the shared boto3 client, so the
+    bootstrap needs no knowledge of DynamoDB internals.
 
-    To swap the default store's builder, register your own
-    ``DefaultRepositoryBuilder`` in the container *before* loading this
+    To swap the default builder, register your own under
+    ``store_binding(DefaultRepositoryBuilder, store)`` *before* loading this
     module — the module will not overwrite an existing registration.
 
     Args:

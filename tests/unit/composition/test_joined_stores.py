@@ -1,8 +1,7 @@
-"""Composition refuses ``Joined`` on a store that cannot roll back (ADR 0008, T046).
+"""Composition refuses a store a use case or job writes to but could not commit (ADR 0008, T046).
 
-Use cases and jobs alike. Until several stores compose (US7 PR 11) the joined
-store's model is not served, so a use case that passes this check fails next
-with :class:`~loom.core.use_case.errors.UnservedModelError`.
+``Joined`` on a store that cannot roll back, and a primary or joined store
+with no unit of work, because no discovered model belongs to it.
 """
 
 from __future__ import annotations
@@ -19,8 +18,12 @@ from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import SERVER_PROFILE
 from loom.core.repository.abc import RepoFor
-from loom.core.use_case import Joined, UnservedModelError, UseCase
-from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
+from loom.core.use_case import Joined, UseCase
+from loom.core.use_case.errors import (
+    JoinedAutocommitStore,
+    UncomposedWriteStore,
+    UseCaseErrorCode,
+)
 from tests.helpers.composition import composition_source
 
 pytestmark = pytest.mark.timeout(30)
@@ -42,6 +45,13 @@ class _AuditEntry(BaseModel):
 class _Audited(UseCase[_Invoice, None]):
     def __init__(self, entries: Joined[RepoFor[_AuditEntry]]) -> None:
         self.entries = entries
+
+    async def execute(self) -> None:
+        return None
+
+
+class _Audit(UseCase[_AuditEntry, None]):
+    """A use case whose primary store is ``audit``."""
 
     async def execute(self) -> None:
         return None
@@ -120,11 +130,21 @@ def test_joined_on_a_store_that_cannot_roll_back_fails_the_composition(
     )
 
 
-def test_joined_on_a_transactional_store_passes_the_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("component", [_Audited, _Audit], ids=["joined", "primary"])
+def test_a_written_store_without_a_unit_of_work_fails_the_composition(
+    tmp_path: Path, component: type[object]
+) -> None:
     audit = {"backend": "mongo", "url": "mongodb://audit", "transactions": True}
 
-    with pytest.raises(UnservedModelError, match="_AuditEntry"):
-        _compose(tmp_path, audit)
+    with pytest.raises(UncomposedWriteStore) as caught:
+        _compose(tmp_path, audit, component)
+
+    issue = caught.value.issue
+    assert (issue.code, issue.component, issue.field) == (
+        UseCaseErrorCode.UNCOMPOSED_WRITE_STORE,
+        component.__qualname__,
+        "audit",
+    )
 
 
 def test_joined_on_an_undeclared_store_fails_the_composition(tmp_path: Path) -> None:

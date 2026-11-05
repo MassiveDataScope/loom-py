@@ -88,17 +88,16 @@ def build_sqlalchemy_repository_registration_module(
     """Build a DI module that registers model repositories and their capability bindings.
 
     The module self-declares its infrastructure dependencies: it registers
-    the store's ``SessionManager`` (keyed by ``(SessionManager, store)`` off
-    the default store), ``CursorCodec`` and, on the default store,
-    ``DefaultRepositoryBuilder`` in the container so that the bootstrap does
-    not need to know about SQLAlchemy internals, and a service paginating by
-    hand resolves the codec the repositories sign with. ``cursor_codec`` is
-    the application's one codec: the module raises ``ConfigError`` when
-    another is already registered. A custom ``builder`` builds its repository
-    with that codec too: resolve ``CursorCodec`` from ``context.container``.
+    ``SessionManager``, ``CursorCodec`` and ``DefaultRepositoryBuilder`` in the
+    container so that the bootstrap does not need to know about SQLAlchemy
+    internals, and a service paginating by hand resolves the codec the
+    repositories sign with. ``cursor_codec`` is the application's one codec: the
+    module raises ``ConfigError`` when another is already registered. A custom
+    ``builder`` builds its repository with that codec too: resolve
+    ``CursorCodec`` from ``context.container``.
 
-    To swap the default store's builder, register your own
-    ``DefaultRepositoryBuilder`` in the container *before* loading this
+    To swap the default builder, register your own under
+    ``store_binding(DefaultRepositoryBuilder, store)`` *before* loading this
     module — the module will not overwrite an existing registration.
     """
 

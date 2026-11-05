@@ -8,20 +8,29 @@ guard's removal relies on.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+import loom.composition.build
+import loom.core.locator
 from loom.composition import AppConfig, Application, CompositionSource, Recipe, compose_application
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.di.container import BindingKey, LoomContainer
+from loom.core.di.scope import Scope
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import SERVER_PROFILE
 from loom.core.persistence.stores import StoreKey
+from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 from loom.core.repository.abc import RepoFor
+from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.transactional import transactional
+from loom.core.uow.scope import UndeclaredStoreWrite
 from loom.core.use_case import Input, UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.rest.model import RestInterface
@@ -62,6 +71,54 @@ class _RecordEntry(UseCase[_Entry, int]):
         return int(created.id)
 
 
+class _Service:
+    """A service whose ``@transactional`` method joins the store of its session manager."""
+
+    def __init__(self, session_manager: SessionManager) -> None:
+        self.session_manager = session_manager
+
+    @transactional
+    async def joined(self) -> bool:
+        return self.session_manager.active_session is not None
+
+
+class _LedgerService(_Service):
+    pass
+
+
+class _DefaultService(_Service):
+    pass
+
+
+def _services(container: LoomContainer) -> None:
+    container.register(
+        _LedgerService,
+        lambda: _LedgerService(container.resolve((SessionManager, _LEDGER))),
+        scope=Scope.APPLICATION,
+    )
+    container.register(
+        _DefaultService,
+        lambda: _DefaultService(container.resolve(SessionManager)),
+        scope=Scope.APPLICATION,
+    )
+
+
+class _ViaLedgerService(UseCase[_Entry, bool]):
+    def __init__(self, service: _LedgerService) -> None:
+        self.service = service
+
+    async def execute(self) -> bool:
+        return await self.service.joined()
+
+
+class _ViaDefaultService(UseCase[_Entry, bool]):
+    def __init__(self, service: _DefaultService) -> None:
+        self.service = service
+
+    async def execute(self) -> bool:
+        return await self.service.joined()
+
+
 class _Serving:
     """Composes exactly the models and use cases it is given."""
 
@@ -76,6 +133,13 @@ class _Serving:
 
     def bind(self, application: Application) -> Application:
         return application
+
+
+@pytest.fixture
+def several_stores(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift the one-store guard of the composition and the locator for this test only."""
+    for module in (loom.composition.build, loom.core.locator):
+        monkeypatch.setattr(module, "require_single_store", lambda models: None)
 
 
 @pytest.fixture
@@ -95,11 +159,17 @@ def _source(databases: tuple[Path, Path], second: str = _LEDGER) -> CompositionS
     return composition_source(ctx, app=AppConfig(name="ledger"))
 
 
+def _compose(
+    databases: tuple[Path, Path], modules: tuple[Callable[[LoomContainer], None], ...] = ()
+) -> Application:
+    use_cases = (_RecordEntry, _ViaLedgerService, _ViaDefaultService)
+    adapter = _Serving(_Account, _Entry, use_cases=use_cases)
+    return compose_application(_source(databases), adapter, modules=(_services, *modules))
+
+
 @pytest.fixture
 def application(several_stores: None, databases: tuple[Path, Path]) -> Application:
-    return compose_application(
-        _source(databases), _Serving(_Account, _Entry, use_cases=(_RecordEntry,))
-    )
+    return _compose(databases)
 
 
 def _rows(database: Path) -> dict[str, int]:
@@ -137,7 +207,55 @@ async def test_a_use_case_whose_primary_store_is_not_the_default_commits_there(
     async with application.running():
         await application.kernel.app.invoke(_RecordEntry, payload={"name": "e"})
 
-    assert _rows(databases[1]) == {"per_store_entries": 1}
+    assert [_rows(database) for database in databases] == [
+        {"per_store_accounts": 0},
+        {"per_store_entries": 1},
+    ]
+
+
+async def test_a_service_joins_the_primary_store_through_its_keyed_session_manager(
+    application: Application,
+) -> None:
+    async with application.running():
+        joined = await application.kernel.app.invoke(_ViaLedgerService)
+
+    assert joined is True
+
+
+async def test_a_service_on_the_default_session_manager_cannot_write_in_another_store(
+    application: Application,
+) -> None:
+    async with application.running():
+        with pytest.raises(UndeclaredStoreWrite, match="default"):
+            await application.kernel.app.invoke(_ViaDefaultService)
+
+
+class _RecordingBuilder:
+    def __init__(self) -> None:
+        self.models: set[type[Any]] = set()
+
+    def __call__(self, context: RepositoryBuildContext) -> object:
+        self.models.add(context.model)
+        return object()
+
+
+@pytest.mark.parametrize(
+    ("key", "served"),
+    [
+        pytest.param(DefaultRepositoryBuilder, _Account, id="default-store"),
+        pytest.param((DefaultRepositoryBuilder, _LEDGER), _Entry, id="ledger-store"),
+    ],
+)
+def test_a_caller_builder_builds_the_repositories_of_its_store_only(
+    several_stores: None, databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
+) -> None:
+    builder = _RecordingBuilder()
+
+    container = _compose(databases, (lambda c: c.register_instance(key, builder),)).kernel.container
+    for model in (_Account, _Entry):
+        container.resolve_repo(model)
+
+    assert builder.models == {served}
 
 
 async def test_two_stores_on_one_backend_keep_one_readiness_probe_each(
@@ -156,9 +274,13 @@ class _Audit(BaseModel):
     id: int = ColumnField(primary_key=True, autoincrement=True)
 
 
-def test_a_store_named_after_the_default_stores_backend_is_refused(
-    several_stores: None, databases: tuple[Path, Path]
+def test_a_store_named_after_the_default_stores_backend_is_refused_before_any_is_built(
+    several_stores: None, databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    def build(*args: object) -> None:
+        raise AssertionError("a store was built")
+
+    monkeypatch.setattr(SQLAlchemyBackend, "build", build)
     source, adapter = _source(databases, second="sqlalchemy"), _Serving(_Audit)
 
     with pytest.raises(ConfigError, match=r"stores\.sqlalchemy would report its readiness"):
@@ -170,22 +292,34 @@ class _Entries(RestInterface[_Entry]):
     auto = True
 
 
-def test_autocrud_routes_are_gated_by_the_backend_of_their_models_store(
-    several_stores: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+_SQLITE_LEDGER = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///:memory:"}
+
+
+def _rest_source(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> CompositionSource:
     discovered = DiscoveryResult(models=(_Entry,), use_cases=(), interfaces=cast(Any, (_Entries,)))
     monkeypatch.setattr("loom.composition.source.discover", lambda config: discovered)
-    stores = {
-        "default": {"backend": "none"},
-        "ledger": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'l.db'}"},
-    }
     ctx = ConfigContext.from_dict(
         {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
     )
+    return composition_source(ctx, app=AppConfig(name="ledger"))
 
-    application = compose_application(
-        composition_source(ctx, app=AppConfig(name="ledger")), FastAPIAdapter()
-    )
+
+def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
+    several_stores: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _rest_source({"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch)
+
+    application = compose_application(source, FastAPIAdapter())
 
     assert {route.path for route in _Entries.routes} >= {"/", "/{id}"}
     assert application.kernel.container.resolve_repo(_Entry) is not None
+
+
+def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
+    several_stores: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
+    source = _rest_source(stores, monkeypatch)
+
+    with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
+        compose_application(source, FastAPIAdapter())
