@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: read # the planner reads the pull request of each merged commit
-    uses: MassiveDataScope/loom-actions/.github/workflows/release-on-label.yml@162f79c6b75e77b9f090df823db968cbb93fa817 # v1.13.3
+    uses: MassiveDataScope/loom-actions/.github/workflows/release-on-label.yml@33251672d6e8a7f25305ce7a50c39933c7284921 # v1.13.5
     with:
       build-distribution: true
       package-name: loom-kernel
