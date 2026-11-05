@@ -297,7 +297,9 @@ class InvocationScope:
             return "the invocation scope was used from a task other than the one that owns it"
         return None
 
-    def participant_for(self, key: StoreKey, owner: object, *, write: bool) -> Participant | None:
+    def participant_for(
+        self, key: StoreKey, owner: object, *, write: bool, record: bool = True
+    ) -> Participant | None:
         """Return the participant of ``key`` a repository of ``owner`` joins, if any.
 
         The single checkpoint every access to a participant goes through.
@@ -305,14 +307,17 @@ class InvocationScope:
         not enlisted, or its unit of work is single-phase, such as Mongo with
         ``transactions: false``) returns ``None`` from any task, and the
         repository reads with a session per call (D3). Anything else checks
-        ownership. A write must target a store of the innermost frame, when
-        one is pushed: a write to any other store is refused, because the
-        execution did not declare it.
+        ownership. A write must target a store of the innermost frame: a
+        write to any other store is refused, because the execution did not
+        declare it, and so is any write while no frame is pushed.
 
         Args:
             key: Store the repository belongs to.
             owner: The repository's session manager or client.
             write: Whether the repository is about to write.
+            record: Whether to record the write now; a repository that
+                records it once the driver answered passes ``False`` and
+                calls :meth:`record_write` then.
 
         Returns:
             The participant of ``key``, or ``None`` when it is not enlisted
@@ -324,7 +329,7 @@ class InvocationScope:
             ForeignSessionError: When the participant is phased and its
                 sessions come from another owner.
             UndeclaredStoreWrite: When a write targets a store outside the
-                innermost frame.
+                innermost frame, or no frame is pushed.
         """
         participant = self.participants.get(key)
         if not write and (participant is None or not participant.phased):
@@ -337,13 +342,22 @@ class InvocationScope:
             )
         if write:
             self._require_in_frame(key, owner)
-            if participant is not None:
-                participant.record_write(next(self._writes))
+            if participant is not None and record:
+                self.record_write(participant)
         return participant
 
+    def record_write(self, participant: Participant) -> None:
+        """Record a write through ``participant`` for the commit order."""
+        participant.record_write(next(self._writes))
+
     def _require_in_frame(self, key: StoreKey, owner: object) -> None:
-        if not self.frames or key in self.frames[-1].stores:
+        if self.frames and key in self.frames[-1].stores:
             return
+        written = ForeignSessionError.side(key, _described(owner))
+        if not self.frames:
+            raise UndeclaredStoreWrite(
+                f"a write to {written} is refused: no execution of this invocation is running"
+            )
         stores = self.frames[-1].stores
         declared = (
             f"declares only store {', '.join(repr(store) for store in stores)}"
@@ -351,8 +365,7 @@ class InvocationScope:
             else "is read-only"
         )
         raise UndeclaredStoreWrite(
-            f"a write to {ForeignSessionError.side(key, _described(owner))} is refused: "
-            f"the execution running now {declared}; "
+            f"a write to {written} is refused: the execution running now {declared}; "
             "inject its repository as Joined[...] to write to it"
         )
 

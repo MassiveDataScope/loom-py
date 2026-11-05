@@ -174,7 +174,11 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
         UndeclaredStoreWrite: When the store is not enlisted in ``scope``, or
             the running execution did not declare it.
     """
-    if scope.participant_for(session_manager.store, session_manager, write=True) is None:
+    scope.require_owner()
+    # Without a frame the checkpoint refuses every write; a store not enlisted is named here.
+    store = session_manager.store
+    checked = scope.frames or store in scope.participants
+    if not checked or scope.participant_for(store, session_manager, write=True) is None:
         enlisted = ", ".join(scope.participants)
         raise UndeclaredStoreWrite(
             f"{ForeignSessionError.side(session_manager.store, session_manager.target)} "
