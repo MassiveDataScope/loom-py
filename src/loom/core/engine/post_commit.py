@@ -248,6 +248,19 @@ def _log_unreported(
             log_never_ran(action)
 
 
+async def drain_after_failure(channel: PostCommitChannel) -> None:
+    """Drain the actions of the stores that may have written, in a failed invocation.
+
+    The caller re-raises the failure that brought it here, so a drain
+    failure is logged rather than raised: it would hide that failure. A
+    cancellation is not caught: it is a terminal outcome of its own.
+    """
+    try:
+        await channel.drain(committed=True)
+    except Exception:
+        _logger.exception("PostCommitDrainFailedDuringTeardown")
+
+
 def log_never_ran(action: PostCommitAction) -> None:
     """Log a shielded action the interruption stopped, by job name and task id only."""
     for fields in _describe(action):

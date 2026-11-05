@@ -207,7 +207,14 @@
   `UndeclaredStoreWrite`.
   SQLAlchemy flushes before it commits, a rollback interrupted by a second
   cancellation is still awaited (bounded by `persistence.rollback_timeout`),
-  and Mongo never aborts after an attempted commit.
+  and Mongo never aborts after an attempted commit. The post-commit actions
+  queued inside, a nested use case's job dispatches and cache invalidations
+  included, run once the store has ended and by its outcome, as in an
+  execution; before, a nested use case sent them before the outer commit, and
+  a cache invalidation ran inline. A failed action raises `PostCommitError`
+  from `async with uow:` too. A job dispatched in the block is sent after the
+  commit instead of waiting for `flush_pending_dispatches()`, which raises
+  `RuntimeError` inside the block, as inside `@transactional`.
 - **stores:** an unknown commit result is `Uncertain`, not a rollback:
   SQLAlchemy `OperationalError`, `InterfaceError`, an invalidated connection
   or a transport timeout during `COMMIT`, and Mongo

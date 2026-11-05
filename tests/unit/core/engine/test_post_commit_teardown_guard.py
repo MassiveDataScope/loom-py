@@ -21,7 +21,7 @@ import pytest
 import loom.core.uow.scope as scope_module
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitChannel, active_channel
+from loom.core.engine.post_commit import PostCommitChannel, active_channel, drain_after_failure
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
@@ -160,7 +160,7 @@ async def test_a_late_enqueue_from_a_nested_execution_during_the_teardown_drain_
 class _StubChannel:
     """Stands in for a channel whose ``drain`` raises whatever the test wants.
 
-    Exercises ``_drain_committed_channel_logging_failure`` directly: a
+    Exercises ``drain_after_failure`` directly: a
     per-action failure is already wrapped into ``PostCommitError`` by
     ``PostCommitChannel.drain`` itself (``_run_all`` catches ``Exception``
     per action), so provoking a *different* ``Exception`` from ``drain()``
@@ -181,19 +181,15 @@ class TestDrainCommittedChannelLoggingFailure:
     async def test_an_ordinary_exception_from_drain_is_logged_and_swallowed(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
         channel = _StubChannel(RuntimeError("shield machinery unavailable"))
 
         with caplog.at_level("ERROR"):
-            await executor._drain_committed_channel_logging_failure(
-                cast(PostCommitChannel, channel)
-            )
+            await drain_after_failure(cast(PostCommitChannel, channel))
 
         assert "PostCommitDrainFailedDuringTeardown" in caplog.text
 
     async def test_a_cancellation_from_drain_is_not_swallowed(self) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
         channel = cast(PostCommitChannel, _StubChannel(asyncio.CancelledError()))
 
         with pytest.raises(asyncio.CancelledError):
-            await executor._drain_committed_channel_logging_failure(channel)
+            await drain_after_failure(channel)

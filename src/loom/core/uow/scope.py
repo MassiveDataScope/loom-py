@@ -617,6 +617,9 @@ async def single_store(key: StoreKey, unit_of_work: UnitOfWork) -> AsyncIterator
     What ``async with uow:`` and ``@transactional`` do outside a scope: the
     repositories of ``key`` join the unit of work through the scope, and on
     exit the coordinator commits it, or rolls it back if the block raised.
+    The post-commit actions queued in the block, a nested use case's
+    included, run once the store has ended, by its outcome
+    (:meth:`InvocationScope.settle_post_commit`).
 
     Args:
         key: Store the unit of work belongs to.
@@ -626,16 +629,44 @@ async def single_store(key: StoreKey, unit_of_work: UnitOfWork) -> AsyncIterator
         The open scope.
 
     Raises:
+        StoresNotCommitted: When the commit's result is unknown.
+        PostCommitError: When a post-commit action failed after the commit.
         Exception: What the commit failed with, when the block did not raise.
     """
+    # Local import: ``loom.core.engine`` imports this module.
+    from loom.core.engine.post_commit import (
+        PostCommitChannel,
+        bind_channel,
+        drain_after_failure,
+        reset_channel,
+    )
+
     coordinator = OrderedCommits({key: _Given(unit_of_work)})
-    async with invocation(coordinator) as scope:
-        async with scope.frame(Frame(key)):
-            yield scope
-        outcome = await coordinator.finish(scope, None)
-    failure = invocation_error(outcome, scope.poisoned)
-    if failure is not None:
-        raise failure
+    unowned, settled = PostCommitChannel(), PostCommitChannel()
+    error: BaseException | None = None
+    token = bind_channel(unowned)
+    try:
+        async with invocation(coordinator) as scope:
+            scope.post_commit = unowned
+            async with scope.frame(Frame(key)):
+                try:
+                    yield scope
+                except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
+                    error = exc
+            try:
+                outcome = await coordinator.finish(scope, error)
+            finally:
+                scope.settle_post_commit(settled, error)
+        failure = invocation_error(outcome, error or scope.poisoned)
+    except BaseException as exc:  # NOSONAR S5754 - raised below, once the drain ran
+        failure = exc
+    finally:
+        reset_channel(token)
+    if failure is None:
+        await settled.drain(committed=True)
+        return
+    await drain_after_failure(settled)
+    raise failure
 
 
 class EntersAlone:

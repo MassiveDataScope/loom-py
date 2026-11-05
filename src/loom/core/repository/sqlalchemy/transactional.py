@@ -14,7 +14,7 @@ from typing import (
     runtime_checkable,
 )
 
-from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.engine.post_commit import PostCommitChannel, PostCommitError
 from loom.core.errors.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
@@ -107,13 +107,10 @@ def transactional(
     ``@transactional`` call) the method joins the participant of its owner's
     store and nothing else happens: the invocation commits it and runs the
     post-commit actions. Outside one, the method runs in an invocation of
-    its owner's store alone, which commits on return and rolls back on any
-    exception; it then runs ``on_transaction_committed(pending)`` on the
-    owner and on its :class:`SupportsPostCommit` attributes through the
-    post-commit channel (:mod:`loom.core.engine.post_commit`). The decorator
-    owns that channel whenever it owns the invocation: a channel bound by an
-    outer context is left untouched and restored afterwards, so a committed
-    transaction always drains its own actions.
+    its owner's store alone (:func:`~loom.core.uow.scope.single_store`),
+    which commits on return and rolls back on any exception; once it
+    committed, ``on_transaction_committed(pending)`` runs on the owner and on
+    its :class:`SupportsPostCommit` attributes, after the cache invalidations.
 
     Args:
         method: Async method of an object exposing ``session_manager``.
@@ -147,19 +144,7 @@ def transactional(
             )
             return await method(self, *args, **kwargs)
 
-        channel = PostCommitChannel()
-        channel_token = bind_channel(channel)
-        try:
-            result = await _run_in_own_invocation(
-                self, method, session_manager, channel, args, kwargs
-            )
-        except BaseException:
-            channel.discard()
-            raise
-        finally:
-            reset_channel(channel_token)
-        await channel.drain(committed=True)
-        return result
+        return await _run_in_own_invocation(self, method, session_manager, args, kwargs)
 
     return cast(Callable[Concatenate[Any, P], Awaitable[T]], wrapper)
 
@@ -212,18 +197,23 @@ async def _run_in_own_invocation(
     owner: Any,
     method: Callable[..., Awaitable[T]],
     session_manager: SessionManager,
-    channel: PostCommitChannel,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> T:
-    """Run ``method`` in an invocation of its store alone, then enqueue the hooks on ``channel``."""
+    """Run ``method`` in an invocation of its store alone; the hooks run only if it commits."""
     # Local import: ``uow`` imports this module for the mutation list.
     from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 
     try:
-        async with single_store(session_manager.store, SQLAlchemyUnitOfWork(session_manager)):
+        async with single_store(
+            session_manager.store, SQLAlchemyUnitOfWork(session_manager)
+        ) as scope:
             result = await method(owner, *args, **kwargs)
             pending = get_pending_mutations()
+            if scope.post_commit is not None:  # always: single_store binds it
+                _enqueue_post_commit_hooks(owner, pending, scope.post_commit)
+    except PostCommitError:
+        raise
     except Exception:
         _log.exception(
             "TransactionRolledBack",
@@ -237,7 +227,6 @@ async def _run_in_own_invocation(
         method=method.__name__,
         mutation_count=len(pending),
     )
-    _enqueue_post_commit_hooks(owner, pending, channel)
     return result
 
 
