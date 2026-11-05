@@ -186,6 +186,7 @@ def test_a_rollback_deadline_not_above_zero_is_refused(
     fixture_project: ProjectFactory, timeout: int
 ) -> None:
     project = fixture_project(persistence={"rollback_timeout": timeout})
+    adapter = _Bare()
 
     with pytest.raises(ConfigError, match="persistence.rollback_timeout must be above zero"):
-        build_application(project, adapter=_Bare(), environment="test")
+        build_application(project, adapter=adapter, environment="test")

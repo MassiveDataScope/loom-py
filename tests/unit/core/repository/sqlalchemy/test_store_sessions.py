@@ -320,14 +320,19 @@ class _InvocationFailed(Exception):
     pass
 
 
-@pytest.fixture
-async def audit_rows(stores: _Stores) -> _AuditRows:
+async def _rows_of(manager: SessionManager) -> _AuditRows:
+    """The rows repository of ``manager``'s store, its table created."""
     compile_all(_Row)
     compiled = get_compiled(_Row)
     assert compiled is not None
-    async with stores.audit.engine.begin() as connection:
+    async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
-    return _AuditRows(stores.audit, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+    return _AuditRows(manager, _Row, cursor_codec=CursorCodec(signing="ephemeral"))
+
+
+@pytest.fixture
+async def audit_rows(stores: _Stores) -> _AuditRows:
+    return await _rows_of(stores.audit)
 
 
 class TestWithSessionScope:
@@ -377,11 +382,13 @@ class TestHandedInSession:
     async def test_a_session_of_another_store_is_refused_and_persists_nothing(
         self, stores: _Stores, audit_rows: _AuditRows
     ) -> None:
+        default_rows = await _rows_of(stores.default)
         async with stores.default.session() as foreign:
             with pytest.raises(ForeignSessionError, match="store 'audit'"):
                 await audit_rows.insert_raw("foreign", session=foreign)
+            await foreign.commit()
 
-        assert await audit_rows.count() == 0
+        assert (await audit_rows.count(), await default_rows.count()) == (0, 0)
 
     async def test_a_session_of_its_own_store_is_used(
         self, stores: _Stores, audit_rows: _AuditRows

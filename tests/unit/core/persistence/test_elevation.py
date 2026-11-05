@@ -199,9 +199,10 @@ class TestScopedElevationSink:
         default = _Store(_store(EDITOR))
         audit = _RefusingStore(_store(REVIEWER, table="e"))
         sink = _sink(default, audit)
+        scopes = frozenset({"editor", "reviewer"})
 
         with pytest.raises(RuntimeError, match="refused before any statement"):
-            sink.clear_flags(frozenset({"editor", "reviewer"}))
+            sink.clear_flags(scopes)
 
         assert [inspect.getcoroutinestate(step) for step in default.made] == [inspect.CORO_CLOSED]
 

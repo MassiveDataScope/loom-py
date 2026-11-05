@@ -11,7 +11,7 @@ from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, Field, Integer, String
 from loom.core.persistence import PersistenceWiring
-from loom.core.repository.abc import Creatable, Readable
+from loom.core.repository.abc import Creatable, Deletable, Readable
 from loom.core.repository.dynamodb.backend import DynamoDBBackend
 from tests.helpers.persistence import build_backend
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
@@ -72,3 +72,12 @@ async def test_a_repository_round_trips_through_the_table(
     assert await container.resolve(Readable[Gadget]).get_by_id(7) == created
     item = dynamodb.get_item(TableName=table, Key={"id": {"N": "7"}})["Item"]
     assert item["name"] == {"S": "lamp"}
+
+
+async def test_a_delete_reports_whether_the_item_existed(wiring: PersistenceWiring) -> None:
+    container = LoomContainer()
+    wiring.repo_registration_module(container)
+    await container.resolve(Creatable[Gadget]).create(Gadget(id=8, name="desk"))
+    deletes = container.resolve(Deletable[Gadget])
+
+    assert [await deletes.delete(8), await deletes.delete(8)] == [True, False]

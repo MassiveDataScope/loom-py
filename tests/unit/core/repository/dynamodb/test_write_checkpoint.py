@@ -143,12 +143,13 @@ async def test_a_failed_write_beside_a_transactional_store_counts_only_if_it_may
     await products.create(ProductCreate(id=1))
     if unavailable:
         monkeypatch.setattr(fake_client, "put_item", _unavailable)
+    again = ProductCreate(id=1)
 
     async with invocation(coordinator) as scope:
         async with scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))):
             scope.participant_for(AUDIT, audit.owner, write=True)
             with pytest.raises((Conflict, ClientError)) as failed:
-                await products.create(ProductCreate(id=1))
+                await products.create(again)
         outcome = await coordinator.finish(scope, failed.value)
 
     assert isinstance(invocation_error(outcome, failed.value), raised)

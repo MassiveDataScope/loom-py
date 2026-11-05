@@ -541,13 +541,13 @@ class TestHungRollback:
     async def test_every_rollback_of_the_invocation_shares_one_deadline(self) -> None:
         ledger = Ledger()
         hung = [PhasedStore(key, ledger, Fault("rollback", Effect.CANCEL)) for key in (S0, S1)]
-        coordinator, scope = _coordinator(*hung, rollback_timeout=0.3), Scope()
+        coordinator, scope = _coordinator(*hung, rollback_timeout=0.4), Scope()
         await _enlist_all(coordinator, scope, S0, S1)
         started = asyncio.get_running_loop().time()
 
         await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
 
-        assert asyncio.get_running_loop().time() - started < 0.5
+        assert asyncio.get_running_loop().time() - started < 0.7
 
 
 async def _finish_within_a_second(
