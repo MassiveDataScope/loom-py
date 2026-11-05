@@ -32,7 +32,7 @@ from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.repository.sqlalchemy.rls import create_schema, elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.scope import NestedElevation, NestedIdentityMismatch
+from loom.core.uow.scope import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
@@ -142,7 +142,7 @@ class NestAsSelf(UseCase[notes.Note, Seen]):
 
 
 class ReadThenWriteAsZoe(UseCase[notes.Note, Seen]):
-    """A read-only parent: its writing child opens a unit of work of its own, as ``ZOE``."""
+    """A read-only parent running a writing child as ``ZOE``."""
 
     read_only = True
 
@@ -323,12 +323,13 @@ async def test_h2_joining_the_parents_unit_of_work_as_the_same_identity_is_allow
     assert (seen.caller, seen.owner_setting, seen.bodies) == (U1, U1, ("a", "b"))
 
 
-async def test_h2_a_nested_unit_of_work_of_its_own_follows_the_childs_identity(
+async def test_h2_a_writing_child_of_a_read_only_parent_is_refused_as_any_identity(
     app: AppInvoker,
 ) -> None:
-    seen: Seen = await app.for_identity(ANA).invoke(ReadThenWriteAsZoe)
+    caller = app.for_identity(ANA)
 
-    assert (seen.caller, seen.owner_setting, seen.bodies) == (U2, U2, ("z",))
+    with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
+        await caller.invoke(ReadThenWriteAsZoe)
 
 
 # --------------------------------------------------------------------- H3
