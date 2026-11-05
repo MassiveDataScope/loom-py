@@ -249,6 +249,39 @@ def test_an_unexpected_failure_answers_500_without_its_details(
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "status", "code", "message", "secret"),
+    [
+        ("/ops/leak", 500, "foreign_session", "An unexpected error occurred", "db.internal"),
+        (
+            "/ops/unavailable",
+            503,
+            "service_unavailable",
+            "The service is temporarily unavailable",
+            "idp.internal",
+        ),
+    ],
+    ids=["500", "503"],
+)
+def test_a_5xx_loom_error_answers_its_code_without_its_message(
+    served: Client,
+    alice: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+    path: str,
+    status: int,
+    code: str,
+    message: str,
+    secret: str,
+) -> None:
+    reply = served("GET", path, headers=alice)
+
+    assert (reply.status, reply.json()) == (
+        status,
+        {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
+    )
+    assert secret in caplog.text
+
+
 def test_a_cors_preflight_is_answered_without_a_token(served: Client) -> None:
     preflight = {"origin": ORIGIN, "access-control-request-method": "POST"}
 
@@ -313,6 +346,7 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
         ("POST", PUBLIC_PATH, {}, b""),
         ("POST", "/items/", {}, b"x" * (MAX_BODY_BYTES + 1)),
         ("GET", "/ops/explode", _AS_ALICE, b""),
+        ("GET", "/ops/leak", _AS_ALICE, b""),
         ("GET", "/ops/admin", _AS_ALICE, b""),
         ("OPTIONS", "/items/7", {"origin": ORIGIN, "access-control-request-method": "GET"}, b""),
     ],
@@ -330,6 +364,7 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
         "excluded-path",
         "413",
         "500",
+        "500-loom",
         "403",
         "preflight",
     ],

@@ -32,6 +32,7 @@ from starlette.responses import Response
 
 from loom.ai.errors import AgentRunErrorCode
 from loom.ai.fastapi.response import AgentJSONResponse
+from loom.rest.errors import _INTERNAL_ERROR_MESSAGE
 
 _JSONRPC_VERSION: Final = "2.0"
 
@@ -83,10 +84,6 @@ RUN_ERROR_DETAILS: Final[Mapping[AgentRunErrorCode, str]] = MappingProxyType(
         ),
     }
 )
-
-# Detail of a failure with no catalogue entry, including the catch-all. Mirrors
-# the wording of the HTTP surface's own unexpected-failure body.
-_UNEXPECTED_DETAIL: Final[str] = "An unexpected error occurred"
 
 
 class RpcEnvelope(msgspec.Struct, frozen=True, kw_only=True):
@@ -162,7 +159,7 @@ def internal_error(code: AgentRunErrorCode) -> InternalError:
     return InternalError(
         code=-32603,
         message="Internal error",
-        data={"code": str(code), "detail": RUN_ERROR_DETAILS.get(code, _UNEXPECTED_DETAIL)},
+        data={"code": str(code), "detail": RUN_ERROR_DETAILS.get(code, _INTERNAL_ERROR_MESSAGE)},
     )
 
 
@@ -171,7 +168,10 @@ def unexpected_error() -> InternalError:
     return InternalError(
         code=-32603,
         message="Internal error",
-        data={"code": str(AgentRunErrorCode.PROVIDER_UNAVAILABLE), "detail": _UNEXPECTED_DETAIL},
+        data={
+            "code": str(AgentRunErrorCode.PROVIDER_UNAVAILABLE),
+            "detail": _INTERNAL_ERROR_MESSAGE,
+        },
     )
 
 

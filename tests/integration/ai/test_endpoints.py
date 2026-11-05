@@ -661,7 +661,7 @@ class TestHookOverHttp:
             assert response.status_code == 500
             body = response.json()
             assert len(body.pop("interaction_id")) == _INTERACTION_ID_LENGTH
-            assert body == {"code": "HOOK_FAILED", "message": HOOK_FAILED_MESSAGE}
+            assert body == {"code": "HOOK_FAILED", "message": "An unexpected error occurred"}
             assert "secret detail" not in response.text
 
     async def test_emits_an_error_with_the_interaction_id_when_the_hook_raises_in_stream(
@@ -809,7 +809,7 @@ class TestLoaderOverHttp:
             assert len(body.pop("interaction_id")) == _INTERACTION_ID_LENGTH
             assert body == {
                 "code": "CONVERSATION_LOAD_FAILED",
-                "message": CONVERSATION_LOAD_FAILED_MESSAGE,
+                "message": "An unexpected error occurred",
             }
 
     async def test_emits_a_single_error_when_the_loader_fails_in_stream(
@@ -1129,6 +1129,38 @@ class TestErrorMapping:
             response = await client.post(f"{_PREFIX}/{_AGENT}/run", json={"prompt": "p"})
 
             assert response.status_code == status
+
+    @pytest.mark.parametrize(
+        ("code", "status", "message"),
+        [
+            (AgentRunErrorCode.PROVIDER_UNAVAILABLE, 503, "The service is temporarily unavailable"),
+            (AgentRunErrorCode.RUN_TIMEOUT, 504, "An unexpected error occurred"),
+            (AgentRunErrorCode.TOOL_CALL_FAILED, 500, "An unexpected error occurred"),
+        ],
+    )
+    async def test_a_5xx_answers_the_fixed_message_and_logs_the_original(
+        self,
+        deps: StubDepsFactory,
+        container: LoomContainer,
+        identity: Identity,
+        caplog: pytest.LogCaptureFixture,
+        code: AgentRunErrorCode,
+        status: int,
+        message: str,
+    ) -> None:
+        leaky = "APIConnectionError: https://llm.internal/v1 api_key=sk-live-123"
+        engine = ScriptedEngine(script=(ErrorEvent(code=code, message=leaky),))
+        async with _serving(
+            deps=deps, container=container, identity=identity, engines={_AGENT: engine}
+        ) as (_app, client):
+            response = await client.post(f"{_PREFIX}/{_AGENT}/run", json={"prompt": "p"})
+
+        body = response.json()
+        assert len(body.pop("interaction_id")) == _INTERACTION_ID_LENGTH
+        assert (response.status_code, body) == (status, {"code": str(code), "message": message})
+        [record] = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert record.exc_info is not None
+        assert str(record.exc_info[1]) == leaky
 
 
 class TestStream:

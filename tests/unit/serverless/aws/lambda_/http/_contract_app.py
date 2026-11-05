@@ -26,11 +26,12 @@ import asyncio
 from typing import Any
 
 from loom.core.command import Command
-from loom.core.errors import NotFound
+from loom.core.errors import ForeignSessionError, NotFound
 from loom.core.identity import current_identity
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
+from loom.rest.auth import AuthenticationUnavailable
 from loom.rest.model import RestInterface, RestRoute
 
 SEEN: list[tuple[asyncio.AbstractEventLoop, object]] = []
@@ -64,6 +65,16 @@ class Explode(UseCase[Item, str]):
         raise RuntimeError("the database is on fire")
 
 
+class Leak(UseCase[Item, str]):
+    async def execute(self) -> str:
+        raise ForeignSessionError("store 'orders' (postgresql://db.internal:5432/orders)")
+
+
+class Unavailable(UseCase[Item, str]):
+    async def execute(self) -> str:
+        raise AuthenticationUnavailable("https://idp.internal/jwks is unreachable")
+
+
 class AdminOnly(UseCase[Item, str]):
     async def execute(self) -> str:
         return "granted"
@@ -92,6 +103,8 @@ class OpsInterface(RestInterface[Item]):
     prefix = "/ops"
     routes = (
         RestRoute(use_case=Explode, method="GET", path="/explode"),
+        RestRoute(use_case=Leak, method="GET", path="/leak"),
+        RestRoute(use_case=Unavailable, method="GET", path="/unavailable"),
         RestRoute(use_case=AdminOnly, method="GET", path="/admin", requires_roles=("admin",)),
         RestRoute(
             use_case=AdminLevel, method="GET", path="/admin/{level}", requires_roles=("admin",)

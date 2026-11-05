@@ -194,16 +194,26 @@ def test_returns_422_with_standard_body_when_backend_rejects_the_sql() -> None:
     assert (response.status_code, detail["code"]) == (422, "rule_violation")
 
 
-def test_returns_generic_500_when_the_backend_is_unreachable() -> None:
-    """A system failure responds a standard 500 without leaking internals."""
-    client = _client(FakeSqlExecutor(error=LoomSystemError("SQL backend unavailable")))
+def test_a_backend_system_failure_answers_the_fixed_500_and_logs_its_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _client(FakeSqlExecutor(error=LoomSystemError("clickhouse.internal:9000 refused")))
+
     response = client.post("/sql/analytics", json={"sql": "SELECT 1"})
-    detail = response.json()["detail"]
-    assert (response.status_code, detail["code"], "trace_id" in detail) == (
+
+    assert (response.status_code, response.json()) == (
         500,
-        "system_error",
-        True,
+        {
+            "detail": {
+                "code": "system_error",
+                "message": "An unexpected error occurred",
+                "trace_id": None,
+            }
+        },
     )
+    [record] = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert record.exc_info is not None
+    assert str(record.exc_info[1]) == "clickhouse.internal:9000 refused"
 
 
 def test_an_unexpected_error_answers_the_generic_500_body() -> None:

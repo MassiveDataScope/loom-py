@@ -63,6 +63,7 @@ from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.observability.span import LoomSpan
 from loom.core.tracing import get_trace_id
 from loom.rest.auth.abc import Authenticator
+from loom.rest.errors import _INTERNAL_ERROR_MESSAGE, _public_message
 
 _logger = logging.getLogger(__name__)
 
@@ -143,11 +144,20 @@ _REQUEST_DECODER = msgspec.json.Decoder(_AgentRunRequest)
 
 
 def _run_error_response(error: AgentRunError) -> Response:
-    """Map a run-error code onto its published HTTP status."""
+    """Map a run-error code onto its published HTTP status; a ``5xx`` hides the message."""
+    status = _STATUS_BY_CODE.get(error.code, 500)
+    if status >= 500:
+        _logger.error(
+            "Agent run failed (code=%s interaction_id=%s trace_id=%s)",
+            error.code,
+            error.interaction_id,
+            get_trace_id(),
+            exc_info=error,
+        )
     return error_response(
-        _STATUS_BY_CODE.get(error.code, 500),
+        status,
         str(error.code),
-        str(error),
+        _public_message(status, str(error)),
         interaction_id=error.interaction_id,
     )
 
@@ -360,7 +370,7 @@ def _make_run_handler(
             return _run_error_response(exc)
         except Exception:
             _logger.exception("Unhandled error in the run endpoint of agent %r", name)
-            return error_response(500, "INTERNAL_ERROR", "An unexpected error occurred")
+            return error_response(500, "INTERNAL_ERROR", _INTERNAL_ERROR_MESSAGE)
 
     return run_agent
 

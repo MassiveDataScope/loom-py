@@ -72,10 +72,10 @@ class AuthenticationUnavailable(LoomError):
     there is an outage.
     Any other exception an authenticator raises keeps propagating unchanged.
 
-    Raised from an authenticator, the message goes to the server log, never to
-    the caller, so it may name the unreachable dependency; raised anywhere
-    else, :class:`~loom.rest.errors.HttpErrorMapper` answers ``503`` with it,
-    like any :class:`~loom.core.errors.LoomError`.  It must never carry the
+    The message goes to the server log, never to the caller, so it may name
+    the unreachable dependency; raised outside an authenticator,
+    :class:`~loom.rest.errors.HttpErrorMapper` answers ``503``, like any
+    ``5xx`` :class:`~loom.core.errors.LoomError`.  It must never carry the
     credential.  Chain the underlying error with ``raise ... from exc`` to keep
     its traceback.
 

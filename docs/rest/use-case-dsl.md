@@ -1107,7 +1107,9 @@ later release; see [Persistence backends](persistence-backends.md).
 
 - **REST**: `HttpErrorMapper` maps it to `500` and copies the flag into the
   response body's `detail` as `committed` — `true` means the write stands
-  even though the request failed, `false` means nothing was written.
+  even though the request failed, `false` means nothing was written. Like
+  every `5xx` body, its `message` is fixed; the error's own message is logged
+  under the same `trace_id`.
 - **Celery**: the worker does **not** retry a `committed=True` failure (a
   retry would repeat the write) and retries a `committed=False` one like any
   other failure — see [Post-commit failures](celery.md#post-commit-failures).

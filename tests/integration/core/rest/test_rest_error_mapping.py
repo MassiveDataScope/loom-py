@@ -264,7 +264,10 @@ class TestSystemErrors:
 
         resp = client.post("/products/", json={"name": "Widget", "price": 10.0})
 
-        assert resp.status_code == 500
+        assert (resp.status_code, resp.content) == (
+            500,
+            b'{"code":"internal_error","message":"An unexpected error occurred","trace_id":""}',
+        )
 
     def test_unhandled_runtime_error_returns_500(self) -> None:
         harness = HttpTestHarness()

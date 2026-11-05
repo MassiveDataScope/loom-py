@@ -7,6 +7,7 @@ never names anything itself.
 
 from __future__ import annotations
 
+from loom.core.authz.elevation import ReadOnlyElevation
 from loom.core.persistence.elevation import validate_elevations
 from loom.core.repository.sqlalchemy.rls.bootstrap import (
     MIN_SERVER_VERSION_NUM,
@@ -35,6 +36,7 @@ __all__ = [
     "Report",
     "DatabaseRoles",
     "DatabaseUser",
+    "ReadOnlyElevation",
     "SQLAlchemyStoreElevation",
     "SchemaNames",
     "apply_bootstrap",

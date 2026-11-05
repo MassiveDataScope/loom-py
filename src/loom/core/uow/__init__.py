@@ -11,5 +11,20 @@ Nested executions in the task that owns the scope join it.
 """
 
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.uow.scope import (
+    NestedElevation,
+    ScopeOwnershipError,
+    StoresNotCommitted,
+    UndeclaredStoreWrite,
+    UnitOfWorkInsideScope,
+)
 
-__all__ = ["UnitOfWork", "UnitOfWorkFactory"]
+__all__ = [
+    "NestedElevation",
+    "ScopeOwnershipError",
+    "StoresNotCommitted",
+    "UndeclaredStoreWrite",
+    "UnitOfWork",
+    "UnitOfWorkFactory",
+    "UnitOfWorkInsideScope",
+]

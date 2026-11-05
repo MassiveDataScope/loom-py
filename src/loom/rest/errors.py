@@ -24,6 +24,8 @@ from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
 _DESCRIPTION_MAX_LENGTH = 256
+_INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
+_UNAVAILABLE_MESSAGE = "The service is temporarily unavailable"
 
 
 class ErrorField(StrEnum):
@@ -60,8 +62,9 @@ class HttpErrorMapper:
 
     Uses the ``code`` discriminator on each ``LoomError`` to select the
     appropriate HTTP status code.  The response body always includes
-    ``code``, ``message``, and ``trace_id``.  Additional fields are added
-    per error type:
+    ``code``, ``message``, and ``trace_id``.  A ``5xx`` body carries a fixed
+    message instead of the error's, which may name hosts, databases or
+    stores.  Additional fields are added per error type:
 
     - :class:`~loom.core.errors.NotFound` → ``entity``, ``id``
     - :class:`~loom.core.errors.Forbidden` → ``reason`` and ``missing``, each only
@@ -134,7 +137,7 @@ class HttpErrorMapper:
         status = self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
         detail: dict[str, Any] = {
             ErrorField.CODE: error.code,
-            ErrorField.MESSAGE: error.message,
+            ErrorField.MESSAGE: _public_message(status, error.message),
             ErrorField.TRACE_ID: get_trace_id(),
         }
 
@@ -166,6 +169,15 @@ class HttpErrorMapper:
             detail[ErrorField.COMMITTED] = error.committed
 
         return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
+
+
+def _public_message(status: int, message: str) -> str:
+    """Return *message*, or the fixed one a ``5xx`` answers with instead."""
+    if status < HTTPStatus.INTERNAL_SERVER_ERROR:
+        return message
+    if status == HTTPStatus.SERVICE_UNAVAILABLE:
+        return _UNAVAILABLE_MESSAGE
+    return _INTERNAL_ERROR_MESSAGE
 
 
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:

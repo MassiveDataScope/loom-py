@@ -472,7 +472,7 @@ is not a retriable code.
 
 | The hook… | The caller gets |
 |---|---|
-| raises | `500` `HOOK_FAILED` with a fixed message — `the output hook failed; the detail is recorded server-side`. The exception never reaches the caller; the server log carries it under the `interaction_id`. |
+| raises | `500` `HOOK_FAILED` with the message `An unexpected error occurred` on `/run`, and `the output hook failed; the detail is recorded server-side` in a `/stream` `error` frame. The exception never reaches the caller; the server log carries it under the `interaction_id`. |
 | raises `Forbidden`, `Unauthenticated`, `RoleNotAllowedError` or `RolesNotBoundError` | `403` `UNAUTHORIZED`, exactly as a `kind: usecase` tool would. |
 | exceeds `tool_timeout_ms` | Cut at the bound and reported as `HOOK_FAILED`. |
 | is cancelled internally | `HOOK_FAILED`: a hook that cancels itself is a hook failure, not a client exit. |
@@ -576,8 +576,8 @@ data: {"output":{...},"usage":{...},"interaction_id":"7f3c...","hook_result":{"t
 ```
 
 Had `RecordTriage` raised, the app would instead get
-`500 {"code":"HOOK_FAILED","message":"the output hook failed; the detail is recorded server-side","interaction_id":"7f3c..."}`
-— or an `error` frame with the same three fields — and no answer.
+`500 {"code":"HOOK_FAILED","message":"An unexpected error occurred","interaction_id":"7f3c..."}`
+— or an `error` frame with the hook's fixed text — and no answer.
 
 ## `conversation` — loading the prior turns
 
@@ -750,9 +750,9 @@ the same timeout: it runs after the model spent tokens, so a retry is not free.
 
 | The loader… | The caller gets |
 |---|---|
-| raises anything but `TimeoutError` | `500` `CONVERSATION_LOAD_FAILED` with a fixed message — `the conversation could not be loaded; the detail is recorded server-side`. The exception never reaches the caller; the server log carries it under the `interaction_id`. |
+| raises anything but `TimeoutError` | `500` `CONVERSATION_LOAD_FAILED` with the message `An unexpected error occurred` on `/run`, and `the conversation could not be loaded; the detail is recorded server-side` in a `/stream` `error` frame. The exception never reaches the caller; the server log carries it under the `interaction_id`. |
 | raises `Forbidden`, `Unauthenticated`, `RoleNotAllowedError` or `RolesNotBoundError` | `403` `UNAUTHORIZED`, exactly as the hook and a `kind: usecase` tool. |
-| times out — cut at `tool_timeout_ms`, or a `TimeoutError` of its own | `504` `CONVERSATION_LOAD_TIMEOUT` with a fixed message — `the conversation loader exceeded its time limit`. Retriable; the origin is in the server log. |
+| times out — cut at `tool_timeout_ms`, or a `TimeoutError` of its own | `504` `CONVERSATION_LOAD_TIMEOUT` with the message `An unexpected error occurred` on `/run`, and `the conversation loader exceeded its time limit` in a `/stream` `error` frame. Retriable; the origin is in the server log. |
 | returns anything but `bytes` or `None` — a `str`, a list, a dict | `CONVERSATION_LOAD_FAILED`; the value is never coerced and never logged. |
 | returns more than `policies.max_history_bytes` bytes | `CONVERSATION_LOAD_FAILED`; the length and the bound are logged under the `interaction_id`, never returned. loom never trims. |
 | returns bytes the engine cannot decode — not JSON, or not one array of messages | `CONVERSATION_LOAD_FAILED`, raised by the engine before any model call. The data is the application's; the engine's `health()` probe is unaffected. |

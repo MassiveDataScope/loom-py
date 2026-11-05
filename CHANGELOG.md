@@ -75,6 +75,11 @@
   `StoresNotLoaded` naming the stores they leave out.
 - **stores:** `persistence.rollback_timeout` (seconds, default 30) bounds the
   rollbacks of one invocation together.
+- **stores:** the errors a caller catches have public import paths:
+  `StoresNotCommitted`, `ScopeOwnershipError`, `UnitOfWorkInsideScope`,
+  `UndeclaredStoreWrite` and `NestedElevation` from `loom.core.uow`,
+  `ForeignSessionError` from `loom.core.errors`, and `ReadOnlyElevation` from
+  `loom.core.repository.sqlalchemy.rls`, next to `elevate`.
 
 ### config
 
@@ -283,6 +288,21 @@
 - **rls:** scope sources are bound when the application is composed: every
   `schema.scopes` binding is validated at startup, and a source registered
   after composition does not reach that application.
+
+### rest
+
+- **rest:** a `5xx` body no longer carries the error's message, which could
+  name hosts, databases, stores or classes: it keeps `code`, `trace_id` and
+  `committed`, with the fixed message `An unexpected error occurred` (`503`:
+  `The service is temporarily unavailable`), also for an `HTTPException`
+  whose detail is a string. The message is logged at `ERROR` under the same
+  `trace_id`. FastAPI and Lambda answer the same; `4xx` bodies are unchanged.
+
+### ai
+
+- **ai:** a `5xx` `/run` body carries the same fixed message instead of the
+  run error's, `HOOK_FAILED` and `CONVERSATION_LOAD_FAILED` included; `code`
+  and `interaction_id` stay, and the error is logged at `ERROR`.
 
 
 ### identity
