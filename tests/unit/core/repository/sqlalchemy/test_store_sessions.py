@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass
 
 import pytest
@@ -27,7 +28,7 @@ from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
@@ -59,12 +60,13 @@ class _Stores:
     default: SessionManager
     audit: SessionManager
 
-    def coordinator(self) -> OrderedCommits:
+    def coordinator(self, rollback_timeout: float = ROLLBACK_TIMEOUT_S) -> OrderedCommits:
         return OrderedCommits(
             {
                 DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(self.default),
                 AUDIT: SQLAlchemyUnitOfWorkFactory(self.audit),
-            }
+            },
+            rollback_timeout=rollback_timeout,
         )
 
 
@@ -390,6 +392,31 @@ class TestHandedInSession:
 
         assert (await audit_rows.count(), await default_rows.count()) == (0, 0)
 
+    async def test_a_session_of_another_engine_is_refused_without_its_secrets(
+        self, audit_rows: _AuditRows
+    ) -> None:
+        manager = _manager(
+            AUDIT, "postgresql+asyncpg://loom:s3cret@db.internal/x?sslpassword=hunter2"
+        )
+        try:
+            async with manager.session() as foreign:
+                with pytest.raises(ForeignSessionError, match="another engine") as raised:
+                    await audit_rows.insert_raw("foreign", session=foreign)
+        finally:
+            await manager.dispose()
+
+        message = str(raised.value)
+        assert "s3cret" not in message
+        assert "hunter2" not in message
+
+    async def test_a_session_outside_the_invocation_is_refused_and_persists_nothing(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        with pytest.raises(_InvocationFailed):
+            await _hand_in_another_session_then_fail(stores, audit_rows)
+
+        assert await audit_rows.count() == 0
+
     async def test_a_session_of_its_own_store_is_used(
         self, stores: _Stores, audit_rows: _AuditRows
     ) -> None:
@@ -398,6 +425,59 @@ class TestHandedInSession:
             await own.commit()
 
         assert await audit_rows.count() == 1
+
+
+class TestCloseAfterRollback:
+    """Close drops the connection only of a transaction its rollback left open."""
+
+    @pytest.mark.parametrize(
+        ("fails", "rollback_timeout", "invalidations"),
+        [
+            pytest.param(False, ROLLBACK_TIMEOUT_S, 0, id="committed"),
+            pytest.param(True, ROLLBACK_TIMEOUT_S, 0, id="rolled-back"),
+            pytest.param(True, 0.0, 1, id="rollback-out-of-time"),
+        ],
+    )
+    async def test_only_a_transaction_left_open_is_invalidated(
+        self,
+        stores: _Stores,
+        audit_rows: _AuditRows,
+        monkeypatch: pytest.MonkeyPatch,
+        fails: bool,
+        rollback_timeout: float,
+        invalidations: int,
+    ) -> None:
+        invalidated: list[AsyncSession] = []
+        invalidate = AsyncSession.invalidate
+
+        async def _spy(session: AsyncSession) -> None:
+            invalidated.append(session)
+            await invalidate(session)
+
+        monkeypatch.setattr(AsyncSession, "invalidate", _spy)
+
+        with suppress(_InvocationFailed):
+            await _write_joined(stores.coordinator(rollback_timeout), audit_rows, fail=fails)
+
+        assert len(invalidated) == invalidations
+
+
+async def _write_joined(coordinator: OrderedCommits, audit: _AuditRows, *, fail: bool) -> None:
+    async with invocation(coordinator) as scope, scope.frame(JOINED_AUDIT):
+        await audit.insert_raw("joined")
+        if fail:
+            raise _InvocationFailed
+
+
+async def _hand_in_another_session_then_fail(stores: _Stores, audit: _AuditRows) -> None:
+    """Write through audit's participant, hand in another audit session and commit it, then fail."""
+    async with invocation(stores.coordinator()) as scope, scope.frame(JOINED_AUDIT):
+        await audit.insert_raw("joined")
+        async with stores.audit.session() as other:
+            with pytest.raises(ForeignSessionError, match="did not open"):
+                await audit.insert_raw("other", session=other)
+            await other.commit()
+        raise _InvocationFailed
 
 
 async def _write_joined_then_fail(stores: _Stores, audit: _AuditRows) -> None:

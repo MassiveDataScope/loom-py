@@ -351,7 +351,7 @@ else:
 | Error | Cause |
 |---|---|
 | `RuntimeError` | no use-case execution is running |
-| `ReadOnlyElevation` | the execution is read-only: an elevable scope opens writes only |
+| `ReadOnlyElevation` | the execution is read-only: elevable scopes are write-only; a read-only execution cannot write, and its per-call sessions would autocommit with the flag on |
 | `ConfigError` | no product is registered, or `scope` is not in `AuthzProduct.elevations` |
 | `PermissionError` | the decision is denied, its grant's role is not in `catalog.roles_with(elevations[scope])`, or its grant's scope does not cover `at` |
 

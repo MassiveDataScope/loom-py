@@ -34,6 +34,7 @@ def make_session() -> MagicMock:
     session.rollback = AsyncMock()
     session.invalidate = AsyncMock()
     session.close = AsyncMock()
+    session.in_transaction = MagicMock(return_value=False)
     return session
 
 

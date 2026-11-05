@@ -41,6 +41,9 @@ class _FakeSession:
     async def rollback(self) -> None:
         self._log("session.rollback")
 
+    def in_transaction(self) -> bool:
+        return False
+
 
 class _FakeSessionCM:
     def __init__(self, log: Log) -> None:

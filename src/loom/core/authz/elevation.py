@@ -33,9 +33,8 @@ _FLAG_STEP_TIMEOUT_S = 30.0
 class ReadOnlyElevation(RuntimeError):
     """``elevate`` was called in a read-only execution.
 
-    An elevable scope opens writes only, and a read-only execution writes
-    nothing: a flag it set would land on the transaction it shares with its
-    parent, or on the sessions its other tasks read with.
+    Elevable scopes are write-only; a read-only execution cannot write, and
+    its per-call sessions would autocommit with the flag on.
 
     Args:
         scope: The scope asked for.

@@ -150,15 +150,18 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         """Handle post-commit mutation events (cache invalidation hook)."""
         self.log.debug("RepositoryTransactionCommitted", mutation_count=len(events))
 
-    def _require_own(self, session: AsyncSession) -> None:
-        """Refuse *session* unless it runs on this repository's engine."""
+    def _require_own(self, session: AsyncSession, joined: AsyncSession | None) -> None:
+        """Refuse *session* unless it is *joined*, or, with no participant, runs on this engine."""
         engine = session.get_bind().engine
         manager = self.session_manager
-        if engine is not manager.engine.sync_engine:
-            raise ForeignSessionError.between(
-                ForeignSessionError.side(manager.store, manager.target),
-                f"another engine ({bare_url(engine.url)})",
-            )
+        if session is joined or (joined is None and engine is manager.engine.sync_engine):
+            return
+        raise ForeignSessionError.between(
+            ForeignSessionError.side(manager.store, manager.target),
+            ForeignSessionError.side(manager.store, "a session this invocation did not open")
+            if joined is not None
+            else f"another engine ({bare_url(engine.url)})",
+        )
 
     @asynccontextmanager
     async def _session_scope(
@@ -173,14 +176,14 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
 
         Raises:
             ScopeOwnershipError: See :meth:`SessionManager.joined_session`.
-            ForeignSessionError: When *session* comes from another engine,
-                or see :meth:`SessionManager.joined_session`.
+            ForeignSessionError: When *session* is not the participant's or,
+                with no participant, comes from another engine; or see
+                :meth:`SessionManager.joined_session`.
             UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
-        if session is not None:
-            self._require_own(session)
         context_session = self.session_manager.joined_session(write=write)
         if session is not None:
+            self._require_own(session, context_session)
             yield session
             return
 

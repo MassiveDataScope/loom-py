@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, InterfaceError, OperationalError
 
+from loom.core._async import run_to_completion
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.transactional import _mutations
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
@@ -481,6 +482,21 @@ class TestPhased:
 
         assert _mutations.get() is None
 
+    @pytest.mark.parametrize(("still_open", "invalidations"), [(True, 1), (False, 0)])
+    async def test_close_invalidates_only_a_transaction_its_rollback_left_open(
+        self, still_open: bool, invalidations: int
+    ) -> None:
+        session = make_session()
+        session.in_transaction.return_value = still_open
+        uow = SQLAlchemyUnitOfWork(make_session_manager(session))
+        await uow.begin()
+        with pytest.raises(TimeoutError):
+            await run_to_completion(uow.rollback(), timeout=0)
+
+        await uow.close()
+
+        assert (session.rollback.await_count, session.invalidate.await_count) == (0, invalidations)
+
     async def test_a_failure_to_close_still_resets_the_tokens_and_propagates(self) -> None:
         sm = RecordingSessionManager(make_session(), exit_error=ConnectionError("pool gone"))
         uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
@@ -513,6 +529,42 @@ class TestPhased:
         await asyncio.sleep(0)
 
         assert observed == [True]
+        assert sm.exits == 1
+
+    async def test_a_close_cancelled_while_invalidating_still_exits_and_resets_the_tokens(
+        self,
+    ) -> None:
+        gate, invalidating = asyncio.Event(), asyncio.Event()
+
+        async def _invalidate() -> None:
+            invalidating.set()
+            await gate.wait()
+
+        session = make_session()
+        session.in_transaction.return_value = True
+        session.invalidate = AsyncMock(side_effect=_invalidate)
+        sm = RecordingSessionManager(session)
+        uow = SQLAlchemyUnitOfWork(sm)  # type: ignore[arg-type]
+        observed: list[tuple[bool, bool, bool]] = []
+
+        async def close() -> None:
+            await uow.begin()
+            try:
+                await uow.close()
+            finally:
+                observed.append(
+                    (uow.session is None, in_atomic_transaction(), _mutations.get() is None)
+                )
+
+        task = asyncio.create_task(close())
+        await invalidating.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        gate.set()
+        await asyncio.sleep(0)
+
+        assert observed == [(True, False, True)]
         assert sm.exits == 1
 
 

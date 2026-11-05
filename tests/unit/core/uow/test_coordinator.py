@@ -8,19 +8,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import MagicMock
 
 import anyio
 import pytest
 from sqlalchemy.engine import make_url
 
+from loom.core._async import run_to_completion
 from loom.core.errors.codes import ErrorCode
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.transaction import in_atomic_transaction
+from loom.core.uow import coordinator as coordinator_module
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     UNKNOWN_PHYSICAL,
@@ -538,16 +541,27 @@ class TestHungRollback:
 
         assert done == {task}
 
-    async def test_every_rollback_of_the_invocation_shares_one_deadline(self) -> None:
+    async def test_every_rollback_of_the_invocation_shares_one_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        budgets: list[float] = []
+
+        async def _recording(step: Coroutine[Any, Any, None], *, timeout: float) -> None:
+            budgets.append(timeout)
+            await run_to_completion(step, timeout=timeout)
+
+        monkeypatch.setattr(coordinator_module, "run_to_completion", _recording)
         ledger = Ledger()
         hung = [PhasedStore(key, ledger, Fault("rollback", Effect.CANCEL)) for key in (S0, S1)]
-        coordinator, scope = _coordinator(*hung, rollback_timeout=0.4), Scope()
+        coordinator, scope = _coordinator(*hung, rollback_timeout=0.1), Scope()
         await _enlist_all(coordinator, scope, S0, S1)
-        started = asyncio.get_running_loop().time()
+        error = Boom("business")
 
-        await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
+        outcome = await _finish_within_a_second(coordinator, scope, error, ledger)
 
-        assert asyncio.get_running_loop().time() - started < 0.7
+        assert budgets == [pytest.approx(0.1), pytest.approx(0.0, abs=0.05)]
+        assert outcome.stores == (RolledBack(S0, error), RolledBack(S1, error))
+        assert ledger.calls_of(S0)[-1] == "close"
 
 
 async def _finish_within_a_second(
