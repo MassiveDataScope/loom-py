@@ -308,19 +308,25 @@ def _discover_from_manifest(
 
 
 def _worker_discovery(ctx: ConfigContext) -> DiscoveryConfig:
-    """Decode ``app.discovery`` as a worker reads it.
+    """Decode ``app.discovery`` of *ctx* as :func:`worker_discovery` does.
+
+    Raises:
+        ConfigError: When ``app`` is absent, or as :func:`worker_discovery`.
+    """
+    return worker_discovery(ctx.section(ConfigKey.APP, dict[str, Any]).get("discovery", {}))
+
+
+def worker_discovery(written: object) -> DiscoveryConfig:
+    """Decode the ``app.discovery`` section *written* as a worker reads it.
 
     The mode defaults to ``modules``, and keys the section does not declare
     are ignored.
 
     Raises:
-        ConfigError: When ``app`` is absent, the section fails validation
-            or its mode is neither ``modules`` nor ``manifest``.
+        ConfigError: When the section fails validation or its mode is
+            neither ``modules`` nor ``manifest``.
     """
-    app = ctx.section(ConfigKey.APP, dict[str, Any])
-    discovery = decode_discovery(
-        app.get("discovery", {}), default_mode=_WORKER_MODES[0], strict=False
-    )
+    discovery = decode_discovery(written, default_mode=_WORKER_MODES[0], strict=False)
     if discovery.mode not in _WORKER_MODES:
         raise ConfigError(
             f"app.discovery.mode {discovery.mode!r} is not one a worker scans: "
@@ -335,7 +341,7 @@ def _discover_compilables_from_config(
 ) -> WorkerComponents:
     if discovery_cfg.mode == "modules":
         return _discover_from_modules(discovery_cfg, autocrud_use_cases)
-    # _worker_discovery admits no mode but modules and manifest.
+    # worker_discovery admits no mode but modules and manifest.
     return _discover_from_manifest(discovery_cfg, autocrud_use_cases)
 
 

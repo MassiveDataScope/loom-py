@@ -11,6 +11,7 @@ import yaml
 from fastapi import FastAPI
 
 from loom.composition import create_app
+from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
 from loom.core.identity import Identity
 from loom.rest.auth import RequestCredentials
@@ -107,6 +108,19 @@ def test_the_entry_variable_selects_the_function_in_production(
 
     assert call("GET", "/items/12", headers=bearer("alice")).status == 404
     assert call("GET", "/ops/admin", headers=bearer("alice", "admin")).status == 200
+
+
+def test_a_function_authenticating_no_caller_stops_startup_in_production(
+    project: Callable[..., str], serve: Callable[..., Any]
+) -> None:
+    def silence_cursor_check(config: dict[str, Any], _root: Path) -> None:
+        config["checks"] = {"silenced": ["loom.cursors.E001"]}
+
+    functions = {"public_api": {"http": ["ItemInterface"], "auth": {}}}
+    path = project("public_api", functions, silence_cursor_check)
+
+    with pytest.raises(DeployCheckError, match="lambda.functions.public_api.auth"):
+        serve(path, environment="production")
 
 
 class _HeaderAuthenticator:

@@ -108,6 +108,28 @@ class TestRestChecks:
 
         assert _rest_ids({"name": "demo", "rest": rest}) == [AUTHENTICATION_CHECK]
 
+    @pytest.mark.parametrize(
+        "auth", [{}, {"jwt": None}, {"custom": False}], ids=["empty", "null-jwt", "custom-false"]
+    )
+    def test_a_function_auth_replacing_the_api_one_with_none_fails_e001(
+        self, auth: dict[str, Any]
+    ) -> None:
+        functions = {"public": {"http": ["Orders"]}, "admin": {"http": ["Admin"], "auth": auth}}
+        document = {"app": {"rest": _CUSTOM_AUTH}, "lambda": {"functions": functions}}
+
+        report = run_deploy_checks(ConfigContext.from_dict(document))
+
+        (result,) = [r for r in report.results if r.id == AUTHENTICATION_CHECK]
+        assert result.message.endswith("is set in lambda.functions.admin.auth.")
+
+    def test_a_function_auth_naming_a_mechanism_passes_e001(self) -> None:
+        functions = {"admin": {"http": ["Admin"], "auth": {"jwt": {"secret_path": "/k"}}}}
+        document = {"app": {"rest": _CUSTOM_AUTH}, "lambda": {"functions": functions}}
+
+        report = run_deploy_checks(ConfigContext.from_dict(document))
+
+        assert AUTHENTICATION_CHECK not in [r.id for r in report.results]
+
     def test_the_default_documentation_urls_publish_the_schema(self) -> None:
         rest = {"auth": {"jwt": {"secret_path": "/k"}}}
 

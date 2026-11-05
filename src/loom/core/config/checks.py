@@ -22,7 +22,7 @@ _PLACEHOLDER: Final = "${"
 
 @deploy_check(EMBEDDED_PASSWORD_CHECK)
 def _embedded_password(config: ConfigContext) -> Finding | None:
-    paths = _password_urls(_document(config), "")
+    paths = _password_urls(config.document(), "")
     if not paths:
         return None
     named = ", ".join(paths)
@@ -30,17 +30,6 @@ def _embedded_password(config: ConfigContext) -> Finding | None:
         message=f"{named} embeds a password in a URL.",
         hint="move the password to a password field and leave it out of the URL.",
     )
-
-
-def _document(config: ConfigContext) -> object:
-    """Return the loaded document unresolved.
-
-    ``raw`` reads one key. This check has to see every key, still without
-    calling a resolver.
-    """
-    from omegaconf import OmegaConf
-
-    return OmegaConf.to_container(config._config, resolve=False)
 
 
 def _password_urls(node: object, path: str) -> list[str]:

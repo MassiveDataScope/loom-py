@@ -36,11 +36,11 @@ import logging
 import operator
 import types
 import typing
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from http import HTTPStatus
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 import msgspec
 
@@ -124,16 +124,17 @@ def _collision_message(
 
 
 _MAX_LISTED_CANDIDATES = 20
+_Route = TypeVar("_Route")
 
 
-def _format_candidates(routes: Sequence[CompiledRoute]) -> str:
-    """Render the ``(method, full_path)`` of every *routes* entry, capped.
+def _format_candidates(keys: Iterable[tuple[str, str]]) -> str:
+    """Render the ``(method, full_path)`` *keys*, capped.
 
-    *routes* are the Python-declared routes actually eligible for
+    *keys* are those of the Python-declared routes actually eligible for
     disablement — what an operator fixing a typo needs to see, since the
     entry that failed to match named none of them.
     """
-    candidates = sorted({(r.route.method.upper(), r.full_path) for r in routes})
+    candidates = sorted(set(keys))
     if not candidates:
         return "no Python-declared route is eligible for disablement."
     shown = candidates[:_MAX_LISTED_CANDIDATES]
@@ -143,10 +144,42 @@ def _format_candidates(routes: Sequence[CompiledRoute]) -> str:
     return f"eligible routes are: {rendered}{suffix}."
 
 
+def full_path(interface: type[RestInterface[Any]], route: RestRoute) -> str:
+    """The path *route* of *interface* is published under, prefix included."""
+    prefix = interface.prefix.rstrip("/")
+    return f"{prefix}{route.path}" if route.path else prefix or "/"
+
+
+def _compiled_key(route: CompiledRoute) -> tuple[str, str]:
+    return route.route.method.upper(), route.full_path
+
+
+def published_routes(sources: RouteSources) -> list[tuple[str, str]]:
+    """The ``(METHOD, full_path)`` of each route :meth:`RestInterfaceCompiler.compile_sources`
+    mounts from *sources*, compiling none.
+
+    Raises:
+        InterfaceCompilationError: If a ``disabled`` entry matches no
+            Python-declared route.
+    """
+
+    python = [
+        (interface, (route.method.upper(), full_path(interface, route)))
+        for interface in (*sources.python, *sources.unserved)
+        for route in interface.routes
+    ]
+    kept = _apply_disablement(python, sources.disabled, lambda entry: entry[1])
+    unserved = set(sources.unserved)
+    config = [(r.method.upper(), full_path(i, r)) for i in sources.config for r in i.routes]
+    return [key for interface, key in kept if interface not in unserved] + config
+
+
 def _apply_disablement(
-    routes: list[CompiledRoute], disabled: Sequence[tuple[str, str]]
-) -> list[CompiledRoute]:
-    """Drop every Python-declared route named by *disabled*.
+    routes: list[_Route],
+    disabled: Sequence[tuple[str, str]],
+    key: Callable[[_Route], tuple[str, str]],
+) -> list[_Route]:
+    """Drop every Python-declared route named by *disabled*, each known by its *key*.
 
     Only Python-declared routes are eligible: a route declared in
     ``app.rest.interfaces`` is removed by deleting it from the config
@@ -160,11 +193,10 @@ def _apply_disablement(
         return routes
     targets = {(method.upper(), path) for method, path in disabled}
     matched: set[tuple[str, str]] = set()
-    kept: list[CompiledRoute] = []
+    kept: list[_Route] = []
     for route in routes:
-        key = (route.route.method.upper(), route.full_path)
-        if key in targets:
-            matched.add(key)
+        if key(route) in targets:
+            matched.add(key(route))
             continue
         kept.append(route)
     unmatched = targets - matched
@@ -180,7 +212,7 @@ def _apply_disablement(
             "Name the full path, prefix included, of a Python-declared "
             "route that would otherwise be published — check for a typo "
             "or a route already removed. "
-            f"{_format_candidates(routes)}"
+            f"{_format_candidates(map(key, routes))}"
         )
     return kept
 
@@ -690,7 +722,7 @@ class RestInterfaceCompiler:
         unserved = self._compile_many(sources.unserved)
         dropped = {id(route) for route in unserved}
         kept = _apply_disablement(
-            [*self._compile_many(sources.python), *unserved], sources.disabled
+            [*self._compile_many(sources.python), *unserved], sources.disabled, _compiled_key
         )
         python_routes = [route for route in kept if id(route) not in dropped]
         self._track_routes(python_routes, _RouteOrigin.PYTHON, seen)
@@ -721,7 +753,7 @@ class RestInterfaceCompiler:
         finds nothing occupying it.
         """
         for route in routes:
-            key = (route.route.method.upper(), route.full_path)
+            key = _compiled_key(route)
             new_label = f"{origin.value} ({route.interface_name})"
             if key in seen:
                 raise InterfaceCompilationError(
@@ -735,7 +767,6 @@ class RestInterfaceCompiler:
 
     def _compile_fresh(self, interface: type[RestInterface[Any]]) -> list[CompiledRoute]:
         iface_name = interface.__qualname__
-        prefix = interface.prefix.rstrip("/")
 
         self._validate_interface(interface)
 
@@ -754,7 +785,7 @@ class RestInterfaceCompiler:
                 )
             seen[key] = route
 
-            full_path = f"{prefix}{route.path}" if route.path else prefix or "/"
+            path = full_path(interface, route)
             where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
             takes_query_spec = any(names_query_spec(pb.annotation) for pb in plan.param_bindings)
             pagination = self._resolve_pagination(route, interface)
@@ -771,7 +802,7 @@ class RestInterfaceCompiler:
                 CompiledRoute(
                     interface_name=iface_name,
                     route=route,
-                    full_path=full_path,
+                    full_path=path,
                     effective_pagination_mode=pagination,
                     effective_profile_default=self._resolve_profile_default(route, interface),
                     effective_allowed_profiles=self._resolve_allowed_profiles(route, interface),

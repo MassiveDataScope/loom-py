@@ -22,6 +22,22 @@
   `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
   `false` makes the SQS handler fail the whole batch.
 
+### lambda
+
+- **lambda:** `loom deploy manifest <config> [--function x]` prints a
+  versioned JSON manifest (`manifest_version: 1`) of each function of
+  `lambda.functions` for a deployment tool: the handler, code path and
+  queues once, then per function its http routes and `auth` or its sqs queue
+  and event source mapping, and the secret and SSM parameter names it
+  resolves (never values; no resolver runs). It runs the deploy
+  checks of `loom check --deploy` first, prints their findings to stderr and
+  no manifest when one fails. New keys: `lambda.handler` and
+  `lambda.functions.<name>.queue` (a key of `sqs.queues`), both required by
+  the manifest only.
+- **rest:** `loom.rest.E001` also fails a `lambda.functions.<name>.auth`
+  that names no mechanism (`{}`, `jwt: null`, `custom: false`): it replaces
+  `app.rest.auth` for that function.
+
 ### testing
 
 - **testing:** Lambda functions are tested in process, without AWS:

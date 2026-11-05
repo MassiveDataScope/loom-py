@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from loom.core.config.binder import StructBinder
 from loom.core.config.configurable import ConfigBinding
@@ -146,14 +146,18 @@ class ConfigContext:
         Returns:
             The value as written, or *default*.
         """
-        from omegaconf import OmegaConf
-
-        node: Any = OmegaConf.to_container(self._config, resolve=False)
+        node: Any = self.document()
         for part in _key_str(key).split("."):
             if not isinstance(node, dict) or part not in node:
                 return default
             node = node[part]
         return node
+
+    def document(self) -> dict[str, Any]:
+        """Return the whole configuration as written, resolving nothing, as :meth:`raw` reads it."""
+        from omegaconf import OmegaConf
+
+        return cast("dict[str, Any]", OmegaConf.to_container(self._config, resolve=False))
 
     def section_optional(self, key: str | ConfigKey, target: type[T]) -> T | None:
         """Extract *key* as *target* when present, otherwise return ``None``.
