@@ -6,10 +6,10 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.composition import create_app
-from loom.rest.fastapi import FastAPIAdapter
 from loom.serverless.aws.lambda_ import LambdaHTTPAdapter, LambdaHTTPHandler
 from tests.helpers.composition import application_openings
 from tests.unit.serverless.aws.lambda_.http._clients import (
@@ -34,15 +34,30 @@ def contract_project(tmp_path_factory: pytest.TempPathFactory) -> Callable[..., 
 
 
 @pytest.fixture(scope="module")
-def fastapi_served(contract_project: Callable[..., str]) -> Iterator[Client]:
-    app = create_app(contract_project(), adapter=FastAPIAdapter(), environment="test")
+def contract_config(contract_project: Callable[..., str]) -> str:
+    """One configuration and one codebase, served by both adapters."""
+    return contract_project()
+
+
+def _served_as(entry: str, config: str) -> object:
+    """Compose *config* as a deployment does: only ``LOOM__APP__ENTRY`` picks the adapter."""
+    with pytest.MonkeyPatch.context() as env:
+        env.setenv("LOOM__APP__ENTRY", entry)
+        return create_app(config, environment="test")
+
+
+@pytest.fixture(scope="module")
+def fastapi_served(contract_config: str) -> Iterator[Client]:
+    app = _served_as("fastapi", contract_config)
+    assert isinstance(app, FastAPI)
     with TestClient(app) as test_client:
         yield driven_by(test_client)
 
 
 @pytest.fixture(scope="module")
-def lambda_served(contract_project: Callable[..., str]) -> Iterator[Client]:
-    handler = create_app(contract_project(), adapter=LambdaHTTPAdapter(), environment="test")
+def lambda_served(contract_config: str) -> Iterator[Client]:
+    handler = _served_as("lambda_http", contract_config)
+    assert isinstance(handler, LambdaHTTPHandler)
     yield lambda_client(handler)
     handler.close()
 
