@@ -300,6 +300,21 @@ async def test_without_a_cancellation_one_error_carries_every_failure_by_lane() 
     assert info.value.failures == tuple(errors)
 
 
+async def test_a_failure_after_a_commit_is_logged_by_job_and_task(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel = PostCommitChannel()
+    channel.enqueue_publish(_Send(ConnectionError("broker down")))
+    drained = channel.drain(committed=True)
+
+    with pytest.raises(PostCommitError):
+        await drained
+
+    fields = _event(caplog, "PostCommitActionFailed")
+    assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
+    assert "broker down" in fields["error"]
+
+
 async def test_a_publish_runs_before_an_inline_job_queued_earlier() -> None:
     calls: list[str] = []
     channel = PostCommitChannel()

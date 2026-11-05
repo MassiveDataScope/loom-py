@@ -212,9 +212,10 @@ class PostCommitChannel:
             _log_failures(plain_failures)
             self._settle_interrupted(pending)
             raise
-        failures = [error for _, error in (*shielded_failures, *plain_failures)]
-        if failures:
-            raise PostCommitError(committed=committed, failures=tuple(failures))
+        failed = [*shielded_failures, *plain_failures]
+        if failed:
+            _log_failures(failed, _FAILURE)
+            raise PostCommitError(committed=committed, failures=tuple(e for _, e in failed))
 
     def _settle_interrupted(self, pending: collections.deque[PostCommitAction]) -> None:
         remaining = [*pending, *self._actions]
@@ -230,6 +231,7 @@ _Failure = tuple[PostCommitAction, Exception]
 _PLAIN_DROPPED = "PostCommitPlainActionsDropped"
 _SHIELDED_UNSENT = "PostCommitShieldedActionNeverRan"
 _UNREPORTED_FAILURE = "PostCommitActionFailedAfterInterruption"
+_FAILURE = "PostCommitActionFailed"
 
 
 def _log_unreported(
@@ -267,10 +269,10 @@ def log_never_ran(action: PostCommitAction) -> None:
         _logger.error(_SHIELDED_UNSENT, **fields)
 
 
-def _log_failures(failures: list[_Failure]) -> None:
+def _log_failures(failures: list[_Failure], event: str = _UNREPORTED_FAILURE) -> None:
     for action, error in failures:
         for fields in _describe(action):
-            _logger.error(_UNREPORTED_FAILURE, **fields, error=repr(error))
+            _logger.error(event, **fields, error=repr(error))
 
 
 def _describe(action: PostCommitAction) -> Iterable[Mapping[str, object]]:
