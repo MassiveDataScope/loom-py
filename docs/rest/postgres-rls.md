@@ -529,15 +529,17 @@ default. Two applications in one process share no table, listener or registry.
 With scoped models on Postgres, `mode: create_all` fails at startup: the application,
 which carries the scope provider, never creates schema. Create it with the migrator.
 
-In `mode: external`, startup fails with `ConfigError` when scoped models meet a dialect
-other than Postgres without `allow_unprotected_dialect`, and when the application
-connects as a superuser or a role with `BYPASSRLS`, which row-level security does not
-restrain. Use the URL of a `read` or `write` user. Startup also reads the catalogue and
-fails with `ConfigError` when a scoped table is missing or not protected canonically
-(forced row-level security, exactly the `loom_*` policies its privileges admit, all
-permissive, and its `loom_deny_owner_dml` trigger enabled `ALWAYS` on this guard's
-function), or when the guard installed in the database is not one this release of loom
-shipped or is below the minimum compatible revision; see
+On Postgres, startup fails with `ConfigError` in every mode, `create_all` included, when
+the application connects as a superuser or a role with `BYPASSRLS`, which row-level
+security does not restrain: it would read the scoped tables of any store sharing the
+database. Use the URL of a `read` or `write` user, or, with `create_all`, of an ordinary
+role that owns its schema. In `mode: external`, startup also fails when scoped models
+meet a dialect other than Postgres without `allow_unprotected_dialect`, and it reads the
+catalogue and fails with `ConfigError` when a scoped table is missing or not protected
+canonically (forced row-level security, exactly the `loom_*` policies its privileges
+admit, all permissive, and its `loom_deny_owner_dml` trigger enabled `ALWAYS` on this
+guard's function), or when the guard installed in the database is not one this release
+of loom shipped or is below the minimum compatible revision; see
 [Why the guard is static SQL](#why-the-guard-is-static-sql) and
 [Adding users and upgrading loom](#adding-users-and-upgrading-loom).
 

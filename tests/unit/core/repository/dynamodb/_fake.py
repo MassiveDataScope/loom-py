@@ -13,7 +13,7 @@ class FakeClient:
     Stores items per table in low-level ``AttributeValue`` form (exactly what
     the client API sends and returns), indexed by the single partition-key
     attribute. Honours the ``attribute_not_exists`` / ``attribute_exists``
-    conditions used by ``create`` / ``update`` by raising a real
+    conditions used by ``create`` / ``update`` / ``delete`` by raising a real
     :class:`botocore.exceptions.ClientError` with the
     ``ConditionalCheckFailedException`` code, so error mapping is exercised
     end-to-end.
@@ -45,11 +45,16 @@ class FakeClient:
         return {}
 
     def delete_item(  # noqa: N803 - boto3 kwarg names
-        self, *, TableName: str, Key: dict[str, Any], ReturnValues: str | None = None
+        self,
+        *,
+        TableName: str,
+        Key: dict[str, Any],
+        ConditionExpression: str | None = None,
+        ExpressionAttributeNames: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        removed = self.items[TableName].pop(self._pk(Key), None)
-        if removed is not None and ReturnValues == "ALL_OLD":
-            return {"Attributes": removed}
+        table = self.items[TableName]
+        self._check_condition(ConditionExpression, exists=self._pk(Key) in table)
+        table.pop(self._pk(Key), None)
         return {}
 
     def describe_table(self, *, TableName: str) -> dict[str, Any]:  # noqa: N803 - boto3 kwarg names

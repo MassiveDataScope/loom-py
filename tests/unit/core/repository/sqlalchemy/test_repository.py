@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
@@ -16,6 +17,13 @@ from loom.core.repository.abc import (
 )
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
+
+
+def _session_of(session_manager: Any) -> AsyncMock:
+    """A session double bound to ``session_manager``'s engine."""
+    session = AsyncMock()
+    session.get_bind = Mock(return_value=SimpleNamespace(engine=session_manager.engine.sync_engine))
+    return session
 
 
 class TestRepositorySessionScope:
@@ -92,7 +100,7 @@ class TestRepositorySessionScope:
             model=dummy_model,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
-        explicit_session = AsyncMock()
+        explicit_session = _session_of(mock_session_manager)
 
         async with repo._session_scope(explicit_session, write=False):
             pass
@@ -144,7 +152,7 @@ class TestWithSessionScopeDecorator:
             model=dummy_model,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
-        explicit_session = AsyncMock()
+        explicit_session = _session_of(mock_session_manager)
 
         result = await repo.custom_operation(10, session=explicit_session)
 

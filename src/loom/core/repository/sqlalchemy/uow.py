@@ -191,8 +191,15 @@ class SQLAlchemyUnitOfWork(EntersAlone):
             self._reset_context()
 
     async def _exit_session(self) -> None:
-        """Exit the session context manager; the session is gone afterwards."""
-        session_cm, self._session_cm, self._session = self._session_cm, None, None
+        """Exit the session context manager; the session is gone afterwards.
+
+        A transaction still open, its rollback timed out before it began, is
+        invalidated first: its connection is closed, not reset and pooled.
+        """
+        session_cm, session = self._session_cm, self._session
+        self._session_cm, self._session = None, None
+        if session is not None and session.in_transaction():
+            await self._invalidate(session)
         if session_cm is not None:
             await session_cm.__aexit__(None, None, None)
 

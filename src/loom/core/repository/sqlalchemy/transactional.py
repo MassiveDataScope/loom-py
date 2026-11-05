@@ -174,13 +174,17 @@ def _require_enlisted(scope: InvocationScope, session_manager: SessionManager) -
         UndeclaredStoreWrite: When the store is not enlisted in ``scope``, or
             the running execution did not declare it.
     """
-    if scope.participant_for(session_manager.store, session_manager, write=True) is None:
-        enlisted = ", ".join(scope.participants)
-        raise UndeclaredStoreWrite(
-            f"{ForeignSessionError.side(session_manager.store, session_manager.target)} "
-            "cannot join this invocation, "
-            + (f"which enlisted only store {enlisted}" if enlisted else "with no store enlisted")
-        )
+    store = session_manager.store
+    # Without a frame the checkpoint refuses every write; a store not enlisted is named here.
+    if not (scope.frames or store in scope.participants):
+        scope.require_owner()
+    elif scope.participant_for(store, session_manager, write=True) is not None:
+        return
+    enlisted = ", ".join(scope.participants)
+    raise UndeclaredStoreWrite(
+        f"{ForeignSessionError.side(store, session_manager.target)} cannot join this invocation, "
+        + (f"which enlisted only store {enlisted}" if enlisted else "with no store enlisted")
+    )
 
 
 def _reject_repository_owner(owner: Any) -> None:

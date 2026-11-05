@@ -169,3 +169,24 @@ def test_the_composition_registers_no_elevation_sink_without_a_store_that_elevat
     application = build_application(fixture_project(), adapter=_Bare(), environment="test")
 
     assert application.kernel.executor._elevation_sink is None
+
+
+def test_the_rollback_deadline_comes_from_the_persistence_section(
+    fixture_project: ProjectFactory,
+) -> None:
+    project = fixture_project(persistence={"rollback_timeout": 5})
+
+    application = build_application(project, adapter=_Bare(), environment="test")
+
+    assert application.kernel.executor._coordinator._rollback_timeout == 5.0
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_a_rollback_deadline_not_above_zero_is_refused(
+    fixture_project: ProjectFactory, timeout: int
+) -> None:
+    project = fixture_project(persistence={"rollback_timeout": timeout})
+    adapter = _Bare()
+
+    with pytest.raises(ConfigError, match="persistence.rollback_timeout must be above zero"):
+        build_application(project, adapter=adapter, environment="test")

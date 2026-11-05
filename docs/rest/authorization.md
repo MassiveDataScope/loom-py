@@ -321,7 +321,8 @@ It also raises `ElevableScopeInSeveralStores`
 named in `elevations`, is declared by two or more stores: an elevation must reach exactly
 one store. A shared scope that is never elevated stays allowed. The composition calls it
 at startup with the compiled scoped tables of every store whose `schema.mode` is
-`external` on Postgres; it remains available for programmatic use.
+`external` on Postgres, with or without a registered product: without one, only the
+one-store rule applies. It remains available for programmatic use.
 
 ## Elevating a write scope
 
@@ -350,6 +351,7 @@ else:
 | Error | Cause |
 |---|---|
 | `RuntimeError` | no use-case execution is running |
+| `ReadOnlyElevation` | the execution is read-only: elevable scopes are write-only; a read-only execution cannot write, and its per-call sessions would autocommit with the flag on |
 | `ConfigError` | no product is registered, or `scope` is not in `AuthzProduct.elevations` |
 | `PermissionError` | the decision is denied, its grant's role is not in `catalog.roles_with(elevations[scope])`, or its grant's scope does not cover `at` |
 

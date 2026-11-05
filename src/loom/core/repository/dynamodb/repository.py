@@ -42,7 +42,8 @@ from loom.core.repository.abc import (
     UnsupportedQuery,
     Updatable,
 )
-from loom.core.uow.scope import current_participant
+from loom.core.uow.coordinator import Participant
+from loom.core.uow.scope import InvocationScope, current_scope
 
 _ResultT = TypeVar("_ResultT")
 
@@ -168,11 +169,9 @@ class RepositoryDynamoDB(
         existing item; a failed condition is surfaced as
         :class:`~loom.core.errors.Conflict`.
         """
-        self._require_writable()
         internal = self._to_internal(data)
         try:
-            await run_in_executor(
-                self._executor,
+            await self._write(
                 self._client.put_item,
                 TableName=self._table_name,
                 Item=self._encode_item(internal),
@@ -196,7 +195,7 @@ class RepositoryDynamoDB(
         ``None`` when no item exists for ``obj_id`` — whether detected by the
         initial read or by the conditional write losing the race.
         """
-        self._require_writable()
+        self._check_write()
         response = await run_in_executor(
             self._executor,
             self._client.get_item,
@@ -210,8 +209,7 @@ class RepositoryDynamoDB(
         changes.pop(self._id_attr, None)
         merged = {**self._decode_item(existing), **changes}
         try:
-            await run_in_executor(
-                self._executor,
+            await self._write(
                 self._client.put_item,
                 TableName=self._table_name,
                 Item=self._encode_item(merged),
@@ -226,19 +224,43 @@ class RepositoryDynamoDB(
 
     async def delete(self, obj_id: IdT) -> bool:
         """Delete an item by partition key, returning whether it existed."""
-        self._require_writable()
-        response = await run_in_executor(
-            self._executor,
-            self._client.delete_item,
-            TableName=self._table_name,
-            Key=self._encode_key(obj_id),
-            ReturnValues="ALL_OLD",
-        )
-        return "Attributes" in response
+        try:
+            await self._write(
+                self._client.delete_item,
+                TableName=self._table_name,
+                Key=self._encode_key(obj_id),
+                ConditionExpression="attribute_exists(#pk)",
+                ExpressionAttributeNames={"#pk": self._id_attr},
+            )
+        except self._client_error as exc:
+            if _is_conditional_check_failure(exc):
+                return False
+            raise
+        return True
 
-    def _require_writable(self) -> None:
-        """Pass the write through the invocation scope's checkpoint, on the event loop."""
-        current_participant(self._store, self._client, write=True)
+    def _check_write(self) -> tuple[InvocationScope | None, Participant | None]:
+        """Pass a write through the invocation scope's checkpoint, on the event loop."""
+        scope = current_scope()
+        if scope is None:
+            return None, None
+        return scope, scope.participant_for(self._store, self._client, write=True, record=False)
+
+    async def _write(self, call: Callable[..., object], **kwargs: Any) -> None:
+        """Run one client write, checked before the call and recorded once it may have landed.
+
+        A failed condition wrote nothing and is not recorded; a timeout or
+        any other failure may have written, and is.
+        """
+        scope, participant = self._check_write()
+        landed = True
+        try:
+            await run_in_executor(self._executor, call, **kwargs)
+        except self._client_error as exc:
+            landed = not _is_conditional_check_failure(exc)
+            raise
+        finally:
+            if landed and scope is not None and participant is not None:
+                scope.record_write(participant)
 
     def _unsupported_field(self, operation: str, field: str) -> UnsupportedQuery:
         """Build the error for a lookup on a field the partition key does not cover."""

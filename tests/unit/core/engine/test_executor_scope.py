@@ -19,7 +19,9 @@ from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import active_channel
+from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.repository.abc import RepoFor
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.coordinator import (
     Committed,
@@ -36,10 +38,13 @@ from loom.core.uow.scope import (
     StoresNotCommitted,
     current_scope,
 )
+from loom.core.use_case import Joined
+from loom.core.use_case.errors import JoinedAutocommitStore
 
 from ..uow._coordinator_fakes import (
     Boom,
     Effect,
+    Factory,
     Fault,
     Ledger,
     NonTransactionalStore,
@@ -796,3 +801,37 @@ async def _hundred_invocations() -> tuple[list[InvocationScope], Ledger, list[bo
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     return scopes, ledger, clean
+
+
+class _AuditEntry(BaseModel):
+    __tablename__ = "executor_scope_audit_entries"
+    __store__ = "audit"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
+class _Audited(Run):
+    """Declares ``Joined`` on ``audit``; compiled on its first execution, not at startup."""
+
+    def __init__(self, body: Body, entries: Joined[RepoFor[_AuditEntry]]) -> None:
+        super().__init__(body)
+        self.entries = entries
+
+
+class TestJoinedStoreThatCannotRollBack:
+    async def test_it_is_refused_before_the_use_case_runs(self) -> None:
+        ledger = Ledger()
+        ran: list[str] = []
+        audit = Factory(NonTransactionalStore(AUDIT, ledger))
+        coordinator = OrderedCommits({DEFAULT_STORE: _Stores(ledger), AUDIT: audit})
+        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+
+        async def body() -> None:
+            ran.append("ran")
+
+        use_case = _Audited(body, cast(Joined[RepoFor[_AuditEntry]], None))
+
+        with pytest.raises(JoinedAutocommitStore, match="store audit, which cannot roll back"):
+            await executor.execute(use_case)
+
+        assert ran == []

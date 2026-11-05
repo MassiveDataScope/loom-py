@@ -76,11 +76,12 @@ def _scope_for(*stores: PhasedStore) -> InvocationScope:
 
 
 async def _enlisted(*keys: StoreKey) -> tuple[InvocationScope, dict[StoreKey, PhasedStore]]:
-    """A scope owned by the current task with ``keys`` enlisted."""
+    """A scope owned by the current task with ``keys`` enlisted, an execution running on them."""
     stores = _stores(Ledger(), *keys)
     scope = InvocationScope(asyncio.current_task(), _coordinator(*stores.values()))
     for key in keys:
         await scope.coordinator.enlist(scope, key)
+    scope.frames.append(Frame(keys[0], frozenset(keys)))
     return scope, stores
 
 
@@ -143,10 +144,17 @@ class TestParticipantForFromTheOwner:
 
         assert scope.participant_for(S1, object(), write=False) is None
 
-    async def test_a_store_that_is_not_enlisted_returns_none_for_a_write(self) -> None:
-        scope, _ = await _enlisted(S0)
+    @pytest.mark.parametrize("key", [S0, S1], ids=["enlisted", "not-enlisted"])
+    async def test_a_write_with_no_execution_running_is_refused(self, key: StoreKey) -> None:
+        scope, stores = await _enlisted(S0)
+        scope.frames.clear()
 
-        assert scope.participant_for(S1, object(), write=True) is None
+        with pytest.raises(
+            UndeclaredStoreWrite, match="no execution of this invocation is running"
+        ):
+            scope.participant_for(key, stores[S0].owner, write=True)
+
+        assert scope.participants[S0].wrote is False
 
     async def test_a_write_marks_the_participant(self) -> None:
         scope, stores = await _enlisted(S0)
@@ -302,6 +310,7 @@ async def _with_autocommit() -> InvocationScope:
     scope = InvocationScope(asyncio.current_task(), coordinator)
     for key in (S0, S1):
         await coordinator.enlist(scope, key)
+    scope.frames.append(Frame(S0, frozenset({S1})))
     return scope
 
 
@@ -477,8 +486,8 @@ class TestCurrentParticipant:
     async def test_it_is_the_participant_of_the_published_scope(self) -> None:
         stores = _stores(Ledger(), S0)
 
-        async with invocation(_coordinator(*stores.values())) as scope:
-            enlisted = await scope.coordinator.enlist(scope, S0)
+        async with invocation(_coordinator(*stores.values())) as scope, scope.frame(Frame(S0)):
+            enlisted = scope.participants[S0]
             found = current_participant(S0, stores[S0].owner, write=True)
 
         assert found is enlisted
@@ -570,7 +579,7 @@ class TestSingleStore:
 
 class TestFramePush:
     async def test_the_frame_is_on_top_while_the_execution_runs(self) -> None:
-        scope, _ = await _enlisted(S0)
+        scope = _scope_for(*_stores(Ledger(), S0).values())
         frame = Frame(S0)
 
         async with scope.frame(frame):

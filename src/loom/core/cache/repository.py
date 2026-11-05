@@ -153,16 +153,13 @@ class _PrimaryKey(NamedTuple):
 _FALLBACK_PRIMARY_KEY = _PrimaryKey(attributes=("id",), python_types=(None,))
 
 
-def _resolve_primary_key(repository: Repository[Any, Any, Any, Any]) -> _PrimaryKey:
-    """Resolve the primary key of the wrapped repository's model.
+def _resolve_primary_key(model: type) -> _PrimaryKey:
+    """Resolve the primary key of the wrapped repository's ``model``.
 
-    Falls back to the attribute ``id`` with no type for a repository without a
-    model or whose model declares no primary key; the type of one attribute
-    alone is ``None`` when its annotation is not a plain class.
+    Falls back to the attribute ``id`` with no type for a model that
+    declares no primary key; the type of one attribute alone is ``None``
+    when its annotation is not a plain class.
     """
-    model = getattr(repository, "model", None)
-    if model is None:
-        return _FALLBACK_PRIMARY_KEY
     try:
         attributes = get_id_attributes(model)
     except (TypeError, ValueError):
@@ -239,6 +236,13 @@ class CachedRepository(
     ) -> None:
         _require_full_repository(repository)
         _require_reported_scope(repository)
+        model = getattr(repository, "model", None)
+        if not isinstance(model, type):
+            raise TypeError(
+                f"{type(repository).__qualname__} cannot be wrapped in CachedRepository: "
+                "it has no model, so the store its invalidations depend on is unknown"
+            )
+        self._store = store_of(model)
         self._repository = repository
         self._config = config
         self._cache = cache
@@ -246,9 +250,7 @@ class CachedRepository(
         fallback_name = repository.__class__.__name__.lower()
         self._entity_name = getattr(repository, "entity_name", fallback_name)
         self._depends_on = self._parse_dependency_specs(self._collect_dependency_specs(repository))
-        self._primary_key = _resolve_primary_key(repository)
-        model = getattr(repository, "model", None)
-        self._store = store_of(model) if isinstance(model, type) else None
+        self._primary_key = _resolve_primary_key(model)
         self._single_flight = SingleFlight(self._log_abandoned_load)
         self._rng = random.Random()
         self._log = get_logger(__name__).bind(repository=repository.__class__.__name__)

@@ -31,7 +31,7 @@ class _DummyModel(BaseModel):
 class MockSessionManager:
     metadata = get_metadata()
     store = DEFAULT_STORE
-    engine = SimpleNamespace(url=make_url("sqlite+aiosqlite://"))
+    engine = SimpleNamespace(url=make_url("sqlite+aiosqlite://"), sync_engine=object())
 
     # The real lookups: they need only ``store`` and the manager's identity.
     active_session = SessionManager.active_session

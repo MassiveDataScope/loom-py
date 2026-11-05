@@ -37,6 +37,7 @@ from loom.core.uow.scope import (
     invocation_error,
     unscoped,
 )
+from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
 from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 
 if TYPE_CHECKING:
@@ -424,9 +425,13 @@ class RuntimeExecutor:
             if read_only or plan.read_only:
                 if scope is not None and scope.owned_here():
                     async with scope.frame(_READ_ONLY):
-                        return await self._run_lifecycle(plan, compilable, inputs, None, None)
+                        return await self._run_lifecycle(
+                            plan, compilable, inputs, None, None, read_only=True
+                        )
                 with nullcontext() if scope is None else unscoped():
-                    return await self._run_lifecycle(plan, compilable, inputs, None, None)
+                    return await self._run_lifecycle(
+                        plan, compilable, inputs, None, None, read_only=True
+                    )
             owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
         finally:
@@ -455,6 +460,8 @@ class RuntimeExecutor:
         inputs: _ExecutionInputs,
         owned: Coordinator | None,
         enclosing: InvocationScope | None,
+        *,
+        read_only: bool = False,
     ) -> Any:
         """Run one execution: start event, invocation scope, one terminal event, drain.
 
@@ -466,6 +473,7 @@ class RuntimeExecutor:
                 opens one.
             enclosing: The scope already published in this context, which this
                 execution joins, if any.
+            read_only: Whether the execution writes nothing; it may not elevate.
         """
         state = self._begin_execution(plan.use_case_type.__qualname__)
         channel = PostCommitChannel() if owned is not None or active_channel() is None else None
@@ -476,7 +484,9 @@ class RuntimeExecutor:
             # the session-settings provider reads ``elevated_scopes()`` when a
             # transaction begins, which may be at that flush.
             async with elevation_scope(
-                owns_transaction=owned is not None, sink=self._elevation_sink
+                owns_transaction=owned is not None,
+                sink=self._elevation_sink,
+                read_only=read_only,
             ):
                 if owned is None:
                     result = await self._run_in_frame(enclosing, state, plan, compilable, inputs)
@@ -558,9 +568,15 @@ class RuntimeExecutor:
         compilable: Compilable,
         inputs: _ExecutionInputs,
     ) -> Any:
-        """Push this execution's frame on ``scope``, if any, and run the pipeline under it."""
+        """Push this execution's frame on ``scope``, if any, and run the pipeline under it.
+
+        Raises:
+            JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
+        """
         frame = nullcontext() if scope is None else scope.frame(Frame(plan.primary, plan.joined))
         async with frame:
+            if scope is not None:
+                _refuse_autocommit_joined(scope, plan)
             return await self._run_pipeline(state, plan, compilable, inputs)
 
     @staticmethod
@@ -1125,6 +1141,20 @@ class RuntimeExecutor:
     def _log_step(self, label: str) -> None:
         if self._debug:
             self._logger.info(f"[STEP] {label}")
+
+
+def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> None:
+    """Refuse a ``Joined`` store of ``plan`` whose enlisted unit of work cannot roll back.
+
+    What composition refuses at startup for the components it discovers,
+    for any plan, compiled then or on its first execution.
+    """
+    for key in sorted(plan.joined):
+        if not scope.participants[key].transactional:
+            issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
+                component=plan.use_case_type, store=key
+            )
+            raise JoinedAutocommitStore(issue)
 
 
 def _refuse_nesting(use_case: str) -> None:

@@ -30,6 +30,23 @@ _FLAG_STEP_TIMEOUT_S = 30.0
 """How long setting or clearing flags, then invalidating the session, may take."""
 
 
+class ReadOnlyElevation(RuntimeError):
+    """``elevate`` was called in a read-only execution.
+
+    Elevable scopes are write-only; a read-only execution cannot write, and
+    its per-call sessions would autocommit with the flag on.
+
+    Args:
+        scope: The scope asked for.
+    """
+
+    def __init__(self, scope: str) -> None:
+        super().__init__(
+            f"scope {scope!r} cannot be elevated in a read-only execution; "
+            "elevate in the use case that writes"
+        )
+
+
 class ElevationSink(Protocol):
     """How the frame reaches the open transactions of the stores that declare a scope.
 
@@ -56,6 +73,7 @@ class _Frame:
     owns_transaction: bool
     sink: ElevationSink | None
     parent: _Frame | None
+    read_only: bool = False
     scopes: set[str] = field(default_factory=set)
     is_open: bool = True
 
@@ -76,15 +94,19 @@ def elevated_scopes() -> frozenset[str]:
 
 @asynccontextmanager
 async def elevation_scope(
-    *, owns_transaction: bool, sink: ElevationSink | None = None
+    *, owns_transaction: bool, sink: ElevationSink | None = None, read_only: bool = False
 ) -> AsyncIterator[None]:
-    """Open a frame for one execution; a nested frame starts empty and never mutates its parent."""
+    """Open a frame for one execution; a nested frame starts empty and never mutates its parent.
+
+    A ``read_only`` execution's frame refuses every elevation.
+    """
     parent = _open_frame()
     inherited = parent.sink if parent is not None else None
     frame = _Frame(
         owns_transaction=owns_transaction,
         sink=sink or inherited,
         parent=parent,
+        read_only=read_only,
     )
     token = _elevation.set(frame)
     try:
@@ -109,12 +131,15 @@ async def elevate_scope(
 
     Raises:
         RuntimeError: Outside an execution frame.
+        ReadOnlyElevation: In a read-only execution.
         PermissionError: When the decision is denied, its grant's role lacks
             ``permission``, or its grant does not cover ``at``.
     """
     frame = _open_frame()
     if frame is None:
         raise RuntimeError("elevate requires an open execution frame")
+    if frame.read_only:
+        raise ReadOnlyElevation(scope)
     _check(decision, scope, at, permission, catalog)
     if scope in frame.scopes:
         return

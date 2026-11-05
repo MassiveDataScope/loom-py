@@ -47,7 +47,7 @@ from loom.core.persistence.stores import (
 )
 from loom.core.repository.abc import CursorCodec
 from loom.core.uow.abc import UnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.uow.coordinator import ROLLBACK_TIMEOUT_S, OrderedCommits
 from loom.core.use_case.errors import (
     JoinedAutocommitStore,
     UncomposedWriteStore,
@@ -352,7 +352,11 @@ def compose_application(
             cache_module_for(ctx),
             *_elevation_modules(wirings),
         ],
-        coordinator=OrderedCommits(factories) if factories else None,
+        coordinator=(
+            OrderedCommits(factories, rollback_timeout=_rollback_timeout(ctx))
+            if factories
+            else None
+        ),
         metrics=recipe.metrics,
         environment=source.environment,
     )
@@ -404,6 +408,18 @@ def _cursor_codec(ctx: ConfigContext, recipe: Recipe) -> CursorCodec | None:
     if recipe.connection_only or not recipe.discovered.models:
         return None
     return CursorCodec.from_context(ctx)
+
+
+def _rollback_timeout(ctx: ConfigContext) -> float:
+    """``persistence.rollback_timeout``: seconds the rollbacks of one invocation may take together.
+
+    Raises:
+        ConfigError: When it is not above zero.
+    """
+    timeout = ctx.section_or_default("persistence.rollback_timeout", float, ROLLBACK_TIMEOUT_S)
+    if timeout <= 0:
+        raise ConfigError(f"persistence.rollback_timeout must be above zero, got {timeout}")
+    return timeout
 
 
 def _elevation_modules(

@@ -16,10 +16,11 @@ import pytest
 from sqlalchemy.engine import make_url
 
 from loom.core.config import ConfigContext, ConfigError
+from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import WORKER_PROFILE
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from tests.helpers.persistence import build_backend
-from tests.integration.rls.conftest import execute
+from tests.integration.rls.conftest import execute, scalar
 
 pytestmark = pytest.mark.integration
 
@@ -89,3 +90,27 @@ async def test_a_table_carrying_loom_s_owner_trigger_refuses_the_probe(
 
     with pytest.raises(ConfigError, match=r"cannot protect scoped tables owned"):
         await _probe(url)
+
+
+class _Plain(BaseModel):
+    __tablename__ = "privileged_create_all_rows"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+
+
+async def test_create_all_as_a_superuser_is_refused_before_creating_anything(
+    module_database_uri: str,
+) -> None:
+    store = {"backend": "sqlalchemy", "url": module_database_uri, "schema": {"mode": "create_all"}}
+    cursors = {"cursors": {"signing": "ephemeral"}}
+    ctx = ConfigContext.from_dict({"stores": {"default": store}, "persistence": cursors})
+    wiring = build_backend(SQLAlchemyBackend(), ctx, (_Plain,), WORKER_PROFILE)
+    wiring.prepare_models((_Plain,))
+
+    with pytest.raises(ConfigError, match=r"stores\.default\.url connects as a superuser"):
+        await wiring.startup_checks()
+
+    assert (
+        await scalar(module_database_uri, "SELECT to_regclass('privileged_create_all_rows')")
+        is None
+    )
