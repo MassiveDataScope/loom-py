@@ -445,14 +445,17 @@ class TestOneStoreRaisesAsToday:
         with pytest.raises(Boom, match="commit failed on default"):
             await executor.execute(use_case)
 
-    async def test_a_lost_commit_acknowledgement_propagates_its_cause(self) -> None:
+    async def test_a_lost_commit_acknowledgement_raises_stores_not_committed(self) -> None:
+        """T101: never the driver error, which a job runner would retry."""
         stores = _Stores(Ledger(), Fault("commit", Effect.UNCERTAIN))
 
         executor = _executor(stores)
         use_case = Run(_done())
 
-        with pytest.raises(ConnectionError, match="lost commit ack"):
+        with pytest.raises(StoresNotCommitted) as raised:
             await executor.execute(use_case)
+
+        assert isinstance(raised.value.__cause__, ConnectionError)
 
     @pytest.mark.parametrize("phase", ["flush", "commit"])
     async def test_a_failure_ending_the_scope_is_reported_as_the_commit(self, phase: str) -> None:

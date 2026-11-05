@@ -249,7 +249,7 @@ def test_bind_propagates_open_failure(
 @pytest.mark.parametrize("fifo", [False, True])
 @pytest.mark.parametrize(
     ("marker", "failed"),
-    [("committed", []), ("scope", []), ("fail", ["2", "3"])],
+    [("committed", []), ("scope", []), ("uncertain", []), ("fail", ["2", "3"])],
 )
 def test_retry_policy_in_batch(
     handler: SQSHandler,

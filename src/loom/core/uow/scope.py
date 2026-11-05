@@ -704,12 +704,12 @@ def invocation_error(
 ) -> BaseException | None:
     """Return what an invocation that ended with ``outcome`` raises, if anything.
 
-    The business ``error`` wins over the stores' own failures. With two or
-    more stores the invocation raises :class:`StoresNotCommitted` instead
-    when the stores did not end the same way: one is ``Uncertain``, or one
+    The business ``error`` wins over the stores' own failures. The
+    invocation raises :class:`StoresNotCommitted` instead, which no retry
+    repeats, when a store is ``Uncertain`` (one store alone too), or when one
     committed or wrote without a transaction while another failed. An
     interruption (``asyncio.CancelledError`` and the like) is never
-    translated. With one store the original exception is always returned.
+    translated.
 
     Args:
         outcome: The outcome of every store, in commit order.
@@ -733,9 +733,7 @@ def _first_failure(stores: tuple[StoreOutcome, ...]) -> BaseException | None:
 
 
 def _split(stores: tuple[StoreOutcome, ...]) -> bool:
-    """Whether two or more stores ended in states the caller cannot treat as one."""
-    if len(stores) < 2:
-        return False
+    """Whether a store may have committed while the invocation failed."""
     failed = any(isinstance(store, RolledBack | Uncertain) for store in stores)
     durable = any(_is_durable(store) for store in stores)
     return any(isinstance(store, Uncertain) for store in stores) or (failed and durable)

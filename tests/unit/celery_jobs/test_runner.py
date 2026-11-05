@@ -30,8 +30,15 @@ from loom.core.job.config import JobSettings
 from loom.core.job.envelope import job_context
 from loom.core.job.job import Job
 from loom.core.observability.event import Scope
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
-from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
+from loom.core.uow.coordinator import InvocationOutcome, Uncertain
+from loom.core.uow.scope import (
+    ScopeOwnershipError,
+    StoresNotCommitted,
+    UnitOfWorkInsideScope,
+    invocation_error,
+)
 from tests.helpers.spans import build_recorder, hex_trace
 
 _SETTINGS = JobSettings()
@@ -424,8 +431,9 @@ class TestMakeJobTaskRetry:
             StoresNotCommitted("audit=Committed, default=RolledBack"),
             ScopeOwnershipError("the invocation scope is already closed"),
             UnitOfWorkInsideScope.entering(object()),
+            invocation_error(InvocationOutcome((Uncertain(DEFAULT_STORE, OSError("ack")),)), None),
         ],
-        ids=["stores-not-committed", "scope-ownership", "uow-inside-scope"],
+        ids=["stores-not-committed", "scope-ownership", "uow-inside-scope", "one-store-uncertain"],
     )
     def test_a_non_retryable_invocation_error_is_not_retried(self, error: Exception) -> None:
         """A store already committed, or the job has a programming error: a retry cannot help."""

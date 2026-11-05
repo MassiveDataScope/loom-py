@@ -211,8 +211,9 @@
   SQLAlchemy `OperationalError`, `InterfaceError`, an invalidated connection
   or a transport timeout during `COMMIT`, and Mongo
   `UnknownTransactionCommitResult`. The connection is invalidated and only the
-  cache invalidations run. With one store the caller still gets the driver
-  error; with several, `StoresNotCommitted`.
+  cache invalidations run. The caller gets `StoresNotCommitted`, even with
+  one store, caused by the driver error; job runners never retry it, and REST
+  still answers 500, now with the code `stores_not_committed`.
 - **stores:** `SessionManager.active_session` and
   `MongoSessions.active_session` (properties) are the only public way to read
   a store's session; `get_active_session()`, `session_to_join()`,

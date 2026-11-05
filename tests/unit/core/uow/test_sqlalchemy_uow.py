@@ -18,7 +18,7 @@ from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemy
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.coordinator import InvocationOutcome, PhysicalStore, RolledBack, Uncertain
-from loom.core.uow.scope import current_scope, single_store
+from loom.core.uow.scope import StoresNotCommitted, current_scope, single_store
 
 from ..conftest import RecordingSessionManager, make_session
 from .conftest import SessionPair, make_session_manager
@@ -388,15 +388,17 @@ class TestRollbackFailure:
 async def test_a_failed_commit_is_classified_and_the_caller_gets_the_driver_error(
     step: str, error: Exception, outcome: type[Uncertain | RolledBack]
 ) -> None:
+    """An uncertain one wrapped in the non-retryable ``StoresNotCommitted`` (T101)."""
     session = make_session()
     setattr(session, step, AsyncMock(side_effect=error))
     uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
+    raised_type = StoresNotCommitted if outcome is Uncertain else type(error)
 
-    with pytest.raises(type(error)) as raised:
+    with pytest.raises(raised_type) as raised:
         async with single_store(DEFAULT_STORE, uow) as scope:
             pass
 
-    assert raised.value is error
+    assert (raised.value.__cause__ if outcome is Uncertain else raised.value) is error
     assert scope.outcome == InvocationOutcome((outcome(DEFAULT_STORE, error),))
     assert session.invalidate.await_count == (outcome is Uncertain)
 
@@ -408,11 +410,11 @@ async def test_a_failing_invalidate_leaves_the_commit_uncertain_with_its_own_err
     session.invalidate = AsyncMock(side_effect=OSError("socket gone"))
     uow = SQLAlchemyUnitOfWork(RecordingSessionManager(session))  # type: ignore[arg-type]
 
-    with pytest.raises(OperationalError) as raised:
+    with pytest.raises(StoresNotCommitted) as raised:
         async with single_store(DEFAULT_STORE, uow) as scope:
             pass
 
-    assert raised.value is error
+    assert raised.value.__cause__ is error
     assert scope.outcome == InvocationOutcome((Uncertain(DEFAULT_STORE, error),))
 
 
