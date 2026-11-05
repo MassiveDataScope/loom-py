@@ -8,13 +8,16 @@ is always the one its own participant holds, never the other store's.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.pool import QueuePool
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
@@ -305,17 +308,24 @@ class TestRepositoryWriteIntent:
         assert wrote is writes
 
 
+_INSERT = text("INSERT INTO store_session_rows (name) VALUES (:name)")
+_COUNT = text("SELECT count(*) FROM store_session_rows")
+
+
 class _AuditRows(RepositorySQLAlchemy[_Row, int]):
     @with_session_scope(write=True)
     async def insert_raw(self, session: AsyncSession, name: str) -> None:
-        await session.execute(
-            text("INSERT INTO store_session_rows (name) VALUES (:name)"), {"name": name}
-        )
+        await session.execute(_INSERT, {"name": name})
 
     @with_session_scope(write=False)
     async def count_raw(self, session: AsyncSession) -> int:
-        result = await session.execute(text("SELECT count(*) FROM store_session_rows"))
+        result = await session.execute(_COUNT)
         return int(result.scalar_one())
+
+    @with_session_scope(write=False)
+    async def first_instance(self, session: AsyncSession) -> Any:
+        """An ORM instance, used once the session is gone."""
+        return (await session.execute(select(self._effective_sa_model))).scalars().first()
 
 
 class _InvocationFailed(Exception):
@@ -376,6 +386,140 @@ class TestWithSessionScope:
             enlisted = AUDIT in scope.participants
 
         assert (counted, enlisted) == (1, False)
+
+
+_READ_ONLY = Frame(None)
+
+
+async def _insert(manager: SessionManager, name: str, *, write: bool = True) -> None:
+    async with manager.operation_session(write=write) as session:
+        await session.execute(_INSERT, {"name": name})
+
+
+@asynccontextmanager
+async def _no_invocation(stores: _Stores) -> AsyncIterator[None]:
+    yield
+
+
+@asynccontextmanager
+async def _read_only_execution(stores: _Stores) -> AsyncIterator[None]:
+    async with (
+        invocation(stores.coordinator(), read_only=True) as scope,
+        scope.frame(_READ_ONLY),
+    ):
+        yield
+
+
+def _count_checkouts(manager: SessionManager) -> list[object]:
+    checkouts: list[object] = []
+    event.listen(manager.engine.sync_engine.pool, "checkout", lambda *args: checkouts.append(args))
+    return checkouts
+
+
+class TestOperationSession:
+    """Raw SQL runs in the session its operation would run in as a repository's.
+
+    What it shares with a repository's operations is covered by
+    :class:`TestWithSessionScope`.
+    """
+
+    @pytest.mark.parametrize("write", [True, False])
+    async def test_an_enlisted_store_yields_its_participant_s_session_and_records_a_write(
+        self, stores: _Stores, audit_rows: _AuditRows, write: bool
+    ) -> None:
+        async with invocation(stores.coordinator()) as scope, scope.frame(JOINED_AUDIT):
+            async with stores.audit.operation_session(write=write) as session:
+                joined = session is stores.audit.active_session
+            wrote = scope.participants[AUDIT].wrote
+
+        assert (joined, wrote) == (True, write)
+
+    async def test_a_read_only_execution_reads_in_a_transaction_of_its_own(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        await audit_rows.insert_raw("before")
+
+        async with (
+            invocation(stores.coordinator(), read_only=True) as scope,
+            scope.frame(_READ_ONLY),
+        ):
+            async with stores.audit.operation_session(write=False) as session:
+                counted = (await session.execute(_COUNT)).scalar_one()
+            enlisted = AUDIT in scope.participants
+
+        assert (counted, enlisted) == (1, False)
+
+    async def test_a_read_only_execution_refuses_a_write_before_any_connection_is_used(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        checkouts = _count_checkouts(stores.audit)
+
+        async with _read_only_execution(stores):
+            with pytest.raises(UndeclaredStoreWrite, match="'audit'"):
+                await _insert(stores.audit, "refused")
+
+        assert checkouts == []
+
+    @pytest.mark.parametrize("context", [_no_invocation, _read_only_execution])
+    async def test_a_read_that_writes_persists_nothing(
+        self,
+        stores: _Stores,
+        audit_rows: _AuditRows,
+        context: Callable[[_Stores], AbstractAsyncContextManager[None]],
+    ) -> None:
+        async with context(stores):
+            await _insert(stores.audit, "declared a read", write=False)
+
+        assert await audit_rows.count() == 0
+
+    async def test_an_instance_a_read_loaded_stays_usable_after_its_session(
+        self, audit_rows: _AuditRows
+    ) -> None:
+        await audit_rows.insert_raw("kept")
+
+        instance = await audit_rows.first_instance()
+
+        assert instance.name == "kept"
+
+    async def test_outside_an_invocation_it_persists_nothing_on_error(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async def write_then_fail() -> None:
+            async with stores.audit.operation_session(write=True) as session:
+                await session.execute(_INSERT, {"name": "failed"})
+                raise _InvocationFailed
+
+        with pytest.raises(_InvocationFailed):
+            await write_then_fail()
+
+        assert await audit_rows.count() == 0
+
+    async def test_a_cancelled_write_persists_nothing_and_returns_its_connection(
+        self, tmp_path: Path
+    ) -> None:
+        manager = _manager(AUDIT, f"sqlite+aiosqlite:///{tmp_path / 'audit.db'}")
+        try:
+            rows = await _rows_of(manager)
+            pool = manager.engine.sync_engine.pool
+            assert isinstance(pool, QueuePool)
+            started = asyncio.Event()
+
+            async def write_then_wait() -> None:
+                async with manager.operation_session(write=True) as session:
+                    await session.execute(_INSERT, {"name": "cancelled"})
+                    started.set()
+                    await asyncio.Event().wait()
+
+            task = asyncio.create_task(write_then_wait())
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            checked_out = pool.checkedout()
+
+            assert (checked_out, await rows.count()) == (0, 0)
+        finally:
+            await manager.dispose()
 
 
 class TestHandedInSession:

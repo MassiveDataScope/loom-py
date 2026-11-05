@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from functools import wraps
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
@@ -49,8 +49,8 @@ def with_session_scope(
             driver is called when the running execution did not declare its
             store, and recorded for the commit order. A method declared
             ``write=False`` that writes anyway, to a store the invocation did
-            not enlist, commits on its own and survives a rollback of the
-            invocation.
+            not enlist, persists nothing: its own transaction is never committed
+            (:meth:`SessionManager.operation_session`).
 
     Example::
 
@@ -159,11 +159,10 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
             else f"another engine ({bare_url(engine.url)})",
         )
 
-    @asynccontextmanager
-    async def _session_scope(
+    def _session_scope(
         self, session: AsyncSession | None = None, *, write: bool
-    ) -> AsyncIterator[AsyncSession]:
-        """Run in *session*, in the session of the store's participant, or in one of its own.
+    ) -> AbstractAsyncContextManager[AsyncSession]:
+        """Return *session*, checked, or else :meth:`SessionManager.operation_session`.
 
         Args:
             session: A session the caller already holds.
@@ -177,21 +176,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
                 :meth:`SessionManager.joined_session`.
             UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
-        context_session = self.session_manager.joined_session(write=write)
-        if session is not None:
-            self._require_own(session, context_session)
-            yield session
-            return
-
-        if context_session is not None:
-            yield context_session
-            return
-
-        async with self.session_manager.session() as new_session:
-            try:
-                yield new_session
-                await new_session.commit()
-            except Exception:
-                await new_session.rollback()
-                self.log.exception("RepositorySessionRollback")
-                raise
+        if session is None:
+            return self.session_manager.operation_session(write=write)
+        self._require_own(session, self.session_manager.joined_session(write=write))
+        return nullcontext(session)

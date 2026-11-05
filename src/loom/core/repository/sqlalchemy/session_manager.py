@@ -166,9 +166,10 @@ class SessionManager:
     def active_session(self) -> AsyncSession | None:
         """The session this store's unit of work holds in the current invocation, if any.
 
-        The one public way to read a store's session, for raw SQL that must
-        run in the invocation's transaction; repositories reach the same
-        session through :meth:`joined_session`, with their write intent.
+        The read of a store's session for code that must only run inside the
+        invocation's transaction; raw SQL takes :meth:`operation_session`,
+        and repositories reach the same session through :meth:`joined_session`,
+        with their write intent.
         Like ``request.user``, its value depends on the context it is read
         from: ``None`` outside an invocation, or when this store is not
         enlisted in it, where :meth:`session` opens a session of its own.
@@ -188,7 +189,7 @@ class SessionManager:
 
         :attr:`active_session` with the operation's write intent, which the
         invocation scope records for the commit order and checks; for
-        repositories. Raw SQL reads :attr:`active_session`.
+        repositories. Raw SQL takes :meth:`operation_session`.
 
         Args:
             write: Whether the operation writes.
@@ -201,6 +202,55 @@ class SessionManager:
                 execution did not declare.
         """
         return cast("AsyncSession | None", current_handle(self.store, self, write=write))
+
+    @asynccontextmanager
+    async def operation_session(self, *, write: bool) -> AsyncIterator[AsyncSession]:
+        """Yield the session one operation of this store runs in, as a repository's does.
+
+        When the store is enlisted in the invocation, the invocation's session
+        (:meth:`joined_session`), left to the invocation to commit or roll back.
+        Otherwise a transaction of its own (:meth:`session`), committed only
+        when a ``write=True`` block succeeds and rolled back in every other
+        case. So a ``write=False`` block that writes persists nothing only
+        where the store is not enlisted (a read-only execution, or no
+        invocation); in an enlisted store it runs unrecorded in the
+        invocation's transaction and commits with it. Declare writes as
+        ``write=True``.
+
+        Args:
+            write: Whether the block writes; checked and recorded for the
+                commit order like a repository's write.
+
+        Yields:
+            The session to run the operation's statements in.
+
+        Raises:
+            ScopeOwnershipError: See :meth:`joined_session`.
+            ForeignSessionError: See :meth:`joined_session`.
+            UndeclaredStoreWrite: See :meth:`joined_session`; raised before
+                the block runs.
+
+        Example::
+
+            async with session_manager.operation_session(write=False) as session:
+                rows = (await session.execute(text("SELECT ..."))).all()
+        """
+        joined = self.joined_session(write=write)
+        if joined is not None:
+            yield joined
+            return
+        # Closing the session without a commit rolls its transaction back.
+        async with self.session() as session:
+            try:
+                yield session
+                if write:
+                    await session.commit()
+            except Exception as exc:
+                # The type only: a driver error's text holds bound parameters.
+                self._log.error(
+                    "OperationSessionRollback", store=self.store, error=type(exc).__name__
+                )
+                raise
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:

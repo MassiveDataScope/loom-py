@@ -80,6 +80,10 @@
   `UndeclaredStoreWrite` and `NestedElevation` from `loom.core.uow`,
   `ForeignSessionError` from `loom.core.errors`, and `ReadOnlyElevation` from
   `loom.core.repository.sqlalchemy.rls`, next to `elevate`.
+- **stores:** `async with session_manager.operation_session(write=...)`
+  gives raw SQL the session its operation runs in, as a repository's: the
+  invocation's when the store is enlisted, else a transaction of its own.
+  Repositories now run through it.
 
 ### config
 
@@ -168,6 +172,16 @@
 
 ### stores
 
+- **stores:** a repository read, a `@with_session_scope(write=False)` method
+  or `operation_session(write=False)` on a store the invocation did not
+  enlist (a read-only execution such as a REST `GET`, or no invocation)
+  runs in a transaction of its own that is never committed: a write in it
+  persists nothing. On an enlisted store a `write=False` block still runs,
+  unrecorded, in the invocation's transaction and commits with it; declare
+  writes as `write=True`.
+- **stores:** a failed transaction of its own logs `OperationSessionRollback`
+  with `store=` and the exception type only, where it logged
+  `RepositorySessionRollback` with `repository=` and the exception text.
 - **stores:** a write to a store the running use case did not declare raises
   `UndeclaredStoreWrite` (`undeclared_store_write`, HTTP 500) before the
   driver is called, where it raised `ForeignSessionError`. So does a
