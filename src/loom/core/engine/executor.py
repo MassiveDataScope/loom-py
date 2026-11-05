@@ -1191,5 +1191,10 @@ def _refuse_nesting(use_case: str) -> None:
     if scopes:
         raise NestedElevation.opening(use_case, scopes)
     scope = current_scope()
-    if scope is not None and scope.owned_here() and current_identity() != scope.identity:
+    if (
+        scope is not None
+        and not scope.read_only
+        and scope.owned_here()
+        and current_identity() != scope.identity
+    ):
         raise NestedIdentityMismatch.joining(use_case)

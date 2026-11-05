@@ -54,7 +54,8 @@
   composition, and so does `__store__` beside a main model.
 - **stores:** `load_application(path, store="audit")` loads one store's models
   and schema section, so `create_schema` and `verify` prepare and check a
-  second Postgres store. Migrations still cover `default` only and log
+  second Postgres store. `Application.path` (`loom.core.locator`) is derived
+  from the new `Application.store` and is no longer a constructor argument. Migrations still cover `default` only and log
   `StoresNotLoaded` naming the stores they leave out.
 - **stores:** `persistence.rollback_timeout` (seconds, default 30) bounds the
   rollbacks of one invocation together.
@@ -176,9 +177,11 @@
   `UnitOfWorkInsideScope`, with or without a configured unit of work. A
   use case or job that writes, run from it (a `gather` child or the invoker
   included), raises `UndeclaredStoreWrite` instead of opening and committing
-  an invocation of its own. Move the write to a use case that is not
-  read-only. A job it dispatches still runs after it, in an invocation of its
-  own.
+  an invocation of its own, and so does one run from a read-only execution
+  nested in a writer. Move the write to a use case that is not read-only. A
+  job it dispatches still runs after it, in an invocation of its own. An
+  invocation that enlists no store closes without an outcome and logs no
+  `InvocationOutcome`.
 - **stores:** `async with uow:` and an outermost `@transactional` run through
   the coordinator; `async with uow:` inside a running invocation raises
   `UnitOfWorkInsideScope`. Even with one store, a write from a `gather` child

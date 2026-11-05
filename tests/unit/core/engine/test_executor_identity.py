@@ -262,6 +262,15 @@ async def test_joining_a_hand_opened_unit_of_work_as_another_identity_is_refused
             await executor.execute(child, identity=ANA)
 
 
+async def test_a_read_only_execution_may_run_a_read_only_one_as_another_identity(
+    executor: RuntimeExecutor,
+) -> None:
+    """Its scope enlists no store, so the child's reads carry the child's identity."""
+    parent = ReadParent(_child_call(executor, ReadChild(_whoami), BOB))
+
+    assert await executor.execute(parent, identity=ANA) == BOB
+
+
 @pytest.mark.parametrize(
     "call",
     [
