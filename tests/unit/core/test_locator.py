@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -9,10 +10,13 @@ from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
 from loom.core.locator import DEFAULT_CODE_PATH, Application, add_code_path, load_application
+from loom.core.persistence.stores import StoreKey
 from loom.core.repository.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"
+TWO_STORES_MODULE = "tests.unit.core.locator_fixtures.two_stores"
+AUDIT_URL = "postgresql+asyncpg://u:p@localhost/audit"
 
 
 def _config(module: str, **schema: object) -> dict[str, object]:
@@ -340,3 +344,34 @@ class TestAddCodePath:
         add_code_path("src", tmp_path)
 
         assert sys.path == [resolved]
+
+
+@pytest.fixture
+def two_stores(tmp_path: Path) -> str:
+    config = _config(TWO_STORES_MODULE)
+    config["stores"] = {**config["stores"], "audit": {"backend": "sqlalchemy", "url": AUDIT_URL}}
+    return _write(tmp_path, "two.yaml", config)
+
+
+def test_a_named_store_is_loaded_with_its_own_models_section_and_key(two_stores: str) -> None:
+    application = load_application(two_stores, store=StoreKey("audit"))
+
+    assert set(application.metadata.tables) == {"gadgets"}
+    assert (application.store, application.path, application.database.url) == (
+        "audit",
+        "stores.audit",
+        AUDIT_URL,
+    )
+
+
+@pytest.mark.parametrize(("store", "skipped"), [("default", "audit"), ("audit", "default")])
+def test_the_models_of_the_other_stores_are_left_out_with_a_warning(
+    two_stores: str, store: str, skipped: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        application = load_application(two_stores, store=StoreKey(store))
+
+    warnings = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
+    assert len(application.models) == 1
+    assert len(warnings) == 1
+    assert repr(skipped) in warnings[0]

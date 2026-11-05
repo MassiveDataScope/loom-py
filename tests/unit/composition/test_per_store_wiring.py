@@ -1,9 +1,4 @@
-"""Each store an application composes gets its own backend, repositories and unit of work.
-
-Until US7 PR 11c the composition refuses a model outside the default store;
-these tests lift that guard for themselves to pin the per-store wiring the
-guard's removal relies on.
-"""
+"""Each store an application composes gets its own backend, repositories and unit of work."""
 
 from __future__ import annotations
 
@@ -14,8 +9,6 @@ from typing import Any, cast
 
 import pytest
 
-import loom.composition.build
-import loom.core.locator
 from loom.composition import AppConfig, Application, CompositionSource, Recipe, compose_application
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
@@ -136,13 +129,6 @@ class _Serving:
 
 
 @pytest.fixture
-def several_stores(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Lift the one-store guard of the composition and the locator for this test only."""
-    for module in (loom.composition.build, loom.core.locator):
-        monkeypatch.setattr(module, "require_single_store", lambda models: None)
-
-
-@pytest.fixture
 def databases(tmp_path: Path) -> tuple[Path, Path]:
     return tmp_path / "default.db", tmp_path / "ledger.db"
 
@@ -168,7 +154,7 @@ def _compose(
 
 
 @pytest.fixture
-def application(several_stores: None, databases: tuple[Path, Path]) -> Application:
+def application(databases: tuple[Path, Path]) -> Application:
     return _compose(databases)
 
 
@@ -247,7 +233,7 @@ class _RecordingBuilder:
     ],
 )
 def test_a_caller_builder_builds_the_repositories_of_its_store_only(
-    several_stores: None, databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
+    databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
 ) -> None:
     builder = _RecordingBuilder()
 
@@ -275,7 +261,7 @@ class _Audit(BaseModel):
 
 
 def test_a_store_named_after_the_default_stores_backend_is_refused_before_any_is_built(
-    several_stores: None, databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def build(*args: object) -> None:
         raise AssertionError("a store was built")
@@ -305,7 +291,7 @@ def _rest_source(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Com
 
 
 def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
-    several_stores: None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _rest_source({"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch)
 
@@ -316,7 +302,7 @@ def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
 
 
 def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
-    several_stores: None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
     source = _rest_source(stores, monkeypatch)

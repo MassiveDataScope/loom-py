@@ -4,8 +4,9 @@
 command line and the schema tools share: it reads the file named by
 ``LOOM_CONFIG`` (or an explicit path), discovers the models the same way the
 server does, compiles them into a ``MetaData`` owned by the returned
-``Application`` and builds the bootstrap declaration from the
-``stores.default`` section. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
+``Application`` and builds the bootstrap declaration from one store's
+section, ``stores.default`` unless another is named. Only that store's models
+are compiled. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from loom.core.environment import (
     loom_variable,
     resolve_environment,
 )
+from loom.core.logger import get_logger
 from loom.core.model.scoped import ScopedTables, declared_scopes
 from loom.core.persistence.database import (
     DatabaseConfig,
@@ -40,8 +42,8 @@ from loom.core.persistence.stores import (
     DEFAULT_STORE,
     DEFAULT_STORE_PATH,
     SQLALCHEMY_BACKEND,
+    StoreKey,
     load_catalog,
-    require_single_store,
 )
 from loom.core.schema_names import SchemaNames, schema_identifier
 
@@ -50,6 +52,8 @@ if TYPE_CHECKING:
 
     from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig, DatabaseUser
 
+
+_log = get_logger(__name__)
 
 _SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
 
@@ -72,6 +76,7 @@ class Application:
     Attributes:
         path: Dotted path of the store section the declarations were read
             from, which every message about them names.
+        store: The store whose models and declarations these are.
     """
 
     models: tuple[type, ...]
@@ -81,6 +86,7 @@ class Application:
     scoped: ScopedTables
     scope_sources: Mapping[str, str]
     path: str = DEFAULT_STORE_PATH
+    store: StoreKey = DEFAULT_STORE
 
     def require_bootstrap(self, purpose: str) -> BootstrapConfig:
         """Return the bootstrap declaration, which *purpose* (``"migrations"``, ...) needs.
@@ -97,13 +103,16 @@ class Application:
         return self.bootstrap
 
 
-def load_application(config_path: str | None = None) -> Application:
-    """Load, discover and compile the application described by ``config_path``.
+def load_application(
+    config_path: str | None = None, *, store: StoreKey = DEFAULT_STORE
+) -> Application:
+    """Load, discover and compile the models of one store of ``config_path``'s application.
 
     ``config_path``, else ``LOOM_CONFIG``, is a file or a config directory:
     a directory loads ``base.yaml`` then the overlay of the environment
     ``LOOM_ENV`` selects, as the application factories do, and the
-    ``LOOM__*`` variables merge last.
+    ``LOOM__*`` variables merge last. The models of other stores are left
+    out, and a warning names those stores.
 
     Raises:
         ConfigError: When the path is missing, a required key is absent or a
@@ -123,13 +132,15 @@ def load_application(config_path: str | None = None) -> Application:
     paths = config_source_paths(path, environment)
     context = load_application_config(*paths, environment=environment)
     app = context.section(ConfigKey.APP, _AppSection)
-    spec = load_catalog(context).require(
-        DEFAULT_STORE, backend=SQLALCHEMY_BACKEND, purpose="the application's schema"
-    )
+    catalog = load_catalog(context)
+    spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose="the application's schema")
     database = spec.decode(DatabaseConfig)
     add_code_path(app.code_path, Path(paths[0]).resolve().parent)
-    models = _discover(app.discovery)
-    require_single_store(models)
+    stores = catalog.models_by_store(_discover(app.discovery))
+    models = stores.get(store, ())
+    skipped = sorted(key for key, held in stores.items() if held and key != store)
+    if skipped:
+        _log.warning("StoresNotLoaded", store=store, skipped=skipped)
     schema = database.schema
     metadata = MetaData(
         naming_convention=configured_naming_convention(schema.naming_convention, path=spec.path)
@@ -148,6 +159,7 @@ def load_application(config_path: str | None = None) -> Application:
         scoped=scoped,
         scope_sources=scope_sources,
         path=spec.path,
+        store=store,
     )
 
 

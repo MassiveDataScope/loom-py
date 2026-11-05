@@ -43,7 +43,6 @@ from loom.core.persistence.stores import (
     DEFAULT_STORE_PATH,
     StoreCatalog,
     StoreKey,
-    require_single_store,
 )
 from loom.core.repository.abc import CursorCodec
 from loom.core.uow.abc import UnitOfWorkFactory
@@ -296,8 +295,8 @@ def compose_application(
         The composed, closed application.
 
     Raises:
-        ConfigError: When a model declares a store other than the default, or
-            the store section is invalid, or a job backend cannot be built.
+        ConfigError: When a model belongs to a store the catalog does not
+            serve, or the store section is invalid, or a job backend cannot be built.
         JoinedAutocommitStore: When a use case declares ``Joined`` on a store
             that cannot roll back.
         UncomposedWriteStore: When a use case or job writes to a store with
@@ -315,7 +314,6 @@ def compose_application(
     discovered = recipe.discovered
     job_settings = JobSettings.from_config(ctx, discovered.jobs)
     catalog = source.catalog
-    require_single_store(discovered.models)
     stores = catalog.models_by_store(discovered.models)
     backends = {key: source.backend(key, default=recipe.default_backend) for key in stores}
     default_label = backends[DEFAULT_STORE].name

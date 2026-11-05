@@ -162,8 +162,8 @@ async def test_the_store_resource_is_named_by_its_key_and_probed_under_its_backe
     assert ready == {"sqlalchemy": True}
 
 
-def test_a_model_of_another_store_is_refused_until_the_invocation_scope_exists(
+def test_a_model_of_a_store_the_configuration_does_not_declare_is_refused(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ConfigError, match="_AuditEntry belongs to store 'audit'"):
+    with pytest.raises(ConfigError, match=r"model _AuditEntry needs stores\.audit"):
         _compose(tmp_path / "refused.db", _Invoice, _AuditEntry)

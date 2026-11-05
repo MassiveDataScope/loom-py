@@ -13,20 +13,8 @@ from loom.core.persistence.stores import (
     StoreCatalog,
     StoreKey,
     load_catalog,
-    require_single_store,
 )
 from tests.helpers.composition import composition_source
-
-
-class _AuditRecord(BaseModel):
-    __tablename__ = "reader_audit_records"
-    __store__ = "audit"
-    id: int = ColumnField(Integer, primary_key=True)
-
-
-class _DefaultRecord(BaseModel):
-    __tablename__ = "reader_default_records"
-    id: int = ColumnField(Integer, primary_key=True)
 
 
 def test_the_composition_refuses_a_retired_section_in_memory_too() -> None:
@@ -66,13 +54,6 @@ def _catalog(stores: dict[str, Any]) -> StoreCatalog:
     return load_catalog(ConfigContext.from_dict({"stores": stores}))
 
 
-def test_an_application_composes_models_of_the_default_store_only() -> None:
-    require_single_store([_DefaultRecord])
-
-    with pytest.raises(ConfigError, match=r"_AuditRecord belongs to store 'audit'"):
-        require_single_store([_DefaultRecord, _AuditRecord])
-
-
 class _ClickRecord(BaseModel):
     __tablename__ = "reader_click_records"
     __store__ = "events"
@@ -101,8 +82,6 @@ def test_an_unknown_kind_names_the_persistence_backends_and_the_connection_only_
 def test_a_model_of_a_named_clickhouse_store_fails_at_composition() -> None:
     catalog = _catalog({"default": {"backend": "none"}, "events": _CLICKHOUSE})
 
-    with pytest.raises(ConfigError, match=r"_ClickRecord belongs to store 'events'"):
-        require_single_store([_ClickRecord])
     with pytest.raises(ConfigError, match="connection-only clickhouse store"):
         catalog.models_by_store([_ClickRecord])
 

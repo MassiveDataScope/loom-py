@@ -266,30 +266,6 @@ def store_binding(binding: type[Any], key: StoreKey) -> object:
     return binding if key == DEFAULT_STORE else (binding, key)
 
 
-def require_single_store(models: Sequence[type[BaseModel]]) -> None:
-    """Fail unless every one of *models* belongs to :data:`DEFAULT_STORE`.
-
-    An application composes its default store only; a model of another store
-    would otherwise be served by the default store's backend and session.
-    The catalog refuses a connection-only default store when it loads.
-
-    Args:
-        models: The discovered models.
-
-    Raises:
-        ConfigError: As :func:`store_of`, or naming the first model of a
-            store other than the default one.
-    """
-    for model in models:
-        key = store_of(model)
-        if key != DEFAULT_STORE:
-            raise ConfigError(
-                f"{model.__name__} belongs to store {key!r}, but an application "
-                f"composes the {DEFAULT_STORE!r} store only, until one unit of work per store "
-                "exists (ADR 0008)"
-            )
-
-
 def load_catalog(ctx: ConfigContext) -> StoreCatalog:
     """Read the ``stores`` section of *ctx* into a catalog.
 
@@ -388,7 +364,6 @@ __all__ = [
     "StoreKey",
     "StoreSpec",
     "load_catalog",
-    "require_single_store",
     "store_binding",
     "store_of",
 ]
