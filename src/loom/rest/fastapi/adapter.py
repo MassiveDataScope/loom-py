@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import logging
 import warnings
-from collections.abc import AsyncIterator, Callable, Collection, Mapping
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -543,6 +543,51 @@ def _interfaces_by_name(
     return {name: tuple(found) for name, found in named.items()}
 
 
+def served_routes(
+    source: CompositionSource,
+    interfaces: Mapping[str, RestInterfaceConfig],
+    disabled: Sequence[DisableRouteConfig],
+    select_interfaces: InterfaceSelector | None = None,
+) -> tuple[DiscoveryResult, RouteSources]:
+    """Discover, add the YAML *interfaces*, narrow to *select_interfaces*, prune the CRUD ones.
+
+    Reads no authentication, so it resolves no secret.
+
+    Returns:
+        What the kernel composes, and the routes the transport mounts.
+
+    Raises:
+        RestInterfaceConfigError: When a YAML interface is malformed.
+        RuntimeError: When discovery finds nothing to serve, or a CRUD
+            route cannot be served by the backend.
+    """
+    # Built ahead of discovery's pruning so their use cases join CRUD
+    # gating, model registration and compilation exactly like a
+    # Python-discovered interface's, in Python-then-config order.
+    config_interfaces = build_interfaces_from_config(interfaces)
+    discovered = _discover_components(source)
+    python_interfaces = discovered.interfaces
+    unserved: tuple[type[RestInterface[Any]], ...] = ()
+    if select_interfaces is not None:
+        named = _interfaces_by_name(python_interfaces, interfaces, config_interfaces)
+        served = frozenset(select_interfaces(named))
+        unserved = tuple(i for i in python_interfaces if i not in served)
+        python_interfaces = tuple(i for i in python_interfaces if i in served)
+        config_interfaces = tuple(i for i in config_interfaces if i in served)
+        discovered = discovered.with_changes(interfaces=python_interfaces)
+    discovered = _fold_config_interfaces(discovered, config_interfaces)
+    # Runs before the backend allocates resources: building it creates them.
+    _reject_autocrud_without_model(discovered)
+    discovered = _gate_autocrud_capabilities(discovered, source)
+    routes = RouteSources(
+        python=python_interfaces,
+        config=config_interfaces,
+        disabled=tuple((d.method, d.path) for d in disabled),
+        unserved=unserved,
+    )
+    return discovered, routes
+
+
 @dataclasses.dataclass(frozen=True)
 class RestDeclaration:
     """What :func:`compose_rest` resolved and an HTTP adapter's ``bind`` mounts."""
@@ -600,37 +645,11 @@ def compose_rest(
         _documentation_paths(rest_cfg, metrics_cfg) if serves_documentation else (),
     )
     _check_sql_section(ctx, auth)
-
-    # Built ahead of discovery's pruning so their use cases join CRUD
-    # gating, model registration and compilation exactly like a
-    # Python-discovered interface's, in Python-then-config order.
-    config_interfaces = build_interfaces_from_config(rest_cfg.interfaces)
-    discovered = _discover_components(source)
-    python_interfaces = discovered.interfaces
-    unserved: tuple[type[RestInterface[Any]], ...] = ()
-    if select_interfaces is not None:
-        named = _interfaces_by_name(python_interfaces, rest_cfg.interfaces, config_interfaces)
-        served = frozenset(select_interfaces(named))
-        unserved = tuple(i for i in python_interfaces if i not in served)
-        python_interfaces = tuple(i for i in python_interfaces if i in served)
-        config_interfaces = tuple(i for i in config_interfaces if i in served)
-        discovered = discovered.with_changes(interfaces=python_interfaces)
-    discovered = _fold_config_interfaces(discovered, config_interfaces)
-    # Runs before the backend allocates resources: building it creates them.
-    _reject_autocrud_without_model(discovered)
-    discovered = _gate_autocrud_capabilities(discovered, source)
-
+    discovered, routes = served_routes(
+        source, rest_cfg.interfaces, rest_cfg.disable_routes, select_interfaces
+    )
     declared = RestDeclaration(
-        name=source.app.name,
-        rest=rest_cfg,
-        auth=auth,
-        metrics_cfg=metrics_cfg,
-        routes=RouteSources(
-            python=python_interfaces,
-            config=config_interfaces,
-            disabled=tuple((d.method, d.path) for d in rest_cfg.disable_routes),
-            unserved=unserved,
-        ),
+        name=source.app.name, rest=rest_cfg, auth=auth, metrics_cfg=metrics_cfg, routes=routes
     )
     recipe = Recipe(
         profile=SERVER_PROFILE,

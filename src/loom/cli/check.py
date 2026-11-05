@@ -71,6 +71,8 @@ class CheckedConfig:
     environment: Environment
     report: DeployReport
     skipped: tuple[str, ...]
+    config_root: Path
+    code_path: Path
 
 
 def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> CheckedConfig:
@@ -85,8 +87,10 @@ def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> 
     context = load_application_config(
         *paths, resolvers=with_default_resolvers(()), environment=environment
     )
-    _add_code_path(context, Path(paths[0]).resolve().parent)
-    return CheckedConfig(context, environment, run_deploy_checks(context, skip=skip), skip)
+    config_root = Path(paths[0]).resolve().parent
+    code_path = _add_code_path(context, config_root)
+    report = run_deploy_checks(context, skip=skip)
+    return CheckedConfig(context, environment, report, skip, config_root, code_path)
 
 
 def _load_check_packages() -> None:
@@ -97,14 +101,14 @@ def _load_check_packages() -> None:
         importlib.import_module("loom.rest")
 
 
-def _add_code_path(context: ConfigContext, config_dir: Path) -> None:
+def _add_code_path(context: ConfigContext, config_dir: Path) -> Path:
     raw = context.raw("app.code_path", DEFAULT_CODE_PATH)
     if not isinstance(raw, str) or "${" in raw:
         raise ConfigError(
             "app.code_path must be a literal path for loom check: a placeholder or a "
             "non-string value cannot name the directory its check modules import from"
         )
-    add_code_path(raw, config_dir)
+    return add_code_path(raw, config_dir)
 
 
 def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ...]:

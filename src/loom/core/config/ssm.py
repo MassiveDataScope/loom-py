@@ -16,7 +16,7 @@ from __future__ import annotations
 import functools
 from typing import Any
 
-from loom.core.config._resolver_utils import aws_client, resolve_cached
+from loom.core.config._resolver_utils import _split_resolver_key, aws_client, resolve_cached
 from loom.core.config.errors import ConfigError
 from loom.core.connections.aws import aws_error_code
 
@@ -102,6 +102,10 @@ class SsmResolver:
             The string ``"ssm"``.
         """
         return "ssm"
+
+    def reference(self, key: str) -> str:
+        """The parameter *key* fetches: its JSON tail dropped, ``%VAR%`` tokens unexpanded."""
+        return _split_resolver_key(key)[0]
 
     def resolve(self, key: str, _root_: Any = None) -> object:
         """Resolve an SSM parameter path to its stored value.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import sys
 import uuid
@@ -64,14 +63,20 @@ _QUEUE_URL = "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"
 _SENTINEL = "resolved-secret-value"
 
 Project = Callable[..., Path]
+Edit = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def _config(package: str) -> dict[str, Any]:
-    admin_auth = {"jwt": {"secret_path": "${secrets:/shop/admin-key}", "algorithms": ["HS256"]}}
+    admin_auth = {
+        "jwt": {
+            "secret_path": "${secrets:/shop/admin-key}",
+            "audience": "${ssm:/shop/admin-audience}",
+            "algorithms": ["HS256"],
+        }
+    }
     return {
         "app": {
             "name": "shop",
-            "job_service": f"{package}.jobs:Backend",
             "discovery": {"mode": "modules", "modules": {"include": [f"{package}.api"]}},
             "rest": {
                 "docs_url": None,
@@ -90,11 +95,11 @@ def _config(package: str) -> dict[str, Any]:
             },
         },
         "stores": {
-            "default": {"backend": "sqlalchemy", "url": "${ssm: '/shop/db-url' }"},
+            "default": {"backend": "sqlalchemy", "url": "${ ssm : '/shop/db-url' }"},
             "reports": {"backend": "none"},
         },
         "sqs": {"queues": {"jobs": _QUEUE_URL}},
-        "checks": {"silenced": ["loom.cursors.E001"], "modules": [f"{package}.checks"]},
+        "checks": {"silenced": ["loom.cursors.E001"]},
         "lambda": {
             "handler": "entry.handler",
             "functions": {
@@ -106,36 +111,32 @@ def _config(package: str) -> dict[str, Any]:
     }
 
 
-def _shared(name: str) -> dict[str, Any]:
-    return {
-        "code_path": "src",
-        "variables": {"LOOM_ENV": "production", "LOOM__APP__ENTRY": name},
-        "handler": "entry.handler",
-        "queues": {"jobs": _QUEUE_URL},
-        "ssm_parameters": ["/shop/db-url"],
-        "stores": {"default": "sqlalchemy"},
-    }
-
-
-def _expected(package: str) -> dict[str, Any]:
-    modules = [f"{package}.api", f"{package}.checks", f"{package}.jobs"]
+def _expected() -> dict[str, Any]:
     app_auth = {"jwt": {"secret_path": "${secrets:/shop/jwt.path}"}}
+    admin_auth = {
+        "jwt": {
+            "algorithms": ["HS256"],
+            "audience": "${ssm:/shop/admin-audience}",
+            "secret_path": "${secrets:/shop/admin-key}",
+        }
+    }
     return {
         "manifest_version": 1,
         "environment": "production",
+        "handler": "entry.handler",
+        "code_path": "src",
+        "queues": {"jobs": _QUEUE_URL},
         "functions": {
             "admin": {
-                **_shared("admin"),
-                "auth": {
-                    "jwt": {"algorithms": ["HS256"], "secret_path": "${secrets:/shop/admin-key}"}
+                "event": {
+                    "type": "http",
+                    "routes": [{"method": "POST", "path": "/admin/purge"}],
+                    "auth": admin_auth,
                 },
-                "event": {"type": "http", "routes": [{"method": "POST", "path": "/admin/purge"}]},
-                "modules": modules,
                 "secrets": ["/shop/admin-key", "/shop/jwt"],
+                "ssm_parameters": ["/shop/admin-audience", "/shop/db-url"],
             },
             "public": {
-                **_shared("public"),
-                "auth": app_auth,
                 "event": {
                     "type": "http",
                     "routes": [
@@ -143,24 +144,23 @@ def _expected(package: str) -> dict[str, Any]:
                         {"method": "GET", "path": "/orders/{order_id}"},
                         {"method": "GET", "path": "/status"},
                     ],
+                    "auth": app_auth,
                 },
-                "modules": modules,
                 "secrets": ["/shop/jwt"],
+                "ssm_parameters": ["/shop/db-url"],
             },
+            # The worker lists app.rest.auth's secret: it resolves the whole app section.
             "worker": {
-                **_shared("worker"),
-                "auth": None,
                 "event": {
                     "type": "sqs",
                     "queue": "jobs",
-                    "url": _QUEUE_URL,
                     "batch_size": 5,
                     "batching_window_s": None,
                     "max_concurrency": None,
                     "report_batch_item_failures": True,
                 },
-                "modules": modules,
                 "secrets": ["/shop/jwt"],
+                "ssm_parameters": ["/shop/db-url"],
             },
         },
     }
@@ -183,9 +183,8 @@ def project(tmp_path: Path, package: str) -> Project:
     code.mkdir(parents=True)
     (code / "__init__.py").write_text("", encoding="utf-8")
     (code / "api.py").write_text(_API_SOURCE, encoding="utf-8")
-    (code / "checks.py").write_text("", encoding="utf-8")
 
-    def write(edit: Callable[[dict[str, Any]], dict[str, Any]] = lambda config: config) -> Path:
+    def write(edit: Edit = lambda config: config) -> Path:
         path = tmp_path / "base.yaml"
         path.write_text(yaml.safe_dump(edit(_config(package)), sort_keys=False), encoding="utf-8")
         return path
@@ -197,11 +196,11 @@ def _manifest(config: Path, *options: str) -> Any:
     return runner.invoke(app, ["deploy", "manifest", "--env", "production", *options, str(config)])
 
 
-def test_the_manifest_describes_every_function(project: Project, package: str) -> None:
+def test_the_manifest_describes_every_function(project: Project) -> None:
     result = _manifest(project())
 
     assert result.exit_code == 0, result.stderr
-    assert json.loads(result.stdout) == _expected(package)
+    assert json.loads(result.stdout) == _expected()
 
 
 def test_the_same_configuration_written_in_another_order_gives_the_same_bytes(
@@ -219,39 +218,12 @@ def test_the_same_configuration_written_in_another_order_gives_the_same_bytes(
     assert first.stdout == second.stdout
 
 
-def test_one_function_is_described_alone(project: Project, package: str) -> None:
+def test_one_function_is_described_alone(project: Project) -> None:
     result = _manifest(project(), "--function", "worker")
 
     assert result.exit_code == 0, result.stderr
     manifest = json.loads(result.stdout)
-    assert manifest["functions"] == {"worker": _expected(package)["functions"]["worker"]}
-
-
-@pytest.mark.parametrize(
-    ("discovery", "modules"),
-    [
-        (
-            {"mode": "modules", "modules": {"include": ["shop.jobs", "shop.api"]}},
-            ["shop.api", "shop.jobs"],
-        ),
-        ({"mode": "manifest", "manifest": {"module": "shop.manifest"}}, ["shop.manifest"]),
-        ({"mode": "interfaces", "interfaces": {"modules": ["shop.api"]}}, ["shop.api"]),
-        ({}, []),
-    ],
-    ids=["modules", "manifest", "interfaces", "default"],
-)
-def test_a_function_lists_the_modules_its_discovery_imports(
-    project: Project, package: str, discovery: dict[str, Any], modules: list[str]
-) -> None:
-    def discovering(config: dict[str, Any]) -> dict[str, Any]:
-        config["app"]["discovery"] = discovery
-        return config
-
-    result = _manifest(project(discovering), "--function", "worker")
-
-    assert result.exit_code == 0, result.stderr
-    extra = [f"{package}.checks", f"{package}.jobs"]
-    assert json.loads(result.stdout)["functions"]["worker"]["modules"] == sorted(modules + extra)
+    assert manifest["functions"] == {"worker": _expected()["functions"]["worker"]}
 
 
 def test_no_secret_or_parameter_is_resolved(
@@ -273,12 +245,6 @@ def test_no_secret_or_parameter_is_resolved(
     assert _SENTINEL not in result.output
 
 
-def test_a_function_does_not_list_the_secrets_of_another_function(project: Project) -> None:
-    manifest = json.loads(_manifest(project(), "--function", "public").stdout)
-
-    assert "/shop/admin-key" not in manifest["functions"]["public"]["secrets"]
-
-
 def test_a_failing_deploy_check_prints_its_findings_and_no_manifest(project: Project) -> None:
     def unsilenced(config: dict[str, Any]) -> dict[str, Any]:
         del config["checks"]
@@ -291,53 +257,132 @@ def test_a_failing_deploy_check_prints_its_findings_and_no_manifest(project: Pro
     assert "loom.cursors.E001" in result.stderr
 
 
-def _without_handler(config: dict[str, Any]) -> dict[str, Any]:
-    del config["lambda"]["handler"]
-    return config
+_DELETE = object()
 
 
-def _without_functions(config: dict[str, Any]) -> dict[str, Any]:
-    config["lambda"]["functions"] = {}
-    return config
+def _set(key: str, value: object) -> Edit:
+    """An edit setting the dotted *key* to *value*, or deleting it for ``_DELETE``."""
 
-
-def _worker(**changes: Any) -> Callable[[dict[str, Any]], dict[str, Any]]:
     def edit(config: dict[str, Any]) -> dict[str, Any]:
-        edited = copy.deepcopy(config)
-        worker = edited["lambda"]["functions"]["worker"]
-        worker.update(changes)
-        for key in [key for key, value in changes.items() if value is None]:
-            del worker[key]
-        return edited
+        *parents, leaf = key.split(".")
+        node = config
+        for part in parents:
+            node = node.setdefault(part, {})
+        if value is _DELETE:
+            del node[leaf]
+        else:
+            node[leaf] = value
+        return config
 
     return edit
 
 
-def _nested_secret(config: dict[str, Any]) -> dict[str, Any]:
-    config["app"]["rest"]["auth"]["jwt"]["secret_path"] = "${secrets:${oc.env:JWT_SECRET}}"
-    return config
+_JWT_SECRET = "app.rest.auth.jwt.secret_path"
+_WORKER_ONLY = ("--function", "worker")
 
 
 @pytest.mark.parametrize(
     ("edit", "options", "message"),
     [
-        (_without_handler, (), "lambda.handler is missing"),
-        (_without_functions, (), "declares no function to deploy"),
-        (_worker(queue=None), (), "worker.queue must name the queue it consumes"),
-        (_worker(queue="unknown"), (), "worker.queue must name the queue it consumes"),
-        (_nested_secret, (), "app.rest.auth.jwt.secret_path nests a placeholder"),
+        (_set("lambda.handler", _DELETE), (), "lambda.handler is missing"),
+        (_set("lambda.handler", "${oc.env:HANDLER}"), (), "lambda.handler must be written"),
+        (_set("lambda.handler", "entry"), (), "must be 'module.attribute'"),
+        (_set("sqs.queues.jobs", "${ssm:/shop/url}"), (), "sqs.queues.jobs must be written"),
+        (_set("lambda.functions", {}), (), "declares no function to deploy"),
+        (_set("lambda.functions.worker.queue", _DELETE), (), "worker.queue must name the queue"),
+        (_set("lambda.functions.worker.queue", "unknown"), (), "worker.queue must name the queue"),
+        (
+            _set("lambda.functions.bad-name", {"sqs": True, "queue": "jobs"}),
+            (),
+            "lambda.functions.bad-name must be named by a Python identifier",
+        ),
+        (
+            _set("lambda.functions.función", {"sqs": True, "queue": "jobs"}),
+            (),
+            "lambda.functions.función must be named by a Python identifier",
+        ),
+        (_set(_JWT_SECRET, "${secrets:${oc.env:JWT}}"), (), f"{_JWT_SECRET} nests a placeholder"),
+        (
+            _set(_JWT_SECRET, "${ secrets : /shop/${oc.env:JWT} }"),
+            (),
+            f"{_JWT_SECRET} nests a placeholder",
+        ),
+        (_set(_JWT_SECRET, "${secrets:/shop/*}"), (), "'/shop/*' holds a wildcard"),
+        (_set(_JWT_SECRET, "${ssm:/shop/key?}"), (), "'/shop/key?' holds a wildcard"),
+        (
+            _set("app.rest.disable_routes", [{"method": "GET", "path": "/nowhere"}]),
+            (),
+            "matches no route declared by a Python interface",
+        ),
+        (
+            _set("app.discovery.mode", "interfaces"),
+            _WORKER_ONLY,
+            "'interfaces' is not one a worker scans",
+        ),
         (lambda config: config, ("--function", "billing"), "declares no function 'billing'"),
     ],
-    ids=["no-handler", "no-function", "no-queue", "unknown-queue", "nested", "unknown-function"],
+    ids=[
+        "no-handler",
+        "handler-placeholder",
+        "handler-malformed",
+        "queue-placeholder",
+        "no-function",
+        "no-queue",
+        "unknown-queue",
+        "function-name",
+        "non-ascii-function-name",
+        "nested",
+        "nested-spaced",
+        "wildcard-secret",
+        "wildcard-parameter",
+        "unmatched-disabled-route",
+        "non-worker-discovery",
+        "unknown-function",
+    ],
 )
 def test_a_manifest_that_cannot_be_complete_is_refused(
-    project: Project,
-    edit: Callable[[dict[str, Any]], dict[str, Any]],
-    options: tuple[str, ...],
-    message: str,
+    project: Project, edit: Edit, options: tuple[str, ...], message: str
 ) -> None:
     result = _manifest(project(edit), *options)
 
     assert result.exit_code == 1
     assert result.stdout == ""
     assert message in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("written", "named"),
+    [
+        ("${ secrets : /shop/spaced }", "/shop/spaced"),
+        ("${secrets: '/shop/quoted' }", "/shop/quoted"),
+        ('${ secrets:"/shop/json.key"}', "/shop/json"),
+    ],
+    ids=["spaces", "single-quotes", "double-quotes-json-tail"],
+)
+def test_a_placeholder_written_with_spaces_or_quotes_is_named(
+    project: Project, written: str, named: str
+) -> None:
+    result = _manifest(project(_set(_JWT_SECRET, written)), "--function", "public")
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["functions"]["public"]["secrets"] == [named]
+
+
+def test_no_variable_is_read(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LEAK", _SENTINEL)
+    leaking = _set(_JWT_SECRET, "${secrets:/shop/${oc.env:LEAK}}")
+
+    result = _manifest(project(leaking))
+
+    assert result.exit_code == 1
+    assert _SENTINEL not in result.output
+
+
+def test_the_findings_go_to_stderr_and_the_manifest_alone_to_stdout(project: Project) -> None:
+    result = _manifest(project(_set("app.rest.docs_url", "/docs")))
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["manifest_version"] == 1
+    assert "environment: production" in result.stderr
+    assert "silenced: loom.cursors.E001" in result.stderr
+    assert "WARNING loom.rest.W001" in result.stderr

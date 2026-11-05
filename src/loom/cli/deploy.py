@@ -1,7 +1,7 @@
 """``loom deploy manifest``: what each Lambda needs deployed, as JSON for the deployment tool.
 
 The configuration loads as ``loom check --deploy`` loads it and must pass the
-same deploy checks: a failing check prints its findings to stderr and no
+same deploy checks, whose findings go to stderr; a failing one prints no
 manifest. The manifest alone goes to stdout.
 """
 
@@ -42,10 +42,16 @@ def manifest(
     """Print the deploy manifest of lambda.functions once the deploy checks pass."""
     try:
         checked = load_checked(config, env, tuple(skip or ()))
+        print_report(checked, err=True)
         if checked.report.errors:
-            print_report(checked, err=True)
             raise typer.Exit(1)
-        document = build_manifest(checked.context, checked.environment, function)
+        document = build_manifest(
+            checked.context,
+            checked.environment,
+            function,
+            config_root=checked.config_root,
+            code_path=checked.code_path,
+        )
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

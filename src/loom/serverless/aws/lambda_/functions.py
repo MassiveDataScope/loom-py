@@ -24,13 +24,7 @@ if TYPE_CHECKING:
     from loom.rest.model import RestInterface
 
 _SECTION = "lambda.functions"
-_SQS_ONLY = (
-    "queue",
-    "batch_size",
-    "batching_window_s",
-    "max_concurrency",
-    "report_batch_item_failures",
-)
+_BATCHING = ("batch_size", "batching_window_s", "max_concurrency", "report_batch_item_failures")
 
 
 class LambdaFunction(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -69,15 +63,6 @@ class HttpFunction:
     select: InterfaceSelector | None = None
 
 
-def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
-    """Decode ``lambda.functions`` and refuse a function or an interface declared twice over.
-
-    Raises:
-        ConfigError: As :func:`declared_lambda`.
-    """
-    return declared_lambda(ctx).functions
-
-
 def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
     """Decode ``lambda`` as written and refuse a function or an interface declared twice over.
 
@@ -88,9 +73,8 @@ def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
             ``batching_window_s``, or an interface another function already serves.
     """
     config = _unresolved(ctx)
-    functions = config.functions
     owners: dict[str, str] = {}
-    for name, function in functions.items():
+    for name, function in config.functions.items():
         _check_kind(name, function)
         for interface in function.http:
             owner = owners.setdefault(interface, name)
@@ -106,7 +90,7 @@ def _check_kind(name: str, function: LambdaFunction) -> None:
         raise ConfigError(f"{_SECTION}.{name} declares exactly one of 'http' or 'sqs: true'")
     if function.auth is not None and function.sqs:
         raise ConfigError(f"{_SECTION}.{name}.auth applies to an http function only")
-    sqs_only = [key for key in _SQS_ONLY if getattr(function, key) is not None]
+    sqs_only = [key for key in ("queue", *_BATCHING) if getattr(function, key) is not None]
     if sqs_only and not function.sqs:
         raise ConfigError(f"{_SECTION}.{name}.{sqs_only[0]} applies to an sqs function only")
     # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
@@ -130,7 +114,7 @@ def declared_function(ctx: ConfigContext, name: str) -> LambdaFunction:
         ConfigError: When no function is called *name*, or ``lambda.functions``
             is misdeclared.
     """
-    return _function(declared_functions(ctx), name)
+    return named_function(declared_lambda(ctx).functions, name)
 
 
 def http_function(
@@ -142,8 +126,8 @@ def http_function(
         ConfigError: When no HTTP function is called *name*, or
             ``lambda.functions`` is misdeclared.
     """
-    functions = declared_functions(ctx) if functions is None else functions
-    function = _function(functions, name)
+    functions = declared_lambda(ctx).functions if functions is None else functions
+    function = named_function(functions, name)
     if function.sqs:
         raise ConfigError(f"{_SECTION}.{name} is an sqs function, not an http one")
     return HttpFunction(
@@ -159,7 +143,7 @@ def entry_function(ctx: ConfigContext, entry: str | None) -> HttpFunction:
         ConfigError: When *entry* names an sqs function, or
             ``lambda.functions`` is misdeclared.
     """
-    functions = declared_functions(ctx)
+    functions = declared_lambda(ctx).functions
     if entry is None or entry not in functions:
         return HttpFunction()
     return http_function(ctx, entry, functions)
@@ -171,12 +155,17 @@ def reports_batch_item_failures(ctx: ConfigContext, entry: str | None) -> bool:
     Raises:
         ConfigError: When ``lambda.functions`` is misdeclared.
     """
-    functions = declared_functions(ctx)
+    functions = declared_lambda(ctx).functions
     function = None if entry is None else functions.get(entry)
     return function is None or function.report_batch_item_failures is not False
 
 
-def _function(functions: Mapping[str, LambdaFunction], name: str) -> LambdaFunction:
+def named_function(functions: Mapping[str, LambdaFunction], name: str) -> LambdaFunction:
+    """The function *name* of *functions*.
+
+    Raises:
+        ConfigError: When no function is called *name*.
+    """
     function = functions.get(name)
     if function is None:
         declared = ", ".join(functions) or "none"

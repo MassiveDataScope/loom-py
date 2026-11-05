@@ -7,14 +7,14 @@ from typing import Any
 import pytest
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.serverless.aws.lambda_.functions import LambdaFunction, declared_functions
+from loom.serverless.aws.lambda_.functions import LambdaFunction, declared_lambda
 
 pytestmark = pytest.mark.timeout(5)
 
 
 def _declared(worker: dict[str, Any]) -> LambdaFunction:
     config = ConfigContext.from_dict({"lambda": {"functions": {"worker": worker}}})
-    return declared_functions(config)["worker"]
+    return declared_lambda(config).functions["worker"]
 
 
 def test_an_sqs_function_declares_its_event_source_mapping() -> None:

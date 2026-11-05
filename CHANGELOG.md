@@ -26,13 +26,17 @@
 
 - **lambda:** `loom deploy manifest <config> [--function x]` prints a
   versioned JSON manifest (`manifest_version: 1`) of each function of
-  `lambda.functions` for a deployment tool: handler, environment variables,
-  http routes or the sqs queue and event source mapping, `auth`, the secret and
-  SSM parameter names its placeholders read (never values), stores, queues,
-  code path and startup modules. It runs the deploy checks of
-  `loom check --deploy` first and prints nothing when one fails. New keys:
-  `lambda.handler` and `lambda.functions.<name>.queue` (a key of
-  `sqs.queues`), both required by the manifest only.
+  `lambda.functions` for a deployment tool: the handler, code path and
+  queues once, then per function its http routes and `auth` or its sqs queue
+  and event source mapping, and the secret and SSM parameter names it
+  resolves (never values; no resolver runs). It runs the deploy
+  checks of `loom check --deploy` first, prints their findings to stderr and
+  no manifest when one fails. New keys: `lambda.handler` and
+  `lambda.functions.<name>.queue` (a key of `sqs.queues`), both required by
+  the manifest only.
+- **rest:** `loom.rest.E001` also fails a `lambda.functions.<name>.auth`
+  that names no mechanism (`{}`, `jwt: null`, `custom: false`): it replaces
+  `app.rest.auth` for that function.
 
 ### testing
 

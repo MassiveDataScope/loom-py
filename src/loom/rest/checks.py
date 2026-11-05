@@ -3,7 +3,9 @@
 ``loom.rest.E001``: the API authenticates no caller. The configuration names
 the mechanism: ``app.rest.auth.jwt`` for the built-in one, or
 ``app.rest.auth.custom: true`` for an ``authenticator`` the composition root
-passes in code (``create_app`` refuses either without the other).
+passes in code (``create_app`` refuses either without the other). The
+``auth`` of a function of ``lambda.functions`` replaces ``app.rest.auth`` for
+that function, so it must name a mechanism too.
 
 ``loom.rest.W001``: the API publishes its documentation or OpenAPI schema,
 which maps every route, parameter and field. The three URLs are on by
@@ -21,6 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import REST_CHECKS, Finding, deploy_check
+from loom.core.config.keys import ConfigKey
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
@@ -31,23 +34,43 @@ AUTHENTICATION_CHECK: Final = f"{REST_CHECKS}.E001"
 SCHEMA_CHECK: Final = f"{REST_CHECKS}.W001"
 """Id of the check warning that a deployed API publishes its schema."""
 
-_JWT_KEY = "app.rest.auth.jwt"
-_CUSTOM_KEY = "app.rest.auth.custom"
+_AUTH_KEY = "app.rest.auth"
 _SCHEMA_KEYS = ("docs_url", "redoc_url", "openapi_url")
 
 
 @deploy_check(AUTHENTICATION_CHECK)
 def _authentication_configured(config: ConfigContext) -> Finding | None:
-    auth = config.raw("app.rest.auth", {})
-    if isinstance(auth, dict) and (isinstance(auth.get("jwt"), dict) or auth.get("custom") is True):
+    unauthenticated = [key for key in _auth_keys(config) if not _authenticates(config.raw(key))]
+    if not unauthenticated:
         return None
     return Finding(
-        message=f"the API authenticates no caller: neither {_JWT_KEY} nor {_CUSTOM_KEY} is set.",
+        message=(
+            "the API authenticates no caller: neither jwt nor 'custom: true' is set in "
+            f"{', '.join(unauthenticated)}."
+        ),
         hint=(
-            f"configure {_JWT_KEY}, or set '{_CUSTOM_KEY}: true' and pass "
+            f"configure {_AUTH_KEY}.jwt, or set '{_AUTH_KEY}.custom: true' and pass "
             f"create_app(authenticator=...); list {AUTHENTICATION_CHECK} under "
             "checks.silenced only when a gateway in front authenticates every request."
         ),
+    )
+
+
+def _auth_keys(config: ConfigContext) -> list[str]:
+    """``app.rest.auth`` and the ``auth`` of each function of ``lambda.functions`` declaring one."""
+    functions = config.raw(f"{ConfigKey.LAMBDA}.functions", {})
+    declared = functions.items() if isinstance(functions, dict) else ()
+    overrides = [
+        f"{ConfigKey.LAMBDA}.functions.{name}.auth"
+        for name, function in declared
+        if isinstance(function, dict) and function.get("auth") is not None
+    ]
+    return [_AUTH_KEY, *overrides]
+
+
+def _authenticates(auth: object) -> bool:
+    return isinstance(auth, dict) and (
+        isinstance(auth.get("jwt"), dict) or auth.get("custom") is True
     )
 
 
