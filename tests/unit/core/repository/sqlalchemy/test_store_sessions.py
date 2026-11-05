@@ -484,10 +484,13 @@ class TestOperationSession:
     async def test_outside_an_invocation_it_persists_nothing_on_error(
         self, stores: _Stores, audit_rows: _AuditRows
     ) -> None:
-        with pytest.raises(_InvocationFailed):
+        async def write_then_fail() -> None:
             async with stores.audit.operation_session(write=True) as session:
                 await session.execute(_INSERT, {"name": "failed"})
                 raise _InvocationFailed
+
+        with pytest.raises(_InvocationFailed):
+            await write_then_fail()
 
         assert await audit_rows.count() == 0
 
