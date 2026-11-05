@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import secrets
 import signal
 import subprocess
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,9 @@ import pytest
 import redis
 import yaml
 from celery import Celery
+from sqlalchemy import make_url, text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 URI_ENV = "LOOM_PG_IT_URI"
 BROKER = "redis://127.0.0.1:6379/15"
@@ -33,6 +39,40 @@ def _skip_without_services() -> str:
         pytest.skip(f"Redis at {BROKER} is not reachable ({exc})")
     client.flushdb()
     return database
+
+
+def _admin(database: str, *statements: str) -> None:
+    async def run() -> None:
+        engine = create_async_engine(database, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+        try:
+            async with engine.connect() as connection:
+                for statement in statements:
+                    await connection.execute(text(statement))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+@pytest.fixture
+def database() -> Iterator[str]:
+    """The URL of an ordinary login role creating its tables in a schema of its own."""
+    admin = _skip_without_services()
+    role = f"loom_prefork_{secrets.token_hex(4)}"
+    password = secrets.token_hex(12)
+    _admin(
+        admin,
+        f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS",
+        f'CREATE SCHEMA "{role}" AUTHORIZATION "{role}"',
+    )
+    try:
+        yield (
+            make_url(admin)
+            .set(username=role, password=password)
+            .render_as_string(hide_password=False)
+        )
+    finally:
+        _admin(admin, f'DROP SCHEMA IF EXISTS "{role}" CASCADE', f'DROP ROLE IF EXISTS "{role}"')
 
 
 def _ready(log: Path, process: subprocess.Popen[str]) -> None:
@@ -55,9 +95,8 @@ class _Run:
     checks: list[int]
 
 
-def _run_prefork_worker(tmp_path: Path, children: int) -> _Run:
+def _run_prefork_worker(tmp_path: Path, database: str, children: int) -> _Run:
     """Start a real prefork worker with *children* processes and run one job in each."""
-    database = _skip_without_services()
     config = tmp_path / "worker.yaml"
     report = tmp_path / "parent.json"
     checks = tmp_path / "checks"
@@ -135,8 +174,8 @@ def _run_prefork_worker(tmp_path: Path, children: int) -> _Run:
     return _Run(parent=parent, answers=answers, checks=recorded)
 
 
-def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
-    run = _run_prefork_worker(tmp_path, children=2)
+def test_prefork_children_open_their_own_connections(tmp_path: Path, database: str) -> None:
+    run = _run_prefork_worker(tmp_path, database, children=2)
     parent, answers = run.parent, run.answers
 
     assert parent["pool"] == "AsyncAdaptedQueuePool"
@@ -148,9 +187,9 @@ def test_prefork_children_open_their_own_connections(tmp_path: Path) -> None:
     assert parent["pid"] not in child_pids
 
 
-def test_eight_children_open_after_one_check_in_the_parent(tmp_path: Path) -> None:
+def test_eight_children_open_after_one_check_in_the_parent(tmp_path: Path, database: str) -> None:
     """SC-006a: the parent checks once and none of its connections serves a child."""
-    run = _run_prefork_worker(tmp_path, children=8)
+    run = _run_prefork_worker(tmp_path, database, children=8)
     parent_pid = run.parent["pid"]
 
     assert run.checks == [parent_pid]

@@ -323,7 +323,9 @@ async def _run_startup_checks(store: _Store) -> None:
     The checks read the tables :func:`_prepare_models` compiled into the
     store's metadata, scoped ones included. An in-memory SQLite pool is the
     database itself, so that connection stays. A failed check releases a
-    queued pool too: the connection must not sit there after the error.
+    queued pool too: the connection must not sit there after the error. On
+    Postgres, a superuser or bypass role is refused in every schema mode:
+    it would read the scoped tables of any store sharing the database.
     """
     session_manager, config = store.session_manager, store.schema
     metadata = session_manager.metadata
@@ -343,6 +345,8 @@ async def _run_startup_checks(store: _Store) -> None:
         )
     try:
         async with session_manager.engine.begin() as connection:
+            if dialect == POSTGRES_DIALECT:
+                await _reject_privileged_connection(connection, store.path)
             if config.mode == EXTERNAL:
                 await _check_external(connection, store, scoped)
             else:
@@ -417,10 +421,8 @@ async def _check_external(
         raise ConfigError(
             f"{store.path}.schema.mode is external but tables are missing: {', '.join(missing)}"
         )
-    if connection.dialect.name == POSTGRES_DIALECT:
-        await _reject_privileged_connection(connection, store.path)
-        if scoped:
-            await _check_guard(connection, scoped, store)
+    if connection.dialect.name == POSTGRES_DIALECT and scoped:
+        await _check_guard(connection, scoped, store)
 
 
 async def _check_guard(

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
+from loom.core.errors.errors import ForeignSessionError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
@@ -368,6 +369,28 @@ class TestWithSessionScope:
             enlisted = AUDIT in scope.participants
 
         assert (counted, enlisted) == (1, False)
+
+
+class TestHandedInSession:
+    """A ``session=`` passed by hand must come from the repository's own store (T105)."""
+
+    async def test_a_session_of_another_store_is_refused_and_persists_nothing(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async with stores.default.session() as foreign:
+            with pytest.raises(ForeignSessionError, match="store 'audit'"):
+                await audit_rows.insert_raw("foreign", session=foreign)
+
+        assert await audit_rows.count() == 0
+
+    async def test_a_session_of_its_own_store_is_used(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async with stores.audit.session() as own:
+            await audit_rows.insert_raw("own", session=own)
+            await own.commit()
+
+        assert await audit_rows.count() == 1
 
 
 async def _write_joined_then_fail(stores: _Stores, audit: _AuditRows) -> None:

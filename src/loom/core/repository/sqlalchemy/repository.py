@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loom.core.errors.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.abc import (
     BulkCreatable,
@@ -28,7 +29,7 @@ from loom.core.repository.sqlalchemy.mixins import (
     SQLAlchemyReadMixin,
     SQLAlchemyUpdateMixin,
 )
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
 
 R = TypeVar("R")
 
@@ -149,6 +150,16 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
         """Handle post-commit mutation events (cache invalidation hook)."""
         self.log.debug("RepositoryTransactionCommitted", mutation_count=len(events))
 
+    def _require_own(self, session: AsyncSession) -> None:
+        """Refuse *session* unless it runs on this repository's engine."""
+        engine = session.get_bind().engine
+        manager = self.session_manager
+        if engine is not manager.engine.sync_engine:
+            raise ForeignSessionError.between(
+                ForeignSessionError.side(manager.store, manager.target),
+                f"another engine ({bare_url(engine.url)})",
+            )
+
     @asynccontextmanager
     async def _session_scope(
         self, session: AsyncSession | None = None, *, write: bool
@@ -162,9 +173,12 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
 
         Raises:
             ScopeOwnershipError: See :meth:`SessionManager.joined_session`.
-            ForeignSessionError: See :meth:`SessionManager.joined_session`.
+            ForeignSessionError: When *session* comes from another engine,
+                or see :meth:`SessionManager.joined_session`.
             UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
+        if session is not None:
+            self._require_own(session)
         context_session = self.session_manager.joined_session(write=write)
         if session is not None:
             yield session

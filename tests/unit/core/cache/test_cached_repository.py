@@ -956,22 +956,16 @@ class TestPrimaryKeyByName:
         assert entity_batches == [[expected_key]]
         assert await env.backend.get_value(expected_key, type=CodeWidget) == keyed
 
-    @pytest.mark.asyncio
-    async def test_repository_without_model_falls_back_to_id(
-        self, cache_config: CacheConfig
-    ) -> None:
+    def test_a_repository_without_a_model_is_refused(self, cache_config: CacheConfig) -> None:
         repository = WritableRepository([Widget(id=1, name="a")], Widget)
         del repository.model
         backend = CountingCacheBackend()
         resolver = _RecordingResolver(backend)
-        wrapped = CachedRepository(
-            repository, config=cache_config, cache=backend, dependency_resolver=resolver
-        )
 
-        created = await wrapped.create(WidgetCreate(name="b"))
-
-        assert created.id == 2
-        assert [event.ids for event in resolver.events] == [(2,)]
+        with pytest.raises(TypeError, match="has no model, so the store"):
+            CachedRepository(
+                repository, config=cache_config, cache=backend, dependency_resolver=resolver
+            )
 
 
 class TestEntityScopeValidation:
