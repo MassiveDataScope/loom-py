@@ -1,4 +1,4 @@
-"""Synthetic product 4: rows of a store other than ``default``, scoped by a text owner key."""
+"""Synthetic product 4: rows of a store other than ``default``, scoped by the caller's tenant."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String, Text
 
 SCHEMA = "memos"
-SCOPE_BINDINGS = {"owner": "identity.subject"}
+SCOPE_BINDINGS = {"owner": "identity.tenant"}
 
 
 class Memo(BaseModel, RowScoped):

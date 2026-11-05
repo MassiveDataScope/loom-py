@@ -11,54 +11,59 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe, compose_application
-from loom.core.authz import Decision, Grant, Scope
+from loom.composition import AppConfig, Application, compose_application
+from loom.core.authz import Scope
 from loom.core.command import Command
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.post_commit import store_channel
 from loom.core.identity import Identity
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.repository.abc import RepoFor
-from loom.core.repository.sqlalchemy.rls import create_schema, elevate
+from loom.core.repository.sqlalchemy.rls import elevate
 from loom.core.repository.sqlalchemy.rls.verify import verify
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.uow.coordinator import Committed, RolledBack
-from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted
+from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
 from loom.core.use_case import Input, Joined, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import Serving, composition_source
 from tests.integration.agnosticism import memos, notes
 from tests.integration.rls.conftest import (
+    AUDIT,
+    DECISION,
+    FLAG,
+    OWNER_SETTING,
     U1,
     U2,
-    BootstrapFactory,
     ScopedDatabase,
+    StoreFactory,
     application_for,
     execute,
     scalar,
+    store_section,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(120)]
 
-AUDIT = StoreKey("audit")
+T1 = "t1000000-0000-0000-0000-000000000001"
+T2 = "t2000000-0000-0000-0000-000000000002"
+TENANT = {U1: T1, U2: T2}
+"""Each caller's ``tenant``, which memos are scoped by, unlike notes (``subject``)."""
 NOTES = {U1: ("a1", "a2"), U2: ("a3",)}
-MEMOS = {U1: ("b1",), U2: ("b2", "b3")}
-OWNER = text("SELECT coalesce(current_setting('loom.scope.owner', true), '')")
-EDITOR_FLAG = text("SELECT coalesce(current_setting('loom.scope.editor.any', true), '')")
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+MEMOS = {T1: ("b1",), T2: ("b2", "b3")}
+OWNER = text(OWNER_SETTING)
+EDITOR_FLAG = text(FLAG)
 REFUSED = "fail-at-commit"
 
 
@@ -77,13 +82,11 @@ class _NewMemo(Command, frozen=True):
 class _Sessions:
     """Both stores' session managers, and the stores whose post-commit actions ran."""
 
-    default: SessionManager
-    audit: SessionManager
+    managers: Mapping[StoreKey, SessionManager]
     ran: list[StoreKey] = field(default_factory=list)
 
     def of(self, key: StoreKey) -> AsyncSession:
-        manager = self.default if key == DEFAULT_STORE else self.audit
-        session = manager.active_session
+        session = self.managers[key].active_session
         assert session is not None, f"store {key!r} is not enlisted"
         return session
 
@@ -148,7 +151,7 @@ class _NoteThenNestedMemo(UseCase[notes.Note, tuple[str, str]]):
 
     async def execute(self) -> tuple[str, str]:
         await self.notes.create(_NewNote(owner_id=U1, editor="ana", body="outer"))
-        nested = await self.invoker.invoke(_RecordMemo, payload={"owner_id": U1, "body": "nested"})
+        nested = await self.invoker.invoke(_RecordMemo, payload={"owner_id": T1, "body": "nested"})
         own = str((await self.sessions.of(DEFAULT_STORE).execute(OWNER)).scalar_one())
         return own, nested
 
@@ -184,11 +187,29 @@ class _SplitCommit(UseCase[notes.Note, None]):
 
     async def execute(self) -> None:
         await self.notes.create(_NewNote(owner_id=U1, editor="ana", body="split"))
-        await self.memos.create(_NewMemo(owner_id=U1, body=REFUSED))
+        await self.memos.create(_NewMemo(owner_id=T1, body=REFUSED))
         for key in _STORES:
             channel = store_channel(key)
             assert channel is not None
             channel.enqueue(lambda key=key: self.sessions.ran.append(key))
+
+
+class _WriteInRead(UseCase[notes.Note, None]):
+    """Read-only, yet writes a note on A or a memo on B."""
+
+    read_only = True
+
+    def __init__(
+        self, notes_repo: RepoFor[notes.Note], memos_repo: Joined[RepoFor[memos.Memo]]
+    ) -> None:
+        self.notes = notes_repo
+        self.memos = memos_repo
+
+    async def execute(self, store: str) -> None:
+        if store == DEFAULT_STORE:
+            await self.notes.create(_NewNote(owner_id=U1, editor="ana", body="read"))
+        else:
+            await self.memos.create(_NewMemo(owner_id=T1, body="read"))
 
 
 _USE_CASES = (
@@ -199,27 +220,13 @@ _USE_CASES = (
     _NoteThenNestedMemo,
     _ElevateEditor,
     _SplitCommit,
+    _WriteInRead,
 )
-
-
-class _Serving:
-    def __init__(self) -> None:
-        self.discovered = DiscoveryResult(
-            models=(notes.Note, memos.Memo), use_cases=cast(Any, _USE_CASES), interfaces=()
-        )
-
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
-        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered)
-
-    def bind(self, application: Application) -> Application:
-        return application
 
 
 def _sessions_module(container: LoomContainer) -> None:
     def build() -> _Sessions:
-        audit = container.resolve((SessionManager, AUDIT))
-        return _Sessions(container.resolve(SessionManager), audit)
+        return _Sessions({k: container.resolve(store_binding(SessionManager, k)) for k in _STORES})
 
     container.register(_Sessions, build, scope=DiScope.APPLICATION)
 
@@ -233,14 +240,15 @@ class TwoStores:
 
     def compose(self) -> Application:
         stores = {
-            DEFAULT_STORE: _section(self.default, notes.SCOPE_BINDINGS),
-            AUDIT: _section(self.audit, memos.SCOPE_BINDINGS),
+            DEFAULT_STORE: store_section(self.default, notes.SCOPE_BINDINGS),
+            AUDIT: store_section(self.audit, memos.SCOPE_BINDINGS),
         }
         ctx = ConfigContext.from_dict(
             {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
         )
         source = composition_source(ctx, app=AppConfig(name="two_stores_composed"))
-        return compose_application(source, _Serving(), modules=(_sessions_module,))
+        adapter = Serving(notes.Note, memos.Memo, use_cases=_USE_CASES)
+        return compose_application(source, adapter, modules=(_sessions_module,))
 
     async def rows(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Every note body on A and memo body on B, read through the bypass users."""
@@ -248,18 +256,6 @@ class TwoStores:
             await _bodies(self.default, "notes"),
             await _bodies(self.audit, "memos"),
         )
-
-
-def _section(database: ScopedDatabase, scopes: dict[str, str]) -> dict[str, Any]:
-    return {
-        "backend": "sqlalchemy",
-        "url": database.write,
-        "schema": {
-            "mode": "external",
-            "scopes": dict(scopes),
-            "guard": f"loom_guard_{database.schema}",
-        },
-    }
 
 
 async def _bodies(database: ScopedDatabase, table: str) -> tuple[str, ...]:
@@ -270,37 +266,21 @@ async def _bodies(database: ScopedDatabase, table: str) -> tuple[str, ...]:
     return tuple(rows.split(",")) if rows else ()
 
 
-async def _seed(database: ScopedDatabase, table: str, rows: str) -> None:
-    await execute(database.bypass, f"INSERT INTO {database.schema}.{table} {rows}")
-
-
 @pytest.fixture
-async def two_stores(
-    notes_wiring: None,
-    scoped_database: BootstrapFactory,
-    scoped_database_b: BootstrapFactory,
-    tmp_path: Path,
-) -> TwoStores:
+async def two_stores(notes_wiring: None, create_store: StoreFactory, tmp_path: Path) -> TwoStores:
     suffix = secrets.token_hex(3)
-    default = await scoped_database(f"cn_{suffix}")
-    await create_schema(
-        default.migrator, application_for(notes, default, tmp_path, schema=default.schema)
-    )
-    audit = await scoped_database_b(f"cm_{suffix}")
+    default = await create_store(DEFAULT_STORE, notes, f"cn_{suffix}")
+    audit = await create_store(AUDIT, memos, f"cm_{suffix}")
     audit_app = application_for(memos, audit, tmp_path, schema=audit.schema, store=AUDIT)
-    await create_schema(audit.migrator, audit_app)
     assert (await verify(audit.superuser, audit_app)).ok
-    await _seed(
-        default,
-        "notes",
-        "(owner_id, editor, body) VALUES "
-        + ", ".join(f"('{o}', 'ana', '{b}')" for o, bodies in NOTES.items() for b in bodies),
+    note_rows = ", ".join(f"('{o}', 'ana', '{b}')" for o, bs in NOTES.items() for b in bs)
+    memo_rows = ", ".join(f"('{o}', '{b}')" for o, bs in MEMOS.items() for b in bs)
+    await execute(
+        default.bypass,
+        f"INSERT INTO {default.schema}.notes (owner_id, editor, body) VALUES {note_rows}",
     )
-    await _seed(
-        audit,
-        "memos",
-        "(owner_id, body) VALUES "
-        + ", ".join(f"('{o}', '{b}')" for o, bodies in MEMOS.items() for b in bodies),
+    await execute(
+        audit.bypass, f"INSERT INTO {audit.schema}.memos (owner_id, body) VALUES {memo_rows}"
     )
     return TwoStores(default, audit)
 
@@ -313,7 +293,8 @@ async def application(two_stores: TwoStores) -> AsyncIterator[Application]:
 
 
 def _as(application: Application, subject: str) -> Any:
-    return application.kernel.app.for_identity(Identity(subject=subject))
+    identity = Identity(subject=subject, attributes={"tenant": TENANT[subject]})
+    return application.kernel.app.for_identity(identity)
 
 
 @pytest.mark.parametrize("use_case", [_ReadBoth, _GatherBoth], ids=["sequential", "gather"])
@@ -323,7 +304,7 @@ async def test_a_read_only_execution_reads_each_store_as_its_caller(
 ) -> None:
     counts = await _as(application, subject).invoke(use_case)
 
-    assert counts == (len(NOTES[subject]), len(MEMOS[subject]))
+    assert counts == (len(NOTES[subject]), len(MEMOS[TENANT[subject]]))
 
 
 async def test_a_gather_child_may_not_touch_the_stores_of_a_writing_execution(
@@ -346,9 +327,21 @@ async def test_a_nested_execution_on_the_other_store_keeps_the_caller_and_commit
         two_stores.default.bypass, f"SELECT to_regclass('{two_stores.default.schema}.memos')"
     )
 
-    assert owners == (U1, U1)
+    assert owners == (U1, T1)
     assert (notes_on_a, memos_on_b) == (("a1", "a2", "a3", "outer"), ("b1", "b2", "b3", "nested"))
     assert memos_on_a is None
+
+
+@pytest.mark.parametrize("store", [DEFAULT_STORE, AUDIT])
+async def test_a_write_in_a_read_only_execution_is_refused_on_either_store(
+    application: Application, two_stores: TwoStores, store: StoreKey
+) -> None:
+    caller = _as(application, U1)
+
+    with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
+        await caller.invoke(_WriteInRead, params={"store": store})
+
+    assert await two_stores.rows() == (("a1", "a2", "a3"), ("b1", "b2", "b3"))
 
 
 async def test_an_elevation_flags_only_the_store_that_declares_the_scope(

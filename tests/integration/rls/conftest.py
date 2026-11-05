@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -24,11 +24,11 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.authz import Permission, Role, RoleCatalog
+from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.locator import Application, load_application
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.sqlalchemy.rls import register_scope_source
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
+from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
@@ -292,11 +292,53 @@ def application_for(
     return load_application(str(path), store=store)
 
 
+def store_section(
+    database: ScopedDatabase, scopes: Mapping[str, str], *, url: str | None = None
+) -> dict[str, Any]:
+    """The ``stores.<key>`` section serving *database*'s external schema, as its write user."""
+    return {
+        "backend": "sqlalchemy",
+        "url": url or database.write,
+        "schema": {
+            "mode": "external",
+            "scopes": dict(scopes),
+            "guard": f"loom_guard_{database.schema}",
+        },
+    }
+
+
+AUDIT = StoreKey("audit")
+StoreFactory = Callable[[StoreKey, ModuleType, str], Awaitable[ScopedDatabase]]
+
+
+@pytest.fixture
+def create_store(
+    scoped_database: BootstrapFactory, scoped_database_b: BootstrapFactory, tmp_path: Path
+) -> StoreFactory:
+    """Bootstrap *schema* on the server of store *server* and create *product*'s tables there.
+
+    ``default`` lives on server A and ``audit`` on server B; the tables are
+    those of the store *product*'s models belong to.
+    """
+    servers = {DEFAULT_STORE: scoped_database, AUDIT: scoped_database_b}
+
+    async def create(server: StoreKey, product: ModuleType, schema: str) -> ScopedDatabase:
+        database = await servers[server](schema)
+        store = store_of(product.MODELS[0])
+        application = application_for(product, database, tmp_path, schema=schema, store=store)
+        await create_schema(database.migrator, application)
+        return database
+
+    return create
+
+
 U1 = "11111111-1111-1111-1111-111111111111"
 U2 = "22222222-2222-2222-2222-222222222222"
 MANAGE = Permission("members.manage")
 CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
 FLAG = "SELECT coalesce(current_setting('loom.scope.editor.any', true), '')"
+OWNER_SETTING = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
+DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
 
 
 @dataclass
