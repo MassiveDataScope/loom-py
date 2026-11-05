@@ -402,9 +402,10 @@ class InvocationScope:
         neither failed nor was poisoned; only the priority lane if one is
         ``Uncertain`` or non-transactional in a failed invocation, since a
         cache invalidation is safe whether or not the write landed; nothing
-        if one rolled back. Actions no store holds, on :attr:`post_commit`,
-        run only if the whole invocation succeeded. What reaches
-        :attr:`post_commit` after this call never runs.
+        if one rolled back, and when the body did not raise, its publish and
+        plain actions are logged as never ran. Actions no store holds, on
+        :attr:`post_commit`, run only if the whole invocation succeeded.
+        What reaches :attr:`post_commit` after this call never runs.
 
         Args:
             into: The channel the owner drains next.
@@ -421,6 +422,8 @@ class InvocationScope:
             allowed = min(lanes.get(key, _NO_LANE) for key in owners)
             if allowed != _NO_LANE:
                 into.adopt(channel, priority_only=allowed == _PRIORITY_LANE)
+            elif error is None:
+                channel.discard_dispatches(log=True)
 
     @asynccontextmanager
     async def frame(self, frame: Frame) -> AsyncIterator[None]:

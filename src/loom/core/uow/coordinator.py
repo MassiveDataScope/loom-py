@@ -34,6 +34,7 @@ invocation error: the caller reads :class:`InvocationOutcome` and decides.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeGuard
@@ -47,16 +48,17 @@ from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 
 _log = get_logger(__name__).bind(component="uow")
 
-_ROLLBACK_TIMEOUT_S = 30.0
-"""How long a phased rollback may take before it counts as failed.
+ROLLBACK_TIMEOUT_S = 30.0
+"""How long the phased rollbacks of one invocation may take, together, by default.
 
 A rollback runs to completion even when the owning task is cancelled, so a
-rollback stuck on a dead socket would leave that task uncancellable. Thirty
-seconds outlasts any rollback a live server answers, yet stays well under the
-minutes a TCP keepalive or driver socket timeout may take to give up. A
-rollback that times out is logged as ``UoWRollbackFailed``, like any other
-failed rollback, and ``close`` runs next; the server discards the
-transaction once the connection is gone.
+rollback stuck on a dead socket would leave that task uncancellable. One
+deadline bounds every rollback of the invocation, however many stores it
+enlisted. Thirty seconds outlasts any rollback a live server answers, yet
+stays well under the minutes a TCP keepalive or driver socket timeout may
+take to give up. A rollback that times out is logged as
+``UoWRollbackFailed``, like any other failed rollback, and ``close`` runs
+next; the server discards the transaction once the connection is gone.
 """
 
 
@@ -173,8 +175,8 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
 
     - ``begin``, ``commit`` and ``rollback`` leave the session open.
     - ``rollback`` runs in a task of its own that is awaited to completion,
-      however often the owning task is cancelled, but for at most
-      :data:`_ROLLBACK_TIMEOUT_S`; it must not touch a ``ContextVar``.
+      however often the owning task is cancelled, but no later than the
+      invocation's rollback deadline; it must not touch a ``ContextVar``.
     - ``close`` releases the session, shields its own driver I/O and resets
       every ``ContextVar`` token ``begin`` published in a ``finally``, so a
       cancellation never leaves one set. It is also called when ``begin``
@@ -226,7 +228,7 @@ class _Driver(Protocol):
     async def begin(self) -> None: ...
     async def flush(self) -> None: ...
     async def commit(self) -> None: ...
-    async def rollback(self, cause: BaseException) -> None: ...
+    async def rollback(self, cause: BaseException, timeout: float) -> None: ...
     async def close(self) -> None: ...
 
 
@@ -271,8 +273,8 @@ class _PhasedDriver:
     async def commit(self) -> None:
         await self._uow.commit()
 
-    async def rollback(self, cause: BaseException) -> None:
-        """Roll back to completion or to :data:`_ROLLBACK_TIMEOUT_S`, even if cancelled meanwhile.
+    async def rollback(self, cause: BaseException, timeout: float) -> None:
+        """Roll back to completion or for ``timeout`` seconds, even if cancelled meanwhile.
 
         ``close`` never runs while the rollback is in flight: a cancellation
         waits for it, and the timeout bounds that wait, so a rollback hung on
@@ -281,12 +283,12 @@ class _PhasedDriver:
         ``__aexit__`` a single-phase unit of work rolls back with.
 
         Raises:
-            TimeoutError: If the rollback outlasted :data:`_ROLLBACK_TIMEOUT_S`.
+            TimeoutError: If the rollback outlasted ``timeout``.
             asyncio.CancelledError: If the task was cancelled meanwhile, once
                 the rollback has ended.
         """
         del cause
-        await run_to_completion(self._uow.rollback(), timeout=_ROLLBACK_TIMEOUT_S)
+        await run_to_completion(self._uow.rollback(), timeout=timeout)
 
     async def close(self) -> None:
         await self._uow.close()
@@ -332,7 +334,9 @@ class _SinglePhaseDriver:
         self._exited = True
         await self._uow.__aexit__(None, None, None)
 
-    async def rollback(self, cause: BaseException) -> None:
+    async def rollback(self, cause: BaseException, timeout: float) -> None:
+        """Exit with ``cause``; the protocol has the unit of work bound its own I/O."""
+        del timeout
         if self._exited:
             return
         self._exited = True
@@ -431,13 +435,14 @@ class Participant:
         """Commit the unit of work."""
         await self._driver.commit()
 
-    async def rollback(self, cause: BaseException) -> None:
+    async def rollback(self, cause: BaseException, timeout: float) -> None:
         """Discard the unit of work's writes.
 
         Args:
             cause: Why the invocation does not commit this store.
+            timeout: Seconds a phased rollback may take.
         """
-        await self._driver.rollback(cause)
+        await self._driver.rollback(cause, timeout)
 
     async def close(self) -> None:
         """Release the unit of work."""
@@ -477,6 +482,8 @@ class OrderedCommits:
 
     Args:
         factories: Unit-of-work factory of every store that may be enlisted.
+        rollback_timeout: Seconds the phased rollbacks of one invocation
+            may take together (:data:`ROLLBACK_TIMEOUT_S`).
 
     Example::
 
@@ -485,8 +492,14 @@ class OrderedCommits:
         outcome = await coordinator.finish(scope, error=None)
     """
 
-    def __init__(self, factories: Mapping[StoreKey, UnitOfWorkFactory]) -> None:
+    def __init__(
+        self,
+        factories: Mapping[StoreKey, UnitOfWorkFactory],
+        *,
+        rollback_timeout: float = ROLLBACK_TIMEOUT_S,
+    ) -> None:
         self._factories = dict(factories)
+        self._rollback_timeout = rollback_timeout
 
     async def enlist(self, scope: ParticipantScope, key: StoreKey) -> Participant:
         """Create, begin and register the participant of ``key``.
@@ -538,7 +551,7 @@ class OrderedCommits:
             BaseException: Likewise, for any other interruption that is not an
                 ``Exception`` (``KeyboardInterrupt``, ``SystemExit``).
         """
-        settlement = _Settlement(tuple(scope.participants.values()), error)
+        settlement = _Settlement(tuple(scope.participants.values()), error, self._rollback_timeout)
         outcome = await settlement.run()
         scope.outcome, scope.closed = outcome, True
         _log_outcome(outcome, scope.participants)
@@ -586,8 +599,15 @@ def _failed(participant: Participant, error: BaseException) -> StoreOutcome:
 class _Settlement:
     """One run of :meth:`OrderedCommits.finish` over the enlisted participants."""
 
-    def __init__(self, enlisted: tuple[Participant, ...], error: BaseException | None) -> None:
+    def __init__(
+        self,
+        enlisted: tuple[Participant, ...],
+        error: BaseException | None,
+        rollback_timeout: float,
+    ) -> None:
         self._enlisted = enlisted
+        self._rollback_timeout = rollback_timeout
+        self._rollback_deadline: float | None = None
         # A poisoned participant fails a clean invocation, as its business error would.
         self._failure = error or next(
             (p.poisoned for p in enlisted if p.poisoned is not None), None
@@ -641,10 +661,18 @@ class _Settlement:
         failure = self._failure
         if failure is not None and not _is_success(self._outcomes.get(participant.key)):
             self._outcomes.setdefault(participant.key, _undone(participant, failure))
+            timeout = self._rollback_time_left()
             await self._attempt(
-                lambda: participant.rollback(failure), participant, "UoWRollbackFailed"
+                lambda: participant.rollback(failure, timeout), participant, "UoWRollbackFailed"
             )
         await self._attempt(participant.close, participant, "UoWCloseFailed")
+
+    def _rollback_time_left(self) -> float:
+        """Seconds left before the deadline every rollback shares, set by the first one."""
+        now = asyncio.get_running_loop().time()
+        if self._rollback_deadline is None:
+            self._rollback_deadline = now + self._rollback_timeout
+        return max(self._rollback_deadline - now, 0.0)
 
     async def _attempt(
         self,

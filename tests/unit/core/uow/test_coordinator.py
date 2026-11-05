@@ -21,7 +21,6 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.transaction import in_atomic_transaction
-from loom.core.uow import coordinator as coordinator_module
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     UNKNOWN_PHYSICAL,
@@ -56,8 +55,9 @@ S0, S1, S2, S3 = (StoreKey(f"s{index}") for index in range(4))
 AnyStore = PhasedStore | ThirdPartyStore
 
 
-def _coordinator(*stores: AnyStore) -> OrderedCommits:
-    return OrderedCommits({store.key: Factory(store) for store in stores})
+def _coordinator(*stores: AnyStore, rollback_timeout: float = 30.0) -> OrderedCommits:
+    factories = {store.key: Factory(store) for store in stores}
+    return OrderedCommits(factories, rollback_timeout=rollback_timeout)
 
 
 async def _enlist_all(coordinator: OrderedCommits, scope: Scope, *keys: StoreKey) -> None:
@@ -487,13 +487,9 @@ class TestTeardownFailures:
 class TestHungRollback:
     """A rollback that never returns is bounded: it fails, and close still runs."""
 
-    @pytest.fixture(autouse=True)
-    def _tiny_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(coordinator_module, "_ROLLBACK_TIMEOUT_S", 0.01)
-
     async def test_the_store_is_still_closed(self) -> None:
         ledger = Ledger()
-        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        coordinator, scope = _coordinator(_hung_rollback(ledger), rollback_timeout=0.01), Scope()
         await coordinator.enlist(scope, S0)
 
         await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
@@ -502,7 +498,7 @@ class TestHungRollback:
 
     async def test_the_store_is_reported_rolled_back(self) -> None:
         ledger = Ledger()
-        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        coordinator, scope = _coordinator(_hung_rollback(ledger), rollback_timeout=0.01), Scope()
         await coordinator.enlist(scope, S0)
         error = Boom("business")
 
@@ -514,7 +510,7 @@ class TestHungRollback:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         ledger = Ledger()
-        coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+        coordinator, scope = _coordinator(_hung_rollback(ledger), rollback_timeout=0.01), Scope()
         await coordinator.enlist(scope, S0)
 
         with caplog.at_level(logging.ERROR):
@@ -526,7 +522,10 @@ class TestHungRollback:
         ledger = Ledger()
 
         async def _invocation() -> None:
-            coordinator, scope = _coordinator(_hung_rollback(ledger)), Scope()
+            coordinator, scope = (
+                _coordinator(_hung_rollback(ledger), rollback_timeout=0.01),
+                Scope(),
+            )
             await coordinator.enlist(scope, S0)
             await coordinator.finish(scope, Boom("business"))
 
@@ -538,6 +537,17 @@ class TestHungRollback:
         await asyncio.gather(task, return_exceptions=True)
 
         assert done == {task}
+
+    async def test_every_rollback_of_the_invocation_shares_one_deadline(self) -> None:
+        ledger = Ledger()
+        hung = [PhasedStore(key, ledger, Fault("rollback", Effect.CANCEL)) for key in (S0, S1)]
+        coordinator, scope = _coordinator(*hung, rollback_timeout=0.3), Scope()
+        await _enlist_all(coordinator, scope, S0, S1)
+        started = asyncio.get_running_loop().time()
+
+        await _finish_within_a_second(coordinator, scope, Boom("business"), ledger)
+
+        assert asyncio.get_running_loop().time() - started < 0.5
 
 
 async def _finish_within_a_second(

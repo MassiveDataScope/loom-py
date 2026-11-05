@@ -1063,6 +1063,11 @@ finish instead of cutting it off, and reset their `ContextVar` tokens in the
 never shields; only the adapters do, around their own I/O. `EXEC_ERROR`
 carries `error_kind="cancelled"` for a cancelled execution.
 
+A cancellation waits for the rollback of each store, but every rollback of
+one invocation shares one deadline: `persistence.rollback_timeout` seconds
+(30 by default) from the first one. A rollback still running then counts as
+failed (`UoWRollbackFailed`) and its store is closed.
+
 ### Events
 
 | Event | When | Carries |

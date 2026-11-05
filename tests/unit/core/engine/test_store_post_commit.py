@@ -501,10 +501,17 @@ class _Send:
         return [{"job_name": "EmailJob", "task_id": "task-1"}]
 
 
-async def test_the_dispatches_an_uncertain_store_drops_are_logged_by_job_and_task(
-    stores: _Stores, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(CommitUncertain(ConnectionError("ack lost")), id="uncertain"),
+        pytest.param(_Refused(), id="rolled-back"),
+    ],
+)
+async def test_the_dispatches_a_store_drops_are_logged_by_job_and_task(
+    stores: _Stores, caplog: pytest.LogCaptureFixture, failure: BaseException
 ) -> None:
-    FAILURES[AUDIT] = CommitUncertain(ConnectionError("ack lost"))
+    FAILURES[AUDIT] = failure
 
     async def send() -> None:
         add_pending_publish(_Send())

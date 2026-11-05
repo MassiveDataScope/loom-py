@@ -147,15 +147,21 @@ class PostCommitChannel:
         """
         self._priority_actions += other._priority_actions
         if priority_only:
-            for action in (*other._publish_actions, *other._actions):
-                log_never_ran(action)
+            other.discard_dispatches(log=True)
         else:
             self._publish_actions += other._publish_actions
             self._actions += other._actions
         other.discard()
 
-    def discard_dispatches(self) -> None:
-        """Drop the publish and plain actions, keeping the priority ones (cache invalidations)."""
+    def discard_dispatches(self, *, log: bool = False) -> None:
+        """Drop the publish and plain actions, keeping the priority ones (cache invalidations).
+
+        Args:
+            log: Log each dropped action as never ran (:func:`log_never_ran`).
+        """
+        if log:
+            for action in (*self._publish_actions, *self._actions):
+                log_never_ran(action)
         self._publish_groups.clear()
         self._publish_actions.clear()
         self._actions.clear()
