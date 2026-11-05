@@ -27,6 +27,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.authz import Permission, Role, RoleCatalog
 from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.locator import Application, load_application
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.sqlalchemy.rls import register_scope_source
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 
@@ -248,9 +249,14 @@ async def admin_connection(module_database_uri: str) -> AsyncIterator[Any]:
 
 
 def application_for(
-    product: ModuleType, database: ScopedDatabase, tmp_path: Path, *, schema: str | None = None
+    product: ModuleType,
+    database: ScopedDatabase,
+    tmp_path: Path,
+    *,
+    schema: str | None = None,
+    store: StoreKey = DEFAULT_STORE,
 ) -> Application:
-    """Load a synthetic product as its own ``Application`` from a generated configuration file."""
+    """Load a synthetic product as *store*'s ``Application`` from a generated configuration file."""
     name = schema or product.SCHEMA
     config = {
         "app": {
@@ -258,7 +264,7 @@ def application_for(
             "discovery": {"mode": "modules", "modules": {"include": [product.__name__]}},
         },
         "stores": {
-            "default": {
+            store: {
                 "backend": "sqlalchemy",
                 "url": database.write,
                 "schema": {
@@ -283,7 +289,7 @@ def application_for(
     }
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(config))
-    return load_application(str(path))
+    return load_application(str(path), store=store)
 
 
 U1 = "11111111-1111-1111-1111-111111111111"

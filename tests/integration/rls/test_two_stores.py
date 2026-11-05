@@ -1,7 +1,7 @@
 """Two Postgres stores on two servers keep row-level security apart (T043, ADR 0008).
 
-The composition still serves the default store only, so each store is built
-directly through the SQLAlchemy backend from one catalog: ``default`` on
+Each store is built directly through the SQLAlchemy backend from one catalog,
+below the composition (``test_two_stores_composed.py`` goes through it): ``default`` on
 server A and ``audit`` on server B, each serving the synthetic ``notes``
 product from an external schema of its own. Every server holds different
 rows, so a row read back names the server it came from.
@@ -498,7 +498,7 @@ async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
 
 
 def _both(stores: Mapping[StoreKey, Store]) -> OrderedCommits:
-    """One coordinator over both stores, as the composition will build it (PR 11)."""
+    """One coordinator over both stores, as the composition builds it."""
     factories = {key: store.wiring.uow_factory for key, store in stores.items()}
     return OrderedCommits({key: f for key, f in factories.items() if f is not None})
 
