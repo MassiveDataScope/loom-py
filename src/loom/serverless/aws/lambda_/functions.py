@@ -24,7 +24,13 @@ if TYPE_CHECKING:
     from loom.rest.model import RestInterface
 
 _SECTION = "lambda.functions"
-_BATCHING = ("batch_size", "batching_window_s", "max_concurrency", "report_batch_item_failures")
+_SQS_ONLY = (
+    "queue",
+    "batch_size",
+    "batching_window_s",
+    "max_concurrency",
+    "report_batch_item_failures",
+)
 
 
 class LambdaFunction(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -32,21 +38,26 @@ class LambdaFunction(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_f
 
     ``auth`` has the ``app.rest.auth`` schema and replaces it for the function.
     An sqs function declares its event source mapping for the deployment:
-    ``batch_size`` (at most 10 on a FIFO queue), ``batching_window_s`` and
-    ``max_concurrency``; loom applies only ``report_batch_item_failures``,
-    which ``false`` turns into a failed invocation instead of a partial batch.
+    the ``queue`` it consumes (a key of ``sqs.queues``), ``batch_size`` (at
+    most 10 on a FIFO queue), ``batching_window_s`` and ``max_concurrency``;
+    loom applies only ``report_batch_item_failures``, which ``false`` turns
+    into a failed invocation instead of a partial batch.
     """
 
     http: tuple[str, ...] = ()
     sqs: bool = False
     auth: dict[str, Any] | None = None
+    queue: str | None = None
     batch_size: Annotated[int, msgspec.Meta(ge=1, le=10000)] | None = None
     batching_window_s: Annotated[int, msgspec.Meta(ge=0, le=300)] | None = None
     max_concurrency: Annotated[int, msgspec.Meta(ge=2, le=1000)] | None = None
     report_batch_item_failures: bool | None = None
 
 
-class _LambdaConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+class LambdaConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """The ``lambda`` section; ``handler`` is the import path every function's deployment runs."""
+
+    handler: str | None = None
     functions: dict[str, LambdaFunction] = msgspec.field(default_factory=dict)
 
 
@@ -62,12 +73,22 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
     """Decode ``lambda.functions`` and refuse a function or an interface declared twice over.
 
     Raises:
-        ConfigError: When a function declares both or neither of ``http`` and
-            ``sqs: true``, ``auth`` on an sqs function, a batching setting on
-            an http one, a ``batch_size`` over 10 without a ``batching_window_s``,
-            or an interface another function already serves.
+        ConfigError: As :func:`declared_lambda`.
     """
-    functions = _unresolved(ctx).functions
+    return declared_lambda(ctx).functions
+
+
+def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
+    """Decode ``lambda`` as written and refuse a function or an interface declared twice over.
+
+    Raises:
+        ConfigError: When a function declares both or neither of ``http`` and
+            ``sqs: true``, ``auth`` on an sqs function, a queue or batching
+            setting on an http one, a ``batch_size`` over 10 without a
+            ``batching_window_s``, or an interface another function already serves.
+    """
+    config = _unresolved(ctx)
+    functions = config.functions
     owners: dict[str, str] = {}
     for name, function in functions.items():
         _check_kind(name, function)
@@ -77,7 +98,7 @@ def declared_functions(ctx: ConfigContext) -> dict[str, LambdaFunction]:
                 raise ConfigError(
                     f"{interface!r} is served by both {_SECTION}.{owner} and {_SECTION}.{name}"
                 )
-    return functions
+    return config
 
 
 def _check_kind(name: str, function: LambdaFunction) -> None:
@@ -85,21 +106,21 @@ def _check_kind(name: str, function: LambdaFunction) -> None:
         raise ConfigError(f"{_SECTION}.{name} declares exactly one of 'http' or 'sqs: true'")
     if function.auth is not None and function.sqs:
         raise ConfigError(f"{_SECTION}.{name}.auth applies to an http function only")
-    batching = [key for key in _BATCHING if getattr(function, key) is not None]
-    if batching and not function.sqs:
-        raise ConfigError(f"{_SECTION}.{name}.{batching[0]} applies to an sqs function only")
+    sqs_only = [key for key in _SQS_ONLY if getattr(function, key) is not None]
+    if sqs_only and not function.sqs:
+        raise ConfigError(f"{_SECTION}.{name}.{sqs_only[0]} applies to an sqs function only")
     # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
     if (function.batch_size or 0) > 10 and not function.batching_window_s:
         raise ConfigError(f"{_SECTION}.{name}.batch_size over 10 needs batching_window_s >= 1")
 
 
-def _unresolved(ctx: ConfigContext) -> _LambdaConfig:
+def _unresolved(ctx: ConfigContext) -> LambdaConfig:
     """``lambda`` as written: another function's ``auth`` may name secrets this one cannot read.
 
     Only the function served resolves its own ``auth``, through its section path.
     """
     raw = ctx.raw(ConfigKey.LAMBDA)
-    return _LambdaConfig() if raw is None else convert_section(raw, ConfigKey.LAMBDA, _LambdaConfig)
+    return LambdaConfig() if raw is None else convert_section(raw, ConfigKey.LAMBDA, LambdaConfig)
 
 
 def declared_function(ctx: ConfigContext, name: str) -> LambdaFunction:

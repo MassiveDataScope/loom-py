@@ -57,6 +57,7 @@ Companion demo application:
    getting-started/streaming
    getting-started/environments
    getting-started/composition
+   getting-started/deploy-manifest
 
 .. toctree::
    :maxdepth: 2

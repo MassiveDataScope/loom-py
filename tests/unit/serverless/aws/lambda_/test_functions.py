@@ -19,6 +19,7 @@ def _declared(worker: dict[str, Any]) -> LambdaFunction:
 
 def test_an_sqs_function_declares_its_event_source_mapping() -> None:
     knobs = {
+        "queue": "orders",
         "batch_size": 10000,
         "batching_window_s": 300,
         "max_concurrency": 1000,
@@ -50,13 +51,14 @@ def test_an_out_of_range_setting_is_refused(knob: str, value: object) -> None:
 @pytest.mark.parametrize(
     ("knob", "value"),
     [
+        ("queue", "orders"),
         ("batch_size", 2),
         ("batching_window_s", 0),
         ("max_concurrency", 2),
         ("report_batch_item_failures", True),
     ],
 )
-def test_an_http_function_takes_no_batching_setting(knob: str, value: object) -> None:
+def test_an_http_function_takes_no_queue_or_batching_setting(knob: str, value: object) -> None:
     worker = {"http": ["ItemInterface"], knob: value}
     with pytest.raises(ConfigError, match=f"worker.{knob} applies to an sqs function only"):
         _declared(worker)

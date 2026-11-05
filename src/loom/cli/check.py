@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -52,21 +53,40 @@ def check(
     if not deploy:
         typer.echo("only deploy checks exist: run 'loom check --deploy <config>'.", err=True)
         raise typer.Exit(2)
-    _load_check_packages()
     try:
-        environment = resolve_environment(env)
-        paths = _config_paths(config, environment)
-        context = load_application_config(
-            *paths, resolvers=with_default_resolvers(()), environment=environment
-        )
-        _add_code_path(context, Path(paths[0]).resolve().parent)
-        report = run_deploy_checks(context, skip=tuple(skip or ()))
+        checked = load_checked(config, env, tuple(skip or ()))
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-    _print(report, environment, tuple(skip or ()))
-    if report.errors:
+    print_report(checked, err=False)
+    if checked.report.errors:
         raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
+class CheckedConfig:
+    """A configuration loaded as the application would load it, and its deploy checks."""
+
+    context: ConfigContext
+    environment: Environment
+    report: DeployReport
+    skipped: tuple[str, ...]
+
+
+def load_checked(config: list[Path], env: str | None, skip: tuple[str, ...]) -> CheckedConfig:
+    """Load *config* for *env*, put its code path on the import path and run the deploy checks.
+
+    Raises:
+        ConfigError: When the configuration does not load.
+    """
+    _load_check_packages()
+    environment = resolve_environment(env)
+    paths = _config_paths(config, environment)
+    context = load_application_config(
+        *paths, resolvers=with_default_resolvers(()), environment=environment
+    )
+    _add_code_path(context, Path(paths[0]).resolve().parent)
+    return CheckedConfig(context, environment, run_deploy_checks(context, skip=skip), skip)
 
 
 def _load_check_packages() -> None:
@@ -95,12 +115,14 @@ def _config_paths(config: list[Path], environment: Environment) -> tuple[str, ..
     return select_config_paths(files, directory, environment, caller="loom check")
 
 
-def _print(report: DeployReport, environment: Environment, skipped: tuple[str, ...]) -> None:
-    typer.echo(f"environment: {environment}")
-    if skipped:
-        typer.echo(f"skipped: {', '.join(skipped)}")
+def print_report(checked: CheckedConfig, *, err: bool) -> None:
+    """Print the findings of *checked*, to stderr when *err*."""
+    report = checked.report
+    typer.echo(f"environment: {checked.environment}", err=err)
+    if checked.skipped:
+        typer.echo(f"skipped: {', '.join(checked.skipped)}", err=err)
     if report.silenced:
-        typer.echo(f"silenced: {', '.join(report.silenced)}")
+        typer.echo(f"silenced: {', '.join(report.silenced)}", err=err)
     for result in report.results:
-        typer.echo(f"{result.level.upper()} {result.describe()}")
-    typer.echo(f"{len(report.errors)} error(s), {len(report.warnings)} warning(s)")
+        typer.echo(f"{result.level.upper()} {result.describe()}", err=err)
+    typer.echo(f"{len(report.errors)} error(s), {len(report.warnings)} warning(s)", err=err)

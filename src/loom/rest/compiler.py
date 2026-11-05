@@ -143,6 +143,12 @@ def _format_candidates(routes: Sequence[CompiledRoute]) -> str:
     return f"eligible routes are: {rendered}{suffix}."
 
 
+def full_path(interface: type[RestInterface[Any]], route: RestRoute) -> str:
+    """The path *route* of *interface* is published under, prefix included."""
+    prefix = interface.prefix.rstrip("/")
+    return f"{prefix}{route.path}" if route.path else prefix or "/"
+
+
 def _apply_disablement(
     routes: list[CompiledRoute], disabled: Sequence[tuple[str, str]]
 ) -> list[CompiledRoute]:
@@ -735,7 +741,6 @@ class RestInterfaceCompiler:
 
     def _compile_fresh(self, interface: type[RestInterface[Any]]) -> list[CompiledRoute]:
         iface_name = interface.__qualname__
-        prefix = interface.prefix.rstrip("/")
 
         self._validate_interface(interface)
 
@@ -754,7 +759,7 @@ class RestInterfaceCompiler:
                 )
             seen[key] = route
 
-            full_path = f"{prefix}{route.path}" if route.path else prefix or "/"
+            path = full_path(interface, route)
             where = f"{iface_name}: route ({route.method.upper()}, {route.path!r})"
             takes_query_spec = any(names_query_spec(pb.annotation) for pb in plan.param_bindings)
             pagination = self._resolve_pagination(route, interface)
@@ -771,7 +776,7 @@ class RestInterfaceCompiler:
                 CompiledRoute(
                     interface_name=iface_name,
                     route=route,
-                    full_path=full_path,
+                    full_path=path,
                     effective_pagination_mode=pagination,
                     effective_profile_default=self._resolve_profile_default(route, interface),
                     effective_allowed_profiles=self._resolve_allowed_profiles(route, interface),
