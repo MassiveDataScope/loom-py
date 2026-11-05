@@ -72,6 +72,7 @@ async def elevate(
     Raises:
         RuntimeError: Outside an execution frame.
         ConfigError: Without a product, or when the product did not map ``scope``.
+        ReadOnlyElevation: In a read-only execution.
         PermissionError: When the decision does not justify the elevation.
     """
     if not in_execution_frame():

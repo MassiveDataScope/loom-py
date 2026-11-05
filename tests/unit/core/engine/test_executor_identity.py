@@ -10,7 +10,7 @@ import pytest
 
 from loom.ai._usecase import invoke_as
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
-from loom.core.authz.elevation import elevate_scope, elevated_scopes
+from loom.core.authz.elevation import ReadOnlyElevation, elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
@@ -323,15 +323,14 @@ async def test_a_task_created_before_elevating_is_refused_a_nested_execution(
     assert isinstance(refused, NestedElevation)
 
 
-@pytest.mark.parametrize("child_type", [Child, ReadChild], ids=["write", "read-only"])
 async def test_a_nested_execution_may_elevate_itself_and_the_flag_ends_with_it(
-    executor: RuntimeExecutor, sink: FakeSink, child_type: type[Run]
+    executor: RuntimeExecutor, sink: FakeSink
 ) -> None:
     async def elevating() -> frozenset[str]:
         await _elevate()
         return elevated_scopes()
 
-    call = _child_call(executor, child_type(elevating), None)
+    call = _child_call(executor, Child(elevating), None)
 
     async def body() -> tuple[frozenset[str], frozenset[str]]:
         return await call(), elevated_scopes()
@@ -339,3 +338,16 @@ async def test_a_nested_execution_may_elevate_itself_and_the_flag_ends_with_it(
     inner, after = await executor.execute(Parent(body))
 
     assert (inner, after, sink.cleared) == ({"editor"}, frozenset(), [{"editor"}])
+
+
+@pytest.mark.parametrize("nested", [True, False], ids=["nested", "top-level"])
+async def test_a_read_only_execution_cannot_elevate(
+    executor: RuntimeExecutor, sink: FakeSink, nested: bool
+) -> None:
+    read_only = ReadChild(_elevate)
+    run = Parent(_child_call(executor, read_only, None)) if nested else read_only
+
+    with pytest.raises(ReadOnlyElevation, match="'editor'"):
+        await executor.execute(run)
+
+    assert sink.set == []

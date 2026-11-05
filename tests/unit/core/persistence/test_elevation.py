@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+import inspect
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from dataclasses import dataclass, field
 
 import pytest
@@ -103,6 +104,7 @@ class _Store:
     tables: ScopedTables
     calls: list[tuple[str, frozenset[str]]] = field(default_factory=list)
     clearing: Callable[[], Awaitable[None]] | None = None
+    made: list[Coroutine[object, object, None]] = field(default_factory=list)
 
     def scoped_tables(self) -> ScopedTables:
         return self.tables
@@ -116,11 +118,21 @@ class _Store:
 
     def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
         self.calls.append(("clear", scopes))
-        return _done() if self.clearing is None else self.clearing()
+        step = _done() if self.clearing is None else self.clearing()
+        if inspect.iscoroutine(step):
+            self.made.append(step)
+        return step
 
     def invalidate(self) -> Awaitable[object]:
         self.calls.append(("invalidate", frozenset()))
         return _done()
+
+
+class _RefusingStore(_Store):
+    """A store whose checkpoint refuses the call itself, before any statement is built."""
+
+    def clear_flags(self, scopes: frozenset[str]) -> Awaitable[object]:
+        raise RuntimeError("refused before any statement")
 
 
 async def _done() -> None:
@@ -162,6 +174,42 @@ class TestScopedElevationSink:
             await clearing
 
         assert finished == ["audit"]
+
+    async def test_stores_are_cleared_one_after_another(self) -> None:
+        running: list[str] = []
+        overlapped: list[bool] = []
+
+        def clearing(name: str) -> Callable[[], Awaitable[None]]:
+            async def clear() -> None:
+                overlapped.append(bool(running))
+                running.append(name)
+                await asyncio.sleep(0)
+                running.remove(name)
+
+            return clear
+
+        default = _Store(_store(EDITOR), clearing=clearing("default"))
+        audit = _Store(_store(REVIEWER, table="e"), clearing=clearing("audit"))
+
+        await _sink(default, audit).clear_flags(frozenset({"editor", "reviewer"}))
+
+        assert overlapped == [False, False]
+
+    def test_a_store_refusing_at_call_time_closes_the_calls_already_made(self) -> None:
+        default = _Store(_store(EDITOR))
+        audit = _RefusingStore(_store(REVIEWER, table="e"))
+        sink = _sink(default, audit)
+
+        with pytest.raises(RuntimeError, match="refused before any statement"):
+            sink.clear_flags(frozenset({"editor", "reviewer"}))
+
+        assert [inspect.getcoroutinestate(step) for step in default.made] == [inspect.CORO_CLOSED]
+
+    def test_an_elevable_scope_of_two_stores_is_refused_without_a_product(self) -> None:
+        default, audit = _Store(_store(EDITOR)), _Store(_store(EDITOR, table="e"))
+
+        with pytest.raises(ElevableScopeInSeveralStores):
+            _sink(default, audit)
 
     def test_it_checks_the_registered_product_against_every_store(self) -> None:
         register_authz_product(Product(CATALOG))

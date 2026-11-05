@@ -424,9 +424,13 @@ class RuntimeExecutor:
             if read_only or plan.read_only:
                 if scope is not None and scope.owned_here():
                     async with scope.frame(_READ_ONLY):
-                        return await self._run_lifecycle(plan, compilable, inputs, None, None)
+                        return await self._run_lifecycle(
+                            plan, compilable, inputs, None, None, read_only=True
+                        )
                 with nullcontext() if scope is None else unscoped():
-                    return await self._run_lifecycle(plan, compilable, inputs, None, None)
+                    return await self._run_lifecycle(
+                        plan, compilable, inputs, None, None, read_only=True
+                    )
             owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
         finally:
@@ -455,6 +459,8 @@ class RuntimeExecutor:
         inputs: _ExecutionInputs,
         owned: Coordinator | None,
         enclosing: InvocationScope | None,
+        *,
+        read_only: bool = False,
     ) -> Any:
         """Run one execution: start event, invocation scope, one terminal event, drain.
 
@@ -466,6 +472,7 @@ class RuntimeExecutor:
                 opens one.
             enclosing: The scope already published in this context, which this
                 execution joins, if any.
+            read_only: Whether the execution writes nothing; it may not elevate.
         """
         state = self._begin_execution(plan.use_case_type.__qualname__)
         channel = PostCommitChannel() if owned is not None or active_channel() is None else None
@@ -476,7 +483,9 @@ class RuntimeExecutor:
             # the session-settings provider reads ``elevated_scopes()`` when a
             # transaction begins, which may be at that flush.
             async with elevation_scope(
-                owns_transaction=owned is not None, sink=self._elevation_sink
+                owns_transaction=owned is not None,
+                sink=self._elevation_sink,
+                read_only=read_only,
             ):
                 if owned is None:
                     result = await self._run_in_frame(enclosing, state, plan, compilable, inputs)

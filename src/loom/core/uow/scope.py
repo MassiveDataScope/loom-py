@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import itertools
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -355,6 +355,24 @@ class InvocationScope:
             f"the execution running now {declared}; "
             "inject its repository as Joined[...] to write to it"
         )
+
+    def poison(self, keys: Iterable[StoreKey], cause: BaseException) -> None:
+        """Forbid the invocation to commit, through the participants of ``keys`` that are enlisted.
+
+        See :meth:`~loom.core.uow.coordinator.Participant.poison`.
+
+        Args:
+            keys: Stores whose transaction can no longer be trusted.
+            cause: Why; the stores' ``RolledBack`` outcomes carry it.
+
+        Raises:
+            ScopeOwnershipError: When the caller may not touch the scope
+                (:meth:`require_owner`).
+        """
+        self.require_owner()
+        for key in keys:
+            if key in self.participants:
+                self.participants[key].poison(cause)
 
     @property
     def poisoned(self) -> BaseException | None:
