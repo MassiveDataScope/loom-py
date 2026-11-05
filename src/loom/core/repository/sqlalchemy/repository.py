@@ -163,7 +163,7 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
     async def _session_scope(
         self, session: AsyncSession | None = None, *, write: bool
     ) -> AsyncIterator[AsyncSession]:
-        """Run in *session*, in the session of the store's participant, or in one of its own.
+        """Run in *session*, or else in :meth:`SessionManager.operation_session`.
 
         Args:
             session: A session the caller already holds.
@@ -177,21 +177,9 @@ class RepositorySQLAlchemy(  # type: ignore[misc]  # mypy/pyright can't resolve 
                 :meth:`SessionManager.joined_session`.
             UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
         """
-        context_session = self.session_manager.joined_session(write=write)
-        if session is not None:
-            self._require_own(session, context_session)
-            yield session
+        if session is None:
+            async with self.session_manager.operation_session(write=write) as own:
+                yield own
             return
-
-        if context_session is not None:
-            yield context_session
-            return
-
-        async with self.session_manager.session() as new_session:
-            try:
-                yield new_session
-                await new_session.commit()
-            except Exception:
-                await new_session.rollback()
-                self.log.exception("RepositorySessionRollback")
-                raise
+        self._require_own(session, self.session_manager.joined_session(write=write))
+        yield session

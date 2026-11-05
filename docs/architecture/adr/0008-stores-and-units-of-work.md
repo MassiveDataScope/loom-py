@@ -101,10 +101,10 @@ Callers ask the capability, never the backend's name.
   the invocation scope. It refuses a task other than the one that owns the
   invocation, and a session another session manager or client opened. A
   store that is not enlisted reads with a session per call.
-- `SessionManager.active_session` is the only public way to read a store's
+- `SessionManager.active_session` is the public read of a store's enlisted
   session. Repositories reach the same session through
   `SessionManager.joined_session(write=...)`, which adds their write intent
-  for the checkpoint; it is not meant for raw SQL. Mongo has the same property on `MongoSessions`, the object the
+  for the checkpoint. Mongo has the same property on `MongoSessions`, the object the
   backend hands its repositories as `session_provider`. Both are resolved by
   dependency injection, so two stores of the same backend never return each
   other's session, and both keep their exact session type.
@@ -120,9 +120,16 @@ Callers ask the capability, never the backend's name.
   lose the typing. A cache invalidation asks the scope instead whether its
   store is enlisted and can still roll back (`InvocationScope.owners_of`);
   the per-context `in_atomic_transaction()` signal is gone.
-- Raw SQL that must run in the invocation's transaction injects the store's
-  `SessionManager` and uses its `active_session`. `session_manager.session()`
-  opens a session outside the invocation, which commits on its own.
+- Raw SQL injects the store's `SessionManager` and runs in
+  `async with session_manager.operation_session(write=...)`, the session a
+  repository's operation would run in: the invocation's when the store is
+  enlisted, which it neither commits nor rolls back; otherwise a transaction
+  of its own, committed on success and rolled back on error. The write
+  intent is checked and recorded as a repository's, so a read-only execution
+  (every REST `GET`) reads in a short transaction and is refused a write.
+  `active_session` is for code that must only run inside the invocation's
+  transaction. `session_manager.session()` opens a session outside the
+  invocation, which commits on its own.
 
 ### One coordinator
 

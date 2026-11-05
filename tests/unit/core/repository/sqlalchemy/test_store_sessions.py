@@ -378,6 +378,97 @@ class TestWithSessionScope:
         assert (counted, enlisted) == (1, False)
 
 
+_INSERT = text("INSERT INTO store_session_rows (name) VALUES (:name)")
+_COUNT = text("SELECT count(*) FROM store_session_rows")
+_READ_ONLY = Frame(None)
+
+
+async def _insert(manager: SessionManager, name: str, *, write: bool = True) -> None:
+    async with manager.operation_session(write=write) as session:
+        await session.execute(_INSERT, {"name": name})
+
+
+class TestOperationSession:
+    """Raw SQL runs in the session its operation would run in as a repository's."""
+
+    async def test_an_enlisted_store_yields_its_participant_s_session(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async with (
+            invocation(stores.coordinator()) as scope,
+            scope.frame(JOINED_AUDIT),
+            stores.audit.operation_session(write=False) as session,
+        ):
+            joined = session is stores.audit.active_session
+
+        assert joined
+
+    async def test_an_enlisted_store_leaves_the_commit_to_the_invocation(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        with pytest.raises(_InvocationFailed):
+            async with invocation(stores.coordinator()) as scope, scope.frame(JOINED_AUDIT):
+                await _insert(stores.audit, "joined")
+                raise _InvocationFailed
+
+        assert await audit_rows.count() == 0
+
+    @pytest.mark.parametrize("write", [True, False])
+    async def test_an_enlisted_store_records_only_a_write_for_the_commit_order(
+        self, stores: _Stores, audit_rows: _AuditRows, write: bool
+    ) -> None:
+        async with invocation(stores.coordinator()) as scope, scope.frame(JOINED_AUDIT):
+            async with stores.audit.operation_session(write=write) as session:
+                await session.execute(_COUNT)
+            wrote = scope.participants[AUDIT].wrote
+
+        assert wrote is write
+
+    async def test_a_read_only_execution_reads_in_a_transaction_of_its_own(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        await audit_rows.insert_raw("before")
+
+        async with (
+            invocation(stores.coordinator(), read_only=True) as scope,
+            scope.frame(_READ_ONLY),
+        ):
+            async with stores.audit.operation_session(write=False) as session:
+                counted = (await session.execute(_COUNT)).scalar_one()
+            enlisted = AUDIT in scope.participants
+
+        assert (counted, enlisted) == (1, False)
+
+    async def test_a_read_only_execution_is_refused_a_write_and_persists_nothing(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async with (
+            invocation(stores.coordinator(), read_only=True) as scope,
+            scope.frame(_READ_ONLY),
+        ):
+            with pytest.raises(UndeclaredStoreWrite, match="'audit'"):
+                await _insert(stores.audit, "refused")
+
+        assert await audit_rows.count() == 0
+
+    async def test_outside_an_invocation_it_commits_on_success(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        await _insert(stores.audit, "own")
+
+        assert await audit_rows.count() == 1
+
+    async def test_outside_an_invocation_it_persists_nothing_on_error(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        with pytest.raises(_InvocationFailed):
+            async with stores.audit.operation_session(write=True) as session:
+                await session.execute(_INSERT, {"name": "failed"})
+                raise _InvocationFailed
+
+        assert await audit_rows.count() == 0
+
+
 class TestHandedInSession:
     """A ``session=`` passed by hand must come from the repository's own store (T105)."""
 

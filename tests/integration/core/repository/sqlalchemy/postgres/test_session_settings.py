@@ -100,6 +100,17 @@ async def test_a_transaction_runs_with_its_tenant_set(app_sessions: SessionManag
     assert payloads == ["a1", "a2"]
 
 
+async def test_an_operation_session_of_its_own_runs_with_its_tenant_set(
+    app_sessions: SessionManager,
+) -> None:
+    current_tenant.set("a")
+    async with app_sessions.operation_session(write=False) as session:
+        current = (await session.execute(text(_CURRENT))).scalar_one()
+        payloads = list((await session.execute(text(_ROWS))).scalars())
+    assert current == "a"
+    assert payloads == ["a1", "a2"]
+
+
 async def test_a_query_without_the_tenant_filter_returns_only_the_tenant_rows(
     app_sessions: SessionManager,
 ) -> None:

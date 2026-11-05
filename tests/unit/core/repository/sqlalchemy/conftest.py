@@ -36,6 +36,7 @@ class MockSessionManager:
     # The real lookups: they need only ``store`` and the manager's identity.
     active_session = SessionManager.active_session
     joined_session = SessionManager.joined_session
+    operation_session = SessionManager.operation_session
 
     def __init__(self, session: Any) -> None:
         self._session = session

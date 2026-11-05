@@ -80,6 +80,13 @@
   `UndeclaredStoreWrite` and `NestedElevation` from `loom.core.uow`,
   `ForeignSessionError` from `loom.core.errors`, and `ReadOnlyElevation` from
   `loom.core.repository.sqlalchemy.rls`, next to `elevate`.
+- **stores:** `async with session_manager.operation_session(write=...)`
+  gives raw SQL the session its operation runs in, as a repository's: the
+  invocation's when the store is enlisted, else a transaction of its own,
+  committed on success and rolled back on error. A write is checked and
+  recorded for the commit order; a read-only execution (a REST `GET`) reads
+  in a short transaction and is refused a write with `UndeclaredStoreWrite`.
+  Repositories now run through it.
 
 ### config
 

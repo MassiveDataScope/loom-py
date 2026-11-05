@@ -166,9 +166,10 @@ class SessionManager:
     def active_session(self) -> AsyncSession | None:
         """The session this store's unit of work holds in the current invocation, if any.
 
-        The one public way to read a store's session, for raw SQL that must
-        run in the invocation's transaction; repositories reach the same
-        session through :meth:`joined_session`, with their write intent.
+        The read of a store's session for code that must only run inside the
+        invocation's transaction; raw SQL takes :meth:`operation_session`,
+        and repositories reach the same session through :meth:`joined_session`,
+        with their write intent.
         Like ``request.user``, its value depends on the context it is read
         from: ``None`` outside an invocation, or when this store is not
         enlisted in it, where :meth:`session` opens a session of its own.
@@ -188,7 +189,7 @@ class SessionManager:
 
         :attr:`active_session` with the operation's write intent, which the
         invocation scope records for the commit order and checks; for
-        repositories. Raw SQL reads :attr:`active_session`.
+        repositories. Raw SQL takes :meth:`operation_session`.
 
         Args:
             write: Whether the operation writes.
@@ -201,6 +202,50 @@ class SessionManager:
                 execution did not declare.
         """
         return cast("AsyncSession | None", current_handle(self.store, self, write=write))
+
+    @asynccontextmanager
+    async def operation_session(self, *, write: bool) -> AsyncIterator[AsyncSession]:
+        """Yield the session one operation of this store runs in, as a repository's does.
+
+        The session of :meth:`joined_session`, which this block neither commits
+        nor rolls back, when the store is enlisted in the invocation; otherwise
+        one of :meth:`session`, committed when the block succeeds and rolled
+        back when it raises. A read-only execution enlists no store, so its
+        reads take a short transaction of their own.
+
+        Args:
+            write: Whether the operation writes. A write is checked and
+                recorded for the commit order (:meth:`joined_session`). A block
+                declared ``write=False`` that writes anyway, to a store the
+                invocation did not enlist, commits on its own and survives a
+                rollback of the invocation.
+
+        Yields:
+            The session to run the operation's statements in.
+
+        Raises:
+            ScopeOwnershipError: See :meth:`joined_session`.
+            ForeignSessionError: See :meth:`joined_session`.
+            UndeclaredStoreWrite: See :meth:`joined_session`; raised before
+                the block runs.
+
+        Example::
+
+            async with session_manager.operation_session(write=False) as session:
+                rows = (await session.execute(text("SELECT ..."))).all()
+        """
+        joined = self.joined_session(write=write)
+        if joined is not None:
+            yield joined
+            return
+        async with self.session() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                _log.exception("OperationSessionRollback", store=self.store)
+                raise
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
