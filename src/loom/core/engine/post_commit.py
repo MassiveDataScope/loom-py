@@ -19,11 +19,12 @@ from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping
 from contextvars import ContextVar, Token
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
+from loom.core._async import held_task
 from loom.core.errors import LoomError
 from loom.core.errors.codes import ErrorCode
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.scope import current_scope
+from loom.core.uow.scope import current_scope, refuse_write_under_read_only
 
 PostCommitAction = Callable[[], Awaitable[None] | None]
 """Zero-argument callable: sync (returning ``None`` or an awaitable) or async."""
@@ -40,7 +41,6 @@ class LoggedAction(Protocol):
 _channel: ContextVar[PostCommitChannel | None] = ContextVar(
     "_loom_post_commit_channel", default=None
 )
-_shielded_tasks: set[asyncio.Task[None]] = set()
 _logger = get_logger(__name__)
 
 
@@ -191,14 +191,14 @@ class PostCommitChannel:
             PostCommitError: If any action raised; carries every failure, in
                 priority, publish, then plain order.
         """
+        if not (self._priority_actions or self._publish_actions or self._actions):
+            return
         shielded_failures: list[_Failure] = []
         plain_failures: list[_Failure] = []
         shielded_pending = collections.deque([*self._priority_actions, *self._publish_actions])
         self._priority_actions, self._publish_actions = [], []
         self._publish_groups.clear()
-        shielded = asyncio.create_task(_run_all(shielded_pending, shielded_failures))
-        _shielded_tasks.add(shielded)
-        shielded.add_done_callback(_shielded_tasks.discard)
+        shielded = held_task(_run_all(shielded_pending, shielded_failures))
         pending: collections.deque[PostCommitAction] = collections.deque()
         try:
             await asyncio.shield(shielded)
@@ -246,6 +246,19 @@ def _log_unreported(
     if shielded.cancelled() or shielded.exception() is not None:
         for action in unsent:
             log_never_ran(action)
+
+
+async def drain_after_failure(channel: PostCommitChannel) -> None:
+    """Drain the actions of the stores that may have written, in a failed invocation.
+
+    The caller re-raises the failure that brought it here, so a drain
+    failure is logged rather than raised: it would hide that failure. A
+    cancellation is not caught: it is a terminal outcome of its own.
+    """
+    try:
+        await channel.drain(committed=True)
+    except Exception:
+        _logger.exception("PostCommitDrainFailedDuringTeardown")
 
 
 def log_never_ran(action: PostCommitAction) -> None:
@@ -313,22 +326,25 @@ def store_channel(store: StoreKey | None = None) -> PostCommitChannel | None:
     """Return the channel an action that depends on ``store`` is queued on.
 
     In an invocation scope that settles its actions by store, owned by this
-    task, that is the channel of the stores the action depends on: ``store``
-    alone (a cache invalidation), or with ``None`` every store of the running
-    execution (a job dispatch: its primary and ``Joined`` stores), once
-    enlisted. Anywhere else it is :func:`active_channel`.
+    task, that is the channel of the stores
+    :meth:`~loom.core.uow.scope.InvocationScope.owners_of` names. Anywhere
+    else a job dispatch (``store`` omitted) is queued on
+    :func:`active_channel`, and a cache invalidation gets ``None``: its write
+    is already durable, so it runs now.
 
     Args:
-        store: Store the action depends on; ``None`` for the running
-            execution's stores.
+        store: Store the action depends on; ``None`` for a job dispatch of
+            the running execution.
+
+    Raises:
+        UndeclaredStoreWrite: For a job dispatch while a read-only execution runs.
     """
+    if store is None:
+        refuse_write_under_read_only("a job dispatch")
     scope = current_scope()
-    if scope is None or scope.post_commit is None or not scope.owned_here():
-        return active_channel()
-    running = next((f.stores for f in reversed(scope.frames) if f.primary), ())
-    owners = frozenset((store,) if store else running)
-    if not owners or not owners <= scope.participants.keys():
-        return active_channel()
+    owners = None if scope is None else scope.owners_of(store)
+    if scope is None or owners is None:
+        return active_channel() if store is None else None
     channel = scope.store_channels.get(owners)
     if channel is None:
         channel = scope.store_channels[owners] = PostCommitChannel()

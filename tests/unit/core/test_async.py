@@ -1,12 +1,22 @@
-"""``run_to_completion``: a step finishes whatever happens to the task awaiting it."""
+"""A step finishes whatever happens to the task awaiting it."""
 
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
+from collections.abc import Callable
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
 from loom.core._async import run_to_completion
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.repository.mongo.uow import MongoUnitOfWork
+from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from tests.unit.core.conftest import make_session
+from tests.unit.core.uow.conftest import make_session_manager
 
 _LONG = 60.0
 """A timeout no step here reaches."""
@@ -77,3 +87,43 @@ async def test_a_step_that_ends_cancelled_still_raises_the_callers_cancellation(
         await caller
 
     assert raised.value.args == ("caller's",)
+
+
+def _sqlalchemy() -> tuple[object, str]:
+    return SQLAlchemyUnitOfWork(make_session_manager(make_session())), "_exit_session"
+
+
+def _mongo() -> tuple[object, str]:
+    return MongoUnitOfWork(MagicMock(), DEFAULT_STORE), "_end_session"
+
+
+@pytest.mark.parametrize("unit_of_work", [_sqlalchemy, _mongo], ids=["sqlalchemy", "mongo"])
+async def test_a_cancelled_close_is_not_collected_before_it_ends(
+    unit_of_work: Callable[[], tuple[object, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing else holds a driver call waiting on its socket: dropped, its session would leak."""
+    uow, ending = unit_of_work()
+    waiting: list[weakref.ref[asyncio.Future[None]]] = []
+    ended: list[bool] = []
+
+    async def end() -> None:
+        released = asyncio.get_running_loop().create_future()
+        waiting.append(weakref.ref(released))
+        try:
+            await released
+        finally:
+            ended.append(released.done())
+
+    monkeypatch.setattr(uow, ending, end)
+    close = asyncio.create_task(cast(Any, uow).close())
+    await asyncio.sleep(0)
+    close.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close
+    gc.collect()
+
+    released = waiting[0]()
+    assert released is not None, "the close was collected before it ended"
+    released.set_result(None)
+    await asyncio.sleep(0)
+    assert ended == [True]

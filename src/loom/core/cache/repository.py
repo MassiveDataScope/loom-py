@@ -60,7 +60,6 @@ from loom.core.repository.abc.session_scope import (
     SupportsCacheScope,
     SupportsCallerScopedSession,
 )
-from loom.core.transaction import in_atomic_transaction
 
 
 def _infer_otm_cache_dep(model: type, attr_name: str, rel: Relation) -> str | None:
@@ -300,13 +299,6 @@ class CachedRepository(
         by forwarding it, so a wrapper around this one stays out of the
         caller's transaction too.  A repository that does not declare the
         capability is taken to own the scope of its own reads.
-
-        This wrapper asks "am I in a transaction?" two ways for two different
-        reasons: this one keeps the cache out of the caller's transaction,
-        while :func:`loom.core.transaction.in_atomic_transaction` in
-        :meth:`_publish_invalidation` guards the bump (must it wait for a
-        commit?). They read different signals and answer different questions;
-        neither substitutes for the other.
         """
         repository = self._repository
         if not isinstance(repository, SupportsCallerScopedSession):
@@ -628,24 +620,10 @@ class CachedRepository(
         self._log.warning("CacheLoadAbandoned", key=key, error=repr(error))
 
     async def _publish_invalidation(self, event: MutationEvent) -> None:
-        """Defer the bump past the commit, or bump inline right away.
+        """Defer the bump past the commit of the model's store, or bump right away.
 
-        Bumps inline for either of two distinct reasons:
-
-        * No transaction is open: every write without one commits on its
-          own — SQLAlchemy's own session on exit, Mongo's no-op unit of work
-          and DynamoDB on every call — so there is nothing left to wait for.
-        * A transaction *is* open but no post-commit channel is bound: a
-          unit of work entered directly — ``async with
-          SQLAlchemyUnitOfWork(session_manager): await repo.create(...)``,
-          the style both units of work document — opens the transaction
-          signal without binding a channel, since only the executor and
-          ``@transactional`` do that. Deferring here would queue an action
-          nothing ever drains, losing the invalidation permanently; bumping
-          early and risking the F03 race this method otherwise closes is the
-          lesser fault of the two.
-
-        Otherwise deferred, on the channel of the model's store
+        Deferred while the model's store is enlisted in the invocation running
+        here and can still roll back, on that store's channel
         (:func:`~loom.core.engine.post_commit.store_channel`), through
         :meth:`~loom.core.engine.post_commit.PostCommitChannel.enqueue_priority`
         so the bump always precedes any job dispatch queued during the same
@@ -656,8 +634,12 @@ class CachedRepository(
         only a process death between the commit and the drain can still lose
         it, nothing else; the affected entries' TTL is the backstop for
         that one remaining gap.
+
+        Anywhere else the write is already durable (a session per call,
+        DynamoDB, Mongo without transactions): the bump runs now, so a later
+        failure of the invocation cannot discard it.
         """
-        channel = store_channel(self._store) if in_atomic_transaction() else None
+        channel = store_channel(self._store)
         if channel is None:
             await self._resolver.bump_from_events((event,))
             return

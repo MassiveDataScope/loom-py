@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from loom.celery.service import CeleryJobService
+from loom.core import _async
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
@@ -275,7 +276,7 @@ async def test_sends_a_dead_shield_never_ran_are_logged(
     await hang.started.wait()
     await _cancelled(task)
 
-    for shielded in list(post_commit._shielded_tasks):  # what closing the loop does
+    for shielded in list(_async._held):  # what closing the loop does
         shielded.cancel()
     await never_ran.wait()
 

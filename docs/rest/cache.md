@@ -156,13 +156,15 @@ outside another unit of work opens none and keeps using the cache. A call to a
 `@cache_query` method whose `session` parameter, passed by position or by
 name, is not `None` is not cached either.
 
-Inside a use case or a `@transactional` scope the bump is not applied at the
-write: it is enqueued on the post-commit channel and published **after the
-commit**, ahead of any job dispatch queued in the same pipeline, so a reader
-cannot cache a row the transaction later rolled back, and a job cannot read a
-stale entry (see [What runs after commit](use-case-dsl.md#what-runs-after-commit)).
-Without an open transaction — SQLAlchemy's own session, Mongo without
-transactions, DynamoDB — the write commits on its own and the bump runs inline.
+Inside a use case, a `@transactional` call or `async with uow:`, while the
+model's store can still roll back, the bump is not applied at the write: it is
+enqueued on the post-commit channel and published **after the commit**, ahead
+of any job dispatch queued in the same pipeline, so a reader cannot cache a row
+the transaction later rolled back, and a job cannot read a stale entry (see
+[What runs after commit](use-case-dsl.md#what-runs-after-commit)). Anywhere
+else — a store the invocation did not enlist, a unit of work without the
+`phased` marker, Mongo without transactions, DynamoDB — the write commits on
+its own and the bump runs inline, even if the invocation fails afterwards.
 
 The bare `user` tag is in every key's tag list but the framework never bumps
 it: it is the manual flush handle. Incrementing `tag:user` on the counter

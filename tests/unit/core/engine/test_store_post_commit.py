@@ -37,7 +37,7 @@ from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import CommitUncertain, OrderedCommits
-from loom.core.uow.scope import StoresNotCommitted, current_scope
+from loom.core.uow.scope import StoresNotCommitted, current_scope, unscoped
 from loom.core.use_case import Joined, UseCase
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
 from tests.unit.core.cache._doubles import CountingCacheBackend
@@ -243,21 +243,21 @@ def _raises(error: type[BaseException] | None) -> AbstractContextManager[object]
             {},
             ["default.priority", "audit.priority", "events.priority"]
             + ["default.publish", "audit.publish", "events.publish"]
-            + ["gathered", "default.plain", "read-only", "audit.plain", "events.plain"],
+            + ["gathered", "default.plain", "audit.plain", "events.plain"],
             None,
             id="every-store-commits",
         ),
         pytest.param(
             {AUDIT: _Refused()},
             ["default.priority", "events.priority", "default.publish", "events.publish"]
-            + ["default.plain", "read-only", "events.plain"],
+            + ["default.plain", "events.plain"],
             StoresNotCommitted,
             id="audit-rolls-back-after-default-committed",
         ),
         pytest.param(
             {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
             ["default.priority", "audit.priority", "events.priority"]
-            + ["default.publish", "events.publish", "default.plain", "read-only", "events.plain"],
+            + ["default.publish", "events.publish", "default.plain", "events.plain"],
             StoresNotCommitted,
             id="audit-uncertain-runs-its-priority-lane-only",
         ),
@@ -280,7 +280,6 @@ async def test_each_store_runs_what_its_outcome_lets_run(
         stores.write_order(),
         stores.queue("default"),
         stores.gathered(),
-        stores.run(_OnDefault(stores.dispatch("read-only")), read_only=True),
         stores.run(_OnAudit(stores.write_entry(), stores.queue("audit"))),
         stores.run(_OnEvents(stores.queue("events"))),
     )
@@ -335,7 +334,7 @@ async def test_a_cache_invalidation_follows_the_store_of_its_repository(
     assert bool(backend.incr_keys) is bumped
 
 
-async def test_a_unit_of_work_entered_by_hand_bumps_inline(stores: _Stores) -> None:
+async def test_a_unit_of_work_entered_by_hand_bumps_once_it_committed(stores: _Stores) -> None:
     backend = CountingCacheBackend()
     cached = stores.cached_entries(backend)
 
@@ -343,7 +342,69 @@ async def test_a_unit_of_work_entered_by_hand_bumps_inline(stores: _Stores) -> N
         await cached.create(_New(ref="by hand"))
         bumped_inside = bool(backend.incr_keys)
 
-    assert bumped_inside
+    assert (bumped_inside, bool(backend.incr_keys)) == (False, True)
+
+
+async def test_a_durable_write_bumps_even_if_its_invocation_fails(stores: _Stores) -> None:
+    """T099 P4: a write outside the invocation commits at once; its bump must not wait."""
+    backend = CountingCacheBackend()
+    cached = stores.cached_entries(backend)
+
+    async def durable() -> None:
+        with unscoped():
+            await cached.create(_New(ref="durable"))
+
+    async def fail() -> None:
+        raise _BodyFails
+
+    use_case = _OnDefault(stores.write_order(), durable, fail)
+
+    with pytest.raises(_BodyFails):
+        await stores.executor.execute(use_case)
+
+    assert backend.incr_keys
+
+
+class _BodyFails(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("failure", "ran", "error"),
+    [
+        pytest.param(
+            None, ["default.priority", "default.publish", "default.plain"], None, id="commits"
+        ),
+        pytest.param(_BodyFails(), [], _BodyFails, id="body-raises"),
+        pytest.param(_Refused(), [], _Refused, id="rolls-back"),
+        pytest.param(
+            CommitUncertain(ConnectionError("ack lost")),
+            ["default.priority"],
+            StoresNotCommitted,
+            id="uncertain-runs-its-priority-lane-only",
+        ),
+    ],
+)
+async def test_a_use_case_run_inside_a_unit_of_work_entered_by_hand_waits_for_its_outcome(
+    stores: _Stores, failure: Exception | None, ran: list[str], error: type[Exception] | None
+) -> None:
+    """T099 P1/P2: never drained before the outer commit, and by its outcome (D4)."""
+    if failure is not None and not isinstance(failure, _BodyFails):
+        FAILURES[DEFAULT_STORE] = failure
+    uow = cast(SQLAlchemyUnitOfWork, _Sql(stores.default).create())
+    ran_inside: list[str] = []
+
+    async def by_hand() -> None:
+        async with uow:
+            await stores.executor.execute(_OnDefault(stores.queue("default")))
+            ran_inside.extend(stores.ran)
+            if isinstance(failure, _BodyFails):
+                raise failure
+
+    with _raises(error):
+        await by_hand()
+
+    assert (ran_inside, stores.ran) == ([], ran)
 
 
 async def test_clearing_the_dispatches_keeps_every_cache_invalidation(stores: _Stores) -> None:

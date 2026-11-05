@@ -20,6 +20,7 @@ from loom.core.engine.post_commit import (
     PostCommitError,
     active_channel,
     bind_channel,
+    drain_after_failure,
     reset_channel,
 )
 from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenticated
@@ -511,7 +512,7 @@ class RuntimeExecutor:
             self._unbind(channel_token)
             channel_token = None
             if state.post_commit is not None:
-                await self._drain_committed_channel_logging_failure(state.post_commit)
+                await drain_after_failure(state.post_commit)
             else:
                 self._discard(channel)
             self._handle_failure(state, exc)
@@ -622,25 +623,6 @@ class RuntimeExecutor:
     def _discard(channel: PostCommitChannel | None) -> None:
         if channel is not None:
             channel.discard()
-
-    async def _drain_committed_channel_logging_failure(self, channel: PostCommitChannel) -> None:
-        """Drain the actions of the stores that may have written, despite the exception.
-
-        Called from an exception handler that is already about to re-raise
-        the failure that brought it here: another store that did not commit
-        (``StoresNotCommitted``), or a teardown error.  Letting some other
-        exception from the drain
-        replace that exception would hide the reason this path was reached
-        at all, so any ordinary failure — a ``PostCommitError`` from a
-        failed action, or any other ``Exception`` a misbehaving action
-        raises directly — is logged instead.  A cancellation is not caught
-        here: it is a terminal outcome in its own right, not a failure to
-        log past.
-        """
-        try:
-            await channel.drain(committed=True)
-        except Exception:
-            self._logger.exception("PostCommitDrainFailedDuringTeardown")
 
     @staticmethod
     def _unbind(token: Token[PostCommitChannel | None] | None) -> None:

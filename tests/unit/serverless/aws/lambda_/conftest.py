@@ -14,8 +14,10 @@ from loom.core.config import ConfigContext
 from loom.core.engine.post_commit import PostCommitError
 from loom.core.identity import current_identity
 from loom.core.job.job import Job
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
-from loom.core.uow.scope import StoresNotCommitted
+from loom.core.uow.coordinator import InvocationOutcome, Uncertain
+from loom.core.uow.scope import StoresNotCommitted, invocation_error
 from loom.serverless.aws.lambda_ import LambdaSQSAdapter
 from loom.serverless.aws.lambda_.sqs import SQSHandler
 from tests.helpers.composition import composition_source
@@ -46,6 +48,9 @@ def probe() -> tuple[type[Job[None]], Probe]:
                 raise PostCommitError(committed=True, failures=(ValueError("post commit"),))
             if marker == "scope":
                 raise StoresNotCommitted("partially committed")
+            if marker == "uncertain":
+                outcome = InvocationOutcome((Uncertain(DEFAULT_STORE, OSError("ack lost")),))
+                raise invocation_error(outcome, None) or AssertionError(outcome)
 
     return ProbeJob, state
 

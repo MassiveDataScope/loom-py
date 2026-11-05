@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date
 from typing import Any, Generic, NamedTuple, TypeVar, cast
 from uuid import UUID
@@ -21,9 +21,10 @@ import msgspec
 
 from loom.core.cache import CacheConfig, CachedRepository, GenerationalDependencyResolver
 from loom.core.cache.decorators import cache_query, cached
-from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.model.introspection import get_id_attribute
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import FilterParams, PageParams, PageResult, Repository, repository_for
 from loom.core.repository.abc.query import (
     CursorResult,
@@ -34,7 +35,14 @@ from loom.core.repository.abc.query import (
 )
 from loom.core.repository.abc.repo_for import Listable, Readable
 from loom.core.repository.sqlalchemy.query_compiler import UnsafeFilterError
-from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
+from loom.core.uow.coordinator import OrderedCommits
+from loom.core.uow.scope import Frame, invocation
+from tests.unit.core.uow._coordinator_fakes import (
+    Factory,
+    Ledger,
+    PhasedStore,
+    StoreFactory,
+)
 
 T = TypeVar("T")
 
@@ -718,21 +726,24 @@ def registered_repository(model: type[LoomStruct], repository_type: type[Any]) -
         delattr(model, "__loom_repository__")
 
 
-@contextmanager
-def open_transaction_with_channel(
-    channel: PostCommitChannel | None = None,
-) -> Iterator[PostCommitChannel]:
-    """Bind *channel* (or a fresh one) and open the transaction signal for the block.
+@asynccontextmanager
+async def enlisted_write(
+    store_type: StoreFactory = PhasedStore,
+) -> AsyncIterator[PostCommitChannel]:
+    """Run the block as a use case writing to the default store; yield the channel it settles into.
 
-    Mirrors what a real unit of work does around a use case: yields the
-    channel so a test can enqueue extra actions on it before the write, or
-    drain it after; both are unwound on exit.
+    Mirrors what the executor does around a use case: the store is enlisted
+    with a ``store_type`` unit of work, and once it committed the actions
+    queued on its channel move to the yielded one, which the test drains, or
+    discards to stand for a rollback. A test may also enqueue on the yielded
+    channel inside the block.
     """
-    channel = channel or PostCommitChannel()
-    channel_token = bind_channel(channel)
-    transaction_token = open_atomic_transaction()
-    try:
-        yield channel
-    finally:
-        close_atomic_transaction(transaction_token)
-        reset_channel(channel_token)
+    channel = PostCommitChannel()
+    store = store_type(DEFAULT_STORE, Ledger(), None)
+    coordinator = OrderedCommits({DEFAULT_STORE: Factory(store)})
+    async with invocation(coordinator) as scope:
+        scope.post_commit = PostCommitChannel()
+        async with scope.frame(Frame(DEFAULT_STORE)):
+            yield channel
+        await coordinator.finish(scope, None)
+        scope.settle_post_commit(channel, None)

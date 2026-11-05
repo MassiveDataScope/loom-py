@@ -16,7 +16,6 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.repository import RepositoryMongo
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.coordinator import (
     InvocationOutcome,
     OrderedCommits,
@@ -71,15 +70,6 @@ class TestWithoutTransactions:
         assert client.sessions == []
         assert client.committed == 0
 
-    async def test_leaves_the_atomic_transaction_signal_closed(self) -> None:
-        """F03: writes autocommit here, so the cache bump must stay inline."""
-        factory = MongoUnitOfWorkFactory.without_transactions()
-
-        async with factory.create():
-            assert in_atomic_transaction() is False
-
-        assert in_atomic_transaction() is False
-
     async def test_repository_writes_without_a_session(self) -> None:
         client = FakeMongoClient()
         factory = MongoUnitOfWorkFactory.without_transactions()
@@ -127,16 +117,6 @@ class TestTransactional:
         assert client.aborted == 0
         assert session.ended is True
         assert current_scope() is None
-
-    async def test_opens_the_atomic_transaction_signal_and_closes_it_after(self) -> None:
-        """F03: a write here is not durable until commit, so the bump must defer."""
-        client = FakeMongoClient()
-
-        assert in_atomic_transaction() is False
-        async with _transactional(client).create():
-            assert in_atomic_transaction() is True
-
-        assert in_atomic_transaction() is False
 
     async def test_aborts_on_exception_and_ends_the_session(self) -> None:
         client = FakeMongoClient()
@@ -408,14 +388,6 @@ class TestPhased:
 
         assert uow.session is None
 
-    async def test_close_closes_the_atomic_transaction_signal(self) -> None:
-        uow = _unit_of_work(FakeMongoClient())
-        await uow.begin()
-
-        await uow.close()
-
-        assert in_atomic_transaction() is False
-
     async def test_a_failure_to_end_the_session_is_logged_and_the_session_released(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -430,7 +402,7 @@ class TestPhased:
         assert uow.session is None
         assert "UoWCloseFailed" in caplog.text
 
-    async def test_a_cancelled_close_still_ends_the_session_and_resets_the_token(self) -> None:
+    async def test_a_cancelled_close_still_ends_the_session(self) -> None:
         client = FakeMongoClient()
         client.end_gate = asyncio.Event()
         uow = _unit_of_work(client)

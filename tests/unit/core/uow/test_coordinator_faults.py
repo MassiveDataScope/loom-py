@@ -30,7 +30,6 @@ from dataclasses import dataclass
 import pytest
 
 from loom.core.persistence.stores import StoreKey
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.coordinator import (
     Committed,
     InvocationOutcome,
@@ -234,7 +233,6 @@ class Run:
     scope: Scope
     ledger: Ledger
     cancelled: bool
-    signal_after: bool
 
 
 async def _scenario(case: Case, ledger: Ledger) -> Run:
@@ -255,7 +253,7 @@ async def _scenario(case: Case, ledger: Ledger) -> Run:
         await coordinator.finish(scope, case.error() if case.error is not None else None)
     except asyncio.CancelledError:
         cancelled = True
-    return Run(scope.outcome, scope, ledger, cancelled, in_atomic_transaction())
+    return Run(scope.outcome, scope, ledger, cancelled)
 
 
 async def _run(case: Case) -> Run:
@@ -288,5 +286,4 @@ async def test_finish_ends_every_store_once_in_lifo_order_and_raises_a_cancellat
 
     assert [key for key, _ in run.ledger.terminal_calls()] == list(reversed(case.keys))
     assert run.scope.closed is True
-    assert run.signal_after is False
     assert run.cancelled is case.cancels

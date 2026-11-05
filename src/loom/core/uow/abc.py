@@ -99,8 +99,7 @@ class UnitOfWork(Protocol):
         Calls :meth:`commit` when no exception occurred, otherwise calls
         :meth:`rollback`.  Always closes the underlying session, also when
         ``commit`` raises and when the exception is a cancellation: the
-        adapter shields its driver I/O so rollback and close complete, and
-        resets its ``ContextVar`` tokens in the caller's context.
+        adapter shields its driver I/O so rollback and close complete.
         """
         ...
 

@@ -9,7 +9,9 @@ channel holds the dispatches so :func:`flush_pending_dispatches` and
 
 Inside an execution the executor owns the drain: :func:`flush_pending_dispatches`
 refuses to run then, and :func:`clear_pending_dispatches` discards the
-execution's dispatches rather than the fallback channel's.
+execution's dispatches rather than the fallback channel's. A read-only
+execution writes nothing, through a job neither: queueing a dispatch from one
+raises :class:`~loom.core.uow.scope.UndeclaredStoreWrite`.
 """
 
 from __future__ import annotations
@@ -102,8 +104,8 @@ def clear_pending_dispatches() -> None:
     bound = active_channel()
     channels = [_fallback.get() if bound is None else bound]
     scope = current_scope()
-    if scope is not None and scope.post_commit is not None and scope.owned_here():
-        channels.extend(scope.store_channels.values())
+    if scope is not None:
+        channels.extend(scope.channels())
     for channel in channels:
         if channel is not None:
             channel.discard_dispatches()

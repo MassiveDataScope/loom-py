@@ -51,7 +51,7 @@ from ._doubles import (
     Widget,
     WidgetUpdate,
     WritableRepository,
-    open_transaction_with_channel,
+    enlisted_write,
     registered_repository,
 )
 
@@ -300,7 +300,7 @@ class TestInvalidationThroughTheContainer:
         inner = builder.built[0]
         await wrapped.get_by_id(1)
 
-        with open_transaction_with_channel() as channel:
+        async with enlisted_write() as channel:
             await wrapped.update(1, WidgetUpdate(name="uno"))
         await channel.drain(committed=True)
         await wrapped.get_by_id(1)

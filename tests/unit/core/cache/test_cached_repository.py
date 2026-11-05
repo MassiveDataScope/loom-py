@@ -22,7 +22,6 @@ from loom.core.cache.repository import _DELEGATED_METHODS
 from loom.core.engine.post_commit import (
     PostCommitChannel,
     PostCommitError,
-    active_channel,
     bind_channel,
     reset_channel,
 )
@@ -35,7 +34,11 @@ from loom.core.repository.abc.query import (
     build_page_result,
 )
 from loom.core.repository.mutation import MutationEvent
-from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
+from tests.unit.core.uow._coordinator_fakes import (
+    NonTransactionalStore,
+    StoreFactory,
+    ThirdPartyStore,
+)
 
 from ._doubles import (
     CachedEnv,
@@ -48,7 +51,7 @@ from ._doubles import (
     WidgetCreate,
     WidgetUpdate,
     WritableRepository,
-    open_transaction_with_channel,
+    enlisted_write,
     wrap_with_cache,
 )
 
@@ -719,7 +722,7 @@ class TestPostCommitDeferral:
     ) -> None:
         """The regression: a concurrent reader must not see the bump before commit."""
         wrapped, resolver = _wrap(_FakeRepository(), cache_config)
-        with open_transaction_with_channel() as channel:
+        async with enlisted_write() as channel:
             created = await wrapped.create(_Create(name="entity-1"))
             # A second reader, mid-transaction: no bump has happened, exactly
             # as if the write had not occurred.
@@ -753,7 +756,7 @@ class TestPostCommitDeferral:
         # Simulates inline job mode: the dispatch body reads the cache while
         # the channel drains it, exactly as a real job handler would.
         generation_seen_by_dispatch: list[int] = []
-        with open_transaction_with_channel() as channel:
+        async with enlisted_write() as channel:
             # The use case body dispatches a job first...
             channel.enqueue(
                 lambda: generation_seen_by_dispatch.append(_generation(wrapped, resolver))
@@ -769,7 +772,7 @@ class TestPostCommitDeferral:
     @pytest.mark.asyncio
     async def test_rollback_publishes_no_bump_at_all(self, cache_config: CacheConfig) -> None:
         wrapped, resolver = _wrap(_FakeRepository(), cache_config)
-        with open_transaction_with_channel() as channel:
+        async with enlisted_write() as channel:
             await wrapped.create(_Create(name="entity-1"))
 
         # The transaction rolled back: the channel is discarded, not drained.
@@ -809,28 +812,21 @@ class TestPostCommitDeferral:
             reset_channel(channel_token)
 
     @pytest.mark.asyncio
-    async def test_a_bare_unit_of_work_with_no_channel_bound_still_bumps_inline(
-        self, cache_config: CacheConfig
+    @pytest.mark.parametrize(
+        "store_type",
+        [NonTransactionalStore, ThirdPartyStore],
+        ids=["store-cannot-roll-back", "store-writes-per-call"],
+    )
+    async def test_a_write_already_durable_bumps_now_even_if_the_invocation_fails(
+        self, cache_config: CacheConfig, store_type: StoreFactory
     ) -> None:
-        """F1: a directly entered unit of work opens the signal but binds no channel.
-
-        ``async with SQLAlchemyUnitOfWork(session_manager): await repo.create(...)``
-        — the usage both units of work document — is real: only the executor
-        and ``@transactional`` bind a post-commit channel. With a transaction
-        open but nothing to defer to, bumping inline here is the deliberate
-        fallback: deferring would queue an action nothing ever drains,
-        losing the invalidation for good. This reopens the F03 race for that
-        one path, which is the lesser fault of the two.
-        """
+        """T099 P4: a deferred bump would be discarded with the failed invocation."""
         wrapped, resolver = _wrap(_FakeRepository(), cache_config)
-        assert active_channel() is None
-        transaction_token = open_atomic_transaction()
-        try:
+        async with enlisted_write(store_type) as channel:
             await wrapped.create(_Create(name="entity-1"))
-            # Bumped immediately: no channel exists to defer to.
-            assert resolver.events != []
-        finally:
-            close_atomic_transaction(transaction_token)
+        channel.discard()
+
+        assert resolver.events != []
 
     @pytest.mark.asyncio
     async def test_update_with_no_transaction_bumps_inline(self, cache_config: CacheConfig) -> None:
@@ -883,7 +879,7 @@ class TestPostCommitDeferral:
         self, cache_config: CacheConfig
     ) -> None:
         wrapped, resolver = _wrap(_BulkFakeRepository(), cache_config)
-        with open_transaction_with_channel() as channel:
+        async with enlisted_write() as channel:
             await wrapped.create_many([_Create(name="a")])
             assert resolver.events == []
 
@@ -903,7 +899,7 @@ class TestPostCommitDeferral:
             raise RuntimeError("cache backend unreachable")
 
         resolver.bump_from_events = _boom  # type: ignore[method-assign]
-        with open_transaction_with_channel() as channel:
+        async with enlisted_write() as channel:
             created = await wrapped.create(_Create(name="entity-1"))
 
         with caplog.at_level("ERROR"), pytest.raises(PostCommitError) as excinfo:

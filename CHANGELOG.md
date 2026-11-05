@@ -183,6 +183,19 @@
   runs its cache invalidations too, and sends no job; a poisoned invocation
   over such stores alone now fails with the poison's cause instead of
   succeeding.
+- **stores:** `loom.core.transaction` is removed (`in_atomic_transaction`,
+  `open_atomic_transaction`, `close_atomic_transaction`). A cache
+  invalidation asks the invocation scope instead
+  (`InvocationScope.owners_of`): it waits for the commit only while the
+  model's store is enlisted and its unit of work declares both
+  `transactional = True` and `phased = True`, which is all a third-party unit
+  of work now needs. A write already durable (a store not enlisted, a unit of
+  work driven in a single phase, DynamoDB, Mongo without transactions) bumps
+  at once, so a later failure of the invocation no longer discards it.
+  `set_active_mutations`, `reset_active_mutations` and
+  `get_pending_mutations` are removed: `record_mutation` records on
+  `InvocationScope.mutations` while an outermost `@transactional` collects
+  them.
 - **stores:** `clear_pending_dispatches()` drops the job dispatches and
   publishes of every store of the running invocation, and never a cache
   invalidation.
@@ -195,7 +208,8 @@
   included), raises `UndeclaredStoreWrite` instead of opening and committing
   an invocation of its own, and so does one run from a read-only execution
   nested in a writer. Move the write to a use case that is not read-only. A
-  job it dispatches still runs after it, in an invocation of its own. An
+  job it dispatches, with any job service, raises `UndeclaredStoreWrite` too.
+  An
   invocation that enlists no store closes without an outcome and logs no
   `InvocationOutcome`.
 - **stores:** `async with uow:` and an outermost `@transactional` run through
@@ -206,13 +220,21 @@
   `UndeclaredStoreWrite`.
   SQLAlchemy flushes before it commits, a rollback interrupted by a second
   cancellation is still awaited (bounded by `persistence.rollback_timeout`),
-  and Mongo never aborts after an attempted commit.
+  and Mongo never aborts after an attempted commit. The post-commit actions
+  queued inside, a nested use case's job dispatches and cache invalidations
+  included, run once the store has ended and by its outcome, as in an
+  execution; before, a nested use case sent them before the outer commit, and
+  a cache invalidation ran inline. A failed action raises `PostCommitError`
+  from `async with uow:` too. A job dispatched in the block is sent after the
+  commit instead of waiting for `flush_pending_dispatches()`, which raises
+  `RuntimeError` inside the block, as inside `@transactional`.
 - **stores:** an unknown commit result is `Uncertain`, not a rollback:
   SQLAlchemy `OperationalError`, `InterfaceError`, an invalidated connection
   or a transport timeout during `COMMIT`, and Mongo
   `UnknownTransactionCommitResult`. The connection is invalidated and only the
-  cache invalidations run. With one store the caller still gets the driver
-  error; with several, `StoresNotCommitted`.
+  cache invalidations run. The caller gets `StoresNotCommitted`, even with
+  one store, caused by the driver error; job runners never retry it, and REST
+  still answers 500, now with the code `stores_not_committed`.
 - **stores:** `SessionManager.active_session` and
   `MongoSessions.active_session` (properties) are the only public way to read
   a store's session; `get_active_session()`, `session_to_join()`,

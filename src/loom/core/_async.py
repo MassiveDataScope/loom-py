@@ -8,6 +8,8 @@ from typing import Any, TypeVar
 
 _T = TypeVar("_T")
 
+_held: set[asyncio.Task[Any]] = set()
+
 
 async def run_to_completion(
     step: Coroutine[Any, Any, _T],
@@ -45,6 +47,14 @@ async def run_to_completion(
         discard_outcome(task)
         raise cancelled
     return task.result()
+
+
+def held_task(step: Coroutine[Any, Any, _T]) -> asyncio.Task[_T]:
+    """Run ``step`` in a task held until it ends: a cancelled shield lets go of it."""
+    task = asyncio.create_task(step)
+    _held.add(task)
+    task.add_done_callback(_held.discard)
+    return task
 
 
 def discard_outcome(task: asyncio.Future[Any]) -> None:

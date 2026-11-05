@@ -40,7 +40,6 @@ from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.rls import elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import Frame, UndeclaredStoreWrite, current_scope, invocation
@@ -393,7 +392,7 @@ async def test_settings_pools_and_context_never_cross_the_two_servers(
         }
         checked_out = {key: store.checked_out() for key, store in stores.items()}
         residue = {key: await _residue(store) for key, store in stores.items()}
-        context = (current_scope(), in_atomic_transaction(), current_identity())
+        context = (current_scope(), current_identity())
 
     assert names[DEFAULT_STORE] != names[AUDIT]
     assert foreign == {DEFAULT_STORE: 0, AUDIT: 0}
@@ -401,7 +400,7 @@ async def test_settings_pools_and_context_never_cross_the_two_servers(
     assert cancelled == {DEFAULT_STORE: True, AUDIT: True}
     assert checked_out == {DEFAULT_STORE: 0, AUDIT: 0}
     assert residue == {DEFAULT_STORE: "", AUDIT: ""}
-    assert context == (None, False, ANONYMOUS)
+    assert context == (None, ANONYMOUS)
     assert elevated_scopes() == frozenset()
 
 

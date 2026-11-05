@@ -12,7 +12,7 @@ through a context variable of their own.
 
 On :meth:`commit` the session is committed.  On :meth:`rollback` all pending
 changes are discarded.  The explicit methods leave the session open: closing
-it and restoring the ContextVars is the job of
+it is the job of
 :meth:`SQLAlchemyUnitOfWork.close`, which the ordered-commits coordinator
 calls phase by phase. A unit of work entered by hand (``async with uow:``)
 runs as the only participant of an invocation of its own.
@@ -26,22 +26,17 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import contextvars
 from typing import Any, ClassVar
 
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
-from loom.core.repository.sqlalchemy.transactional import (
-    reset_active_mutations,
-    set_active_mutations,
-)
-from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.alone import EntersAlone
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
-from loom.core.uow.scope import EntersAlone
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -73,12 +68,10 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         self._session_manager = session_manager
         self._store = session_manager.store
         self._session: AsyncSession | None = None
-        self._mutations_token: contextvars.Token[Any] | None = None
-        self._transaction_token: contextvars.Token[bool] | None = None
         self._session_cm: Any = None  # context manager from session_manager.session()
 
     async def begin(self) -> None:
-        """Open a new ``AsyncSession`` and publish a fresh mutation list and the atomic signal.
+        """Open a new ``AsyncSession``.
 
         Raises:
             RuntimeError: If :meth:`begin` has already been called without
@@ -88,15 +81,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
             raise RuntimeError("SQLAlchemyUnitOfWork.begin() called twice without commit/rollback")
 
         self._session_cm = self._session_manager.session()
-        session: AsyncSession = await self._session_cm.__aenter__()
-        try:
-            self._bind(session)
-        except BaseException:
-            # The session context manager is already open: close it before
-            # the failure leaves, or the connection leaks for good.
-            await self._exit_session()
-            self._reset_context()
-            raise
+        self._session = await self._session_cm.__aenter__()
         _log.debug("UoWBegin")
 
     @property
@@ -115,12 +100,6 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         return PhysicalStore(
             backend="sqlalchemy", target=bare_url(self._session_manager.engine.url)
         )
-
-    def _bind(self, session: AsyncSession) -> None:
-        """Hold ``session`` and publish a fresh mutation list to the current context."""
-        self._session = session
-        _, self._mutations_token = set_active_mutations()
-        self._transaction_token = open_atomic_transaction()
 
     async def flush(self) -> None:
         """Send pending changes to the database without committing them.
@@ -179,16 +158,8 @@ class SQLAlchemyUnitOfWork(EntersAlone):
         _log.debug("UoWRollback")
 
     async def close(self) -> None:
-        """Close the session and reset the ContextVars :meth:`begin` published.
-
-        The session closes under ``asyncio.shield``, so a cancellation arriving
-        meanwhile lets it finish; the tokens are reset whatever happens.
-        Closing a unit of work that holds no session only resets the tokens.
-        """
-        try:
-            await asyncio.shield(self._exit_session())
-        finally:
-            self._reset_context()
+        """Close the session, if any, under ``asyncio.shield``: a cancellation lets it finish."""
+        await asyncio.shield(held_task(self._exit_session()))
 
     async def _exit_session(self) -> None:
         """Exit the session context manager; the session is gone afterwards.
@@ -202,16 +173,6 @@ class SQLAlchemyUnitOfWork(EntersAlone):
             await self._invalidate(session)
         if session_cm is not None:
             await session_cm.__aexit__(None, None, None)
-
-    def _reset_context(self) -> None:
-        # Closed first: see loom.core.transaction for why this is the token
-        # that must be the one to leak if a reset here raises.
-        if self._transaction_token is not None:
-            close_atomic_transaction(self._transaction_token)
-            self._transaction_token = None
-        if self._mutations_token is not None:
-            reset_active_mutations(self._mutations_token)
-            self._mutations_token = None
 
 
 class SQLAlchemyUnitOfWorkFactory:

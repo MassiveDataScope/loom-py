@@ -795,6 +795,25 @@ protected in the transaction that creates it, and each guard call resolves the g
 first, as described in [What the guard enforces](#what-the-guard-enforces). Then start
 the application with `mode: external` and the URL of a `read` or `write` user.
 
+### Several Postgres stores
+
+`load_application()` loads the `default` store. Each other Postgres store whose models
+are row-scoped is prepared and checked on its own: `load_application(store=...)` loads
+that store's models and its `stores.<store>.schema` section, and the bootstrap,
+`create_schema` and `verify` take that `Application` with that store's URLs.
+
+```python
+audit = load_application(store="audit")
+if audit.bootstrap is None:
+    raise SystemExit("no RowScoped model in the audit store")
+await apply_bootstrap(os.environ["AUDIT_SUPERUSER_URL"], audit.bootstrap, audit_passwords)
+await create_schema(os.environ["AUDIT_MIGRATOR_URL"], audit)
+report = await verify(os.environ["AUDIT_MIGRATOR_URL"], audit)
+```
+
+A store left unprepared fails closed: its startup checks refuse a scoped table its guard
+does not protect. The migration runners cover `default` only.
+
 ### CI and production with Alembic
 
 The structural tree lives in `alembic/versions`, the data tree in `alembic/data`. Both

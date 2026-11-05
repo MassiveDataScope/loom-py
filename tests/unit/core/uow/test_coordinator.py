@@ -22,7 +22,6 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow import coordinator as coordinator_module
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
@@ -139,7 +138,6 @@ class TestEnlist:
 
         assert scope.participants == {}
         assert ledger.calls == [(S0, "begin"), (S0, "close")]
-        assert in_atomic_transaction() is False
 
     async def test_a_close_failing_after_a_failed_begin_is_logged_with_its_store(
         self, caplog: pytest.LogCaptureFixture
@@ -292,7 +290,6 @@ class TestCommitOrder:
 
         assert _calls(ledger, "commit") == [S1, S2, S0]
         assert outcome.stores == (Committed(S1), Committed(S2), Committed(S0))
-        assert in_atomic_transaction() is False
 
     async def test_a_scope_without_participants_succeeds_with_no_outcomes(self) -> None:
         scope = Scope()
@@ -591,7 +588,6 @@ class _Seen:
     """State observed in the invocation's own task once ``finish`` has returned or raised."""
 
     closed: bool = False
-    signal: bool = True
     outcome: InvocationOutcome | None = None
 
 
@@ -639,7 +635,7 @@ class TestInterruptions:
             try:
                 await coordinator.finish(scope, Boom("business"))
             finally:
-                seen.closed, seen.signal = scope.closed, in_atomic_transaction()
+                seen.closed = scope.closed
 
         task = asyncio.create_task(_invocation())
         await _cancel_when_blocked(ledger, task.cancel)
@@ -649,7 +645,6 @@ class TestInterruptions:
         assert _ends(ledger) == [S2, S1, S0]
         assert _calls(ledger, "rollback") == [S2, S1, S0]
         assert seen.closed is True
-        assert seen.signal is False
 
     async def test_a_cancellation_while_closing_stops_a_third_party_store_from_committing(
         self,
@@ -666,7 +661,7 @@ class TestInterruptions:
             try:
                 await coordinator.finish(scope, None)
             finally:
-                seen.outcome, seen.signal = scope.outcome, in_atomic_transaction()
+                seen.outcome = scope.outcome
 
         task = asyncio.create_task(_invocation())
         await _cancel_when_blocked(ledger, task.cancel)
@@ -680,7 +675,6 @@ class TestInterruptions:
         ]
         assert ledger.terminal_calls() == [(S1, "close"), (S0, "exit-rollback")]
         assert dict(ledger.persisted) == {S1: ["row-s1"]}
-        assert seen.signal is False
 
     async def test_an_interruption_that_is_not_an_exception_ends_every_store_then_propagates(
         self,
@@ -702,7 +696,6 @@ class TestInterruptions:
             ("RolledBack", S2, _Interrupt),
         ]
         assert _ends(ledger) == [S2, S1, S0]
-        assert in_atomic_transaction() is False
 
     async def test_level_cancellation_still_rolls_back_and_closes_every_store_once(self) -> None:
         ledger, seen = Ledger(), _Seen()
@@ -719,7 +712,7 @@ class TestInterruptions:
             try:
                 await coordinator.finish(scope, Boom("business"))
             finally:
-                seen.closed, seen.signal = scope.closed, in_atomic_transaction()
+                seen.closed = scope.closed
         await releaser
 
         assert cancel_scope.cancelled_caught is True
@@ -727,7 +720,6 @@ class TestInterruptions:
         assert _calls(ledger, "rollback") == [S2, S1, S0]
         assert _ends(ledger) == [S2, S1, S0]
         assert seen.closed is True
-        assert seen.signal is False
 
 
 class TestOutcomeLog:

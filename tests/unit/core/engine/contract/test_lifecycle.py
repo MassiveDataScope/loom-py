@@ -84,10 +84,10 @@ class TestTerminalEventReflectsTheTransaction:
     async def test_commit_failure_is_exec_error_commit_and_the_adapter_closes_once(
         self, case: LifecycleCase, executor: RuntimeExecutor, metrics: Metrics, log: Log
     ) -> None:
-        require_transactional(case).fail_commit(ConnectionError("commit lost"))
+        require_transactional(case).fail_commit(RuntimeError("commit refused"))
         action = Ok()
 
-        with pytest.raises(ConnectionError, match="commit lost"):
+        with pytest.raises(RuntimeError, match="commit refused"):
             await executor.execute(action, params={"value": "x"})
 
         assert metrics.kinds() == [EventKind.EXEC_START, EventKind.EXEC_ERROR]

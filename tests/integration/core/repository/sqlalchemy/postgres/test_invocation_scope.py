@@ -22,7 +22,6 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.coordinator import OrderedCommits, Uncertain
 from loom.core.uow.scope import Frame, ScopeOwnershipError, current_scope, invocation
 from tests.integration.support.scope_doubles import BusinessError, Run
@@ -329,4 +328,4 @@ async def test_a_hundred_invocations_return_every_connection_and_reset_the_conte
 
 
 def _context_is_clean() -> bool:
-    return current_scope() is None and not in_atomic_transaction()
+    return current_scope() is None

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import contextvars
 from collections.abc import Awaitable, Callable
 from functools import partial, wraps
 from typing import (
-    TYPE_CHECKING,
     Any,
     Concatenate,
     ParamSpec,
@@ -14,19 +12,19 @@ from typing import (
     runtime_checkable,
 )
 
-from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.engine.post_commit import PostCommitChannel, PostCommitError
 from loom.core.errors.errors import ForeignSessionError
 from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
+from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.uow.alone import single_store
 from loom.core.uow.scope import (
     InvocationScope,
+    StoresNotCommitted,
     UndeclaredStoreWrite,
     current_scope,
-    single_store,
 )
-
-if TYPE_CHECKING:  # session_manager is the heavier module; it does not import this one
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
 
 
 @runtime_checkable
@@ -39,63 +37,20 @@ class SupportsPostCommit(Protocol):
 T = TypeVar("T")
 P = ParamSpec("P")
 
-_mutations: contextvars.ContextVar[list[MutationEvent] | None] = contextvars.ContextVar(
-    "_mutations",
-    default=None,
-)
 _log = get_logger(__name__).bind(component="transactional")
-
-MutationsToken = contextvars.Token[list[MutationEvent] | None]
-
-
-def set_active_mutations() -> tuple[list[MutationEvent], MutationsToken]:
-    """Initialise a fresh mutations list for the current context.
-
-    Returns:
-        A tuple of ``(mutations_list, reset_token)`` where the list collects
-        :class:`~loom.core.repository.mutation.MutationEvent` objects and
-        the token is passed to :func:`reset_active_mutations` on exit.
-    """
-    mutations: list[MutationEvent] = []
-    token = _mutations.set(mutations)
-    return mutations, token
-
-
-def reset_active_mutations(
-    token: MutationsToken,
-) -> None:
-    """Restore the mutations ContextVar to its previous state.
-
-    Args:
-        token: The token returned by :func:`set_active_mutations`.
-    """
-    _mutations.reset(token)
 
 
 def record_mutation(event: MutationEvent) -> None:
-    """Append a mutation event to the current transaction's pending list.
+    """Record ``event`` on the invocation running in this task, for the ``@transactional`` hooks.
 
-    If called outside a ``@transactional`` scope the event is silently discarded.
+    Discarded unless this task owns an invocation collecting them.
 
     Args:
         event: The mutation event to record.
     """
-    events = _mutations.get()
-    if events is None:
-        return
-    events.append(event)
-
-
-def get_pending_mutations() -> tuple[MutationEvent, ...]:
-    """Return all mutation events recorded in the current transaction scope.
-
-    Returns:
-        A tuple of ``MutationEvent`` instances, empty if none were recorded.
-    """
-    events = _mutations.get()
-    if not events:
-        return ()
-    return tuple(events)
+    scope = current_scope()
+    if scope is not None and scope.mutations is not None and scope.owned_here():
+        scope.mutations.append(event)
 
 
 def transactional(
@@ -107,13 +62,10 @@ def transactional(
     ``@transactional`` call) the method joins the participant of its owner's
     store and nothing else happens: the invocation commits it and runs the
     post-commit actions. Outside one, the method runs in an invocation of
-    its owner's store alone, which commits on return and rolls back on any
-    exception; it then runs ``on_transaction_committed(pending)`` on the
-    owner and on its :class:`SupportsPostCommit` attributes through the
-    post-commit channel (:mod:`loom.core.engine.post_commit`). The decorator
-    owns that channel whenever it owns the invocation: a channel bound by an
-    outer context is left untouched and restored afterwards, so a committed
-    transaction always drains its own actions.
+    its owner's store alone (:func:`~loom.core.uow.alone.single_store`),
+    which commits on return and rolls back on any exception; once it
+    committed, ``on_transaction_committed(pending)`` runs on the owner and on
+    its :class:`SupportsPostCommit` attributes, after the cache invalidations.
 
     Args:
         method: Async method of an object exposing ``session_manager``.
@@ -147,19 +99,7 @@ def transactional(
             )
             return await method(self, *args, **kwargs)
 
-        channel = PostCommitChannel()
-        channel_token = bind_channel(channel)
-        try:
-            result = await _run_in_own_invocation(
-                self, method, session_manager, channel, args, kwargs
-            )
-        except BaseException:
-            channel.discard()
-            raise
-        finally:
-            reset_channel(channel_token)
-        await channel.drain(committed=True)
-        return result
+        return await _run_in_own_invocation(self, method, session_manager, args, kwargs)
 
     return cast(Callable[Concatenate[Any, P], Awaitable[T]], wrapper)
 
@@ -212,18 +152,20 @@ async def _run_in_own_invocation(
     owner: Any,
     method: Callable[..., Awaitable[T]],
     session_manager: SessionManager,
-    channel: PostCommitChannel,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> T:
-    """Run ``method`` in an invocation of its store alone, then enqueue the hooks on ``channel``."""
-    # Local import: ``uow`` imports this module for the mutation list.
-    from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-
+    """Run ``method`` in an invocation of its store alone; the hooks run only if it commits."""
+    hooks = PostCommitChannel()
+    unit_of_work = SQLAlchemyUnitOfWork(session_manager)
     try:
-        async with single_store(session_manager.store, SQLAlchemyUnitOfWork(session_manager)):
+        async with single_store(session_manager.store, unit_of_work, post_commit=hooks) as scope:
+            scope.mutations = []
             result = await method(owner, *args, **kwargs)
-            pending = get_pending_mutations()
+            pending = tuple(scope.mutations)
+            _enqueue_post_commit_hooks(owner, pending, hooks)
+    except (PostCommitError, StoresNotCommitted):
+        raise
     except Exception:
         _log.exception(
             "TransactionRolledBack",
@@ -237,7 +179,6 @@ async def _run_in_own_invocation(
         method=method.__name__,
         mutation_count=len(pending),
     )
-    _enqueue_post_commit_hooks(owner, pending, channel)
     return result
 
 

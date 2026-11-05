@@ -84,7 +84,8 @@ Callers ask the capability, never the backend's name.
   a use case or job without one declares `__store__` itself, else it is
   `default`. A plain repository reads from any store and writes only to the
   primary store. A read-only execution (`read_only = True`, every REST GET)
-  writes to no store, and a writing use case or job it runs is refused.
+  writes to no store: a writing use case or job it runs, and a job it
+  dispatches, are refused.
 - **`Joined[...]`** on an injected repository is the only new public concept.
   It lets that repository write to its store, which joins the invocation and
   commits with it. Writing through a plain repository to a store other than
@@ -116,8 +117,9 @@ Callers ask the capability, never the backend's name.
   it, so a custom write is refused or recorded exactly as a built-in one, and
   a custom read of a store that is not enlisted still uses a session per call.
 - No facade reads the session of every backend: it would return `object` and
-  lose the typing. `in_atomic_transaction()` stays, because it answers
-  another question for third parties and the ETL.
+  lose the typing. A cache invalidation asks the scope instead whether its
+  store is enlisted and can still roll back (`InvocationScope.owners_of`);
+  the per-context `in_atomic_transaction()` signal is gone.
 - Raw SQL that must run in the invocation's transaction injects the store's
   `SessionManager` and uses its `active_session`. `session_manager.session()`
   opens a session outside the invocation, which commits on its own.

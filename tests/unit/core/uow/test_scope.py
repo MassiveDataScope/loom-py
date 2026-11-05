@@ -21,6 +21,7 @@ from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.alone import single_store
 from loom.core.uow.coordinator import (
     Committed,
     InvocationOutcome,
@@ -44,7 +45,6 @@ from loom.core.uow.scope import (
     invocation,
     invocation_error,
     refuse_inside_open_scope,
-    single_store,
     unscoped,
 )
 
@@ -817,10 +817,14 @@ class TestInvocationError:
 
         assert invocation_error(_outcome(RolledBack(S0, cause)), None) is cause
 
-    def test_one_uncertain_store_re_raises_its_cause(self) -> None:
+    def test_one_uncertain_store_raises_a_non_retryable_error_caused_by_the_driver(self) -> None:
+        """T101: a retry of a commit whose result is unknown may apply it twice."""
         cause = ConnectionError("ack lost")
 
-        assert invocation_error(_outcome(Uncertain(S0, cause)), None) is cause
+        error = invocation_error(_outcome(Uncertain(S0, cause)), None)
+
+        assert isinstance(error, StoresNotCommitted)
+        assert (error.retryable, error.__cause__) == (False, cause)
 
     def test_one_store_re_raises_the_business_error(self) -> None:
         error = Boom("business")

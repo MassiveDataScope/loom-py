@@ -23,7 +23,6 @@ entry-point load into a ``ConfigError`` naming the extra.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 from collections.abc import Callable
 from typing import Any, ClassVar, cast
 
@@ -31,12 +30,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
+from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
-from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.alone import EntersAlone
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
-from loom.core.uow.scope import EntersAlone, current_handle
+from loom.core.uow.scope import current_handle
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -144,7 +144,6 @@ class MongoUnitOfWork(EntersAlone):
         self._client = client
         self._store = store
         self._session: AsyncClientSession | None = None
-        self._transaction_token: contextvars.Token[bool] | None = None
 
     @property
     def owner(self) -> AsyncMongoClient[Any]:
@@ -169,7 +168,7 @@ class MongoUnitOfWork(EntersAlone):
         return PhysicalStore(backend="mongo", target=target)
 
     async def begin(self) -> None:
-        """Start a session and a transaction, and publish the atomic signal.
+        """Start a session and a transaction.
 
         The session is ended when ``start_transaction`` fails, so nothing
         leaks on a server that cannot open one.
@@ -186,7 +185,6 @@ class MongoUnitOfWork(EntersAlone):
             await session.end_session()
             raise
         self._session = session
-        self._transaction_token = open_atomic_transaction()
         _log.debug("UoWBegin")
 
     async def flush(self) -> None:  # NOSONAR S7503 - the PhasedUnitOfWork protocol awaits it
@@ -233,16 +231,11 @@ class MongoUnitOfWork(EntersAlone):
         _log.debug("UoWRollback")
 
     async def close(self) -> None:
-        """End the session and reset the ContextVars :meth:`begin` published.
+        """End the session under ``asyncio.shield``, so a cancellation lets it finish.
 
-        The session ends under ``asyncio.shield``, so a cancellation arriving
-        meanwhile lets it finish; the tokens are reset whatever happens. A
-        failure while ending is logged, not raised.
+        A failure while ending is logged, not raised.
         """
-        try:
-            await asyncio.shield(self._end_session())
-        finally:
-            self._reset_context()
+        await asyncio.shield(held_task(self._end_session()))
 
     async def _end_session(self) -> None:
         """End the session; the unit of work holds none afterwards.
@@ -257,13 +250,6 @@ class MongoUnitOfWork(EntersAlone):
             await session.end_session()
         except Exception:
             _log.exception("UoWCloseFailed")
-
-    def _reset_context(self) -> None:
-        # Closed first: see loom.core.transaction for why this is the token
-        # that must be the one to leak if a reset here raises.
-        if self._transaction_token is not None:
-            close_atomic_transaction(self._transaction_token)
-            self._transaction_token = None
 
     def _require_session(self, operation: str) -> AsyncClientSession:
         if self._session is None:
