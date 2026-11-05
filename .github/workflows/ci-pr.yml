@@ -673,6 +673,30 @@ jobs:
           set -euo pipefail
           uv run --no-sync pytest tests/unit/ai tests/contract/ai tests/integration/ai -q
 
+  dependency-audit:
+    if: ${{ !startsWith(github.head_ref, 'docs/release-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PRIMARY_PYTHON }}
+
+      - name: Install uv and pip-audit
+        run: |
+          pip install --only-binary :all: "uv==0.10.2" "pip-audit==2.10.1"
+
+      - name: Audit the locked runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv export --frozen --all-extras --no-dev --no-emit-project \
+            -o "$RUNNER_TEMP/requirements-runtime.txt"
+          pip-audit --disable-pip --require-hashes --strict \
+            --ignore-vuln GHSA-3589-pxp7-3gj8 \
+            -r "$RUNNER_TEMP/requirements-runtime.txt"
+
   # ---------------------------------------------------------------------------
   # Integration lane: everything marked `integration` needs a real external
   # service, so it runs here with the services actually provisioned — never as a
