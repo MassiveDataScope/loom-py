@@ -235,7 +235,7 @@ class ExecutionPlan:
             from ``UseCase.read_only`` at compile time.  The HTTP layer may
             also override this at the handler level (e.g. GET routes).
         primary: The store the use case writes to: the ``__store__`` of its
-            main model.
+            main model, else its own ``__store__``, else the default store.
         joined: The further stores it writes to, those of its ``Joined[...]``
             repositories other than ``primary``.
 

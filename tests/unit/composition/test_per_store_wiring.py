@@ -1,9 +1,4 @@
-"""Each store an application composes gets its own backend, repositories and unit of work.
-
-Until US7 PR 11c the composition refuses a model outside the default store;
-these tests lift that guard for themselves to pin the per-store wiring the
-guard's removal relies on.
-"""
+"""Each store an application composes gets its own backend, repositories and unit of work."""
 
 from __future__ import annotations
 
@@ -14,16 +9,15 @@ from typing import Any, cast
 
 import pytest
 
-import loom.composition.build
-import loom.core.locator
-from loom.composition import AppConfig, Application, CompositionSource, Recipe, compose_application
+from loom.composition import AppConfig, Application, CompositionSource, compose_application
+from loom.core.bootstrap.bootstrap import BootstrapError
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence import SERVER_PROFILE
 from loom.core.persistence.stores import StoreKey
 from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
 from loom.core.repository.abc import RepoFor
@@ -32,9 +26,10 @@ from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
 from loom.core.uow.scope import UndeclaredStoreWrite
 from loom.core.use_case import Input, UseCase
+from loom.core.use_case.errors import UncomposedWriteStore
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.rest.model import RestInterface
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import Serving, composition_source
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -119,29 +114,6 @@ class _ViaDefaultService(UseCase[_Entry, bool]):
         return await self.service.joined()
 
 
-class _Serving:
-    """Composes exactly the models and use cases it is given."""
-
-    def __init__(self, *models: type[BaseModel], use_cases: tuple[type, ...] = ()) -> None:
-        self.discovered = DiscoveryResult(
-            models=models, use_cases=cast(Any, use_cases), interfaces=()
-        )
-
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
-        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered)
-
-    def bind(self, application: Application) -> Application:
-        return application
-
-
-@pytest.fixture
-def several_stores(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Lift the one-store guard of the composition and the locator for this test only."""
-    for module in (loom.composition.build, loom.core.locator):
-        monkeypatch.setattr(module, "require_single_store", lambda models: None)
-
-
 @pytest.fixture
 def databases(tmp_path: Path) -> tuple[Path, Path]:
     return tmp_path / "default.db", tmp_path / "ledger.db"
@@ -163,12 +135,12 @@ def _compose(
     databases: tuple[Path, Path], modules: tuple[Callable[[LoomContainer], None], ...] = ()
 ) -> Application:
     use_cases = (_RecordEntry, _ViaLedgerService, _ViaDefaultService)
-    adapter = _Serving(_Account, _Entry, use_cases=use_cases)
+    adapter = Serving(_Account, _Entry, use_cases=use_cases)
     return compose_application(_source(databases), adapter, modules=(_services, *modules))
 
 
 @pytest.fixture
-def application(several_stores: None, databases: tuple[Path, Path]) -> Application:
+def application(databases: tuple[Path, Path]) -> Application:
     return _compose(databases)
 
 
@@ -247,7 +219,7 @@ class _RecordingBuilder:
     ],
 )
 def test_a_caller_builder_builds_the_repositories_of_its_store_only(
-    several_stores: None, databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
+    databases: tuple[Path, Path], key: BindingKey, served: type[BaseModel]
 ) -> None:
     builder = _RecordingBuilder()
 
@@ -275,13 +247,13 @@ class _Audit(BaseModel):
 
 
 def test_a_store_named_after_the_default_stores_backend_is_refused_before_any_is_built(
-    several_stores: None, databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    databases: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def build(*args: object) -> None:
         raise AssertionError("a store was built")
 
     monkeypatch.setattr(SQLAlchemyBackend, "build", build)
-    source, adapter = _source(databases, second="sqlalchemy"), _Serving(_Audit)
+    source, adapter = _source(databases, second="sqlalchemy"), Serving(_Audit)
 
     with pytest.raises(ConfigError, match=r"stores\.sqlalchemy would report its readiness"):
         compose_application(source, adapter)
@@ -305,7 +277,7 @@ def _rest_source(stores: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Com
 
 
 def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
-    several_stores: None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _rest_source({"default": {"backend": "none"}, "ledger": _SQLITE_LEDGER}, monkeypatch)
 
@@ -316,7 +288,7 @@ def test_autocrud_routes_of_a_model_follow_the_backend_of_its_store(
 
 
 def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
-    several_stores: None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
     source = _rest_source(stores, monkeypatch)
@@ -324,3 +296,100 @@ def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
 
     with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
         compose_application(source, adapter)
+
+
+class _AuditRow(BaseModel):
+    __tablename__ = "per_store_audit_rows"
+    __store__ = "audit"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=20)
+
+
+class _RecordAudit(Job[int]):
+    """A job without a main model, whose primary store is ``audit``."""
+
+    __store__ = "audit"
+
+    def __init__(self, rows: RepoFor[_AuditRow]) -> None:
+        self.rows = rows
+
+    async def execute(self) -> int:
+        created = await self.rows.create(_Named(name="a"))
+        return int(created.id)
+
+
+class _RecordAuditUndeclared(_RecordAudit):
+    __store__ = "ledger"
+
+
+class _AuditUnstored(Job[int]):
+    def __init__(self, rows: RepoFor[_AuditRow]) -> None:
+        self.rows = rows
+
+    async def execute(self) -> int:
+        return 0
+
+
+class _AuditMissing(_AuditUnstored):
+    __store__ = "missing"
+
+
+class _AuditBesideModel(UseCase[_AuditRow, int]):
+    __store__ = "ledger"
+
+    async def execute(self) -> int:
+        return 0
+
+
+def _compose_audit(tmp_path: Path, component: type[object]) -> Application:
+    stores = {
+        "default": {"backend": "none"},
+        "audit": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'audit.db'}"},
+        "ledger": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{tmp_path / 'ledger.db'}"},
+    }
+    ctx = ConfigContext.from_dict(
+        {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+    )
+    source = composition_source(ctx, app=AppConfig(name="audit"))
+    jobs = (component,) if issubclass(component, Job) else ()
+    use_cases = () if jobs else (component,)
+    return compose_application(source, Serving(_AuditRow, _Entry, use_cases=use_cases, jobs=jobs))
+
+
+async def test_a_job_without_a_main_model_writes_to_the_store_it_declares(tmp_path: Path) -> None:
+    application = _compose_audit(tmp_path, _RecordAudit)
+    kernel = application.kernel
+
+    async with application.running():
+        await kernel.executor.execute(kernel.factory.build(_RecordAudit))
+
+    assert _rows(tmp_path / "audit.db") == {"per_store_audit_rows": 1}
+
+
+async def test_a_job_declaring_another_store_may_still_not_write_to_audit(tmp_path: Path) -> None:
+    application = _compose_audit(tmp_path, _RecordAuditUndeclared)
+    kernel = application.kernel
+
+    async with application.running():
+        job = kernel.factory.build(_RecordAuditUndeclared)
+        with pytest.raises(UndeclaredStoreWrite, match="audit"):
+            await kernel.executor.execute(job)
+
+    assert _rows(tmp_path / "audit.db") == {"per_store_audit_rows": 0}
+
+
+@pytest.mark.parametrize(
+    ("component", "error", "match"),
+    [
+        (_AuditUnstored, UncomposedWriteStore, "default"),
+        (_AuditMissing, ConfigError, r"__store__ of _AuditMissing needs stores\.missing"),
+        (_AuditBesideModel, BootstrapError, "declares __store__ but writes to the store"),
+    ],
+    ids=["no-store", "undeclared-store", "beside-a-main-model"],
+)
+def test_a_store_a_component_declares_is_checked_at_composition(
+    tmp_path: Path, component: type[object], error: type[Exception], match: str
+) -> None:
+    with pytest.raises(error, match=match):
+        _compose_audit(tmp_path, component)

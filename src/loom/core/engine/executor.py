@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import Awaitable, Callable
-from contextlib import nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -26,7 +26,7 @@ from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenti
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.tracing import get_trace_id
-from loom.core.uow.coordinator import Coordinator, InvocationOutcome
+from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
@@ -35,6 +35,7 @@ from loom.core.uow.scope import (
     current_scope,
     invocation,
     invocation_error,
+    refuse_write_under_read_only,
     unscoped,
 )
 from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
@@ -377,13 +378,14 @@ class RuntimeExecutor:
                 ``LoadById()`` / ``Load()`` / ``Exists()`` steps.
             load_overrides: Pre-loaded entities by type, bypassing repo
                 calls. Used by test harnesses.
-            read_only: When ``True``, opens no invocation scope and joins
-                none, even if a ``uow_factory`` was provided.  Its reads
-                join the stores the enclosing invocation enlisted only in
-                the task that owns it; anywhere else (a ``gather`` child)
-                they run with a session per call.
-                Automatically set to ``True`` by the HTTP layer for GET
-                routes.  Also honoured when ``plan.read_only`` is ``True``.
+            read_only: When ``True``, the execution may write to no store
+                and enlists none.  In the task that owns the enclosing
+                invocation its reads join the stores that invocation
+                enlisted; anywhere else it opens a read-only invocation of
+                its own and its reads run with a session per call.  A use
+                case or job it runs that writes is refused.  Automatically
+                set to ``True`` by the HTTP layer for GET routes.  Also
+                honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
                 transport.  Required when the plan declares a ``Caller()``
                 parameter; pass
@@ -410,6 +412,8 @@ class RuntimeExecutor:
                 than the one the scope was opened with.
             loom.core.uow.scope.NestedElevation: If the execution running
                 in this context has elevated a scope.
+            loom.core.uow.scope.UndeclaredStoreWrite: If this execution
+                writes and a read-only execution encloses it.
         """
         plan = self._plan_for(type(compilable))
         inputs = _ExecutionInputs(
@@ -423,15 +427,10 @@ class RuntimeExecutor:
         token = None if identity is None else set_identity(identity)
         try:
             if read_only or plan.read_only:
-                if scope is not None and scope.owned_here():
-                    async with scope.frame(_READ_ONLY):
-                        return await self._run_lifecycle(
-                            plan, compilable, inputs, None, None, read_only=True
-                        )
-                with nullcontext() if scope is None else unscoped():
-                    return await self._run_lifecycle(
-                        plan, compilable, inputs, None, None, read_only=True
-                    )
+                return await self._run_lifecycle(
+                    plan, compilable, inputs, None, scope, read_only=True
+                )
+            refuse_write_under_read_only(f"{plan.use_case_type.__qualname__}, which writes,")
             owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
         finally:
@@ -489,7 +488,9 @@ class RuntimeExecutor:
                 read_only=read_only,
             ):
                 if owned is None:
-                    result = await self._run_in_frame(enclosing, state, plan, compilable, inputs)
+                    result = await self._run_in_frame(
+                        enclosing, state, plan, compilable, inputs, read_only=read_only
+                    )
                 else:
                     result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
@@ -567,17 +568,41 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
+        *,
+        read_only: bool = False,
     ) -> Any:
         """Push this execution's frame on ``scope``, if any, and run the pipeline under it.
 
         Raises:
             JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
         """
-        frame = nullcontext() if scope is None else scope.frame(Frame(plan.primary, plan.joined))
+        frame: AbstractAsyncContextManager[None]
+        if read_only:
+            frame = self._read_only_frame(scope)
+        elif scope is None:
+            frame = nullcontext()
+        else:
+            frame = scope.frame(Frame(plan.primary, plan.joined))
         async with frame:
-            if scope is not None:
+            if scope is not None and not read_only:
                 _refuse_autocommit_joined(scope, plan)
             return await self._run_pipeline(state, plan, compilable, inputs)
+
+    @asynccontextmanager
+    async def _read_only_frame(self, scope: InvocationScope | None) -> AsyncIterator[None]:
+        """Push a frame writing to no store: on ``scope`` in the task that owns it.
+
+        Anywhere else it opens a read-only invocation of its own, enlisting no
+        store, unpublished before the execution's post-commit actions run.
+        """
+        if scope is not None and scope.owned_here():
+            async with scope.frame(_READ_ONLY):
+                yield
+            return
+        coordinator = self._coordinator or OrderedCommits({})
+        with nullcontext() if scope is None else unscoped():
+            async with invocation(coordinator, read_only=True) as own, own.frame(_READ_ONLY):
+                yield
 
     @staticmethod
     async def _finish(
@@ -1166,5 +1191,10 @@ def _refuse_nesting(use_case: str) -> None:
     if scopes:
         raise NestedElevation.opening(use_case, scopes)
     scope = current_scope()
-    if scope is not None and scope.owned_here() and current_identity() != scope.identity:
+    if (
+        scope is not None
+        and not scope.read_only
+        and scope.owned_here()
+        and current_identity() != scope.identity
+    ):
         raise NestedIdentityMismatch.joining(use_case)

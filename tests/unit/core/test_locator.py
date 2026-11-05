@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -9,10 +10,13 @@ from sqlalchemy import MetaData
 
 from loom.core.config.errors import ConfigError
 from loom.core.locator import DEFAULT_CODE_PATH, Application, add_code_path, load_application
+from loom.core.persistence.stores import StoreKey
 from loom.core.repository.sqlalchemy.rls import SchemaNames
 
 SCOPED_MODULE = "tests.integration.agnosticism.notes"
 PLAIN_MODULE = "tests.unit.core.locator_fixtures.plain"
+TWO_STORES_MODULE = "tests.unit.core.locator_fixtures.two_stores"
+AUDIT_URL = "postgresql+asyncpg://u:p@localhost/audit"
 
 
 def _config(module: str, **schema: object) -> dict[str, object]:
@@ -340,3 +344,36 @@ class TestAddCodePath:
         add_code_path("src", tmp_path)
 
         assert sys.path == [resolved]
+
+
+@pytest.fixture
+def two_stores(tmp_path: Path) -> str:
+    config = _config(TWO_STORES_MODULE)
+    config["stores"] = {**config["stores"], "audit": {"backend": "sqlalchemy", "url": AUDIT_URL}}
+    return _write(tmp_path, "two.yaml", config)
+
+
+@pytest.mark.parametrize(
+    ("store", "table", "url", "skipped"),
+    [
+        ("default", "widgets", "postgresql+asyncpg://u:p@localhost/db", "audit"),
+        ("audit", "gadgets", AUDIT_URL, "default"),
+    ],
+)
+def test_a_store_is_loaded_with_its_own_models_and_section_and_names_the_others(
+    two_stores: str,
+    store: str,
+    table: str,
+    url: str,
+    skipped: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO):
+        application = load_application(two_stores, store=StoreKey(store))
+
+    loaded = (set(application.metadata.tables), application.store, application.path)
+    left_out = [r.getMessage() for r in caplog.records if "StoresNotLoaded" in r.getMessage()]
+    assert loaded == ({table}, store, f"stores.{store}")
+    assert application.database.url == url
+    assert len(left_out) == 1
+    assert repr(skipped) in left_out[0]

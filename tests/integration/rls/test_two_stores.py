@@ -1,7 +1,7 @@
 """Two Postgres stores on two servers keep row-level security apart (T043, ADR 0008).
 
-The composition still serves the default store only, so each store is built
-directly through the SQLAlchemy backend from one catalog: ``default`` on
+Each store is built directly through the SQLAlchemy backend from one catalog,
+below the composition (``test_two_stores_composed.py`` goes through it): ``default`` on
 server A and ``audit`` on server B, each serving the synthetic ``notes``
 product from an external schema of its own. Every server holds different
 rows, so a row read back names the server it came from.
@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import pytest
@@ -23,9 +22,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import QueuePool
 
-from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
+from loom.core.authz import Scope
 from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
-from loom.core.authz.product import clear_authz_product, register_authz_product
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
@@ -40,12 +38,7 @@ from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls import (
-    create_schema,
-    elevate,
-    register_scope_source,
-)
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
+from loom.core.repository.sqlalchemy.rls import elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.transaction import in_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
@@ -54,51 +47,34 @@ from loom.core.uow.scope import Frame, UndeclaredStoreWrite, current_scope, invo
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (
-    BootstrapFactory,
+    AUDIT,
+    DECISION,
+    FLAG,
+    OWNER_SETTING,
+    U1,
+    U2,
     ScopedDatabase,
-    application_for,
+    StoreFactory,
     execute,
     scalar,
+    store_section,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("notes_wiring")]
 
 T = TypeVar("T")
 
-AUDIT = StoreKey("audit")
 STORES = (DEFAULT_STORE, AUDIT)
 OTHER = {DEFAULT_STORE: AUDIT, AUDIT: DEFAULT_STORE}
-U1 = "11111111-1111-1111-1111-111111111111"
-U2 = "22222222-2222-2222-2222-222222222222"
 SEEDS: Mapping[StoreKey, Mapping[str, tuple[str, ...]]] = {
     DEFAULT_STORE: {U1: ("a1", "a2"), U2: ("a3",)},
     AUDIT: {U1: ("b1",), U2: ("b2", "b3")},
 }
-OWNER = text("SELECT coalesce(current_setting('loom.scope.owner', true), '')")
+OWNER = text(OWNER_SETTING)
+EDITOR_FLAG = text(FLAG)
 BODIES = text("SELECT body FROM notes ORDER BY body")
 BACKEND_PID = text("SELECT pg_backend_pid()")
-EDITOR_FLAG = text("SELECT coalesce(current_setting('loom.scope.editor.any', true), '')")
 PROBE = text("SELECT coalesce(current_setting('loom.probe', true), '')")
-MANAGE = Permission("members.manage")
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
-
-
-@dataclass
-class _Product:
-    catalog: RoleCatalog = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
-    delegate: Permission = MANAGE
-    elevations: dict[str, Permission] = field(default_factory=lambda: {"editor": MANAGE})
-
-
-@pytest.fixture(autouse=True)
-def _editor_source() -> Iterator[None]:
-    clear_scope_sources()
-    clear_authz_product()
-    register_scope_source("editor", lambda: "ana")
-    register_authz_product(_Product())
-    yield
-    clear_scope_sources()
-    clear_authz_product()
 
 
 @dataclass(frozen=True)
@@ -140,29 +116,19 @@ class TwoServers:
 
 
 def _section(database: ScopedDatabase, url: str | None, *, external: bool) -> dict[str, Any]:
-    section: dict[str, Any] = {"backend": "sqlalchemy", "url": url or database.write}
-    if external:
-        section["schema"] = {
-            "mode": "external",
-            "scopes": dict(notes.SCOPE_BINDINGS),
-            "guard": f"loom_guard_{database.schema}",
-        }
+    section = store_section(database, notes.SCOPE_BINDINGS, url=url)
+    if not external:
+        del section["schema"]
     return section
 
 
 @pytest.fixture
-async def two_servers(
-    scoped_database: BootstrapFactory, scoped_database_b: BootstrapFactory, tmp_path: Path
-) -> TwoServers:
+async def two_servers(create_store: StoreFactory) -> TwoServers:
     suffix = secrets.token_hex(3)
-    factories = {DEFAULT_STORE: scoped_database, AUDIT: scoped_database_b}
     databases: dict[StoreKey, ScopedDatabase] = {}
-    for key, factory in factories.items():
+    for key in STORES:
         schema = f"two_{key}_{suffix}"
-        database = await factory(schema)
-        await create_schema(
-            database.migrator, application_for(notes, database, tmp_path, schema=schema)
-        )
+        database = databases[key] = await create_store(key, notes, schema)
         rows = ", ".join(
             f"('{owner}', 'ana', '{body}')"
             for owner, bodies in SEEDS[key].items()
@@ -171,7 +137,6 @@ async def two_servers(
         await execute(
             database.bypass, f"INSERT INTO {schema}.notes (owner_id, editor, body) VALUES {rows}"
         )
-        databases[key] = database
     return TwoServers(databases)
 
 
@@ -498,7 +463,7 @@ async def test_a_repository_of_one_store_refuses_the_other_store_s_unit_of_work(
 
 
 def _both(stores: Mapping[StoreKey, Store]) -> OrderedCommits:
-    """One coordinator over both stores, as the composition will build it (PR 11)."""
+    """One coordinator over both stores, as the composition builds it."""
     factories = {key: store.wiring.uow_factory for key, store in stores.items()}
     return OrderedCommits({key: f for key, f in factories.items() if f is not None})
 

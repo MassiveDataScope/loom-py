@@ -34,13 +34,31 @@
 
 ### stores
 
+- **stores:** an application composes `stores.default` and every store that
+  holds a model (`__store__`). Each store gets its own backend, engine,
+  repositories, unit of work and readiness probe; its `SessionManager` or
+  `MongoSessions` is injected by type for `default` and as
+  `(SessionManager, "<store>")` for the others. One invocation enlists the
+  stores it uses and commits them one after another (ADR 0008); nothing is
+  atomic across stores. When they do not all end the same way the execution
+  raises `StoresNotCommitted` (`stores_not_committed`, HTTP 500) with each
+  store's outcome.
 - **stores:** `Joined[...]` (`loom.core.use_case`) wraps a repository a use
   case or job injects, such as `Joined[RepoFor[AuditEntry]]`, to declare that
   it writes to that repository's store as well as to its primary store, the
   `__store__` of its main model. Composition refuses `Joined` on a store that
-  cannot roll back (`UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE`). A model of a
-  store other than `default` still fails at startup until several stores
-  compose.
+  cannot roll back (`UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE`).
+- **stores:** a use case or job without a main model declares its primary
+  store with `__store__ = "<store>"`, as a model does; without it the primary
+  store stays `default`. A store it names that is not declared fails
+  composition, and so does `__store__` beside a main model.
+- **stores:** `load_application(path, store="audit")` loads one store's models
+  and schema section, so `create_schema` and `verify` prepare and check a
+  second Postgres store. `Application.path` (`loom.core.locator`) is derived
+  from the new `Application.store` and is no longer a constructor argument. Migrations still cover `default` only and log
+  `StoresNotLoaded` naming the stores they leave out.
+- **stores:** `persistence.rollback_timeout` (seconds, default 30) bounds the
+  rollbacks of one invocation together.
 
 ### config
 
@@ -119,6 +137,13 @@
   configured. Set `app.job_service` to keep the choice explicit.
 - **jobs:** the Lambda SQS adapter logs the type of its job service instead
   of assuming Celery for anything that is not inline.
+- **jobs:** job settings belong to the application:
+  `MyJob.__queue__`, `__retries__`, `__countdown__`, `__timeout__` and
+  `__priority__` no longer reflect `jobs.<Job>`; read
+  `application.job_settings.of(MyJob)`. `apply_job_config`,
+  `apply_job_overrides`, `read_job_config`, `resolve_binding` and
+  `validate_bindings` are removed, and an invalid or unknown `jobs.<Job>` key
+  fails composition.
 
 ### stores
 
@@ -145,6 +170,82 @@
 - **stores:** `clear_pending_dispatches()` drops the job dispatches and
   publishes of every store of the running invocation, and never a cache
   invalidation.
+- **stores:** a read-only execution (`read_only = True`, every REST GET) runs
+  in an invocation that writes to no store: a write raises
+  `UndeclaredStoreWrite` instead of committing on its own, and so does a
+  `@transactional` method it calls; `async with uow:` in it raises
+  `UnitOfWorkInsideScope`, with or without a configured unit of work. A
+  use case or job that writes, run from it (a `gather` child or the invoker
+  included), raises `UndeclaredStoreWrite` instead of opening and committing
+  an invocation of its own, and so does one run from a read-only execution
+  nested in a writer. Move the write to a use case that is not read-only. A
+  job it dispatches still runs after it, in an invocation of its own. An
+  invocation that enlists no store closes without an outcome and logs no
+  `InvocationOutcome`.
+- **stores:** `async with uow:` and an outermost `@transactional` run through
+  the coordinator; `async with uow:` inside a running invocation raises
+  `UnitOfWorkInsideScope`. Even with one store, a write from a `gather` child
+  or from a task that outlived its use case raises `ScopeOwnershipError`. A
+  write in an open invocation with no execution running raises
+  `UndeclaredStoreWrite`.
+  SQLAlchemy flushes before it commits, a rollback interrupted by a second
+  cancellation is still awaited (bounded by `persistence.rollback_timeout`),
+  and Mongo never aborts after an attempted commit.
+- **stores:** an unknown commit result is `Uncertain`, not a rollback:
+  SQLAlchemy `OperationalError`, `InterfaceError`, an invalidated connection
+  or a transport timeout during `COMMIT`, and Mongo
+  `UnknownTransactionCommitResult`. The connection is invalidated and only the
+  cache invalidations run. With one store the caller still gets the driver
+  error; with several, `StoresNotCommitted`.
+- **stores:** `SessionManager.active_session` and
+  `MongoSessions.active_session` (properties) are the only public way to read
+  a store's session; `get_active_session()`, `session_to_join()`,
+  `has_caller_scoped_session()` and Mongo `active_session()` are gone. A Mongo
+  `session_provider` is called with the write intent
+  (`Callable[[bool], AsyncClientSession | None]`); one without arguments no
+  longer works.
+- **stores:** a SQLAlchemy repository refuses a `session=` that is not the
+  invocation's session for its store (`ForeignSessionError`), and
+  `CachedRepository` requires a repository with `model`.
+- **stores:** DynamoDB writes go through the same checks
+  (`UndeclaredStoreWrite`, `ScopeOwnershipError`) before any call to AWS and
+  report `NonTransactional(wrote=True)`; `delete` is conditional. Its thread
+  pool starts when the store is built, shuts down when the application closes
+  and starts again when it reopens.
+- **stores:** wiring API. `RuntimeExecutor(uow_factory=)` and
+  `create_kernel(uow_factory=)` become `coordinator=` (`OrderedCommits`);
+  `Recipe.backend` becomes `Recipe.default_backend`, and
+  `CompositionSource.backend(key, *, default=)` takes the store;
+  `Application.persistence` and `require_single_store` are removed. `store`
+  is required by `StoreCatalog.served_by`, `BackendRuntime`, `SessionManager`,
+  `build_session_manager`, `MongoSessions`, `MongoUnitOfWork` and
+  `MongoUnitOfWorkFactory.transactional`;
+  `build_repository_registration_module` takes `default_builder=` and
+  `store=`. `StoreCatalog.models_by_store` always includes `default`. Binding
+  `MongoSessions` unkeyed, or a session manager keyed by store, is refused.
+  An invalid `stores` section fails in `compose_application`.
+  `_ROLLBACK_TIMEOUT_S` is now `ROLLBACK_TIMEOUT_S`.
+
+### rls
+
+- **rls:** a Postgres role that is a superuser or has `BYPASSRLS` is refused
+  at startup in every mode, `create_all` included; local setups running as
+  `postgres` need a plain role.
+- **rls:** elevation is routed per store. `SQLAlchemyElevationSink` becomes
+  `SQLAlchemyStoreElevation`; a hand-built kernel registers
+  `ScopedElevationSink({store: SQLAlchemyStoreElevation(session_manager)})`.
+  `validate_elevations(product, Mapping[StoreKey, ScopedTables])` runs in the
+  composition, and a backend plugin may expose `PersistenceWiring.elevation`.
+  A scope that is elevable or listed in `AuthzProduct.elevations` and
+  declared by two stores fails at startup
+  (`ELEVABLE_SCOPE_IN_SEVERAL_STORES`).
+- **rls:** `elevate()` in a read-only execution, REST GET routes included,
+  raises `ReadOnlyElevation`. A failed elevation step rolls back every store
+  of the invocation, even when a parent use case catches the error.
+- **rls:** scope sources are bound when the application is composed: every
+  `schema.scopes` binding is validated at startup, and a source registered
+  after composition does not reach that application.
+
 
 ### identity
 

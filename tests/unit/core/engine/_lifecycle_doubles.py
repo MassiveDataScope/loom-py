@@ -62,7 +62,9 @@ class Broker:
 
     def dispatch(self, job_name: str) -> None:
         def send() -> None:
-            self._log(f"broker.send({job_name}) uow={current_scope() is not None}")
+            scope = current_scope()
+            open_uow = scope is not None and bool(scope.participants)
+            self._log(f"broker.send({job_name}) uow={open_uow}")
             if job_name in self.failing:
                 raise ConnectionError("broker down")
             self.sent.append(job_name)

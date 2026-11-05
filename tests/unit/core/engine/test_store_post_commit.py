@@ -3,8 +3,7 @@
 A job dispatch depends on every store of the execution that queued it, a
 cache invalidation on its repository's store. The executor owns an
 invocation of two SQLite stores and a store without transactions, the way the
-composition will once several stores compose (PR 11); a store's commit fails
-where a test sets ``FAILURES``.
+composition builds it; a store's commit fails where a test sets ``FAILURES``.
 """
 
 from __future__ import annotations
@@ -170,11 +169,10 @@ class _Stores:
         self.orders = RepositorySQLAlchemy(default, _Order, cursor_codec=codec)
         self.entries = RepositorySQLAlchemy(audit, _Entry, cursor_codec=codec)
         self.ran: list[str] = []
-        self.executor = RuntimeExecutor(UseCaseCompiler())
-        # Until the composition builds it (PR 11).
-        self.executor._coordinator = OrderedCommits(
+        coordinator = OrderedCommits(
             {DEFAULT_STORE: _Sql(default), AUDIT: _Sql(audit), EVENTS: _NoTransactions()}
         )
+        self.executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
 
     def mark(self, label: str) -> Callable[[], None]:
         return lambda: self.ran.append(label)

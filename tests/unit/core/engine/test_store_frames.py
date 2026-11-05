@@ -3,9 +3,9 @@
 A use case's primary store is the ``__store__`` of its main model, and
 ``Joined[...]`` repositories declare the further stores it writes to. Every
 use case here runs through ``RuntimeExecutor.execute`` inside an invocation
-of two SQLite stores the test opens, as the composition will once several
-stores compose (PR 11). A refused write must never reach the driver: a
-listener on the audit store's engine sees every statement sent to it.
+of two SQLite stores the test opens, as the composition does. A refused write
+must never reach the driver: a listener on the audit store's engine sees every
+statement sent to it.
 """
 
 from __future__ import annotations
@@ -261,6 +261,16 @@ class _NestReadOnlyWriter(UseCase[_Order, None]):
         await self.executor.execute(_WriteOrder(self.orders), read_only=True)
 
 
+_READ_ONLY_RUNS: dict[str, Callable[[_Stores], Awaitable[object]]] = {
+    "nested": lambda stores: stores.run(
+        _NestReadOnlyWriter(RuntimeExecutor(UseCaseCompiler()), stores.order_port)
+    ),
+    "top-level": lambda stores: RuntimeExecutor(
+        UseCaseCompiler(), coordinator=stores.coordinator()
+    ).execute(_WriteOrder(stores.order_port), read_only=True),
+}
+
+
 class TestUndeclaredWrite:
     @pytest.mark.parametrize("operation", sorted(_ENTRY_WRITES))
     async def test_a_plain_repository_of_another_store_is_refused_before_the_driver(
@@ -297,11 +307,12 @@ class TestUndeclaredWrite:
 
         assert entries.ran == []
 
-    async def test_a_read_only_nested_execution_may_not_write(self, stores: _Stores) -> None:
-        use_case = _NestReadOnlyWriter(RuntimeExecutor(UseCaseCompiler()), stores.order_port)
-
+    @pytest.mark.parametrize("run", _READ_ONLY_RUNS.values(), ids=_READ_ONLY_RUNS.keys())
+    async def test_a_read_only_execution_may_not_write(
+        self, stores: _Stores, run: Callable[[_Stores], Awaitable[object]]
+    ) -> None:
         with pytest.raises(UndeclaredStoreWrite, match="is read-only"):
-            await stores.run(use_case)
+            await run(stores)
 
         assert await stores.orders.count() == 0
 

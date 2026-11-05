@@ -16,11 +16,17 @@ stores:
 
 `backend` is resolved by name; an unknown name is a startup error listing the registered ones.
 
-An application composes its `default` store: the API, the worker, the
-migrations and the row-level-security tooling read `stores.default`. A model
-belongs to `default` unless it declares `__store__`; a model of another store
-fails at startup until several stores can be composed (ADR 0008,
-`docs/architecture/adr/0008-stores-and-units-of-work.md`). A streaming sink
+An application composes `stores.default` and every store that holds a model.
+A model belongs to `default` unless it declares `__store__`; a model of a
+store the configuration does not declare fails at startup. A use case or job
+without a main model writes to the store its own `__store__` names, else to
+`default`. How use cases write
+to several stores is in ADR 0008
+(`docs/architecture/adr/0008-stores-and-units-of-work.md`). Migrations cover
+`default` only and log `StoresNotLoaded` naming the stores they leave out; the
+row-level-security schema tooling takes the store to work on
+(`load_application(path, store="audit")`, then `create_schema` and `verify`).
+A streaming sink
 names any store with `store: <name>`. A `clickhouse` store is
 connection-only: it is no persistence backend, serves no model, never joins a
 unit of work, and only hands its connection to the sinks that name it (a

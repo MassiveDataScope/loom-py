@@ -18,7 +18,6 @@ from loom.core.backend.scoped_ddl import (
     validate_timeout,
 )
 from loom.core.config import ConfigError
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.rls.config import BootstrapConfig
 from loom.core.repository.sqlalchemy.rls.integrity import require_guard_revision
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -62,7 +61,7 @@ async def create_schema(
         validate_timeout(lock_timeout)
     except ValueError as exc:
         raise ConfigError(f"create_schema: {exc}") from exc
-    manager = SessionManager(migrator_url, store=DEFAULT_STORE)
+    manager = SessionManager(migrator_url, store=application.store)
     try:
         check_dialect(
             manager.engine.dialect.name,

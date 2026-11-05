@@ -7,16 +7,14 @@ with no unit of work, because no discovered model belongs to it.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe, compose_application
+from loom.composition import AppConfig, Application, compose_application
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence import SERVER_PROFILE
 from loom.core.repository.abc import RepoFor
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.errors import (
@@ -24,7 +22,7 @@ from loom.core.use_case.errors import (
     UncomposedWriteStore,
     UseCaseErrorCode,
 )
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import Serving, composition_source
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -65,30 +63,6 @@ class _AuditJob(Job[None]):
         return None
 
 
-class _Serving:
-    """Composes ``_Invoice`` and one use case or job."""
-
-    def __init__(self, component: type[object]) -> None:
-        self.component = component
-
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
-        is_job = issubclass(self.component, Job)
-        return Recipe(
-            profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(
-                models=(_Invoice,),
-                use_cases=() if is_job else cast(Any, (self.component,)),
-                interfaces=(),
-                jobs=cast(Any, (self.component,)) if is_job else (),
-            ),
-            default_backend="sqlalchemy",
-        )
-
-    def bind(self, application: Application) -> Application:
-        return application
-
-
 def _compose(
     tmp_path: Path, audit: dict[str, Any] | None, component: type[object] = _Audited
 ) -> Application:
@@ -105,7 +79,9 @@ def _compose(
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return compose_application(source, _Serving(component))
+    if issubclass(component, Job):
+        return compose_application(source, Serving(_Invoice, jobs=(component,)))
+    return compose_application(source, Serving(_Invoice, use_cases=(component,)))
 
 
 @pytest.mark.parametrize("component", [_Audited, _AuditJob], ids=["use-case", "job"])
