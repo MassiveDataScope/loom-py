@@ -28,7 +28,27 @@ def _session_of(session_manager: Any) -> AsyncMock:
 
 class TestRepositorySessionScope:
     @pytest.mark.asyncio
-    async def test_scope_commits_when_session_has_changes(
+    async def test_scope_commits_a_write(
+        self,
+        mock_session_manager: Any,
+        mock_session: AsyncMock,
+        dummy_model: type,
+    ) -> None:
+        repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
+            session_manager=cast(SessionManager, mock_session_manager),
+            model=dummy_model,
+            cursor_codec=CursorCodec(signing="ephemeral"),
+        )
+        mock_session.new = {"pending"}
+
+        async with repo._session_scope(None, write=True) as session:
+            assert session is mock_session
+
+        mock_session.commit.assert_awaited_once()
+        mock_session.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_scope_rolls_back_a_read_even_with_pending_changes(
         self,
         mock_session_manager: Any,
         mock_session: AsyncMock,
@@ -44,30 +64,8 @@ class TestRepositorySessionScope:
         async with repo._session_scope(None, write=False) as session:
             assert session is mock_session
 
-        mock_session.commit.assert_awaited_once()
-        mock_session.rollback.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_scope_commits_when_session_is_read_only(
-        self,
-        mock_session_manager: Any,
-        mock_session: AsyncMock,
-        dummy_model: type,
-    ) -> None:
-        repo: RepositorySQLAlchemy[msgspec.Struct, int] = RepositorySQLAlchemy(
-            session_manager=cast(SessionManager, mock_session_manager),
-            model=dummy_model,
-            cursor_codec=CursorCodec(signing="ephemeral"),
-        )
-        mock_session.new = set()
-        mock_session.dirty = set()
-        mock_session.deleted = set()
-
-        async with repo._session_scope(None, write=False) as session:
-            assert session is mock_session
-
-        mock_session.commit.assert_awaited_once()
-        mock_session.rollback.assert_not_awaited()
+        mock_session.commit.assert_not_awaited()
+        mock_session.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_scope_rolls_back_on_error(

@@ -458,6 +458,24 @@ class TestOperationSession:
 
         assert await audit_rows.count() == 1
 
+    async def test_outside_an_invocation_a_read_that_writes_persists_nothing(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        await _insert(stores.audit, "declared a read", write=False)
+
+        assert await audit_rows.count() == 0
+
+    async def test_a_read_only_execution_whose_read_writes_persists_nothing(
+        self, stores: _Stores, audit_rows: _AuditRows
+    ) -> None:
+        async with (
+            invocation(stores.coordinator(), read_only=True) as scope,
+            scope.frame(_READ_ONLY),
+        ):
+            await _insert(stores.audit, "declared a read", write=False)
+
+        assert await audit_rows.count() == 0
+
     async def test_outside_an_invocation_it_persists_nothing_on_error(
         self, stores: _Stores, audit_rows: _AuditRows
     ) -> None:

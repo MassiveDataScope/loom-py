@@ -49,8 +49,8 @@ def with_session_scope(
             driver is called when the running execution did not declare its
             store, and recorded for the commit order. A method declared
             ``write=False`` that writes anyway, to a store the invocation did
-            not enlist, commits on its own and survives a rollback of the
-            invocation.
+            not enlist, persists nothing: its own transaction is rolled back
+            (:meth:`SessionManager.operation_session`).
 
     Example::
 

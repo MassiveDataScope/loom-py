@@ -209,16 +209,16 @@ class SessionManager:
 
         The session of :meth:`joined_session`, which this block neither commits
         nor rolls back, when the store is enlisted in the invocation; otherwise
-        one of :meth:`session`, committed when the block succeeds and rolled
-        back when it raises. A read-only execution enlists no store, so its
-        reads take a short transaction of their own.
+        one of :meth:`session`, always rolled back when the block raises. A
+        read-only execution enlists no store, so its reads take a short
+        transaction of their own.
 
         Args:
             write: Whether the operation writes. A write is checked and
-                recorded for the commit order (:meth:`joined_session`). A block
-                declared ``write=False`` that writes anyway, to a store the
-                invocation did not enlist, commits on its own and survives a
-                rollback of the invocation.
+                recorded for the commit order (:meth:`joined_session`), and
+                its own transaction is committed when the block succeeds. A
+                read's own transaction is never committed: a block declared
+                ``write=False`` that writes anyway persists nothing.
 
         Yields:
             The session to run the operation's statements in.
@@ -241,7 +241,7 @@ class SessionManager:
         async with self.session() as session:
             try:
                 yield session
-                await session.commit()
+                await (session.commit() if write else session.rollback())
             except Exception:
                 await session.rollback()
                 _log.exception("OperationSessionRollback", store=self.store)

@@ -124,9 +124,11 @@ Callers ask the capability, never the backend's name.
   `async with session_manager.operation_session(write=...)`, the session a
   repository's operation would run in: the invocation's when the store is
   enlisted, which it neither commits nor rolls back; otherwise a transaction
-  of its own, committed on success and rolled back on error. The write
-  intent is checked and recorded as a repository's, so a read-only execution
-  (every REST `GET`) reads in a short transaction and is refused a write.
+  of its own, rolled back on error. The write intent is checked and recorded
+  as a repository's: a write's own transaction commits on success, a read's
+  never does, so a block declared a read that writes anyway persists
+  nothing. A read-only execution (every REST `GET`) reads in a short
+  transaction and is refused a write.
   `active_session` is for code that must only run inside the invocation's
   transaction. `session_manager.session()` opens a session outside the
   invocation, which commits on its own.

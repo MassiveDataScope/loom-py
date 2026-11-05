@@ -83,9 +83,10 @@
 - **stores:** `async with session_manager.operation_session(write=...)`
   gives raw SQL the session its operation runs in, as a repository's: the
   invocation's when the store is enlisted, else a transaction of its own,
-  committed on success and rolled back on error. A write is checked and
-  recorded for the commit order; a read-only execution (a REST `GET`) reads
-  in a short transaction and is refused a write with `UndeclaredStoreWrite`.
+  rolled back on error. A write is checked and recorded for the commit order,
+  and its own transaction commits on success; a read's own transaction is
+  never committed. A read-only execution (a REST `GET`) reads in a short
+  transaction and is refused a write with `UndeclaredStoreWrite`.
   Repositories now run through it.
 
 ### config
@@ -175,6 +176,14 @@
 
 ### stores
 
+- **stores:** a read that runs in a transaction of its own (a store the
+  invocation did not enlist, or no invocation) ends with a rollback, never a
+  commit: a repository read, a `@with_session_scope(write=False)` method or
+  `operation_session(write=False)` that writes anyway persists nothing, in a
+  `GET` or anywhere.
+- **stores:** a failed own transaction of a repository logs
+  `OperationSessionRollback` with `store=`, where it logged
+  `RepositorySessionRollback` with `repository=`.
 - **stores:** a write to a store the running use case did not declare raises
   `UndeclaredStoreWrite` (`undeclared_store_write`, HTTP 500) before the
   driver is called, where it raised `ForeignSessionError`. So does a
