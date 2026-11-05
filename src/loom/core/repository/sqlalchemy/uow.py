@@ -31,11 +31,12 @@ from typing import Any, ClassVar
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, bare_url
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.alone import EntersAlone
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
-from loom.core.uow.scope import EntersAlone
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -158,7 +159,7 @@ class SQLAlchemyUnitOfWork(EntersAlone):
 
     async def close(self) -> None:
         """Close the session, if any, under ``asyncio.shield``: a cancellation lets it finish."""
-        await asyncio.shield(self._exit_session())
+        await asyncio.shield(held_task(self._exit_session()))
 
     async def _exit_session(self) -> None:
         """Exit the session context manager; the session is gone afterwards.

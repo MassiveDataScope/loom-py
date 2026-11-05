@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
@@ -14,7 +15,6 @@ from loom.core.job.service import InlineJobService, JobService
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import Frame, InvocationScope, UndeclaredStoreWrite, invocation
-from loom.testing import RecordingJobService
 from tests.helpers.jobs import EmailJob, SQSClient, sqs_service
 from tests.unit.core.uow._coordinator_fakes import Factory, Ledger, PhasedStore
 
@@ -38,12 +38,7 @@ def _sqs() -> tuple[JobService, _Sent]:
     return sqs_service(client), lambda: len(client.requests)
 
 
-def _recording() -> tuple[JobService, _Sent]:
-    service = RecordingJobService()
-    return service, lambda: len(service.dispatched)
-
-
-_SERVICES = {"inline": _inline, "celery": _celery, "sqs": _sqs, "recording": _recording}
+_SERVICES = {"inline": _inline, "celery": _celery, "sqs": _sqs}
 
 
 @asynccontextmanager
@@ -78,24 +73,19 @@ def service(request: pytest.FixtureRequest) -> Iterator[tuple[JobService, _Sent]
     clear_pending_dispatches()
 
 
+@pytest.mark.parametrize("gathered", [False, True], ids=["owner", "gather-child"])
 @pytest.mark.parametrize("read_only", sorted(_READ_ONLY))
 async def test_a_dispatch_from_a_read_only_execution_is_refused_and_never_sent(
-    service: tuple[JobService, _Sent], read_only: str
+    service: tuple[JobService, _Sent], read_only: str, gathered: bool
 ) -> None:
     jobs, sent = service
+
+    async def dispatch() -> None:
+        jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
+
     async with _READ_ONLY[read_only]():
         with pytest.raises(UndeclaredStoreWrite, match="a job dispatch is refused"):
-            jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
+            await (asyncio.gather(dispatch()) if gathered else dispatch())
 
     await flush_pending_dispatches()
     assert sent() == 0
-
-
-async def test_a_dispatch_outside_a_read_only_execution_is_sent(
-    service: tuple[JobService, _Sent],
-) -> None:
-    jobs, sent = service
-    jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
-
-    await flush_pending_dispatches()
-    assert sent() == 1

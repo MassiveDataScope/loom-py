@@ -186,14 +186,16 @@
 - **stores:** `loom.core.transaction` is removed (`in_atomic_transaction`,
   `open_atomic_transaction`, `close_atomic_transaction`). A cache
   invalidation asks the invocation scope instead
-  (`InvocationScope.channel_for`): it waits for the commit only while the
-  model's store is enlisted and its unit of work declares
-  `transactional = True`, which is all a third-party unit of work now needs.
-  A write already durable (a store not enlisted, DynamoDB, Mongo without
-  transactions) bumps at once, so a later failure of the invocation no
-  longer discards it. `set_active_mutations`, `reset_active_mutations` and
+  (`InvocationScope.owners_of`): it waits for the commit only while the
+  model's store is enlisted and its unit of work declares both
+  `transactional = True` and `phased = True`, which is all a third-party unit
+  of work now needs. A write already durable (a store not enlisted, a unit of
+  work driven in a single phase, DynamoDB, Mongo without transactions) bumps
+  at once, so a later failure of the invocation no longer discards it.
+  `set_active_mutations`, `reset_active_mutations` and
   `get_pending_mutations` are removed: `record_mutation` records on
-  `InvocationScope.mutations`.
+  `InvocationScope.mutations` while an outermost `@transactional` collects
+  them.
 - **stores:** `clear_pending_dispatches()` drops the job dispatches and
   publishes of every store of the running invocation, and never a cache
   invalidation.

@@ -18,11 +18,12 @@ from loom.core.logger import get_logger
 from loom.core.repository.mutation import MutationEvent
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
+from loom.core.uow.alone import single_store
 from loom.core.uow.scope import (
     InvocationScope,
+    StoresNotCommitted,
     UndeclaredStoreWrite,
     current_scope,
-    single_store,
 )
 
 
@@ -42,13 +43,13 @@ _log = get_logger(__name__).bind(component="transactional")
 def record_mutation(event: MutationEvent) -> None:
     """Record ``event`` on the invocation running in this task, for the ``@transactional`` hooks.
 
-    Outside an invocation this task owns the event is discarded.
+    Discarded unless this task owns an invocation collecting them.
 
     Args:
         event: The mutation event to record.
     """
     scope = current_scope()
-    if scope is not None and scope.owned_here():
+    if scope is not None and scope.mutations is not None and scope.owned_here():
         scope.mutations.append(event)
 
 
@@ -61,7 +62,7 @@ def transactional(
     ``@transactional`` call) the method joins the participant of its owner's
     store and nothing else happens: the invocation commits it and runs the
     post-commit actions. Outside one, the method runs in an invocation of
-    its owner's store alone (:func:`~loom.core.uow.scope.single_store`),
+    its owner's store alone (:func:`~loom.core.uow.alone.single_store`),
     which commits on return and rolls back on any exception; once it
     committed, ``on_transaction_committed(pending)`` runs on the owner and on
     its :class:`SupportsPostCommit` attributes, after the cache invalidations.
@@ -155,15 +156,15 @@ async def _run_in_own_invocation(
     kwargs: dict[str, Any],
 ) -> T:
     """Run ``method`` in an invocation of its store alone; the hooks run only if it commits."""
+    hooks = PostCommitChannel()
+    unit_of_work = SQLAlchemyUnitOfWork(session_manager)
     try:
-        async with single_store(
-            session_manager.store, SQLAlchemyUnitOfWork(session_manager)
-        ) as scope:
+        async with single_store(session_manager.store, unit_of_work, post_commit=hooks) as scope:
+            scope.mutations = []
             result = await method(owner, *args, **kwargs)
             pending = tuple(scope.mutations)
-            if scope.post_commit is not None:  # always: single_store binds it
-                _enqueue_post_commit_hooks(owner, pending, scope.post_commit)
-    except PostCommitError:
+            _enqueue_post_commit_hooks(owner, pending, hooks)
+    except (PostCommitError, StoresNotCommitted):
         raise
     except Exception:
         _log.exception(

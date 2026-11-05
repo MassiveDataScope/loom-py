@@ -31,23 +31,20 @@ import asyncio
 import inspect
 import itertools
 from collections.abc import AsyncIterator, Iterable, Iterator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from types import TracebackType
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any
 
 from loom.core.errors.codes import ErrorCode
 from loom.core.errors.errors import ForeignSessionError, SystemError
 from loom.core.identity import ANONYMOUS, Identity, current_identity
 from loom.core.persistence.stores import StoreKey
-from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import (
     Committed,
     Coordinator,
     InvocationOutcome,
     NonTransactional,
-    OrderedCommits,
     Participant,
     RolledBack,
     StoreOutcome,
@@ -259,8 +256,8 @@ class InvocationScope:
         store_channels: The post-commit actions, by the stores they depend on.
         read_only: Whether a read-only execution opened it: nothing run in it
             may write.
-        mutations: What the repositories wrote in it, for the hooks of
-            ``@transactional``.
+        mutations: What the repositories wrote in it, once ``@transactional``
+            set it to collect them for its hooks.
     """
 
     owner_task: asyncio.Task[Any] | None
@@ -273,7 +270,7 @@ class InvocationScope:
     post_commit: PostCommitChannel | None = None
     store_channels: dict[frozenset[StoreKey], PostCommitChannel] = field(default_factory=dict)
     read_only: bool = False
-    mutations: list[MutationEvent] = field(default_factory=list)
+    mutations: list[MutationEvent] | None = None
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
 
     def require_owner(self) -> None:
@@ -432,41 +429,35 @@ class InvocationScope:
             elif error is None:
                 channel.discard_dispatches(log=True)
 
-    def channel_for(self, store: StoreKey | None = None) -> PostCommitChannel | None:
-        """Return the channel an action that depends on ``store`` waits on, while this task settles.
+    def owners_of(self, store: StoreKey | None) -> frozenset[StoreKey] | None:
+        """Return the stores an action that depends on ``store`` waits for, while this task settles.
 
         A cache invalidation names ``store`` and waits only while that
-        store's enlisted participant can still roll back: a write anywhere
-        else is already durable. A job dispatch names none and waits on every
-        store of the running execution, its primary and ``Joined`` stores.
+        store's participant holds the write in a transaction it can still
+        roll back: a write anywhere else is already durable. A job dispatch
+        names none and waits on every store of the running execution, its
+        primary and ``Joined`` stores.
 
         Args:
             store: Store the action depends on; ``None`` for the running
                 execution's stores.
 
         Returns:
-            The channel, or ``None`` when no owner settles this scope by store
-            (:attr:`post_commit` unset), another task asks, or those stores
-            are not enlisted, or ``store`` cannot roll back.
+            Those stores, or ``None`` when no owner settles this scope by
+            store (:attr:`post_commit` unset), another task asks, or the
+            action need not wait.
         """
         if self.post_commit is None or not self.owned_here():
             return None
-        if store is None:
-            owners = frozenset(next((f.stores for f in reversed(self.frames) if f.primary), ()))
-        else:
+        if store is not None:
             participant = self.participants.get(store)
-            owners = frozenset((store,) if participant and participant.transactional else ())
-        if not owners or not owners <= self.participants.keys():
-            return None
-        if owners not in self.store_channels:
-            # Local import: ``loom.core.engine`` imports this module.
-            from loom.core.engine.post_commit import PostCommitChannel
-
-            self.store_channels[owners] = PostCommitChannel()
-        return self.store_channels[owners]
+            holds = participant is not None and participant.transactional and participant.phased
+            return frozenset((store,)) if holds else None
+        owners = frozenset(next((f.stores for f in reversed(self.frames) if f.primary), ()))
+        return owners if owners and owners <= self.participants.keys() else None
 
     def channels(self) -> list[PostCommitChannel]:
-        """Return the channels :meth:`channel_for` handed out, while this task settles."""
+        """Return the channels of :attr:`store_channels`, while this task settles."""
         settles = self.post_commit is not None and self.owned_here()
         return list(self.store_channels.values()) if settles else []
 
@@ -576,13 +567,12 @@ def refuse_write_under_read_only(what: str) -> None:
 
     Raises:
         UndeclaredStoreWrite: When the published scope was opened by a
-            read-only execution, or this task runs one in it now.
+            read-only execution, or one runs in it now, in any task.
     """
     scope = _scope.get()
     if scope is None:
         return
-    nested = scope.owned_here() and bool(scope.frames) and scope.frames[-1].primary is None
-    if scope.read_only or nested:
+    if scope.read_only or (scope.frames and scope.frames[-1].primary is None):
         raise UndeclaredStoreWrite(f"{what} is refused: the enclosing execution is read-only")
 
 
@@ -650,119 +640,6 @@ async def invocation(
         await _finish_if_open(scope, None)
     finally:
         _scope.reset(token)
-
-
-@asynccontextmanager
-async def single_store(key: StoreKey, unit_of_work: UnitOfWork) -> AsyncIterator[InvocationScope]:
-    """Run ``unit_of_work`` as the only participant of an invocation of its own.
-
-    What ``async with uow:`` and ``@transactional`` do outside a scope: the
-    repositories of ``key`` join the unit of work through the scope, and on
-    exit the coordinator commits it, or rolls it back if the block raised.
-    The post-commit actions queued in the block, a nested use case's
-    included, run once the store has ended, by its outcome
-    (:meth:`InvocationScope.settle_post_commit`).
-
-    Args:
-        key: Store the unit of work belongs to.
-        unit_of_work: Not yet begun; it is begun on entry.
-
-    Yields:
-        The open scope.
-
-    Raises:
-        StoresNotCommitted: When the commit's result is unknown.
-        PostCommitError: When a post-commit action failed after the commit.
-        Exception: What the commit failed with, when the block did not raise.
-    """
-    # Local import: ``loom.core.engine`` imports this module.
-    from loom.core.engine.post_commit import (
-        PostCommitChannel,
-        bind_channel,
-        drain_after_failure,
-        reset_channel,
-    )
-
-    coordinator = OrderedCommits({key: _Given(unit_of_work)})
-    unowned, settled = PostCommitChannel(), PostCommitChannel()
-    error: BaseException | None = None
-    token = bind_channel(unowned)
-    try:
-        async with invocation(coordinator) as scope:
-            scope.post_commit = unowned
-            async with scope.frame(Frame(key)):
-                try:
-                    yield scope
-                except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
-                    error = exc
-            try:
-                outcome = await coordinator.finish(scope, error)
-            finally:
-                scope.settle_post_commit(settled, error)
-        failure = invocation_error(outcome, error or scope.poisoned)
-    except BaseException as exc:  # NOSONAR S5754 - raised below, once the drain ran
-        failure = exc
-    finally:
-        reset_channel(token)
-    if failure is None:
-        await settled.drain(committed=True)
-        return
-    await drain_after_failure(settled)
-    raise failure
-
-
-class EntersAlone:
-    """Mixin: ``async with uow:`` runs the unit of work as the only participant of an invocation.
-
-    What :func:`single_store` does, for a phased unit of work entered by
-    hand. The class sets ``_store``, the key of its store, in ``__init__``.
-    """
-
-    _store: StoreKey
-    _alone: AbstractAsyncContextManager[InvocationScope] | None = None
-
-    async def __aenter__(self) -> Self:
-        """Begin the unit of work as the only participant of an invocation of its own.
-
-        Returns:
-            This instance.
-
-        Raises:
-            UnitOfWorkInsideScope: Inside an open invocation scope, where
-                this transaction would commit on its own, outside the invocation.
-        """
-        refuse_inside_open_scope(self)
-        alone = single_store(self._store, cast("UnitOfWork", self))
-        await alone.__aenter__()
-        self._alone = alone
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        """End the invocation ``__aenter__`` opened: commit on clean exit, roll back otherwise.
-
-        The coordinator rolls back a failed commit, and the unit of work
-        always closes; see :mod:`loom.core.uow.coordinator` for how
-        cancellation is handled.
-        """
-        alone, self._alone = self._alone, None
-        if alone is not None:
-            traceback = exc_tb if isinstance(exc_tb, TracebackType) else None
-            await alone.__aexit__(exc_type, exc_val, traceback)
-
-
-@dataclass(frozen=True, slots=True)
-class _Given:
-    """A factory that hands out one unit of work already built."""
-
-    unit_of_work: UnitOfWork
-
-    def create(self) -> UnitOfWork:
-        return self.unit_of_work
 
 
 async def _finish_if_open(scope: InvocationScope, error: BaseException | None) -> None:

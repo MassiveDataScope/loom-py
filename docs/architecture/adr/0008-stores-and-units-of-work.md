@@ -118,7 +118,7 @@ Callers ask the capability, never the backend's name.
   a custom read of a store that is not enlisted still uses a session per call.
 - No facade reads the session of every backend: it would return `object` and
   lose the typing. A cache invalidation asks the scope instead whether its
-  store is enlisted and can still roll back (`InvocationScope.channel_for`);
+  store is enlisted and can still roll back (`InvocationScope.owners_of`);
   the per-context `in_atomic_transaction()` signal is gone.
 - Raw SQL that must run in the invocation's transaction injects the store's
   `SessionManager` and uses its `active_session`. `session_manager.session()`

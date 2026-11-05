@@ -30,11 +30,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
+from loom.core._async import held_task
 from loom.core.logger import get_logger
 from loom.core.persistence.stores import StoreKey
 from loom.core.uow.abc import UnitOfWork
+from loom.core.uow.alone import EntersAlone
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
-from loom.core.uow.scope import EntersAlone, current_handle
+from loom.core.uow.scope import current_handle
 
 _log = get_logger(__name__).bind(component="uow")
 
@@ -233,7 +235,7 @@ class MongoUnitOfWork(EntersAlone):
 
         A failure while ending is logged, not raised.
         """
-        await asyncio.shield(self._end_session())
+        await asyncio.shield(held_task(self._end_session()))
 
     async def _end_session(self) -> None:
         """End the session; the unit of work holds none afterwards.

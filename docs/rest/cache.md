@@ -162,9 +162,9 @@ enqueued on the post-commit channel and published **after the commit**, ahead
 of any job dispatch queued in the same pipeline, so a reader cannot cache a row
 the transaction later rolled back, and a job cannot read a stale entry (see
 [What runs after commit](use-case-dsl.md#what-runs-after-commit)). Anywhere
-else — a store the invocation did not enlist, Mongo without transactions,
-DynamoDB — the write commits on its own and the bump runs inline, even if the
-invocation fails afterwards.
+else — a store the invocation did not enlist, a unit of work without the
+`phased` marker, Mongo without transactions, DynamoDB — the write commits on
+its own and the bump runs inline, even if the invocation fails afterwards.
 
 The bare `user` tag is in every key's tag list but the framework never bumps
 it: it is the manual flush handle. Incrementing `tag:user` on the counter

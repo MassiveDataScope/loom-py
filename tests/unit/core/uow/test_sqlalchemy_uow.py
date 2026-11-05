@@ -15,8 +15,9 @@ from loom.core._async import run_to_completion
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork, SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.uow.alone import single_store
 from loom.core.uow.coordinator import InvocationOutcome, PhysicalStore, RolledBack, Uncertain
-from loom.core.uow.scope import StoresNotCommitted, current_scope, single_store
+from loom.core.uow.scope import StoresNotCommitted, current_scope
 
 from ..conftest import RecordingSessionManager, make_session
 from .conftest import SessionPair, make_session_manager

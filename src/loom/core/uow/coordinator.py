@@ -13,9 +13,7 @@ ends every participant and records the :class:`InvocationOutcome`.
    wrote, by first write, then the rest, by enlistment. The first failure
    stops the sequence and the participants not yet committed roll back.
 3. **End** every participant in reverse enlistment order (LIFO): roll back
-   what did not commit, then close. ``ContextVar`` tokens a unit of work
-   published in ``begin`` are therefore reset in the reverse order they were
-   set.
+   what did not commit, then close.
 
 A single-phase participant (any unit of work that does not declare the
 ``phased`` marker of :class:`PhasedUnitOfWork`) commits and closes in the
@@ -177,10 +175,8 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
     - ``rollback`` runs in a task of its own that is awaited to completion,
       however often the owning task is cancelled, but no later than the
       invocation's rollback deadline; it must not touch a ``ContextVar``.
-    - ``close`` releases the session, shields its own driver I/O and resets
-      every ``ContextVar`` token ``begin`` published in a ``finally``, so a
-      cancellation never leaves one set. It is also called when ``begin``
-      fails.
+    - ``close`` releases the session and shields its own driver I/O, so a
+      cancellation lets it finish. It is also called when ``begin`` fails.
     """
 
     phased: ClassVar[bool]
@@ -206,7 +202,7 @@ class PhasedUnitOfWork(UnitOfWork, Protocol):
         ...
 
     async def close(self) -> None:
-        """Release the session and reset the tokens ``begin`` published."""
+        """Release the session."""
         ...
 
 
@@ -257,7 +253,7 @@ class _PhasedDriver:
         try:
             await self._uow.begin()
         except BaseException:
-            # ``begin`` may have published tokens before it failed.
+            # ``begin`` may have opened a session before it failed.
             await self._close_logging_failure()
             raise
 

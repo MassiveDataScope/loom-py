@@ -24,7 +24,7 @@ from loom.core.cache.decorators import cache_query, cached
 from loom.core.engine.post_commit import PostCommitChannel
 from loom.core.model import BaseModel, ColumnField, LoomStruct
 from loom.core.model.introspection import get_id_attribute
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import FilterParams, PageParams, PageResult, Repository, repository_for
 from loom.core.repository.abc.query import (
     CursorResult,
@@ -40,8 +40,8 @@ from loom.core.uow.scope import Frame, invocation
 from tests.unit.core.uow._coordinator_fakes import (
     Factory,
     Ledger,
-    NonTransactionalStore,
     PhasedStore,
+    StoreFactory,
 )
 
 T = TypeVar("T")
@@ -727,23 +727,23 @@ def registered_repository(model: type[LoomStruct], repository_type: type[Any]) -
 
 
 @asynccontextmanager
-async def open_transaction_with_channel(
-    store: StoreKey = DEFAULT_STORE, *, transactional: bool = True
+async def enlisted_write(
+    store_type: StoreFactory = PhasedStore,
 ) -> AsyncIterator[PostCommitChannel]:
-    """Run the block as a use case writing to ``store``; yield the channel its actions settle into.
+    """Run the block as a use case writing to the default store; yield the channel it settles into.
 
     Mirrors what the executor does around a use case: the store is enlisted
-    (with a unit of work that can roll back, or not), and once it committed
-    the actions queued on its channel move to the yielded one, which the test
-    drains, or discards to stand for a rollback. A test may also enqueue on
-    the yielded channel inside the block.
+    with a ``store_type`` unit of work, and once it committed the actions
+    queued on its channel move to the yielded one, which the test drains, or
+    discards to stand for a rollback. A test may also enqueue on the yielded
+    channel inside the block.
     """
     channel = PostCommitChannel()
-    unit_of_work = (PhasedStore if transactional else NonTransactionalStore)(store, Ledger())
-    coordinator = OrderedCommits({store: Factory(unit_of_work)})
+    store = store_type(DEFAULT_STORE, Ledger(), None)
+    coordinator = OrderedCommits({DEFAULT_STORE: Factory(store)})
     async with invocation(coordinator) as scope:
         scope.post_commit = PostCommitChannel()
-        async with scope.frame(Frame(store)):
+        async with scope.frame(Frame(DEFAULT_STORE)):
             yield channel
         await coordinator.finish(scope, None)
         scope.settle_post_commit(channel, None)

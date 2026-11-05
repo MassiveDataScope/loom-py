@@ -21,7 +21,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from loom.core.engine.post_commit import ActionT, PostCommitChannel, active_channel, store_channel
-from loom.core.uow.scope import current_scope, refuse_write_under_read_only
+from loom.core.uow.scope import current_scope
 
 # default=None, never a channel instance: a shared default would leak
 # dispatches across contexts.  Each context creates its own on first use.
@@ -62,7 +62,6 @@ def pending_publish_group(key: Hashable, create: Callable[[], ActionT]) -> Actio
 
 
 def _target_channel() -> PostCommitChannel:
-    refuse_write_under_read_only("a job dispatch")
     bound = store_channel()
     return _fallback_channel() if bound is None else bound
 

@@ -79,7 +79,7 @@ class _RecordingStore:
 
     transactional: ClassVar[bool] = True
 
-    def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None) -> None:
+    def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
         self.key = key
         self.ledger = ledger
         self.fault = fault
@@ -165,9 +165,6 @@ class NonTransactionalStore(PhasedStore):
 
 class ThirdPartyStore(_RecordingStore):
     """A protocol-only unit of work."""
-
-    def __init__(self, key: StoreKey, ledger: Ledger, fault: Fault | None = None) -> None:
-        super().__init__(key, ledger, fault)
 
     async def begin(self) -> None:
         await self._run("begin")

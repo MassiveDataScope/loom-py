@@ -402,7 +402,7 @@ class TestPhased:
         assert uow.session is None
         assert "UoWCloseFailed" in caplog.text
 
-    async def test_a_cancelled_close_still_ends_the_session_and_resets_the_token(self) -> None:
+    async def test_a_cancelled_close_still_ends_the_session(self) -> None:
         client = FakeMongoClient()
         client.end_gate = asyncio.Event()
         uow = _unit_of_work(client)
