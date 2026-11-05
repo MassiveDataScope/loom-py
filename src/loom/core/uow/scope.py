@@ -256,6 +256,8 @@ class InvocationScope:
             store holds; while set, the others wait in :attr:`store_channels`
             for :meth:`settle_post_commit`.
         store_channels: The post-commit actions, by the stores they depend on.
+        read_only: Whether a read-only execution opened it: nothing run in it
+            may write.
     """
 
     owner_task: asyncio.Task[Any] | None
@@ -267,6 +269,7 @@ class InvocationScope:
     identity: Identity = ANONYMOUS
     post_commit: PostCommitChannel | None = None
     store_channels: dict[frozenset[StoreKey], PostCommitChannel] = field(default_factory=dict)
+    read_only: bool = False
     _writes: itertools.count[int] = field(default_factory=itertools.count, init=False, repr=False)
 
     def require_owner(self) -> None:
@@ -526,6 +529,21 @@ def current_handle(key: StoreKey, owner: object, *, write: bool) -> object | Non
     return None if participant is None else participant.handle
 
 
+def refuse_write_under_read_only(what: str) -> None:
+    """Refuse ``what``, which writes, while a read-only execution runs in this context.
+
+    Raises:
+        UndeclaredStoreWrite: When the published scope was opened by a
+            read-only execution, or this task runs one in it now.
+    """
+    scope = _scope.get()
+    if scope is None:
+        return
+    nested = scope.owned_here() and bool(scope.frames) and scope.frames[-1].primary is None
+    if scope.read_only or nested:
+        raise UndeclaredStoreWrite(f"{what} is refused: the enclosing execution is read-only")
+
+
 @contextmanager
 def unscoped() -> Iterator[None]:
     """Publish no scope for the block: what runs in it uses a session per call."""
@@ -555,7 +573,9 @@ def refuse_inside_open_scope(unit_of_work: object) -> None:
 
 
 @asynccontextmanager
-async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]:
+async def invocation(
+    coordinator: Coordinator, *, read_only: bool = False
+) -> AsyncIterator[InvocationScope]:
     """Open an invocation scope owned by the current task, as its ambient identity, and publish it.
 
     On exit the coordinator ends the participants the caller has not ended,
@@ -564,6 +584,7 @@ async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]
 
     Args:
         coordinator: Enlists the stores of the invocation and ends them.
+        read_only: Whether a read-only execution opens it.
 
     Yields:
         The open scope.
@@ -572,7 +593,10 @@ async def invocation(coordinator: Coordinator) -> AsyncIterator[InvocationScope]
         asyncio.CancelledError: If ending the participants was interrupted.
     """
     scope = InvocationScope(
-        owner_task=asyncio.current_task(), coordinator=coordinator, identity=current_identity()
+        owner_task=asyncio.current_task(),
+        coordinator=coordinator,
+        identity=current_identity(),
+        read_only=read_only,
     )
     token = _scope.set(scope)
     try:
@@ -669,7 +693,9 @@ class _Given:
 
 
 async def _finish_if_open(scope: InvocationScope, error: BaseException | None) -> None:
-    if not scope.closed:
+    if not scope.participants:
+        scope.closed = True
+    elif not scope.closed:
         await scope.coordinator.finish(scope, error)
 
 

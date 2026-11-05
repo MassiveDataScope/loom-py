@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -18,7 +18,12 @@ from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import NestedElevation, NestedIdentityMismatch, invocation
+from loom.core.uow.scope import (
+    NestedElevation,
+    NestedIdentityMismatch,
+    UndeclaredStoreWrite,
+    invocation,
+)
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
@@ -106,6 +111,17 @@ def ambient_bob() -> Iterator[None]:
 def _child_call(executor: RuntimeExecutor, child: Run, identity: Identity | None) -> Body:
     async def call() -> Any:
         return await executor.execute(child, identity=identity)
+
+    return call
+
+
+def _invoking_as(executor: RuntimeExecutor, identity: Identity) -> Body:
+    invoker = AppInvoker(
+        cast(UseCaseFactory, _Factory()), executor, cast(UseCaseRegistry, None), identity=identity
+    )
+
+    async def call() -> object:
+        return await invoke_as(invoker, Child, identity, params=None, payload=None)
 
     return call
 
@@ -230,13 +246,7 @@ async def test_changing_the_ambient_identity_mid_execution_does_not_unlock_a_joi
 async def test_invoking_as_another_identity_from_inside_a_use_case_is_refused(
     executor: RuntimeExecutor,
 ) -> None:
-    registry = cast(UseCaseRegistry, None)
-    invoker = AppInvoker(cast(UseCaseFactory, _Factory()), executor, registry, identity=BOB)
-
-    async def call() -> object:
-        return await invoke_as(invoker, Child, BOB, params=None, payload=None)
-
-    refused = await executor.execute(_catching(call), identity=ANA)
+    refused = await executor.execute(_catching(_invoking_as(executor, BOB)), identity=ANA)
 
     assert isinstance(refused, NestedIdentityMismatch)
 
@@ -252,12 +262,22 @@ async def test_joining_a_hand_opened_unit_of_work_as_another_identity_is_refused
             await executor.execute(child, identity=ANA)
 
 
-async def test_a_nested_execution_opening_its_own_unit_of_work_may_use_another_identity(
-    executor: RuntimeExecutor,
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda executor: _child_call(executor, Child(_whoami), ANA),
+        lambda executor: _child_call(executor, Child(_whoami), BOB),
+        lambda executor: _invoking_as(executor, BOB),
+    ],
+    ids=["same-identity", "another-identity", "invoker"],
+)
+async def test_a_writing_execution_under_a_read_only_one_is_refused_whatever_its_identity(
+    executor: RuntimeExecutor, call: Callable[[RuntimeExecutor], Body]
 ) -> None:
-    parent = ReadParent(_child_call(executor, Child(_whoami), BOB))
+    parent = ReadParent(call(executor))
 
-    assert await executor.execute(parent, identity=ANA) == BOB
+    with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
+        await executor.execute(parent, identity=ANA)
 
 
 async def test_a_per_call_read_from_a_gather_child_may_use_another_identity(

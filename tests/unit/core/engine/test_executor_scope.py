@@ -36,6 +36,7 @@ from loom.core.uow.scope import (
     InvocationScope,
     ScopeOwnershipError,
     StoresNotCommitted,
+    UndeclaredStoreWrite,
     current_scope,
 )
 from loom.core.use_case import Joined
@@ -199,16 +200,21 @@ class TestAtomicity:
 
         assert [(scope is seen[0][0], depth) for scope, depth in seen] == [(True, 1), (True, 2)]
 
-    async def test_a_read_only_execution_opens_a_scope_that_writes_to_no_store(self) -> None:
+    async def test_a_read_only_execution_opens_a_read_only_scope_it_closes_unsettled(
+        self,
+    ) -> None:
+        """It enlists no store, so ending it settles and logs no outcome."""
         stores = _Stores(Ledger())
-        seen: list[tuple[tuple[StoreKey, ...], int]] = []
+        seen: list[tuple[InvocationScope, tuple[StoreKey, ...]]] = []
 
         async def body() -> None:
-            seen.append((_scope().frames[-1].stores, len(_scope().participants)))
+            seen.append((_scope(), _scope().frames[-1].stores))
 
         await _executor(stores).execute(Run(body), read_only=True)
 
-        assert (seen, stores.created) == ([((), 0)], [])
+        [(scope, frame)] = seen
+        assert (scope.read_only, frame, scope.participants, stores.created) == (True, (), {}, [])
+        assert (scope.closed, scope.outcome) == (True, None)
 
     async def test_a_read_only_nested_execution_pushes_a_frame_writing_to_no_store(self) -> None:
         stores = _Stores(Ledger())
@@ -225,6 +231,25 @@ class TestAtomicity:
         await executor.execute(Run(outer))
 
         assert depths == [(2, ())]
+
+    async def test_a_writer_under_a_read_only_nested_execution_is_refused(self) -> None:
+        ledger = Ledger()
+        stores = _Stores(ledger)
+        executor = _executor(stores)
+
+        async def read() -> None:
+            await executor.execute(Run(_done()))
+
+        async def outer() -> None:
+            _write(stores, "row")
+            await executor.execute(Run(read), read_only=True)
+
+        use_case = Run(outer)
+
+        with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
+            await executor.execute(use_case)
+
+        assert ledger.persisted[DEFAULT_STORE] == []
 
     async def test_an_executor_without_a_factory_opens_no_scope(self) -> None:
         seen: list[InvocationScope | None] = []
@@ -293,6 +318,23 @@ class TestOwnership:
         await executor.execute(Run(outer))
 
         assert seen == [(True, 0)]
+
+    @pytest.mark.parametrize("coordinated", [True, False], ids=["coordinator", "none"])
+    async def test_a_gather_child_of_a_read_only_execution_may_not_run_a_writer(
+        self, coordinated: bool
+    ) -> None:
+        stores = _Stores(Ledger())
+        executor = _executor(stores) if coordinated else RuntimeExecutor(UseCaseCompiler())
+
+        async def outer() -> None:
+            await asyncio.gather(executor.execute(Run(_done())))
+
+        use_case = Run(outer)
+
+        with pytest.raises(UndeclaredStoreWrite, match="the enclosing execution is read-only"):
+            await executor.execute(use_case, read_only=True)
+
+        assert stores.created == []
 
     async def test_a_read_only_execution_in_the_owner_task_still_sees_the_scope(self) -> None:
         """Its reads join the invocation's sessions and see its uncommitted writes."""

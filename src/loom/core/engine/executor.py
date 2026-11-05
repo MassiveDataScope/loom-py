@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import Awaitable, Callable
-from contextlib import nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from contextvars import Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -26,7 +26,7 @@ from loom.core.errors import NotFound, RuleViolation, RuleViolations, Unauthenti
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.tracing import get_trace_id
-from loom.core.uow.coordinator import Coordinator, InvocationOutcome
+from loom.core.uow.coordinator import Coordinator, InvocationOutcome, OrderedCommits
 from loom.core.uow.scope import (
     Frame,
     InvocationScope,
@@ -35,6 +35,7 @@ from loom.core.uow.scope import (
     current_scope,
     invocation,
     invocation_error,
+    refuse_write_under_read_only,
     unscoped,
 )
 from loom.core.use_case.errors import JoinedAutocommitStore, UseCaseErrorCode
@@ -377,13 +378,14 @@ class RuntimeExecutor:
                 ``LoadById()`` / ``Load()`` / ``Exists()`` steps.
             load_overrides: Pre-loaded entities by type, bypassing repo
                 calls. Used by test harnesses.
-            read_only: When ``True``, opens no invocation scope and joins
-                none, even if a ``uow_factory`` was provided.  Its reads
-                join the stores the enclosing invocation enlisted only in
-                the task that owns it; anywhere else (a ``gather`` child)
-                they run with a session per call.
-                Automatically set to ``True`` by the HTTP layer for GET
-                routes.  Also honoured when ``plan.read_only`` is ``True``.
+            read_only: When ``True``, the execution may write to no store
+                and enlists none.  In the task that owns the enclosing
+                invocation its reads join the stores that invocation
+                enlisted; anywhere else it opens a read-only invocation of
+                its own and its reads run with a session per call.  A use
+                case or job it runs that writes is refused.  Automatically
+                set to ``True`` by the HTTP layer for GET routes.  Also
+                honoured when ``plan.read_only`` is ``True``.
             identity: Verified caller for this execution, supplied by the
                 transport.  Required when the plan declares a ``Caller()``
                 parameter; pass
@@ -410,6 +412,8 @@ class RuntimeExecutor:
                 than the one the scope was opened with.
             loom.core.uow.scope.NestedElevation: If the execution running
                 in this context has elevated a scope.
+            loom.core.uow.scope.UndeclaredStoreWrite: If this execution
+                writes and a read-only execution encloses it.
         """
         plan = self._plan_for(type(compilable))
         inputs = _ExecutionInputs(
@@ -423,16 +427,11 @@ class RuntimeExecutor:
         token = None if identity is None else set_identity(identity)
         try:
             if read_only or plan.read_only:
-                if scope is not None and scope.owned_here():
-                    async with scope.frame(_READ_ONLY):
-                        return await self._run_lifecycle(
-                            plan, compilable, inputs, None, None, read_only=True
-                        )
-                with nullcontext() if scope is None else unscoped():
-                    return await self._run_lifecycle(
-                        plan, compilable, inputs, self._coordinator, None, read_only=True
-                    )
-            owned = self._coordinator if scope is None or _read_only(scope) else None
+                return await self._run_lifecycle(
+                    plan, compilable, inputs, None, scope, read_only=True
+                )
+            refuse_write_under_read_only(f"{plan.use_case_type.__qualname__}, which writes,")
+            owned = self._coordinator if scope is None else None
             return await self._run_lifecycle(plan, compilable, inputs, owned, scope)
         finally:
             if token is not None:
@@ -479,7 +478,7 @@ class RuntimeExecutor:
         channel = PostCommitChannel() if owned is not None or active_channel() is None else None
         channel_token = bind_channel(channel) if channel is not None else None
         try:
-            _refuse_nesting(state.use_case_name, joins=owned is None)
+            _refuse_nesting(state.use_case_name)
             # The elevation frame wraps the coordinator's flush and commit too:
             # the session-settings provider reads ``elevated_scopes()`` when a
             # transaction begins, which may be at that flush.
@@ -488,15 +487,12 @@ class RuntimeExecutor:
                 sink=self._elevation_sink,
                 read_only=read_only,
             ):
-                frame = _READ_ONLY if read_only else Frame(plan.primary, plan.joined)
                 if owned is None:
                     result = await self._run_in_frame(
-                        enclosing, state, plan, compilable, inputs, frame
+                        enclosing, state, plan, compilable, inputs, read_only=read_only
                     )
                 else:
-                    result = await self._run_in_invocation(
-                        owned, state, plan, compilable, inputs, frame
-                    )
+                    result = await self._run_in_invocation(owned, state, plan, compilable, inputs)
         except BaseException as exc:
             # ``BaseException``: a cancellation is a terminal outcome too,
             # accounted for and re-raised.  ``state.post_commit`` holds only
@@ -529,7 +525,7 @@ class RuntimeExecutor:
             # actions of a committed invocation.
             settled = state.post_commit if state.post_commit is not None else channel
             if settled is not None:
-                await settled.drain(committed=state.commit_ms is not None)
+                await settled.drain(committed=owned is not None)
         return result
 
     async def _run_in_invocation(
@@ -539,7 +535,6 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
-        frame: Frame,
     ) -> Any:
         """Open an invocation scope, run the execution in it, end it, raise what it ended with.
 
@@ -551,7 +546,7 @@ class RuntimeExecutor:
         async with invocation(coordinator) as scope:
             scope.post_commit = active_channel()
             try:
-                result = await self._run_in_frame(scope, state, plan, compilable, inputs, frame)
+                result = await self._run_in_frame(scope, state, plan, compilable, inputs)
             except BaseException as exc:  # NOSONAR S5754 - raised below, once the scope ended
                 error = exc
             try:
@@ -573,24 +568,48 @@ class RuntimeExecutor:
         plan: ExecutionPlan,
         compilable: Compilable,
         inputs: _ExecutionInputs,
-        frame: Frame,
+        *,
+        read_only: bool = False,
     ) -> Any:
-        """Push ``frame`` on ``scope``, if any, and run the pipeline under it.
+        """Push this execution's frame on ``scope``, if any, and run the pipeline under it.
 
         Raises:
             JoinedAutocommitStore: When a ``Joined`` store cannot roll back.
         """
-        async with nullcontext() if scope is None else scope.frame(frame):
-            if scope is not None:
+        frame: AbstractAsyncContextManager[None]
+        if read_only:
+            frame = self._read_only_frame(scope)
+        elif scope is None:
+            frame = nullcontext()
+        else:
+            frame = scope.frame(Frame(plan.primary, plan.joined))
+        async with frame:
+            if scope is not None and not read_only:
                 _refuse_autocommit_joined(scope, plan)
             return await self._run_pipeline(state, plan, compilable, inputs)
+
+    @asynccontextmanager
+    async def _read_only_frame(self, scope: InvocationScope | None) -> AsyncIterator[None]:
+        """Push a frame writing to no store: on ``scope`` in the task that owns it.
+
+        Anywhere else it opens a read-only invocation of its own, enlisting no
+        store, unpublished before the execution's post-commit actions run.
+        """
+        if scope is not None and scope.owned_here():
+            async with scope.frame(_READ_ONLY):
+                yield
+            return
+        coordinator = self._coordinator or OrderedCommits({})
+        with nullcontext() if scope is None else unscoped():
+            async with invocation(coordinator, read_only=True) as own, own.frame(_READ_ONLY):
+                yield
 
     @staticmethod
     async def _finish(
         scope: InvocationScope, error: BaseException | None, state: _ExecutionState
     ) -> InvocationOutcome:
-        """End every participant of ``scope``; from a store's flush on, the phase is the commit."""
-        if error is not None or not scope.participants:
+        """End every participant of ``scope``; from the flush on, the phase is the commit."""
+        if error is not None:
             return await scope.coordinator.finish(scope, error)
         state.phase = _ERROR_KIND_COMMIT
         started = time.perf_counter()
@@ -1155,7 +1174,7 @@ def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> No
     What composition refuses at startup for the components it discovers,
     for any plan, compiled then or on its first execution.
     """
-    for key in sorted(scope.frames[-1].joined):
+    for key in sorted(plan.joined):
         if not scope.participants[key].transactional:
             issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                 component=plan.use_case_type, store=key
@@ -1163,12 +1182,7 @@ def _refuse_autocommit_joined(scope: InvocationScope, plan: ExecutionPlan) -> No
             raise JoinedAutocommitStore(issue)
 
 
-def _read_only(scope: InvocationScope) -> bool:
-    """Whether ``scope`` was opened by a read-only execution, which no writer joins."""
-    return bool(scope.frames) and not scope.frames[0].stores
-
-
-def _refuse_nesting(use_case: str, *, joins: bool) -> None:
+def _refuse_nesting(use_case: str) -> None:
     """Refuse ``use_case`` inside an elevated execution, or joining this task's scope as another.
 
     Its identity is compared with the scope's identity, never the ambient one a parent set.
@@ -1177,5 +1191,5 @@ def _refuse_nesting(use_case: str, *, joins: bool) -> None:
     if scopes:
         raise NestedElevation.opening(use_case, scopes)
     scope = current_scope()
-    if joins and scope is not None and scope.owned_here() and current_identity() != scope.identity:
+    if scope is not None and scope.owned_here() and current_identity() != scope.identity:
         raise NestedIdentityMismatch.joining(use_case)
