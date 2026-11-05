@@ -1,5 +1,11 @@
 # Security
 
+## Reporting a vulnerability
+
+Report it privately through
+[GitHub's private vulnerability reporting](https://github.com/MassiveDataScope/loom-py/security/advisories/new),
+not in a public issue or pull request. Fixes ship in the latest `10.x` release.
+
 ## Dependency audit
 
 Every pull request runs `pip-audit` over the locked runtime closure: the core
