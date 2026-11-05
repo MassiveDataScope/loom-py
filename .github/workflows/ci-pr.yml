@@ -181,8 +181,8 @@ jobs:
   # The gate: cheap checks plus the merged results, so a failure in either lane
   # still blocks here.
   validate:
-    needs: [tests-fast, tests-spark, integration]
-    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) }}
+    needs: [tests-fast, tests-spark, integration, dependency-audit]
+    if: ${{ !cancelled() && needs.tests-fast.result == 'success' && needs.tests-spark.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.integration.result) && contains(fromJSON('["success", "skipped"]'), needs.dependency-audit.result) }}
     runs-on: ubuntu-latest
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -676,6 +676,8 @@ jobs:
   dependency-audit:
     if: ${{ !startsWith(github.head_ref, 'docs/release-') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
@@ -683,9 +685,13 @@ jobs:
         with:
           python-version: ${{ env.PRIMARY_PYTHON }}
 
-      - name: Install uv and pip-audit
+      - name: Install uv
         run: |
-          pip install --only-binary :all: "uv==0.10.2" "pip-audit==2.10.1"
+          pip install --only-binary :all: "uv==0.10.2"
+
+      - name: Install pip-audit
+        run: |
+          pip install --only-binary :all: --require-hashes -r .github/requirements/pip-audit.txt
 
       - name: Audit the locked runtime dependencies
         shell: bash
