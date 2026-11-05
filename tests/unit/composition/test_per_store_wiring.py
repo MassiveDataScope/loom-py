@@ -320,6 +320,7 @@ def test_autocrud_routes_of_a_model_in_a_store_without_repositories_are_refused(
 ) -> None:
     stores = {"default": _SQLITE_LEDGER, "ledger": {"backend": "none"}}
     source = _rest_source(stores, monkeypatch)
+    adapter = FastAPIAdapter()
 
     with pytest.raises(RuntimeError, match=r"stores\.ledger\.backend 'none' serves no"):
-        compose_application(source, FastAPIAdapter())
+        compose_application(source, adapter)
