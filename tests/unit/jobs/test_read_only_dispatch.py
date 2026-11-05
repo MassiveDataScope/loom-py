@@ -84,8 +84,9 @@ async def test_a_dispatch_from_a_read_only_execution_is_refused_and_never_sent(
         jobs.dispatch(EmailJob, payload={"to": "a@b.c"})
 
     async with _READ_ONLY[read_only]():
+        attempt = asyncio.gather(dispatch()) if gathered else dispatch()
         with pytest.raises(UndeclaredStoreWrite, match="a job dispatch is refused"):
-            await (asyncio.gather(dispatch()) if gathered else dispatch())
+            await attempt
 
     await flush_pending_dispatches()
     assert sent() == 0
