@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 from http import HTTPStatus
 from typing import Any, ClassVar
@@ -24,6 +25,10 @@ from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
 _DESCRIPTION_MAX_LENGTH = 256
+INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
+_UNAVAILABLE_MESSAGE = "The service is temporarily unavailable"
+
+_logger = logging.getLogger(__name__)
 
 
 class ErrorField(StrEnum):
@@ -60,8 +65,10 @@ class HttpErrorMapper:
 
     Uses the ``code`` discriminator on each ``LoomError`` to select the
     appropriate HTTP status code.  The response body always includes
-    ``code``, ``message``, and ``trace_id``.  Additional fields are added
-    per error type:
+    ``code``, ``message``, and ``trace_id``.  A ``5xx`` body carries a fixed
+    message instead of the error's, which may name hosts, databases or
+    stores; the error's message is logged under the same ``trace_id``.
+    Additional fields are added per error type:
 
     - :class:`~loom.core.errors.NotFound` → ``entity``, ``id``
     - :class:`~loom.core.errors.Forbidden` → ``reason`` and ``missing``, each only
@@ -134,7 +141,7 @@ class HttpErrorMapper:
         status = self._STATUS.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
         detail: dict[str, Any] = {
             ErrorField.CODE: error.code,
-            ErrorField.MESSAGE: error.message,
+            ErrorField.MESSAGE: _public_message(error, status),
             ErrorField.TRACE_ID: get_trace_id(),
         }
 
@@ -166,6 +173,23 @@ class HttpErrorMapper:
             detail[ErrorField.COMMITTED] = error.committed
 
         return HTTPException(status_code=status, detail=detail, headers=_headers(error, status))
+
+
+def _public_message(error: LoomError, status: HTTPStatus) -> str:
+    """Return the message the caller sees; log the one a ``5xx`` hides."""
+    if status < HTTPStatus.INTERNAL_SERVER_ERROR:
+        return error.message
+    _logger.error(
+        "%s answered %d (code=%s trace_id=%s): %s",
+        type(error).__name__,
+        status,
+        error.code,
+        get_trace_id(),
+        error.message,
+    )
+    if status is HTTPStatus.SERVICE_UNAVAILABLE:
+        return _UNAVAILABLE_MESSAGE
+    return INTERNAL_ERROR_MESSAGE
 
 
 def _headers(error: LoomError, status: HTTPStatus) -> dict[str, str] | None:

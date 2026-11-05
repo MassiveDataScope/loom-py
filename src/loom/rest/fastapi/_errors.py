@@ -33,12 +33,11 @@ from loom.core.errors import BODY_FIELD
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest._body import malformed_body_detail
-from loom.rest.errors import ErrorField
+from loom.rest.errors import INTERNAL_ERROR_MESSAGE, ErrorField
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
 _VALIDATION_MESSAGE = "Request validation failed"
 _INTERNAL_ERROR_CODE = "internal_error"
-_INTERNAL_ERROR_MESSAGE = "An unexpected error occurred"
 _FALLBACK_CODE = "http_error"
 _BODY_LOCATION = "body"
 
@@ -52,7 +51,7 @@ def internal_error_response() -> MsgspecJSONResponse:
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         content={
             ErrorField.CODE: _INTERNAL_ERROR_CODE,
-            ErrorField.MESSAGE: _INTERNAL_ERROR_MESSAGE,
+            ErrorField.MESSAGE: INTERNAL_ERROR_MESSAGE,
             ErrorField.TRACE_ID: get_trace_id() or "",
         },
     )

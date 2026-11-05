@@ -279,8 +279,8 @@ without `custom: true`, `custom: true` without an `authenticator`, and
   `WWW-Authenticate` challenge, so clients keep credentials that are still valid. The
   exception's message and its chained cause go to the server log at `WARNING`, never
   to the caller. Raised outside an authenticator — from a use case, for instance —
-  {class}`~loom.rest.errors.HttpErrorMapper` answers `503` with the exception's own
-  message, like any `LoomError`. Any other exception from an authenticator keeps
+  {class}`~loom.rest.errors.HttpErrorMapper` answers `503` with a fixed message and
+  logs the exception's, like any `5xx` `LoomError`. Any other exception from an authenticator keeps
   answering `500`.
 
   ```python

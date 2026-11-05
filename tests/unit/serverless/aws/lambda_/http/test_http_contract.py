@@ -248,6 +248,24 @@ def test_an_unexpected_failure_answers_500_without_its_details(
     )
 
 
+def test_a_5xx_loom_error_answers_its_code_without_its_message(
+    served: Client, alice: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    reply = served("GET", "/ops/leak", headers=alice)
+
+    assert (reply.status, reply.json()) == (
+        500,
+        {
+            "detail": {
+                "trace_id": TRACE_ID,
+                "code": "foreign_session",
+                "message": "An unexpected error occurred",
+            }
+        },
+    )
+    assert "db.internal" in caplog.text
+
+
 def test_a_cors_preflight_is_answered_without_a_token(served: Client) -> None:
     preflight = {"origin": ORIGIN, "access-control-request-method": "POST"}
 
@@ -309,6 +327,7 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
         ("POST", "/items/", _AS_ALICE, b"[1]"),
         ("POST", "/items/", {}, b"x" * (MAX_BODY_BYTES + 1)),
         ("GET", "/ops/explode", _AS_ALICE, b""),
+        ("GET", "/ops/leak", _AS_ALICE, b""),
         ("GET", "/ops/admin", _AS_ALICE, b""),
         ("OPTIONS", "/items/7", {"origin": ORIGIN, "access-control-request-method": "GET"}, b""),
     ],
@@ -323,6 +342,7 @@ def test_an_unsafe_trace_id_is_replaced_by_one_the_body_shares(served: Client) -
         "422-not-an-object",
         "413",
         "500",
+        "500-loom",
         "403",
         "preflight",
     ],

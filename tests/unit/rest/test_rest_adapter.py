@@ -22,6 +22,7 @@ from loom.core.errors import (
     RateLimited,
     RuleViolation,
     RuleViolations,
+    SystemError,
     Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
@@ -31,8 +32,8 @@ from loom.core.repository.abc.query import CursorResult, PageResult
 from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
+from loom.core.uow import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 from loom.core.uow.coordinator import Committed, InvocationOutcome
-from loom.core.uow.scope import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 from loom.core.use_case import Created
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
@@ -115,6 +116,10 @@ class TestLoomAdapterProtocol:
 # ---------------------------------------------------------------------------
 # HttpErrorMapper
 # ---------------------------------------------------------------------------
+
+
+_LEAKY = "store 'orders' (postgresql://db.internal:5432/orders)"
+_SERVER_CODES = [code for code, status in HttpErrorMapper._STATUS.items() if status >= 500]
 
 
 def _detail(exc: HTTPException) -> dict[str, Any]:
@@ -341,6 +346,25 @@ class TestHttpErrorMapper:
             "query_validation",
             [{"field": "limit", "message": "Expected `int` <= 200"}],
         )
+
+    @pytest.mark.parametrize("code", [*_SERVER_CODES, "unknown_custom"])
+    def test_a_5xx_body_hides_the_message_and_logs_it(
+        self, code: ErrorCode, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        error = SystemError(_LEAKY, code=code)
+
+        detail = _detail(self._mapper().to_http(error))
+
+        unavailable = code == ErrorCode.SERVICE_UNAVAILABLE
+        assert detail == {
+            ErrorField.CODE: code,
+            ErrorField.MESSAGE: "The service is temporarily unavailable"
+            if unavailable
+            else "An unexpected error occurred",
+            ErrorField.TRACE_ID: get_trace_id(),
+        }
+        assert "db.internal" not in str(detail)
+        assert _LEAKY in caplog.text
 
     def test_unknown_code_defaults_to_500(self) -> None:
         class _CustomError(LoomError):

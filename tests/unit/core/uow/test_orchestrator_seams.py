@@ -129,7 +129,8 @@ def test_each_store_ends_in_one_of_four_typed_outcomes() -> None:
     assert non_transactional.wrote
 
 
-def test_the_unit_of_work_package_does_not_export_the_coordinator_or_the_scope() -> None:
-    exported = {getattr(loom.core.uow, name).__module__ for name in loom.core.uow.__all__}
+def test_the_unit_of_work_package_exports_only_the_errors_of_the_coordinator_or_the_scope() -> None:
+    symbols = [getattr(loom.core.uow, name) for name in loom.core.uow.__all__]
+    exported = {s.__module__ for s in symbols if not issubclass(s, BaseException)}
 
     assert exported.isdisjoint({"loom.core.uow.coordinator", "loom.core.uow.scope"})
