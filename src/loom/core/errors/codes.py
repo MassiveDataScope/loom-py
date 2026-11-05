@@ -54,6 +54,7 @@ class ErrorCode(StrEnum):
     STORES_NOT_COMMITTED = "stores_not_committed"
     UOW_INSIDE_SCOPE = "uow_inside_scope"
     UNDECLARED_STORE_WRITE = "undeclared_store_write"
+    UNCOMPOSED_STORE = "uncomposed_store"
     NESTED_IDENTITY_MISMATCH = "nested_identity_mismatch"
     NESTED_ELEVATION = "nested_elevation"
     MALFORMED_JOB_MESSAGE = "malformed_job_message"

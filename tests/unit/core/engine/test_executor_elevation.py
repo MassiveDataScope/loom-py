@@ -7,6 +7,7 @@ from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case import UseCase
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -28,7 +29,11 @@ def _executor(sink: FakeSink, *types: type) -> RuntimeExecutor:
     compiler = UseCaseCompiler()
     for use_case in types:
         compiler.compile(use_case)
-    return RuntimeExecutor(compiler, uow_factory=StubUnitOfWorkFactory(Log()), elevation_sink=sink)
+    return RuntimeExecutor(
+        compiler,
+        coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())}),
+        elevation_sink=sink,
+    )
 
 
 async def test_an_execution_runs_inside_a_frame_that_closes_with_it() -> None:
@@ -77,7 +82,9 @@ async def _elevate_then_finish() -> _SeesElevation:
     store = _SeesElevation()
     compiler = UseCaseCompiler()
     compiler.compile(Elevating)
-    executor = RuntimeExecutor(compiler, uow_factory=Factory(store))
+    executor = RuntimeExecutor(
+        compiler, coordinator=OrderedCommits({DEFAULT_STORE: Factory(store)})
+    )
 
     await executor.execute(Elevating(), params={"value": "x"})  # type: ignore[arg-type]
 

@@ -128,7 +128,7 @@ A `Recipe` is a frozen dataclass:
 |---|---|
 | `profile` | Pool defaults of the entry point: `SERVER_PROFILE`, `WORKER_PROFILE`, `STREAMING_PROFILE` or your own `RuntimeProfile`. A key in `stores.default.pool` still wins. |
 | `discovered` | The `DiscoveryResult` to compile: models, use cases, interfaces, agent specs, after whatever the adapter added or pruned. |
-| `backend` | The `PersistenceBackend` serving the models. |
+| `default_backend` | Backend of the default store when `stores.default` is not declared. Default `none`. |
 | `skip_checks` | Deploy-check areas the entry point does not serve, such as `REST_CHECKS` for a worker. |
 | `agents` | Whether the entry point hosts the agent runtime; without it an `ai` section is ignored. Default `False`. |
 | `metrics` | Use-case metrics, or `None`. |
@@ -150,7 +150,7 @@ class ScriptAdapter:
         return Recipe(
             profile=WORKER_PROFILE,
             discovered=source.discover(),               # app.discovery
-            backend=source.backend(default="sqlalchemy"),  # stores.default.backend
+            default_backend="sqlalchemy",               # without stores.default
             skip_checks=frozenset({REST_CHECKS}),
         )
 
@@ -167,8 +167,7 @@ async def main(operator: Identity) -> None:   # Product: a model of your app
 
 `application.kernel` carries the container, the use-case factory, the
 executor and the invoker; `application.config`, `environment`,
-`observability`, `sql`, `ai` and `persistence` expose the rest of what was
-composed.
+`observability`, `sql` and `ai` expose the rest of what was composed.
 
 ## Lifecycle
 
@@ -274,6 +273,11 @@ request or task:
   elevable, or named in `AuthzProduct.elevations`, is declared by two or more
   stores, so an elevation could not reach exactly one of them. It is a
   `ConfigError` and carries a `CompileIssue` naming the scope.
+- `UncomposedWriteStore` (`loom.core.use_case.errors`, code
+  `UseCaseErrorCode.UNCOMPOSED_WRITE_STORE`): a use case or job writes, as
+  its primary or a `Joined` store, to a store with no unit of work, because
+  no discovered model belongs to it. It is a `ConfigError` and carries a
+  `CompileIssue` naming the component and the store.
 - `DeployCheckError` — a deploy check of level error in production or
   staging.
 
@@ -285,9 +289,9 @@ key you bind depends on who owns it:
 | Key | A binding in your `modules` |
 |---|---|
 | `JobService` | kept: the framework's default (Celery or inline) is built and registered only when nothing is bound |
-| A repository, or a capability key such as `Listable[Order]` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` |
+| A repository, or a capability key such as `Listable[Order]` | kept; the usual way to replace one is `repository_for` or a custom `DefaultRepositoryBuilder` (keyed `(DefaultRepositoryBuilder, store)` for a store other than `default`) |
 | `CachedCalls`, `RepositoryDecorator` | kept |
-| `SessionManager`, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
+| `SessionManager` and `MongoSessions`, also keyed `(…, store)` for any declared store, `SqlQueryService`, `CallerBoundSql`, `ObservabilityRuntime`, `ElevationSink`, `RuntimeExecutor`, `UseCaseRegistry`, `ApplicationInvoker` | reserved: startup fails with a typed reserved-binding error naming the key |
 
 The reserved keys are the framework's own: `ElevationSink` sets and clears the
 row-level-security elevation inside the transaction, and the SQL and

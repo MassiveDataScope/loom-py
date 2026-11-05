@@ -15,6 +15,10 @@
 ``JoinedAutocommitStore``
     A use case declares ``Joined[...]`` on a store that cannot roll back.
     Composition raises it at startup.
+
+``UncomposedWriteStore``
+    A use case or job writes to a store with no unit of work. Composition
+    raises it at startup.
 """
 
 from __future__ import annotations
@@ -38,6 +42,15 @@ class UseCaseErrorCode(IssueCode):
             "store it is, or after the commit, through the post-commit channel.",
             field="{store}",
             component="{component}",
+        ),
+    )
+
+    UNCOMPOSED_WRITE_STORE = (
+        "UNCOMPOSED_WRITE_STORE",
+        Template(
+            "{component} writes to store {store}, which has no unit of work: no "
+            "discovered model belongs to it, or its backend persists nothing.",
+            field="{store}",
         ),
     )
 
@@ -97,4 +110,21 @@ class JoinedAutocommitStore(ConfigError):
         self.issue = issue
 
 
-__all__ = ["JoinedAutocommitStore", "UnservedModelError", "UseCaseErrorCode"]
+class UncomposedWriteStore(ConfigError):
+    """Raised at startup when a use case or job writes to a store with no unit of work.
+
+    Attributes:
+        issue: The typed issue: code, component, field (the store) and message.
+    """
+
+    def __init__(self, issue: CompileIssue[UseCaseErrorCode]) -> None:
+        super().__init__(issue.message)
+        self.issue = issue
+
+
+__all__ = [
+    "JoinedAutocommitStore",
+    "UncomposedWriteStore",
+    "UnservedModelError",
+    "UseCaseErrorCode",
+]

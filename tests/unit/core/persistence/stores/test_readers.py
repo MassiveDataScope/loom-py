@@ -35,15 +35,18 @@ def test_the_composition_refuses_a_retired_section_in_memory_too() -> None:
     )
 
     with pytest.raises(ConfigError, match="stores.default"):
-        source.backend(default="none")
+        source.backend(DEFAULT_STORE, default="none")
 
 
-def test_the_default_store_names_the_composed_backend() -> None:
-    source = composition_source(
-        ConfigContext.from_dict({"app": {"name": "x"}, "stores": {"default": {"backend": "none"}}})
-    )
+def test_each_store_names_the_backend_composed_for_it() -> None:
+    stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
+    source = composition_source(ConfigContext.from_dict({"app": {"name": "x"}, "stores": stores}))
 
-    assert source.backend(default="sqlalchemy").name == "none"
+    keys = (DEFAULT_STORE, StoreKey("audit"))
+
+    backends = [source.backend(key, default="mongo").name for key in keys]
+
+    assert backends == ["none", "sqlalchemy"]
 
 
 def test_a_store_section_resolves_against_the_whole_configuration_without_its_backend() -> None:
@@ -115,4 +118,4 @@ def test_a_clickhouse_default_store_is_not_composed_as_a_backend() -> None:
     )
 
     with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-        source.backend(default="none")
+        source.backend(DEFAULT_STORE, default="none")

@@ -22,7 +22,6 @@ from loom.core.job.service import InlineJobService, JobService
 from loom.core.logger import get_logger
 from loom.core.observability.event import Scope
 from loom.core.persistence import LAMBDA_PROFILE
-from loom.core.persistence.stores import NONE_BACKEND
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.serverless.aws.lambda_._refusals import refuse_manifest_agents, refuse_unserved_config
 from loom.serverless.aws.lambda_.functions import reports_batch_item_failures
@@ -127,7 +126,6 @@ class LambdaSQSAdapter:
                 interfaces=(),
                 jobs=resolved.jobs,
             ),
-            backend=source.backend(default=NONE_BACKEND),
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,

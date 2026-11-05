@@ -25,6 +25,8 @@ from typing import Any
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
 from loom.core.job.context import add_pending_dispatch
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -57,7 +59,9 @@ async def test_read_only_declared_on_the_class_skips_the_unit_of_work() -> None:
 
     log = Log()
     factory = StubUnitOfWorkFactory(log)
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=factory)
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
 
     assert await executor.execute(_ReadOnlyUseCase()) == "read"
     assert factory.created == []

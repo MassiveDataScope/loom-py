@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.di.container import LoomContainer
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import DefaultRepositoryBuilder
 from loom.core.repository.abc import Creatable, Readable
 from loom.core.repository.dynamodb.registry import (
@@ -16,7 +17,9 @@ from .conftest import FakeClient, Product, ProductCreate
 
 def _container(fake_client: FakeClient) -> LoomContainer:
     container = LoomContainer()
-    module = build_dynamodb_repository_registration_module(fake_client, "products", (Product,))
+    module = build_dynamodb_repository_registration_module(
+        fake_client, "products", (Product,), store=DEFAULT_STORE
+    )
     module(container)
     return container
 

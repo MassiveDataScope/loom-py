@@ -21,6 +21,7 @@ from sqlalchemy.pool import NullPool
 from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.persistence.database import DatabaseConfig, PoolConfig
 from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager, build_session_manager
 
 _CALLERS = 12
@@ -63,7 +64,7 @@ async def test_the_pool_never_opens_more_than_size_plus_overflow(pg_admin_uri: s
         pool=PoolConfig(size=2, max_overflow=1, timeout=_TIMEOUT_SECONDS),
         connect_args=RedactedMap({"server_settings": {"application_name": application}}),
     )
-    manager = build_session_manager(config, SERVER_PROFILE)
+    manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
     outcomes: list[str] = []
     durations: list[float] = []
     stop = asyncio.Event()

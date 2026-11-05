@@ -113,6 +113,7 @@ async def manager() -> AsyncIterator[SessionManager]:
         max_overflow=None,
         pool_timeout=None,
         pool_recycle=None,
+        store=DEFAULT_STORE,
     )
     try:
         yield built

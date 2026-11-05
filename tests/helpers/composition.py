@@ -17,6 +17,8 @@ from loom.core.config import ConfigContext, ConfigKey
 from loom.core.environment import Environment
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.uow.abc import UnitOfWorkFactory
 from tests.unit.rest._fixture_app import write_project
 
 ProjectFactory = Callable[..., str]
@@ -47,6 +49,14 @@ def composition_source(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         ),
     )
+
+
+def uow_factory(
+    application: Application, key: StoreKey = DEFAULT_STORE
+) -> UnitOfWorkFactory | None:
+    """The unit-of-work factory *application* runs store *key*'s executions with, if any."""
+    coordinator: Any = application.kernel.executor._coordinator  # noqa: SLF001
+    return None if coordinator is None else coordinator._factories.get(key)  # noqa: SLF001
 
 
 @pytest.fixture
@@ -95,7 +105,6 @@ def application_of(*resources: Resource) -> Application:
         observability=unused,
         sql=unused,
         ai=unused,
-        persistence=unused,
         resources=resources,
     )
 

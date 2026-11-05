@@ -79,7 +79,6 @@ from loom.core.discovery.worker import (
 )
 from loom.core.engine.compilable import Compilable
 from loom.core.persistence import WORKER_PROFILE
-from loom.core.persistence.stores import NONE_BACKEND
 from loom.core.runner import shutdown_runner
 
 if TYPE_CHECKING:
@@ -378,9 +377,6 @@ class CeleryAdapter:
             callbacks=merge_unique(resolved.callbacks, self._callbacks),
         )
         _emit_worker_init_graph(resolved)
-        # Without a default store the worker pays for no persistence at all: it
-        # runs only pure jobs, or its stores serve streaming sinks only.
-        backend = source.backend(default=NONE_BACKEND)
 
         self._declared = _Declared(
             celery=celery_cfg, jobs=resolved.jobs, callbacks=resolved.callbacks
@@ -394,7 +390,6 @@ class CeleryAdapter:
                 interfaces=(),
                 jobs=resolved.jobs,
             ),
-            backend=backend,
             skip_checks=frozenset({REST_CHECKS}),
             agents=False,
             metrics=self._metrics,

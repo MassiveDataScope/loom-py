@@ -32,7 +32,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.errors import PyMongoError
 
 from loom.core.logger import get_logger
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import StoreKey
 from loom.core.transaction import close_atomic_transaction, open_atomic_transaction
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import CommitUncertain, PhysicalStore
@@ -53,9 +53,9 @@ class MongoSessions:
         store: Key of the store.
     """
 
-    def __init__(self, client: AsyncMongoClient[Any], store: StoreKey = DEFAULT_STORE) -> None:
+    def __init__(self, client: AsyncMongoClient[Any], store: StoreKey) -> None:
         self._client = client
-        self._store = store
+        self.store = store
 
     @property
     def active_session(self) -> AsyncClientSession | None:
@@ -86,7 +86,7 @@ class MongoSessions:
                 execution did not declare.
         """
         return cast(
-            "AsyncClientSession | None", current_handle(self._store, self._client, write=write)
+            "AsyncClientSession | None", current_handle(self.store, self._client, write=write)
         )
 
 
@@ -132,7 +132,7 @@ class MongoUnitOfWork(EntersAlone):
 
     Example::
 
-        async with MongoUnitOfWork(client):
+        async with MongoUnitOfWork(client, store=DEFAULT_STORE):
             await repo.create(entity)
         # committed
     """
@@ -140,7 +140,7 @@ class MongoUnitOfWork(EntersAlone):
     transactional: ClassVar[bool] = True
     phased: ClassVar[bool] = True
 
-    def __init__(self, client: AsyncMongoClient[Any], store: StoreKey = DEFAULT_STORE) -> None:
+    def __init__(self, client: AsyncMongoClient[Any], store: StoreKey) -> None:
         self._client = client
         self._store = store
         self._session: AsyncClientSession | None = None
@@ -292,7 +292,7 @@ class MongoUnitOfWorkFactory:
 
     @classmethod
     def transactional(
-        cls, client: AsyncMongoClient[Any], store: StoreKey = DEFAULT_STORE
+        cls, client: AsyncMongoClient[Any], store: StoreKey
     ) -> MongoUnitOfWorkFactory:
         """Return a factory whose units of work run one transaction on ``client``.
 

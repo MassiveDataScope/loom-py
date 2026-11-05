@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from loom.core.model.redaction import Dsn
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import (
     SessionManager,
     build_session_manager,
@@ -73,7 +74,9 @@ def test_a_non_str_value_raises_type_error(value: object) -> None:
 def test_session_settings_on_a_non_postgres_url_is_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="postgresql"):
         SessionManager(
-            "sqlite+aiosqlite:///:memory:", session_settings=lambda: {"app.tenant_id": "acme"}
+            "sqlite+aiosqlite:///:memory:",
+            session_settings=lambda: {"app.tenant_id": "acme"},
+            store=DEFAULT_STORE,
         )
 
 
@@ -83,6 +86,7 @@ def test_the_configured_constructor_rejects_session_settings_on_a_non_postgres_u
             DatabaseConfig(url=Dsn("sqlite+aiosqlite:///:memory:")),
             SERVER_PROFILE,
             session_settings=lambda: None,
+            database=DEFAULT_STORE,
         )
 
 
@@ -101,6 +105,7 @@ def test_session_settings_with_autocommit_is_rejected_at_construction(
         SessionManager(
             "postgresql+asyncpg://user:secret@localhost/db",
             session_settings=lambda: None,
+            store=DEFAULT_STORE,
             **engine_kwargs,
         )
 
@@ -112,6 +117,7 @@ async def test_without_session_settings_sessions_use_the_plain_sqlalchemy_sessio
         max_overflow=None,
         pool_timeout=None,
         pool_recycle=None,
+        store=DEFAULT_STORE,
     )
     try:
         async with manager.session() as session:
@@ -175,7 +181,9 @@ def test_a_failing_settings_statement_invalidates_the_connection() -> None:
 
 async def test_a_provider_on_a_postgres_url_installs_a_dedicated_session_class() -> None:
     manager = SessionManager(
-        "postgresql+asyncpg://user:secret@localhost/db", session_settings=lambda: None
+        "postgresql+asyncpg://user:secret@localhost/db",
+        session_settings=lambda: None,
+        store=DEFAULT_STORE,
     )
     try:
         assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"
@@ -188,6 +196,7 @@ async def test_the_configured_constructor_installs_the_provider_on_a_postgres_ur
         DatabaseConfig(url=Dsn("postgresql+asyncpg://user:secret@localhost/db")),
         SERVER_PROFILE,
         session_settings=lambda: None,
+        database=DEFAULT_STORE,
     )
     try:
         assert manager.session_factory.kw["sync_session_class"].__name__ == "SettingsSession"

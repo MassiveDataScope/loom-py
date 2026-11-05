@@ -11,7 +11,6 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.job.job import Job
 from loom.core.persistence.profile import WORKER_PROFILE
-from loom.core.persistence.stores import NONE_BACKEND
 from loom.jobs.aws.sqs import SQSConfig, SQSJobService
 from tests.helpers.composition import composition_source
 
@@ -39,7 +38,6 @@ class JobsAdapter:
             discovered=DiscoveryResult(
                 models=(), use_cases=cast(Any, self._jobs), interfaces=(), jobs=self._jobs
             ),
-            backend=source.backend(default=NONE_BACKEND),
             connection_only=True,
         )
 

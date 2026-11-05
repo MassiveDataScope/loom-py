@@ -10,6 +10,7 @@ import msgspec
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import (
     BulkCreatable,
     Countable,
@@ -63,6 +64,8 @@ def _container(default_repository_type: type | None) -> LoomContainer:
         models=(Widget,),
         build_registered_repository=_unused_builder,
         default_repository_type=default_repository_type,
+        default_builder=_default_builder,
+        store=DEFAULT_STORE,
     )(container)
     return container
 

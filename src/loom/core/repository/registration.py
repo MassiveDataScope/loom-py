@@ -7,6 +7,7 @@ from typing import Any, Protocol, cast, get_origin
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, LoomStruct
+from loom.core.persistence.stores import StoreKey, store_binding
 from loom.core.repository.abc.repo_for import (
     BulkCreatable,
     Countable,
@@ -203,6 +204,7 @@ def _build_repository_provider(
     model: type[LoomStruct],
     registration: RepositoryRegistration | None,
     build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
+    builder_key: object,
 ) -> Callable[[], Any]:
     """Return the provider shared by every DI key of *model* this module registers.
 
@@ -223,8 +225,7 @@ def _build_repository_provider(
             raise RuntimeError(
                 f"No default repository can be built for non-persistible type {model.__qualname__}"
             )
-        default_builder = container.resolve(DefaultRepositoryBuilder)
-        return default_builder(context)
+        return container.resolve(builder_key)(context)
 
     def _decorate(repository: Any) -> Any:
         if not container.is_registered(RepositoryDecorator):
@@ -261,6 +262,8 @@ def build_repository_registration_module(
     explicit_models: Sequence[type[LoomStruct]] = (),
     build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
     default_repository_type: type | None = None,
+    default_builder: DefaultRepositoryBuilder,
+    store: StoreKey,
 ) -> Callable[[LoomContainer], None]:
     """Build a container module that registers main repositories.
 
@@ -273,6 +276,10 @@ def build_repository_registration_module(
     use cases can declare fine-grained capability dependencies without casts.
     Default-built repositories bind the capabilities of
     ``default_repository_type``; ``None`` binds none.
+
+    *default_builder* builds them, registered under
+    ``store_binding(DefaultRepositoryBuilder, store)`` unless a caller
+    registered that key first, which then builds them instead.
     """
     repository_specs = _build_repository_specs(
         models=models,
@@ -281,12 +288,16 @@ def build_repository_registration_module(
     )
 
     def register(container: LoomContainer) -> None:
+        builder = store_binding(DefaultRepositoryBuilder, store)
+        if not container.is_registered(builder):
+            container.register_instance(builder, default_builder)
         for model, spec in repository_specs.items():
             provider = _build_repository_provider(
                 container=container,
                 model=model,
                 registration=spec.registration,
                 build_registered_repository=build_registered_repository,
+                builder_key=builder,
             )
             _register_repository_binding(
                 container=container,

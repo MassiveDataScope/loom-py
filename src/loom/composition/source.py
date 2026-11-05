@@ -13,7 +13,7 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.config import DiscoveryConfig, discover
 from loom.core.locator import DEFAULT_CODE_PATH
 from loom.core.persistence import resolve_backend
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, load_catalog
+from loom.core.persistence.stores import StoreCatalog, StoreKey, load_catalog
 
 if TYPE_CHECKING:
     from loom.core.discovery.base import DiscoveryResult
@@ -71,12 +71,12 @@ class CompositionSource:
         """
         return load_catalog(self.config)
 
-    def backend(self, default: str) -> PersistenceBackend:
-        """Build the backend ``stores.default.backend`` names; *default* without that store.
+    def backend(self, key: StoreKey, *, default: str) -> PersistenceBackend:
+        """Build the backend ``stores.<key>.backend`` names; *default* without that store.
 
         Raises:
             ConfigError: As :attr:`catalog`, or when no backend is
                 registered under that name.
         """
-        spec = self.catalog.specs.get(DEFAULT_STORE)
+        spec = self.catalog.specs.get(key)
         return resolve_backend(default if spec is None else spec.backend)

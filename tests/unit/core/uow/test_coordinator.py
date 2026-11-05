@@ -16,7 +16,8 @@ import anyio
 import pytest
 from sqlalchemy.engine import make_url
 
-from loom.core.persistence.stores import StoreKey
+from loom.core.errors.codes import ErrorCode
+from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from loom.core.transaction import in_atomic_transaction
@@ -34,6 +35,7 @@ from loom.core.uow.coordinator import (
     RolledBack,
     StoreOutcome,
     Uncertain,
+    UncomposedStore,
 )
 
 from ._coordinator_fakes import (
@@ -148,11 +150,16 @@ class TestEnlist:
         assert "UoWCloseFailed" in caplog.text
         assert "'store': 's0'" in caplog.text
 
-    async def test_a_store_without_a_factory_is_a_key_error(self) -> None:
-        coordinator, scope = OrderedCommits({}), Scope()
+    async def test_a_store_without_a_factory_is_refused_naming_it_and_the_composed_ones(
+        self,
+    ) -> None:
+        coordinator = OrderedCommits({S1: Factory(PhasedStore(S1, Ledger()))})
+        scope = Scope()
 
-        with pytest.raises(KeyError):
+        with pytest.raises(UncomposedStore, match=r"store 's0' .* are \['s1'\]") as caught:
             await coordinator.enlist(scope, S0)
+
+        assert (caught.value.code, caught.value.retryable) == (ErrorCode.UNCOMPOSED_STORE, False)
 
     @pytest.mark.parametrize("store_type", [_FlushOnly, _CloseOnly], ids=["flush", "close"])
     async def test_a_unit_of_work_without_the_phased_marker_runs_in_a_single_phase(
@@ -226,7 +233,7 @@ def _session_manager() -> MagicMock:
 
 @pytest.mark.parametrize(
     "uow",
-    [SQLAlchemyUnitOfWork(_session_manager()), MongoUnitOfWork(MagicMock())],
+    [SQLAlchemyUnitOfWork(_session_manager()), MongoUnitOfWork(MagicMock(), store=DEFAULT_STORE)],
     ids=["sqlalchemy", "mongo"],
 )
 def test_loom_transactional_units_of_work_are_phased(uow: UnitOfWork) -> None:

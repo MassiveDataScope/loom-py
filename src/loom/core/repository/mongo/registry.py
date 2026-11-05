@@ -16,8 +16,8 @@ from typing import Any, Protocol
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_table_name
+from loom.core.persistence.stores import StoreKey
 from loom.core.repository import (
-    DefaultRepositoryBuilder,
     RepositoryBuildContext,
 )
 from loom.core.repository import (
@@ -105,13 +105,14 @@ def build_mongo_repository_registration_module(
     id_policy: IdPolicy,
     session_provider: SessionProvider,
     cursor_codec: CursorCodec,
+    store: StoreKey,
     logical_models: Sequence[type[Any]] = (),
 ) -> Callable[[LoomContainer], None]:
     """Build a DI module that registers Mongo repositories and capability bindings.
 
     The module registers a ``DefaultRepositoryBuilder`` bound to the shared
-    database unless one is already registered, so a deployment may swap the
-    builder by registering its own before loading the module. It registers
+    database under ``store_binding(DefaultRepositoryBuilder, store)`` unless
+    one is already registered there, so a deployment may swap the builder. It registers
     ``cursor_codec`` as the application's one ``CursorCodec`` too, raising
     ``ConfigError`` when another is already registered, so a custom builder
     or a service paginating by hand resolves the codec the repositories sign
@@ -124,6 +125,7 @@ def build_mongo_repository_registration_module(
         id_policy: Strategy minting and converting primary keys.
         session_provider: Returns the active client session, or ``None``.
         cursor_codec: Codec that issues and verifies cursor tokens.
+        store: Key of the store the repositories belong to.
         logical_models: Extra models with explicit ``repository_for`` registrations.
     """
     builder = MongoDefaultRepositoryBuilder(
@@ -155,12 +157,12 @@ def build_mongo_repository_registration_module(
         explicit_models=logical_models,
         build_registered_repository=_registered_builder,
         default_repository_type=RepositoryMongo,
+        default_builder=builder,
+        store=store,
     )
 
     def _register_with_database(container: LoomContainer) -> None:
         register_cursor_codec(container, cursor_codec)
-        if not container.is_registered(DefaultRepositoryBuilder):
-            container.register_instance(DefaultRepositoryBuilder, builder)
         register(container)
 
     return _register_with_database

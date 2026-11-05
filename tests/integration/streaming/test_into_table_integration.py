@@ -28,6 +28,7 @@ from sqlalchemy import Row, create_engine, event, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from loom.core.persistence.stores import DEFAULT_STORE
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
@@ -184,7 +185,7 @@ class TestIntoTableSQLAlchemyIntegration:
             "CREATE TABLE orders (order_id INTEGER, amount REAL, status TEXT)",
         )
         bridge = AsyncBridge()
-        session_manager = SessionManager(_async_url(path))
+        session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
         node = IntoTable(payload=_OrderRow, table="orders", backend=Backend.SQLALCHEMY)
         sink_config = SqlAlchemySinkConfig.from_config(
             {"chunk_size": 500, "table": "orders"},
@@ -233,7 +234,7 @@ class TestIntoTableSQLAlchemyIntegration:
         without_note = _NoteRow(note_id=2)
         items = [with_note, without_note] if first_has_note else [without_note, with_note]
         bridge = AsyncBridge()
-        session_manager = SessionManager(_async_url(path))
+        session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
         node = IntoTable(payload=_NoteRow, table="notes", backend=Backend.SQLALCHEMY)
         partition = node.build_partition(
             SqlAlchemySinkConfig.from_config({"table": "notes"}, default_table="notes"),
@@ -260,7 +261,7 @@ class TestIntoTableSQLAlchemyIntegration:
     def test_a_uuid_field_is_written_as_core_writes_a_uuid_column(self, tmp_path: Path) -> None:
         path = _make_db(tmp_path, "CREATE TABLE visits (visit_id CHAR(32), label TEXT)")
         bridge = AsyncBridge()
-        session_manager = SessionManager(_async_url(path))
+        session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
         node = IntoTable(payload=_VisitRow, table="visits", backend=Backend.SQLALCHEMY)
         sink_config = SqlAlchemySinkConfig.from_config({"table": "visits"}, default_table="visits")
         partition = node.build_partition(
@@ -291,7 +292,7 @@ class TestIntoTableSQLAlchemyIntegration:
             "CREATE TABLE orders (order_id INTEGER, amount REAL, status TEXT)",
         )
         bridge = AsyncBridge()
-        session_manager = SessionManager(_async_url(path))
+        session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
         node = IntoTable(payload=_OrderRow, table="orders")
         sink_config = SqlAlchemySinkConfig.from_config(
             {"chunk_size": 500, "table": "orders"},
@@ -324,7 +325,7 @@ class TestIntoTableSQLAlchemyIntegration:
             "CREATE TABLE sink_orders (order_id INTEGER, amount REAL, status TEXT)",
         )
         bridge = AsyncBridge()
-        session_manager = SessionManager(_async_url(path))
+        session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
         node = IntoTable(payload=_OrderRow, table="orders")
         sink_config = SqlAlchemySinkConfig.from_config(
             {"table": "sink_orders", "chunk_size": 500},
@@ -360,7 +361,7 @@ class TestIntoTableSQLAlchemyIntegration:
             tmp_path,
             "CREATE TABLE orders (order_id INTEGER, amount REAL, status TEXT)",
         )
-        session_manager = SessionManager(_async_url(path))
+        session_manager = SessionManager(_async_url(path), store=DEFAULT_STORE)
         insert_calls: list[int] = []
 
         @event.listens_for(session_manager.engine.sync_engine, "before_cursor_execute")
@@ -711,7 +712,7 @@ def pg_table(pg_uri: str) -> Iterator[str]:
 
 def _write_to_postgres(uri: str, table: str, payload: type[Any], items: list[Any]) -> None:
     bridge = AsyncBridge()
-    session_manager = SessionManager(uri)
+    session_manager = SessionManager(uri, store=DEFAULT_STORE)
     node = IntoTable(payload=payload, table=table, backend=Backend.SQLALCHEMY)
     partition = node.build_partition(
         SqlAlchemySinkConfig.from_config({"table": table}, default_table=table),

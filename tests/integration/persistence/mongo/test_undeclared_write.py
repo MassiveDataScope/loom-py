@@ -87,7 +87,7 @@ async def audit(mongo_database: Any) -> AsyncIterator[_Audit]:
 def _coordinator(default: AsyncMongoClient[Any], audit: _Audit) -> OrderedCommits:
     return OrderedCommits(
         {
-            DEFAULT_STORE: MongoUnitOfWorkFactory.transactional(default),
+            DEFAULT_STORE: MongoUnitOfWorkFactory.transactional(default, store=DEFAULT_STORE),
             AUDIT: MongoUnitOfWorkFactory.transactional(audit.client, AUDIT),
         }
     )
@@ -137,13 +137,13 @@ async def test_each_store_joins_a_session_of_its_own_client(
         invocation(_coordinator(mongo_client, audit)) as scope,
         scope.frame(Frame(DEFAULT_STORE, frozenset({AUDIT}))),
     ):
-        default = MongoSessions(mongo_client).active_session
+        default = MongoSessions(mongo_client, store=DEFAULT_STORE).active_session
         joined = MongoSessions(audit.client, AUDIT).active_session
         assert default is not None
         assert joined is not None
         assert default.client is mongo_client
         assert joined.client is audit.client
-        foreign = MongoSessions(audit.client)
+        foreign = MongoSessions(audit.client, store=DEFAULT_STORE)
         with pytest.raises(ForeignSessionError):
             foreign(True)
 

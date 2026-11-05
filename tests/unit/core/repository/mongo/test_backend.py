@@ -349,7 +349,7 @@ async def test_a_store_s_repositories_write_in_its_own_unit_of_work_session(
 
     async with invocation(coordinator) as scope, scope.frame(Frame(_AUDIT)):
         await container.resolve(Creatable[Article]).create(ArticleCreate(slug="a", title="A"))
-        active = container.resolve(MongoSessions).active_session
+        active = container.resolve((MongoSessions, _AUDIT)).active_session
 
     assert client.collection("articles").last_session is client.sessions[0]
     assert active is client.sessions[0]

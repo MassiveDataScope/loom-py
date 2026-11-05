@@ -23,7 +23,6 @@ from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence import SERVER_PROFILE
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.use_case import Exists, LoadById, UnservedModelError, UseCase, UseCaseErrorCode
 from tests.helpers.composition import composition_source
 
@@ -61,7 +60,7 @@ class _Serving:
             discovered=DiscoveryResult(
                 models=self._models, use_cases=cast(Any, self._use_cases), interfaces=()
             ),
-            backend=SQLAlchemyBackend(),
+            default_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:

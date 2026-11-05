@@ -196,8 +196,8 @@ class StoreCatalog:
             )
         return spec
 
-    def served_by(self, backend: str, key: StoreKey = DEFAULT_STORE) -> StoreSpec:
-        """Return the store *key*, :data:`DEFAULT_STORE` by default, that *backend* serves.
+    def served_by(self, backend: str, key: StoreKey) -> StoreSpec:
+        """Return the store *key* that *backend* serves.
 
         Args:
             backend: The backend the store must declare.
@@ -217,26 +217,28 @@ class StoreCatalog:
             models: The discovered models.
 
         Returns:
-            Every declared store, :data:`DEFAULT_STORE` first and the others
-            in declaration order, with its models in the order given.
+            :data:`DEFAULT_STORE`, declared or not, then every other store
+            that holds a model, in declaration order, each with its models in
+            the order given.
 
         Raises:
             ConfigError: When a model declares the retired ``__database__``,
                 or belongs to a store the catalog does not declare or to a
                 connection-only store, naming the model and the store.
         """
-        keys = sorted(self.specs, key=lambda key: key != DEFAULT_STORE)
-        groups: dict[StoreKey, list[type[BaseModel]]] = {key: [] for key in keys}
+        groups: dict[StoreKey, list[type[BaseModel]]] = {DEFAULT_STORE: []}
         for model in models:
-            spec = self.require(store_of(model), purpose=f"model {model.__name__}")
-            if not spec.capabilities.serves_models:
-                raise ConfigError(
-                    f"{model.__name__} belongs to store {spec.key!r}, a connection-only "
-                    f"{spec.backend} store that serves no model; {spec.path} only hands its "
-                    "connection to the sinks that name it"
-                )
-            groups[spec.key].append(model)
-        return {key: tuple(members) for key, members in groups.items()}
+            key = store_of(model)
+            if key != DEFAULT_STORE:
+                spec = self.require(key, purpose=f"model {model.__name__}")
+                if not spec.capabilities.serves_models:
+                    raise ConfigError(
+                        f"{model.__name__} belongs to store {key!r}, a connection-only "
+                        f"{spec.backend} store that serves no model; {spec.path} only hands "
+                        "its connection to the sinks that name it"
+                    )
+            groups.setdefault(key, []).append(model)
+        return {key: tuple(groups[key]) for key in (DEFAULT_STORE, *self.specs) if key in groups}
 
 
 def store_of(model: type[BaseModel]) -> StoreKey:
@@ -253,6 +255,15 @@ def store_of(model: type[BaseModel]) -> StoreKey:
         )
     declared = getattr(model, _STORE_ATTRIBUTE, DEFAULT_STORE)
     return _store_key(declared, owner=f"{model.__name__}.{_STORE_ATTRIBUTE}")
+
+
+def store_binding(binding: type[Any], key: StoreKey) -> object:
+    """The DI key of store *key*'s *binding*: *binding* itself for the default store.
+
+    The default store's binding stays injectable by type; another store's is
+    keyed by ``(binding, key)``.
+    """
+    return binding if key == DEFAULT_STORE else (binding, key)
 
 
 def require_single_store(models: Sequence[type[BaseModel]]) -> None:
@@ -378,5 +389,6 @@ __all__ = [
     "StoreSpec",
     "load_catalog",
     "require_single_store",
+    "store_binding",
     "store_of",
 ]

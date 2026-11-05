@@ -20,7 +20,7 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.metrics import MetricsAdapter
 from loom.core.environment import Environment
 from loom.core.logger import LoggerPort
-from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.uow.coordinator import Coordinator
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 
@@ -51,7 +51,7 @@ def create_kernel(
     modules: Sequence[Callable[[LoomContainer], None]] = (),
     logger: LoggerPort | None = None,
     metrics: MetricsAdapter | None = None,
-    uow_factory: UnitOfWorkFactory | None = None,
+    coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
 ) -> KernelRuntime:
@@ -64,7 +64,8 @@ def create_kernel(
         modules: Container registration modules.
         logger: Optional logger override.
         metrics: Optional metrics adapter.
-        uow_factory: Optional UnitOfWork factory for transactional execution.
+        coordinator: Coordinator of the application's stores, which runs
+            each execution in their units of work; ``None`` runs without one.
         repo_resolver: Optional repository resolver used by marker-based loads.
             Defaults to ``container.resolve_repo``.
         environment: Environment of the application, resolved like
@@ -87,7 +88,7 @@ def create_kernel(
     resolver = repo_resolver or base.container.resolve_repo
     executor = RuntimeExecutor(
         base.compiler,
-        uow_factory=uow_factory,
+        coordinator=coordinator,
         metrics=base.metrics,
         repo_resolver=resolver,
         elevation_sink=_registered_sink(base.container),

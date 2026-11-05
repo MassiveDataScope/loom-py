@@ -57,12 +57,13 @@ repository class the auto-CRUD gate inspects, and it is known before `build`.
 `BackendRuntime`: the `RuntimeProfile` of the entry point building it
 (`server`, `worker`, ...), whose defaults size any connection pool the backend
 opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
-`StoreCatalog` the composition loaded once. The class takes its store,
-`stores.default`, from that catalog
-(`runtime.catalog.require(DEFAULT_STORE, backend=self.name, purpose=...)`)
-and decodes its section; the host knows nothing about the keys of that
-section. It reads any other section (`persistence.cursors`) from `ctx`. A
-backend with no pool ignores the profile.
+`StoreCatalog` the composition loaded once, `store`, the key of the store it
+serves, and `cursor_codec`, the application's one cursor codec. The
+composition builds one backend per store: the default one, and each other
+store a model belongs to. The class takes its store from that catalog
+(`runtime.catalog.served_by(self.name, runtime.store)`) and decodes its
+section; the host knows nothing about the keys of that section. It reads any
+other section from `ctx`. A backend with no pool ignores the profile.
 `connection_only` is set by an entry point with no model (a worker running
 raw-SQL jobs): a backend that honours it serves its connection and unit of
 work only, no repository and no cursor codec, and its startup checks only
@@ -97,7 +98,6 @@ from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
 from loom.core.model.introspection import get_id_attribute
 from loom.core.persistence import BackendRuntime, PersistenceWiring
-from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import RepositoryBuildContext, build_repository_registration_module
 
 from billing_ledger.client import LedgerClient
@@ -116,10 +116,8 @@ class LedgerBackend:
     def build(
         self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
     ) -> PersistenceWiring:
-        # ConfigError when stores.default is missing, names another backend or is invalid.
-        store = runtime.catalog.require(
-            DEFAULT_STORE, backend=self.name, purpose=f"the {self.name!r} backend"
-        )
+        # ConfigError when the store is missing, names another backend or is invalid.
+        store = runtime.catalog.served_by(self.name, runtime.store)
         cfg = store.decode(_LedgerConfig)
         client = LedgerClient(cfg.url, cfg.namespace)
         return PersistenceWiring(
@@ -128,6 +126,8 @@ class LedgerBackend:
                 models=models,
                 build_registered_repository=lambda context, registration: _build(client, context),
                 default_repository_type=RepositoryLedger,
+                default_builder=lambda context: _build(client, context),
+                store=runtime.store,
             ),
             lifespan_init=lambda: _lifespan(client),
             prepare_models=_validate_identifiers,

@@ -40,7 +40,7 @@ class _Bare:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=source.discover(),
-            backend=source.backend(default="sqlalchemy"),
+            default_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:
@@ -101,17 +101,23 @@ class _Answer(UseCase[Any, int]):
         return 42
 
 
-class _Recorded(SQLAlchemyBackend):
-    """The SQLAlchemy backend, recording the runtime the composition hands it."""
+@pytest.fixture
+def runtimes(monkeypatch: pytest.MonkeyPatch) -> list[BackendRuntime]:
+    """Record the runtime the composition hands the SQLAlchemy backend."""
+    recorded: list[BackendRuntime] = []
+    build = SQLAlchemyBackend.build
 
-    def __init__(self, runtimes: list[BackendRuntime]) -> None:
-        self.runtimes = runtimes
-
-    def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
+    def recording(
+        self: SQLAlchemyBackend,
+        ctx: ConfigContext,
+        models: Sequence[type[BaseModel]],
+        runtime: BackendRuntime,
     ) -> PersistenceWiring:
-        self.runtimes.append(runtime)
-        return super().build(ctx, models, runtime)
+        recorded.append(runtime)
+        return build(self, ctx, models, runtime)
+
+    monkeypatch.setattr(SQLAlchemyBackend, "build", recording)
+    return recorded
 
 
 class _Handler:
@@ -124,15 +130,11 @@ class _Handler:
 
 # The adapter under test: a profile of its own, one extra use case, its own result type.
 class _TinyAdapter:
-    def __init__(self, runtimes: list[BackendRuntime]) -> None:
-        self.runtimes = runtimes
-
     def recipe(self, source: CompositionSource) -> Recipe:
         discovered = source.discover()
         return Recipe(
             profile=_TINY,
             discovered=dataclasses.replace(discovered, use_cases=(*discovered.use_cases, _Answer)),
-            backend=_Recorded(self.runtimes),
         )
 
     def bind(self, application: Application) -> _Handler:
@@ -140,12 +142,11 @@ class _TinyAdapter:
 
 
 async def test_an_adapter_of_its_own_gets_its_profile_its_use_case_and_its_type(
-    fixture_project: ProjectFactory,
+    fixture_project: ProjectFactory, runtimes: list[BackendRuntime]
 ) -> None:
-    runtimes: list[BackendRuntime] = []
     config = fixture_project()
 
-    handler = create_app(config, adapter=_TinyAdapter(runtimes), environment="test")
+    handler = create_app(config, adapter=_TinyAdapter(), environment="test")
 
     assert_type(handler, _Handler)
     assert [runtime.profile for runtime in runtimes] == [_TINY]

@@ -21,7 +21,7 @@ from loom.core.logger import get_logger
 from loom.core.model.redaction import reveal_for_driver
 from loom.core.persistence.database import DatabaseConfig
 from loom.core.persistence.profile import PoolMetricsSink, RuntimeProfile
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
+from loom.core.persistence.stores import StoreKey
 from loom.core.repository.sqlalchemy._pool_metrics import instrumented_pool_class
 from loom.core.repository.sqlalchemy.session_settings import (
     SessionSettings,
@@ -50,7 +50,7 @@ class SessionManager:
         inject_trace_id: bool = True,
         session_settings: SessionSettings | None = None,
         metadata: MetaData | None = None,
-        store: StoreKey = DEFAULT_STORE,
+        store: StoreKey,
         **engine_kwargs: object,
     ) -> None:
         """Create a session manager backed by an async SQLAlchemy engine.
@@ -249,7 +249,7 @@ def build_session_manager(
     profile: RuntimeProfile,
     *,
     pool_metrics: PoolMetricsSink | None = None,
-    database: StoreKey = DEFAULT_STORE,
+    database: StoreKey,
     **manager_kwargs: Any,
 ) -> SessionManager:
     """Build the session manager of a relational store section for one entry point.

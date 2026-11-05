@@ -107,7 +107,7 @@ class _WithoutAgents:
             discovered=dataclasses.replace(
                 discovered, use_cases=(*discovered.use_cases, NotifyIncidentUseCase)
             ),
-            backend=source.backend(default="sqlalchemy"),
+            default_backend="sqlalchemy",
             agents=False,
         )
 

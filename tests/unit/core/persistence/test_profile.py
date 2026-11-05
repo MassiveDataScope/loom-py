@@ -15,7 +15,7 @@ from loom.core.persistence.profile import (
     PoolDefaults,
     RuntimeProfile,
 )
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog
 
 
 def test_server_profile_sizes_the_pool_for_a_concurrent_process() -> None:
@@ -63,7 +63,7 @@ def test_a_new_profile_needs_nothing_but_its_own_values() -> None:
 
 
 def test_backend_runtime_carries_no_metrics_unless_given() -> None:
-    runtime = BackendRuntime(SERVER_PROFILE, catalog=StoreCatalog(specs={}))
+    runtime = BackendRuntime(SERVER_PROFILE, catalog=StoreCatalog(specs={}), store=DEFAULT_STORE)
 
     assert runtime.pool_metrics is None
 

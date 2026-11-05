@@ -24,6 +24,7 @@ from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
 from loom.core.uow.coordinator import (
     Committed,
     InvocationOutcome,
+    OrderedCommits,
     Participant,
     RolledBack,
     Uncertain,
@@ -68,7 +69,9 @@ class _Stores:
 
 
 def _executor(stores: UnitOfWorkFactory, metrics: Metrics | None = None) -> RuntimeExecutor:
-    return RuntimeExecutor(UseCaseCompiler(), uow_factory=stores, metrics=metrics)
+    return RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: stores}), metrics=metrics
+    )
 
 
 def _scope() -> InvocationScope:

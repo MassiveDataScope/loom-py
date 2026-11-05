@@ -21,6 +21,7 @@ from loom.core.cache import (
 )
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField, DateTime
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import Repository
 from loom.core.repository.abc import (
     CursorCodec,
@@ -65,6 +66,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Re
         max_overflow=0,
         pool_pre_ping=False,
         session_settings=_scope_settings,
+        store=DEFAULT_STORE,
     )
     async with manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().drop_all)

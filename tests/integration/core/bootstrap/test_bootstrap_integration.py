@@ -26,10 +26,12 @@ import pytest
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.bootstrap.kernel import create_kernel
 from loom.core.errors import NotFound
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case import Input
 from loom.core.use_case.markers import LoadById
 from loom.core.use_case.use_case import UseCase
@@ -83,6 +85,7 @@ async def sa_env(tmp_path: Path):  # type: ignore[no-untyped-def]
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
     async with manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().create_all)
@@ -116,7 +119,7 @@ class TestTransactionCommit:
             config=_Cfg(),
             use_cases=[_CreateProductUC, _GetProductUC],
             modules=[repo_module],
-            uow_factory=uow_factory,
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
         await runtime.app.invoke(_CreateProductUC, payload={"name": "keyboard", "price": 120.0})
@@ -133,7 +136,7 @@ class TestTransactionCommit:
             config=_Cfg(),
             use_cases=[_CreateProductUC, _GetProductUC],
             modules=[repo_module],
-            uow_factory=uow_factory,
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
         await runtime.app.invoke(_CreateProductUC, payload={"name": "mouse", "price": 25.0})
@@ -158,7 +161,7 @@ class TestTransactionRollback:
             config=_Cfg(),
             use_cases=[_FailAfterCreateUC, _GetProductUC],
             modules=[repo_module],
-            uow_factory=uow_factory,
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
         with pytest.raises(RuntimeError, match="simulated failure after write"):
@@ -179,7 +182,7 @@ class TestTransactionRollback:
             config=_Cfg(),
             use_cases=[_CreateProductUC, _FailAfterCreateUC, _GetProductUC],
             modules=[repo_module],
-            uow_factory=uow_factory,
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
         # Commit one product successfully.
@@ -216,7 +219,7 @@ class TestLoadByIdMarker:
             config=_Cfg(),
             use_cases=[_LoadByIdUC],
             modules=[repo_module],
-            uow_factory=uow_factory,
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
         with pytest.raises(NotFound) as exc_info:
@@ -233,7 +236,7 @@ class TestLoadByIdMarker:
             config=_Cfg(),
             use_cases=[_CreateProductUC, _LoadByIdUC],
             modules=[repo_module],
-            uow_factory=uow_factory,
+            coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
         )
 
         await runtime.app.invoke(_CreateProductUC, payload={"name": "desk", "price": 200.0})

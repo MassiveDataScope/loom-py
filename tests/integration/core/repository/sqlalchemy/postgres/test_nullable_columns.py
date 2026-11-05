@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -37,7 +38,9 @@ class CreateGauge(Command, frozen=True):
 async def manager(pg_admin_uri: str) -> AsyncIterator[SessionManager]:
     reset_registry()
     compile_all(Gauge)
-    session_manager = SessionManager(pg_admin_uri, pool_size=1, max_overflow=0, pool_pre_ping=False)
+    session_manager = SessionManager(
+        pg_admin_uri, pool_size=1, max_overflow=0, pool_pre_ping=False, store=DEFAULT_STORE
+    )
     async with session_manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().drop_all)
         await conn.run_sync(get_metadata().create_all)

@@ -25,7 +25,7 @@ from loom.core.model.types import NonNegativeInt, PositiveInt
 from loom.core.persistence.abc import PersistenceWiring
 from loom.core.persistence.database import PoolConfig
 from loom.core.persistence.profile import BackendRuntime, PoolDefaults, RuntimeProfile
-from loom.core.persistence.stores import StoreCapabilities, StoreKey, StoreSpec
+from loom.core.persistence.stores import StoreCapabilities, StoreKey, StoreSpec, store_binding
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.mongo.ids import (
     IdPolicy,
@@ -146,6 +146,7 @@ class MongoBackend:
                     id_policy=_ID_POLICIES[mongo_cfg.id](),
                     session_provider=sessions,
                     cursor_codec=cursor_codec,
+                    store=spec.key,
                 ),
                 sessions,
             ),
@@ -171,7 +172,7 @@ def _with_sessions(
 
     def register(container: LoomContainer) -> None:
         module(container)
-        container.register_instance(MongoSessions, sessions)
+        container.register_instance(store_binding(MongoSessions, sessions.store), sessions)
 
     return register
 

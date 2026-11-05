@@ -9,7 +9,9 @@ import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
@@ -74,7 +76,7 @@ async def test_no_uow_factory_runs_without_transaction() -> None:
 async def test_uow_factory_creates_uow_per_execution() -> None:
     factory, uow = _make_uow_factory()
     compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
     uc = _SimpleUC()
     await executor.execute(uc)
@@ -87,7 +89,7 @@ async def test_uow_entered_through_the_context_manager_protocol() -> None:
     """FR-001: the executor never calls ``begin`` itself."""
     factory, uow = _make_uow_factory()
     compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
     await executor.execute(_SimpleUC())
 
@@ -100,7 +102,7 @@ async def test_uow_exited_cleanly_on_success() -> None:
     """FR-001: a clean ``__aexit__`` is the commit; the executor calls no method."""
     factory, uow = _make_uow_factory()
     compiler = _compiler(_SimpleUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
     await executor.execute(_SimpleUC())
 
@@ -119,7 +121,7 @@ async def test_uow_exited_with_the_error_on_failure() -> None:
     """FR-001: the failure reaches ``__aexit__``; the adapter decides the rollback."""
     factory, uow = _make_uow_factory()
     compiler = _compiler(_FailingUC)
-    executor = RuntimeExecutor(compiler, uow_factory=factory)
+    executor = RuntimeExecutor(compiler, coordinator=OrderedCommits({DEFAULT_STORE: factory}))
 
     failing_uc = _FailingUC()
     with pytest.raises(RuntimeError, match="intentional") as info:
@@ -151,7 +153,9 @@ class _NestingUC(UseCase[Any, str]):
 @pytest.mark.asyncio
 async def test_nested_execution_does_not_open_second_uow() -> None:
     factory, _ = _make_uow_factory()
-    executor = RuntimeExecutor(_compiler(_SimpleUC, _NestingUC), uow_factory=factory)
+    executor = RuntimeExecutor(
+        _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
 
     await executor.execute(_NestingUC(executor))
 
@@ -161,7 +165,9 @@ async def test_nested_execution_does_not_open_second_uow() -> None:
 @pytest.mark.asyncio
 async def test_nested_execution_does_not_commit() -> None:
     factory, uow = _make_uow_factory()
-    executor = RuntimeExecutor(_compiler(_SimpleUC, _NestingUC), uow_factory=factory)
+    executor = RuntimeExecutor(
+        _compiler(_SimpleUC, _NestingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
 
     await executor.execute(_NestingUC(executor))
 
@@ -171,7 +177,9 @@ async def test_nested_execution_does_not_commit() -> None:
 @pytest.mark.asyncio
 async def test_no_scope_is_published_after_execution() -> None:
     factory, _ = _make_uow_factory()
-    executor = RuntimeExecutor(_compiler(_SimpleUC), uow_factory=factory)
+    executor = RuntimeExecutor(
+        _compiler(_SimpleUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
 
     await executor.execute(_SimpleUC())
 
@@ -181,7 +189,9 @@ async def test_no_scope_is_published_after_execution() -> None:
 @pytest.mark.asyncio
 async def test_no_scope_is_published_after_failed_execution() -> None:
     factory, _ = _make_uow_factory()
-    executor = RuntimeExecutor(_compiler(_FailingUC), uow_factory=factory)
+    executor = RuntimeExecutor(
+        _compiler(_FailingUC), coordinator=OrderedCommits({DEFAULT_STORE: factory})
+    )
 
     use_case = _FailingUC()
 

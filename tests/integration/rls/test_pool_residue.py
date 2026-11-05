@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.identity import Identity, reset_identity, set_identity
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.rls import (
     create_schema,
     install_pool_reset,
@@ -64,6 +65,7 @@ async def test_every_key_is_re_emitted_and_reset_all_runs_when_the_connection_re
         session_settings=rls_session_settings(application),
         pool_size=1,
         max_overflow=0,
+        store=DEFAULT_STORE,
     )
     install_pool_reset(manager.engine)
     token = set_identity(Identity(subject=U1))

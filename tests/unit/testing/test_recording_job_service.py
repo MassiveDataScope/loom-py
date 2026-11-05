@@ -15,6 +15,8 @@ from loom.core.identity import ANONYMOUS, Identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 from loom.testing import DispatchedJob, RecordingJobService
 from tests.helpers.jobs import JobsAdapter, job_source
@@ -56,7 +58,9 @@ def jobs() -> RecordingJobService:
 
 @pytest.fixture
 def executor() -> RuntimeExecutor:
-    return RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(Log()))
+    return RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
+    )
 
 
 async def test_a_committed_dispatch_is_recorded_with_its_caller(

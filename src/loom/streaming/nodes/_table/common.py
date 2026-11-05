@@ -61,7 +61,7 @@ SQLAlchemy example::
         default_table="orders",
     )
     db_cfg = load_database_config(ctx, sink_cfg.store)
-    session_manager = build_session_manager(db_cfg, STREAMING_PROFILE)
+    session_manager = build_session_manager(db_cfg, STREAMING_PROFILE, database=sink_cfg.store)
 
 Delta example::
 

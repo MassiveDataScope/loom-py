@@ -24,7 +24,6 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String
 from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.rls import register_scope_source
 from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -50,7 +49,7 @@ class _Tickets:
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(models=(_Ticket,), use_cases=(), interfaces=()),
-            backend=SQLAlchemyBackend(),
+            default_backend="sqlalchemy",
         )
 
     def bind(self, application: Application) -> Application:

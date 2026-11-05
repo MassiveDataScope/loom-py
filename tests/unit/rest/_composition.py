@@ -10,10 +10,10 @@ from loom.core.bootstrap import KernelRuntime
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
-from loom.core.persistence import PersistenceWiring
+from loom.core.uow.abc import UnitOfWorkFactory
 from loom.rest.fastapi.adapter import FastAPIAdapter
 from loom.rest.model import RestInterface
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_source, uow_factory
 
 SQLITE_STORE: dict[str, object] = {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}
 """An in-memory SQLite default store."""
@@ -43,8 +43,15 @@ def store_context(store: Mapping[str, object] | None = None, **sections: object)
 
 def build_bootstrap(
     _app_cfg: object, ctx: ConfigContext, *, environment: Environment = Environment.TEST
-) -> tuple[KernelRuntime, PersistenceWiring, DiscoveryResult, tuple[type[RestInterface[Any]], ...]]:
-    """Compose as ``create_app`` does, returning what the removed ``_build_bootstrap`` did.
+) -> tuple[
+    KernelRuntime,
+    UnitOfWorkFactory | None,
+    DiscoveryResult,
+    tuple[type[RestInterface[Any]], ...],
+]:
+    """Compose as ``create_app`` does; return the kernel, unit-of-work factory and discovery.
+
+    The factory is the default store's; the last item is the discovered interfaces.
 
     The application config comes from *ctx*'s ``app`` section, as it does in
     ``create_app``; the first argument is accepted for the callers' sake.
@@ -53,4 +60,4 @@ def build_bootstrap(
         composition_source(ctx, environment=environment), FastAPIAdapter()
     )
     discovered = application.discovered
-    return application.kernel, application.persistence, discovered, discovered.interfaces
+    return application.kernel, uow_factory(application), discovered, discovered.interfaces

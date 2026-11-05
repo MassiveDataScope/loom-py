@@ -17,6 +17,8 @@ from loom.core.engine.executor import RuntimeExecutor
 from loom.core.engine.post_commit import PostCommitChannel, PostCommitError, active_channel
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
+from loom.core.persistence.stores import DEFAULT_STORE
+from loom.core.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -141,7 +143,9 @@ async def test_a_send_committed_before_the_cancellation_reaches_the_broker_once(
     app.send_task.side_effect = lambda *_, **__: sent.set()
     bump = _Gate()
     log = Log()
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(log))
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)})
+    )
     task = asyncio.create_task(executor.execute(_DispatchAfterCommit(CeleryJobService(app), bump)))
     await bump.started.wait()
     assert _COMMITTED in log.entries
@@ -199,7 +203,9 @@ async def test_the_executor_drops_what_a_cancellation_left_and_says_how_much(
     hang = _Hang()
     calls: list[str] = []
     log = Log()
-    executor = RuntimeExecutor(UseCaseCompiler(), uow_factory=StubUnitOfWorkFactory(log))
+    executor = RuntimeExecutor(
+        UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)})
+    )
     task = asyncio.create_task(executor.execute(_InlineAfterCommit(hang, calls)))
     await hang.started.wait()
     assert _COMMITTED in log.entries

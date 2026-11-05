@@ -16,6 +16,7 @@ from loom.core.job import InlineJobService, JobService
 from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -285,7 +286,7 @@ class _RecordRepository(RepositorySQLAlchemy[_Record, int]):
 
 
 async def _create_schema(db_url: str) -> None:
-    manager = SessionManager(db_url)
+    manager = SessionManager(db_url, store=DEFAULT_STORE)
     try:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().create_all)
@@ -294,7 +295,7 @@ async def _create_schema(db_url: str) -> None:
 
 
 async def _drop_schema(db_url: str) -> None:
-    manager = SessionManager(db_url)
+    manager = SessionManager(db_url, store=DEFAULT_STORE)
     try:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)

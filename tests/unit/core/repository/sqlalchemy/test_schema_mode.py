@@ -18,6 +18,7 @@ from loom.core.model import BaseModel, ColumnField, ColumnType, RowScoped, Scope
 from loom.core.model.types import Integer, Text
 from loom.core.persistence.database import DatabaseConfig, SchemaConfig
 from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.backend import (
     SQLAlchemyBackend,
     check_time_zone_columns,
@@ -86,8 +87,8 @@ def test_an_unknown_mode_is_rejected() -> None:
 
 def test_has_session_settings_is_false_without_a_provider_and_true_with_one() -> None:
     url = "postgresql+asyncpg://u:p@localhost/db"
-    plain = SessionManager(url)
-    scoped = SessionManager(url, session_settings=lambda: None)
+    plain = SessionManager(url, store=DEFAULT_STORE)
+    scoped = SessionManager(url, session_settings=lambda: None, store=DEFAULT_STORE)
 
     assert plain.has_session_settings is False
     assert scoped.has_session_settings is True
@@ -239,6 +240,7 @@ def test_create_kernel_hands_a_registered_elevation_sink_to_the_executor() -> No
         max_overflow=None,
         pool_timeout=None,
         pool_recycle=None,
+        store=DEFAULT_STORE,
     )
     sink = sink_for(manager, "editor")
 

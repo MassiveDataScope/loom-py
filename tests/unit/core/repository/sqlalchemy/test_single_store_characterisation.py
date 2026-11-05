@@ -33,6 +33,7 @@ from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.post_commit import active_channel
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc import CursorCodec, PageParams, RepoFor
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
@@ -44,7 +45,7 @@ from loom.core.repository.sqlalchemy.uow import (
 from loom.core.uow.scope import current_scope
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
-from tests.helpers.composition import ProjectFactory, fixture_project
+from tests.helpers.composition import ProjectFactory, fixture_project, uow_factory
 from tests.helpers.elevation import sink_for
 
 __all__ = ["fixture_project"]
@@ -89,7 +90,6 @@ class _SingleStoreAdapter:
             discovered=dataclasses.replace(
                 discovered, use_cases=(*discovered.use_cases, *self.use_cases)
             ),
-            backend=source.backend(default="sqlalchemy"),
         )
 
     def bind(self, application: Application) -> Application:
@@ -120,8 +120,7 @@ def _compose(
 ) -> tuple[Application, tuple[type, ...], type[BaseModel]]:
     adapter = _SingleStoreAdapter(build_use_cases)
     application = build_application(config_path, adapter=adapter, environment="test")
-    factory = application.kernel.executor._uow_factory  # noqa: SLF001
-    assert isinstance(factory, SQLAlchemyUnitOfWorkFactory)
+    assert isinstance(uow_factory(application), SQLAlchemyUnitOfWorkFactory)
     return application, adapter.use_cases, _config_record(application.discovered)
 
 
@@ -213,7 +212,7 @@ def _spy_commits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 
 def _spy_units(monkeypatch: pytest.MonkeyPatch, application: Application) -> list[int]:
-    factory = application.kernel.executor._uow_factory  # noqa: SLF001
+    factory = uow_factory(application)
     assert isinstance(factory, SQLAlchemyUnitOfWorkFactory)
     opened: list[int] = []
     original = factory.create
@@ -363,6 +362,7 @@ def _session_manager(path: Path) -> SessionManager:
         pool_timeout=None,
         pool_recycle=None,
         connect_args={},
+        store=DEFAULT_STORE,
     )
 
 

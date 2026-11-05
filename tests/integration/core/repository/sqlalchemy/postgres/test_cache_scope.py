@@ -22,6 +22,7 @@ from loom.core.cache import (
 )
 from loom.core.cache.decorators import cache_query
 from loom.core.model import BaseModel, ColumnField
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository import PageParams, Repository
 from loom.core.repository.abc import CursorCodec, PaginationMode, QuerySpec, SortSpec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
@@ -128,6 +129,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[NoteRepository]:
         max_overflow=0,
         pool_pre_ping=False,
         session_settings=_scope_settings,
+        store=DEFAULT_STORE,
     )
     try:
         yield NoteRepository(

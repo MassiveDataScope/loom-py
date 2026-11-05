@@ -29,6 +29,7 @@ isolates tenants:
 from collections.abc import Mapping
 from contextvars import ContextVar
 
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy import SessionManager
 
 current_tenant: ContextVar[str | None] = ContextVar("current_tenant", default=None)
@@ -49,6 +50,7 @@ def request_settings() -> Mapping[str, str] | None:
 sessions = SessionManager(
     "postgresql+asyncpg://app:secret@db/app",
     session_settings=request_settings,
+    store=DEFAULT_STORE,
 )
 ```
 
@@ -137,8 +139,8 @@ across every boundary. A policy-less table with an automatic `SELECT` is the one
 combination that leaks.
 
 ```python
-app_sessions = SessionManager(APP_URL, session_settings=request_settings)
-platform_sessions = SessionManager(PLATFORM_URL)
+app_sessions = SessionManager(APP_URL, session_settings=request_settings, store=DEFAULT_STORE)
+platform_sessions = SessionManager(PLATFORM_URL, store=DEFAULT_STORE)
 ```
 
 - **Owner.** `app_owner` owns every table, view and function and has neither
@@ -434,11 +436,14 @@ provider for programmatic use, for a session manager a script builds itself:
 
 ```python
 from loom.core.locator import load_application
+from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy import SessionManager
 from loom.core.repository.sqlalchemy.rls import install_pool_reset, rls_session_settings
 
 application = load_application()
-sessions = SessionManager(APP_URL, session_settings=rls_session_settings(application))
+sessions = SessionManager(
+    APP_URL, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+)
 install_pool_reset(sessions.engine)
 ```
 
@@ -1326,7 +1331,7 @@ A job that must read or write every boundary uses a second
 the declared bypass user, without a provider:
 
 ```python
-operations = SessionManager(LEDGER_OPS_URL)
+operations = SessionManager(LEDGER_OPS_URL, store=DEFAULT_STORE)
 ```
 
 On the application URL without an identity, the same job sees zero rows, by design. This
