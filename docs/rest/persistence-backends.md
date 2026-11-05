@@ -18,7 +18,9 @@ stores:
 
 An application composes `stores.default` and every store that holds a model.
 A model belongs to `default` unless it declares `__store__`; a model of a
-store the configuration does not declare fails at startup. How use cases write
+store the configuration does not declare fails at startup. A use case or job
+without a main model writes to the store its own `__store__` names, else to
+`default`. How use cases write
 to several stores is in ADR 0008
 (`docs/architecture/adr/0008-stores-and-units-of-work.md`). Migrations cover
 `default` only and log a warning naming the stores they leave out; the

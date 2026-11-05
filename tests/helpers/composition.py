@@ -11,12 +11,15 @@ from typing import Any, cast
 
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource
+from loom.composition import AppConfig, Application, CompositionSource, Recipe
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext, ConfigKey
+from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import Environment
+from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
 from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.persistence import SERVER_PROFILE
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.uow.abc import UnitOfWorkFactory
 from tests.unit.rest._fixture_app import write_project
@@ -49,6 +52,27 @@ def composition_source(
             ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         ),
     )
+
+
+class Serving:
+    """An adapter composing exactly the models, use cases and jobs it is given."""
+
+    def __init__(
+        self,
+        *models: type[BaseModel],
+        use_cases: tuple[type, ...] = (),
+        jobs: tuple[type, ...] = (),
+    ) -> None:
+        self.discovered = DiscoveryResult(
+            models=models, use_cases=cast(Any, use_cases), interfaces=(), jobs=cast(Any, jobs)
+        )
+
+    def recipe(self, source: CompositionSource) -> Recipe:
+        del source
+        return Recipe(profile=SERVER_PROFILE, discovered=self.discovered)
+
+    def bind(self, application: Application) -> Application:
+        return application
 
 
 def uow_factory(

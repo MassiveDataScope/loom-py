@@ -25,7 +25,7 @@ from loom.core.job.job import Job
 from loom.core.logger import LoggerPort, get_logger
 from loom.core.model import BaseModel, UnsupportedBoundaryType, loom_type
 from loom.core.model.introspection import resolve_type_hints
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
+from loom.core.persistence.stores import StoreKey, store_of
 from loom.core.repository.abc.repo_for import (
     BulkCreatable,
     Countable,
@@ -469,9 +469,20 @@ class UseCaseCompiler:
 
 
 def _primary_store(use_case_type: type[Compilable]) -> StoreKey:
-    """The ``__store__`` of the use case's main model; the default store without one."""
+    """The ``__store__`` of the use case's main model, else its own, else the default store.
+
+    Raises:
+        CompilationError: When it declares ``__store__`` beside a main model.
+    """
     model = getattr(use_case_type, "__loom_main_model__", None)
-    return DEFAULT_STORE if model is None else store_of(model)
+    if model is None:
+        return store_of(use_case_type)
+    if hasattr(use_case_type, "__store__"):
+        raise CompilationError(
+            f"{use_case_type.__qualname__} declares __store__ but writes to the store of "
+            f"its main model {model.__name__}; remove __store__"
+        )
+    return store_of(model)
 
 
 _REPOSITORY_CONTRACTS: Final = frozenset(

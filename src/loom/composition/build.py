@@ -466,12 +466,14 @@ def _refuse_unservable_stores(
 
     Raises:
         CompilationError: When a component does not compile.
-        ConfigError: When a joined store is not declared.
+        ConfigError: When a primary or joined store is not declared.
         JoinedAutocommitStore: When a joined store is not transactional.
         UncomposedWriteStore: When a store written to has no unit of work.
     """
     for component in components:
         plan = kernel.compiler.compile(component)
+        if plan.primary != DEFAULT_STORE:
+            catalog.require(plan.primary, purpose=f"the __store__ of {component.__qualname__}")
         for key in sorted(plan.joined):
             spec = catalog.require(key, purpose=f"Joined in {component.__qualname__}")
             if not spec.capabilities.transactional:

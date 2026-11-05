@@ -48,6 +48,10 @@
   it writes to that repository's store as well as to its primary store, the
   `__store__` of its main model. Composition refuses `Joined` on a store that
   cannot roll back (`UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE`).
+- **stores:** a use case or job without a main model declares its primary
+  store with `__store__ = "<store>"`, as a model does; without it the primary
+  store stays `default`. A store it names that is not declared fails
+  composition, and so does `__store__` beside a main model.
 - **stores:** `load_application(path, store="audit")` loads one store's models
   and schema section, so `create_schema` and `verify` prepare and check a
   second Postgres store. Migrations still cover `default` only and log
@@ -169,9 +173,12 @@
   in an invocation that writes to no store: a write raises
   `UndeclaredStoreWrite` instead of committing on its own, and so does a
   `@transactional` method it calls; `async with uow:` in it raises
-  `UnitOfWorkInsideScope`. Move the write to a use case that is not
-  read-only; a writing use case it runs still opens and commits an
-  invocation of its own.
+  `UnitOfWorkInsideScope`, with or without a configured unit of work. A
+  use case or job that writes, run from it (a `gather` child or the invoker
+  included), raises `UndeclaredStoreWrite` instead of opening and committing
+  an invocation of its own. Move the write to a use case that is not
+  read-only. A job it dispatches still runs after it, in an invocation of its
+  own.
 - **stores:** `async with uow:` and an outermost `@transactional` run through
   the coordinator; `async with uow:` inside a running invocation raises
   `UnitOfWorkInsideScope`. Even with one store, a write from a `gather` child

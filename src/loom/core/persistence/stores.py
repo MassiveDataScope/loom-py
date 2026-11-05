@@ -241,8 +241,10 @@ class StoreCatalog:
         return {key: tuple(groups[key]) for key in (DEFAULT_STORE, *self.specs) if key in groups}
 
 
-def store_of(model: type[BaseModel]) -> StoreKey:
+def store_of(model: type[Any]) -> StoreKey:
     """Return the store *model* belongs to: its ``__store__``, else :data:`DEFAULT_STORE`.
+
+    A use case or job without a main model declares its primary store the same way.
 
     Raises:
         ConfigError: When the model declares the retired ``__database__``, or
