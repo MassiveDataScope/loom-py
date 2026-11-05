@@ -209,7 +209,7 @@ class PostCommitChannel:
             shielded.add_done_callback(
                 lambda done: _log_unreported(done, shielded_pending, shielded_failures)
             )
-            _log_failures(plain_failures)
+            _log_failures(plain_failures, _UNREPORTED_FAILURE)
             self._settle_interrupted(pending)
             raise
         failed = [*shielded_failures, *plain_failures]
@@ -244,7 +244,7 @@ def _log_unreported(
     The failures it collected, and, when the task itself died (the loop closing
     cancels it), every action it never ran.
     """
-    _log_failures(failures)
+    _log_failures(failures, _UNREPORTED_FAILURE)
     if shielded.cancelled() or shielded.exception() is not None:
         for action in unsent:
             log_never_ran(action)
@@ -269,7 +269,7 @@ def log_never_ran(action: PostCommitAction) -> None:
         _logger.error(_SHIELDED_UNSENT, **fields)
 
 
-def _log_failures(failures: list[_Failure], event: str = _UNREPORTED_FAILURE) -> None:
+def _log_failures(failures: list[_Failure], event: str) -> None:
     for action, error in failures:
         for fields in _describe(action):
             _logger.error(event, **fields, error=repr(error))
