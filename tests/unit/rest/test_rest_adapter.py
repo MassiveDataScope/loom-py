@@ -12,27 +12,29 @@ from fastapi.testclient import TestClient
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitError
 from loom.core.errors import (
+    BoundaryValidationError,
     Conflict,
     Forbidden,
     InsufficientAuthentication,
     LoomError,
     NotFound,
+    PostCommitError,
     RateLimited,
     RuleViolation,
     RuleViolations,
+    ScopeOwnershipError,
+    StoresNotCommitted,
     SystemError,
     Unauthenticated,
+    UnitOfWorkInsideScope,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import BoundaryValidationError
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.abc.query import CursorResult, PageResult
 from loom.core.sql import SqlExecutionError
 from loom.core.tracing import get_trace_id
 from loom.core.transport.adapter import AdapterRequest, LoomAdapter
-from loom.core.uow import ScopeOwnershipError, StoresNotCommitted, UnitOfWorkInsideScope
 from loom.core.uow.coordinator import Committed, InvocationOutcome
 from loom.core.use_case import Created
 from loom.core.use_case.markers import Input

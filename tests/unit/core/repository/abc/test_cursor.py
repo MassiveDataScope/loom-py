@@ -14,6 +14,7 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
+from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
 from loom.core.repository.abc import (
     CURSOR_SIGNING_CHECK,
@@ -25,7 +26,6 @@ from loom.core.repository.abc import (
     PaginationMode,
     QuerySpec,
     SortSpec,
-    UnsupportedQuery,
 )
 from loom.core.repository.abc.cursor import register_cursor_codec
 

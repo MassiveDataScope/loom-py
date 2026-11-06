@@ -19,11 +19,12 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import ScopeOwnershipError
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits, Uncertain
-from loom.core.uow.scope import Frame, ScopeOwnershipError, current_scope, invocation
+from loom.core.uow.scope import Frame, current_scope, invocation
 from tests.integration.support.scope_doubles import BusinessError, Run
 
 

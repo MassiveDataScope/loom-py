@@ -13,17 +13,13 @@ from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scop
 from loom.core.authz.elevation import ReadOnlyElevation, elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.job.job import Job
 from loom.core.job.service import InlineJobService
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import (
-    NestedElevation,
-    NestedIdentityMismatch,
-    UndeclaredStoreWrite,
-    invocation,
-)
+from loom.core.uow.scope import invocation
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry

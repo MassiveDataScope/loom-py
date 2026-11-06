@@ -7,15 +7,9 @@ from uuid import UUID
 import msgspec
 import pytest
 
+from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import (
-    Cursor,
-    FilterGroup,
-    FilterOp,
-    FilterSpec,
-    SortSpec,
-    UnsupportedQuery,
-)
+from loom.core.repository.abc import Cursor, FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.repository.abc.query_compiler import QueryCompiler
 from loom.core.repository.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
 

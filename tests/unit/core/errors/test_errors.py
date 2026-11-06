@@ -12,6 +12,7 @@ from loom.core.errors import (
     Conflict,
     DomainError,
     Forbidden,
+    ForeignSessionError,
     InsufficientAuthentication,
     LoomError,
     NotFound,
@@ -22,7 +23,6 @@ from loom.core.errors import (
     Unauthenticated,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import ForeignSessionError
 from loom.core.use_case import rule as rule_module
 
 # ---------------------------------------------------------------------------

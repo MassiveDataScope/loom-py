@@ -15,13 +15,13 @@ from typing import Any, cast
 import pytest
 from pymongo import AsyncMongoClient
 
-from loom.core.errors.errors import ForeignSessionError
+from loom.core.errors import ForeignSessionError, ScopeOwnershipError
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWorkFactory
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, InvocationScope, ScopeOwnershipError, invocation
+from loom.core.uow.scope import Frame, InvocationScope, invocation
 
 from .mongo._fake import FakeMongoClient
 

@@ -16,6 +16,7 @@ from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.discovery.base import DiscoveryResult
+from loom.core.errors import UndeclaredStoreWrite
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import StoreKey
@@ -24,7 +25,6 @@ from loom.core.repository.abc import RepoFor
 from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.transactional import transactional
-from loom.core.uow.scope import UndeclaredStoreWrite
 from loom.core.use_case import Input, UseCase
 from loom.core.use_case.errors import UncomposedWriteStore
 from loom.rest.fastapi.adapter import FastAPIAdapter

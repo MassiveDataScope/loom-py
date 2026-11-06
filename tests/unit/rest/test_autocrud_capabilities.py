@@ -22,15 +22,10 @@ from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
 from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc import (
-    BulkCreatable,
-    Creatable,
-    Listable,
-    Readable,
-    UnsupportedQuery,
-)
+from loom.core.repository.abc import BulkCreatable, Creatable, Listable, Readable
 from loom.core.repository.registry import repository_for
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
 from loom.core.use_case.factory import UseCaseFactory

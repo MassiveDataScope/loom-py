@@ -8,18 +8,18 @@ from typing import Any, ClassVar
 
 from fastapi import HTTPException
 
-from loom.core.engine.post_commit import PostCommitError
 from loom.core.errors import (
+    BoundaryValidationError,
     Forbidden,
     InsufficientAuthentication,
     LoomError,
     NotFound,
+    PostCommitError,
     RateLimited,
     RuleViolation,
     RuleViolations,
 )
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import BoundaryValidationError
 from loom.core.tracing import get_trace_id
 from loom.rest.constants import BEARER_CHALLENGE, RETRY_AFTER_HEADER, WWW_AUTHENTICATE_HEADER
 
@@ -71,7 +71,7 @@ class HttpErrorMapper:
       when the refusal carries it
     - :class:`~loom.core.errors.RuleViolation` → ``field``
     - :class:`~loom.core.errors.RuleViolations` → ``violations``
-    - :class:`~loom.core.model.BoundaryValidationError` → ``violations``
+    - :class:`~loom.core.errors.BoundaryValidationError` → ``violations``
       (``422``; a schema failure, distinct from a rule failure; ``400`` under
       ``query_validation``, since RFC 9110 §15.5.21 defines ``422`` over
       request content and a query string is not content)
@@ -80,7 +80,7 @@ class HttpErrorMapper:
     - :class:`~loom.core.errors.InsufficientAuthentication` → ``401`` with the
       RFC 9470 step-up challenge (``error="insufficient_user_authentication"``,
       ``error_description``, and ``max_age`` / ``acr_values`` when given)
-    - :class:`~loom.core.engine.post_commit.PostCommitError` → ``committed``
+    - :class:`~loom.core.errors.PostCommitError` → ``committed``
       (``500``; ``true`` when a unit of work committed, so a retry would
       repeat the write, ``false`` when the execution held none)
 

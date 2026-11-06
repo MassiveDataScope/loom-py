@@ -4,54 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Generic, TypeVar
 
-from loom.core.errors.errors import LoomError
+from loom.core.errors import JobFailedError, JobTimeoutError
 
 ResultT = TypeVar("ResultT")
-
-
-class JobTimeoutError(LoomError):
-    """Raised when waiting for a job result exceeds the requested timeout.
-
-    Args:
-        job_id: UUID of the timed-out job.
-        timeout: The timeout value that was exceeded, in seconds.
-
-    Example::
-
-        raise JobTimeoutError("abc-123", timeout=30.0)
-    """
-
-    def __init__(self, job_id: str, timeout: float | None = None) -> None:
-        msg = f"Job {job_id!r} timed out"
-        if timeout is not None:
-            msg += f" after {timeout}s"
-        super().__init__(msg, code="job_timeout")
-        self.job_id = job_id
-        self.timeout = timeout
-
-
-class JobFailedError(LoomError):
-    """Raised when a job fails during execution.
-
-    Wraps the underlying cause so callers can inspect it without catching
-    arbitrary exceptions directly.
-
-    Args:
-        job_id: UUID of the failed job.
-        cause: The exception that caused the failure, if available.
-
-    Example::
-
-        raise JobFailedError("abc-123", cause=exc)
-    """
-
-    def __init__(self, job_id: str, cause: BaseException | None = None) -> None:
-        msg = f"Job {job_id!r} failed"
-        if cause is not None:
-            msg += f": {cause}"
-        super().__init__(msg, code="job_failed")
-        self.job_id = job_id
-        self.cause = cause
 
 
 @dataclass(frozen=True)

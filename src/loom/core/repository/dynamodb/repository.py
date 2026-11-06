@@ -7,7 +7,7 @@ key-scoped ``get_by`` / ``exists_by``. Listing and counting need a full table
 scan or a secondary index, so the class declares neither ``Listable`` nor
 ``Countable``: the auto-CRUD gate mounts no list route over it and the DI
 container binds no such capability. A lookup on a field other than the key
-raises :class:`~loom.core.repository.abc.UnsupportedQuery`.
+raises :class:`~loom.core.errors.UnsupportedQuery`.
 
 Model-to-table mapping is intentionally simple: every model is stored in the
 single table configured under ``stores.<name>.table``. The item primary
@@ -28,20 +28,12 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 import msgspec
 
 from loom.core.config import ConfigError
-from loom.core.errors import Conflict
+from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.logger import get_logger
 from loom.core.model.convert import to_struct
 from loom.core.model.introspection import get_column_fields, get_id_attributes, get_table_name
 from loom.core.persistence.stores import store_of
-from loom.core.repository.abc import (
-    Creatable,
-    Deletable,
-    IdT,
-    OutputT,
-    Readable,
-    UnsupportedQuery,
-    Updatable,
-)
+from loom.core.repository.abc import Creatable, Deletable, IdT, OutputT, Readable, Updatable
 from loom.core.uow.coordinator import Participant
 from loom.core.uow.scope import InvocationScope, current_scope
 
@@ -144,7 +136,7 @@ class RepositoryDynamoDB(
 
         Supported only when ``field`` is the partition key; any other field
         would require a scan or secondary index and raises
-        :class:`~loom.core.repository.abc.UnsupportedQuery`.
+        :class:`~loom.core.errors.UnsupportedQuery`.
         """
         if field == self._id_attr:
             return await self.get_by_id(cast(IdT, value), profile)

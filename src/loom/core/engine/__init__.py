@@ -10,7 +10,7 @@ from loom.core.engine.plan import (
     ParamBinding,
     RuleStep,
 )
-from loom.core.engine.post_commit import PostCommitChannel, PostCommitError
+from loom.core.engine.post_commit import PostCommitChannel
 
 __all__ = [
     "ComputeStep",
@@ -21,7 +21,6 @@ __all__ = [
     "MetricsAdapter",
     "ParamBinding",
     "PostCommitChannel",
-    "PostCommitError",
     "RuleStep",
     "RuntimeEvent",
     "RuntimeExecutor",

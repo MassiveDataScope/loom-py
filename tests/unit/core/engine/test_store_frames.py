@@ -23,6 +23,7 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
 from loom.core.engine.executor import RuntimeExecutor
+from loom.core.errors import UndeclaredStoreWrite
 from loom.core.model import BaseModel, ColumnField
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.abc import CursorCodec, RepoFor
@@ -30,7 +31,7 @@ from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, wit
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 from loom.core.uow.coordinator import Committed, InvocationOutcome, OrderedCommits
-from loom.core.uow.scope import UndeclaredStoreWrite, invocation
+from loom.core.uow.scope import invocation
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.factory import UseCaseFactory
 

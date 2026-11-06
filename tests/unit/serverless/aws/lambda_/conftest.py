@@ -11,13 +11,13 @@ import pytest
 from loom.composition import AppConfig, Application, CompositionSource, compose_application
 from loom.composition.resources import Resource, ResourceKind
 from loom.core.config import ConfigContext
-from loom.core.engine.post_commit import PostCommitError
+from loom.core.errors import PostCommitError, StoresNotCommitted
 from loom.core.identity import current_identity
 from loom.core.job.job import Job
 from loom.core.persistence.stores import DEFAULT_STORE
 from loom.core.tracing import get_trace_id
 from loom.core.uow.coordinator import InvocationOutcome, Uncertain
-from loom.core.uow.scope import StoresNotCommitted, invocation_error
+from loom.core.uow.scope import invocation_error
 from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
 from tests.helpers.composition import composition_source
 from tests.helpers.loops import event_loops

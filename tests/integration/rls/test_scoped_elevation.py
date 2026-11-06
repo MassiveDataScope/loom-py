@@ -27,11 +27,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loom.composition import build_application
 from loom.core.authz import Decision, Grant, Scope
 from loom.core.authz.elevation import elevated_scopes
+from loom.core.errors import ScopeOwnershipError
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.persistence.elevation import ScopedElevationSink
 from loom.core.repository.sqlalchemy.rls import SQLAlchemyStoreElevation, create_schema, elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.scope import ScopeOwnershipError
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.use_case import UseCase
 from loom.rest.fastapi.adapter import FastAPIAdapter

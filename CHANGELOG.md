@@ -206,6 +206,28 @@
   raise `NotImplementedError`. Cache scenarios and frames, not runners: tests
   that mutate state need a function-scoped runner on their own `tmp_path`.
 
+## 💥 Breaking
+
+### errors
+
+- **errors:** `loom.core.errors` is a package split by area (`base`, `domain`,
+  `auth`, `model`, `jobs`, `stores`, `codes`) and re-exports every error, so
+  `from loom.core.errors import X` is unchanged. The errors below are
+  importable only from `loom.core.errors`; their old paths, and the package
+  re-exports that pointed at them, are gone:
+
+  | Old path | New path |
+  |---|---|
+  | every class of the removed `errors` submodule of `loom.core.errors` | `loom.core.errors` |
+  | `loom.core.uow.scope.ScopeOwnershipError`, `UnitOfWorkInsideScope`, `UndeclaredStoreWrite`, `NestedIdentityMismatch`, `NestedElevation`, `StoresNotCommitted` (also `loom.core.uow.*`) | `loom.core.errors` |
+  | `loom.core.uow.coordinator.UncomposedStore` | `loom.core.errors` |
+  | `loom.core.job.handle.JobTimeoutError`, `JobFailedError` (also `loom.core.job.*`) | `loom.core.errors` |
+  | `loom.core.job.router.MixedJobBackendsError` (also `loom.core.job.*`) | `loom.core.errors` |
+  | `loom.core.engine.post_commit.PostCommitError` (also `loom.core.engine.*`) | `loom.core.errors` |
+  | `loom.core.model._loom_type.BoundaryValidationError`, `UnsupportedBoundaryType` (also `loom.core.model.*`) | `loom.core.errors` |
+  | `loom.core.repository.abc.errors.UnsupportedQuery` (also `loom.core.repository.abc.*`; the module is removed) | `loom.core.errors` |
+  | `loom.jobs.aws.sqs.SQSDispatchError` | `loom.core.errors` |
+
 ## ⚠ Behaviour changes
 
 ### jobs

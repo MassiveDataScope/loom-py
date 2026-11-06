@@ -27,12 +27,12 @@ from sqlalchemy import CursorResult, text
 
 from loom.composition import build_application
 from loom.core.authz import Decision, Grant, Scope
+from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
 from loom.core.repository.sqlalchemy.rls import create_schema, elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.scope import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase

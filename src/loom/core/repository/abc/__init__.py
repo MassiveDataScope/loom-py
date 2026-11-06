@@ -8,7 +8,6 @@ from loom.core.repository.abc.cursor import (
     register_cursor_codec,
     require_cursor_sort,
 )
-from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import (
     CursorResult,
     FilterGroup,
@@ -80,7 +79,6 @@ __all__ = [
     "SortSpec",
     "SupportsCacheScope",
     "SupportsCallerScopedSession",
-    "UnsupportedQuery",
     "UpdateT",
     "build_page_result",
     "register_cursor_codec",

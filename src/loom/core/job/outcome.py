@@ -1,6 +1,6 @@
 """Retry policy shared by job transports."""
 
-from loom.core.engine.post_commit import PostCommitError
+from loom.core.errors import PostCommitError
 
 
 def is_retryable(exc: Exception) -> bool:

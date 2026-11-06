@@ -32,8 +32,8 @@ from typing import Any
 import msgspec
 from sqlalchemy import JSON, Time
 
+from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import BoundaryValidationError
 from loom.core.model.convert import to_column_value
 
 _OFFSET_REFUSED = "time must not carry a UTC offset"

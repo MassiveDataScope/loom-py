@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.engine.post_commit import PostCommitError
-from loom.core.errors import MalformedJobMessage, UnknownJob
+from loom.core.errors import MalformedJobMessage, PostCommitError, UnknownJob
 from loom.core.job.envelope import JobEnvelope, decode_job_envelope, wire_job_name
 from loom.core.job.outcome import failure_log_fields
 

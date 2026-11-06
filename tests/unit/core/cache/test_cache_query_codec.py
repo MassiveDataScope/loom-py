@@ -22,7 +22,7 @@ import pytest
 from loom.core.cache import CacheConfig, CachedRepository
 from loom.core.cache.decorators import cache_query
 from loom.core.cache.result_codec import build_result_codec
-from loom.core.model import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError
 
 from ._doubles import (
     CachedEnv,

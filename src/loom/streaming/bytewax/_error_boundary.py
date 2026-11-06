@@ -8,7 +8,7 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 
 from bytewax.operators import branch, flat_map
 
-from loom.core.errors.errors import DomainError
+from loom.core.errors import DomainError
 from loom.core.logger import get_logger
 from loom.core.observability.event import TerminalReason
 from loom.core.observability.runtime import ObservabilityRuntime

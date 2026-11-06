@@ -15,16 +15,9 @@ from sqlalchemy import Column, MetaData, Table
 from sqlalchemy import types as sa_types
 
 from loom.core.backend.sqlalchemy import compile_all, get_compiled, get_metadata
+from loom.core.errors import BoundaryValidationError
 from loom.core.errors.codes import ErrorCode
-from loom.core.model import (
-    JSON,
-    BaseModel,
-    BoundaryValidationError,
-    ColumnField,
-    LoomStruct,
-    String,
-    Text,
-)
+from loom.core.model import JSON, BaseModel, ColumnField, LoomStruct, String, Text
 from loom.core.repository.abc import CursorCodec
 from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
 from loom.core.repository.sqlalchemy.values import to_column_row

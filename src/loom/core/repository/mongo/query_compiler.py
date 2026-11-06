@@ -24,9 +24,9 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, ClassVar
 
+from loom.core.errors import UnsupportedQuery
 from loom.core.model.introspection import get_column_fields
 from loom.core.repository.abc.cursor import Cursor
-from loom.core.repository.abc.errors import UnsupportedQuery
 from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, SortSpec
 from loom.core.repository.mongo.values import to_storage_value
 

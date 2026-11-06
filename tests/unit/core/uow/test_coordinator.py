@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy.engine import make_url
 
 from loom.core._async import run_to_completion
+from loom.core.errors import UncomposedStore
 from loom.core.errors.codes import ErrorCode
 from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
 from loom.core.repository.mongo.uow import MongoUnitOfWork
@@ -36,7 +37,6 @@ from loom.core.uow.coordinator import (
     RolledBack,
     StoreOutcome,
     Uncertain,
-    UncomposedStore,
 )
 
 from ._coordinator_fakes import (

@@ -26,6 +26,7 @@ from loom.core.authz import Scope
 from loom.core.authz.elevation import ElevationSink, elevated_scopes, elevation_scope
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
+from loom.core.errors import UndeclaredStoreWrite
 from loom.core.identity import Identity, current_identity, reset_identity, set_identity
 from loom.core.identity.identity import ANONYMOUS
 from loom.core.persistence import PersistenceWiring
@@ -42,7 +43,7 @@ from loom.core.repository.sqlalchemy.rls import elevate
 from loom.core.repository.sqlalchemy.session_manager import SessionManager
 from loom.core.uow.abc import UnitOfWork
 from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import Frame, UndeclaredStoreWrite, current_scope, invocation
+from loom.core.uow.scope import Frame, current_scope, invocation
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import (

@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import TypeVar
 
+from loom.core.errors import LoomError
 from loom.core.errors.codes import ErrorCode
-from loom.core.errors.errors import LoomError
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._write_options import WriteOptions
 

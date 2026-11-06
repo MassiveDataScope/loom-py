@@ -19,15 +19,8 @@ from uuid import UUID
 import msgspec
 import pytest
 
-from loom.core.model import (
-    BoundaryValidationError,
-    LoomType,
-    UnsupportedBoundaryType,
-    loom_type,
-    loom_type_of,
-    msgspec_type,
-    pydantic_type,
-)
+from loom.core.errors import BoundaryValidationError, UnsupportedBoundaryType
+from loom.core.model import LoomType, loom_type, loom_type_of, msgspec_type, pydantic_type
 from loom.core.model._loom_type import _msgspec_violation
 
 pydantic = pytest.importorskip("pydantic")

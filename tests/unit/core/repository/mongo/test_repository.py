@@ -13,7 +13,7 @@ from bson import ObjectId
 from pymongo.errors import AutoReconnect, BulkWriteError
 from pymongo.results import DeleteResult, InsertManyResult
 
-from loom.core.errors import Conflict
+from loom.core.errors import Conflict, UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, DateTime, TimestampedModel
 from loom.core.model.enums import ServerDefault
 from loom.core.repository.abc import (
@@ -29,7 +29,6 @@ from loom.core.repository.abc import (
     PaginationMode,
     QuerySpec,
     SortSpec,
-    UnsupportedQuery,
 )
 from loom.core.repository.mongo import repository as repository_module
 from loom.core.repository.mongo.ids import ObjectIdPolicy, Uuid4IdPolicy

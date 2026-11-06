@@ -7,12 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.core.job.handle import (
-    JobFailedError,
-    JobGroup,
-    JobHandle,
-    JobTimeoutError,
-)
+from loom.core.errors import JobFailedError, JobTimeoutError
+from loom.core.job.handle import JobGroup, JobHandle
 
 
 def _now() -> datetime:

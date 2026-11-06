@@ -71,8 +71,8 @@ The consumer's `GET /v1/orders` needs typed equality filters (`customerId`,
 unknown parameter answered 400 `unsupported_query`.
 
 `ErrorCode.UNSUPPORTED_QUERY` already exists and maps to 400
-(`codes.py:35`, `errors.py:87`); today only repositories raise it, through
-`UnsupportedQuery(backend, model, reason)` (`src/loom/core/repository/abc/errors.py:9-30`).
+(`codes.py:35`, `domain.py`); today only repositories raise it, through
+`UnsupportedQuery(backend, model, reason)` (`src/loom/core/errors/domain.py`).
 
 ### Constraints from the code
 
@@ -133,7 +133,7 @@ loom ships the error and its mapping, not a limiter.
 # loom/core/errors/codes.py
 RATE_LIMITED = "rate_limited"
 
-# loom/core/errors/errors.py
+# loom/core/errors/domain.py
 class RateLimited(DomainError):
     """The caller spent its budget; it may retry after ``retry_after`` seconds."""
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
