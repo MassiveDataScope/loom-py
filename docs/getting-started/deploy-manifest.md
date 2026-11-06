@@ -26,14 +26,14 @@ lambda:
     public_api:
       trigger: {source: http, interfaces: [OrdersInterface]}
     worker:
-      trigger: {source: jobs, queue: jobs, batch_size: 5}
+      trigger: {source: jobs, queue: {name: jobs, batch_size: 5}}
     invoices_in:
       trigger:
         source: eventbridge
         job: ImportInvoice
         identity: {subject: svc:invoices, roles: [invoice_importer]}
     alerts:
-      trigger: {source: sns, via: sqs, queue: alerts, job: ImportInvoice}
+      trigger: {source: sns, queue: {name: alerts}, job: ImportInvoice}
 sqs:
   queues:
     jobs: https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs
@@ -43,9 +43,9 @@ sqs:
 - `lambda.handler` is the Lambda handler that every function runs (the module
   that calls `create_app`, in `module.attribute` form). Every function runs
   the same handler and picks its own function through `LOOM__APP__ENTRY`.
-- `lambda.functions.<name>.trigger.queue` names the queue a `jobs` function,
-  or an event trigger `via: sqs`, consumes. It must be a key of `sqs.queues`,
-  and no two functions may consume the same queue.
+- `lambda.functions.<name>.trigger.queue.name` names the queue a `jobs`
+  function, or an event trigger with a `queue:` block, consumes. It must be a
+  key of `sqs.queues`, and no two functions may consume the same queue.
 
 The manifest refuses a configuration that does not declare these keys, a
 handler or queue URL given by a placeholder, a function whose key is not a
@@ -126,10 +126,10 @@ Python identifier, and an event trigger whose job startup would refuse.
 | `handler` | `lambda.handler`. |
 | `code_path` | `app.code_path` (`src` by default), relative to the configuration. |
 | `queues` | `sqs.queues` as written: the queues the application may send jobs to. |
-| `source`, `via` | The trigger's `source`, and `sqs` for an event trigger `via: sqs`, else `null`. |
+| `source`, `via` | The trigger's `source`, and `sqs` for an event trigger with a `queue:` block, else `null`. |
 | `event.routes` (http) | Each route of the function's interfaces, prefix included, as startup composes them: Python interfaces from `app.discovery`, YAML ones from `app.rest.interfaces`, `app.rest.disable_routes` applied and the CRUD routes the store's backend cannot serve dropped. A `disable_routes` entry that matches no route is refused, as at startup. |
 | `event.auth` (http) | The trigger's `auth`, or else `app.rest.auth`, as written. |
-| `event` (jobs, via sqs) | `queue` and the event source mapping settings of the trigger. `report_batch_item_failures` is `true` unless the trigger sets it to `false`. `dead_letter_required: true`: the queue needs a dead-letter queue, where messages that keep failing end. The discovery mode must be one a worker scans. An event trigger adds its `job` and `identity`; an sns one `raw_message_delivery: false`, which its subscription must keep. |
+| `event` (jobs, queued) | `queue` (the block's `name`) and the event source mapping settings of the trigger's `queue:` block. `report_batch_item_failures` is `true` unless the trigger sets it to `false`. `dead_letter_required: true`: the queue needs a dead-letter queue, where messages that keep failing end. The discovery mode must be one a worker scans. An event trigger adds its `job` and `identity`; an sns one `raw_message_delivery: false`, which its subscription must keep. |
 | `event` (direct) | The `job`, the `identity` it runs as (`null`: anonymous) and `on_failure`: the asynchronous invocation's `maximum_retry_attempts` and `maximum_event_age_s`, defaults applied. Its presence means the deployment must configure an on-failure destination, where a failed event goes. |
 | `secrets`, `ssm_parameters` | The secret and parameter names the function resolves: those of every `${secrets:...}` and `${ssm:...}` placeholder of the configuration, except the other functions' sections. A dotted JSON tail is dropped, so `/shop/jwt.path` lists the secret `/shop/jwt`. `%VAR%` tokens stay as written. A function running jobs lists those of `app.rest.auth` too: it resolves the whole `app` section. |
 
@@ -159,7 +159,7 @@ construct that takes one manifest entry:
 - the environment variables `LOOM_ENV` and `LOOM__APP__ENTRY`;
 - an API Gateway route for each http route; an SQS event source mapping with
   the declared settings and `ReportBatchItemFailures` for a `jobs` or
-  `via: sqs` function; for a direct trigger, the asynchronous invocation's
+  queued function; for a direct trigger, the asynchronous invocation's
   retries, maximum event age and on-failure destination;
 - the rule, bucket notification, topic subscription or schedule that sends a
   trigger's events, which loom does not declare;

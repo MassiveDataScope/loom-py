@@ -26,8 +26,8 @@
   | `app.entry: lambda_sqs` | `app.entry: <function>` with `trigger: {source: jobs}` |
   | `lambda.functions.<f>.http: [...]` | `lambda.functions.<f>.trigger: {source: http, interfaces: [...]}` |
   | `lambda.functions.<f>.auth` | `lambda.functions.<f>.trigger.auth` |
-  | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs}` |
-  | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` | The same keys under `trigger` |
+  | `lambda.functions.<f>.sqs: true` | `lambda.functions.<f>.trigger: {source: jobs, queue: {name: ...}}` |
+  | `lambda.functions.<f>.queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` | The same keys under `trigger.queue` (`queue` becomes `queue.name`) |
   | `loom.serverless.aws.lambda_.http` | `loom.serverless.aws.lambda_.triggers.http` |
   | `loom.serverless.aws.lambda_.sqs.SQSBatchFailedError` | `loom.serverless.aws.lambda_.SQSBatchFailedError` |
   | `loom.serverless.aws.lambda_.sqs.SQSHandler` | `loom.serverless.aws.lambda_.LambdaHandler` |
@@ -66,17 +66,18 @@
   `SendMessageBatch` calls per queue, in dispatch order (`sqs.batch`,
   `sqs.batch_size`, `sqs.max_concurrent_sends`); a standard queue resends the
   entries SQS refuses once, a FIFO queue stops at its first failure. A
-  Lambda `jobs` trigger declares `batch_size`, `batching_window_s`,
-  `max_concurrency` and `report_batch_item_failures`; `false` makes the SQS
-  handler fail the whole batch.
+  Lambda `jobs` trigger's `queue` block declares `batch_size`,
+  `batching_window_s`, `max_concurrency` and `report_batch_item_failures`;
+  `false` makes the SQS handler fail the whole batch.
 
 ### lambda
 
 - **lambda:** event triggers: `trigger: {source: eventbridge | s3 | sns |
-  schedule, job, identity}` runs the job for each event, directly or
-  `via: sqs`, as the configured identity only. A failed job fails the event,
-  which Lambda retries, then sends to its on-failure destination; via SQS it
-  is reported, then dead-lettered. See "Event triggers" in the composition guide.
+  schedule, job, identity}` runs the job for each event, directly or through
+  a `queue:` block, as the configured identity only. A failed job fails the
+  event, which Lambda retries, then sends to its on-failure destination;
+  through a queue it is reported, then dead-lettered. See "Event triggers" in
+  the composition guide.
 - **lambda:** `loom deploy manifest <config> [--function x]` prints a
   versioned JSON manifest (`manifest_version: 2`) of each function of
   `lambda.functions` for a deployment tool: the handler, code path and

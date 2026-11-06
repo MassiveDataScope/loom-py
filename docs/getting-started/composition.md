@@ -49,8 +49,7 @@ lambda:
     worker:
       trigger:
         source: jobs
-        queue: jobs
-        batch_size: 10
+        queue: {name: jobs, batch_size: 10}
 ```
 
 A `trigger` takes the keys of its `source` only:
@@ -58,8 +57,8 @@ A `trigger` takes the keys of its `source` only:
 | `source` | Invoked by | Keys |
 |---|---|---|
 | `http` | API Gateway | `interfaces`, `auth` |
-| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` |
-| `eventbridge`, `s3`, `sns`, `schedule` | The service, directly or `via: sqs` | `job`, `identity`; directly `maximum_retry_attempts` (2) and `maximum_event_age_s` (21600); via sqs the keys of `jobs` |
+| `jobs` | An SQS queue of loom `JobEnvelope` messages | `queue`: a block of `name`, `batch_size`, `batching_window_s`, `max_concurrency`, `report_batch_item_failures` |
+| `eventbridge`, `s3`, `sns`, `schedule` | The service, directly or through a queue | `job`, `identity`; directly `maximum_retry_attempts` (2) and `maximum_event_age_s` (21600); through a queue the `queue` block of `jobs` |
 
 An HTTP function serves only the interfaces it lists, a Python `RestInterface`
 by its class name and a YAML one by its `app.rest.interfaces` key; other routes
@@ -86,8 +85,7 @@ lambda:
     invoices_buffered:
       trigger:
         source: eventbridge
-        via: sqs
-        queue: invoice_events
+        queue: {name: invoice_events}
         job: ImportInvoice
 ```
 
@@ -126,10 +124,12 @@ The S3 `s3:TestEvent` runs no job. An SNS message that is not a
 fetches its `SubscribeURL`. The failure log names the function, job and
 error, never the payload.
 
-`via: sqs` reads each message body as the source delivers it to a queue and
-reports each failed message, a failure that is not retryable included, so
-the queue retries it and then sends it to its dead-letter queue. A `jobs`
-function consumes a message whose job fails for good, as before. An SNS subscription to that queue
+A `queue:` block reads each message body as the source delivers it to the
+queue it names and reports each failed message, a failure that is not
+retryable included, so the queue retries it and then sends it to its
+dead-letter queue. The block takes the keys of a `jobs` trigger's `queue`; the
+retry keys apply to a direct trigger only. A `jobs` function consumes a
+message whose job fails for good, as before. An SNS subscription to that queue
 must not use raw message delivery.
 
 The rule or pattern, bucket and prefix, topic or schedule expression that

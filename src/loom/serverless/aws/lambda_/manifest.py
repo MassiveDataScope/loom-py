@@ -44,7 +44,7 @@ MANIFEST_VERSION: Final = 2
 _HANDLER: Final = re.compile(r"[A-Za-z_][\w.]*\.\w+", re.ASCII)
 _FUNCTION: Final = re.compile(r"[A-Za-z_]\w*", re.ASCII)
 _RESOLVERS: Final = ("secrets", "ssm")
-_QUEUE_KEYS: Final = ("queue", "batch_size", "batching_window_s", "max_concurrency")
+_MAPPING_KEYS: Final = ("batch_size", "batching_window_s", "max_concurrency")
 
 
 class FunctionManifest(msgspec.Struct, frozen=True, kw_only=True):
@@ -161,21 +161,23 @@ def _queue_event(
 ) -> dict[str, Any]:
     """The key of ``sqs.queues`` the function consumes and its event source mapping.
 
-    The queue needs a dead-letter queue, where failed messages end. An event
-    trigger via sqs adds its ``job`` and ``identity``; an sns one,
+    The queue needs a dead-letter queue, where failed messages end. A queued
+    event trigger adds its ``job`` and ``identity``; an sns one,
     ``raw_message_delivery: false``, which its subscription must keep.
     """
-    if trigger.queue is None or trigger.queue not in queues:
+    queue = trigger.queue
+    if queue is None or queue.name not in queues:
         declared = ", ".join(sorted(queues)) or "none"
         raise ConfigError(
-            f"lambda.functions.{name}.trigger.queue must name the queue it consumes, a key of "
-            f"sqs.queues (declared: {declared})"
+            f"lambda.functions.{name}.trigger.queue.name must name the queue it consumes, a key "
+            f"of sqs.queues (declared: {declared})"
         )
-    written = msgspec.to_builtins(trigger)
-    event: dict[str, Any] = {key: written[key] for key in _QUEUE_KEYS}
-    event["report_batch_item_failures"] = trigger.reports_batch_item_failures
+    event: dict[str, Any] = {"queue": queue.name}
+    event.update({key: getattr(queue, key) for key in _MAPPING_KEYS})
+    event["report_batch_item_failures"] = queue.reports_batch_item_failures
     event["dead_letter_required"] = True
     if isinstance(trigger, EventTrigger):
+        written = msgspec.to_builtins(trigger)
         event["job"] = written["job"]
         event["identity"] = written["identity"]
     if isinstance(trigger, SnsTrigger):

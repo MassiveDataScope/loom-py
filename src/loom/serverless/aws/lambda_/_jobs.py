@@ -1,6 +1,6 @@
 """A function running jobs: composed with Lambda pool defaults, each job run within the invocation.
 
-Shared by the ``jobs`` function, the event triggers via sqs and the direct ones.
+Shared by the ``jobs`` function, the queued event triggers and the direct ones.
 """
 
 from __future__ import annotations

@@ -5,13 +5,13 @@ serves, and its ``trigger`` what invokes it. An ``http`` function serves the
 interfaces it lists, a Python one by its class name and a YAML one by its
 ``app.rest.interfaces`` key; a ``jobs`` function runs the loom jobs of a queue;
 an ``eventbridge``, ``s3``, ``sns`` or ``schedule`` function runs the job it
-declares for each event, invoked directly or ``via: sqs``.
+declares for each event, invoked directly or through a ``queue``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import msgspec
 
@@ -20,7 +20,6 @@ from loom.core.config.keys import INTERPOLATION
 from loom.core.config.loader import convert_section
 
 _SECTION = "lambda.functions"
-_BATCHING = ("batch_size", "batching_window_s", "max_concurrency", "report_batch_item_failures")
 _RETRIES = ("maximum_retry_attempts", "maximum_event_age_s")
 DEFAULT_MAXIMUM_RETRY_ATTEMPTS = 2
 """Retries of a direct trigger's failed event when undeclared, Lambda's own default."""
@@ -45,17 +44,15 @@ class HttpTrigger(
     auth: dict[str, Any] | None = None
 
 
-class _QueueKeys(
-    msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True, tag_field="source"
-):
-    """The keys of the event source mapping, for a trigger whose messages arrive through a queue.
+class QueueMapping(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """The event source mapping of a trigger whose messages arrive through a queue.
 
-    ``queue`` is a key of ``sqs.queues`` and ``batch_size`` at most 10 on a FIFO
+    ``name`` is a key of ``sqs.queues`` and ``batch_size`` at most 10 on a FIFO
     queue. loom applies only ``report_batch_item_failures``, which ``false``
     turns into a failed invocation instead of a partial batch.
     """
 
-    queue: str | None = None
+    name: str
     batch_size: Annotated[int, msgspec.Meta(ge=1, le=10000)] | None = None
     batching_window_s: Annotated[int, msgspec.Meta(ge=0, le=300)] | None = None
     max_concurrency: Annotated[int, msgspec.Meta(ge=2, le=1000)] | None = None
@@ -67,8 +64,22 @@ class _QueueKeys(
         return self.report_batch_item_failures is not False
 
 
-class JobsTrigger(_QueueKeys, frozen=True, kw_only=True, tag="jobs"):
+class JobsTrigger(
+    msgspec.Struct,
+    frozen=True,
+    kw_only=True,
+    forbid_unknown_fields=True,
+    tag="jobs",
+    tag_field="source",
+):
     """The ``JobEnvelope`` messages ``SQSJobService`` sends to a queue."""
+
+    queue: QueueMapping | None = None
+
+    @property
+    def reports_batch_item_failures(self) -> bool:
+        """Whether a failed message is reported alone; true without a ``queue`` block."""
+        return self.queue is None or self.queue.reports_batch_item_failures
 
 
 class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -79,24 +90,36 @@ class TriggerIdentity(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_
     attributes: dict[str, str] = msgspec.field(default_factory=dict)
 
 
-class EventTrigger(_QueueKeys, frozen=True, kw_only=True):
+class EventTrigger(
+    msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True, tag_field="source"
+):
     """Run ``job`` for each event of the source, as ``identity`` or anonymous.
 
     Invoked directly, the deployment configures ``maximum_retry_attempts``
-    and ``maximum_event_age_s`` of the asynchronous invocation; ``via: sqs``,
-    the queue keys of the event source mapping in between instead.
+    and ``maximum_event_age_s`` of the asynchronous invocation; with a
+    ``queue`` block, the event source mapping in between instead.
     """
 
     job: str
     identity: TriggerIdentity | None = None
-    via: Literal["sqs"] | None = None
+    queue: QueueMapping | None = None
     maximum_retry_attempts: Annotated[int, msgspec.Meta(ge=0, le=2)] | None = None
     maximum_event_age_s: Annotated[int, msgspec.Meta(ge=60, le=21600)] | None = None
 
     @property
     def queued(self) -> bool:
-        """Whether the events arrive through a queue, ``via: sqs``."""
-        return self.via == "sqs"
+        """Whether the events arrive through a queue: a ``queue`` block is declared."""
+        return self.queue is not None
+
+    @property
+    def via(self) -> str | None:
+        """``"sqs"`` when the events arrive through a queue, else ``None``, for the manifest."""
+        return "sqs" if self.queued else None
+
+    @property
+    def reports_batch_item_failures(self) -> bool:
+        """Whether a failed message is reported alone; true without a ``queue`` block."""
+        return self.queue is None or self.queue.reports_batch_item_failures
 
     def written_values(self) -> Iterator[str]:
         """The job and every identity value, to refuse a placeholder among them."""
@@ -151,11 +174,10 @@ def declared_lambda(ctx: ConfigContext) -> LambdaConfig:
 
     Raises:
         ConfigError: When a function declares a key outside ``trigger`` or
-            one of another source, a direct trigger a queue key, a
-            trigger via sqs a retry key, a placeholder in its ``job`` or
-            ``identity``, a ``batch_size`` over 10 without a
-            ``batching_window_s``, or an interface or a queue another
-            function serves.
+            one of another source, a queued trigger a retry key, a
+            placeholder in its ``job`` or ``identity``, a ``batch_size``
+            over 10 without a ``batching_window_s``, or an interface or a
+            queue another function serves.
     """
     config = _unresolved(ctx)
     owners: dict[str, str] = {}
@@ -175,25 +197,23 @@ def _served(where: str, trigger: Trigger) -> list[str]:
         return [repr(interface) for interface in trigger.interfaces]
     if isinstance(trigger, EventTrigger):
         _check_event_trigger(where, trigger)
-    _check_batching(where, trigger)
-    return [] if trigger.queue is None else [f"queue {trigger.queue!r}"]
+    _check_batching(where, trigger.queue)
+    return [] if trigger.queue is None else [f"queue {trigger.queue.name!r}"]
 
 
-def _check_batching(where: str, trigger: _QueueKeys) -> None:
+def _check_batching(where: str, queue: QueueMapping | None) -> None:
     # AWS: a batch size over 10 needs MaximumBatchingWindowInSeconds of at least 1.
-    if (trigger.batch_size or 0) > 10 and not trigger.batching_window_s:
-        raise ConfigError(f"{where}.batch_size over 10 needs batching_window_s >= 1")
+    if queue is None:
+        return
+    if (queue.batch_size or 0) > 10 and not queue.batching_window_s:
+        raise ConfigError(f"{where}.queue.batch_size over 10 needs batching_window_s >= 1")
 
 
 def _check_event_trigger(where: str, trigger: EventTrigger) -> None:
-    refused: tuple[str, ...]
     if trigger.queued:
-        refused, applies = _RETRIES, "a direct trigger"
-    else:
-        refused, applies = ("queue", *_BATCHING), "a trigger via sqs"
-    for key in refused:
-        if getattr(trigger, key) is not None:
-            raise ConfigError(f"{where}.{key} applies to {applies} only")
+        for key in _RETRIES:
+            if getattr(trigger, key) is not None:
+                raise ConfigError(f"{where}.{key} applies to a direct trigger only")
     if any(INTERPOLATION in value for value in trigger.written_values()):
         raise ConfigError(f"{where}: job and identity must be written as values, not placeholders")
 

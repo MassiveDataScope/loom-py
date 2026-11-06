@@ -116,6 +116,9 @@ def serve(tmp_path: Path) -> Iterator[Serve]:
         adapter.close()
 
 
+_QUEUE = {"name": "events"}
+
+
 def _events(job: str = "ImportInvoice", **trigger: Any) -> dict[str, Any]:
     return {"source": "eventbridge", "job": job, **trigger}
 
@@ -338,11 +341,11 @@ class TestDirectTrigger:
         assert [invoice for invoice, _ in ran] == [Invoice(number="7")]
 
 
-class TestViaSqs:
+class TestQueued:
     def test_a_failed_message_is_reported_alone(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
-        handler = serve(_events(via="sqs", identity=_IDENTITY))
+        handler = serve(_events(queue=_QUEUE, identity=_IDENTITY))
         records = [
             *LambdaEvent.eventbridge({"number": "1"}).via_sqs(message_id="m1")["Records"],
             *LambdaEvent.eventbridge({"number": "fail"}).via_sqs(message_id="m2")["Records"],
@@ -357,7 +360,7 @@ class TestViaSqs:
     def test_a_final_failure_is_reported_too_so_it_is_dead_lettered(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
-        handler = serve(_events(via="sqs"))
+        handler = serve(_events(queue=_QUEUE))
         event = LambdaEvent.eventbridge({"number": "final"}).via_sqs(message_id="m1")
 
         result = handler(event, None)
@@ -368,7 +371,7 @@ class TestViaSqs:
     def test_an_sns_message_runs_from_its_envelope(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
-        handler = serve({"source": "sns", "via": "sqs", "job": "ImportInvoice"})
+        handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
 
         result = handler(LambdaEvent.sns({"number": "7"}).via_sqs(), None)
 
@@ -380,7 +383,7 @@ class TestViaSqs:
     def test_an_sns_message_delivered_raw_is_malformed(
         self, serve: Serve, ran: list[tuple[Any, Identity]]
     ) -> None:
-        handler = serve({"source": "sns", "via": "sqs", "job": "ImportInvoice"})
+        handler = serve({"source": "sns", "queue": _QUEUE, "job": "ImportInvoice"})
 
         event = LambdaEvent.sqs_record('{"number": "7"}', message_id="r")
 

@@ -198,7 +198,7 @@ def _bind_queued_events(
     job_type: type[Job[Any]],
     application: Application,
 ) -> LambdaHandler:
-    """The SQS batch handler of an event trigger via sqs: every failure is reported, then DLQ'd."""
+    """The SQS batch handler of a queued event trigger: every failure is reported, then DLQ'd."""
     reader = _event_reader(name, trigger, _VIA_SQS)
     source = QueueSource(
         read=lambda body: reader(parsed(body, "the SQS message body")),

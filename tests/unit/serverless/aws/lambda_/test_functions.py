@@ -11,7 +11,12 @@ from loom.core.job.job import Job
 from loom.core.use_case import Input
 from loom.serverless.aws.lambda_ import S3Object
 from loom.serverless.aws.lambda_.checks import trigger_job
-from loom.serverless.aws.lambda_.functions import EventTrigger, LambdaFunction, declared_lambda
+from loom.serverless.aws.lambda_.functions import (
+    EventTrigger,
+    JobsTrigger,
+    LambdaFunction,
+    declared_lambda,
+)
 
 pytestmark = pytest.mark.timeout(5)
 
@@ -22,12 +27,11 @@ def _declared(trigger: dict[str, Any]) -> LambdaFunction:
 
 
 def _jobs(**knobs: Any) -> dict[str, Any]:
-    return {"source": "jobs", **knobs}
+    return {"source": "jobs", "queue": {"name": "orders", **knobs}}
 
 
 def test_a_jobs_function_declares_its_event_source_mapping() -> None:
     knobs = {
-        "queue": "orders",
         "batch_size": 10000,
         "batching_window_s": 300,
         "max_concurrency": 1000,
@@ -35,7 +39,23 @@ def test_a_jobs_function_declares_its_event_source_mapping() -> None:
     }
     function = _declared(_jobs(**knobs))
 
-    assert {key: getattr(function.trigger, key) for key in knobs} == knobs
+    assert isinstance(function.trigger, JobsTrigger)
+    assert function.trigger.queue is not None
+    assert function.trigger.queue.name == "orders"
+    assert {key: getattr(function.trigger.queue, key) for key in knobs} == knobs
+    assert function.trigger.reports_batch_item_failures is False
+
+
+def test_a_jobs_function_without_a_queue_block_reports_batch_item_failures() -> None:
+    function = _declared({"source": "jobs"})
+
+    assert isinstance(function.trigger, JobsTrigger)
+    assert (function.trigger.queue, function.trigger.reports_batch_item_failures) == (None, True)
+
+
+def test_a_queue_block_without_a_name_is_refused() -> None:
+    with pytest.raises(ConfigError, match=r"missing required field `name` - at `.*trigger\.queue`"):
+        _declared({"source": "jobs", "queue": {"batch_size": 5}})
 
 
 @pytest.mark.parametrize(
@@ -58,7 +78,7 @@ def test_an_out_of_range_setting_is_refused(knob: str, value: object) -> None:
 @pytest.mark.parametrize(
     ("knob", "value"),
     [
-        ("queue", "orders"),
+        ("queue", {"name": "orders"}),
         ("batch_size", 2),
         ("batching_window_s", 0),
         ("max_concurrency", 2),
@@ -78,7 +98,10 @@ def test_a_batch_over_ten_needs_a_batching_window(window: int | None, refused: b
         with pytest.raises(ConfigError, match="needs batching_window_s >= 1"):
             _declared(trigger)
     else:
-        assert _declared(trigger).trigger.batch_size == 11  # type: ignore[union-attr]
+        declared = _declared(trigger).trigger
+        assert isinstance(declared, JobsTrigger)
+        assert declared.queue is not None
+        assert declared.queue.batch_size == 11
 
 
 @pytest.mark.parametrize("source", ["eventbridge", "s3", "sns", "schedule"])
@@ -88,7 +111,7 @@ def test_an_event_trigger_declares_its_job_and_identity(source: str) -> None:
     trigger = _declared({"source": source, "job": "ImportInvoice", "identity": identity}).trigger
 
     assert isinstance(trigger, EventTrigger)
-    assert (trigger.job, trigger.via) == ("ImportInvoice", None)
+    assert (trigger.job, trigger.via, trigger.queued) == ("ImportInvoice", None, False)
     assert trigger.identity is not None
     assert (trigger.identity.subject, trigger.identity.roles) == ("svc:invoices", ("importer",))
     assert trigger.identity.attributes == {"tenant": "acme"}
@@ -103,8 +126,8 @@ def test_the_form_before_trigger_is_refused() -> None:
 
 def test_two_functions_consuming_one_queue_are_refused() -> None:
     functions = {
-        "worker": {"trigger": _jobs(queue="jobs")},
-        "alerts": {"trigger": {"source": "sns", "via": "sqs", "queue": "jobs", "job": "J"}},
+        "worker": {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}},
+        "alerts": {"trigger": {"source": "sns", "queue": {"name": "jobs"}, "job": "J"}},
     }
     config = ConfigContext.from_dict({"lambda": {"functions": functions}})
 
@@ -122,14 +145,24 @@ def test_two_functions_consuming_one_queue_are_refused() -> None:
         ),
         pytest.param({"source": "jobs", "job": "J"}, "unknown field `job`", id="event-key-on-jobs"),
         pytest.param(
-            {"source": "s3", "job": "J", "queue": "jobs"},
-            r"trigger\.queue applies to a trigger via sqs only",
-            id="queue-on-direct",
+            {"source": "s3", "job": "J", "batch_size": 10},
+            "unknown field `batch_size`",
+            id="batching-on-direct",
         ),
         pytest.param(
-            {"source": "sns", "job": "J", "via": "sqs", "maximum_retry_attempts": 1},
+            {"source": "s3", "job": "J", "via": "sqs", "queue": {"name": "jobs"}},
+            "unknown field `via`",
+            id="via-sqs",
+        ),
+        pytest.param(
+            {"source": "sns", "job": "J", "queue": {"name": "jobs"}, "maximum_retry_attempts": 1},
             r"trigger\.maximum_retry_attempts applies to a direct trigger only",
-            id="retries-via-sqs",
+            id="retries-on-queued",
+        ),
+        pytest.param(
+            {"source": "sns", "job": "J", "queue": {"name": "jobs", "job": "J"}},
+            "unknown field `job`",
+            id="event-key-in-queue-block",
         ),
         pytest.param(
             {"source": "schedule", "job": "J", "maximum_retry_attempts": 3},

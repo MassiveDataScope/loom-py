@@ -12,9 +12,12 @@ RecordFactory = Callable[..., dict[str, Any]]
 WORKER = "worker"
 
 
-def with_worker(document: dict[str, Any], **trigger: Any) -> dict[str, Any]:
-    """*document* declaring the jobs function :data:`WORKER`, its trigger extended by *trigger*."""
-    worker = {"trigger": {"source": "jobs", **trigger}}
+def with_worker(document: dict[str, Any], **mapping: Any) -> dict[str, Any]:
+    """*document* declaring the jobs function :data:`WORKER`, its ``queue`` block *mapping*."""
+    trigger: dict[str, Any] = {"source": "jobs"}
+    if mapping:
+        trigger["queue"] = {"name": "jobs", **mapping}
+    worker = {"trigger": trigger}
     return document | {"lambda": {"functions": {WORKER: worker}}}
 
 

@@ -118,14 +118,14 @@ def _config(package: str) -> dict[str, Any]:
             "functions": {
                 "public": _trigger("http", interfaces=["OrdersInterface", "health"]),
                 "admin": _trigger("http", interfaces=["AdminInterface"], auth=admin_auth),
-                "worker": _trigger("jobs", queue="jobs", batch_size=5),
+                "worker": _trigger("jobs", queue={"name": "jobs", "batch_size": 5}),
                 "invoices_in": _trigger(
                     "eventbridge",
                     job="ImportInvoice",
                     identity={"subject": "svc:invoices", "roles": ["invoice_importer"]},
                     maximum_retry_attempts=1,
                 ),
-                "alerts": _trigger("sns", via="sqs", queue="alerts", job="ImportInvoice"),
+                "alerts": _trigger("sns", queue={"name": "alerts"}, job="ImportInvoice"),
             },
         },
     }
@@ -353,17 +353,17 @@ _WORKER_ONLY = ("--function", "worker")
         (
             _set("lambda.functions.worker.trigger.queue", _DELETE),
             (),
-            "worker.trigger.queue must name the queue",
+            "worker.trigger.queue.name must name the queue",
         ),
         (
-            _set("lambda.functions.worker.trigger.queue", "unknown"),
+            _set("lambda.functions.worker.trigger.queue.name", "unknown"),
             (),
-            "worker.trigger.queue must name the queue",
+            "worker.trigger.queue.name must name the queue",
         ),
         (
-            _set("lambda.functions.alerts.trigger.queue", _DELETE),
+            _set("lambda.functions.alerts.trigger.queue.name", "unknown"),
             (),
-            "alerts.trigger.queue must name the queue",
+            "alerts.trigger.queue.name must name the queue",
         ),
         (
             _set("lambda.functions.invoices_in.trigger.job", "MissingJob"),
@@ -408,7 +408,7 @@ _WORKER_ONLY = ("--function", "worker")
         "no-function",
         "no-queue",
         "unknown-queue",
-        "no-queue-via-sqs",
+        "unknown-queue-on-event-trigger",
         "undiscovered-job",
         "function-name",
         "non-ascii-function-name",

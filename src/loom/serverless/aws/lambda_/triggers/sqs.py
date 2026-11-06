@@ -1,7 +1,7 @@
 """SQS partial-batch handler: loom job envelopes, or an event source's messages via a queue.
 
 A ``jobs`` function reads each message body as the ``JobEnvelope``
-``SQSJobService`` sent; an event trigger ``via: sqs`` reads it into the jobs
+``SQSJobService`` sent; a queued event trigger reads it into the jobs
 it declares, through its :class:`QueueSource`. Either way the batch reports
 the messages to retry; via sqs a final failure too, so the queue dead-letters
 it instead of consuming it.
