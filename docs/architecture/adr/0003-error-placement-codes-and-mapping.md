@@ -181,8 +181,9 @@ Amendment (2026-11): R3 was amended to split `loom/core/errors/` by area.
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
 | `JobTimeoutError`, `JobFailedError` | `core/job/handle.py` | `core/errors` | Any transport awaiting a job |
-| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `core/errors` | The SQS batch outcome the jobs pillar and the Lambda adapter share; `sqs.py` keeps importing it |
-| `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/errors.py` | REST only. `rest/auth/abc.py` and `loom.rest.auth` keep re-exporting it |
+| `SQSDispatchError` | `jobs/aws/sqs.py` | `jobs/aws/errors.py` | Raised by the SQS job service only; core keeps no AWS vocabulary |
+| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `serverless/aws/lambda_/errors.py` | Raised by the Lambda adapter only |
+| `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/auth/errors.py` | Raised by authenticators, which stay free of FastAPI; `rest/errors.py`, `rest/auth/abc.py` and `loom.rest.auth` re-export it |
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |
 
@@ -234,7 +235,7 @@ what happened; the transport decides the status. The status numbers in the
 
 Each test lands with the fix it guards and has no allowlist.
 
-**T1: `tests/unit/test_error_placement_containment.py`.** It sits next to
+**T1: `tests/unit/core/errors/test_error_placement.py`.** It sits next to
 `test_domain_containment.py` and works the same way: it reads `src/loom` with
 `ast` and imports nothing, so it needs no optional extras. Every check uses
 direct names, with no inheritance index.
