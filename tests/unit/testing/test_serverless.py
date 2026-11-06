@@ -36,17 +36,10 @@ def test_an_sns_message_via_sqs_carries_the_sns_envelope_not_the_lambda_event() 
     assert json.loads(record["body"]) == event["Records"][0]["Sns"]
 
 
-@pytest.mark.parametrize(
-    ("event", "message"),
-    [
-        (LambdaEvent.http("POST", "/x"), "http events are not delivered via SQS"),
-        (LambdaEvent.sqs_record("{}"), "sqs events are not delivered via SQS"),
-    ],
-    ids=["http", "record"],
-)
-def test_via_sqs_is_refused_where_it_means_nothing(event: LambdaEvent, message: str) -> None:
-    with pytest.raises(TypeError, match=message):
-        event.via_sqs()
+def test_only_the_events_a_queue_can_carry_offer_via_sqs() -> None:
+    assert hasattr(LambdaEvent.sns(), "via_sqs")
+    assert not hasattr(LambdaEvent.http("POST", "/x"), "via_sqs")
+    assert not hasattr(LambdaEvent.sqs_record("{}"), "via_sqs")
 
 
 def test_an_http_request_takes_one_body() -> None:

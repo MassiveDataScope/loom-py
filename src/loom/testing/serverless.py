@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Final, Self
+from typing import TYPE_CHECKING, Any, Final, NotRequired, TypedDict
 from urllib.parse import quote_plus
 
 from loom.core.job.envelope import encode_job_message
@@ -23,25 +23,29 @@ if TYPE_CHECKING:
     from loom.core.identity import Identity
     from loom.core.job.job import Job
 
-__all__ = ["EventFormat", "LambdaEvent"]
+__all__ = ["EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
 
 _REGION: Final = "us-east-1"
 _ARN: Final = f"{_REGION}:000000000000"
 _TIME: Final = "2026-01-01T00:00:00Z"
 
 
+class S3ObjectSpec(TypedDict):
+    """One object of an S3 notification; a bare key stands for ``{"key": key}``."""
+
+    key: str
+    size: NotRequired[int]
+    version_id: NotRequired[str]
+
+
 class LambdaEvent(dict[str, Any]):
     """The event AWS delivers for one trigger source; the handler takes it as is.
 
-    Each constructor builds the event of a direct delivery. ``via_sqs`` turns it
-    into the one SQS record the queue in between delivers: ``jobs`` events are
-    already that record, and an ``http`` request is never queued.
+    Each constructor builds the event of a direct delivery. The sources a queue
+    can sit in front of return a ``QueueableEvent``, whose ``via_sqs`` is the one
+    SQS record the queue delivers; ``jobs`` events are already that record, and
+    an ``http`` request is never queued.
     """
-
-    def __init__(self, event: Mapping[str, Any], *, source: str, sqs_body: str | None) -> None:
-        super().__init__(event)
-        self._source = source
-        self._sqs_body = sqs_body
 
     @classmethod
     def http(
@@ -54,7 +58,7 @@ class LambdaEvent(dict[str, Any]):
         json_body: Any = None,
         body: bytes | str | None = None,
         event_format: EventFormat = "v2",
-    ) -> Self:
+    ) -> LambdaEvent:
         """An API Gateway request; ``json_body`` is serialised and typed ``application/json``.
 
         Raises:
@@ -67,8 +71,7 @@ class LambdaEvent(dict[str, Any]):
             body = json.dumps(json_body)
             written.setdefault("content-type", "application/json")
         content = body.encode() if isinstance(body, str) else body or b""
-        event = api_gateway_event(method, path, query, written, content, event_format)
-        return cls(event, source="http", sqs_body=None)
+        return LambdaEvent(api_gateway_event(method, path, query, written, content, event_format))
 
     @classmethod
     def jobs(
@@ -81,7 +84,7 @@ class LambdaEvent(dict[str, Any]):
         message_id: str | None = None,
         group_id: str | None = None,
         queue_arn: str | None = None,
-    ) -> Self:
+    ) -> LambdaEvent:
         """One SQS record of the ``JobEnvelope`` ``SQSJobService`` sends for *job*."""
         body = encode_job_message(job, payload=payload, params=params, identity=identity).decode()
         return cls.sqs_record(body, message_id=message_id, group_id=group_id, queue_arn=queue_arn)
@@ -94,15 +97,15 @@ class LambdaEvent(dict[str, Any]):
         message_id: str | None = None,
         group_id: str | None = None,
         queue_arn: str | None = None,
-    ) -> Self:
+    ) -> LambdaEvent:
         """One SQS record whose body is *body* as written; ``group_id`` makes the queue FIFO."""
         record = _sqs_record(body, message_id=message_id, group_id=group_id, queue_arn=queue_arn)
-        return cls({"Records": [record]}, source="sqs", sqs_body=None)
+        return LambdaEvent({"Records": [record]})
 
     @classmethod
     def eventbridge(
         cls, detail: dict[str, Any] | None = None, *, event_id: str | None = None
-    ) -> Self:
+    ) -> QueueableEvent:
         """An EventBridge event carrying *detail*."""
         event = {
             "version": "0",
@@ -115,19 +118,21 @@ class LambdaEvent(dict[str, Any]):
             "resources": [],
             "detail": detail or {},
         }
-        return cls(event, source="eventbridge", sqs_body=json.dumps(event))
+        return QueueableEvent(event, sqs_body=json.dumps(event))
 
     @classmethod
-    def s3(cls, objects: Sequence[str | Mapping[str, Any]], *, bucket: str = "loom-test") -> Self:
-        """An S3 notification, one record per object: a key, or ``key``/``size``/``version_id``."""
+    def s3(
+        cls, objects: Sequence[str | S3ObjectSpec], *, bucket: str = "loom-test"
+    ) -> QueueableEvent:
+        """An S3 notification, one ``ObjectCreated:Put`` record per object."""
         event = {"Records": [_s3_record(bucket, item) for item in objects]}
-        return cls(event, source="s3", sqs_body=json.dumps(event))
+        return QueueableEvent(event, sqs_body=json.dumps(event))
 
     @classmethod
-    def s3_test_event(cls, bucket: str = "loom-test") -> Self:
+    def s3_test_event(cls, bucket: str = "loom-test") -> QueueableEvent:
         """The ``s3:TestEvent`` S3 sends when a notification is configured."""
         event = {"Service": "Amazon S3", "Event": "s3:TestEvent", "Time": _TIME, "Bucket": bucket}
-        return cls(event, source="s3", sqs_body=json.dumps(event))
+        return QueueableEvent(event, sqs_body=json.dumps(event))
 
     @classmethod
     def sns(
@@ -136,7 +141,7 @@ class LambdaEvent(dict[str, Any]):
         *,
         notification_id: str | None = None,
         type: str = "Notification",  # noqa: A002 - SNS's own field name
-    ) -> Self:
+    ) -> QueueableEvent:
         """The event of a Lambda subscription; queued, the SNS envelope SQS stores."""
         envelope = {
             "Type": type,
@@ -149,13 +154,21 @@ class LambdaEvent(dict[str, Any]):
             "MessageAttributes": {},
         }
         event = {"Records": [{"EventSource": "aws:sns", "Sns": envelope}]}
-        return cls(event, source="sns", sqs_body=json.dumps(envelope))
+        return QueueableEvent(event, sqs_body=json.dumps(envelope))
 
     @classmethod
-    def schedule(cls, payload: dict[str, Any] | None = None) -> Self:
+    def schedule(cls, payload: dict[str, Any] | None = None) -> QueueableEvent:
         """The input an EventBridge Scheduler schedule passes as is."""
         event = payload or {}
-        return cls(event, source="schedule", sqs_body=json.dumps(event))
+        return QueueableEvent(event, sqs_body=json.dumps(event))
+
+
+class QueueableEvent(LambdaEvent):
+    """A direct event a queue can sit in front of: ``via_sqs`` is the record it then delivers."""
+
+    def __init__(self, event: Mapping[str, Any], *, sqs_body: str) -> None:
+        super().__init__(event)
+        self._sqs_body = sqs_body
 
     def via_sqs(
         self,
@@ -163,14 +176,8 @@ class LambdaEvent(dict[str, Any]):
         message_id: str | None = None,
         group_id: str | None = None,
         queue_arn: str | None = None,
-    ) -> Self:
-        """This event as the one SQS record the queue in between delivers.
-
-        Raises:
-            TypeError: For an ``http`` request, or an event that is already an SQS record.
-        """
-        if self._sqs_body is None:
-            raise TypeError(f"{self._source} events are not delivered via SQS")
+    ) -> LambdaEvent:
+        """This event as the one SQS record the queue in between delivers."""
         return self.sqs_record(
             self._sqs_body, message_id=message_id, group_id=group_id, queue_arn=queue_arn
         )
@@ -200,14 +207,12 @@ def _sqs_record(
     }
 
 
-def _s3_record(bucket: str, item: str | Mapping[str, Any]) -> dict[str, Any]:
+def _s3_record(bucket: str, item: str | S3ObjectSpec) -> dict[str, Any]:
     """One ``ObjectCreated:Put`` record; the key URL-encoded, as S3 writes it."""
-    found = {"key": item} if isinstance(item, str) else dict(item)
-    written = {"key": quote_plus(found.pop("key")), "size": found.pop("size", 0)}
+    found: S3ObjectSpec = {"key": item} if isinstance(item, str) else item
+    written = {"key": quote_plus(found["key"]), "size": found.get("size", 0)}
     if "version_id" in found:
-        written["versionId"] = found.pop("version_id")
-    if found:
-        raise TypeError(f"an S3 object takes no {', '.join(sorted(found))}")
+        written["versionId"] = found["version_id"]
     return {
         "eventVersion": "2.1",
         "eventSource": "aws:s3",

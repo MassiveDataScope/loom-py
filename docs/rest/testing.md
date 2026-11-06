@@ -123,11 +123,11 @@ constructor per trigger source, so a test calls the real handler with it:
 | `LambdaEvent.sns(message, notification_id=, type=)` | The event of a Lambda subscription |
 | `LambdaEvent.schedule(payload)` | The schedule's input, passed as is |
 
-`.via_sqs(message_id=, group_id=, queue_arn=)` turns an EventBridge, S3, SNS
-or schedule event into the one SQS record the queue in between delivers:
-`group_id` makes the queue FIFO, and an SNS message is queued as the SNS
-envelope the subscription stores. An HTTP request is never queued and a
-`jobs` event already is a record. Every SQS record also takes `message_id`,
+An EventBridge, S3, SNS or schedule event is a `QueueableEvent`: its
+`.via_sqs(message_id=, group_id=, queue_arn=)` is the one SQS record the queue
+in between delivers, `group_id` makes that queue FIFO, and an SNS message is
+queued as the SNS envelope the subscription stores. An HTTP request is never
+queued and a `jobs` event already is a record, so neither has `via_sqs`. Every SQS record also takes `message_id`,
 `group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
 should retry:
 
