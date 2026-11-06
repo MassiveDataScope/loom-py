@@ -65,8 +65,7 @@ class ScopeOwnershipError(SystemError):
         message: Which of those happened.
     """
 
-    retryable = False
-    """A programming error: a retry meets it again."""
+    retryable = False  # a programming error: a retry meets it again
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.INVOCATION_SCOPE_FOREIGN_TASK)
@@ -82,8 +81,7 @@ class UnitOfWorkInsideScope(SystemError):
         message: Names the unit of work.
     """
 
-    retryable = False
-    """A programming error: a retry meets it again."""
+    retryable = False  # a programming error: a retry meets it again
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.UOW_INSIDE_SCOPE)
@@ -113,8 +111,7 @@ class UndeclaredStoreWrite(SystemError):
         message: Names the store written to and the stores declared.
     """
 
-    retryable = False
-    """A programming error: a retry meets it again."""
+    retryable = False  # a programming error: a retry meets it again
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.UNDECLARED_STORE_WRITE)
@@ -131,8 +128,7 @@ class NestedIdentityMismatch(SystemError):
         message: Names the nested use case.
     """
 
-    retryable = False
-    """A programming error: a retry meets it again."""
+    retryable = False  # a programming error: a retry meets it again
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.NESTED_IDENTITY_MISMATCH)
@@ -156,8 +152,7 @@ class NestedElevation(SystemError):
         message: Names the nested use case and the elevated scopes.
     """
 
-    retryable = False
-    """A programming error: a retry meets it again."""
+    retryable = False  # a programming error: a retry meets it again
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.NESTED_ELEVATION)
